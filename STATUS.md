@@ -339,6 +339,29 @@ its output fails the whole batch.
    The job lands last, since a red job on `master` would block every push
    between.
 
+Chunk 1 landed: `SitePairing` pairs each method's tracked instructions between
+the class file and the received bytes, with polarity, and the rewriter places
+each method's slots from the class file's numbering and checks them per method,
+so a method asking for more than its run skips the class instead of shifting
+another method's counts. The suite under JaCoCo went from 63 failures to 0, and
+`EarlierTransformerInstrumentationTest` runs JaCoCo's `Instrumenter` as an
+earlier transformer inside the normal suite. Facts the design did not predict:
+`StaticBaselineScannerTest`'s four JaCoCo failures were the same cause, the
+manifest side read from JaCoCo's output; a method the received bytes lack
+gets no probe at all (ADR 0052 amended), since a probe with nothing to weave
+into reads as never hit; and switch pairing also compares which entries go to
+the default, since slot counts depend on it.
+
+Known gap from chunk 1's review: the class file comes from the loader's
+`getResourceAsStream`, parent-first unless overridden. A loader that defines
+child-first but serves resources parent-first, with another version of the
+class on its parent's path, hands the agent the wrong class file, and a method
+only the child's version declares gets no probe. The test fixture loader had
+exactly this shape and was made consistent. Tomcat's, Jetty's and the common
+child-first loaders are consistent already. Mitigation if one turns up: read
+the class file from the `ProtectionDomain`'s code source, with a per-location
+cache, which needs Boot's nested-jar URLs handled.
+
 The JVM keeps an off-heap copy of each woven class's received bytes once the
 transformer is capable, about one class-file length each; no flag, and the
 overhead entry measures it. The default when a body is not recognised, which

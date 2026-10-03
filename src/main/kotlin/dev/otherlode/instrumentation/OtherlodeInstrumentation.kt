@@ -17,6 +17,7 @@ import dev.otherlode.instrumentation.branch.BranchProbeAsmVisitorWrapper
 import dev.otherlode.instrumentation.branch.BranchSite
 import dev.otherlode.instrumentation.branch.BranchSiteAnalyzer
 import dev.otherlode.instrumentation.branch.HandlerForwarder
+import dev.otherlode.instrumentation.branch.SitePairing
 import dev.otherlode.instrumentation.endpoints.HandlerForwarders
 import dev.otherlode.instrumentation.staticscan.StaticBaselineMismatchDetector
 import dev.otherlode.registry.ExternalClassRegistry
@@ -61,8 +62,8 @@ import net.bytebuddy.matcher.ElementMatchers.named
 import net.bytebuddy.matcher.ElementMatchers.none
 import net.bytebuddy.matcher.ElementMatchers.not
 import net.bytebuddy.matcher.ElementMatchers.takesArguments
+import net.bytebuddy.pool.TypePool
 import net.bytebuddy.utility.JavaModule
-import java.io.IOException
 import java.lang.System.Logger.Level
 import java.lang.instrument.Instrumentation
 import java.util.WeakHashMap
@@ -113,8 +114,8 @@ class OtherlodeInstrumentation(
     private val staticBaselineMismatchDetector: StaticBaselineMismatchDetector = StaticBaselineMismatchDetector(),
     /**
      * Whether [install] registers a [ClassBytesCapture] ahead of ByteBuddy's transformer. Always
-     * true for the agent; a test switches it off to drive the classloader-resource fallback in
-     * [analyzeBytecode], the path taken when the capture has nothing for a class.
+     * true for the agent; a test switches it off to drive the path taken when the capture has
+     * nothing for a class, where the class file stands in for the received bytes.
      */
     captureClassBytes: Boolean = true,
     /** Where dropped branch sites are tallied; see [BranchDropCounts]. */
@@ -388,20 +389,57 @@ class OtherlodeInstrumentation(
         typeDescription: TypeDescription,
         classLoader: ClassLoader?,
     ): DynamicType.Builder<*> {
-        // Read once, ahead of filtering: whether a synthetic method is a probed lambda body
-        // depends on whether scalac compiled this class at all (methodMatcher's isScalaClass), and
-        // the branch analysis below needs these same bytes too. classBytesCapture.take is
-        // destructive, so it must not be called a second time for the same class.
-        val classBytes = classBytesCapture?.take(typeDescription.internalName) ?: locateClassBytes(typeDescription, classLoader)
-        val isScalaClass = classBytes?.let(ScalaClassDetector::isScalaClass) ?: false
-        val methods = typeDescription.declaredMethods.filter(methodMatcher(isScalaClass))
+        val source = readClassBytes(typeDescription, classLoader)
+        val analysedBytes = source.analysed
+        // Whether a synthetic method is a probed lambda body depends on whether scalac compiled
+        // this class at all (methodMatcher's isScalaClass), which the class file says.
+        val isScalaClass = analysedBytes?.let(ScalaClassDetector::isScalaClass) ?: false
+        val methodMatcher = methodMatcher(isScalaClass)
+        // Which methods get probes comes from the class file, so an instance reports the same
+        // methods whatever ran ahead of it. A method only the received bytes declare gets none,
+        // and neither does one the received bytes lack, since there is nothing to weave into.
+        val analysedMethods =
+            if (source.receivedDiffers) {
+                describeClassFile(typeDescription, analysedBytes!!, classLoader).declaredMethods.filter(methodMatcher)
+            } else {
+                typeDescription.declaredMethods.filter(methodMatcher)
+            }
+        val receivedMethods =
+            if (source.receivedDiffers) typeDescription.declaredMethods.mapTo(HashSet()) { it.internalName to it.descriptor } else null
+        val methods =
+            receivedMethods?.let { received -> analysedMethods.filter { (it.internalName to it.descriptor) in received } }
+                ?: analysedMethods
 
         // Analysed regardless of whether methods is empty: a type whose only concrete content is
         // a Kotlin $default method (an interface declaring only an abstract method plus its
         // default, with no other probe-worthy method) would otherwise never reach the omission
         // tier below at all.
-        val analysis = analyzeBytecode(classBytes, classLoader, methods)
-        if (classBytes == null) {
+        val analysis = analyzeBytecode(analysedBytes, classLoader, analysedMethods)
+        val pairing =
+            if (source.receivedDiffers) {
+                SitePairing.of(analysedBytes!!, source.received!!, analysedMethods.map { it.internalName to it.descriptor })
+            } else {
+                SitePairing.IDENTICAL
+            }
+        if (pairing.unpairedMethods.isNotEmpty()) {
+            val (absent, misaligned) = pairing.unpairedMethods.partition { receivedMethods != null && it !in receivedMethods }
+            val signatures = { methods: List<Pair<String, String>> -> methods.joinToString { (name, descriptor) -> name + descriptor } }
+            val details =
+                listOfNotNull(
+                    misaligned.takeIf { it.isNotEmpty() }?.let {
+                        "the branches of ${signatures(it)} do not line up with its class file, so those methods keep their " +
+                            "entry probe and get no branch probes"
+                    },
+                    absent.takeIf { it.isNotEmpty() }?.let {
+                        "${signatures(it)} are missing from the bytes it received, so those methods get no probes at all"
+                    },
+                )
+            log.log(
+                Level.INFO,
+                "otherlode: ${typeDescription.name} reached this agent rewritten by an earlier transformer; ${details.joinToString("; ")}",
+            )
+        }
+        if (analysedBytes == null) {
             // Warned ahead of the guard below, not after it. With no bytes the analysis is empty,
             // so that guard reads as "no methods matched" and returns for a class whose only
             // probe-worthy content is a <clinit> or a $default method. The agent cannot tell that
@@ -436,7 +474,7 @@ class OtherlodeInstrumentation(
             // reads as empty too, since the Scala marker comes from those same bytes. Recording
             // that as nothing to probe would tell the sweep the class is accounted for and hide
             // the one case the warning above exists to report.
-            if (classBytes != null) registry.recordNothingToProbe(typeDescription.name)
+            if (analysedBytes != null) registry.recordNothingToProbe(typeDescription.name)
             return builder
         }
         if (analysis.isKotlinClass && !analysis.hasLineNumbers) {
@@ -446,7 +484,11 @@ class OtherlodeInstrumentation(
                     "in it cannot be recognised and reads as ordinary code, and its inlined copies cannot be traced",
             )
         }
-        val branchSites = analysis.sites
+        // A method whose sites did not pair keeps its entry probe and marks, and its sites are left
+        // out entirely rather than reported at zero. Every other site keeps the branch indexes the
+        // class file gave it.
+        val branchSites = analysis.sites.filter { pairing.isPaired(it.methodName, it.methodDescriptor) }
+        val keptSites = analysis.keptSites.filter { pairing.isPaired(it.site.methodName, it.site.methodDescriptor) }
         val references = ReferencesKept(classLoader)
 
         // A resolved Scala default getter keeps its ordinary method-tier slot and advice; only its
@@ -471,17 +513,22 @@ class OtherlodeInstrumentation(
                     )
                 } else {
                     val sourceSignature = analysis.sourceSignatureOf(it.internalName, it.descriptor)
+                    val paired = pairing.isPaired(it.internalName, it.descriptor)
                     ProbeMeta(
                         ProbeKind.METHOD,
                         it.internalName,
                         it.descriptor,
                         line = analysis.firstLineOf(it.internalName, it.descriptor),
                         inline = analysis.isInline(it.internalName, it.descriptor),
-                        calls = analysis.callsOf(it.internalName, it.descriptor),
+                        // An unpaired method's sites are not reported, so no edge may name one as its guard.
+                        calls =
+                            analysis.callsOf(it.internalName, it.descriptor).map { edge ->
+                                if (paired) edge else edge.copy(guard = null)
+                            },
                         generatedBy = analysis.generatedBy(it.internalName, it.descriptor),
                         referencedClasses = references.keep(analysis.referencesOf(it.internalName, it.descriptor)),
                         lambdaBody = analysis.isLambdaBody(it.internalName, it.descriptor),
-                        branchSites = analysis.branchSitesOf(it.internalName, it.descriptor),
+                        branchSites = if (paired) analysis.branchSitesOf(it.internalName, it.descriptor) else emptyList(),
                         static = it.isStatic,
                         parameterNames = sourceSignature.parameterNames,
                         genericSignature = sourceSignature.genericSignature,
@@ -495,7 +542,7 @@ class OtherlodeInstrumentation(
         // as the method probe itself, so it inherits the same flag, and a branch inside a
         // generated method carries that method's mark.
         val branchProbes =
-            analysis.keptSites.flatMap { kept ->
+            keptSites.flatMap { kept ->
                 val site = kept.site
                 kept.outcomes.map { outcome ->
                     ProbeMeta(
@@ -517,7 +564,8 @@ class OtherlodeInstrumentation(
         // method and branch slots: bit i's slot is siteBase + bitCount(optionalBits & ((1 << i) - 1)),
         // never one slot per value parameter, so a required parameter's bit (never set) never
         // reserves a slot nobody increments.
-        val defaultSites = analysis.defaultSites
+        val defaultSites =
+            analysis.defaultSites.filter { receivedMethods == null || (it.defaultName to it.defaultDescriptor) in receivedMethods }
         var omissionBase = methodProbes.size + branchProbes.size
         val omissionSiteBases = mutableMapOf<Pair<String, String>, Int>()
         val omissionProbes =
@@ -647,7 +695,22 @@ class OtherlodeInstrumentation(
             )
 
         if (branchSites.isNotEmpty()) {
-            val eligible = methods.map { it.internalName to it.descriptor }.toSet()
+            val eligible =
+                methods
+                    .map {
+                        it.internalName to it.descriptor
+                    }.filterTo(HashSet()) { (name, descriptor) -> pairing.isPaired(name, descriptor) }
+            val slotsByMethod = LinkedHashMap<Pair<String, String>, BranchProbeAsmVisitorWrapper.MethodSlots>()
+            var nextSlot = 0
+            for (kept in keptSites) {
+                val key = kept.site.methodName to kept.site.methodDescriptor
+                val run = slotsByMethod[key] ?: BranchProbeAsmVisitorWrapper.MethodSlots(nextSlot, 0)
+                slotsByMethod[key] = run.copy(count = run.count + kept.outcomes.size)
+                nextSlot += kept.outcomes.size
+            }
+            // The analysis's ordinals are the class file's. Pairing guarantees an eligible method's
+            // tracked instructions match the received bytes' one for one, so they name the same
+            // instructions there, and the swapped ordinals say which conditionals arrive inverted.
             instrumented =
                 instrumented.visit(
                     BranchProbeAsmVisitorWrapper(
@@ -657,6 +720,8 @@ class OtherlodeInstrumentation(
                         droppedOrdinalsByMethod = analysis::droppedOrdinalsOf,
                         throwingDefaultOrdinalsByMethod = analysis::throwingDefaultOrdinalsOf,
                         unprobedOutcomesByMethod = analysis::unprobedOutcomesOf,
+                        swappedOrdinalsByMethod = pairing::swappedOrdinalsOf,
+                        slotsByMethod = { name, descriptor -> slotsByMethod[name to descriptor] },
                     ),
                 )
         }
@@ -734,13 +799,71 @@ class OtherlodeInstrumentation(
     }
 
     /**
+     * A class's bytes as one transform sees them.
+     *
+     * [analysed] is what the analysis reads: the class file, or the received bytes when the class's
+     * loader serves no class file for it (bytes defined from memory). Null when neither could be
+     * had. [received] is the received bytes [ClassBytesCapture] took, or null when it took none.
+     * [receivedDiffers] is true when both the class file and the received bytes were read and are
+     * not byte-for-byte equal, which is what an earlier transformer leaves; only then do the
+     * methods and branch sites need pairing.
+     */
+    private class ClassBytesSource(
+        val analysed: ByteArray?,
+        val received: ByteArray?,
+        val receivedDiffers: Boolean,
+    )
+
+    /**
+     * Takes the received bytes from [classBytesCapture] and reads the class file through
+     * [classLoader]. With nothing captured (the capture switched off, or a class defined outside
+     * the ordinary transformer chain), the class file stands in for the received bytes, since
+     * without an earlier transformer they are the same. With no class file, the received bytes
+     * are analysed, logged at DEBUG.
+     */
+    private fun readClassBytes(
+        typeDescription: TypeDescription,
+        classLoader: ClassLoader?,
+    ): ClassBytesSource {
+        // take is destructive, so it must not be called a second time for the same class.
+        val received = classBytesCapture?.take(typeDescription.internalName)
+        val classFile = locateClassBytes(typeDescription, classLoader)
+        if (classFile == null && received != null) {
+            log.log(Level.DEBUG, "otherlode: no class file found for ${typeDescription.name}; its shape is read from the received bytes")
+        }
+        return ClassBytesSource(
+            analysed = classFile ?: received,
+            received = received,
+            receivedDiffers = classFile != null && received != null && !classFile.contentEquals(received),
+        )
+    }
+
+    /**
+     * Describes [classFile] as ByteBuddy would describe the class, so the method matcher judges the
+     * methods the compiler wrote rather than the ones an earlier transformer left. Supertypes resolve
+     * lazily through [classLoader]'s class files, and nothing is loaded.
+     */
+    private fun describeClassFile(
+        typeDescription: TypeDescription,
+        classFile: ByteArray,
+        classLoader: ClassLoader?,
+    ): TypeDescription {
+        val locator =
+            ClassFileLocator.Compound(
+                ClassFileLocator.Simple.of(typeDescription.name, classFile),
+                classFileLocatorFor(classLoader),
+            )
+        return TypePool.Default
+            .WithLazyResolution(TypePool.CacheProvider.Simple(), locator, TypePool.Default.ReaderMode.FAST)
+            .describe(typeDescription.name)
+            .resolve()
+    }
+
+    /**
      * Runs [BranchSiteAnalyzer] over [classBytes]: branch sites, first lines, call edges,
-     * references and the marks the manifest carries. [classBytes] are the bytes the JVM is about
-     * to define, as captured by [ClassBytesCapture] just before ByteBuddy's transform, or read
-     * from the class's own classloader resource when nothing was captured (a class defined outside
-     * the ordinary transformer chain, or loaded by a test harness that bypasses [install]).
-     * ByteBuddy's own callback only hands over type metadata, not the class bytes, hence the
-     * separate capture.
+     * references and the marks the manifest carries. [classBytes] are the class file, so an
+     * instance reports the same shape whatever transformer ran ahead of this agent, or the received
+     * bytes when there is no class file; see [readClassBytes].
      *
      * If [classBytes] is null, this class gets no branch probes and no method line numbers.
      * Method-entry tracking is unaffected.
@@ -870,10 +993,12 @@ class OtherlodeInstrumentation(
         classLoader: ClassLoader?,
     ): ByteArray? {
         val locator = classFileLocatorFor(classLoader)
+        // Any failure reads as no class file: the transform then analyses the received bytes
+        // rather than failing the class over a resource it could do without.
         return try {
             val resolution = locator.locate(typeDescription.name)
             if (resolution.isResolved) resolution.resolve() else null
-        } catch (_: IOException) {
+        } catch (_: Exception) {
             null
         }
     }

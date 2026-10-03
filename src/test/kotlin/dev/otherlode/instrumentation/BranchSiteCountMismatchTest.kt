@@ -123,7 +123,10 @@ class BranchSiteCountMismatchTest {
         assertTrue(manifest.probes.none { it.className == "com.example.target.BranchTarget" }, "no probe exists for the skipped class")
         val skipped = manifest.skippedClasses.filter { it.className == "com.example.target.BranchTarget" }
         assertEquals(1, skipped.size, "the class appears once in skippedClasses")
-        assertTrue("9" in skipped.single().reason, "reason names the slot count sized from the analysed bytes")
-        assertTrue("11" in skipped.single().reason, "reason names the slot count wanted at rewrite time")
+        // The check runs per method, so the reason names classify: two slots sized from the
+        // analysed bytes against four wanted by the rewrite.
+        val reason = skipped.single().reason
+        assertTrue("classify(I)Ljava/lang/String; wants 4 branch probe slots" in reason, reason)
+        assertTrue("but 2 were sized" in reason, reason)
     }
 }

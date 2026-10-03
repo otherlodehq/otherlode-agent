@@ -6,10 +6,11 @@ import dev.otherlode.export.ConditionPart
  * One tracked branch point found in a class: either a two-outcome [ConditionalJump] or a
  * `TABLESWITCH`/`LOOKUPSWITCH`.
  *
- * [siteIndex] is assigned once per class by [BranchSiteAnalyzer], in bytecode encounter order
- * across all its methods. [BranchProbeMethodVisitor] numbers the same sites by their ordinal
- * within each method, with no shared state; the two agree because both walk the same methods in
- * the same order and track the same instructions.
+ * [siteIndex] is assigned once per class by [BranchSiteAnalyzer], in the class file's encounter
+ * order across all its methods. [BranchProbeMethodVisitor] numbers the same sites by their ordinal
+ * within each method, with no shared state, walking the received bytes; the two agree because
+ * both track the same instructions, and [SitePairing] has checked that each probed method's
+ * tracked instructions line up one for one.
  *
  * [outcomeCount] is the number of outcomes this site numbers. A conditional jump has 2 (taken,
  * not-taken). A switch has the case count plus one for the default.

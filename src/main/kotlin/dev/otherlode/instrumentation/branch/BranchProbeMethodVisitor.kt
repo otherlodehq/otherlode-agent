@@ -49,6 +49,12 @@ import net.bytebuddy.jar.asm.Opcodes
  * collision reaches, and that outcome's offset (see [BranchSite.unprobedOutcome]). Such a
  * conditional asks for one slot, for its other outcome, and the unprobed edge goes straight to its
  * target.
+ *
+ * [swappedOrdinals] names, in the same numbering, the conditionals that test the opposite of the
+ * class file's jump the analysis numbered, because an earlier transformer inverted them. Every
+ * offset above is the class file's: offset 0 is the class file's taken edge. For a swapped
+ * conditional that is this jump's fall-through, so the two edges trade slots, and an unprobed
+ * outcome trades sides with them.
  */
 class BranchProbeMethodVisitor(
     methodVisitor: MethodVisitor,
@@ -57,6 +63,7 @@ class BranchProbeMethodVisitor(
     private val droppedOrdinals: Set<Int> = emptySet(),
     private val throwingDefaultOrdinals: Set<Int> = emptySet(),
     private val unprobedOutcomes: Map<Int, Int> = emptyMap(),
+    private val swappedOrdinals: Set<Int> = emptySet(),
     private val allocateSlots: (outcomeCount: Int) -> Int,
 ) : MethodVisitor(Opcodes.ASM9, methodVisitor) {
     private var nextOrdinal = 0
@@ -74,7 +81,10 @@ class BranchProbeMethodVisitor(
             super.visitJumpInsn(opcode, label)
             return
         }
-        val unprobed = unprobedOutcomes[ordinal]
+        val swapped = ordinal in swappedOrdinals
+        // The analysis numbers outcomes by the class file's jump. An inverted jump's taken edge is
+        // the class file's fall-through, so the unprobed side and the two slots both flip.
+        val unprobed = unprobedOutcomes[ordinal]?.let { if (swapped) 1 - it else it }
         val slot = allocateSlots(if (unprobed == null) 2 else 1)
         if (slot == NO_SLOT) {
             super.visitJumpInsn(opcode, label)
@@ -87,14 +97,16 @@ class BranchProbeMethodVisitor(
             emitProbeIncrement(base)
             return
         }
+        val takenSlot = if (unprobed == null && swapped) base + 1 else base
+        val fallThroughSlot = if (swapped) base else base + 1
         val taken = Label()
         val continuation = Label()
 
         super.visitJumpInsn(opcode, taken)
-        if (unprobed == null) emitProbeIncrement(base + 1)
+        if (unprobed == null) emitProbeIncrement(fallThroughSlot)
         super.visitJumpInsn(Opcodes.GOTO, continuation)
         super.visitLabel(taken)
-        emitProbeIncrement(base)
+        emitProbeIncrement(takenSlot)
         super.visitJumpInsn(Opcodes.GOTO, label)
         super.visitLabel(continuation)
     }
