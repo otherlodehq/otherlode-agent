@@ -386,6 +386,14 @@ that launches a child JVM with the agent needs a collector of its own, started
 with `OtherlodeTestCollector.start()`, for the same reason. Anything else that
 posts to the port is rejected, and fails every query for the rest of the run.
 
+JaCoCo's agent can sit before or after this one on the command line. Gradle's
+`jacoco` plugin puts its agent after a test task's `jvmArgs`, and that order is
+fine. This agent runs after every agent whose transformer is not
+retransformation-capable, JaCoCo's included, and reads each class's shape from
+its class file, so neither tool's results change. An agent that adds or
+reorders a method's conditional jumps ahead of this one, as AspectJ's weaver
+can, leaves that method with its entry probe but no branch probes.
+
 The module isn't published yet. Use it from a multi-project build as
 `testImplementation(project(":testkit"))`, or build the jar with
 `./gradlew :testkit:jar`. It brings only the wire classes onto your test
@@ -413,6 +421,8 @@ tasks.test {
   test run belongs to another service.
 - `includePackages` must cover your test classes as well as the production
   code. They usually share packages, so production's value works.
+- The `jacoco` plugin can stay applied: the order of the two agents changes
+  neither tool's results, as "Test your app against the agent" above explains.
 - `staticBaselineEnabled=true` sends call edges from every test class on
   the classpath, not only from the tests that ran.
 - Pin `serviceInstanceId` once per test task. The collector reads each

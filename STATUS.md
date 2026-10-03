@@ -113,7 +113,7 @@ adopter's collector forwards to one multi-tenant backend.
      `x$0` parameter names. A data class property's getter reads as never
      hit when only `copy`, `toString` and the class's own methods read the
      field; that is true, and noisy.
-3. **Another agent ahead of or behind this one.** Grilled on 2026-10-03;
+3. **Another agent ahead of or behind this one.** Done on 2026-10-03;
    ADRs 0052 and 0053. With JaCoCo ahead, every exact-body result is read
    from JaCoCo's output; with this agent ahead, which is Gradle's default
    for an adopter's test task, JaCoCo's report loses every woven class. The
@@ -297,7 +297,7 @@ earlier transformer adds) and fall back to the received bytes with a WARNING.
 The question is how much machinery a so-far hypothetical loader earns, set
 against ADR 0007's "silent, confident, wrong".
 
-### Another agent ahead of or behind this one: grilled, three chunks
+### Another agent ahead of or behind this one: landed
 
 Found in the deep review of 2026-10-03 and grilled the same day; ADRs 0052
 and 0053, pre-release checklist item 3. Terms: class file, received bytes,
@@ -411,14 +411,18 @@ transformer is capable, about one class-file length each; no flag, and the
 overhead entry measures it. The default when a body is not recognised, which
 this fix's fallback can still reach, is its own entry.
 
-To reproduce today: apply JaCoCo 0.8.13 from a Gradle init script outside the
-repo (`allprojects { plugins.withId("java") { apply(plugin = "jacoco") } }`)
-and run `./gradlew --init-script <file> test --continue`. 63 failures on
-2026-10-03: `ScalaGeneratedMethodMarkingTest` 45, `StaticBaselineScannerTest`
-4, `GuardedCodeInstrumentationTest` 3, `OtherlodeTestCollectorEndToEndTest` 3,
-`SwitchLoweringInstrumentationTest` 2, `GeneratedMethodMarkingTest` 2,
-`ScalaNeverHitEndToEndTest` 2, `ConditionInstrumentationTest` 1,
-`KotlinKindInstrumentationTest` 1.
+Chunk 3 landed: `CoverageAgentOrderTest` launches the fixture program in three
+JVMs (this agent alone, JaCoCo's real agent jar listed first, and listed after)
+and checks that the manifest and every count match the run alone and that
+JaCoCo's id for each fixture class is its class file's CRC64. With chunk 2's
+registration reverted only the listed-after JaCoCo check fails, and with
+chunk 1's class-file read or its polarity handling reverted the manifest or
+count checks fail in both orders. The `jacoco-check` CI job runs `check` with
+`gradle/jacoco-check.init.gradle.kts` on every push: 1896 tests, all passing
+under JaCoCo on 2026-10-03. The README says the order is free for JaCoCo and
+that an agent which changes a method's jumps ahead of this one costs that
+method its branch probes. A failed fork is remembered, so a hanging one costs a
+single timeout.
 
 ### Deep review of 2026-10-03: landed, with follow-ups
 

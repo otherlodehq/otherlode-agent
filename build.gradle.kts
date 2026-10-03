@@ -19,6 +19,10 @@ repositories {
 // internal the agent reads, such as the lambda factory's `interfaceClass` and `implInfo` fields,
 // fails a test.
 val testJdk = providers.gradleProperty("otherlode.testJdk")
+
+// One JaCoCo version for its core library and its agent jar: CoverageAgentOrderTest reads the
+// agent's execution data with the core's reader and compares ids with the core's CRC64.
+val jacocoVersion = "0.8.13"
 allprojects {
     plugins.withType<JavaBasePlugin> {
         val toolchains = extensions.getByType<JavaToolchainService>()
@@ -97,7 +101,7 @@ dependencies {
     // JaCoCo's offline instrumenter, used only to produce the bytecode shape a coverage agent
     // attached ahead of this one hands to the transformer chain, so the analyser is tested
     // against the real thing rather than a hand-written imitation of it.
-    testImplementation("org.jacoco:org.jacoco.core:0.8.13")
+    testImplementation("org.jacoco:org.jacoco.core:$jacocoVersion")
 }
 
 kotlin {
@@ -356,6 +360,18 @@ val jvmDefaultDisableFixtureRuntimeClasspath =
     project(":fixtures-kotlin-jvm-default-disable").configurations.named("runtimeClasspath")
 val classSamFixtureClassesDir = project(":fixtures-kotlin-class-sam").layout.buildDirectory.dir("classes/kotlin/main")
 
+// JaCoCo's own agent jar, for CoverageAgentOrderTest, which launches JVMs with it beside this
+// agent in each command-line order. The test needs only the jar's path, so it stays off the test
+// classpath. The name stays clear of `jacocoAgent`, which the `jacoco` plugin creates when an init
+// script applies it.
+val coverageAgentOrderJacoco by configurations.creating {
+    isCanBeConsumed = false
+    isTransitive = false
+}
+dependencies {
+    coverageAgentOrderJacoco("org.jacoco:org.jacoco.agent:$jacocoVersion:runtime")
+}
+
 tasks.test {
     useJUnitPlatform()
     jvmArgs("-Djdk.attach.allowAttachSelf=true")
@@ -367,11 +383,14 @@ tasks.test {
     )
     // ShadedBodyKindRuleTest runs the analyser from the shaded jar, since relocation rewrites
     // string constants in the agent's own classes and only the shaded copy shows the effect.
+    // CoverageAgentOrderTest launches JVMs with the shaded jar as their -javaagent.
     dependsOn(tasks.shadowJar)
     val shadedAgentJar = tasks.shadowJar.flatMap { it.archiveFile }
     inputs.file(shadedAgentJar)
+    inputs.files(coverageAgentOrderJacoco).withPropertyName("coverageAgentOrderJacoco")
     doFirst {
         systemProperty("otherlode.agent.shadedJar", shadedAgentJar.get().asFile.absolutePath)
+        systemProperty("otherlode.jacoco.agentJar", coverageAgentOrderJacoco.singleFile.absolutePath)
         systemProperty("otherlode.fixtures.scala3.dir", scala3FixtureClassesDir.get().asFile.absolutePath)
         systemProperty("otherlode.fixtures.scala3.classpath", scala3FixtureRuntimeClasspath.get().asPath)
         systemProperty("otherlode.fixtures.scala2.dir", scala2FixtureClassesDir.get().asFile.absolutePath)
