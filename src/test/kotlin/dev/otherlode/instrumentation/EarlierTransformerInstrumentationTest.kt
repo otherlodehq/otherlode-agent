@@ -1,5 +1,6 @@
 package dev.otherlode.instrumentation
 
+import dev.otherlode.advice.MethodEntryAdvice
 import dev.otherlode.config.AgentConfig
 import dev.otherlode.export.BodyKind
 import dev.otherlode.export.GeneratedBy
@@ -17,12 +18,14 @@ import net.bytebuddy.agent.builder.ResettableClassFileTransformer
 import net.bytebuddy.jar.asm.ClassReader
 import net.bytebuddy.jar.asm.ClassVisitor
 import net.bytebuddy.jar.asm.ClassWriter
+import net.bytebuddy.jar.asm.FieldVisitor
 import net.bytebuddy.jar.asm.Label
 import net.bytebuddy.jar.asm.MethodVisitor
 import net.bytebuddy.jar.asm.Opcodes
 import org.jacoco.core.data.ExecutionDataStore
 import org.jacoco.core.data.SessionInfoStore
 import org.jacoco.core.instr.Instrumenter
+import org.jacoco.core.internal.data.CRC64
 import org.jacoco.core.runtime.LoggerRuntime
 import org.jacoco.core.runtime.OfflineInstrumentationAccessGenerator
 import org.jacoco.core.runtime.RuntimeData
@@ -88,6 +91,9 @@ class EarlierTransformerInstrumentationTest {
         /** The bytes this transformer handed on, by internal name: JaCoCo's output, or what it was given. */
         val handedOn = ConcurrentHashMap<String, ByteArray>()
 
+        /** The bytes this transformer was given, by internal name. */
+        val received = ConcurrentHashMap<String, ByteArray>()
+
         @Volatile
         var loader: ClassLoader? = null
 
@@ -103,6 +109,7 @@ class EarlierTransformerInstrumentationTest {
             classfileBuffer: ByteArray,
         ): ByteArray? {
             if (loader == null || loader !== this.loader || className == null || classBeingRedefined != null) return null
+            received[className] = classfileBuffer
             val instrumented =
                 try {
                     instrumenter.instrument(classfileBuffer, className)
@@ -116,10 +123,19 @@ class EarlierTransformerInstrumentationTest {
         }
 
         /** Whether any probe JaCoCo planted has fired. */
-        fun anyProbeHit(): Boolean {
+        fun anyProbeHit(): Boolean = collect().contents.any { it.hasHits() }
+
+        /** The ids of the classes whose probes have fired. */
+        fun hitClassIds(): Set<Long> =
+            collect()
+                .contents
+                .filter { it.hasHits() }
+                .mapTo(HashSet()) { it.id }
+
+        private fun collect(): ExecutionDataStore {
             val store = ExecutionDataStore()
             data.collect(store, SessionInfoStore(), false)
-            return store.contents.any { it.hasHits() }
+            return store
         }
 
         fun shutdown() = runtime.shutdown()
@@ -181,6 +197,9 @@ class EarlierTransformerInstrumentationTest {
     /**
      * Installs Otherlode, with JaCoCo ahead of it when [withJacoco] is true, loads and initialises
      * [classNames] through a fresh loader from [newLoader], runs [drive], and uninstalls again.
+     *
+     * JaCoCo's transformer is registered before Otherlode's, unless [jacocoRegisteredLater] is true.
+     * Either way it is registered as not retransformation-capable, as JaCoCo's agent registers it.
      */
     private fun run(
         withJacoco: Boolean,
@@ -188,19 +207,14 @@ class EarlierTransformerInstrumentationTest {
         classNames: List<String>,
         newLoader: () -> ClassLoader,
         drive: (ClassLoader) -> Unit = {},
+        jacocoRegisteredLater: Boolean = false,
     ): Run {
-        val jacoco =
-            if (withJacoco) {
-                JacocoAhead().also {
-                    earlierTransformers += it
-                    instrumentation.addTransformer(it, false)
-                }
-            } else {
-                null
-            }
+        val jacoco = if (withJacoco) JacocoAhead().also { earlierTransformers += it } else null
+        if (jacoco != null && !jacocoRegisteredLater) instrumentation.addTransformer(jacoco, false)
         val registry = LayoutRecordingRegistry()
         val otherlode = OtherlodeInstrumentation(AgentConfig.parse("includePackages=$includePackage"), registry)
         installed = otherlode to otherlode.install(instrumentation)
+        if (jacoco != null && jacocoRegisteredLater) instrumentation.addTransformer(jacoco, false)
         try {
             val loader = newLoader()
             jacoco?.loader = loader
@@ -342,6 +356,75 @@ class EarlierTransformerInstrumentationTest {
         val instrumentedHere = jacoco.handedOn.values.any { !it.contentEquals(classFile) }
         assertTrue(instrumentedHere, "JaCoCo changed the bytes before this agent saw them")
         if (!isUnderJacocoAgent()) assertTrue(jacoco.anyProbeHit(), "JaCoCo's own probes fired beside this agent's")
+    }
+
+    /**
+     * The JVM calls every transformer that is not retransformation-capable before every one that
+     * is, so JaCoCo's runs first even when it is registered after this agent's. That is Gradle's
+     * order for an adopter's test task, where `-javaagent` from `jvmArgs` comes ahead of the
+     * `jacoco` plugin's. JaCoCo then receives the class file and identifies the class by its CRC64,
+     * which is what its report matches the class file against.
+     */
+    @Test
+    fun `JaCoCo registered after this agent still receives the class file, and the manifest is the same`() {
+        val classNames = listOf("BranchTarget", "RoutineTarget", "GeneratedPoint").map { "$TARGET.$it" }
+        val drive = { loader: ClassLoader ->
+            val branchTarget = Class.forName("$TARGET.BranchTarget", true, loader)
+            branchTarget.getMethod("classify", Int::class.java).invoke(branchTarget.getDeclaredConstructor().newInstance(), 5)
+            Unit
+        }
+
+        val without = run(false, TARGET, classNames, ::targetLoader, drive)
+        val with = run(true, TARGET, classNames, ::targetLoader, drive, jacocoRegisteredLater = true)
+
+        assertSameManifest(without, with, classNames)
+        val jacoco = assertNotNull(with.jacoco)
+        for (className in classNames) {
+            val internalName = className.replace('.', '/')
+            val received = assertNotNull(jacoco.received[internalName], "JaCoCo saw $className")
+            assertFalse(
+                declaresField(received, MethodEntryAdvice.PROBE_ARRAY_FIELD),
+                "JaCoCo received $className before this agent wove it",
+            )
+            // A JaCoCo agent on the test JVM instruments the fixture first; its output is then what
+            // both transformers here receive, and only the order can be checked.
+            if (isUnderJacocoAgent()) continue
+            val classFile = classFileOf(internalName)
+            assertTrue(received.contentEquals(classFile), "JaCoCo received $className's class file")
+        }
+        if (!isUnderJacocoAgent()) {
+            val branchTargetId = CRC64.classId(classFileOf("com/example/target/BranchTarget"))
+            assertTrue(branchTargetId in jacoco.hitClassIds(), "JaCoCo recorded BranchTarget's hits under its class file's id")
+        }
+    }
+
+    private fun classFileOf(internalName: String): ByteArray =
+        listOf("build/classes/java/test", "build/classes/kotlin/test")
+            .map { File(it, "$internalName.class") }
+            .first { it.exists() }
+            .readBytes()
+
+    private fun declaresField(
+        bytes: ByteArray,
+        name: String,
+    ): Boolean {
+        var found = false
+        ClassReader(bytes).accept(
+            object : ClassVisitor(Opcodes.ASM9) {
+                override fun visitField(
+                    access: Int,
+                    fieldName: String,
+                    descriptor: String,
+                    signature: String?,
+                    value: Any?,
+                ): FieldVisitor? {
+                    if (fieldName == name) found = true
+                    return null
+                }
+            },
+            ClassReader.SKIP_CODE,
+        )
+        return found
     }
 
     /** Whether a JaCoCo agent was on this JVM's command line, which instruments the fixtures before [JacocoAhead] can. */

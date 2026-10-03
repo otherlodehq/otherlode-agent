@@ -110,6 +110,26 @@ class JaxRsModuleTest {
                 2L,
                 methodDeltas.single { it.classId == getOrderProbe.classId && it.probeIndex == getOrderProbe.probeIndex }.hitsTotal,
             )
+
+            // Another agent retransforming the resource class: both tiers weave it again, so both
+            // keep counting, and nothing is declared or registered a second time.
+            JaxRsTestAgent.instrumentation.retransformClasses(OrdersResource::class.java)
+            get(client, port, "/orders/42")
+
+            assertEquals(endpoints.toSet(), endpointRegistry.endpoints().toSet(), "no endpoint declared again")
+            val deltasAfter = endpointRegistry.computeDeltas(maxPerBatch = 10).flatMap { it.deltas }.associateBy { it.endpointId }
+            assertEquals(3L, deltasAfter.getValue(byIdentity.getValue("GET /orders/{id}").endpointId).hitsTotal)
+            assertTrue(endpointRegistry.disabledModules().isEmpty())
+            val resource = ResourceAttributes("jaxrs-test", null, "instance-1", null, "run-1")
+            assertEquals(manifest.probes, probeRegistry.manifest(resource).probes, "no probe registered again")
+            assertEquals(
+                3L,
+                probeRegistry
+                    .computeDeltaBatch(resource)
+                    .batch.deltas
+                    .single { it.classId == getOrderProbe.classId && it.probeIndex == getOrderProbe.probeIndex }
+                    .hitsTotal,
+            )
         } finally {
             server.stop(0)
             JaxRsTestAgent.uninstall()

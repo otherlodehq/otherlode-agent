@@ -38,7 +38,10 @@ object JaxRsTestAgent {
     lateinit var probeRegistry: ProbeRegistry
         private set
 
-    private lateinit var instrumentation: Instrumentation
+    /** The instrumentation [premain] was handed, for [JaxRsModuleTest] to retransform a resource class through. */
+    lateinit var instrumentation: Instrumentation
+        private set
+
     private lateinit var methodInstrumentation: OtherlodeInstrumentation
     private lateinit var methodTransformer: ResettableClassFileTransformer
     private lateinit var endpointInstrumentation: EndpointInstrumentation

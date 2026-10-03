@@ -10,14 +10,17 @@ import net.bytebuddy.agent.builder.ResettableClassFileTransformer
 import net.bytebuddy.jar.asm.ClassReader
 import net.bytebuddy.jar.asm.ClassWriter
 import java.io.File
+import java.lang.instrument.ClassFileTransformer
 import java.lang.reflect.Modifier
 import java.nio.file.Files
+import java.security.ProtectionDomain
 import java.util.logging.Handler
 import java.util.logging.LogRecord
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import java.util.logging.Level as JulLevel
 import java.util.logging.Logger as JulLogger
@@ -60,22 +63,159 @@ class OtherlodeInstrumentationTest {
     }
 
     /**
-     * HotSwap and another agent's `redefineClasses` run every transformer again on the new bytes.
-     * The agent does not support that: the woven class carries a field the new bytes
-     * lack, so the JVM refuses the redefinition. What it must not do is report the class it has
-     * already delivered probes for as a skipped class too.
+     * A debugger's HotSwap writes the recompiled class file before it redefines the class. The
+     * agent cannot weave the class again from a class file that is not the one its slots were
+     * numbered from, so it hands back nothing, and the JVM refuses the redefinition because the
+     * new bytes lack the probe field. What it must not do is report the class it has already
+     * delivered probes for as a skipped class too. A WARNING names the agent and the cause, since
+     * the JVM's own message does neither.
      */
     @Test
-    fun `redefining a woven class records no skip for it`() {
+    fun `redefining a woven class after its class file changed on disk is refused and records no skip for it`() {
         val registry = ProbeRegistry()
-        val target = install(registry, AgentConfig.parse("includePackages=com.example.target"))
-        val original = File("build/classes/java/test/com/example/target/SampleTarget.class").readBytes()
+        installOnly(registry, AgentConfig.parse("includePackages=com.example.target"))
+        val dir = Files.createTempDirectory("otherlode-hotswap").toFile()
+        val classFile = File(dir, "com/example/target/SampleTarget.class")
+        classFile.parentFile.mkdirs()
+        File("build/classes/java/test/com/example/target/SampleTarget.class").copyTo(classFile)
+        val targetClass =
+            Class.forName(
+                "com.example.target.SampleTarget",
+                true,
+                FixtureClassLoader(arrayOf(dir.toURI().toURL()), javaClass.classLoader),
+            )
+        val target = targetClass.getDeclaredConstructor().newInstance()
+        val changed = replaceConstant(classFile.readBytes(), "pong", "PONG")
+        classFile.writeBytes(changed)
 
-        runCatching { ByteBuddyAgent.install().redefineClasses(java.lang.instrument.ClassDefinition(target.javaClass, original)) }
+        var refusal: Throwable? = null
+        val records =
+            captureLogRecords(OtherlodeInstrumentation::class.java.name) {
+                refusal =
+                    runCatching {
+                        ByteBuddyAgent.install().redefineClasses(java.lang.instrument.ClassDefinition(targetClass, changed))
+                    }.exceptionOrNull()
+            }
 
+        val thrown = refusal
+        assertTrue(thrown is UnsupportedOperationException && "schema" in thrown.message.orEmpty(), "$thrown")
+        assertEquals("pong", targetClass.getMethod("ping").invoke(target), "the woven class is still the one running")
+        assertTrue(
+            records.any { it.level == JulLevel.WARNING && "class file of com.example.target.SampleTarget differs" in it.message },
+            "${records.map { it.message }}",
+        )
         val manifest = registry.manifest(ResourceAttributes("test", null, "instance-1", null, "run-1"))
         assertTrue(manifest.probes.any { it.className == "com.example.target.SampleTarget" })
         assertTrue(manifest.skippedClasses.none { it.className == "com.example.target.SampleTarget" }, "${manifest.skippedClasses}")
+    }
+
+    /**
+     * New bytes passed to `redefineClasses` while the class file is the one the class was woven
+     * from are woven from the class's own plan: every method keeps its slots, and a method whose
+     * branches no longer line up with the class file keeps its entry probe while its branch counts
+     * stop. The new bytes are built from the bytes the class was woven from, which are JaCoCo's
+     * output when the test JVM runs JaCoCo's agent.
+     */
+    @Test
+    fun `redefining with new bytes and an unchanged class file keeps every slot, and freezes a method that no longer pairs`() {
+        val registry = ProbeRegistry()
+        val wovenFrom = arrayOfNulls<ByteArray>(1)
+        val spy =
+            object : ClassFileTransformer {
+                override fun transform(
+                    loader: ClassLoader?,
+                    className: String?,
+                    classBeingRedefined: Class<*>?,
+                    protectionDomain: ProtectionDomain?,
+                    classfileBuffer: ByteArray,
+                ): ByteArray? {
+                    if (className == "com/example/target/BranchTarget" && classBeingRedefined == null) wovenFrom[0] = classfileBuffer
+                    return null
+                }
+            }
+        ByteBuddyAgent.install().addTransformer(spy, false)
+        val targetClass =
+            try {
+                installOnly(registry, AgentConfig.parse("includePackages=com.example.target"))
+                Class.forName("com.example.target.BranchTarget", true, fixtureLoader())
+            } finally {
+                ByteBuddyAgent.install().removeTransformer(spy)
+            }
+        val target = targetClass.getDeclaredConstructor().newInstance()
+        val classify = targetClass.getMethod("classify", Int::class.java)
+        val classifyDense = targetClass.getMethod("classifyDense", Int::class.java)
+        repeat(2) { classify.invoke(target, 5) }
+        classify.invoke(target, -1)
+        classifyDense.invoke(target, 1)
+        val changed = replaceFirstJump(assertNotNull(wovenFrom[0]), "classify") { net.bytebuddy.jar.asm.Opcodes.IFNE }
+
+        ByteBuddyAgent.install().redefineClasses(java.lang.instrument.ClassDefinition(targetClass, changed))
+        assertEquals("non-positive", classify.invoke(target, 5), "the new bytes run")
+        classifyDense.invoke(target, 1)
+
+        val resource = ResourceAttributes("test", null, "instance-1", null, "run-1")
+        val probes = registry.manifest(resource).probes.filter { it.className == "com.example.target.BranchTarget" }
+        val deltas =
+            registry
+                .computeDeltaBatch(resource)
+                .batch.deltas
+                .associate { it.probeIndex to it.hitsTotal }
+        val countsOf = { method: String ->
+            val own = probes.filter { it.methodName == method }
+            (deltas[own.single { it.kind == ProbeKind.METHOD }.probeIndex] ?: 0L) to
+                own.filter { it.kind == ProbeKind.BRANCH }.sortedBy { it.branchIndex }.map { deltas[it.probeIndex] ?: 0L }
+        }
+        assertEquals(4L to listOf(1L, 2L), countsOf("classify"), "the entry probe counts; the branches stay")
+        assertEquals(2L to listOf(0L, 2L, 0L, 0L), countsOf("classifyDense"))
+        assertTrue(registry.manifest(resource).skippedClasses.isEmpty())
+    }
+
+    /**
+     * A redefinition that hands over the bytes the class was woven from cannot be told from a
+     * retransformation, and needs no telling: weaving them again gives the class it already is.
+     *
+     * The bytes it was woven from are the class file unless a JaCoCo agent on the test JVM got there
+     * first, so they are taken from a transformer that is not retransformation-capable, which runs
+     * after any such agent and before this one.
+     */
+    @Test
+    fun `redefining a woven class with the bytes it was woven from succeeds and keeps it counting`() {
+        val registry = ProbeRegistry()
+        var wovenFrom: ByteArray? = null
+        val spy =
+            object : ClassFileTransformer {
+                override fun transform(
+                    loader: ClassLoader?,
+                    className: String?,
+                    classBeingRedefined: Class<*>?,
+                    protectionDomain: ProtectionDomain?,
+                    classfileBuffer: ByteArray,
+                ): ByteArray? {
+                    if (className == "com/example/target/SampleTarget" && classBeingRedefined == null) wovenFrom = classfileBuffer
+                    return null
+                }
+            }
+        ByteBuddyAgent.install().addTransformer(spy, false)
+        val target =
+            try {
+                install(registry, AgentConfig.parse("includePackages=com.example.target"))
+            } finally {
+                ByteBuddyAgent.install().removeTransformer(spy)
+            }
+        target.javaClass.getMethod("ping").invoke(target)
+
+        ByteBuddyAgent.install().redefineClasses(java.lang.instrument.ClassDefinition(target.javaClass, assertNotNull(wovenFrom)))
+        target.javaClass.getMethod("ping").invoke(target)
+
+        val manifest = registry.manifest(ResourceAttributes("test", null, "instance-1", null, "run-1"))
+        val ping = manifest.probes.single { it.className == "com.example.target.SampleTarget" && it.methodName == "ping" }
+        val hits =
+            registry
+                .computeDeltaBatch(ResourceAttributes("test", null, "i-1", null, "run-1"))
+                .batch.deltas
+                .single { it.classId == ping.classId && it.probeIndex == ping.probeIndex }
+        assertEquals(2L, hits.hitsTotal)
+        assertTrue(manifest.skippedClasses.isEmpty(), "${manifest.skippedClasses}")
     }
 
     @Test

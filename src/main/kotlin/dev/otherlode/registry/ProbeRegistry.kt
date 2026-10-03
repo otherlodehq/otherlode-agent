@@ -504,8 +504,9 @@ open class ProbeRegistry(
      * bounded, since it depends on how long that writer was away, so the size of a drop says
      * little on its own. A drop on a probe with almost no traffic is the one worth looking at.
      * Registration is the only path that hands out a new, lower-starting array, and it takes a
-     * changed probe layout hash, which static attach cannot produce since it never retransforms a
-     * loaded class. Logging instead of silently sending the lower value means a bug that does
+     * changed probe layout hash, which static attach cannot produce: this agent never retransforms
+     * a loaded class, and another agent's retransformation of one is woven again without
+     * registering. Logging instead of silently sending the lower value means a bug that does
      * reach here is visible rather than hidden.
      *
      * The lower value goes out as it is. A collector that reads a falling total as a restarted

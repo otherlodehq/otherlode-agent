@@ -347,8 +347,9 @@ its output fails the whole batch.
    `Instrumenter` for inverted jumps; a fake earlier transformer adding a
    branch for the fallback.
 2. **Retransformation-capable.** Both tiers register as capable, with nothing
-   retransformed at install. On a retransformation, a class this agent wove
-   is re-woven to identical bytes and every other class gets null; type
+   retransformed at install. On a retransformation or redefinition, a class
+   this agent wove is woven again from the plan its first weave stored (ADR
+   0053's amendment), and every other class gets null; type
    descriptions come from the passed bytes, since ByteBuddy's default reads
    the loaded class, which already has the field; no second registry commit
    and no second JAX-RS declaration. ADR 0053 and the ADR 0005 amendment.
@@ -375,6 +376,32 @@ manifest side read from JaCoCo's output; a method the received bytes lack
 gets no probe at all (ADR 0052 amended), since a probe with nothing to weave
 into reads as never hit; and switch pairing also compares which entries go to
 the default, since slot counts depend on it.
+
+Chunk 2 landed: both tiers and the capture are registered
+retransformation-capable through `makeRaw()` and `addTransformer(t, true)`,
+with nothing retransformed at install, and describe classes with `POOL_ONLY`.
+The first weave stores a `WeavePlan` per class (`WovenClasses`), and a later
+call for a woven class is woven again from it, never renumbered, refused only
+when the class file is readable, was read at first weave, and differs. Two
+review rounds changed the design (ADR 0053's amendment): the first version
+gated on a hash of the received bytes, which made an earlier capable agent's
+retransformation fail, since HotSpot caches the input to the first capable
+environment that changed the class; and a re-weave that recomputed the analysis
+from a changed class file could keep the layout hash while counting into the
+wrong outcome. The plan therefore holds each paired method's tracked
+instructions and its dropped, throwing-default and unprobed ordinals, and a
+re-weave runs no analysis. Measured over the fixtures, a plan costs about 100 to
+180 bytes per probed method depending on how shared strings are counted, and
+reaches no loader, class or type description. First weaves were checked
+byte-identical to chunk 1's over 453 woven fixture classes, and re-weaves
+byte-identical to first weaves. Facts the design did not predict: the
+`endpoints-*` test agents needed `Can-Retransform-Classes` in their manifests;
+an endpoint module that throws on a re-weave loses its advice for that class
+without landing in `disabled_endpoint_modules` (logged once per module; its
+endpoints then read as never called from that point, recorded here rather than
+fixed, since its inputs equal the first load's); and `BranchKeys` already
+calls `MessageDigest` inside every first weave, so JCA initialisation inside a
+transformer predates this chunk.
 
 Known gap from chunk 1's review, the class file read through the wrong loader
 path: its own entry above, to grill.
@@ -1638,7 +1665,8 @@ keeps out of the agent, so composing one is an adopter's own call.
 ### Deliberate v1 boundaries
 
 Not gaps, and not on anyone's list: static attach only (ADR 0013), no
-redefinition of a woven class (ADR 0005), the
+redefinition of a woven class whose class file changed (ADR 0005, which
+accepts one whose class file did not), the
 static scan not opening `BOOT-INF/lib` nested dependency jars, the
 classpath blind spot for app-server, OSGi and plugin-loaded deployments, and
 include rules being required, with no `includePackages=*` to ask for every

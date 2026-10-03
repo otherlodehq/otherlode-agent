@@ -76,6 +76,9 @@ val jaxRsTestAgentJar =
         from(sourceSets.test.get().output)
         manifest {
             attributes["Premain-Class"] = "dev.otherlode.instrumentation.endpoints.jaxrs.JaxRsTestAgent"
+            // Both tiers register retransformation-capable transformers, which the JVM
+            // allows only for an agent whose manifest says so.
+            attributes["Can-Retransform-Classes"] = "true"
         }
     }
 
@@ -128,6 +131,9 @@ val javaxTestAgentJar =
         from(testing.suites.named<JvmTestSuite>("javaxTest").map { it.sources.output })
         manifest {
             attributes["Premain-Class"] = "dev.otherlode.instrumentation.endpoints.jaxrs.JaxRsTestAgent"
+            // Both tiers register retransformation-capable transformers, which the JVM
+            // allows only for an agent whose manifest says so.
+            attributes["Can-Retransform-Classes"] = "true"
         }
     }
 

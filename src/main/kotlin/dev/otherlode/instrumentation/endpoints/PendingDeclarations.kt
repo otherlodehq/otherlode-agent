@@ -47,10 +47,11 @@ class PendingDeclarations internal constructor() {
      *
      * ByteBuddy's default fallback strategy can run a whole transform twice, retrying with a
      * different type description after a `LinkageError` and with no listener call in between to
-     * close the list. It only retries a class being retransformed, and the endpoint pipeline
-     * retransforms nothing it declares from (only the lambda factory hook retransforms, and it
-     * declares nothing), so the second pass cannot happen here. It would be harmless anyway: declaring one endpoint
-     * key twice is the same endpoint.
+     * close the list. It only retries a class being retransformed, and only when the class is
+     * described from its loaded `Class` first; the endpoint pipeline describes every class from
+     * its bytes, so the second pass cannot happen here. On a retransformation the pipeline rolls
+     * back whatever a module declared anyway. It would be harmless regardless: declaring one
+     * endpoint key twice is the same endpoint.
      */
     fun begin(): Int {
         val pending = staged.get()

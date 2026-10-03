@@ -80,6 +80,98 @@ class SitePairing private constructor(
             return SitePairing(unpaired, swapped)
         }
 
+        /**
+         * Each of [methods]' tracked instructions in [classFile], encoded as [ofStored] reads them,
+         * so a later weave can pair against them without reading the class file. A method the
+         * class file does not declare is left out.
+         */
+        fun encodedSequences(
+            classFile: ByteArray,
+            methods: Collection<Pair<String, String>>,
+        ): Map<Pair<String, String>, IntArray> = trackedInstructions(classFile, methods.toSet()).mapValues { (_, list) -> encode(list) }
+
+        /**
+         * Pairs [receivedBytes] with class-file tracked instructions [encodedSequences] produced,
+         * method by method. With no [receivedBytes] there is nothing to pair against, and every
+         * method in [stored] is unpaired.
+         */
+        fun ofStored(
+            stored: Map<Pair<String, String>, IntArray>,
+            receivedBytes: ByteArray?,
+        ): SitePairing {
+            if (receivedBytes == null) return SitePairing(LinkedHashSet(stored.keys), emptyMap())
+            val received = trackedInstructions(receivedBytes, stored.keys)
+            val unpaired = LinkedHashSet<Pair<String, String>>()
+            val swapped = mutableMapOf<Pair<String, String>, Set<Int>>()
+            for ((method, encoded) in stored) {
+                val actual = received[method]
+                val swaps = if (actual == null) null else pairOne(decode(encoded), actual)
+                when {
+                    swaps == null -> unpaired += method
+                    swaps.isNotEmpty() -> swapped[method] = swaps
+                }
+            }
+            return SitePairing(unpaired, swapped)
+        }
+
+        /**
+         * One int per conditional jump (its opcode); for a `TABLESWITCH` its opcode, the bounds, the
+         * entry count and a 0 or 1 per entry for "goes to the default"; for a `LOOKUPSWITCH` its
+         * opcode, the key count, the keys, then the same 0 or 1 per key. No conditional opcode is a
+         * switch opcode, so the stream reads back unambiguously.
+         */
+        private fun encode(list: List<TrackedInstruction>): IntArray {
+            val out = ArrayList<Int>()
+            for (instruction in list) {
+                when (instruction) {
+                    is TrackedInstruction.Jump -> {
+                        out += instruction.opcode
+                    }
+
+                    is TrackedInstruction.TableSwitch -> {
+                        out += listOf(Opcodes.TABLESWITCH, instruction.min, instruction.max, instruction.toDefault.size)
+                        instruction.toDefault.forEach { out += if (it) 1 else 0 }
+                    }
+
+                    is TrackedInstruction.LookupSwitch -> {
+                        out += listOf(Opcodes.LOOKUPSWITCH, instruction.keys.size)
+                        out += instruction.keys
+                        instruction.toDefault.forEach { out += if (it) 1 else 0 }
+                    }
+                }
+            }
+            return out.toIntArray()
+        }
+
+        private fun decode(encoded: IntArray): List<TrackedInstruction> {
+            val list = mutableListOf<TrackedInstruction>()
+            var at = 0
+            while (at < encoded.size) {
+                when (val opcode = encoded[at++]) {
+                    Opcodes.TABLESWITCH -> {
+                        val min = encoded[at++]
+                        val max = encoded[at++]
+                        val count = encoded[at++]
+                        list += TrackedInstruction.TableSwitch(min, max, (0 until count).map { encoded[at + it] == 1 })
+                        at += count
+                    }
+
+                    Opcodes.LOOKUPSWITCH -> {
+                        val count = encoded[at++]
+                        val keys = (0 until count).map { encoded[at + it] }
+                        at += count
+                        list += TrackedInstruction.LookupSwitch(keys, (0 until count).map { encoded[at + it] == 1 })
+                        at += count
+                    }
+
+                    else -> {
+                        list += TrackedInstruction.Jump(opcode)
+                    }
+                }
+            }
+            return list
+        }
+
         /** The ordinals [actual] inverts, or null when the two lists do not pair. */
         private fun pairOne(
             expected: List<TrackedInstruction>,
@@ -132,7 +224,7 @@ class SitePairing private constructor(
         /** Each of [wanted]'s tracked instructions in [bytes], per method, in encounter order. */
         private fun trackedInstructions(
             bytes: ByteArray,
-            wanted: Set<Pair<String, String>>,
+            wanted: Collection<Pair<String, String>>,
         ): Map<Pair<String, String>, List<TrackedInstruction>> {
             val result = LinkedHashMap<Pair<String, String>, List<TrackedInstruction>>()
             val visitor =

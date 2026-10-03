@@ -16,6 +16,7 @@ import dev.otherlode.instrumentation.branch.BranchDropReason
 import dev.otherlode.instrumentation.branch.BranchProbeAsmVisitorWrapper
 import dev.otherlode.instrumentation.branch.BranchSite
 import dev.otherlode.instrumentation.branch.BranchSiteAnalyzer
+import dev.otherlode.instrumentation.branch.DefaultSite
 import dev.otherlode.instrumentation.branch.HandlerForwarder
 import dev.otherlode.instrumentation.branch.SitePairing
 import dev.otherlode.instrumentation.endpoints.HandlerForwarders
@@ -67,14 +68,6 @@ import net.bytebuddy.utility.JavaModule
 import java.lang.System.Logger.Level
 import java.lang.instrument.Instrumentation
 import java.util.WeakHashMap
-import java.util.concurrent.atomic.AtomicBoolean
-
-/** A woven `$default` method's per-method constants for [OptionalArgumentAdvice]. */
-private class DefaultSiteBinding(
-    val base: Int,
-    val optionalBits: Int,
-    val maskParameterIndex: Int,
-)
 
 private fun bindingFor(
     bindings: Map<Pair<String, String>, DefaultSiteBinding>,
@@ -107,6 +100,12 @@ private fun bindingFor(
  * This registers a transformer for classes as they load. It does not retransform classes already
  * loaded when [install] runs. That matches the agent's static `premain` attach model, where the
  * transformer is registered before any application class has loaded.
+ *
+ * The transformer is retransformation-capable, so another agent's retransformation of a woven class
+ * reaches it, and so does a redefinition. Either way the class is woven again from the plan its
+ * first weave recorded, with nothing committed to the registry a second time, as long as its class
+ * file is still the one it was woven from; see [WovenClasses]. When the class file has changed the
+ * call is refused. Any class this agent did not weave is left alone.
  */
 class OtherlodeInstrumentation(
     private val config: AgentConfig,
@@ -129,9 +128,17 @@ class OtherlodeInstrumentation(
     private val handlerForwarders: HandlerForwarders = HandlerForwarders(),
 ) {
     private val log = System.getLogger(OtherlodeInstrumentation::class.java.name)
-    private val redefinitionLogged = AtomicBoolean(false)
+
     private val referencedClassLocator = ReferencedClassLocator()
     private val classBytesCapture: ClassBytesCapture? = if (captureClassBytes) ClassBytesCapture(::isCandidateInternalName) else null
+    private val wovenClasses = WovenClasses()
+
+    /**
+     * Whether the class ByteBuddy is handling on this thread is already loaded, which makes the call
+     * a retransformation or a redefinition. Set from the listener's discovery callback, which
+     * ByteBuddy makes before it matches or transforms anything, and cleared when it completes.
+     */
+    private val alreadyLoaded = ThreadLocal<Boolean?>()
 
     /**
      * One parsed-table cache per defining classloader, so transforms of classes that reference
@@ -154,21 +161,40 @@ class OtherlodeInstrumentation(
 
     /**
      * Installs the bootstrap holder, points it at this registry, then registers two transformers
-     * in this order: [ClassBytesCapture], then ByteBuddy's. Both are registered as not
-     * retransformation-capable, so the JVM calls them in registration order and the capture
-     * always runs just before ByteBuddy for the same class on the same thread.
+     * in this order: [ClassBytesCapture], then ByteBuddy's. Both are registered as
+     * retransformation-capable. The JVM calls every transformer that is not capable before every
+     * one that is, whatever order the agents were listed in, so this agent runs after JaCoCo's,
+     * AspectJ's and Spring's weavers and sees their output as its received bytes. Within the
+     * capable group the JVM keeps registration order, so the capture always runs just before
+     * ByteBuddy for the same class on the same thread. Nothing is retransformed here.
      *
      * Throws [BootstrapInstallException], before registering anything, if the holder cannot be
      * made bootstrap-visible. Without it every instrumented class would fail in its own
-     * `<clinit>`, so not instrumenting at all is the only safe answer.
+     * `<clinit>`, so not instrumenting at all is the only safe answer. Registering throws
+     * [UnsupportedOperationException] where retransformation is not supported, which the agent
+     * jar's `Can-Retransform-Classes` manifest attribute rules out.
      *
      * The returned transformer's `reset` only removes ByteBuddy's; call [uninstall] to remove both.
      */
     fun install(instrumentation: Instrumentation): ResettableClassFileTransformer {
         BootstrapHolder.install(instrumentation)
         OtherlodeProbeArrays.install { className, layoutHash, _, classLoader -> registry.lookup(className, layoutHash, classLoader) }
-        if (classBytesCapture != null) instrumentation.addTransformer(classBytesCapture, false)
-        return AgentBuilder
+        // makeRaw and a plain addTransformer rather than installOn with a retransforming
+        // redefinition strategy: installOn would also check retransformation support and run a
+        // discovery pass, when all this needs is the registration flag.
+        val transformer = buildTransformer()
+        if (classBytesCapture != null) instrumentation.addTransformer(classBytesCapture, true)
+        try {
+            instrumentation.addTransformer(transformer, true)
+        } catch (t: Throwable) {
+            if (classBytesCapture != null) instrumentation.removeTransformer(classBytesCapture)
+            throw t
+        }
+        return transformer
+    }
+
+    private fun buildTransformer(): ResettableClassFileTransformer =
+        AgentBuilder
             // ByteBuddy's own default ignores every synthetic method, copying it through
             // unrewritten no matter what a later .visit()/.method() matcher asks for: a Kotlin
             // $default method is exactly such a method, and the omission tier's whole job is to
@@ -178,20 +204,25 @@ class OtherlodeInstrumentation(
             .Default(ByteBuddy().ignore(none()))
             .ignore(any<TypeDescription>(), isBootstrapClassLoader<ClassLoader>().or(isExtensionClassLoader()))
             .or(ignoredNames())
-            // A class already loaded is being redefined (HotSwap, another agent's redefineClasses),
-            // which this agent does not support. Its woven field is missing from the new bytes, so
-            // the JVM refuses the redefinition either way; re-weaving would fail on the field the
-            // loaded class already has, and report as skipped a class whose probes were already
-            // sent.
-            .or(AgentBuilder.RawMatcher { type, _, _, classBeingRedefined, _ -> isRedefinition(type, classBeingRedefined) })
+            // A class already loaded is left alone unless this agent wove it; see isWoven.
+            .or(
+                AgentBuilder.RawMatcher { type, classLoader, _, classBeingRedefined, _ ->
+                    classBeingRedefined != null && !isWoven(type, classLoader)
+                },
+            )
             // No LoadedTypeInitializer is ever used, so ByteBuddy has nothing to run after load
             // and no reason to inject its Nexus class into the bootstrap loader via Unsafe.
             .with(AgentBuilder.InitializationStrategy.NoOp.INSTANCE)
+            // Describes a class from the bytes passed in even when it is already loaded. The
+            // default describes a loaded class from its Class object, which carries the probe field
+            // a re-weave is about to define. On a first load every strategy reads the pool.
+            .with(AgentBuilder.DescriptionStrategy.Default.POOL_ONLY)
             .with(TransformResultListener())
             .type(typeMatcher())
             .transform { builder, typeDescription, classLoader, _, _ -> instrument(builder, typeDescription, classLoader) }
-            .installOn(instrumentation)
-    }
+            // AgentBuilder.Default.makeRaw returns a ResettableClassFileTransformer; the interface
+            // this chain ends on declares only the supertype.
+            .makeRaw() as ResettableClassFileTransformer
 
     /**
      * The names in ByteBuddy's own default ignore matcher: its own package (other than the package
@@ -207,25 +238,28 @@ class OtherlodeInstrumentation(
             .or(nameStartsWith("jdk.internal.reflect."))
 
     /**
-     * Whether [classBeingRedefined] is set, which makes this a redefinition the agent leaves alone.
-     * The first one of a class in scope logs an INFO line: the JVM's own refusal ("attempted to
-     * change the schema") names no agent, which leaves an adopter's failed HotSwap a mystery.
+     * Whether this agent wove the already-loaded [type], so a call for it, a retransformation or a
+     * redefinition, weaves it again from its [WeavePlan]. Any other class is left alone, and the
+     * bytes captured for it are dropped here, since no transform follows to take them.
      */
-    private fun isRedefinition(
+    private fun isWoven(
         type: TypeDescription,
-        classBeingRedefined: Class<*>?,
+        classLoader: ClassLoader?,
     ): Boolean {
-        if (classBeingRedefined == null) return false
-        if (isCandidateInternalName(type.internalName) && redefinitionLogged.compareAndSet(false, true)) {
-            log.log(
-                Level.INFO,
-                "otherlode: ${type.name} is being redefined; if this agent instrumented it, it carries a probe field " +
-                    "the new bytes lack, and the JVM refuses the change (redefining an instrumented class, as a " +
-                    "debugger's HotSwap does, is not supported)",
-            )
-        }
-        return true
+        if (wovenClasses.find(classLoader, type.name) != null) return true
+        classBytesCapture?.take(type.internalName)
+        return false
     }
+
+    /**
+     * Thrown from [reweave] when the class file of a woven class is not the one it was woven from.
+     * ByteBuddy reports it to [TransformResultListener.onError] and hands back no bytes, so the
+     * JVM refuses the redefinition or retransformation: the bytes it is left with lack the probe
+     * field.
+     */
+    private class ReweaveRefused(
+        className: String,
+    ) : IllegalStateException("otherlode: the class file of $className differs from the one it was woven from")
 
     /** Removes both transformers [install] registered. */
     fun uninstall(
@@ -256,6 +290,8 @@ class OtherlodeInstrumentation(
         val sourceName: String?,
         val handlerForwarders: List<HandlerForwarder>,
         val kotlinKind: KotlinKind,
+        /** How the class was woven, kept once the class is committed so a later call can weave it again. */
+        val plan: WeavePlan,
     )
 
     /**
@@ -298,8 +334,21 @@ class OtherlodeInstrumentation(
      * later flush, and by then the handler the entry names has been registered. An entry for a
      * class that was never defined does no harm: the table is never sent, and no handler of that
      * class can exist to be looked up.
+     *
+     * The class's [WeavePlan] is kept here too, for a later call to weave it again from. A re-weave
+     * stages nothing, so it commits nothing, and a failed one is logged without being recorded as
+     * skipped: the class's probes were delivered at its first weave.
      */
     private inner class TransformResultListener : AgentBuilder.Listener.Adapter() {
+        override fun onDiscovery(
+            typeName: String,
+            classLoader: ClassLoader?,
+            module: JavaModule?,
+            loaded: Boolean,
+        ) {
+            alreadyLoaded.set(loaded)
+        }
+
         override fun onTransformation(
             typeDescription: TypeDescription,
             classLoader: ClassLoader?,
@@ -324,6 +373,7 @@ class OtherlodeInstrumentation(
             )
             for ((className, location) in pending.externalClasses) externalClassRegistry.record(className, location)
             pending.handlerForwarders.forEach(handlerForwarders::record)
+            wovenClasses.record(pending.classLoader, pending.className, pending.plan)
         }
 
         override fun onError(
@@ -333,8 +383,35 @@ class OtherlodeInstrumentation(
             loaded: Boolean,
             throwable: Throwable,
         ) {
-            log.log(Level.WARNING, "otherlode: instrumentation failed for $typeName, class will run uninstrumented", throwable)
-            registry.recordSkipped(typeName, throwable.message ?: throwable.toString())
+            val plan = if (alreadyLoaded.get() == true) wovenClasses.find(classLoader, typeName) else null
+            when {
+                throwable is ReweaveRefused -> {
+                    if (plan?.firstLog(WeavePlan.LOGGED_REFUSAL) != false) {
+                        log.log(
+                            Level.WARNING,
+                            "otherlode: the class file of $typeName differs from the one it was woven from, as after a " +
+                                "recompile or a HotSwap; it cannot be woven again, so the JVM refuses this redefinition " +
+                                "or retransformation",
+                        )
+                    }
+                }
+
+                alreadyLoaded.get() == true -> {
+                    if (plan?.firstLog(WeavePlan.LOGGED_FAILURE) != false) {
+                        log.log(
+                            Level.WARNING,
+                            "otherlode: could not weave $typeName again for a redefinition or retransformation; the JVM " +
+                                "refuses it, and the class keeps running with its probes",
+                            throwable,
+                        )
+                    }
+                }
+
+                else -> {
+                    log.log(Level.WARNING, "otherlode: instrumentation failed for $typeName, class will run uninstrumented", throwable)
+                    registry.recordSkipped(typeName, throwable.message ?: throwable.toString())
+                }
+            }
         }
 
         /**
@@ -349,6 +426,7 @@ class OtherlodeInstrumentation(
             loaded: Boolean,
         ) {
             pendingRegistration.remove()
+            alreadyLoaded.remove()
         }
     }
 
@@ -374,8 +452,14 @@ class OtherlodeInstrumentation(
      * annotation's own `@Target` only covers functions, properties, and files, not classes. This
      * trips the same check: legal bytecode, but not a shape ByteBuddy's redefinition path
      * accepts.
+     *
+     * A class this agent already wove is never turned away here: its probes were delivered at the
+     * first weave, so recording it as skipped would contradict them. If the bytes that arrive for it
+     * carry such an annotation, ByteBuddy's validation fails and the listener logs the failed
+     * re-weave instead.
      */
     private fun isSafeToInstrument(typeDescription: TypeDescription): Boolean {
+        if (alreadyLoaded.get() == true) return true
         val unsupported = TypeMatchPolicy.unsafeAnnotation(typeDescription) ?: return true
         registry.recordSkipped(
             typeDescription.name,
@@ -384,43 +468,22 @@ class OtherlodeInstrumentation(
         return false
     }
 
+    /**
+     * Computes [typeDescription]'s probes from its class file and weaves them into [builder]. A
+     * class that is already loaded and was woven before goes to [reweave] instead.
+     */
     private fun instrument(
         builder: DynamicType.Builder<*>,
         typeDescription: TypeDescription,
         classLoader: ClassLoader?,
     ): DynamicType.Builder<*> {
+        if (alreadyLoaded.get() == true) return reweave(builder, typeDescription, classLoader)
         val source = readClassBytes(typeDescription, classLoader)
         val analysedBytes = source.analysed
-        // Whether a synthetic method is a probed lambda body depends on whether scalac compiled
-        // this class at all (methodMatcher's isScalaClass), which the class file says.
-        val isScalaClass = analysedBytes?.let(ScalaClassDetector::isScalaClass) ?: false
-        val methodMatcher = methodMatcher(isScalaClass)
-        // Which methods get probes comes from the class file, so an instance reports the same
-        // methods whatever ran ahead of it. A method only the received bytes declare gets none,
-        // and neither does one the received bytes lack, since there is nothing to weave into.
-        val analysedMethods =
-            if (source.receivedDiffers) {
-                describeClassFile(typeDescription, analysedBytes!!, classLoader).declaredMethods.filter(methodMatcher)
-            } else {
-                typeDescription.declaredMethods.filter(methodMatcher)
-            }
-        val receivedMethods =
-            if (source.receivedDiffers) typeDescription.declaredMethods.mapTo(HashSet()) { it.internalName to it.descriptor } else null
+        val (analysedMethods, receivedMethods, analysis, pairing) = analyse(typeDescription, classLoader, source)
         val methods =
             receivedMethods?.let { received -> analysedMethods.filter { (it.internalName to it.descriptor) in received } }
                 ?: analysedMethods
-
-        // Analysed regardless of whether methods is empty: a type whose only concrete content is
-        // a Kotlin $default method (an interface declaring only an abstract method plus its
-        // default, with no other probe-worthy method) would otherwise never reach the omission
-        // tier below at all.
-        val analysis = analyzeBytecode(analysedBytes, classLoader, analysedMethods)
-        val pairing =
-            if (source.receivedDiffers) {
-                SitePairing.of(analysedBytes!!, source.received!!, analysedMethods.map { it.internalName to it.descriptor })
-            } else {
-                SitePairing.IDENTICAL
-            }
         if (pairing.unpairedMethods.isNotEmpty()) {
             val (absent, misaligned) = pairing.unpairedMethods.partition { receivedMethods != null && it !in receivedMethods }
             val signatures = { methods: List<Pair<String, String>> -> methods.joinToString { (name, descriptor) -> name + descriptor } }
@@ -590,29 +653,7 @@ class OtherlodeInstrumentation(
                 omissionBase += slots.size
                 slots
             }
-        for (site in defaultSites) {
-            if (site.higherMaskTested) {
-                log.log(
-                    Level.INFO,
-                    "otherlode: ${typeDescription.name}#${site.defaultName} tests a mask int past the first; " +
-                        "only the first 32 optional parameters are counted",
-                )
-            }
-        }
-        for ((name, descriptor) in analysis.unresolvedDefaultSites) {
-            log.log(
-                Level.INFO,
-                "otherlode: ${typeDescription.name}#$name$descriptor looks like a Kotlin default-argument method " +
-                    "but its target could not be uniquely resolved, or no mask test was found; no omission probes woven",
-            )
-        }
-        for ((name, descriptor) in analysis.unresolvedScalaGetterSites) {
-            log.log(
-                Level.INFO,
-                "otherlode: ${typeDescription.name}#$name$descriptor looks like a Scala default getter but its target " +
-                    "could not be uniquely resolved; reported as an ordinary method probe",
-            )
-        }
+        logUnprobedDefaults(typeDescription, defaultSites, analysis)
         // The type initializer's own probe, when the class declares one, is appended after every
         // other slot category (method, branch, omission). It carries no advice of its own: the
         // woven <clinit> prelude increments it directly, right after it fills the counts field, so
@@ -643,32 +684,164 @@ class OtherlodeInstrumentation(
                     defaultSites.map { "${it.defaultName}${it.defaultDescriptor}#optional${it.optionalBits}" } +
                     (if (analysis.hasTypeInitializer) listOf("<clinit>()V#typeinit") else emptyList()),
             )
-        pendingRegistration.set(
-            PendingRegistration(
-                typeDescription.name,
-                layoutHash,
-                probes,
-                classLoader,
-                analysis.superClassName,
-                analysis.interfaceNames,
-                references.keep(analysis.classReferences),
-                references.kept(),
-                analysis.sourceFile,
-                analysis.bodyKind,
-                analysis.sourceName,
-                analysis.handlerForwarders,
-                analysis.kotlinKind,
-            ),
-        )
-        if (staticBaselineMismatchDetector.shouldWarnAbout(typeDescription.name)) {
+        val plan =
+            WeavePlan.Builder(
+                classFileHash = if (source.hasClassFile) analysedBytes?.let(WovenClasses::hashOf) else null,
+                layoutHash = layoutHash,
+                probeCount = probes.size,
+                typeInitializerProbeIndex = typeInitializerProbeIndex,
+                branchWrapper = branchSites.isNotEmpty(),
+                branchBase = methodProbes.size,
+                branchSlotCapacity = branchProbes.size,
+            )
+        methods.forEachIndexed { slot, method -> plan.entrySlot(method.internalName, method.descriptor, slot) }
+        var nextSlot = 0
+        val runs = LinkedHashMap<Pair<String, String>, BranchProbeAsmVisitorWrapper.MethodSlots>()
+        for (kept in keptSites) {
+            val key = kept.site.methodName to kept.site.methodDescriptor
+            val run = runs[key] ?: BranchProbeAsmVisitorWrapper.MethodSlots(nextSlot, 0)
+            runs[key] = run.copy(count = run.count + kept.outcomes.size)
+            nextSlot += kept.outcomes.size
+        }
+        for ((key, run) in runs) plan.branchRun(key.first, key.second, run)
+        if (branchSites.isNotEmpty()) {
+            val eligible =
+                methods.map { it.internalName to it.descriptor }.filter { (name, descriptor) ->
+                    pairing.isPaired(name, descriptor)
+                }
+            // The class file's tracked instructions of each eligible method, so a later weave pairs
+            // the bytes that arrive then against them without reading or analysing anything.
+            val sequences = analysedBytes?.let { SitePairing.encodedSequences(it, eligible) }.orEmpty()
+            for ((name, descriptor) in eligible) {
+                plan.branchEligible(
+                    name,
+                    descriptor,
+                    sequences[name to descriptor] ?: IntArray(0),
+                    analysis.droppedOrdinalsOf(name, descriptor),
+                    analysis.throwingDefaultOrdinalsOf(name, descriptor),
+                    analysis.unprobedOutcomesOf(name, descriptor),
+                )
+            }
+        }
+        for (site in defaultSites) {
+            val base = omissionSiteBases.getValue(site.defaultName to site.defaultDescriptor)
+            plan.defaultSite(site.defaultName, site.defaultDescriptor, DefaultSiteBinding(base, site.optionalBits, site.maskParameterIndex))
+        }
+        val built = plan.build()
+        stage(typeDescription, classLoader, probes, analysis, references, built)
+        return weave(builder, typeDescription, built, built.view(), pairing, reweaving = false)
+    }
+
+    /** What [analyse] reads from a class's bytes for a first weave. */
+    private data class ClassFileView(
+        /** The methods the class file declares that the method tier probes. */
+        val analysedMethods: MethodList<*>,
+        /** The methods the received bytes declare, or null when they are the class file. */
+        val receivedMethods: Set<Pair<String, String>>?,
+        val analysis: BranchSiteAnalyzer.Analysis,
+        val pairing: SitePairing,
+    )
+
+    /**
+     * Runs the analysis over the class file in [source] and pairs its branch sites with the
+     * received bytes.
+     *
+     * Which methods get probes comes from the class file, so an instance reports the same methods
+     * whatever ran ahead of it. The analysis runs regardless of whether any method matched: a type
+     * whose only concrete content is a Kotlin $default method (an interface declaring only an
+     * abstract method plus its default) would otherwise never reach the omission tier at all.
+     */
+    private fun analyse(
+        typeDescription: TypeDescription,
+        classLoader: ClassLoader?,
+        source: ClassBytesSource,
+    ): ClassFileView {
+        val analysedBytes = source.analysed
+        // Whether a synthetic method is a probed lambda body depends on whether scalac compiled
+        // this class at all (methodMatcher's isScalaClass), which the class file says.
+        val isScalaClass = analysedBytes?.let(ScalaClassDetector::isScalaClass) ?: false
+        val methodMatcher = methodMatcher(isScalaClass)
+        val analysedMethods =
+            if (source.receivedDiffers) {
+                describeClassFile(typeDescription, analysedBytes!!, classLoader).declaredMethods.filter(methodMatcher)
+            } else {
+                typeDescription.declaredMethods.filter(methodMatcher)
+            }
+        val receivedMethods =
+            if (source.receivedDiffers) typeDescription.declaredMethods.mapTo(HashSet()) { it.internalName to it.descriptor } else null
+        val analysis = analyzeBytecode(analysedBytes, classLoader, analysedMethods)
+        val pairing =
+            if (source.receivedDiffers) {
+                SitePairing.of(analysedBytes!!, source.received!!, analysedMethods.map { it.internalName to it.descriptor })
+            } else {
+                SitePairing.IDENTICAL
+            }
+        return ClassFileView(analysedMethods, receivedMethods, analysis, pairing)
+    }
+
+    /**
+     * Weaves an already-loaded class this agent wove before, for another agent's retransformation
+     * or a redefinition, from the [WeavePlan] its first weave recorded.
+     *
+     * Nothing is read or analysed again but the class file, for one check: when it is readable, the
+     * first weave read one, and the two differ, the plan's slots describe other code and this
+     * throws [ReweaveRefused]. A class file that has gone, or one that appears for a class first
+     * woven from memory, says nothing about the code, so it does not refuse.
+     *
+     * The bytes that arrive are paired against the class file's tracked instructions the plan
+     * stored, and the plan's ordinals and slots are used as they are, so nothing is renumbered. A
+     * method whose branches paired at the first weave but do not pair now, because another agent
+     * changed its body, keeps its entry probe and gets no branch probes, so its branch counts stay
+     * where they were. Nothing is staged for the registry and nothing is tallied again.
+     */
+    private fun reweave(
+        builder: DynamicType.Builder<*>,
+        typeDescription: TypeDescription,
+        classLoader: ClassLoader?,
+    ): DynamicType.Builder<*> {
+        val plan = wovenClasses.find(classLoader, typeDescription.name) ?: throw ReweaveRefused(typeDescription.name)
+        // take is destructive, so it must not be called a second time for the same class.
+        val received = classBytesCapture?.take(typeDescription.internalName)
+        if (plan.hasClassFileHash) {
+            val classFile = locateClassBytes(typeDescription, classLoader)
+            if (classFile != null && WovenClasses.hashOf(classFile) != plan.classFileHash) throw ReweaveRefused(typeDescription.name)
+        }
+        val view = plan.view()
+        val pairing = SitePairing.ofStored(view.sequences, received)
+        val frozen =
+            view.branchEligible.filter { (name, descriptor) ->
+                !pairing.isPaired(name, descriptor) && (view.branchRuns[name to descriptor]?.count ?: 0) > 0
+            }
+        if (frozen.isNotEmpty() && plan.firstLog(WeavePlan.LOGGED_FROZEN)) {
             log.log(
-                Level.WARNING,
-                "otherlode: ${typeDescription.name} registered dynamically but was not in the static baseline computed " +
-                    "at startup for this process; the static scan cannot see classes a server or plugin loader finds " +
-                    "at run time, such as a deployed WAR, so this deployment may have such a blind spot",
+                Level.INFO,
+                "otherlode: ${typeDescription.name} was transformed again with bytes whose branches no longer line up " +
+                    "with its class file in ${frozen.joinToString { (name, descriptor) -> name + descriptor }}; those " +
+                    "methods keep their entry probe, and their branch counts stay where they were",
             )
         }
+        return weave(builder, typeDescription, plan, view, pairing, reweaving = true)
+    }
 
+    /**
+     * Weaves [plan] into [builder]: the counts field and the `<clinit>` prelude that fills it, entry
+     * advice on every method the plan gave a slot, branch probes on every method the plan gave a
+     * run that [pairing] pairs, and omission advice on every `$default` method in the plan.
+     *
+     * The plan's ordinals are the class file's. Pairing guarantees an eligible method's tracked
+     * instructions match the received bytes' one for one, so they name the same instructions there,
+     * and the swapped ordinals say which conditionals arrive inverted. Each method's slot count is
+     * checked against its run. When [reweaving], the class-wide total is not, since a method may
+     * have dropped out.
+     */
+    private fun weave(
+        builder: DynamicType.Builder<*>,
+        typeDescription: TypeDescription,
+        plan: WeavePlan,
+        view: WeavePlan.View,
+        pairing: SitePairing,
+        reweaving: Boolean,
+    ): DynamicType.Builder<*> {
         var instrumented =
             builder
                 .defineField(
@@ -678,13 +851,15 @@ class OtherlodeInstrumentation(
                     Ownership.STATIC,
                     FieldManifestation.FINAL,
                     SyntheticState.SYNTHETIC,
-                ).initializer(ProbeArrayInitializer(typeDescription.name, layoutHash, probes.size, typeInitializerProbeIndex))
+                ).initializer(
+                    ProbeArrayInitializer(typeDescription.name, plan.layoutHash, plan.probeCount, plan.typeInitializerProbeIndex),
+                )
 
         // One Advice visitor for the whole class, with each method's slot resolved from its
         // signature at weave time. One visitor per method would stack N method visitors, each
-        // checking every method against its own matcher, so transform cost would grow with the square
-        // of the method count.
-        val slotBySignature = methods.withIndex().associate { (index, method) -> (method.internalName to method.descriptor) to index }
+        // checking every method against its own matcher, so transform cost would grow with the
+        // square of the method count.
+        val slotBySignature = view.entrySlots
         instrumented =
             instrumented.visit(
                 Advice
@@ -694,50 +869,25 @@ class OtherlodeInstrumentation(
                     .on { method -> (method.internalName to method.descriptor) in slotBySignature },
             )
 
-        if (branchSites.isNotEmpty()) {
-            val eligible =
-                methods
-                    .map {
-                        it.internalName to it.descriptor
-                    }.filterTo(HashSet()) { (name, descriptor) -> pairing.isPaired(name, descriptor) }
-            val slotsByMethod = LinkedHashMap<Pair<String, String>, BranchProbeAsmVisitorWrapper.MethodSlots>()
-            var nextSlot = 0
-            for (kept in keptSites) {
-                val key = kept.site.methodName to kept.site.methodDescriptor
-                val run = slotsByMethod[key] ?: BranchProbeAsmVisitorWrapper.MethodSlots(nextSlot, 0)
-                slotsByMethod[key] = run.copy(count = run.count + kept.outcomes.size)
-                nextSlot += kept.outcomes.size
-            }
-            // The analysis's ordinals are the class file's. Pairing guarantees an eligible method's
-            // tracked instructions match the received bytes' one for one, so they name the same
-            // instructions there, and the swapped ordinals say which conditionals arrive inverted.
+        if (plan.branchWrapper) {
+            val eligible = view.branchEligible.filterTo(HashSet()) { (name, descriptor) -> pairing.isPaired(name, descriptor) }
             instrumented =
                 instrumented.visit(
                     BranchProbeAsmVisitorWrapper(
                         eligibleMethods = { name, descriptor -> (name to descriptor) in eligible },
-                        probeIndexBase = methodProbes.size,
-                        branchSlotCapacity = branchProbes.size,
-                        droppedOrdinalsByMethod = analysis::droppedOrdinalsOf,
-                        throwingDefaultOrdinalsByMethod = analysis::throwingDefaultOrdinalsOf,
-                        unprobedOutcomesByMethod = analysis::unprobedOutcomesOf,
+                        probeIndexBase = plan.branchBase,
+                        branchSlotCapacity = if (reweaving) Int.MAX_VALUE else plan.branchSlotCapacity,
+                        droppedOrdinalsByMethod = view::droppedOrdinalsOf,
+                        throwingDefaultOrdinalsByMethod = view::throwingDefaultOrdinalsOf,
+                        unprobedOutcomesByMethod = view::unprobedOutcomesOf,
                         swappedOrdinalsByMethod = pairing::swappedOrdinalsOf,
-                        slotsByMethod = { name, descriptor -> slotsByMethod[name to descriptor] },
+                        slotsByMethod = { name, descriptor -> view.branchRuns[name to descriptor] },
                     ),
                 )
         }
 
-        if (defaultSites.isNotEmpty()) {
-            val bindings =
-                defaultSites.associateBy(
-                    { it.defaultName to it.defaultDescriptor },
-                    {
-                        DefaultSiteBinding(
-                            omissionSiteBases.getValue(it.defaultName to it.defaultDescriptor),
-                            it.optionalBits,
-                            it.maskParameterIndex,
-                        )
-                    },
-                )
+        if (view.defaultSites.isNotEmpty()) {
+            val bindings = view.defaultSites
             instrumented =
                 instrumented.visit(
                     Advice
@@ -751,6 +901,77 @@ class OtherlodeInstrumentation(
         }
 
         return instrumented
+    }
+
+    /** Logs what the omission tier could not count in [typeDescription]'s default-argument methods and getters. */
+    private fun logUnprobedDefaults(
+        typeDescription: TypeDescription,
+        defaultSites: List<DefaultSite>,
+        analysis: BranchSiteAnalyzer.Analysis,
+    ) {
+        for (site in defaultSites) {
+            if (site.higherMaskTested) {
+                log.log(
+                    Level.INFO,
+                    "otherlode: ${typeDescription.name}#${site.defaultName} tests a mask int past the first; " +
+                        "only the first 32 optional parameters are counted",
+                )
+            }
+        }
+        for ((name, descriptor) in analysis.unresolvedDefaultSites) {
+            log.log(
+                Level.INFO,
+                "otherlode: ${typeDescription.name}#$name$descriptor looks like a Kotlin default-argument method " +
+                    "but its target could not be uniquely resolved, or no mask test was found; no omission probes woven",
+            )
+        }
+        for ((name, descriptor) in analysis.unresolvedScalaGetterSites) {
+            log.log(
+                Level.INFO,
+                "otherlode: ${typeDescription.name}#$name$descriptor looks like a Scala default getter but its target " +
+                    "could not be uniquely resolved; reported as an ordinary method probe",
+            )
+        }
+    }
+
+    /**
+     * Holds a first weave's probes and [plan] for [TransformResultListener] to commit, and warns
+     * once if the class was missing from the static baseline.
+     */
+    private fun stage(
+        typeDescription: TypeDescription,
+        classLoader: ClassLoader?,
+        probes: List<ProbeMeta>,
+        analysis: BranchSiteAnalyzer.Analysis,
+        references: ReferencesKept,
+        plan: WeavePlan,
+    ) {
+        pendingRegistration.set(
+            PendingRegistration(
+                typeDescription.name,
+                plan.layoutHash,
+                probes,
+                classLoader,
+                analysis.superClassName,
+                analysis.interfaceNames,
+                references.keep(analysis.classReferences),
+                references.kept(),
+                analysis.sourceFile,
+                analysis.bodyKind,
+                analysis.sourceName,
+                analysis.handlerForwarders,
+                analysis.kotlinKind,
+                plan,
+            ),
+        )
+        if (staticBaselineMismatchDetector.shouldWarnAbout(typeDescription.name)) {
+            log.log(
+                Level.WARNING,
+                "otherlode: ${typeDescription.name} registered dynamically but was not in the static baseline computed " +
+                    "at startup for this process; the static scan cannot see classes a server or plugin loader finds " +
+                    "at run time, such as a deployed WAR, so this deployment may have such a blind spot",
+            )
+        }
     }
 
     /**
@@ -806,20 +1027,26 @@ class OtherlodeInstrumentation(
      * had. [received] is the received bytes [ClassBytesCapture] took, or null when it took none.
      * [receivedDiffers] is true when both the class file and the received bytes were read and are
      * not byte-for-byte equal, which is what an earlier transformer leaves; only then do the
-     * methods and branch sites need pairing.
+     * methods and branch sites need pairing. [hasClassFile] is whether the loader served a class
+     * file at all.
      */
     private class ClassBytesSource(
         val analysed: ByteArray?,
         val received: ByteArray?,
         val receivedDiffers: Boolean,
+        val hasClassFile: Boolean,
     )
 
     /**
      * Takes the received bytes from [classBytesCapture] and reads the class file through
-     * [classLoader]. With nothing captured (the capture switched off, or a class defined outside
-     * the ordinary transformer chain), the class file stands in for the received bytes, since
-     * without an earlier transformer they are the same. With no class file, the received bytes
-     * are analysed, logged at DEBUG.
+     * [classLoader], for a first weave. With nothing captured (the capture switched off, or a class
+     * defined outside the ordinary transformer chain), the class file stands in for the received
+     * bytes, since without an earlier transformer they are the same. With no class file, the
+     * received bytes are analysed, logged at DEBUG.
+     *
+     * A re-weave does not stand anything in: with nothing captured it has no bytes to pair against
+     * the plan's stored instructions, so every method's branch counts stay where they were. Only a
+     * test switches the capture off.
      */
     private fun readClassBytes(
         typeDescription: TypeDescription,
@@ -835,6 +1062,7 @@ class OtherlodeInstrumentation(
             analysed = classFile ?: received,
             received = received,
             receivedDiffers = classFile != null && received != null && !classFile.contentEquals(received),
+            hasClassFile = classFile != null,
         )
     }
 

@@ -19,10 +19,14 @@ import net.bytebuddy.matcher.ElementMatcher
 import net.bytebuddy.matcher.ElementMatchers.named
 import net.bytebuddy.pool.TypePool
 import java.io.File
+import java.lang.instrument.ClassFileTransformer
 import java.lang.instrument.Instrumentation
+import java.security.ProtectionDomain
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
 class EndpointInstrumentationTest {
@@ -292,16 +296,168 @@ class EndpointInstrumentationTest {
             "the second module's begin must not discard what the first staged",
         )
     }
+
+    /**
+     * Another agent's retransformation hands this tier the bytes from before it ran, so its advice
+     * has to be woven in again or the class loses it. The module's transform runs a second time,
+     * which also shows the transformer is retransformation-capable: the JVM calls no other kind on
+     * a retransformation.
+     */
+    @Test
+    fun `a retransformed class keeps counting through its advice and declares nothing again`() {
+        val registry = EndpointRegistry()
+        val declaring = DeclaringModule()
+        val router = install(registry, listOf(FakeRouterModule(), declaring), "com.example.framework.FakeRouter")
+        val addRoute = router.javaClass.getMethod("addRoute", String::class.java, String::class.java, Runnable::class.java)
+        val dispatch = router.javaClass.getMethod("dispatch", String::class.java, String::class.java)
+        addRoute.invoke(router, "GET", "/hit", Runnable {})
+        dispatch.invoke(router, "GET", "/hit")
+
+        installedInstrumentation!!.retransformClasses(router.javaClass)
+        dispatch.invoke(router, "GET", "/hit")
+
+        assertEquals(2, declaring.transforms.get(), "the module wove the retransformed class")
+        assertEquals(setOf("/hit", "/declared-in-transform"), registry.endpoints().mapTo(mutableSetOf()) { it.verbatimTemplate })
+        val hitId = registry.endpoints().single { it.verbatimTemplate == "/hit" }.endpointId
+        val byId = registry.computeDeltas(maxPerBatch = 10).flatMap { it.deltas }.associateBy { it.endpointId }
+        assertEquals(2L, byId.getValue(hitId).hitsTotal, "one dispatch before the retransformation and one after")
+        assertTrue(registry.disabledModules().isEmpty())
+        assertEquals(0, installedEndpointInstrumentation!!.pendingDeclarationCount())
+    }
+
+    @Test
+    fun `a module that throws while weaving a retransformed class is not disabled`() {
+        val registry = EndpointRegistry()
+        val declaring = DeclaringModule(throwAfterDeclaring = true, throwOnlyAfterFirst = true)
+        val router = install(registry, listOf(FakeRouterModule(), declaring), "com.example.framework.FakeRouter")
+        val addRoute = router.javaClass.getMethod("addRoute", String::class.java, String::class.java, Runnable::class.java)
+        val dispatch = router.javaClass.getMethod("dispatch", String::class.java, String::class.java)
+        addRoute.invoke(router, "GET", "/hit", Runnable {})
+
+        installedInstrumentation!!.retransformClasses(router.javaClass)
+        dispatch.invoke(router, "GET", "/hit")
+
+        assertEquals(2, declaring.transforms.get())
+        assertTrue(registry.disabledModules().isEmpty(), "${registry.disabledModules()}")
+        assertEquals(setOf("/hit", "/declared-in-transform"), registry.endpoints().mapTo(mutableSetOf()) { it.verbatimTemplate })
+        val hitId = registry.endpoints().single { it.verbatimTemplate == "/hit" }.endpointId
+        val byId = registry.computeDeltas(maxPerBatch = 10).flatMap { it.deltas }.associateBy { it.endpointId }
+        assertEquals(1L, byId.getValue(hitId).hitsTotal, "the other module's advice was woven again")
+    }
+
+    /**
+     * A module weaving a retransformed class is handed a description of the bytes passed in, which
+     * are the bytes its advice goes into, not of the loaded class. Here an earlier agent adds an
+     * annotation to a method on the retransformation, which only a description of those bytes
+     * shows.
+     */
+    @Test
+    fun `a module weaving a retransformed class sees the bytes passed in, not the loaded class`() {
+        val instrumentation = ByteBuddyAgent.install()
+        val earlier =
+            object : ClassFileTransformer {
+                override fun transform(
+                    loader: ClassLoader?,
+                    className: String?,
+                    classBeingRedefined: Class<*>?,
+                    protectionDomain: ProtectionDomain?,
+                    classfileBuffer: ByteArray,
+                ): ByteArray? =
+                    if (classBeingRedefined != null && className == "com/example/framework/FakeRouter") {
+                        annotateMethod(classfileBuffer, "routes", "Ljava/lang/Deprecated;")
+                    } else {
+                        null
+                    }
+            }
+        val seen = mutableListOf<Boolean>()
+        val observing =
+            object : EndpointModule {
+                override val name: String = "observing-${System.nanoTime()}"
+
+                override fun typeMatcher(): ElementMatcher<in TypeDescription> = named("com.example.framework.FakeRouter")
+
+                override fun transform(
+                    builder: DynamicType.Builder<*>,
+                    typeDescription: TypeDescription,
+                    advice: AdviceBinder,
+                    classLoader: ClassLoader?,
+                ): DynamicType.Builder<*> {
+                    val routes = typeDescription.declaredMethods.filter(named("routes")).only
+                    seen += routes.declaredAnnotations.isAnnotationPresent(java.lang.Deprecated::class.java)
+                    return builder
+                }
+            }
+        instrumentation.addTransformer(earlier, true)
+        try {
+            val router = install(EndpointRegistry(), listOf(observing), "com.example.framework.FakeRouter")
+            instrumentation.retransformClasses(router.javaClass)
+        } finally {
+            instrumentation.removeTransformer(earlier)
+        }
+
+        assertEquals(listOf(false, true), seen, "the second description is of the annotated bytes")
+    }
+
+    /**
+     * A transformer that is not retransformation-capable runs before every one that is, so one
+     * registered after this tier's still receives the bytes without the advice: the class file, or
+     * a JaCoCo agent's output when the test JVM runs one.
+     */
+    @Test
+    fun `a transformer registered after this tier that is not retransformation-capable runs before it`() {
+        val instrumentation = ByteBuddyAgent.install()
+        var received: ByteArray? = null
+        val spy =
+            object : ClassFileTransformer {
+                override fun transform(
+                    loader: ClassLoader?,
+                    className: String?,
+                    classBeingRedefined: Class<*>?,
+                    protectionDomain: ProtectionDomain?,
+                    classfileBuffer: ByteArray,
+                ): ByteArray? {
+                    if (className == "com/example/framework/FakeRouter") received = classfileBuffer
+                    return null
+                }
+            }
+        installedInstrumentation = instrumentation
+        val endpointInstrumentation = EndpointInstrumentation(EndpointRegistry(), listOf(FakeRouterModule()))
+        installedEndpointInstrumentation = endpointInstrumentation
+        installedTransformer = endpointInstrumentation.install(instrumentation)
+        instrumentation.addTransformer(spy, false)
+        try {
+            Class.forName("com.example.framework.FakeRouter", true, frameworkLoader())
+        } finally {
+            instrumentation.removeTransformer(spy)
+        }
+
+        val bytes = assertNotNull(received)
+        val seam = "dev/otherlode/bootstrap/OtherlodeEndpoints".toByteArray()
+        assertTrue((0..bytes.size - seam.size).none { at -> seam.indices.all { bytes[at + it] == seam[it] } }, "no advice yet")
+        val underJacocoAgent =
+            java.lang.management.ManagementFactory
+                .getRuntimeMXBean()
+                .inputArguments
+                .any { it.startsWith("-javaagent:") && "jacoco" in it }
+        if (!underJacocoAgent) {
+            val classFile = File("build/classes/java/test/com/example/framework/FakeRouter.class").readBytes()
+            assertTrue(bytes.contentEquals(classFile), "the spy received the class file")
+        }
+    }
 }
 
 /**
  * Declares one endpoint from inside its transform callback, the shape of a module that reads its
  * routes off a class's own annotations. [failRewrite] makes ByteBuddy's `make()` throw after the
- * callback returns; [throwAfterDeclaring] makes the callback itself throw once it has declared.
+ * callback returns; [throwAfterDeclaring] makes the callback itself throw once it has declared, on
+ * every transform or, with [throwOnlyAfterFirst], on every transform after the first. Each
+ * transform declares under its own key and template, so a second declaration would show as a
+ * second endpoint.
  */
 private class DeclaringModule(
     private val failRewrite: Boolean = false,
     private val throwAfterDeclaring: Boolean = false,
+    private val throwOnlyAfterFirst: Boolean = false,
     // Unique per instance. A module this test disables through `moduleFailed` stays disabled for
     // the life of the JVM, and the test JVM is shared, so a fixed name would silence the module
     // for every later test that used it and make their assertions pass for the wrong reason.
@@ -309,6 +465,9 @@ private class DeclaringModule(
     private val template: String = "/declared-in-transform",
 ) : EndpointModule {
     override val name: String = moduleName
+
+    /** How many times [transform] has run. */
+    val transforms = AtomicInteger()
 
     override fun typeMatcher(): ElementMatcher<in TypeDescription> = named("com.example.framework.FakeRouter")
 
@@ -318,17 +477,18 @@ private class DeclaringModule(
         advice: AdviceBinder,
         classLoader: ClassLoader?,
     ): DynamicType.Builder<*> {
+        val transform = transforms.incrementAndGet()
         dev.otherlode.bootstrap.OtherlodeEndpoints.register(
             moduleName,
-            "$moduleName-key",
+            if (transform == 1) "$moduleName-key" else "$moduleName-key-$transform",
             "GET",
-            template,
+            if (transform == 1) template else "$template-$transform",
             null,
             typeDescription.name,
             null,
             null,
         )
-        if (throwAfterDeclaring) throw IllegalStateException("module gave up after declaring")
+        if (throwAfterDeclaring && (!throwOnlyAfterFirst || transform > 1)) throw IllegalStateException("module gave up after declaring")
         return if (failRewrite) builder.visit(ThrowingAsmVisitorWrapper()) else builder
     }
 
@@ -351,4 +511,37 @@ private class ThrowingAsmVisitorWrapper : AsmVisitorWrapper {
         writerFlags: Int,
         readerFlags: Int,
     ): ClassVisitor = throw IllegalStateException("rewrite refused these bytes")
+}
+
+/** [bytes] with a runtime-visible annotation of [annotationDescriptor] added to [methodName]. */
+private fun annotateMethod(
+    bytes: ByteArray,
+    methodName: String,
+    annotationDescriptor: String,
+): ByteArray {
+    val reader =
+        net.bytebuddy.jar.asm
+            .ClassReader(bytes)
+    val writer =
+        net.bytebuddy.jar.asm
+            .ClassWriter(reader, 0)
+    reader.accept(
+        object : ClassVisitor(net.bytebuddy.jar.asm.Opcodes.ASM9, writer) {
+            override fun visitMethod(
+                access: Int,
+                name: String,
+                descriptor: String,
+                signature: String?,
+                exceptions: Array<out String>?,
+            ): net.bytebuddy.jar.asm.MethodVisitor {
+                val delegate = super.visitMethod(access, name, descriptor, signature, exceptions)
+                if (name != methodName) return delegate
+                delegate.visitAnnotation(annotationDescriptor, true)?.visitEnd()
+                // Wrapped so ASM rewrites this method instead of copying its attributes verbatim.
+                return object : net.bytebuddy.jar.asm.MethodVisitor(net.bytebuddy.jar.asm.Opcodes.ASM9, delegate) {}
+            }
+        },
+        0,
+    )
+    return writer.toByteArray()
 }
