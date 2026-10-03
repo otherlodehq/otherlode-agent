@@ -92,6 +92,10 @@ dependencies {
     api(project(":wire"))
 
     testImplementation(kotlin("test"))
+
+    // The compiler matrix tests run once per kotlinc release and javac version. The version is the
+    // one kotlin("test") already brings in for junit-jupiter-api.
+    testImplementation("org.junit.jupiter:junit-jupiter-params:5.10.1")
     testImplementation("net.bytebuddy:byte-buddy-agent:1.18.12")
 
     // Drives javassist's own proxy generator, so the name rule for its classes is tested against
@@ -343,8 +347,9 @@ tasks.shadowJar {
 
 // Scala default-getter resolution is proven against real scalac output, compiled by the two
 // Scala fixture modules below, `$DefaultImpls` marking against kotlinc output under
-// -jvm-default=disable, compiled by the third, and the handler forwarder table against kotlinc
-// output under class-based SAM conversion, compiled by the fourth. None is a
+// -jvm-default=disable, compiled by the third, the handler forwarder table against kotlinc
+// output under class-based SAM conversion, compiled by the fourth, and the generated-method and
+// lowering rules against every kotlinc and javac in the compiler matrix. None is a
 // test dependency, only a task dependency: putting one on the test classpath would let JUnit
 // discovery load these classes before install() wires up instrumentation, defeating the
 // fixture's purpose (see FixtureClassLoader). The output directory and runtime classpath are
@@ -359,6 +364,18 @@ val jvmDefaultDisableFixtureClassesDir =
 val jvmDefaultDisableFixtureRuntimeClasspath =
     project(":fixtures-kotlin-jvm-default-disable").configurations.named("runtimeClasspath")
 val classSamFixtureClassesDir = project(":fixtures-kotlin-class-sam").layout.buildDirectory.dir("classes/kotlin/main")
+
+// The compiler matrix (ADR 0055): one fixture build per kotlinc release and per javac version, each
+// compiled by that compiler (see fixtures-compilers). Same arrangement as above, a task dependency
+// and a system property per build holding its class directory, named by the release.
+val kotlincMatrix = providers.gradleProperty("otherlode.matrix.kotlinc").get().split(",")
+val javacMatrix = providers.gradleProperty("otherlode.matrix.javac").get().split(",")
+val kotlincSuspendsSource =
+    project(":fixtures-kotlinc").file("src/main/kotlin/com/example/target/kotlinc/Suspends.kt")
+val kotlincMatrixClassesDirs =
+    kotlincMatrix.associateWith { project(":fixtures-kotlinc").layout.buildDirectory.dir("classes/kotlinc/$it") }
+val javacMatrixClassesDirs =
+    javacMatrix.associateWith { project(":fixtures-javac").layout.buildDirectory.dir("classes/javac/$it") }
 
 // JaCoCo's own agent jar, for CoverageAgentOrderTest, which launches JVMs with it beside this
 // agent in each command-line order. The test needs only the jar's path, so it stays off the test
@@ -380,7 +397,24 @@ tasks.test {
         ":fixtures-scala2:classes",
         ":fixtures-kotlin-jvm-default-disable:classes",
         ":fixtures-kotlin-class-sam:classes",
+        ":fixtures-kotlinc:classes",
+        ":fixtures-javac:classes",
     )
+    // A fixture build is not on the test classpath, so its classes are declared as inputs here:
+    // otherwise a fixture change would recompile the fixture and leave the test task up to date.
+    listOf(
+        "scala3" to scala3FixtureClassesDir,
+        "scala2" to scala2FixtureClassesDir,
+        "jvmDefaultDisable" to jvmDefaultDisableFixtureClassesDir,
+        "classSam" to classSamFixtureClassesDir,
+    ).plus(kotlincMatrixClassesDirs.map { (version, dir) -> "kotlinc$version" to dir })
+        .plus(javacMatrixClassesDirs.map { (version, dir) -> "javac$version" to dir })
+        .forEach { (name, dir) ->
+            inputs.dir(dir).withPropertyName("fixtureClasses.$name").withPathSensitivity(PathSensitivity.RELATIVE)
+        }
+    // KotlincMatrixTest reads the source's marker comments for line numbers, which the class files
+    // alone do not reflect.
+    inputs.file(kotlincSuspendsSource).withPropertyName("kotlincSuspendsSource").withPathSensitivity(PathSensitivity.NONE)
     // ShadedBodyKindRuleTest runs the analyser from the shaded jar, since relocation rewrites
     // string constants in the agent's own classes and only the shaded copy shows the effect.
     // CoverageAgentOrderTest launches JVMs with the shaded jar as their -javaagent.
@@ -404,6 +438,15 @@ tasks.test {
             jvmDefaultDisableFixtureRuntimeClasspath.get().asPath,
         )
         systemProperty("otherlode.fixtures.classsam.dir", classSamFixtureClassesDir.get().asFile.absolutePath)
+        systemProperty("otherlode.fixtures.kotlinc.versions", kotlincMatrix.joinToString(","))
+        systemProperty("otherlode.fixtures.javac.versions", javacMatrix.joinToString(","))
+        systemProperty("otherlode.fixtures.kotlinc.suspendsSource", kotlincSuspendsSource.absolutePath)
+        kotlincMatrixClassesDirs.forEach { (version, dir) ->
+            systemProperty("otherlode.fixtures.kotlinc.$version.dir", dir.get().asFile.absolutePath)
+        }
+        javacMatrixClassesDirs.forEach { (version, dir) ->
+            systemProperty("otherlode.fixtures.javac.$version.dir", dir.get().asFile.absolutePath)
+        }
         systemProperty(
             "otherlode.demo.serverMainSource",
             project(":demo").file("src/main/kotlin/com/example/demo/server/DemoServerMain.kt").absolutePath,

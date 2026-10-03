@@ -261,7 +261,7 @@ after-release line above; what, if anything, gates CI (shared runners are too
 noisy for thresholds); and which JDKs and collectors count. Load tests shaped
 like one adopter's traffic wait for an adopter.
 
-### An unread body is an unread shape: settled, not started
+### An unread body is an unread shape: settled, in progress
 
 Grilled on 2026-10-03 with Luke; ADRs 0054 and 0055, with amendments to 0025,
 0026, 0038, 0048 and 0052. Terms: unread shape, read release. Every exact-body
@@ -302,10 +302,18 @@ The decisions, in short:
 Landing order. One Sonnet chunk per step, reviewed in the main session, big
 fixes re-reviewed by a fresh Opus reviewer, one commit each:
 
-1. Kotlin and javac fixture matrix: kotlinc 1.9.25, 2.1.21, 2.2.21 and 2.4.20
-   (KGP's Build Tools API `compilerVersion`, or a hand-run compile task: the
-   chunk confirms which), javac 17, 21 and 25 through toolchains, asserting
-   today's marks and replacing `SwitchLoweringTest`'s simulated javac 17.
+1. Kotlin and javac fixture matrix. Landed 2026-10-04. `fixtures-compilers`
+   compiles one Kotlin source set with kotlinc 1.9.25, 2.1.21, 2.2.21 and
+   2.4.20 and one Java source set with javac 17, 21 and 25; the versions are
+   listed once, in `gradle.properties`. KGP 2.2.21's Build Tools API
+   `compilerVersion` could not drive 1.9.25 or 2.4.20, so each release's own
+   `K2JVMCompiler` runs from `kotlin-compiler-embeddable` against its own
+   stdlib. `KotlincMatrixTest` and `JavacMatrixTest` run the real analyser over
+   every build; javac 17's throwing default is asserted on real javac 17 output.
+   The review added the fixture class directories as inputs of the test task
+   (a fixture change used to leave tests up to date, for the existing Scala and
+   Kotlin fixture modules too) and made the compile tasks configuration-cache
+   safe. No rule gap beyond the three in step 2 turned up.
 2. ADR 0026's three gaps, failing tests first against the matrix's 2.1.21
    build and a non-null-parameter `$DefaultImpls` fixture.
 3. Scala fixture matrix, one build per variant boundary (2.12.20, 2.13.16,

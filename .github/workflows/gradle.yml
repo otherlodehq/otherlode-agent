@@ -22,7 +22,11 @@ jobs:
           distribution: temurin
           # The last version listed becomes JAVA_HOME and runs Gradle. Each version is also
           # exported as JAVA_HOME_<version>_X64, which is how Gradle finds it as a toolchain.
+          # 17 and 25 are the javac fixture toolchains (fixtures-compilers/javac), beside the
+          # test JDK and the 21 everything else compiles with.
           java-version: |
+            17
+            25
             ${{ matrix.test-jdk }}
             21
       - uses: gradle/actions/setup-gradle@v4
@@ -31,7 +35,7 @@ jobs:
       - run: >-
           ./gradlew build --no-daemon
           -Potherlode.testJdk=${{ matrix.test-jdk }}
-          -Porg.gradle.java.installations.fromEnv=JAVA_HOME_21_X64,JAVA_HOME_${{ matrix.test-jdk }}_X64
+          -Porg.gradle.java.installations.fromEnv=JAVA_HOME_17_X64,JAVA_HOME_21_X64,JAVA_HOME_25_X64,JAVA_HOME_${{ matrix.test-jdk }}_X64
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
@@ -50,7 +54,11 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 21
+          # 17 and 25 are the javac fixture toolchains; 21 is last, so it runs Gradle.
+          java-version: |
+            17
+            25
+            21
       - uses: gradle/actions/setup-gradle@v4
       # The init script applies the `jacoco` plugin to every Java project, so every test JVM runs
       # with JaCoCo's agent beside Otherlode's, the way an adopter's test task does. `check` rather
@@ -58,7 +66,7 @@ jobs:
       - run: >-
           ./gradlew --init-script gradle/jacoco-check.init.gradle.kts check --no-daemon
           -Potherlode.testJdk=21
-          -Porg.gradle.java.installations.fromEnv=JAVA_HOME_21_X64
+          -Porg.gradle.java.installations.fromEnv=JAVA_HOME_17_X64,JAVA_HOME_21_X64,JAVA_HOME_25_X64
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

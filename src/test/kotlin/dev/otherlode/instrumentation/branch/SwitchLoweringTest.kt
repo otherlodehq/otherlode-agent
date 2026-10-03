@@ -3,11 +3,6 @@ package dev.otherlode.instrumentation.branch
 import dev.otherlode.export.BranchRole
 import dev.otherlode.export.ConditionPart
 import dev.otherlode.export.ConditionPartKind
-import net.bytebuddy.jar.asm.ClassReader
-import net.bytebuddy.jar.asm.ClassVisitor
-import net.bytebuddy.jar.asm.ClassWriter
-import net.bytebuddy.jar.asm.MethodVisitor
-import net.bytebuddy.jar.asm.Opcodes
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -16,7 +11,9 @@ import kotlin.test.assertTrue
 /**
  * Proves each switch lowering the analyser reads back to source cases, against real compiled fixtures:
  * `SwitchJavaTarget.java`, `SwitchTarget.kt` and each Scala fixture module's `Switches.scala`.
- * Every shape was confirmed with `javap -c -l -p` on these fixtures first.
+ * Every shape was confirmed with `javap -c -l -p` on these fixtures first. The same lowerings over
+ * each compiler in the matrix, javac 17's throwing default included, are in `JavacMatrixTest` and
+ * `KotlincMatrixTest`.
  */
 class SwitchLoweringTest {
     private fun code(text: String) = ConditionPart(ConditionPartKind.CODE, text)
@@ -40,44 +37,6 @@ class SwitchLoweringTest {
 
     private val java by lazy { analysis(javaBytes()) }
     private val kotlin by lazy { analysis(kotlinBytes()) }
-
-    private fun kept(
-        analysis: BranchSiteAnalyzer.Analysis,
-        method: String,
-    ): List<KeptBranchSite> = analysis.keptSites.filter { it.site.methodName == method }
-
-    private fun dropped(
-        analysis: BranchSiteAnalyzer.Analysis,
-        method: String,
-    ): List<BranchSite> = analysis.sites.filter { it.methodName == method && it.dropReason != null }
-
-    /** Each outcome as its role and label: `RED`, `"open"` for a literal, or `default`. */
-    private fun outcomes(site: KeptBranchSite): List<String> =
-        site.outcomes.map { outcome ->
-            when (outcome.role) {
-                BranchRole.DEFAULT -> {
-                    "default"
-                }
-
-                BranchRole.CASE -> {
-                    val label = outcome.caseLabel.single()
-                    if (label.kind == ConditionPartKind.STRING_LITERAL) "\"${label.text}\"" else label.text
-                }
-
-                else -> {
-                    outcome.role.name
-                }
-            }
-        }
-
-    /** The one line each outcome guards whole, or null when it guards none or several. */
-    private fun guardedLines(site: KeptBranchSite): List<Int?> =
-        site.outcomes.map { outcome ->
-            outcome.guardedLines
-                .singleOrNull()
-                ?.takeIf { it.firstLine == it.lastLine }
-                ?.firstLine
-        }
 
     // --- javac ---
 
@@ -115,14 +74,6 @@ class SwitchLoweringTest {
                 .first()
                 .branchIndex
         assertTrue(next > first + 3, "the default's branch index and the string lowering's sites still count")
-    }
-
-    @Test
-    fun `javac 17 enum switch expression - the default that only throws IncompatibleClassChangeError is not listed`() {
-        val site = kept(analysis(withJavac17Default(javaBytes())), "enumExpression").single()
-
-        assertEquals(listOf("RED", "BLUE", "GREEN"), outcomes(site))
-        assertTrue(site.site.throwingDefault)
     }
 
     @Test
@@ -362,58 +313,5 @@ class SwitchLoweringTest {
         assertEquals(listOf(1, 2, 3, null), site.outcomes.map { it.caseKey })
         assertEquals(BranchRole.DEFAULT, site.outcomes.last().role)
         assertTrue(site.outcomes.all { it.caseLabel.isEmpty() })
-    }
-
-    /**
-     * [bytes] with `enumExpression`'s default rewritten to the shape javac 17 emits, confirmed with
-     * `javap -c` on javac 17.0.15 output: `new IncompatibleClassChangeError; dup; invokespecial
-     * <init>()V; athrow` in place of javac 21's `MatchException` with two nulls.
-     */
-    private fun withJavac17Default(bytes: ByteArray): ByteArray {
-        val writer = ClassWriter(0)
-        val visitor =
-            object : ClassVisitor(Opcodes.ASM9, writer) {
-                override fun visitMethod(
-                    access: Int,
-                    name: String,
-                    descriptor: String,
-                    signature: String?,
-                    exceptions: Array<out String>?,
-                ): MethodVisitor {
-                    val delegate = super.visitMethod(access, name, descriptor, signature, exceptions)
-                    if (name != "enumExpression") return delegate
-                    return object : MethodVisitor(Opcodes.ASM9, delegate) {
-                        override fun visitTypeInsn(
-                            opcode: Int,
-                            type: String,
-                        ) = super.visitTypeInsn(opcode, if (type == MATCH_EXCEPTION) ICCE else type)
-
-                        override fun visitInsn(opcode: Int) {
-                            if (opcode != Opcodes.ACONST_NULL) super.visitInsn(opcode)
-                        }
-
-                        override fun visitMethodInsn(
-                            opcode: Int,
-                            owner: String,
-                            name: String,
-                            descriptor: String,
-                            isInterface: Boolean,
-                        ) {
-                            if (owner == MATCH_EXCEPTION) {
-                                super.visitMethodInsn(opcode, ICCE, name, "()V", isInterface)
-                            } else {
-                                super.visitMethodInsn(opcode, owner, name, descriptor, isInterface)
-                            }
-                        }
-                    }
-                }
-            }
-        ClassReader(bytes).accept(visitor, 0)
-        return writer.toByteArray()
-    }
-
-    private companion object {
-        const val MATCH_EXCEPTION = "java/lang/MatchException"
-        const val ICCE = "java/lang/IncompatibleClassChangeError"
     }
 }
