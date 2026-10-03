@@ -273,6 +273,30 @@ claiming dead code; or recognise plumbing by name in such a class, which ADR
 default when the agent cannot tell, set against ADR 0007's "silent,
 confident, wrong".
 
+### A class file read through the wrong loader path: to grill
+
+Raised 2026-10-03 at the review of chunk 1 of the JaCoCo work (ADR 0052, which
+records it as a consequence); not yet grilled. The analysis reads a class's
+class file through its loader's `getResourceAsStream`, which is parent-first
+unless the loader overrides it. A loader that defines classes child-first but
+serves resources parent-first, with another version of the class on its
+parent's path, hands the agent the parent's class file. Marks, keys and lines
+then describe that version, and a method only the child's version declares
+gets no probe, which is a silent absence. The test fixture loader had exactly
+this shape and was made consistent. Tomcat's, Jetty's and the common
+child-first loaders override both lookups alike; nobody has shown an adopter's
+loader of the bad shape.
+
+Options to weigh: leave it as a recorded gap until a loader of this shape
+turns up; read the class file from the class's `ProtectionDomain` code source
+instead, with a per-location cache, which has to handle Spring Boot's nested
+jar URLs (`jar:nested:` from Boot 3.2, `jar:file:...!/BOOT-INF/...` before)
+and classes with no code source; or detect a mismatch (the class file's
+method set or `SourceFile` disagreeing with the received bytes beyond what an
+earlier transformer adds) and fall back to the received bytes with a WARNING.
+The question is how much machinery a so-far hypothetical loader earns, set
+against ADR 0007's "silent, confident, wrong".
+
 ### Another agent ahead of or behind this one: grilled, three chunks
 
 Found in the deep review of 2026-10-03 and grilled the same day; ADRs 0052
@@ -352,15 +376,8 @@ gets no probe at all (ADR 0052 amended), since a probe with nothing to weave
 into reads as never hit; and switch pairing also compares which entries go to
 the default, since slot counts depend on it.
 
-Known gap from chunk 1's review: the class file comes from the loader's
-`getResourceAsStream`, parent-first unless overridden. A loader that defines
-child-first but serves resources parent-first, with another version of the
-class on its parent's path, hands the agent the wrong class file, and a method
-only the child's version declares gets no probe. The test fixture loader had
-exactly this shape and was made consistent. Tomcat's, Jetty's and the common
-child-first loaders are consistent already. Mitigation if one turns up: read
-the class file from the `ProtectionDomain`'s code source, with a per-location
-cache, which needs Boot's nested-jar URLs handled.
+Known gap from chunk 1's review, the class file read through the wrong loader
+path: its own entry above, to grill.
 
 The JVM keeps an off-heap copy of each woven class's received bytes once the
 transformer is capable, about one class-file length each; no flag, and the
