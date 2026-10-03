@@ -27,3 +27,13 @@ The agent marks the probe once, with a `GeneratedBy` reason (`ENUM`, `DATA_CLASS
 - An omission probe carries its target's mark, the way it carries the target's inline flag under ADR 0022, so a collector makes no never-supplied or always-supplied claim about a data class's `copy` parameters: `copy(x = 1)` omitting `y` is how `copy` is meant to be used, not a dead default.
 - A Kotlin `value class` (`box-impl`, `unbox-impl`, `equals-impl`, `hashCode-impl`) and kotlinx.serialization's output are not covered; they wait for an adopter who has them.
 - Amended on 2026-10-03 by ADR 0052: the shapes this record reads are read from the class file, not the received bytes, so an earlier transformer such as JaCoCo leaves them unchanged.
+
+## Amended on 2026-10-03: three gaps found reading other compilers
+
+Found while surveying kotlinc 1.9.25 to 2.4.20 and javac 17 to 25 for ADR 0055, each from `javap` output.
+
+- **An implementing class's stub under `-jvm-default=disable`.** kotlinc 2.1 and earlier default to `disable`, and give every class implementing an interface method with a body a public, non-bridge stub, `Impl.m`, whose body loads `this` and its parameters, calls `invokestatic <Iface>$DefaultImpls.m`, and returns. It was probed unmarked and read as a never-hit method nobody wrote. From kotlinc 2.2 the stub is `ACC_BRIDGE` and excluded in every mode. A method of exactly that body is marked `DEFAULT_IMPLS` and passes calls through, as ADR 0041's generated forwarders do. Kotlin source cannot reach a `$DefaultImpls` class, so no Kotlin method written by hand has this body.
+- **A `$DefaultImpls` forwarder with a non-null reference parameter** begins with kotlinc's `checkNotNullParameter`, on every kotlinc read. The forwarder rule refused null checks, so such a forwarder was never marked. The rule accepts them, as the `@JvmOverloads` and multi-file facade rules already do.
+- **A record's `equals`, `hashCode` and `toString`** were marked by name and descriptor alone, so an override the adopter wrote was hidden. They are marked only when the body is javac's `invokedynamic` through `java.lang.runtime.ObjectMethods.bootstrap`; an override is ordinary code, as a data class's is.
+
+The data-class and enum rules go by name and descriptor and were unchanged across every compiler read. ADR 0054 gives them no unread-shape outline for that reason.

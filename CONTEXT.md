@@ -68,6 +68,14 @@ _Avoid_: coroutine noise, state-machine branches
 A method the compiler emits from a declaration rather than from a body the adopter wrote: an enum's `values` and `valueOf`, a data class's `componentN`, `copy`, and the `equals`, `hashCode` and `toString` it did not override by hand, a `$DefaultImpls` method that only forwards to the interface's own default method, an overload `@JvmOverloads` adds that only forwards to its `$default` twin, a multi-file facade's function, a Scala case class's and its companion's plumbing (`copy`, `canEqual`, `productElement` and the rest, `apply`, `unapply`) that the adopter did not write by hand, and a static forwarder. Probed and marked with what generated it, and so are the branch sites inside it; never reported as never hit. A `$DefaultImpls` method holding the interface method's real body, or an override the adopter wrote, is ordinary code.
 _Avoid_: synthetic method (a JVM flag; these are not synthetic), compiler method
 
+**Unread shape**:
+A probe whose code has the outline of compiler output, such as a plumbing-named method in a case class, a jump in a suspend method's state machine, or the collision side of a string switch's hash bucket, but whose body matches no shape the agent has read for that compiler. Probed and counted, never a finding and never a cluster node, and listed apart with what the agent could not read. The agent's own output for a compiler it has not read, not a claim about who wrote the code.
+_Avoid_: unrecognised, unknown, suspected generated, unclassified
+
+**Read release**:
+A compiler release whose output the agent's shape rules were checked against. Where a class names the release that compiled it, as a Scala 3 class does, a body that fails its rule is hand-written when the release is read and an unread shape when it is not.
+_Avoid_: supported version, known compiler
+
 **Runtime-generated class**:
 A class a framework synthesized in memory rather than compiled from source, named after the class it proxies or the class it serves, so that it falls inside the adopter's own packages: a Spring CGLIB proxy and its fast-class helpers, a Hibernate proxy or instantiator, a ByteBuddy or Mockito subclass, a javassist proxy, or a JDK proxy of a non-public interface. Recognised by the generator's naming, never probed, never declared, and never reported at all, the way coroutine machinery is.
 _Avoid_: proxy class (a Spring bean proxy is one shape of it), synthetic class (a JVM flag; these are not synthetic), skipped class (a skipped class is one the agent wanted and could not have)
@@ -320,7 +328,7 @@ A class file the baseline could not read or resolve.
 An in-scope class with no concrete method to probe, such as an interface with only abstract methods. It can never appear in a manifest.
 
 **Never hit**:
-A probe present in a manifest whose hit total has stayed at zero. The class loaded; the code did not run. A collector claims it only for a probe that is neither inline nor generated.
+A probe present in a manifest whose hit total has stayed at zero. The class loaded; the code did not run. A collector claims it only for a probe that is not inline, not generated and not an unread shape.
 
 **Final flush**:
 The delta batch the agent's shutdown hook sends, marked as such so a collector can tell an instance that ended cleanly from one that went silent.

@@ -124,3 +124,17 @@ shape.
   (its constructor takes the capture beside the elements) are not recognised and stay unmarked. (Scala 2 writes no
   `unapply` past 22 elements, so there is nothing to recognise there.)
 - Amended on 2026-10-03 by ADR 0052: the shapes this record reads are read from the class file, not the received bytes, so an earlier transformer such as JaCoCo leaves them unchanged.
+
+## Amended on 2026-10-03: every release's bodies, keyed on the release where it is known
+
+The consequence that other versions "degrade to unmarked plumbing until their shapes are read" turned out to cover current patch releases, not only old and future lines. The agent's matcher over scalac 2.12.18 to 3.10.0-RC3 found, all from the compiler and none from the library:
+
+- `hashCode` folds `productPrefix().hashCode()` into a constant, or calls `MurmurHash3.productHash` with no primitive element, from 2.13.17, 3.3.7 and 3.7.1. 2.12 mixes no prefix at all.
+- `equals` compares a null-safe reference element through `Objects.equals` in 3.3.8, 3.8.4 and 3.9.0, and compares every element through an `astore` copy from 3.7.3 to 3.8.3. 2.12 compares in source order.
+- Scala 3's companion `fromProduct` unboxes into locals before `new` from 3.7.0.
+- `productElement` and `productElementName` fail out of range with `new IndexOutOfBoundsException(int)` from 3.9.0; 2.12 with `new IndexOutOfBoundsException(Integer.toString(n))`.
+- 2.12 gives every module class a private `readResolve()` returning `MODULE$`, its counterpart of `writeReplace`. It was unmarked.
+
+Every one of these variants is read and recognised. 2.12's `readResolve` is marked `SCALA_OBJECT`. Scala 3 enum plumbing (the enum class's `values`, `valueOf`, `ordinal`, `fromOrdinal` and `$new`, and a singleton case's `productPrefix`, `toString` and, from 3.3.7, `hashCode`) is read now too, since enums are everyday code; `lazy val` plumbing, value-class elements and the other shapes listed above still wait.
+
+A body that fails its rule is no longer always ordinary. For a Scala 3 class whose `.tasty` names a release the agent has read, it is: that release writes the read shape, so a different body was written by hand. Otherwise it is an unread shape (ADR 0054). The list of read releases and the fixtures behind it are ADR 0055's.

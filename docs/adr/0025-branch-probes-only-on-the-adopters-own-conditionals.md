@@ -26,3 +26,7 @@ Those sites get no probe. An inlined copy is recognised from the class's `Source
 - A same-class inline function's copies carry the class's own name as `inlined_from_class_name`, since the fact stated is "copied from an inline body", not "from another class".
 - Sites that are true but uninteresting (the null path of a safe call, a `!!` check, a `finally` copy on the exception path) are not covered. They are conditionals the adopter wrote, and telling them from dead code is the collector's classification job under ADR 0015.
 - Amended on 2026-10-03 by ADR 0052: the shapes this record reads are read from the class file, not the received bytes, so an earlier transformer such as JaCoCo leaves them unchanged.
+
+## Amended on 2026-10-03: machinery the agent cannot read
+
+A jump or switch in a suspend-shaped method that is fed by `getfield label` on a continuation class or by the `getCOROUTINE_SUSPENDED` value, and matches none of the shapes above, was kept as an ordinary site. It is an unread shape of family `COROUTINE_MACHINERY` (ADR 0054): probed, counted, and never a finding. All four shapes, both compare forms and the continuation class were identical from kotlinc 1.9.25 to 2.4.20; a suspend lambda's `invokeSuspend` reloads its parameter per state below language version 2.2, which leaves the machinery shapes intact.

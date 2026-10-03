@@ -108,6 +108,11 @@ adopter's collector forwards to one multi-tenant backend.
      framework interface reads as an uncalled root (the ADR 0024 gap);
      kotlin-stdlib always reads as used, through `kotlin.Metadata`; a class
      that failed to load reads as unreferenced.
+   - An unread body reads as the adopter's code, found after item 3 landed:
+     current Scala patch releases make every case class's `hashCode` dead code,
+     and kotlinc 2.1 and earlier a never-hit stub per interface default method.
+     Settled on 2026-10-03 (ADRs 0054, 0055); the TODO entry "An unread body is
+     an unread shape" has the landing order. It lands before item 4 starts.
    - Naming, after release: `Tariff$Companion`, `Cc$` and `Driver$` show
      their JVM names in the UI, and Scala signatures read with Java types and
      `x$0` parameter names. A data class property's getter reads as never
@@ -139,6 +144,10 @@ adopter's collector forwards to one multi-tenant backend.
    - Review the testkit's query API, which publishing freezes. Include
      whether `neverHit()` judges per instance or across instances (see the
      runtime-generated classes entry below).
+   - Review the surfaces ADR 0054 adds: the `UnreadShape` enum, the oneofs
+     on `ProbeLocation`, `DeclaredMethod` and `BranchOutcome`,
+     `ResourceAttributes.agent_version`, and the testkit's
+     `neverHitUnreadShapes()`.
    - Review the agent option names, which ADR 0016 makes a compatibility
      surface.
    - Settle versioning: the agent is `1.0-SNAPSHOT`, and no repo has
@@ -252,26 +261,79 @@ after-release line above; what, if anything, gates CI (shared runners are too
 noisy for thresholds); and which JDKs and collectors count. Load tests shaped
 like one adopter's traffic wait for an adopter.
 
-### An unrecognised body reads as the adopter's code: to grill
+### An unread body is an unread shape: settled, not started
 
-Raised 2026-10-03, while grilling the JaCoCo fix below; not yet grilled.
-Every exact-body rule (ADR 0026 marks, ADR 0046 routine kinds, ADR 0048
-Scala plumbing, switch lowering) falls back to "plain adopter code" when it
-cannot recognise a body, and plain code that never ran is a never-hit row.
-So the symptom the JaCoCo fix removes, `neverHit()` listing `canEqual`,
-`productElement` and `unapply` as dead, has other causes that fix does not
-touch: ADR 0048 accepts that Scala 2.12 and 3.x past 3.3.4 "degrade to
-unmarked plumbing until their shapes are read", with no JaCoCo involved, and
-the JaCoCo fix's own fallback (no class file, or one that does not line up)
-is a third.
+Grilled on 2026-10-03 with Luke; ADRs 0054 and 0055, with amendments to 0025,
+0026, 0038, 0048 and 0052. Terms: unread shape, read release. Every exact-body
+rule fell back to "the adopter's code" on a body it could not read, and the
+agent's real matcher over scalac 2.12.18 to 3.10.0-RC3 showed that is already a
+false finding in the field: from 2.13.17, 3.3.7 and 3.7.1 every case class's
+`hashCode` reads as dead code, and 3.9.0, the new LTS, keeps 609 of 819 marks.
+kotlinc 1.9.25 to 2.4.20 and javac 17 to 25 were stable apart from three gaps
+in ADR 0026's rules.
 
-Options to weigh: keep reading compiler versions as they appear (ADR 0048's
-stance); have the agent say that a class is a case class, data class or enum
-whose plumbing it could not read, so consumers label or abstain instead of
-claiming dead code; or recognise plumbing by name in such a class, which ADR
-0048 rejected because it hid hand-written methods. The question is the
-default when the agent cannot tell, set against ADR 0007's "silent,
-confident, wrong".
+The decisions, in short:
+
+- A body inside an outline of compiler output that matches no read shape is an
+  unread shape: probed, counted, never a finding or a cluster node, listed apart
+  by family. Version-keyed for Scala 3 (the `.tasty` header names the release),
+  version-blind elsewhere, since Scala 2, kotlinc (`mv` is the language
+  version) and javac (the class-file version follows `--release`) do not name
+  the compiler.
+- Outlines: Scala case-class, companion, object and enum plumbing and static
+  forwarders; a multi-file facade's methods; coroutine machinery; the collision
+  side of an unread string-switch lowering. None for data classes and enums
+  (name rules cannot drift) or for `@JvmOverloads` and `$DefaultImpls`
+  forwarders (Java can write them).
+- Every Scala variant the sweep found is read; 2.12's `readResolve` is
+  `SCALA_OBJECT`; Scala 3 enum plumbing is read. A declared compiler list, one
+  fixture build per variant boundary, an exact Scala 3 release table filled by a
+  sweep script, and a scheduled canary on the newest release of each compiler.
+- ADR 0026's gaps: kotlinc 2.1 and earlier's `disable`-mode stub forwarding to
+  `$DefaultImpls` is marked and passes through; the `$DefaultImpls` forwarder
+  rule accepts kotlinc's null checks; a record's methods are marked only with
+  the `ObjectMethods` indy body.
+- Wire, with no consumers to keep compatible: `oneof origin { generated_by;
+  unread_shape }` on `ProbeLocation` and `DeclaredMethod`, `oneof { routine;
+  unread_shape }` on `BranchOutcome`, `ResourceAttributes.agent_version`. No
+  compiler field.
+- The no-class-file case of ADR 0052 stays a recorded gap with an INFO count.
+
+Landing order. One Sonnet chunk per step, reviewed in the main session, big
+fixes re-reviewed by a fresh Opus reviewer, one commit each:
+
+1. Kotlin and javac fixture matrix: kotlinc 1.9.25, 2.1.21, 2.2.21 and 2.4.20
+   (KGP's Build Tools API `compilerVersion`, or a hand-run compile task: the
+   chunk confirms which), javac 17, 21 and 25 through toolchains, asserting
+   today's marks and replacing `SwitchLoweringTest`'s simulated javac 17.
+2. ADR 0026's three gaps, failing tests first against the matrix's 2.1.21
+   build and a non-null-parameter `$DefaultImpls` fixture.
+3. Scala fixture matrix, one build per variant boundary (2.12.20, 2.13.16,
+   2.13.18, 3.3.6, 3.3.7, 3.3.8, 3.7.0, 3.7.2, 3.8.3, 3.8.4, 3.9.0), and every
+   variant read, 2.12's `readResolve` included. No wire change.
+4. Scala 3 enum plumbing, each body read with `javap` first.
+5. Wire: `UnreadShape`, the two oneofs, `agent_version`; codec, testkit decode,
+   stub collector; `otherlode-collector` bindings bump.
+6. Unread shapes for Scala: the `.tasty` reader, the release table and its
+   sweep script (sweeping 3.4.0 to 3.4.2, 3.5.0 to 3.5.1 and 3.6.0 to 3.6.3
+   first), version-keyed and version-blind outlines, branch-site and omission
+   propagation, the static baseline, the WARNING and the first-flush summary.
+7. Unread shapes for the other outlines: multi-file facade, coroutine
+   machinery, string-switch collision side; the INFO count of classes analysed
+   from received bytes.
+8. Testkit: `neverHit()` leaves unread shapes out, `neverHitUnreadShapes()`,
+   clusters, never-supplied and always-supplied; the stub collector's output.
+9. `otherlode-server`: store both oneofs and `agent_version`, count unread
+   shapes per family in the report, label the rows, keep them out of the graph.
+10. The scheduled canary job and the README's list of compilers whose marks are
+    exact.
+
+Open from the survey, after release: javac 25 at `--release 21` lowers an enum
+pattern switch through `typeSwitch` with ConstantDynamic `EnumDesc` arguments,
+and every javac lowers a qualified enum label the same way; `bootstrapSwitch`
+reads neither, so those cases keep numeric keys (readability only, ADR 0038's
+amendment). `$default`'s super-marker null check is not checked by the mask
+rule; nothing has shown a body where that matters.
 
 ### A class file read through the wrong loader path: to grill
 

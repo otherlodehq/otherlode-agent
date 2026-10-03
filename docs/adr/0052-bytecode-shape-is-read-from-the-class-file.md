@@ -29,3 +29,7 @@ Read in JaCoCo 0.8.13's source: its instrumentation replays a method's original 
 - Every woven class costs one more resource read, on top of the class files the cross-class lookups already read during a transform. The overhead measurement in `STATUS.md` covers it.
 - `ClassBytesCapture` keeps its job: it supplies the received bytes the rewrite and the pairing need.
 - The static baseline already reads class files, so with JaCoCo ahead its declared methods now agree with the manifest instead of disagreeing.
+
+## Amended on 2026-10-03: the no-class-file case stays a recorded gap
+
+The open question this record left about a class with no class file is settled in ADR 0054. Such a class is still analysed from its received bytes, and a body there that an earlier transformer changed can read as the adopter's code. A per-class flag was rejected as abstaining on every class defined from memory for a case that needs three rare things together. The agent logs an INFO count of classes analysed from received bytes on the first flush, and the case is revisited when an adopter shows it, the trigger the wrong-loader-path entry in `STATUS.md` also uses.

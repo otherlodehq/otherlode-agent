@@ -1,5 +1,5 @@
 ---
-description: Build a settled design as sequential chunks, autonomously through the landing order. An Opus 5.5 subagent implements each chunk from a written brief; the main Opus 5.5 session reviews the implementation, fixes findings, runs the build, commits one chunk per commit, and continues to the next unless the user asked for a breakpoint. Manual invocation only.
+description: Build a settled design as sequential chunks, autonomously through the landing order. A Sonnet subagent implements each chunk from a written brief and hands back; the main session reviews the implementation and fixes findings, a fresh Opus reviewer re-reviews every big fix until the main session is satisfied, then it runs the build, commits one chunk per commit, and continues to the next unless the user asked for a breakpoint. Manual invocation only.
 argument-hint: [which chunk to build next, or the design section that lists the landing order]
 disable-model-invocation: true
 ---
@@ -7,19 +7,26 @@ disable-model-invocation: true
 # Chunked build
 
 Turn an already-settled design into code one chunk at a time. Each chunk is
-built by an Opus 5.5 subagent from a brief this session writes, reviewed here
-by reading the implementation, and committed only after a clean pass.
+built by a Sonnet subagent from a brief this session writes, reviewed here
+by reading the implementation, its big fixes re-reviewed by a fresh Opus
+subagent, and committed only after a clean pass.
 `$ARGUMENTS` names the chunk to build next, or the design section whose
 landing order says what comes next.
 
 ## Who does what
 
-- The main session (Opus 5.5) owns the design, the briefs, the review, the
-  fixes, the commit message and the project's status log. Judgement never
-  moves to the subagent.
-- One Opus 5.5 subagent (`general-purpose`, `model: opus`) implements one
-  chunk, with "do not commit" in its brief. It reports back; it does not
-  decide.
+- The main session owns the design, the briefs, the review, the fixes,
+  the commit message and the project's status log. Judgement never moves
+  to a subagent.
+- One Sonnet subagent (`general-purpose`, `model: sonnet`) implements one
+  chunk, with "do not commit" in its brief. It hands back to the main
+  session; it does not decide.
+- A fresh Opus subagent (`general-purpose`, `model: opus`) reviews each big
+  fix the main session makes. It reports findings and never edits. A new
+  reviewer each round, so no reviewer checks its own earlier advice.
+- Research and fact-finding (reading library sources, compiling scratch
+  fixtures, running `javap`) go to Opus subagents too, never to the
+  implementer.
 - Chunks run one after another, never in parallel. They share the build
   directory and usually a few central files, and the next brief depends on
   what the last review found.
@@ -58,8 +65,8 @@ text goes to the subagent verbatim. It states:
 
 ## 2. Launch and wait
 
-Launch the subagent with the brief. Do not touch the files it is working
-in. When it reports, treat the report as a claim to check, not a result.
+Launch the Sonnet subagent with the brief. Do not touch the files it is
+working in. When it reports, treat the report as a claim to check, not a result.
 
 The loop runs on its own: brief, launch, review, commit, next brief, next
 launch, through the whole landing order, without asking between chunks.
@@ -95,10 +102,23 @@ wording.
 
 ## 4. Fix everything found, regardless of size
 
-Fix directly when the change is small; send the chunk back with an exact
-brief when it is not. A test that pins a boundary the chunk left unpinned
-counts as a finding. Re-review the fixes the same way. Repeat until a full
-pass finds nothing. The commit follows a clean pass, not the last fix.
+The main session implements the fixes itself; it does not send the chunk
+back to the implementer. A test that pins a boundary the chunk left
+unpinned counts as a finding.
+
+A big fix (one that changes a rule, touches several files, or adds tests
+of its own, rather than a rename or a one-line correction) goes to a fresh
+Opus reviewer once it is complete. Brief it with the settled design, the
+ADRs, the facts already verified, and the uncommitted diff (`git diff HEAD`
+plus untracked files, in every repo the chunk touched), and ask for
+findings only. Treat its report as claims: check each finding against the
+code or the library source before acting on it, fix the ones that hold,
+and say why the others do not.
+
+Repeat (review, fix, a fresh Opus review of every big fix) until the main
+session is happy and a full pass finds nothing. Small fixes are re-read
+here and need no reviewer. The commit follows a clean pass, not the last
+fix.
 
 ## 5. Verify yourself
 
