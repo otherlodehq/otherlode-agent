@@ -32,3 +32,7 @@ The server keys a service by its namespace and its name, as OpenTelemetry's `ser
 
 - The name detection reads the application's own Spring Boot configuration and jar, so it runs when the agent starts. It never loads application classes.
 - An adopter who sets both an Otherlode name and an OpenTelemetry name gets the Otherlode one. That is how the service can be named differently in Otherlode on purpose.
+
+## Amended on 2026-10-04: the service version, and never the instance id
+
+Settled with Luke in the pre-release review of option names (`STATUS.md` checklist item 4), since a fallback added after release changes what a running deployment reports. The service version resolves like the namespace: Otherlode's own three sources, then `service.version` in OpenTelemetry's resource attributes, else unset. `service.instance.id` is never read from OpenTelemetry. A copied deployment template gives every replica the same value, which OpenTelemetry tolerates as an attribute, but here the instance is the stream hits merge in. A pinned instance id comes only from `serviceInstanceId`, set on purpose.

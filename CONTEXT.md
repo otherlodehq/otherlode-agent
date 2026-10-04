@@ -149,6 +149,10 @@ _Avoid_: process ID (the operating system's PID), boot ID
 A run whose agent was started with the test-run flag, in a JVM that runs the adopter's tests. A collector keeps it out of every finding about production and reads only its call edges, to name the tests that call production code.
 _Avoid_: test environment (an environment is a deployment, and a test run is told apart by its flag), test JVM, test instance
 
+**Stripped run**:
+A run some of whose payloads a collector forwarded with fields removed that its own version did not know. It is shown but judged by nothing, since a removed field may be one a finding depends on.
+_Avoid_: partial run, degraded run
+
 **Collector**:
 Whatever receives the payloads and merges them across instances. `otherlode-collector` is the production one; the demo's stub and the testkit's `OtherlodeTestCollector` play the role in this repo.
 _Avoid_: backend, server, ingest

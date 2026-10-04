@@ -128,35 +128,31 @@ adopter's collector forwards to one multi-tenant backend.
    plan is the TODO entry "Another agent ahead of or behind this one". It
    sits here because the testkit's first report is wrong and the adopter's
    coverage report breaks.
-4. **Settle the one-way doors before anything is published.** Next up.
-   Item 2's last bullet, unread shapes, landed on 2026-10-04. On 2026-09-27
-   every earlier item 2 bullet from the real runs had landed, and
-   the simple items in 5 and 6 were cleared first on 2026-09-27; what is
-   left in 5 is settled and planned in the server STATUS, and 6 is
-   publishing. Item 4 is decisions, so it starts with a
-   grill, one sub-item at a time. Facts gathered so far: the testkit's public surface is
-   `OtherlodeTestCollector` (about 40 public functions, from `awaitNextFlush`
-   and `wasHit` to `unreachedClusters` and the dependency queries), the
-   top-level types beside it (`ProbeRef`, `ClassFindingRef`,
-   `UnreachedCluster`, `WholeClass`, `OptionalParameterRef`, `EndpointRef`,
-   `DependencyStatus` and its parts, three `Unknown…Exception`s, and the
-   `RootKind`, `ClassFinding` and `DependencyUsage` enums), and
-   `junit5/OtherlodeExtension`. The per-instance question is written up under
-   "Generators other than Spring and Hibernate are not recognised" below.
-   Not yet read: ADR 0016, `AgentConfig`'s option list, and the Gradle
-   publishing, group id and licence state of each repo.
-   - Review the testkit's query API, which publishing freezes. Include
-     whether `neverHit()` judges per instance or across instances (see the
-     runtime-generated classes entry below).
-   - Review the surfaces ADR 0054 adds: the `UnreadShape` enum, the oneofs
-     on `ProbeLocation`, `DeclaredMethod` and `BranchOutcome`,
-     `ResourceAttributes.agent_version`, and the testkit's
-     `neverHitUnreadShapes()` and `agentVersion(serviceInstanceId)`.
-   - Review the agent option names, which ADR 0016 makes a compatibility
-     surface.
-   - Settle versioning: the agent is `1.0-SNAPSHOT`, and no repo has
-     tags. Add Maven publishing, signing, and licence metadata in the
-     poms.
+4. **Settle the one-way doors before anything is published.** Settled on
+   2026-10-04 in a grilling session (ADRs 0056 and 0057, amendments to 0016,
+   0045 and 0054, collector ADR 0005, server ADR 0054); being built as the
+   TODO entry "One-way doors settled before release", four chunks.
+   - Testkit API (ADR 0056): Java and Kotlin callers; the testkit owns its
+     result types and shades wire and protobuf; data classes only grow, with
+     internal constructors; enums grow in minor releases; findings merge
+     across instances as the server's do; seven queries and `rootSite`
+     become internal; `explicitApi()` and an ABI dump; American spelling in
+     identifiers; `otherlode.testkit.startup.timeout.seconds`; the testkit
+     refuses an agent of another version.
+   - ADR 0054's wire surfaces: the zero values inside `origin` oneofs become
+     `_UNSPECIFIED` and are never written; `UNREAD_SHAPE_STRING_SWITCH`;
+     `agent_version` is opaque; a collector that strips unknown fields sets
+     `ResourceAttributes.fields_stripped`, and the server makes no claim from
+     that run.
+   - Option names (ADR 0016, amended): `endpoint` becomes `exportUrl`, which
+     refuses a query string or fragment; no option begins with `testkit` or
+     `collector`; OTel's `service.version` is read, its
+     `service.instance.id` never (ADR 0045, amended); every other name stands.
+   - Versioning (ADR 0057): `otherlode-agent` and `otherlode-testkit` go to
+     Maven Central under `dev.otherlode`; agent, testkit and collector
+     release in lockstep from `0.1.0`; the version lives in the tree and a
+     release is a matching `vX.Y.Z` tag. Publishing, signing, the release
+     workflow and a JDK 17 floor (if a JDK 17 CI leg passes) are item 6.
 5. **Security basics, sized to how the server is hosted.** Settled on
    2026-09-27 in a grilling session: server ADRs 0040 to 0043 and
    collector ADR 0003. The plan, its ten chunks and what is deferred are
@@ -205,7 +201,16 @@ adopter's collector forwards to one multi-tenant backend.
      floor for anyone importing `ingest` or `metrics`, kept for
      compatibility, and a Dependabot bump had moved the image to 1.27;
      Dependabot now ignores golang minor and major bumps.
-   - Agent: publish the jar and the testkit.
+   - Agent: publish `otherlode-agent` and `otherlode-testkit` to Maven
+     Central (ADR 0057): verify the `dev.otherlode` namespace with a TXT
+     record on `otherlode.dev`, poms with licence, developer and SCM
+     metadata, sources and javadoc jars, signing, and a workflow on a
+     `vX.Y.Z` tag that refuses a tag differing from the declared version,
+     attaches the agent jar to a GitHub release and pushes the collector
+     image under the same number.
+   - JDK floor: add a JDK 17 CI leg; if it passes, target 17 for the agent
+     jar and the testkit (settled 2026-10-04). ADR 0035's lambda-factory
+     hook reads JDK internals and is the part most likely to differ.
    - Agent CI moved to `bufbuild/buf-action` on 2026-09-27, which also
      checks formatting. It runs every check but not the push, which is a
      `buf push --label master` step after it: the action's own push labels
@@ -230,7 +235,37 @@ routine and OpenTelemetry edge cases in the entries below.
 
 ## TODO
 
-## TODO
+### One-way doors settled before release: in progress
+
+Settled 2026-10-04 (checklist item 4). One Sonnet chunk and one commit each,
+reviewed before it lands.
+
+1. **Wire.** Rename `GENERATED_BY_NONE`, `UNREAD_SHAPE_NONE` and
+   `ROUTINE_KIND_NONE` to `_UNSPECIFIED` and `UNREAD_SHAPE_SWITCH_LOWERING` to
+   `UNREAD_SHAPE_STRING_SWITCH`; add `bool fields_stripped = 9` to
+   `ResourceAttributes`. Then the collector: bump bindings, set the flag and
+   log once per instance when redaction strips a field. Then the server:
+   bump bindings, store the flag per run, keep flagged runs out of every
+   finding and label them, and rename `never-initialised` /
+   `never_initialised` to the `z` spelling.
+2. **Agent options.** `endpoint` to `exportUrl`, refusing a query or
+   fragment; OTel `service.version` as a fallback; the four internal field
+   names aligned with their keys; README, demo and compose files updated.
+3. **Testkit.** Its own result types and enums (nullable, no `NONE`),
+   wire and protobuf shaded with NOTICE and licences; internal constructors
+   with `@ConsistentCopyVisibility`; `@JvmOverloads`, `@JvmStatic` and a
+   Java compile test; the seven internal queries; findings merged across
+   instances with branch rows grouped by key; the agent-version check;
+   `neverInitialized`; the renamed startup-timeout property;
+   `explicitApi()` and the ABI dump in CI.
+4. **Versioning.** `version=0.1.0-SNAPSHOT` in `gradle.properties`, applied
+   to every subproject; the collector reports its version.
+
+Parked from the same review, none a one-way door: a WARNING for an
+`OTHERLODE_*` variable or `otherlode.*` property the agent does not know
+(typos are silently ignored); option parsing and service-name detection
+still run with `enabled=false`; no warning for `otelBridgeEnabled=true` with
+`endpointsEnabled=false`.
 
 ### Runtime overhead is unmeasured: to grill
 
@@ -1072,9 +1107,9 @@ on dead code, has no distribution. The wire schema is the one thing that is
 published, to the Buf Schema Registry, and CI does that on every push that
 touches the proto.
 
-Two things fall out of it when it happens. The poms need licence metadata,
-which nothing generates today. And a published testkit fixes its own API, so
-the query surface is worth a look before it is frozen rather than after.
+What gets published, under which version, and the testkit's frozen surface
+were settled on 2026-10-04 (ADRs 0056 and 0057). The publishing itself is
+checklist item 6.
 
 ### Naming hidden code: landed in all three repos
 
@@ -1530,17 +1565,11 @@ The testkit judges a never-hit row once per instance and name, summing the
 hits of every copy of a class two loaders defined in that instance; it used to
 list each copy's probes on their own. Open from that, found at review:
 
-- `neverHit()` judges each instance on its own hits, where the server merges
-  every in-scope instance, and so do the testkit's own class findings,
-  clusters and `hitCount`. With two instances, one that ran `Foo(1)` and one
-  that loaded `Foo` and ran nothing, `neverHit()` lists the second instance's
-  constructors and methods. Rare in a test JVM, which reports as one
-  instance; settle it with the testkit query API review (checklist item 4),
-  since it changes which instance a `ProbeRef` names.
-- A branch row groups copies by `branch_index`; the server groups by
-  `branch_key` when one is set. Two different builds of one class in one
-  instance (two webapps in one Tomcat) would have their outcomes summed by
-  index. The testkit's cluster code groups the same way.
+- `neverHit()` judges each instance on its own hits, and a branch row groups
+  copies by `branch_index`, where the server merges every in-scope instance
+  and groups by `branch_key`. Settled 2026-10-04 (ADR 0056): the testkit
+  matches the server, built in chunk 3 of "One-way doors settled before
+  release".
 - The demo's stub collector still judges each class copy on its own. It is
   the demo's printer and loads one copy.
 
