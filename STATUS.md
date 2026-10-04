@@ -409,6 +409,28 @@ finding is a missed finding, not a false one, the trade ADR 0052 made for a
 method whose sites do not pair. Recorded as an amendment to ADR 0052's
 consequences when built.
 
+Landing order, one chunk and one commit each: (1) the micro suite; (2) the
+CI checks; (3) `benchmark-overhead/` and its manual workflow; (4) the first
+run, both numbers in the README, and the ceiling run's findings.
+
+Chunk 1 landed: `HotPathBenchmark` in the `jmh` source set, run alone with
+`./gradlew jmh -Potherlode.benchmark.include=HotPathBenchmark`, and
+`HotPathWeavingTest` keeping its setup honest. `HotPathWeaver` defines one
+fixture class twice from the same bytes in two child-first loaders, the second
+copy through the transformer `OtherlodeInstrumentation.install` registers,
+held instead of registered. The fixtures sit in `com.example.hotpath`, since
+`TypeMatchPolicy` never includes `dev.otherlode.`. The review added `-prof gc`
+to every run, which the brief had left out, and a test pinning the branchy
+fixture at nine branch probes, so a lost switch probe cannot shrink what the
+benchmark measures. A short run on 2026-10-04 (a 12-core laptop, half of them
+efficiency cores, so not a number to publish): the woven probes allocate
+nothing on every shape; the endpoint seam's lookup and hit allocate nothing;
+the full Spring sequence allocates 24 bytes, the `List.of` key
+`HandleMatchAdvice` builds per request by design. One thread per core showed
+the endpoint dispatch at about 500 ns a call against 12 on one thread, the
+largest contention effect in the suite; the runner's numbers decide whether it
+matters.
+
 ### A Scala 3 enum nested in a class fails to transform
 
 Found 2026-10-04 by the overhead grill's size count. Running the real

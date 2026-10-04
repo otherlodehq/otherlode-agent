@@ -525,11 +525,23 @@ tasks.test {
     doFirst { systemProperties(benchmarkCorpusProperties()) }
 }
 
-// Fork, warmup and measurement settings live on the benchmark class. `-Potherlode.benchmark.corpus=demo`
-// runs one corpus; a comma-separated list runs several.
+// The hot-path suite weaves fixtures through the real transformer, which self-attaches, and reaches
+// the bootstrap seam classes the same way the test source set does.
+dependencies {
+    "jmhCompileOnly"(project(":bootstrap"))
+    "jmhImplementation"("net.bytebuddy:byte-buddy-agent:1.18.12")
+}
+
+// Fork, warmup and measurement settings live on the benchmark classes. `-Potherlode.benchmark.corpus=demo`
+// runs one corpus of the analyser benchmark; a comma-separated list runs several.
+// `-Potherlode.benchmark.include=HotPathBenchmark` runs only the benchmarks whose names match that
+// regular expression. Every run adds JMH's GC profiler, so each score carries its allocation per operation.
 jmh {
     jmhVersion.set("1.37")
     includeTests.set(false)
+    profilers.add("gc")
+    jvmArgsAppend.add("-Djdk.attach.allowAttachSelf=true")
+    providers.gradleProperty("otherlode.benchmark.include").orNull?.let { includes.add(it) }
     jvmArgsAppend.addAll(provider { benchmarkCorpusProperties().map { (key, value) -> "-D$key=$value" } })
     providers.gradleProperty("otherlode.benchmark.corpus").orNull?.let { selected ->
         benchmarkParameters.put("corpus", objects.listProperty<String>().value(selected.split(',').map { it.trim() }))
