@@ -78,6 +78,17 @@ class JavacMatrixTest {
 
     @ParameterizedTest(name = "javac {0}")
     @MethodSource("versions")
+    fun `a record with a hand-written equals leaves it unmarked and still marks the generated hashCode and toString`(version: String) {
+        val marks = CompilerFixtures.javac(version).marks("Named")
+
+        assertEquals(GeneratedBy.NONE, marks.only("equals"))
+        assertEquals(GeneratedBy.RECORD, marks.only("hashCode"))
+        assertEquals(GeneratedBy.RECORD, marks.only("toString"))
+        listOf("name", "age", "<init>").forEach { assertEquals(GeneratedBy.NONE, marks.only(it), it) }
+    }
+
+    @ParameterizedTest(name = "javac {0}")
+    @MethodSource("versions")
     fun `an enum's values and valueOf are ENUM, its constructor is not`(version: String) {
         val marks = CompilerFixtures.javac(version).marks("Shade")
 

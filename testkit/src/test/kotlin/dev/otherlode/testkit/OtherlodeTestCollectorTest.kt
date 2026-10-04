@@ -1682,6 +1682,173 @@ class OtherlodeTestCollectorTest {
     }
 
     @Test
+    fun `a call that resolves to a generated method continues along its edges, so a default reached only through a stub has its caller`() {
+        val target = startCollector()
+        val exporter = exporterFor(target)
+        exporter.exportManifest(
+            ProbeManifest(
+                ResourceAttributes("svc", null, "i-1", null, "run-1"),
+                probes =
+                    listOf(
+                        methodProbe(
+                            1,
+                            0,
+                            "com.acme.Caller",
+                            "call",
+                            "(Lcom/acme/Greeter;)V",
+                            1,
+                            calls = listOf(CallEdge("com.acme.Greeter", "greet", "()V", virtual = true)),
+                        ),
+                        // The implementing class's -jvm-default=disable stub: generated, so no node,
+                        // and the only edge to the default's code.
+                        methodProbe(
+                            2,
+                            0,
+                            "com.acme.GreeterImpl",
+                            "greet",
+                            "()V",
+                            -1,
+                            calls = listOf(CallEdge("com.acme.Greeter\$DefaultImpls", "greet", "(Lcom/acme/Greeter;)V", virtual = false)),
+                            generatedBy = GeneratedBy.DEFAULT_IMPLS,
+                        ),
+                        methodProbe(
+                            3,
+                            0,
+                            "com.acme.Greeter\$DefaultImpls",
+                            "greet",
+                            "(Lcom/acme/Greeter;)V",
+                            5,
+                            static = true,
+                            calls = listOf(CallEdge("com.acme.Helper", "help", "()V", virtual = false)),
+                        ),
+                        methodProbe(4, 0, "com.acme.Helper", "help", "()V", 9),
+                    ),
+                classLocations =
+                    listOf(
+                        ClassLocation(2, "java.lang.Object", listOf("com.acme.Greeter")),
+                        ClassLocation(3, "java.lang.Object", emptyList()),
+                    ),
+            ),
+        )
+        exporter.exportDeltaBatch(
+            DeltaBatch(ResourceAttributes("svc", null, "i-1", null, "run-1"), listOf(ProbeDelta(1, 0, ProbeKind.METHOD, 1L, 3L))),
+        )
+
+        val cluster = target.unreachedClusters().single()
+        assertEquals("com.acme.Greeter\$DefaultImpls", cluster.root.className)
+        assertEquals(RootKind.REACHED_FROM_HIT, cluster.rootKind, "the default is reached through the stub, not uncalled")
+        assertEquals(listOf("com.acme.Caller"), cluster.reachedFrom.map { it.className })
+        assertEquals(setOf("com.acme.Greeter\$DefaultImpls", "com.acme.Helper"), cluster.methods.map { it.className }.toSet())
+    }
+
+    @Test
+    fun `a hit generated method is a hit caller, so what it reaches roots its own cluster instead of joining a never-hit caller's`() {
+        val target = startCollector()
+        val exporter = exporterFor(target)
+        exporter.exportManifest(
+            ProbeManifest(
+                ResourceAttributes("svc", null, "i-1", null, "run-1"),
+                probes =
+                    listOf(
+                        // A data class's hashCode, hit by a HashMap outside scope, hashing a property
+                        // typed as an open class.
+                        methodProbe(
+                            1,
+                            0,
+                            "com.acme.D",
+                            "hashCode",
+                            "()I",
+                            -1,
+                            calls = listOf(CallEdge("com.acme.Base", "hashCode", "()I", virtual = true)),
+                            generatedBy = GeneratedBy.DATA_CLASS,
+                        ),
+                        methodProbe(2, 0, "com.acme.Sub", "hashCode", "()I", 4),
+                        methodProbe(
+                            3,
+                            0,
+                            "com.acme.C",
+                            "audit",
+                            "(Lcom/acme/D;)I",
+                            7,
+                            calls = listOf(CallEdge("com.acme.D", "hashCode", "()I", virtual = true)),
+                        ),
+                    ),
+                classLocations = listOf(ClassLocation(2, "com.acme.Base", emptyList())),
+            ),
+        )
+        exporter.exportDeltaBatch(
+            DeltaBatch(ResourceAttributes("svc", null, "i-1", null, "run-1"), listOf(ProbeDelta(1, 0, ProbeKind.METHOD, 1L, 1000L))),
+        )
+
+        val clusters = target.unreachedClusters()
+        val sub = clusters.single { it.root.className == "com.acme.Sub" }
+        assertEquals(RootKind.REACHED_FROM_HIT, sub.rootKind)
+        assertEquals(listOf("com.acme.D"), sub.reachedFrom.map { it.className })
+        val audit = clusters.single { it.root.className == "com.acme.C" }
+        assertEquals(listOf("com.acme.C"), audit.methods.map { it.className }, "the hit hashCode also calls Sub.hashCode")
+    }
+
+    @Test
+    fun `a lookup looks through a chain of generated methods to the code at its end`() {
+        val target = startCollector()
+        val exporter = exporterFor(target)
+        exporter.exportManifest(
+            ProbeManifest(
+                ResourceAttributes("svc", null, "i-1", null, "run-1"),
+                probes =
+                    listOf(
+                        methodProbe(
+                            1,
+                            0,
+                            "com.acme.Caller",
+                            "call",
+                            "(Lcom/acme/K;)V",
+                            1,
+                            calls = listOf(CallEdge("com.acme.K", "p", "()V", virtual = true)),
+                        ),
+                        methodProbe(
+                            2,
+                            0,
+                            "com.acme.KImpl",
+                            "p",
+                            "()V",
+                            -1,
+                            calls = listOf(CallEdge("com.acme.K\$DefaultImpls", "p", "(Lcom/acme/K;)V", virtual = false)),
+                            generatedBy = GeneratedBy.DEFAULT_IMPLS,
+                        ),
+                        methodProbe(
+                            3,
+                            0,
+                            "com.acme.K\$DefaultImpls",
+                            "p",
+                            "(Lcom/acme/K;)V",
+                            -1,
+                            static = true,
+                            calls = listOf(CallEdge("com.acme.I\$DefaultImpls", "p", "(Lcom/acme/I;)V", virtual = false)),
+                            generatedBy = GeneratedBy.DEFAULT_IMPLS,
+                        ),
+                        methodProbe(4, 0, "com.acme.I\$DefaultImpls", "p", "(Lcom/acme/I;)V", 5, static = true),
+                        // Hit, so the class loaded and p is judged on its own, not as a class finding.
+                        methodProbe(4, 1, "com.acme.I\$DefaultImpls", "q", "(Lcom/acme/I;)V", 8, static = true),
+                    ),
+                classLocations = listOf(ClassLocation(2, "java.lang.Object", listOf("com.acme.K"))),
+            ),
+        )
+        exporter.exportDeltaBatch(
+            DeltaBatch(
+                ResourceAttributes("svc", null, "i-1", null, "run-1"),
+                listOf(ProbeDelta(1, 0, ProbeKind.METHOD, 1L, 2L), ProbeDelta(4, 1, ProbeKind.METHOD, 1L, 1L)),
+            ),
+        )
+
+        val cluster = target.unreachedClusters().single()
+        assertEquals("com.acme.I\$DefaultImpls", cluster.root.className)
+        assertEquals("p", cluster.root.methodName)
+        assertEquals(RootKind.REACHED_FROM_HIT, cluster.rootKind, "reached through KImpl.p and K\$DefaultImpls.p, both generated")
+        assertEquals(listOf("com.acme.Caller"), cluster.reachedFrom.map { it.className })
+    }
+
+    @Test
     fun `widening starts at the edge's owner, so a sibling subtype's override is never a target`() {
         val target = startCollector()
         val exporter = exporterFor(target)

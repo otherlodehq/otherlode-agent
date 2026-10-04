@@ -173,7 +173,15 @@ class OtherlodeTestCollector private constructor(
     private class CallGraph(
         val nodes: Map<NodeKey, NodeInfo>,
         val calls: Map<NodeKey, Set<ResolvedCall>>,
-    )
+        /**
+         * Each generated method with hits, which is no node but is a caller that ran: its calls are
+         * in [calls], so what it reaches has a hit caller and joins no other cluster.
+         */
+        val hitGeneratedCallers: Map<NodeKey, NodeInfo> = emptyMap(),
+    ) {
+        /** The record behind [key], a node or a hit generated caller. */
+        fun infoOf(key: NodeKey): NodeInfo = nodes[key] ?: hitGeneratedCallers.getValue(key)
+    }
 
     /**
      * One node of the cluster graph [unreachedClusters] grows clusters over: a method, or, when
@@ -1228,7 +1236,8 @@ class OtherlodeTestCollector private constructor(
      * names, or else its method. Within one JVM a guard's branch index names one outcome of the
      * caller's class, so it is looked up there directly.
      *
-     * A root is a never-hit node with no caller or with a caller that is a method with hits. A method
+     * A root is a never-hit node with no caller or with a caller that is a method with hits, a
+     * generated method with hits included, since code outside scope may call it. A method
      * root with no caller is [RootKind.UNCALLED], and one with a caller that has hits is
      * [RootKind.REACHED_FROM_HIT]. An outcome root is [RootKind.UNTAKEN_OUTCOME], and a class root is
      * [RootKind.CLASS_FINDING]. A `<clinit>` is never a root, and neither is an unjudged constructor:
@@ -1249,7 +1258,7 @@ class OtherlodeTestCollector private constructor(
         return checked {
             val graph = computeCallGraph()
 
-            fun isHit(key: NodeKey) = (graph.nodes[key]?.hits ?: 0L) > 0L
+            fun isHit(key: NodeKey) = ((graph.nodes[key] ?: graph.hitGeneratedCallers[key])?.hits ?: 0L) > 0L
 
             val judgement = judgeClasses()
             val classNodes = buildClassNodes(graph, judgement)
@@ -1287,7 +1296,7 @@ class OtherlodeTestCollector private constructor(
                         }
                     val reachedFrom =
                         if (kind == RootKind.REACHED_FROM_HIT || kind == RootKind.CLASS_FINDING) {
-                            hitCallers.map { toProbeRef(graph.nodes.getValue(it.method), it.method) }.sortedWith(probeRefComparator)
+                            hitCallers.map { toProbeRef(graph.infoOf(it.method), it.method) }.sortedWith(probeRefComparator)
                         } else {
                             emptyList()
                         }
@@ -1531,31 +1540,91 @@ class OtherlodeTestCollector private constructor(
      * the class's first active use, and a resolved call into the class is exactly such a use.
      * Without this a never-initialised class's `<clinit>` would be an uncalled root of its own
      * beside the cluster that actually owns it. A call from a method to itself is dropped.
+     *
+     * A generated method is no node but is not a dead end either: a lookup that lands on one
+     * continues along that method's own edges, resolved the same way, so the call reaches what
+     * the generated code runs. A Kotlin `-jvm-default=disable` stub is the case that needs it: a
+     * call typed as the interface widens down to each implementing class's stub, which is
+     * generated, and only the stub's edge reaches the default's code in `$DefaultImpls`. A
+     * generated method with hits is a caller in its own right, since code outside scope can call
+     * it, as a `HashMap` calls a data class's `hashCode`: its calls are resolved the same way and
+     * recorded in [CallGraph.hitGeneratedCallers].
      */
     private fun computeCallGraph(): CallGraph {
         val nodes = buildNodes()
+        val transparent = buildTransparentMethods()
+        val known = nodes.keys + transparent.keys
         val reverseSubtypes = buildReverseSubtypes()
+
+        fun resolve(
+            edge: CallEdge,
+            expanded: MutableSet<NodeKey>,
+            into: MutableSet<NodeKey>,
+        ) {
+            val candidates = mutableSetOf<NodeKey>()
+            findDeclaringType(known, edge.className, edge.methodName, edge.methodDescriptor)?.let {
+                candidates += NodeKey(it, edge.methodName, edge.methodDescriptor)
+            }
+            if (edge.virtual && edge.methodName != "<init>" && edge.methodName != "<clinit>") {
+                candidates += widenToSubtypes(known, reverseSubtypes, edge.className, edge.methodName, edge.methodDescriptor)
+            }
+            for (candidate in candidates) {
+                val typeInitializer = NodeKey(candidate.className, "<clinit>", "()V")
+                if (typeInitializer in nodes) into += typeInitializer
+                if (candidate in nodes) {
+                    into += candidate
+                } else if (expanded.add(candidate)) {
+                    transparent[candidate].orEmpty().forEach { resolve(it, expanded, into) }
+                }
+            }
+        }
+
         val calls = mutableMapOf<NodeKey, Set<ResolvedCall>>()
         for ((nodeKey, info) in nodes) {
             val resolved = mutableSetOf<ResolvedCall>()
             for (edge in info.edges) {
                 val targets = mutableSetOf<NodeKey>()
-                findDeclaringType(nodes, edge.className, edge.methodName, edge.methodDescriptor)?.let {
-                    targets += NodeKey(it, edge.methodName, edge.methodDescriptor)
-                }
-                if (edge.virtual && edge.methodName != "<init>" && edge.methodName != "<clinit>") {
-                    targets += widenToSubtypes(nodes, reverseSubtypes, edge.className, edge.methodName, edge.methodDescriptor)
-                }
-                for (target in targets.toList()) {
-                    val typeInitializer = NodeKey(target.className, "<clinit>", "()V")
-                    if (typeInitializer in nodes) targets += typeInitializer
-                }
+                resolve(edge, mutableSetOf(), targets)
                 targets -= nodeKey
                 targets.mapTo(resolved) { ResolvedCall(it, edge.guard) }
             }
             calls[nodeKey] = resolved
         }
-        return CallGraph(nodes, calls)
+        val hitGeneratedCallers = mutableMapOf<NodeKey, NodeInfo>()
+        probesByKey.entries
+            .filter { (_, probe) -> probe.kind == ProbeKind.METHOD && !probe.inline && probe.generatedBy != GeneratedBy.NONE }
+            .groupBy { (_, probe) -> NodeKey(probe.className, probe.methodName, probe.methodDescriptor) }
+            .forEach { (key, entries) ->
+                // A key some instance reports unmarked is a node, with its own resolved calls.
+                if (key in nodes) return@forEach
+                val hits = entries.sumOf { (probeKey, _) -> hitsByKey[probeKey] ?: 0L }
+                if (hits == 0L) return@forEach
+                val representative = entries.first()
+                hitGeneratedCallers[key] =
+                    NodeInfo(representative.key.serviceInstanceId, representative.value.line, neverLoaded = false, hits, emptySet())
+                val targets = mutableSetOf<NodeKey>()
+                transparent[key].orEmpty().forEach { resolve(it, mutableSetOf(key), targets) }
+                calls[key] = targets.map { ResolvedCall(it, null) }.toSet()
+            }
+        return CallGraph(nodes, calls, hitGeneratedCallers)
+    }
+
+    /**
+     * Every generated method that is not inline, from manifests and complete baselines alike, with
+     * its edges: the methods [computeCallGraph] looks through rather than stopping at.
+     */
+    private fun buildTransparentMethods(): Map<NodeKey, Set<CallEdge>> {
+        val transparent = mutableMapOf<NodeKey, MutableSet<CallEdge>>()
+        probesByKey.values
+            .filter { it.kind == ProbeKind.METHOD && !it.inline && it.generatedBy != GeneratedBy.NONE }
+            .forEach { transparent.getOrPut(NodeKey(it.className, it.methodName, it.methodDescriptor)) { mutableSetOf() } += it.calls }
+        for ((className, declared) in consultedDeclaredClasses) {
+            for (method in declared.methods) {
+                if (method.inline || method.generatedBy == GeneratedBy.NONE) continue
+                transparent.getOrPut(NodeKey(className, method.methodName, method.methodDescriptor)) { mutableSetOf() } += method.calls
+            }
+        }
+        return transparent
     }
 
     /**
@@ -1627,12 +1696,12 @@ class OtherlodeTestCollector private constructor(
     }
 
     /**
-     * Breadth-first walk from [owner] up through its supertypes to the first type with a node
-     * named ([name], [desc]), [owner] itself included. Null if the whole chain, as far as it is
+     * Breadth-first walk from [owner] up through its supertypes to the first type with a key in
+     * [nodes] named ([name], [desc]), [owner] itself included. Null if the whole chain, as far as it is
      * known, never reaches one.
      */
     private fun findDeclaringType(
-        nodes: Map<NodeKey, NodeInfo>,
+        nodes: Set<NodeKey>,
         owner: String,
         name: String,
         desc: String,
@@ -1651,9 +1720,9 @@ class OtherlodeTestCollector private constructor(
         return null
     }
 
-    /** Every transitive subtype of [owner], excluding itself, that has a matching ([name], [desc]) node. */
+    /** Every transitive subtype of [owner], excluding itself, that has a matching ([name], [desc]) key in [nodes]. */
     private fun widenToSubtypes(
-        nodes: Map<NodeKey, NodeInfo>,
+        nodes: Set<NodeKey>,
         reverseSubtypes: Map<String, List<String>>,
         owner: String,
         name: String,

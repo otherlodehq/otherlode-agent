@@ -302,6 +302,8 @@ private data class ResolvedCall(
 private class CallGraph(
     val nodes: Map<NodeKey, NodeInfo>,
     val calls: Map<NodeKey, Set<ResolvedCall>>,
+    /** Each generated method with hits: no node, but a caller that ran, whose calls are in [calls]. */
+    val hitGeneratedCallers: Map<NodeKey, NodeInfo> = emptyMap(),
 )
 
 /**
@@ -1531,7 +1533,7 @@ private fun routesByHandler(): Map<NodeKey, List<String>> =
 private fun computeUnreachedClusters(): List<UnreachedClusterInfo> {
     val graph = computeCallGraph()
 
-    fun isHit(key: NodeKey) = (graph.nodes[key]?.hits ?: 0L) > 0L
+    fun isHit(key: NodeKey) = ((graph.nodes[key] ?: graph.hitGeneratedCallers[key])?.hits ?: 0L) > 0L
 
     val judgement = judgeClasses()
     val classNodes = buildClassNodes(graph, judgement)
@@ -1569,7 +1571,9 @@ private fun computeUnreachedClusters(): List<UnreachedClusterInfo> {
                 }
             val reachedFrom =
                 if (kind == ClusterRootKind.REACHED_FROM_HIT || kind == ClusterRootKind.CLASS_FINDING) {
-                    hitCallers.map { toClusterMember(graph.nodes.getValue(it.method), it.method) }.sortedWith(clusterMemberComparator)
+                    hitCallers
+                        .map { toClusterMember(graph.nodes[it.method] ?: graph.hitGeneratedCallers.getValue(it.method), it.method) }
+                        .sortedWith(clusterMemberComparator)
                 } else {
                     emptyList()
                 }
@@ -1782,38 +1786,89 @@ private fun buildClusterGraph(
  * typed as the owner can only be the owner or one of its subtypes, never a sibling under some
  * ancestor. Each resolved call keeps its raw edge's guard. Declared classes and their supertypes
  * are consulted only from scans where every chunk has arrived; see [printNeverLoadedReport] for why
- * a partial scan cannot be diffed.
+ * a partial scan cannot be diffed. A lookup that lands on a generated method, which is no node,
+ * continues along that method's own edges, so a call reaches what the generated code runs, and a
+ * generated method with hits is a caller in its own right, as in
+ * OtherlodeTestCollector.computeCallGraph.
  */
 private fun computeCallGraph(): CallGraph {
     val scansComplete = scans.values.all { it.complete }
     val declaredClasses = if (scansComplete) staticallyDeclaredClasses else emptyMap()
     val declaredSupertypes = if (scansComplete) staticallyDeclaredSupertypes else emptyMap()
     val nodes = buildClusterNodes(declaredClasses)
+    val transparent = buildTransparentMethods(declaredClasses)
+    val known = nodes.keys + transparent.keys
     val supertypesByClassName = buildSupertypesByClassName(declaredSupertypes)
     val reverseSubtypes = buildReverseSubtypes(supertypesByClassName)
+
+    fun resolve(
+        edge: CallEdgeInfo,
+        expanded: MutableSet<NodeKey>,
+        into: MutableSet<NodeKey>,
+    ) {
+        val candidates = mutableSetOf<NodeKey>()
+        findDeclaringType(known, supertypesByClassName, edge.className, edge.methodName, edge.methodDescriptor)?.let {
+            candidates += NodeKey(it, edge.methodName, edge.methodDescriptor)
+        }
+        if (edge.virtual && edge.methodName != "<init>" && edge.methodName != "<clinit>") {
+            candidates += widenToSubtypes(known, reverseSubtypes, edge.className, edge.methodName, edge.methodDescriptor)
+        }
+        for (candidate in candidates) {
+            // A resolved call into a class is its first active use, which is what runs <clinit>;
+            // no bytecode ever calls it directly. Same rule as OtherlodeTestCollector.computeCallGraph.
+            val typeInitializer = NodeKey(candidate.className, "<clinit>", "()V")
+            if (typeInitializer in nodes) into += typeInitializer
+            if (candidate in nodes) {
+                into += candidate
+            } else if (expanded.add(candidate)) {
+                transparent[candidate].orEmpty().forEach { resolve(it, expanded, into) }
+            }
+        }
+    }
+
     val calls = mutableMapOf<NodeKey, Set<ResolvedCall>>()
     for ((nodeKey, info) in nodes) {
         val resolved = mutableSetOf<ResolvedCall>()
         for (edge in info.edges) {
             val targets = mutableSetOf<NodeKey>()
-            findDeclaringType(nodes, supertypesByClassName, edge.className, edge.methodName, edge.methodDescriptor)?.let {
-                targets += NodeKey(it, edge.methodName, edge.methodDescriptor)
-            }
-            if (edge.virtual && edge.methodName != "<init>" && edge.methodName != "<clinit>") {
-                targets += widenToSubtypes(nodes, reverseSubtypes, edge.className, edge.methodName, edge.methodDescriptor)
-            }
-            // A resolved call into a class is its first active use, which is what runs <clinit>;
-            // no bytecode ever calls it directly. Same rule as OtherlodeTestCollector.computeCallGraph.
-            for (target in targets.toList()) {
-                val typeInitializer = NodeKey(target.className, "<clinit>", "()V")
-                if (typeInitializer in nodes) targets += typeInitializer
-            }
+            resolve(edge, mutableSetOf(), targets)
             targets -= nodeKey
             targets.mapTo(resolved) { ResolvedCall(it, edge.guard) }
         }
         calls[nodeKey] = resolved
     }
-    return CallGraph(nodes, calls)
+    val hitGeneratedCallers = mutableMapOf<NodeKey, NodeInfo>()
+    manifestProbes.entries
+        .filter { (_, probe) -> probe.kind == ProbeKind.METHOD && !probe.inline && probe.generatedBy != GeneratedBy.GENERATED_BY_NONE }
+        .groupBy { (_, probe) -> NodeKey(probe.className, probe.methodName, probe.methodDescriptor) }
+        .forEach { (key, entries) ->
+            // A key some instance reports unmarked is a node, with its own resolved calls.
+            if (key in nodes) return@forEach
+            val hits = entries.sumOf { (probeKey, _) -> latestHitsTotal[probeKey] ?: 0L }
+            if (hits == 0L) return@forEach
+            hitGeneratedCallers[key] = NodeInfo(line = entries.first().value.line, neverLoaded = false, hits = hits, edges = emptySet())
+            val targets = mutableSetOf<NodeKey>()
+            transparent[key].orEmpty().forEach { resolve(it, mutableSetOf(key), targets) }
+            calls[key] = targets.map { ResolvedCall(it, null) }.toSet()
+        }
+    return CallGraph(nodes, calls, hitGeneratedCallers)
+}
+
+/** Every generated method that is not inline, from manifests and [declaredClasses], with its edges. */
+private fun buildTransparentMethods(declaredClasses: Map<String, List<DeclaredMethodInfo>>): Map<NodeKey, Set<CallEdgeInfo>> {
+    val transparent = mutableMapOf<NodeKey, MutableSet<CallEdgeInfo>>()
+    for ((key, probe) in manifestProbes) {
+        if (probe.kind != ProbeKind.METHOD || probe.inline || probe.generatedBy == GeneratedBy.GENERATED_BY_NONE) continue
+        transparent.getOrPut(NodeKey(probe.className, probe.methodName, probe.methodDescriptor)) { mutableSetOf() } +=
+            manifestCallEdges[key].orEmpty()
+    }
+    for ((className, methods) in declaredClasses) {
+        for (method in methods) {
+            if (method.inline || method.generatedBy == GeneratedBy.GENERATED_BY_NONE) continue
+            transparent.getOrPut(NodeKey(className, method.methodName, method.methodDescriptor)) { mutableSetOf() } += method.calls
+        }
+    }
+    return transparent
 }
 
 /**
@@ -1875,12 +1930,12 @@ private fun buildReverseSubtypes(supertypesByClassName: Map<String, SupertypesIn
 }
 
 /**
- * Breadth-first walk from [owner] up through its supertypes to the first type with a node named
+ * Breadth-first walk from [owner] up through its supertypes to the first type with a key in [nodes] named
  * ([name], [desc]), [owner] itself included. Null if the whole chain, as far as it is known, never
  * reaches one.
  */
 private fun findDeclaringType(
-    nodes: Map<NodeKey, NodeInfo>,
+    nodes: Set<NodeKey>,
     supertypesByClassName: Map<String, SupertypesInfo>,
     owner: String,
     name: String,
@@ -1902,7 +1957,7 @@ private fun findDeclaringType(
 
 /** Every transitive subtype of [declaringType], excluding itself, that has a matching ([name], [desc]) node. */
 private fun widenToSubtypes(
-    nodes: Map<NodeKey, NodeInfo>,
+    nodes: Set<NodeKey>,
     reverseSubtypes: Map<String, List<String>>,
     declaringType: String,
     name: String,

@@ -314,8 +314,30 @@ fixes re-reviewed by a fresh Opus reviewer, one commit each:
    (a fixture change used to leave tests up to date, for the existing Scala and
    Kotlin fixture modules too) and made the compile tasks configuration-cache
    safe. No rule gap beyond the three in step 2 turned up.
-2. ADR 0026's three gaps, failing tests first against the matrix's 2.1.21
-   build and a non-null-parameter `$DefaultImpls` fixture.
+2. ADR 0026's three gaps. Landed 2026-10-04. The `disable`-mode stub, the
+   `$DefaultImpls` forwarder's null checks and the record body rule, each
+   proven across the matrix. The reviews widened the stub rule to generic
+   interfaces (erased parameters, a cast on the return, boxed primitives),
+   found that a `super.m()` override compiles to the stub's exact body (marked,
+   by ADR 0048's precedent), and found that passing a call through an open
+   class's stub, or kotlinc 2.2's bridge in its place, dropped the virtual
+   edge a subclass override is reached by, and that a call naming a subclass
+   that only inherits the stub reached nothing once the stub was marked. ADR
+   0041 is amended: the virtual edge is kept, an inherited forwarder or
+   bridge is resolved at the class that declares it, and a call to an abstract
+   interface method also reaches the interface's own `$DefaultImpls` body. A
+   sub-interface's inherited defaults (`J$DefaultImpls.p` forwarding to
+   `I$DefaultImpls.p` with a receiver cast) are marked too. The fourth review
+   showed a call typed as a super-interface cannot be fixed in the agent, so
+   ADR 0024 is amended: a collector looks through a generated method along its
+   own edges instead of stopping at it. The testkit and the stub collector
+   apply it; `otherlode-server` takes it in step 9. The fifth review added that
+   a generated method with hits is a hit caller (a `HashMap` calling a data
+   class's `hashCode` reaches an override), and two forwarder shapes: a boxed
+   primitive result under kotlinc 2.2's default mode, and `Boxing.box<Type>` in
+   a suspend forwarder. The sixth found the boxed-result acceptance also let a
+   hand-written `super` call through a `$DefaultImpls` method be marked, and
+   narrowed it to calls to the interface's own accessor. Seven Opus reviews.
 3. Scala fixture matrix, one build per variant boundary (2.12.20, 2.13.16,
    2.13.18, 3.3.6, 3.3.7, 3.3.8, 3.7.0, 3.7.2, 3.8.3, 3.8.4, 3.9.0), and every
    variant read, 2.12's `readResolve` included. No wire change.
@@ -333,8 +355,32 @@ fixes re-reviewed by a fresh Opus reviewer, one commit each:
    clusters, never-supplied and always-supplied; the stub collector's output.
 9. `otherlode-server`: store both oneofs and `agent_version`, count unread
    shapes per family in the report, label the rows, keep them out of the graph.
+   Also ADR 0024's amendment from step 2: the graph looks through a generated
+   method along its own edges (`internal/store/graph.go` drops generated
+   methods with `generated_by = 0` filters on nodes and edges).
 10. The scheduled canary job and the README's list of compilers whose marks are
     exact.
+
+Open from step 2's review, after release: kotlinc 2.2 and later under an
+explicit `-jvm-default=disable` make each implementing class's stub a bridge,
+which has no probe, so a call typed as a super-interface whose sub-interface
+overrides the default does not reach that sub-interface's `$DefaultImpls`
+body. The default mode from 2.2 is unaffected. Also: a value class as a generic
+interface's type argument (`Impl : I<V>`, kotlinc 2.1 and earlier) gives a
+stub that boxes through `V.box-impl`, then casts and unboxes the result; it is
+not read and reads as the adopter's code (ADR 0026's amendment). `Unit` as
+the type argument gives a stub for a default returning the type parameter
+whose body pops the result and returns void (`get()V`), not read either. Both
+shapes turn up in a sub-interface's `$DefaultImpls` forwarders too
+(`SV$DefaultImpls.put-<hash>`, `SU$DefaultImpls.put`). A data class with a
+value-class property is not recognised at all: its `componentN` and `copy`
+names are mangled (`component2-<hash>`), so none of its generated methods is
+marked (kotlinc 1.9.25 and 2.1.21; ADR 0026 already leaves value classes out).
+A suspend default returning `Unit` gives a `$DefaultImpls` forwarder that ends
+by comparing the result with the suspended marker and returning `Unit`
+(`dup; getCOROUTINE_SUSPENDED; if_acmpne; ...; getstatic Unit.INSTANCE`): a
+sub-interface's under `disable` on every kotlinc, and the interface's own under
+`all-compatibility` before 2.2. Not read; a false never-hit when unused.
 
 Open from the survey, after release: javac 25 at `--release 21` lowers an enum
 pattern switch through `typeSwitch` with ConstantDynamic `EnumDesc` arguments,

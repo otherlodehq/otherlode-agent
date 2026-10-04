@@ -48,6 +48,9 @@ object CompilerFixtures {
         private val dir: File,
         private val packagePath: String,
     ) {
+        /** The root of this build's class files, which a static scan can walk. */
+        val directory: File get() = dir
+
         /** The raw bytes of fixture class [simpleName], which may be a nested name such as `Outer$Inner`. */
         fun classBytes(simpleName: String): ByteArray = File(dir, "$packagePath/$simpleName.class").readBytes()
 
@@ -64,6 +67,32 @@ object CompilerFixtures {
                 lookup,
                 includePackages = listOf("com.example.target"),
             ) { _, _ -> true }
+
+        /**
+         * The analysis of fixture class [simpleName] with the methods the method tier probes: no
+         * bridge, synthetic, abstract or native method and no `<clinit>`, so a call to a bridge in
+         * the class is passed through as it is in the agent.
+         */
+        fun analyzeAsMethodTier(simpleName: String): BranchSiteAnalyzer.Analysis {
+            val bytes = classBytes(simpleName)
+            val unprobed = mutableSetOf<Pair<String, String>>()
+            val excluded = Opcodes.ACC_BRIDGE or Opcodes.ACC_SYNTHETIC or Opcodes.ACC_ABSTRACT or Opcodes.ACC_NATIVE
+            ClassReader(bytes).accept(
+                object : ClassVisitor(Opcodes.ASM9) {
+                    override fun visitMethod(
+                        access: Int,
+                        name: String,
+                        descriptor: String,
+                        signature: String?,
+                        exceptions: Array<out String>?,
+                    ) = null.also { if (access and excluded != 0 || name == "<clinit>") unprobed += name to descriptor }
+                },
+                ClassReader.SKIP_CODE,
+            )
+            return BranchSiteAnalyzer.analyze(bytes, lookup, includePackages = listOf("com.example.target")) { name, descriptor ->
+                (name to descriptor) !in unprobed
+            }
+        }
 
         /** The analysis as the method tier sees it, constructors left out. */
         fun analyzeBranches(simpleName: String): BranchSiteAnalyzer.Analysis =

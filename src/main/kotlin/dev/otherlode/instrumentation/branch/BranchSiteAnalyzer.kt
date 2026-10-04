@@ -18,6 +18,7 @@ import net.bytebuddy.jar.asm.Label
 import net.bytebuddy.jar.asm.MethodVisitor
 import net.bytebuddy.jar.asm.Opcodes
 import net.bytebuddy.jar.asm.RecordComponentVisitor
+import net.bytebuddy.jar.asm.Type
 import net.bytebuddy.jar.asm.TypePath
 import dev.otherlode.export.BranchSite as BranchSitePayload
 
@@ -889,6 +890,8 @@ object BranchSiteAnalyzer {
                 methodsWithLineNumbers,
                 kotlinKind,
                 isScalaClass,
+                isKotlinClass,
+                interfaceInternalNames,
                 readClass,
             )
 
@@ -908,6 +911,8 @@ object BranchSiteAnalyzer {
                 guardsByMethod = guardsByMethod,
                 isOwnClassBodyClass = hasEnclosingMethod,
                 forwarderKeys = generatedByMethod.filterValues { it in PASS_THROUGH_FORWARDERS }.keys,
+                classAccess = classAccess,
+                superInternalName = superInternalName,
             )
         val references =
             placeReferences(
@@ -1510,6 +1515,31 @@ object BranchSiteAnalyzer {
      * entry point that is itself a generated forwarder does not pass through other forwarders:
      * its own edges name its callees as its bytecode does. A `$default` whose target is a
      * forwarder, as a multi-file facade's may be, passes through the target too.
+     *
+     * A virtual call into a forwarder, or into another class's bridge, that a subclass can
+     * override, one neither private, static nor final in a class that is not final ([classAccess]
+     * for this class's own), also keeps its edge to the method called. Other pass-throughs, such as
+     * an accessor or an enhancement method (ADR 0047), never stand for an override. The pass-through names what
+     * that method runs, and the edge lets a collector walk down to every override: an `open`
+     * class's stub for an interface default, a bridge from kotlinc 2.2 and a marked method before
+     * it, passes through to the interface's code, while a subclass that overrides it is reached
+     * only through the virtual edge. The same holds for a call to this class's own bridge.
+     *
+     * A call naming a class that only inherits the method (`plain.p()` where `Plain` extends the
+     * `open class Open` that declares the stub) is resolved at the first superclass up from it that
+     * declares the method, from [superInternalName] for this class's own calls; the walk stops at a
+     * superclass out of scope or unreadable, and after [MAX_INHERITED_DECLARATION_HOPS]. When that
+     * declaration is a forwarder or a bridge, its callees are passed through as for a direct call.
+     * This matters for the `-jvm-default=disable` stub, whose code is in `$DefaultImpls`, which is no
+     * supertype a collector walks up through; from kotlinc 2.2 the walk up already reaches the
+     * interface's own method. Only forwarders and bridges are looked for: kotlinc names the declaring
+     * class for a `$default` or an `access$` call. The edge naming the class called keeps its place,
+     * so a collector can walk down to an override below it.
+     *
+     * Under `-jvm-default=disable` a virtual call naming the interface itself (`describer.plain()`
+     * with `describer: Describer`) names an abstract method, and the code it may run is the static
+     * method of that name in `<interface>$DefaultImpls`. Each implementing class reaches it through
+     * a marked stub, which is no node, so the call also gets an edge to that `$DefaultImpls` method.
      */
     private fun resolveCallEdges(
         internalClassName: String,
@@ -1525,6 +1555,8 @@ object BranchSiteAnalyzer {
         guardsByMethod: Map<Pair<String, String>, MethodGuards> = emptyMap(),
         isOwnClassBodyClass: Boolean = false,
         forwarderKeys: Set<Pair<String, String>> = emptySet(),
+        classAccess: Int,
+        superInternalName: String?,
     ): ResolvedCalls {
         val crossClassMethodTables = mutableMapOf<String, MethodTable?>()
 
@@ -1562,6 +1594,23 @@ object BranchSiteAnalyzer {
         val reachedPassThroughs = mutableSetOf<Pair<String, String>>()
         val referencesByMethod = mutableMapOf<Pair<String, String>, Set<String>>()
         val reachedUnprobedBodyClasses = LinkedHashSet<String>()
+
+        // The nearest superclass from [start] up, in scope and readable, that declares the method.
+        fun inheritedDeclaration(
+            start: String?,
+            name: String,
+            descriptor: String,
+        ): Pair<String, MethodTable>? {
+            var current = start
+            repeat(MAX_INHERITED_DECLARATION_HOPS) {
+                val candidate = current ?: return null
+                if (!TypeMatchPolicy.isIncluded(candidate.replace('/', '.'), includePackages, excludePackages)) return null
+                val table = methodTableFor(candidate) ?: return null
+                if ((name to descriptor) in table.methodAccess) return candidate to table
+                current = table.superInternalName
+            }
+            return null
+        }
 
         fun isBodyClass(ownerInternalName: String): Boolean =
             if (ownerInternalName == internalClassName) {
@@ -1646,20 +1695,54 @@ object BranchSiteAnalyzer {
                     references = outer
                 }
 
+                // Passes through the method a superclass declares when it is a forwarder or a bridge,
+                // and says whether it did.
+                fun passThroughInherited(start: String?): Boolean {
+                    if (name == "<init>" || name == "<clinit>") return false
+                    val (declaringOwner, declaringTable) = inheritedDeclaration(start, name, descriptor) ?: return false
+                    val declaringAccess = declaringTable.methodAccess.getValue(name to descriptor)
+                    if (declaringAccess and BODYLESS_FLAGS != 0) return false
+                    val declaringCandidates = declaringTable.rawCandidatesByMethod[name to descriptor].orEmpty()
+                    when {
+                        passThroughForwarders && (name to descriptor) in declaringTable.forwarderKeys -> {
+                            passThroughForwarder(declaringCandidates)
+                        }
+
+                        declaringAccess and Opcodes.ACC_BRIDGE != 0 -> {
+                            references += declaringTable.rawReferencesByMethod[name to descriptor].orEmpty()
+                            declaringCandidates.forEach(::visitInside)
+                        }
+
+                        else -> {
+                            return false
+                        }
+                    }
+                    visit(declaringOwner, "<clinit>", "()V", false, kind, 0, null)
+                    return true
+                }
+
                 if (owner == internalClassName) {
                     if (name == "<clinit>") return
                     val access = methodAccess[name to descriptor]
+                    if (access == null) passThroughInherited(superInternalName)
                     val nonVirtual = access != null && access and NON_VIRTUAL_FLAGS != 0
                     val virtual = virtualRaw && !nonVirtual
                     val declaredWithBody = access != null && access and BODYLESS_FLAGS == 0
                     if (passThroughForwarders && declaredWithBody && (name to descriptor) in forwarderKeys) {
                         passThroughForwarder(rawCandidatesByMethod[name to descriptor].orEmpty())
+                        if (virtual && classAccess and Opcodes.ACC_FINAL == 0) {
+                            edges += edge(dottedClassName, name, descriptor, true, kind, capturedCount, implementedInterface)
+                        }
                     } else if ((name to descriptor) in eligibleMethodKeys || !declaredWithBody) {
                         edges += edge(dottedClassName, name, descriptor, virtual, kind, capturedCount, implementedInterface)
                     } else {
                         passThroughs += name to descriptor
                         references += rawReferencesByMethod[name to descriptor].orEmpty()
                         rawCandidatesByMethod[name to descriptor].orEmpty().forEach(::visitInside)
+                        val ownBridge = access != null && access and Opcodes.ACC_BRIDGE != 0
+                        if (virtual && ownBridge && classAccess and Opcodes.ACC_FINAL == 0) {
+                            edges += edge(dottedClassName, name, descriptor, true, kind, capturedCount, implementedInterface)
+                        }
                     }
                     return
                 }
@@ -1690,6 +1773,7 @@ object BranchSiteAnalyzer {
 
                 val table = methodTableFor(owner)
                 val access = table?.methodAccess?.get(name to descriptor)
+                if (table != null && access == null) passThroughInherited(table.superInternalName)
                 if (table == null || access == null) {
                     // Under runtime enhancement the owner's class file predates the enhancer, so an
                     // enhancement method it calls is not declared there. Nothing probes that name,
@@ -1715,19 +1799,37 @@ object BranchSiteAnalyzer {
                     }
                     return
                 }
+                val overridable = virtualRaw && access and NON_VIRTUAL_FLAGS == 0 && table.classAccess and Opcodes.ACC_FINAL == 0
                 if (declaredWithBody && !isConstructorOrInitializer &&
                     wouldNotBeProbedByMethodTier(access, name, table.isScalaClass, table.superInternalName)
                 ) {
                     references += table.rawReferencesByMethod[name to descriptor].orEmpty()
                     table.rawCandidatesByMethod[name to descriptor].orEmpty().forEach(::visitInside)
                     visit(owner, "<clinit>", "()V", false, kind, 0, null)
+                    if (overridable && access and Opcodes.ACC_BRIDGE != 0) {
+                        edges += edge(dottedOwner, name, descriptor, true, kind, capturedCount, implementedInterface)
+                    }
                     return
+                }
+
+                // Under -jvm-default=disable an interface method with a body is abstract, and its code is
+                // the static method of the same name in `<interface>$DefaultImpls`, reached through
+                // each implementing class's stub, which is marked and no node. A virtual call naming
+                // the interface may run that code, so it gets an edge beside the verbatim one.
+                if (virtualRaw && access and Opcodes.ACC_ABSTRACT != 0 && table.classAccess and Opcodes.ACC_INTERFACE != 0) {
+                    val implsOwner = owner + DEFAULT_IMPLS_SUFFIX
+                    val implsDescriptor = "(L$owner;" + descriptor.substring(1)
+                    val implsAccess = methodTableFor(implsOwner)?.methodAccess?.get(name to implsDescriptor)
+                    if (implsAccess != null && implsAccess and Opcodes.ACC_STATIC != 0 && implsAccess and BODYLESS_FLAGS == 0) {
+                        edges += edge(implsOwner.replace('/', '.'), name, implsDescriptor, false, kind, capturedCount, implementedInterface)
+                    }
                 }
 
                 val isForwarder = passThroughForwarders && declaredWithBody && (name to descriptor) in table.forwarderKeys
                 if (isForwarder) {
                     passThroughForwarder(table.rawCandidatesByMethod[name to descriptor].orEmpty())
                     visit(owner, "<clinit>", "()V", false, kind, 0, null)
+                    if (overridable) edges += edge(dottedOwner, name, descriptor, true, kind, capturedCount, implementedInterface)
                 } else {
                     val nonVirtual = access and NON_VIRTUAL_FLAGS != 0
                     edges += edge(dottedOwner, name, descriptor, virtualRaw && !nonVirtual, kind, capturedCount, implementedInterface)
@@ -1961,6 +2063,9 @@ object BranchSiteAnalyzer {
 
     /** A target with any of these flags can never be overridden, so a call to it is never virtual. */
     private const val NON_VIRTUAL_FLAGS = Opcodes.ACC_PRIVATE or Opcodes.ACC_STATIC or Opcodes.ACC_FINAL
+
+    /** How many superclasses a call naming a class that only inherits its method is followed up. */
+    private const val MAX_INHERITED_DECLARATION_HOPS = 16
 
     /** A target with either flag has no body to pass through, so a call to it stays an edge. */
     private const val BODYLESS_FLAGS = Opcodes.ACC_ABSTRACT or Opcodes.ACC_NATIVE
@@ -2677,7 +2782,8 @@ object BranchSiteAnalyzer {
 
     /**
      * What compiled each of [internalClassName]'s own declared methods into existence, from
-     * bytecode shape alone. No rule here reads an annotation or `kotlin.Metadata`.
+     * bytecode shape alone. The only annotation any rule reads is `kotlin.Metadata`: its kind for the
+     * multi-file facade rule, and its presence for the `-jvm-default=disable` stub rule below.
      *
      * A class named with the `$DefaultImpls` suffix marks a method [GeneratedBy.DEFAULT_IMPLS] only
      * when its body only forwards, as [defaultImplsForwarders] checks, and marks nothing else in the
@@ -2695,8 +2801,14 @@ object BranchSiteAnalyzer {
      * descriptor, [GeneratedBy.ENUM].
      *
      * A class whose direct superclass is `java.lang.Record` marks `equals(Ljava/lang/Object;)Z`,
-     * `hashCode()I`, and `toString()Ljava/lang/String;` [GeneratedBy.RECORD]; its accessors are
-     * the adopter's own component declarations and stay [GeneratedBy.NONE].
+     * `hashCode()I`, and `toString()Ljava/lang/String;` [GeneratedBy.RECORD] only when the body is
+     * javac's, as [javacRecordMembers] reads it. A method the adopter wrote stays
+     * [GeneratedBy.NONE], and so do the record's accessors, which are the adopter's own component
+     * declarations.
+     *
+     * In a class that carries `kotlin.Metadata` and implements an interface, a method that only
+     * forwards to that interface's `$DefaultImpls` is [GeneratedBy.DEFAULT_IMPLS]; see
+     * [defaultImplsStubs].
      *
      * A data class is recognised by the shape the compiler alone can produce: a consecutive
      * `component1` through `componentN`, each taking no parameters, whose return types in order
@@ -2734,6 +2846,8 @@ object BranchSiteAnalyzer {
         methodsWithLineNumbers: Set<Pair<String, String>>,
         kotlinKind: KotlinKind,
         isScalaClass: Boolean,
+        isKotlinClass: Boolean,
+        interfaceInternalNames: List<String>,
         lookup: (internalName: String) -> ByteArray?,
     ): Map<Pair<String, String>, GeneratedBy> {
         val result = mutableMapOf<Pair<String, String>, GeneratedBy>()
@@ -2758,10 +2872,7 @@ object BranchSiteAnalyzer {
         }
 
         if (superInternalName == "java/lang/Record") {
-            for (key in methodAccess.keys) {
-                val (name, descriptor) = key
-                if (isEqualsHashCodeOrToString(name, descriptor)) result[key] = GeneratedBy.RECORD
-            }
+            for (key in javacRecordMembers(classBytes)) result[key] = GeneratedBy.RECORD
         }
 
         markDataClassMembers(internalClassName, methodAccess, methodsWithLineNumbers, result)
@@ -2772,6 +2883,10 @@ object BranchSiteAnalyzer {
 
         if (methodAccess.keys.any { (name, descriptor) -> isDefaultShaped(name, descriptor) }) {
             for (key in jvmOverloadsForwarders(classBytes, internalClassName)) result.putIfAbsent(key, GeneratedBy.JVM_OVERLOADS)
+        }
+
+        if (isKotlinClass && interfaceInternalNames.isNotEmpty()) {
+            for (key in defaultImplsStubs(classBytes, interfaceInternalNames)) result.putIfAbsent(key, GeneratedBy.DEFAULT_IMPLS)
         }
 
         if (isScalaClass) {
@@ -2787,6 +2902,7 @@ object BranchSiteAnalyzer {
      * `kotlin/` prefix so that `shadowJar` does not rewrite it in this agent's relocated copy.
      */
     private const val INTRINSICS_SUFFIX = "/jvm/internal/Intrinsics"
+    private const val OBJECT_METHODS_INTERNAL_NAME = "java/lang/runtime/ObjectMethods"
     private const val THROWABLE_INTERNAL_NAME = "java/lang/Throwable"
     private const val OBJECT_INTERNAL_NAME = "java/lang/Object"
     private const val UNREADABLE = ""
@@ -3090,20 +3206,46 @@ object BranchSiteAnalyzer {
      * The methods of a `$DefaultImpls` class whose body only forwards to [interfaceInternalName]:
      * it loads each of its parameters once, in declaration order, with the load opcode for that
      * parameter's type, then makes exactly one `invokestatic` whose owner is the interface, then
-     * returns with one xRETURN. Labels, line numbers, frames and other pseudo-instructions are
-     * ignored; any other instruction, including a conditional jump, a `checkcast` or a boxing call,
-     * means the method is not a forwarder.
+     * returns with one xRETURN. kotlinc's parameter null checks may come before the loads, as in
+     * [multifileFacadeForwarders]: a forwarder with a non-null reference parameter starts with
+     * `aload; ldc "<name>"; invokestatic Intrinsics.checkNotNullParameter`. Where a sub-interface
+     * fixes a type argument at a primitive, the call returns the primitive and the forwarder boxes
+     * it with its box type's `valueOf` for its own return (kotlinc 2.2.21 to 2.4.20, and earlier
+     * under `all-compatibility`). Labels, line numbers, frames and other pseudo-instructions are
+     * ignored; any other instruction, a `checkcast` included, means the method is not a forwarder
+     * to the interface.
+     *
+     * Under `-jvm-default=disable`, the default up to kotlinc 2.1 and an explicit choice after, a
+     * sub-interface that inherits a default gets a `$DefaultImpls` method forwarding to the
+     * super-interface's instead: `SubDescriber$DefaultImpls.plain(LSubDescriber;)` loads its
+     * receiver, casts it to `Describer`, and calls `Describer$DefaultImpls.plain(LDescriber;)` with
+     * the same name (checked with `javap` on kotlinc 1.9.25 and 2.1.21). That call may pass the
+     * parameters as an erased generic signature would, as [forwardsThroughErasure] checks, since a
+     * sub-interface can fix a type argument, and a suspend default boxes a primitive argument with
+     * `Boxing.box<Type>`. `override fun plain() = super<Describer>.plain()` in a sub-interface
+     * compiles to the same call with no cast; it is marked too, as ADR 0026's amendment explains for
+     * implementing classes.
      *
      * The rule is kept this narrow on purpose. A real forwarder shape it misses shows up as a
      * false never-hit, which someone can see and report; a wider rule that also matched a real body
-     * would hide that body from never-hit with nothing to show for it. Every forwarder kotlinc
-     * 2.2.21 emits under `-jvm-default=enable` matches, generic, `long`/`double`, property accessor,
-     * `$default` and suspend methods included (checked with `javap`).
+     * would hide that body from never-hit with nothing to show for it. Every forwarder in the
+     * compiler matrix's fixtures matches, generic, primitive, `long`/`double`, property accessor,
+     * `$default` and suspend methods included (ADR 0055).
      */
     private fun defaultImplsForwarders(
         classBytes: ByteArray,
         interfaceInternalName: String,
     ): Set<Pair<String, String>> {
+        // A super-interface's `$DefaultImpls` method takes that interface as its first parameter.
+        fun callsOwnInterfacesDefaultImpls(
+            owner: String,
+            calledDescriptor: String,
+        ): Boolean {
+            if (!owner.endsWith(DEFAULT_IMPLS_SUFFIX) || owner == interfaceInternalName + DEFAULT_IMPLS_SUFFIX) return false
+            val first = Type.getArgumentTypes(calledDescriptor).firstOrNull() ?: return false
+            return first.sort == Type.OBJECT && first.internalName == owner.removeSuffix(DEFAULT_IMPLS_SUFFIX)
+        }
+
         val forwarders = mutableSetOf<Pair<String, String>>()
         val classVisitor =
             object : ClassVisitor(Opcodes.ASM9) {
@@ -3115,15 +3257,417 @@ object BranchSiteAnalyzer {
                     exceptions: Array<out String>?,
                 ): MethodVisitor? {
                     if (access and BODYLESS_FLAGS != 0) return null
+                    val isStatic = access and Opcodes.ACC_STATIC != 0
+                    val ownParameters = Type.getArgumentTypes(descriptor)
+                    val ownReturn = Type.getReturnType(descriptor)
                     return ForwarderShapeVisitor(
-                        argumentLoads(descriptor, isStatic = access and Opcodes.ACC_STATIC != 0),
-                        allowNullChecks = false,
-                        isForwardingCall = { opcode, owner, _, _ -> opcode == Opcodes.INVOKESTATIC && owner == interfaceInternalName },
-                    ) { forwarders += name to descriptor }
+                        argumentLoads(descriptor, isStatic = isStatic),
+                        allowNullChecks = true,
+                        isForwardingCall = { opcode, owner, calledName, calledDescriptor ->
+                            opcode == Opcodes.INVOKESTATIC &&
+                                (
+                                    owner == interfaceInternalName ||
+                                        (isStatic && calledName == name && callsOwnInterfacesDefaultImpls(owner, calledDescriptor))
+                                )
+                        },
+                        returnCast = ownReturn.takeIf { it.sort in REFERENCE_SORTS }?.internalName,
+                        allowBoxing = true,
+                        allowReceiverCast = true,
+                    ) { match ->
+                        val forwards =
+                            if (match.calledOwner == interfaceInternalName) {
+                                // From kotlinc 2.2 the forwarder calls the interface's own accessor,
+                                // which returns a primitive where a sub-interface fixed a type
+                                // argument at one, and boxes it for its own erased return.
+                                !match.cast &&
+                                    match.boxed.isEmpty() &&
+                                    match.receiverCast == null &&
+                                    (
+                                        match.returnBoxed == null ||
+                                            returnMatches(ownReturn, Type.getReturnType(match.calledDescriptor), match)
+                                    )
+                            } else {
+                                val superInterface = match.calledOwner.removeSuffix(DEFAULT_IMPLS_SUFFIX)
+                                (match.receiverCast == null || match.receiverCast == superInterface) &&
+                                    forwardsThroughErasure(ownParameters, ownReturn, match, offset = 0)
+                            }
+                        if (forwards) forwarders += name to descriptor
+                    }
                 }
             }
         ClassReader(classBytes).accept(classVisitor, ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
         return forwarders
+    }
+
+    /**
+     * The methods of a Kotlin class that implements one of [interfaceInternalNames] and only forward
+     * to that interface's `$DefaultImpls`: the stub kotlinc 2.1 and earlier write under
+     * `-jvm-default=disable` for each interface method with a body. The body loads `this` and each
+     * parameter in order, makes one `invokestatic` of the stub's own name on `<interface>$DefaultImpls`,
+     * and returns with one xRETURN. No null check comes first (checked with `javap` on kotlinc
+     * 1.9.25 and 2.1.21 for a non-null `String` parameter). Only a method that is not static,
+     * synthetic, a bridge or bodyless is checked; from kotlinc 2.2 the stub is a bridge and the
+     * method tier leaves it out.
+     *
+     * The called descriptor is the stub's own with the interface type prepended, except where the
+     * class implements a generic interface: `Impl : I<String>` gets `put(Ljava/lang/String;)` calling
+     * `put(LI;Ljava/lang/Object;)`, and `get()Ljava/lang/String;` calling `get(LI;)Ljava/lang/Object;`
+     * then `checkcast java/lang/String` (checked with `javap` on kotlinc 2.1.21). So a parameter or a
+     * return type may differ when both are references, and a differing return needs exactly that
+     * cast. At a primitive type argument (`Impl : I<Int>`) the stub boxes the parameter with its box
+     * type's `valueOf` before the call, and returns the box type through the same cast; any other
+     * primitive must match exactly.
+     *
+     * The interface is one the class file lists itself. kotlinc names the direct interface's
+     * `$DefaultImpls`, even for a default declared on a super-interface (checked with `javap`), so no
+     * supertype is walked. The caller checks `kotlin.Metadata`, since Java source can write this body
+     * by hand and Kotlin source cannot reach a `$DefaultImpls` class.
+     */
+    private fun defaultImplsStubs(
+        classBytes: ByteArray,
+        interfaceInternalNames: List<String>,
+    ): Set<Pair<String, String>> {
+        val stubs = mutableSetOf<Pair<String, String>>()
+        val classVisitor =
+            object : ClassVisitor(Opcodes.ASM9) {
+                override fun visitMethod(
+                    access: Int,
+                    name: String,
+                    descriptor: String,
+                    signature: String?,
+                    exceptions: Array<out String>?,
+                ): MethodVisitor? {
+                    if (access and (BODYLESS_FLAGS or Opcodes.ACC_STATIC or Opcodes.ACC_SYNTHETIC or Opcodes.ACC_BRIDGE) != 0) return null
+                    if (name.startsWith("<")) return null
+                    val stubParameters = Type.getArgumentTypes(descriptor)
+                    val stubReturn = Type.getReturnType(descriptor)
+                    return ForwarderShapeVisitor(
+                        listOf(Opcodes.ALOAD to 0) + argumentLoads(descriptor, isStatic = false),
+                        allowNullChecks = false,
+                        isForwardingCall = { opcode, owner, calledName, calledDescriptor ->
+                            val interfaceName = owner.removeSuffix(DEFAULT_IMPLS_SUFFIX)
+                            val calledParameters = Type.getArgumentTypes(calledDescriptor)
+                            opcode == Opcodes.INVOKESTATIC &&
+                                owner.endsWith(DEFAULT_IMPLS_SUFFIX) &&
+                                interfaceName in interfaceInternalNames &&
+                                calledName == name &&
+                                calledParameters.size == stubParameters.size + 1 &&
+                                calledParameters[0].sort == Type.OBJECT &&
+                                calledParameters[0].internalName == interfaceName
+                        },
+                        returnCast = stubReturn.takeIf { it.sort in REFERENCE_SORTS }?.internalName,
+                        allowBoxing = true,
+                    ) { match ->
+                        // Load 0 is `this`, so the stub's parameter i is load i + 1 and the called
+                        // method's parameter i + 1, after the interface.
+                        if (forwardsThroughErasure(stubParameters, stubReturn, match, offset = 1)) stubs += name to descriptor
+                    }
+                }
+            }
+        ClassReader(classBytes).accept(classVisitor, ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
+        return stubs
+    }
+
+    /**
+     * What a [ForwarderShapeVisitor] saw in a body it accepted: the [calledOwner] and [calledDescriptor] of the
+     * forwarding call, whether a [cast] followed it, and the positions among the loads of those
+     * [boxed] before the call, each with the field descriptor of the primitive it boxed, the type
+     * of a [receiverCast] on the first load, and the primitive the call returned when the body
+     * boxed it before returning ([returnBoxed]).
+     */
+    private class ForwarderMatch(
+        val calledOwner: String,
+        val calledDescriptor: String,
+        val cast: Boolean,
+        val boxed: Map<Int, String>,
+        val receiverCast: String?,
+        val returnBoxed: String?,
+    )
+
+    /**
+     * The field descriptor of the primitive a call boxes, when it is `<Box>.valueOf(<primitive>)`
+     * or the coroutine library's `Boxing.box<Type>(<primitive>)`, which kotlinc uses in suspend
+     * code; null for any other call.
+     */
+    private fun boxedPrimitive(
+        opcode: Int,
+        owner: String,
+        name: String,
+        descriptor: String,
+    ): String? {
+        if (opcode != Opcodes.INVOKESTATIC) return null
+        val primitive =
+            when {
+                name == "valueOf" -> BOX_TYPES.entries.singleOrNull { it.value == owner }?.key
+                owner.endsWith(COROUTINE_BOXING_SUFFIX) -> COROUTINE_BOXING_NAMES.entries.singleOrNull { it.value == name }?.key
+                else -> null
+            } ?: return null
+        return primitive.takeIf { descriptor == "($it)L${BOX_TYPES.getValue(it)};" }
+    }
+
+    /**
+     * kotlinc's boxing helper for suspend code, `kotlin/coroutines/jvm/internal/Boxing`, matched by
+     * suffix so the shaded jar's relocation of `kotlin/` leaves the rule intact.
+     */
+    private const val COROUTINE_BOXING_SUFFIX = "/coroutines/jvm/internal/Boxing"
+
+    /** Each primitive's field descriptor with the name of its `Boxing` method. */
+    private val COROUTINE_BOXING_NAMES =
+        mapOf(
+            "Z" to "boxBoolean",
+            "B" to "boxByte",
+            "C" to "boxChar",
+            "S" to "boxShort",
+            "I" to "boxInt",
+            "J" to "boxLong",
+            "F" to "boxFloat",
+            "D" to "boxDouble",
+        )
+
+    /** Each primitive's field descriptor with its box type's internal name, for `valueOf`. */
+    private val BOX_TYPES =
+        mapOf(
+            "Z" to "java/lang/Boolean",
+            "B" to "java/lang/Byte",
+            "C" to "java/lang/Character",
+            "S" to "java/lang/Short",
+            "I" to "java/lang/Integer",
+            "J" to "java/lang/Long",
+            "F" to "java/lang/Float",
+            "D" to "java/lang/Double",
+        )
+
+    /**
+     * Whether the forwarding call [match] saw passes [ownParameters] on as an erased generic
+     * signature would: own parameter i is load i + [offset] and the called method's parameter
+     * i + [offset], and each pair is the same type, both references, or a primitive boxed with its
+     * own box type's `valueOf` into `Object`. The called method takes exactly [offset] more
+     * parameters, and its return is [ownReturn], or another reference cast back to [ownReturn]
+     * with the one `checkcast` the match saw.
+     */
+    private fun forwardsThroughErasure(
+        ownParameters: Array<Type>,
+        ownReturn: Type,
+        match: ForwarderMatch,
+        offset: Int,
+    ): Boolean {
+        // A boxed result comes only from a call to the interface's own accessor; through a
+        // `$DefaultImpls` method it is a hand-written `super` call, which kotlinc writes for no
+        // generated method.
+        if (match.returnBoxed != null) return false
+        val called = Type.getMethodType(match.calledDescriptor)
+        val calledParameters = called.argumentTypes
+        if (calledParameters.size != ownParameters.size + offset) return false
+        val parametersMatch =
+            ownParameters.indices.all { index ->
+                val ownParameter = ownParameters[index]
+                val calledParameter = calledParameters[index + offset]
+                val boxedPrimitive = match.boxed[index + offset]
+                if (boxedPrimitive != null) {
+                    ownParameter.descriptor == boxedPrimitive && calledParameter.sort == Type.OBJECT
+                } else {
+                    sameOrBothReferences(ownParameter, calledParameter)
+                }
+            }
+        return parametersMatch && returnMatches(ownReturn, called.returnType, match)
+    }
+
+    /**
+     * Whether a forwarder returning [ownReturn] returns what a call returning [calledReturn] gave,
+     * as [match] saw it: the same type, another reference cast to [ownReturn], or a primitive boxed
+     * into [ownReturn], its own box type.
+     */
+    private fun returnMatches(
+        ownReturn: Type,
+        calledReturn: Type,
+        match: ForwarderMatch,
+    ): Boolean {
+        val boxedPrimitive = match.returnBoxed
+        if (boxedPrimitive != null) {
+            return !match.cast && calledReturn.descriptor == boxedPrimitive && ownReturn.sort == Type.OBJECT &&
+                ownReturn.internalName == BOX_TYPES.getValue(boxedPrimitive)
+        }
+        return sameOrBothReferences(ownReturn, calledReturn) && match.cast == (calledReturn != ownReturn)
+    }
+
+    /** Whether [a] and [b] are the same type, or both reference types. */
+    private fun sameOrBothReferences(
+        a: Type,
+        b: Type,
+    ): Boolean = a == b || (a.sort in REFERENCE_SORTS && b.sort in REFERENCE_SORTS)
+
+    private val REFERENCE_SORTS = setOf(Type.OBJECT, Type.ARRAY)
+
+    /**
+     * The `equals`, `hashCode` and `toString` of a record whose body is exactly javac's: `aload_0`,
+     * plus `aload_1` for `equals`, then one `invokedynamic` whose bootstrap method is
+     * `java/lang/runtime/ObjectMethods.bootstrap`, then the matching return (`ireturn`, `ireturn`
+     * and `areturn`). javac 17, 21 and 25 emit that and nothing else (checked with `javap`). Labels,
+     * line numbers and frames are ignored; any other instruction means an override the adopter wrote.
+     */
+    private fun javacRecordMembers(classBytes: ByteArray): Set<Pair<String, String>> {
+        val members = mutableSetOf<Pair<String, String>>()
+        val classVisitor =
+            object : ClassVisitor(Opcodes.ASM9) {
+                override fun visitMethod(
+                    access: Int,
+                    name: String,
+                    descriptor: String,
+                    signature: String?,
+                    exceptions: Array<out String>?,
+                ): MethodVisitor? {
+                    val returnOpcode =
+                        when {
+                            name == "equals" && descriptor == "(Ljava/lang/Object;)Z" -> Opcodes.IRETURN
+                            name == "hashCode" && descriptor == "()I" -> Opcodes.IRETURN
+                            name == "toString" && descriptor == "()Ljava/lang/String;" -> Opcodes.ARETURN
+                            else -> return null
+                        }
+                    val expected =
+                        buildList {
+                            add(RecordStep.Load(0))
+                            if (name == "equals") add(RecordStep.Load(1))
+                            add(RecordStep.ObjectMethodsIndy)
+                            add(RecordStep.Return(returnOpcode))
+                        }
+                    return RecordBodyVisitor(expected) { members += name to descriptor }
+                }
+            }
+        ClassReader(classBytes).accept(classVisitor, ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
+        return members
+    }
+
+    /** One instruction of a record member's body, as [RecordBodyVisitor] records it. */
+    private sealed interface RecordStep {
+        data class Load(
+            val slot: Int,
+        ) : RecordStep
+
+        data object ObjectMethodsIndy : RecordStep
+
+        data class Return(
+            val opcode: Int,
+        ) : RecordStep
+
+        data object Other : RecordStep
+    }
+
+    /** Calls [onMatch] at the end of a body whose instructions are exactly [expected]. */
+    private class RecordBodyVisitor(
+        private val expected: List<RecordStep>,
+        private val onMatch: () -> Unit,
+    ) : MethodVisitor(Opcodes.ASM9) {
+        private val steps = mutableListOf<RecordStep>()
+
+        override fun visitVarInsn(
+            opcode: Int,
+            varIndex: Int,
+        ) {
+            steps += if (opcode == Opcodes.ALOAD) RecordStep.Load(varIndex) else RecordStep.Other
+        }
+
+        override fun visitInsn(opcode: Int) {
+            steps += if (opcode in Opcodes.IRETURN..Opcodes.RETURN) RecordStep.Return(opcode) else RecordStep.Other
+        }
+
+        override fun visitInvokeDynamicInsn(
+            name: String,
+            descriptor: String,
+            bootstrapMethodHandle: Handle,
+            vararg bootstrapMethodArguments: Any?,
+        ) {
+            val isObjectMethods =
+                bootstrapMethodHandle.owner == OBJECT_METHODS_INTERNAL_NAME && bootstrapMethodHandle.name == "bootstrap"
+            steps += if (isObjectMethods) RecordStep.ObjectMethodsIndy else RecordStep.Other
+        }
+
+        override fun visitIntInsn(
+            opcode: Int,
+            operand: Int,
+        ) {
+            steps += RecordStep.Other
+        }
+
+        override fun visitTypeInsn(
+            opcode: Int,
+            type: String,
+        ) {
+            steps += RecordStep.Other
+        }
+
+        override fun visitFieldInsn(
+            opcode: Int,
+            owner: String,
+            name: String,
+            descriptor: String,
+        ) {
+            steps += RecordStep.Other
+        }
+
+        override fun visitMethodInsn(
+            opcode: Int,
+            owner: String,
+            name: String,
+            descriptor: String,
+            isInterface: Boolean,
+        ) {
+            steps += RecordStep.Other
+        }
+
+        override fun visitJumpInsn(
+            opcode: Int,
+            label: Label,
+        ) {
+            steps += RecordStep.Other
+        }
+
+        override fun visitLdcInsn(value: Any?) {
+            steps += RecordStep.Other
+        }
+
+        override fun visitIincInsn(
+            varIndex: Int,
+            increment: Int,
+        ) {
+            steps += RecordStep.Other
+        }
+
+        override fun visitTableSwitchInsn(
+            min: Int,
+            max: Int,
+            dflt: Label,
+            vararg labels: Label,
+        ) {
+            steps += RecordStep.Other
+        }
+
+        override fun visitLookupSwitchInsn(
+            dflt: Label,
+            keys: IntArray,
+            labels: Array<out Label>,
+        ) {
+            steps += RecordStep.Other
+        }
+
+        override fun visitMultiANewArrayInsn(
+            descriptor: String,
+            numDimensions: Int,
+        ) {
+            steps += RecordStep.Other
+        }
+
+        override fun visitTryCatchBlock(
+            start: Label,
+            end: Label,
+            handler: Label,
+            type: String?,
+        ) {
+            steps += RecordStep.Other
+        }
+
+        override fun visitEnd() {
+            if (steps == expected) onMatch()
+        }
     }
 
     /**
@@ -3202,6 +3746,13 @@ object BranchSiteAnalyzer {
     /**
      * Walks one method body and calls [onForwarder] at its end when the body is exactly
      * [expectedLoads], then one call [isForwardingCall] accepts, then one xRETURN. With
+     * [returnCast], one `checkcast` to that internal name may come between the call and the return.
+     * With [allowBoxing], a primitive load may be followed by a call that boxes it, its box type's
+     * `valueOf` or the coroutine library's `Boxing.box<Type>`, as kotlinc boxes a primitive
+     * argument for a generic parameter, and the call's primitive result may be boxed the same way
+     * before the return, with no check of its types here: a rule that sets [allowBoxing] must
+     * check [ForwarderMatch.returnBoxed] itself. With [allowReceiverCast], one `checkcast` may
+     * follow the first load. [onForwarder] is told what it saw, as a [ForwarderMatch]. With
      * [allowNullChecks], kotlinc's parameter null checks may come before the loads: `aload` of a
      * reference parameter, `ldc` of its name, then `invokestatic` of
      * `Intrinsics.checkNotNullParameter` or `checkParameterIsNotNull`. Labels, line numbers, frames
@@ -3212,8 +3763,17 @@ object BranchSiteAnalyzer {
         private val expectedLoads: List<Pair<Int, Int>>,
         private val allowNullChecks: Boolean,
         private val isForwardingCall: (opcode: Int, owner: String, name: String, descriptor: String) -> Boolean,
-        private val onForwarder: () -> Unit,
+        private val returnCast: String? = null,
+        private val allowBoxing: Boolean = false,
+        private val allowReceiverCast: Boolean = false,
+        private val onForwarder: (ForwarderMatch) -> Unit,
     ) : MethodVisitor(Opcodes.ASM9) {
+        private var cast = false
+        private var receiverCast: String? = null
+        private var returnBoxed: String? = null
+        private var calledOwner = ""
+        private var calledDescriptor = ""
+        private val boxed = mutableMapOf<Int, String>()
         private val referenceSlots = expectedLoads.filter { it.first == Opcodes.ALOAD }.mapTo(mutableSetOf()) { it.second }
         private val pushed = mutableListOf<Pushed>()
         private var invoked = false
@@ -3244,7 +3804,19 @@ object BranchSiteAnalyzer {
             descriptor: String,
             isInterface: Boolean,
         ) {
-            if (invoked) return reject()
+            if (invoked) {
+                val primitive =
+                    if (allowBoxing && !returned && !cast &&
+                        returnBoxed == null
+                    ) {
+                        boxedPrimitive(opcode, owner, name, descriptor)
+                    } else {
+                        null
+                    }
+                if (primitive == null) return reject()
+                returnBoxed = primitive
+                return
+            }
             if (allowNullChecks && opcode == Opcodes.INVOKESTATIC && owner.endsWith(INTRINSICS_SUFFIX) && name in parameterNullCheckNames) {
                 val checked = pushed.getOrNull(0) as? Pushed.Load
                 val checksOwnReference = checked != null && checked.opcode == Opcodes.ALOAD && checked.slot in referenceSlots
@@ -3252,8 +3824,17 @@ object BranchSiteAnalyzer {
                 pushed.clear()
                 return
             }
+            val boxing = if (allowBoxing) boxedPrimitive(opcode, owner, name, descriptor) else null
+            if (boxing != null) {
+                val load = pushed.lastOrNull() as? Pushed.Load
+                if (load == null || load.opcode != loadOpcodeFor(boxing)) return reject()
+                if (boxed.put(pushed.size - 1, boxing) != null) return reject()
+                return
+            }
             if (!isForwardingCall(opcode, owner, name, descriptor)) return reject()
             if (pushed != expectedLoads.map { (loadOpcode, slot) -> Pushed.Load(loadOpcode, slot) }) return reject()
+            calledOwner = owner
+            calledDescriptor = descriptor
             invoked = true
         }
 
@@ -3270,7 +3851,14 @@ object BranchSiteAnalyzer {
         override fun visitTypeInsn(
             opcode: Int,
             type: String,
-        ) = reject()
+        ) {
+            if (allowReceiverCast && opcode == Opcodes.CHECKCAST && !invoked && pushed.size == 1 && receiverCast == null) {
+                receiverCast = type
+                return
+            }
+            if (opcode != Opcodes.CHECKCAST || type != returnCast || !invoked || returned || cast) return reject()
+            cast = true
+        }
 
         override fun visitFieldInsn(
             opcode: Int,
@@ -3322,17 +3910,13 @@ object BranchSiteAnalyzer {
         ) = reject()
 
         override fun visitEnd() {
-            if (!broken && invoked && returned) onForwarder()
+            if (!broken && invoked &&
+                returned
+            ) {
+                onForwarder(ForwarderMatch(calledOwner, calledDescriptor, cast, boxed, receiverCast, returnBoxed))
+            }
         }
     }
-
-    private fun isEqualsHashCodeOrToString(
-        name: String,
-        descriptor: String,
-    ): Boolean =
-        (name == "equals" && descriptor == "(Ljava/lang/Object;)Z") ||
-            (name == "hashCode" && descriptor == "()I") ||
-            (name == "toString" && descriptor == "()Ljava/lang/String;")
 
     /**
      * Finds a consecutive `component1..componentN` group, a matching `<init>`, a matching `copy`,
@@ -3744,6 +4328,7 @@ object BranchSiteAnalyzer {
         var superInternalName: String? = null
         var interfaceInternalNames: List<String> = emptyList()
         var hasEnclosingMethod = false
+        var isKotlinClass = false
         var kotlinKind = KotlinKind.NONE
         val methodAccess = mutableMapOf<Pair<String, String>, Int>()
         val localNames = mutableMapOf<Pair<String, String>, MutableMap<Int, String>>()
@@ -3780,6 +4365,7 @@ object BranchSiteAnalyzer {
                     visible: Boolean,
                 ): AnnotationVisitor? {
                     if (!kotlinMetadataDescriptorShape.matches(descriptor)) return null
+                    isKotlinClass = true
                     kotlinKind = KotlinKind.ofMetadataKind(null)
                     return MetadataKindReader(null) { kotlinKind = KotlinKind.ofMetadataKind(it) }
                 }
@@ -3832,6 +4418,8 @@ object BranchSiteAnalyzer {
                 firstLines.keys,
                 kotlinKind,
                 isScalaClass,
+                isKotlinClass,
+                interfaceInternalNames,
             ) { null }
                 .filterValues { it in PASS_THROUGH_FORWARDERS }
                 .keys
