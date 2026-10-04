@@ -84,7 +84,7 @@ git clone https://github.com/otherlodehq/otherlode-collector /path/to/otherlode-
 | `-PcollectorDir` | required | A local clone of `otherlode-collector`; its `Dockerfile` is built. |
 | `-Pconfig` | `headline` | `headline` or `ceiling`. |
 | `-Prepeats` | `6` | Runs per variant. A multiple of three gives each variant each position equally often. |
-| `-PwarmupSeconds` | `60` | Warmup load before the measured window. |
+| `-PwarmupSeconds` | `150` | Warmup load before the measured window. On an `ubuntu-latest` runner PetClinic's throughput still climbed for about 45 s after a 60 s warmup. |
 | `-PwindowSeconds` | `180` | Length of the measured window. |
 
 Give both paths absolute, as above, or relative to `benchmark-overhead/`: `-p` makes that Gradle's

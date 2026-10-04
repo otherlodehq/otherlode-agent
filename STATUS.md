@@ -463,7 +463,7 @@ Chunk 3 landed: `benchmark-overhead/`, a standalone Gradle build run as
 `./gradlew -p benchmark-overhead test -PagentJar=... -PcollectorDir=...
 -Pconfig=headline|ceiling`, and the manual `benchmark-overhead` workflow, which
 runs both configs on `ubuntu-latest` and uploads the results. Settled while
-building, past what the grill decided: a 60 s warmup with a throwaway JFR
+building, past what the grill decided: a 150 s warmup with a throwaway JFR
 recording, then a 180 s window, so three default flushes fall in it; the heap
 fixed at 1 GiB, PetClinic limited to 2 CPUs and 2 GiB, variant order rotated
 each repeat with 6 repeats by default so each variant takes each position
@@ -507,6 +507,11 @@ startup cost on a Spring Boot 4 app with narrow include rules, outside the
 budget, which covers throughput and p95. Its cause is not yet looked at. A
 ceiling run on the same laptop, before the review's fixes, took startup from
 3.8 s to 17.4 s; the ceiling has not run on the fixed harness.
+
+The first workflow run (2026-10-04, run 37230002817) failed both configs on
+the steadiness rule, as it should: on the 4-vCPU runner `none`'s throughput
+climbed from 108 to 200 iterations a second over the first 45 s of the window
+after a 60 s warmup, a 30% drift. The default warmup went to 150 s.
 
 **Found by the sweep, to fix later:**
 

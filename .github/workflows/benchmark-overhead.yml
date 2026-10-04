@@ -17,7 +17,8 @@ jobs:
   benchmark:
     name: benchmark (${{ matrix.config }})
     runs-on: ubuntu-latest
-    # About five minutes a run: 18 runs at the default 6 repeats, plus image builds. More repeats need a longer limit.
+    # About six minutes a run (150 s warmup, 180 s window, startup and teardown): 18 runs at the default 6 repeats,
+    # plus image builds. More repeats need a longer limit.
     timeout-minutes: 150
     strategy:
       fail-fast: false
