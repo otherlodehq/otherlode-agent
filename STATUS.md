@@ -633,6 +633,24 @@ and pre-existing: an adopter class in a named module must read the boot
 loader's unnamed module to reach the holder, as the old prelude did; nothing
 adds that edge for adopter modules.
 
+### HotSwap of a woven class with changed code: to grill
+
+Raised 2026-10-04 while landing ADR 0060. A woven class whose class file
+changed under a running JVM is refused on a re-weave (ADR 0053, amended): the
+JVM rejects the redefinition and the old code keeps running woven, so with the
+agent attached an IDE's HotSwap of edited code fails, all of a batch together.
+Only development meets it, chiefly debugging a test with the agent on the test
+task; the README says so beside the testkit's set-up. Below class-file version
+55 nothing else was possible, since new bytes would need the probe field a
+redefinition cannot add. From 55 a class carries nothing added, so the agent
+could re-scan instead: analyse the new class file, weave it with a fresh plan
+whose layout hash gives it a fresh registered array, and let the HotSwap
+through, the new code counting. To settle: what the manifest says of the old
+layout's probes, frozen beside a second entry for the same class (a method the
+edit deleted would read as never hit unless a collector learns the old entry
+is superseded, which may need a wire field), and whether that is worth it for a
+development convenience.
+
 ### The agent's startup: measured, to grill
 
 Measured 2026-10-04 on PetClinic REST (Corretto 21.0.5 with CDS, medians of

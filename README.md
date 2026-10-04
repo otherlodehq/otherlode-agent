@@ -391,6 +391,15 @@ its class file, so neither tool's results change. An agent that adds or
 reorders a method's conditional jumps ahead of this one, as AspectJ's weaver
 can, leaves that method with its entry probe but no branch probes.
 
+HotSwap does not work on a woven class whose code you changed. When you debug
+a test from your IDE with the agent on the test task and edit a method
+mid-session, the JVM refuses the redefinition, the IDE reports that HotSwap
+failed, and the old code keeps running until you restart. The agent refuses
+on purpose, so its report never describes code that is not the code running.
+Restart the test, or leave the agent off the task you debug with. Another
+tool's retransformation that leaves the class file alone, as an APM agent's
+does, is not affected.
+
 The first heartbeat has 15 seconds to arrive; set
 `otherlode.testkit.startup.timeout.seconds` to change that.
 
