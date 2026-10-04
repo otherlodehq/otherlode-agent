@@ -665,6 +665,53 @@ bucket 1, and its migration 0010 deletes those rows (all test data, Luke
 said) and adds a check constraint refusing the code, with `bucketString`
 reading an unknown code as unknown.
 
+### Keep each method's original frames instead of recomputing them: to grill, before release
+
+Raised 2026-10-05 while landing ADR 0059's amendment, as the wider fix for a
+class of problem that amendment only guards against. The branch tier makes ASM
+recompute every stack map frame of a class it rewrites (`COMPUTE_FRAMES`), and
+a recomputed frame can differ from the class file's in what the verifier has to
+load:
+
+- A class file's frame can name a type the verifier must load to check an
+  assignment, as spring-core's `PropagationContextElement$ReactorDelegate`
+  types a local `ContextView` (Reactor's). Without Reactor it fails
+  verification with `NoClassDefFoundError`; ASM types the local `Context`, the
+  check goes, and the woven class defines and initialises. A framework probing
+  an optional integration by catching `NoClassDefFoundError` would read it as
+  present.
+- ASM merges types through the type pool, so a type the pool cannot see (a
+  placeholder, or a class a loader defines from memory) widens a merge to
+  `Object`, which turned a class that ran unwoven into a `VerifyError`.
+
+ADR 0059's amendment refuses a class whose weave would merge a placeholder or
+whose own frames name one, which is correct but only covers classes woven with
+placeholders: a class woven without any, whose missing type appears only in its
+code, could still load woven where it fails unwoven. Not yet seen in a corpus.
+
+The wider fix: keep each method's frames as the compiler wrote them, as JaCoCo
+does, so the JVM verifies the woven class against the same frames and loads and
+fails exactly what the unwoven class does. It looks workable: the probes only
+push and pop the operand stack and add no local, so the only frames to supply
+are at the labels the branch tier inserts on branch edges, where the frame is
+the original jump target's, already in the class file; ASM can hand every frame
+expanded, and an `AnalyzerAdapter`-style tracker covers fall-through edges.
+ByteBuddy's `Advice` already handles frames without recomputing them, and a
+class below version 50 has none to keep (the subroutine inliner covers those).
+It would also drop frame computation from transform time, one of the things
+that reads supertypes' class files through Spring Boot's nested-jar loader
+(`docs/investigations/2026-10-04-agent-startup.md` counted about 111k reads in
+the ceiling run). The cost is the branch rewriter emitting a correct frame at
+every inserted label, for both jump polarities and switches, beside Advice's own
+frame handling in the same method; `WovenClassVerificationTest` (ADR 0058) is
+the net for getting it wrong. If adopted, ADR 0059's frame-merge hook and
+second frame guard, and its strict pool for loaders without class files, become
+redundant; the placeholders, the supertype guard and the signature restore
+stay. To settle in the grill: whether to adopt it before release (Luke's rule
+says yes unless something blocks), how to treat class-file version 50 (frames
+optional, type-inference fallback), and what happens to a method whose frames
+an earlier agent already rewrote.
+
 ### HotSwap of a woven class with changed code: to grill
 
 Raised 2026-10-04 while landing ADR 0060. A woven class whose class file
