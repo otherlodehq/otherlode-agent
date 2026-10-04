@@ -520,10 +520,51 @@ fun benchmarkCorpusProperties(): Map<String, String> =
             }
         }.toMap()
 
+// The classpath that resolves each class set's own dependencies when the code-size test weaves it,
+// keyed `<corpus>.<class set>` as the corpus properties are. The test reads the class files from the
+// corpus and defines nothing from it, so the loader only has to answer the transformer's type lookups.
+val codeSizeClasspaths: Map<String, FileCollection> =
+    mapOf(
+        "demo.main" to files({ project(":demo").configurations.getByName("runtimeClasspath") }),
+        "demo-spring.main" to files({ project(":demo-spring").configurations.getByName("runtimeClasspath") }),
+        "spring-webmvc.jar" to files({ project(":demo-spring").configurations.getByName("runtimeClasspath") }),
+        "ktor-server-core.jar" to files({ project(":endpoints-ktor-3").configurations.getByName("testRuntimeClasspath") }),
+        "scala.fixtures-scala2" to files({ project(":fixtures-scala2").configurations.getByName("runtimeClasspath") }),
+        "scala.fixtures-scala3" to files({ project(":fixtures-scala3").configurations.getByName("runtimeClasspath") }),
+    )
+
 tasks.test {
     inputs.files(benchmarkCorpusFiles).withPropertyName("benchmarkCorpora")
-    doFirst { systemProperties(benchmarkCorpusProperties()) }
+    inputs.files(codeSizeClasspaths.values).withPropertyName("codeSizeClasspaths")
+    val codeSizeReport = layout.buildDirectory.file("reports/code-size/limits.txt")
+    outputs.file(codeSizeReport).withPropertyName("codeSizeReport")
+    doFirst {
+        systemProperties(benchmarkCorpusProperties())
+        codeSizeClasspaths.forEach { (classSet, files) ->
+            systemProperty("otherlode.codesize.classpath.$classSet", files.asPath)
+        }
+        systemProperty("otherlode.codesize.report", codeSizeReport.get().asFile.absolutePath)
+    }
 }
+
+// ProbeAllocationTest runs in its own JVM with escape analysis off: C2 would otherwise remove a
+// boxed value or a varargs array that stays inside the call, so a probe that made one would read as
+// allocating nothing, though it allocates in a larger method or before C2 compiles it. Run it with
+// `./gradlew probeAllocationTest`; `test` leaves it out.
+val probeAllocationTest by tasks.registering(Test::class) {
+    description = "Checks that the woven probes allocate nothing, with escape analysis off."
+    group = "verification"
+    testClassesDirs =
+        sourceSets.test
+            .get()
+            .output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    useJUnitPlatform()
+    jvmArgs("-Djdk.attach.allowAttachSelf=true", "-XX:-DoEscapeAnalysis")
+    filter { includeTestsMatching("dev.otherlode.benchmark.ProbeAllocationTest") }
+}
+tasks.test { filter { excludeTestsMatching("dev.otherlode.benchmark.ProbeAllocationTest") } }
+tasks.check { dependsOn(probeAllocationTest) }
 
 // The hot-path suite weaves fixtures through the real transformer, which self-attaches, and reaches
 // the bootstrap seam classes the same way the test source set does.

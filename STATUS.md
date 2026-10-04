@@ -431,6 +431,51 @@ the endpoint dispatch at about 500 ns a call against 12 on one thread, the
 largest contention effect in the suite; the runner's numbers decide whether it
 matters.
 
+Chunk 2 landed: two checks in `check`. `ProbeAllocationTest` runs in its own
+`probeAllocationTest` task with `-XX:-DoEscapeAnalysis`, since the review
+showed C2 removing a per-call `Long` box or `Object[]` inside the harness's
+loop on JDK 21 and 25, so a probe change that boxed would have passed. It
+calls each fixture's woven and unwoven copy in windows of 100,000 calls and
+requires the fewest bytes any of five windows allocated to be zero (the JVM
+allocates a few hundred bytes on the calling thread once as it moves a loop
+between compiler tiers), and a control that boxes per call must read above
+zero. C2 still removes an allocation whose every use folds away, which no
+probe makes. The endpoint seam is outside the gate: JDK 21's
+`AbstractImmutableList.equals` calls `iterator()` on the other list
+(`ImmutableCollections.java:311`), so a per-request key equal to the
+registered one allocates, and the JMH profiler reports that instead.
+`CodeSizeLimitsTest` weaves all five corpora through the real transformer in
+about 4 s, fails on any method weaving pushes past 8000 bytes, any class
+skipped as too large, any method missing from a woven class, or a corpus of
+which under 75% wove, checks the checker on synthetic classes crossing 8000
+and 65535, and writes the crossings of 325 bytes to
+`build/reports/code-size/limits.txt` (18, 0, 5, 103, 42, as the scratch count
+found). The review found the too-large check dead as first written: the skip
+records ASM's message ("Method too large: ..."), which never names
+`MethodTooLargeException`. At least 90% of the classes the transformer wove or
+failed on must weave; a class is left out of that share only when it fails
+naming a type its classpath lacks and also fails to load in a fresh loader for
+want of a class, and at most 20% of a corpus may be left out, so a wrong
+classpath cannot excuse everything. 58 spring-webmvc classes are left out that
+way.
+
+**Found by the sweep, to fix later:**
+
+- A class that names an absent optional type is skipped even when the JVM
+  loads it. ByteBuddy resolves field and signature types while validating the
+  rebased class (`InstrumentedType.Default.validated()`), which the JVM leaves
+  until use. 18 spring-webmvc classes load and initialise without their
+  optional dependency and are still skipped: the PDF, feed, FreeMarker, Groovy
+  and Jackson 2 views, several JSP tag helpers, `LiteWebJarsResourceResolver`.
+  The skip is reported, so nothing reads as dead, but an adopter class with an
+  optional dependency in a signature loses its probes. The sweep's report
+  lists them.
+- An annotation type with a `<clinit>` is skipped (2 in the corpora, one in
+  spring-webmvc and one in ktor-server-core): `TypeMatchPolicy.unsafeAnnotation`
+  checks only `ElementType.TYPE`, while ByteBuddy also accepts
+  `ANNOTATION_TYPE` on an annotation type (`InstrumentedType.java:1759-1760`
+  in byte-buddy 1.18.12's sources).
+
 ### A Scala 3 enum nested in a class fails to transform
 
 Found 2026-10-04 by the overhead grill's size count. Running the real

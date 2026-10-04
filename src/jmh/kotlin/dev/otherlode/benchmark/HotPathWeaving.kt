@@ -59,17 +59,7 @@ class HotPathWeaver {
     /** Where each woven class registers its probes, and where a test reads their counts. */
     val registry = ProbeRegistry()
 
-    private val transformer: ClassFileTransformer
-
-    init {
-        val captured = mutableListOf<ClassFileTransformer>()
-        OtherlodeInstrumentation(
-            AgentConfig.parse("includePackages=$FIXTURE_PACKAGE"),
-            registry,
-            captureClassBytes = false,
-        ).install(capturing(ByteBuddyAgent.install(), captured))
-        transformer = captured.single()
-    }
+    private val transformer: ClassFileTransformer = offlineTransformer(listOf(FIXTURE_PACKAGE), registry)
 
     /** A new instance of [fixture], defined from its class file exactly as the compiler wrote it. */
     fun unwoven(fixture: Class<out HotPathShape>): HotPathShape = instantiate(fixture, woven = false)
@@ -106,8 +96,28 @@ class HotPathWeaver {
             return stream.use { it.readBytes() }
         }
 
+        /**
+         * The agent's own class file transformer, configured to include [includePackages] and
+         * registering what it weaves in [registry]. It is not registered with the JVM: a caller
+         * invokes `transform` itself, so nothing else the JVM loads passes through it. Installing
+         * it still points the JVM-wide `OtherlodeProbeArrays` resolver at [registry], so a woven
+         * class initialised afterwards takes its array from the most recent call's registry.
+         */
+        fun offlineTransformer(
+            includePackages: List<String>,
+            registry: ProbeRegistry,
+        ): ClassFileTransformer {
+            val captured = mutableListOf<ClassFileTransformer>()
+            OtherlodeInstrumentation(
+                AgentConfig.parse("includePackages=" + includePackages.joinToString(";")),
+                registry,
+                captureClassBytes = false,
+            ).install(capturing(ByteBuddyAgent.install(), captured))
+            return captured.single()
+        }
+
         /** An [Instrumentation] that forwards to [real] except `addTransformer`, whose argument it adds to [sink] instead. */
-        internal fun capturing(
+        fun capturing(
             real: Instrumentation,
             sink: MutableList<ClassFileTransformer>,
         ): Instrumentation =
