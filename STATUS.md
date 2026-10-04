@@ -261,7 +261,7 @@ after-release line above; what, if anything, gates CI (shared runners are too
 noisy for thresholds); and which JDKs and collectors count. Load tests shaped
 like one adopter's traffic wait for an adopter.
 
-### An unread body is an unread shape: landed in this repo and the collector; server in progress
+### An unread body is an unread shape: landed
 
 Grilled on 2026-10-03 with Luke; ADRs 0054 and 0055, with amendments to 0025,
 0026, 0038, 0048 and 0052. Terms: unread shape, read release. Every exact-body
@@ -435,11 +435,16 @@ fixes re-reviewed by a fresh Opus reviewer, one commit each:
    unread shape as a generated method, and the call graph looks through it and
    counts a hit one as a caller (ADR 0024, amended). The stub collector applies
    the same rules and prints an `UNREAD SHAPES` section.
-9. `otherlode-server`: store both oneofs and `agent_version`, count unread
-   shapes per family in the report, label the rows, keep them out of the graph.
-   Also ADR 0024's amendment from step 2: the graph looks through a generated
-   method along its own edges (`internal/store/graph.go` drops generated
-   methods with `generated_by = 0` filters on nodes and edges).
+9. `otherlode-server`. Landed 2026-10-04 in `b200bc2` and `6dbc56a` (server
+   ADR 0053). Both oneofs and `agent_version` are stored, an unread shape is
+   never judged, rows carry `unread_shape`, `/probes` takes `include_unread`,
+   and the report has an `unread_shapes` block. The graph looks through
+   generated and unread methods and counts a hit one as a caller, as the
+   testkit does, with two recorded differences: across instances the server
+   lets any mark win where the testkit lets any unmarked report make a node,
+   and an edge from a loaded class the agent did not probe blocks a claim on
+   the server where the testkit drops it. Both matter only with several
+   instances, or with unreported classes, in one test JVM.
 10. The canary and the README. Landed 2026-10-04. `compiler-canary.yml` runs
     weekly: `.github/scripts/newest-compilers.sh` extends the kotlinc and
     scalac lists with the newest stable release of each line from Maven
