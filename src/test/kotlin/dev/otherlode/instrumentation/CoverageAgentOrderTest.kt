@@ -164,7 +164,7 @@ class CoverageAgentOrderTest {
         Receiver().use { receiver ->
             val otherlodeArg =
                 "-javaagent:$agentJar=serviceName=coverage-agent-order,includePackages=$TARGET," +
-                    "flushIntervalSeconds=1,endpoint=${receiver.endpoint}"
+                    "flushIntervalSeconds=1,exportUrl=${receiver.endpoint}"
             val jacocoArg = execFile?.let { "-javaagent:$jacocoJar=destfile=${it.absolutePath}" }
             val agentArgs =
                 when (jacoco) {

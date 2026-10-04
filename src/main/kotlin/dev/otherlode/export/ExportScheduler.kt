@@ -596,7 +596,7 @@ class ExportScheduler(
      * false says so.
      */
     private val referencesRecorded: Boolean
-        get() = config.instrumentedPackagePrefixes.isNotEmpty()
+        get() = config.includePackages.isNotEmpty()
 
     /**
      * Whether a manifest built at this point may say `dependenciesListed`: every startup dependency and every

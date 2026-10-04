@@ -152,7 +152,7 @@ testing {
                                     "staticBaselineEnabled=true," +
                                     "serviceName=testkit-agent-test," +
                                     "endpointsEnabled=false," +
-                                    "endpoint=http://localhost:$agentTestCollectorPort",
+                                    "exportUrl=http://localhost:$agentTestCollectorPort",
                                 "-Dotherlode.testkit.port=$agentTestCollectorPort",
                             )
                         }

@@ -85,7 +85,7 @@ private fun bindingFor(
 
 /**
  * Wires method-entry, branch, optional-argument and `<clinit>` probes into every type matched by
- * [AgentConfig.instrumentedPackagePrefixes], less the bootstrap and platform loaders' classes that
+ * [AgentConfig.includePackages], less the bootstrap and platform loaders' classes that
  * ByteBuddy's `AgentBuilder` ignores by default. An empty list matches nothing; the agent refuses
  * to start with one.
  *
@@ -279,7 +279,7 @@ class OtherlodeInstrumentation(
 
     /** String-only pre-filter for the capture, the package part of [typeMatcher] without resolving a type. */
     private fun isCandidateInternalName(internalName: String): Boolean =
-        TypeMatchPolicy.isIncluded(internalName.replace('/', '.'), config.instrumentedPackagePrefixes, config.excludedPackagePrefixes)
+        TypeMatchPolicy.isIncluded(internalName.replace('/', '.'), config.includePackages, config.excludePackages)
 
     /** One class's probes, held between [instrument] and the transform result; see [TransformResultListener]. */
     private class PendingRegistration(
@@ -439,7 +439,7 @@ class OtherlodeInstrumentation(
 
     private fun typeMatcher(): ElementMatcher.Junction<TypeDescription> =
         TypeMatchPolicy
-            .typeNameMatcher(config.instrumentedPackagePrefixes, config.excludedPackagePrefixes)
+            .typeNameMatcher(config.includePackages, config.excludePackages)
             .and { typeDescription -> isSafeToInstrument(typeDescription) }
 
     /**
@@ -1167,8 +1167,8 @@ class OtherlodeInstrumentation(
         return BranchSiteAnalyzer.analyze(
             bytes,
             lookup,
-            config.instrumentedPackagePrefixes,
-            config.excludedPackagePrefixes,
+            config.includePackages,
+            config.excludePackages,
             tableCacheFor(classLoader),
             handlerForwarders.handlerInterfaces,
             resourceLookup(classLoader),

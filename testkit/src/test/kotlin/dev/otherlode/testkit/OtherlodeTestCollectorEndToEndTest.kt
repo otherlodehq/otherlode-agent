@@ -52,7 +52,7 @@ class OtherlodeTestCollectorEndToEndTest {
         val config =
             AgentConfig.parse(
                 "includePackages=com.example.testkittarget," +
-                    "endpoint=${target.endpoint}," +
+                    "exportUrl=${target.exportUrl}," +
                     "flushIntervalSeconds=1," +
                     "serviceName=testkit-e2e," +
                     "serviceInstanceId=e2e-1",
@@ -67,7 +67,7 @@ class OtherlodeTestCollectorEndToEndTest {
         val fixture = fixtureClass.getDeclaredConstructor().newInstance()
         fixtureClass.getMethod("exercised").invoke(fixture)
 
-        val exporter = HttpOtlpStyleExporter(target.endpoint)
+        val exporter = HttpOtlpStyleExporter(target.exportUrl)
         val exportScheduler = ExportScheduler(config, TestResources.forConfig(config), registry, EndpointRegistry(), exporter)
         scheduler = exportScheduler
         exportScheduler.start()
@@ -88,7 +88,7 @@ class OtherlodeTestCollectorEndToEndTest {
         val config =
             AgentConfig.parse(
                 "includePackages=com.example.testkittarget," +
-                    "endpoint=${target.endpoint}," +
+                    "exportUrl=${target.exportUrl}," +
                     "flushIntervalSeconds=1," +
                     "serviceName=testkit-e2e," +
                     "serviceInstanceId=e2e-2",
@@ -103,7 +103,7 @@ class OtherlodeTestCollectorEndToEndTest {
         val fixture = fixtureClass.getDeclaredConstructor().newInstance()
         fixtureClass.getMethod("exercised").invoke(fixture)
 
-        val exporter = HttpOtlpStyleExporter(target.endpoint)
+        val exporter = HttpOtlpStyleExporter(target.exportUrl)
         val exportScheduler = ExportScheduler(config, TestResources.forConfig(config), registry, EndpointRegistry(), exporter)
         scheduler = exportScheduler
         exportScheduler.start()
@@ -131,7 +131,7 @@ class OtherlodeTestCollectorEndToEndTest {
         val config =
             AgentConfig.parse(
                 "includePackages=com.example.testkittarget," +
-                    "endpoint=${target.endpoint}," +
+                    "exportUrl=${target.exportUrl}," +
                     "flushIntervalSeconds=1," +
                     "serviceName=testkit-e2e," +
                     "serviceInstanceId=e2e-3",
@@ -151,7 +151,7 @@ class OtherlodeTestCollectorEndToEndTest {
         Class.forName("com.example.testkittarget.LegacyCalculator", false, loader)
         Class.forName("com.example.testkittarget.LegacyFees", false, loader)
 
-        val exporter = HttpOtlpStyleExporter(target.endpoint)
+        val exporter = HttpOtlpStyleExporter(target.exportUrl)
         val exportScheduler = ExportScheduler(config, TestResources.forConfig(config), registry, EndpointRegistry(), exporter)
         scheduler = exportScheduler
         exportScheduler.start()
@@ -196,7 +196,7 @@ class OtherlodeTestCollectorEndToEndTest {
         val config =
             AgentConfig.parse(
                 "includePackages=com.example.testkittarget," +
-                    "endpoint=${target.endpoint}," +
+                    "exportUrl=${target.exportUrl}," +
                     "flushIntervalSeconds=1," +
                     "serviceName=testkit-e2e," +
                     "serviceInstanceId=$instanceId",
@@ -227,7 +227,7 @@ class OtherlodeTestCollectorEndToEndTest {
         val counters = load("Counters", initialise = true)
         counters.getMethod("size").invoke(counters.getField("INSTANCE").get(null))
 
-        val exporter = HttpOtlpStyleExporter(target.endpoint)
+        val exporter = HttpOtlpStyleExporter(target.exportUrl)
         val exportScheduler = ExportScheduler(config, TestResources.forConfig(config), registry, EndpointRegistry(), exporter)
         scheduler = exportScheduler
         exportScheduler.start()
@@ -323,7 +323,7 @@ class OtherlodeTestCollectorEndToEndTest {
         val config =
             AgentConfig.parse(
                 "includePackages=com.example.testkittarget," +
-                    "endpoint=${target.endpoint}," +
+                    "exportUrl=${target.exportUrl}," +
                     "flushIntervalSeconds=1," +
                     "serviceName=testkit-e2e," +
                     "serviceInstanceId=e2e-7",
@@ -337,7 +337,7 @@ class OtherlodeTestCollectorEndToEndTest {
         val callerClass = Class.forName("$FIXTURES.TextCaller", true, fixtureLoader())
         callerClass.getMethod("exercised").invoke(callerClass.getDeclaredConstructor().newInstance())
 
-        val exporter = HttpOtlpStyleExporter(target.endpoint)
+        val exporter = HttpOtlpStyleExporter(target.exportUrl)
         val exportScheduler = ExportScheduler(config, TestResources.forConfig(config), registry, EndpointRegistry(), exporter)
         scheduler = exportScheduler
         exportScheduler.start()
@@ -382,7 +382,7 @@ class OtherlodeTestCollectorEndToEndTest {
         val config =
             AgentConfig.parse(
                 "includePackages=com.example.testkittarget," +
-                    "endpoint=${target.endpoint}," +
+                    "exportUrl=${target.exportUrl}," +
                     "flushIntervalSeconds=1," +
                     "serviceName=testkit-e2e," +
                     "serviceInstanceId=$instanceId",
@@ -401,7 +401,7 @@ class OtherlodeTestCollectorEndToEndTest {
         foldsClass.getMethod("behindRoutine", Integer::class.java, flag).invoke(folds, 7, true)
         Class.forName(LONE_CONSTRUCTOR, true, foldsClass.classLoader)
 
-        val exporter = HttpOtlpStyleExporter(target.endpoint)
+        val exporter = HttpOtlpStyleExporter(target.exportUrl)
         val exportScheduler = ExportScheduler(config, TestResources.forConfig(config), registry, EndpointRegistry(), exporter)
         scheduler = exportScheduler
         exportScheduler.start()

@@ -162,7 +162,7 @@ open class LoadedClassSweep(
         if (loader === ClassLoader.getPlatformClassLoader()) return false
         val name = loaded.name
         if (IGNORED_NAME_PREFIXES.any { name.startsWith(it) }) return false
-        if (!TypeMatchPolicy.isIncluded(name, config.instrumentedPackagePrefixes, config.excludedPackagePrefixes)) {
+        if (!TypeMatchPolicy.isIncluded(name, config.includePackages, config.excludePackages)) {
             return false
         }
         if (TypeMatchPolicy.isRuntimeGenerated(name)) return false

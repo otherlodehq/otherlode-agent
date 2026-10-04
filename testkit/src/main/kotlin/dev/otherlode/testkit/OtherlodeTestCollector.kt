@@ -36,7 +36,7 @@ import kotlin.concurrent.write
 /**
  * An embeddable collector that speaks the same wire protocol the Otherlode agent sends: delta
  * batches, probe manifests, and static baselines, all protobuf over plain HTTP. An adopter's test
- * runs the real agent against [endpoint] and then asks this collector what it saw, instead of
+ * runs the real agent against [exportUrl] and then asks this collector what it saw, instead of
  * querying any in-process registry.
  *
  * Every class name in this API is the dotted binary name the manifest carries: for example
@@ -443,8 +443,8 @@ class OtherlodeTestCollector private constructor(
     /** The one instance a collector that [servesOneJvm] accepts: the first it heard from. */
     private val onlyInstance = AtomicReference<String?>()
 
-    /** Base URL to pass as an agent's `endpoint=` option, for example `http://localhost:54321`. */
-    val endpoint: String = "http://localhost:${server.address.port}"
+    /** Base URL to pass as an agent's `exportUrl=` option, for example `http://localhost:54321`. */
+    val exportUrl: String = "http://localhost:${server.address.port}"
 
     /**
      * Blocks until a delta batch arrives that was received after this call began, including an
@@ -2591,7 +2591,7 @@ class OtherlodeTestCollector private constructor(
 
         /**
          * Starts a collector bound to `localhost`. [port] `0` (the default) picks any free port,
-         * read back afterwards from [endpoint].
+         * read back afterwards from [exportUrl].
          */
         fun start(port: Int = 0): OtherlodeTestCollector = create(port, servesOneJvm = false)
 

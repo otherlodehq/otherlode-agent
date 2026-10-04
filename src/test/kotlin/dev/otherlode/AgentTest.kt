@@ -142,7 +142,7 @@ class AgentTest {
 
         assertFailsWith<IllegalStateException> {
             Agent.start(
-                "includePackages=com.example.nothing,staticBaselineEnabled=true,endpoint=http://localhost:1",
+                "includePackages=com.example.nothing,staticBaselineEnabled=true,exportUrl=http://localhost:1",
                 recordingInstrumentation(calls),
                 addShutdownHook = { throw IllegalStateException("Shutdown in progress") },
             )
@@ -266,7 +266,7 @@ class AgentTest {
         val running =
             Agent.start(
                 "includePackages=com.example.target,flushIntervalSeconds=3600,endpointsEnabled=false," +
-                    "staticBaselineEnabled=true,endpoint=http://localhost:${collector.address.port}",
+                    "staticBaselineEnabled=true,exportUrl=http://localhost:${collector.address.port}",
                 instrumentation,
             )
         try {
@@ -307,7 +307,7 @@ class AgentTest {
         val running =
             Agent.start(
                 "includePackages=com.example.target,flushIntervalSeconds=3600,endpointsEnabled=false," +
-                    "staticBaselineEnabled=true,endpoint=http://localhost:${collector.address.port}",
+                    "staticBaselineEnabled=true,exportUrl=http://localhost:${collector.address.port}",
                 instrumentation,
             )
         try {
@@ -379,7 +379,7 @@ class AgentTest {
         val running =
             Agent.start(
                 "includePackages=com.example.target,flushIntervalSeconds=3600,endpointsEnabled=false," +
-                    "staticBaselineEnabled=true,endpoint=http://localhost:${collector.address.port}",
+                    "staticBaselineEnabled=true,exportUrl=http://localhost:${collector.address.port}",
                 instrumentation,
             )
         try {

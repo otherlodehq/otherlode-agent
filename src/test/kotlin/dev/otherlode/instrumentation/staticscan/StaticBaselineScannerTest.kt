@@ -780,7 +780,7 @@ class StaticBaselineScannerTest {
     fun `a class under excludePackages lands in no bucket, even though it matches includePackages`() {
         val root = directoryRoot("com/example/target/SampleTarget.class" to sampleTargetBytes)
         val scanner =
-            StaticBaselineScanner(listOf("com.example.target"), excludedPackagePrefixes = listOf("com.example.target.SampleTarget"))
+            StaticBaselineScanner(listOf("com.example.target"), excludePackages = listOf("com.example.target.SampleTarget"))
 
         val result = scanner.scan(listOf(root))
 

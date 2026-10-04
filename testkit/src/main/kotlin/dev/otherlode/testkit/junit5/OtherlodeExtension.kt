@@ -19,7 +19,7 @@ import java.util.concurrent.TimeoutException
  *
  * ```kotlin
  * tasks.test {
- *     jvmArgs("-javaagent:/path/to/otherlode-agent.jar=endpoint=http://localhost:4319,flushIntervalSeconds=1,includePackages=com.acme")
+ *     jvmArgs("-javaagent:/path/to/otherlode-agent.jar=exportUrl=http://localhost:4319,flushIntervalSeconds=1,includePackages=com.acme")
  * }
  * ```
  *
@@ -167,7 +167,7 @@ class OtherlodeExtension :
             timeoutSeconds: Long,
         ): String =
             "otherlode-testkit: no delta batch arrived from the agent within ${timeoutSeconds}s. Add " +
-                "\"-javaagent:<path to otherlode-agent.jar>=endpoint=${collector.endpoint},flushIntervalSeconds=1," +
+                "\"-javaagent:<path to otherlode-agent.jar>=exportUrl=${collector.exportUrl},flushIntervalSeconds=1," +
                 "includePackages=<your package>\" to the test task's JVM arguments. Without includePackages " +
                 "the agent refuses to start and sends nothing; its ERROR line on the test JVM's standard " +
                 "error names a package to use when it can find one. The agent's default flush interval is " +

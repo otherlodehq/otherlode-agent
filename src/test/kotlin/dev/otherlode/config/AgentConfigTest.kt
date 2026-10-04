@@ -1,6 +1,7 @@
 package dev.otherlode.config
 
 import java.time.Duration
+import java.util.UUID
 import java.util.logging.Handler
 import java.util.logging.LogRecord
 import kotlin.test.Test
@@ -21,9 +22,9 @@ class AgentConfigTest {
         assertEquals(null, config.serviceVersion)
         assertNotNull(config.serviceInstanceId)
         assertEquals(Duration.ofSeconds(60), config.flushInterval)
-        assertEquals("http://localhost:4319", config.collectorEndpoint)
-        assertEquals(emptyList(), config.instrumentedPackagePrefixes)
-        assertEquals(emptyList(), config.excludedPackagePrefixes)
+        assertEquals("http://localhost:4319", config.exportUrl)
+        assertEquals(emptyList(), config.includePackages)
+        assertEquals(emptyList(), config.excludePackages)
         assertEquals(false, config.staticBaselineEnabled)
         assertEquals(true, config.enabled)
         assertEquals(true, config.endpointsEnabled)
@@ -136,12 +137,12 @@ class AgentConfigTest {
     fun `excludePackages splits on semicolons, trims whitespace, and drops a trailing dot`() {
         val config = AgentConfig.parse("excludePackages=com.acme.internal ; com.acme.legacy.;com.other")
 
-        assertEquals(listOf("com.acme.internal", "com.acme.legacy", "com.other"), config.excludedPackagePrefixes)
+        assertEquals(listOf("com.acme.internal", "com.acme.legacy", "com.other"), config.excludePackages)
     }
 
     @Test
     fun `excludePackages defaults to empty`() {
-        assertEquals(emptyList(), AgentConfig.parse("serviceName=checkout").excludedPackagePrefixes)
+        assertEquals(emptyList(), AgentConfig.parse("serviceName=checkout").excludePackages)
     }
 
     @Test
@@ -149,13 +150,13 @@ class AgentConfigTest {
         val config =
             AgentConfig.parse(
                 "serviceName=checkout,serviceVersion=1.2.3,environment=prod," +
-                    "endpoint=https://collector.example.com,flushIntervalSeconds=30",
+                    "exportUrl=https://collector.example.com,flushIntervalSeconds=30",
             )
 
         assertEquals("checkout", config.serviceName)
         assertEquals("1.2.3", config.serviceVersion)
         assertEquals("prod", config.environment)
-        assertEquals("https://collector.example.com", config.collectorEndpoint)
+        assertEquals("https://collector.example.com", config.exportUrl)
         assertEquals(Duration.ofSeconds(30), config.flushInterval)
     }
 
@@ -185,7 +186,7 @@ class AgentConfigTest {
     fun `includePackages splits on semicolons and trims whitespace`() {
         val config = AgentConfig.parse("includePackages=com.acme ; com.acme.internal;com.other")
 
-        assertEquals(listOf("com.acme", "com.acme.internal", "com.other"), config.instrumentedPackagePrefixes)
+        assertEquals(listOf("com.acme", "com.acme.internal", "com.other"), config.includePackages)
     }
 
     @Test
@@ -223,16 +224,16 @@ class AgentConfigTest {
 
     @Test
     fun `a trailing slash on the endpoint is dropped so request paths do not get a double slash`() {
-        assertEquals("https://collector.example.com", AgentConfig.parse("endpoint=https://collector.example.com/").collectorEndpoint)
-        assertEquals("http://host:4319/base", AgentConfig.parse("endpoint=http://host:4319/base//").collectorEndpoint)
+        assertEquals("https://collector.example.com", AgentConfig.parse("exportUrl=https://collector.example.com/").exportUrl)
+        assertEquals("http://host:4319/base", AgentConfig.parse("exportUrl=http://host:4319/base//").exportUrl)
     }
 
     @Test
     fun `an endpoint that is not an absolute http(s) URL falls back to the default`() {
         // Left as is, URI.create would throw on every attempt of every flush.
-        assertEquals("http://localhost:4319", AgentConfig.parse("endpoint=not a url").collectorEndpoint)
-        assertEquals("http://localhost:4319", AgentConfig.parse("endpoint=ftp://collector.example.com").collectorEndpoint)
-        assertEquals("http://localhost:4319", AgentConfig.parse("endpoint=/v1/otherlode").collectorEndpoint)
+        assertEquals("http://localhost:4319", AgentConfig.parse("exportUrl=not a url").exportUrl)
+        assertEquals("http://localhost:4319", AgentConfig.parse("exportUrl=ftp://collector.example.com").exportUrl)
+        assertEquals("http://localhost:4319", AgentConfig.parse("exportUrl=/v1/otherlode").exportUrl)
     }
 
     @Test
@@ -240,14 +241,14 @@ class AgentConfigTest {
         val config = AgentConfig.parse("serviceName=checkout,includePackage=com.acme")
 
         assertEquals("checkout", config.serviceName)
-        assertEquals(emptyList(), config.instrumentedPackagePrefixes, "the typo'd key must not silently act as includePackages")
+        assertEquals(emptyList(), config.includePackages, "the typo'd key must not silently act as includePackages")
     }
 
     @Test
     fun `a trailing dot on an includePackages prefix is dropped`() {
         val config = AgentConfig.parse("includePackages=com.acme.;com.other")
 
-        assertEquals(listOf("com.acme", "com.other"), config.instrumentedPackagePrefixes)
+        assertEquals(listOf("com.acme", "com.other"), config.includePackages)
     }
 
     @Test
@@ -355,20 +356,20 @@ class AgentConfigTest {
     fun `the endpoint's scheme is lowercased, and its host and path are kept as given`() {
         assertEquals(
             "http://Collector.Example.com:4319/Base",
-            parseQuietly("endpoint=HTTP://Collector.Example.com:4319/Base/").collectorEndpoint,
+            parseQuietly("exportUrl=HTTP://Collector.Example.com:4319/Base/").exportUrl,
         )
-        assertEquals("https://collector.example.com", parseQuietly("endpoint=HTTPS://collector.example.com").collectorEndpoint)
+        assertEquals("https://collector.example.com", parseQuietly("exportUrl=HTTPS://collector.example.com").exportUrl)
     }
 
     @Test
     fun `a padded endpoint option is trimmed before its scheme is lowercased`() {
-        assertEquals("http://collector.example.com", parseQuietly("endpoint= Http://collector.example.com ").collectorEndpoint)
+        assertEquals("http://collector.example.com", parseQuietly("exportUrl= Http://collector.example.com ").exportUrl)
     }
 
     @Test
     fun `a token sent to a plain http endpoint is warned about whatever the scheme's case`() {
         for (scheme in listOf("http", "HTTP", "Http")) {
-            val warnings = warningsFrom { parseQuietly("endpoint=$scheme://collector.example.com,authToken=abc") }
+            val warnings = warningsFrom { parseQuietly("exportUrl=$scheme://collector.example.com,authToken=abc") }
 
             assertEquals(1, warnings.count { it.contains("plain http") }, "scheme $scheme")
         }
@@ -377,7 +378,7 @@ class AgentConfigTest {
     @Test
     fun `a token from OTHERLODE_AUTH_TOKEN sent to a plain http endpoint is warned about`() {
         val env = mapOf("OTHERLODE_AUTH_TOKEN" to "xyz")
-        val warnings = warningsFrom { parseQuietly("endpoint=HTTP://collector.example.com", env = env::get) }
+        val warnings = warningsFrom { parseQuietly("exportUrl=HTTP://collector.example.com", env = env::get) }
 
         assertEquals(1, warnings.count { it.contains("plain http") })
     }
@@ -392,7 +393,7 @@ class AgentConfigTest {
     @Test
     fun `a token sent to an https endpoint is not warned about whatever the scheme's case`() {
         for (scheme in listOf("https", "HTTPS")) {
-            val warnings = warningsFrom { parseQuietly("endpoint=$scheme://collector.example.com,authToken=abc,unknownOption=1") }
+            val warnings = warningsFrom { parseQuietly("exportUrl=$scheme://collector.example.com,authToken=abc,unknownOption=1") }
 
             assertEquals(1, warnings.count { it.contains("unknown agent option") }, "scheme $scheme: log capture saw nothing")
             assertEquals(0, warnings.count { it.contains("plain http") }, "scheme $scheme")
@@ -401,7 +402,7 @@ class AgentConfigTest {
 
     @Test
     fun `a plain http endpoint without a token is not warned about`() {
-        val warnings = warningsFrom { parseQuietly("endpoint=HTTP://collector.example.com,unknownOption=1") }
+        val warnings = warningsFrom { parseQuietly("exportUrl=HTTP://collector.example.com,unknownOption=1") }
 
         assertEquals(1, warnings.count { it.contains("unknown agent option") }, "log capture saw nothing")
         assertEquals(0, warnings.count { it.contains("plain http") })
@@ -420,8 +421,109 @@ class AgentConfigTest {
     fun `a glob or path prefix is dropped, so it can never be the only include rule`() {
         val config = parseQuietly("includePackages=com.acme.*;com.other;org/third,excludePackages=com.other.gen.*;com.other.internal")
 
-        assertEquals(listOf("com.other"), config.instrumentedPackagePrefixes)
-        assertEquals(listOf("com.other.internal"), config.excludedPackagePrefixes)
+        assertEquals(listOf("com.other"), config.includePackages)
+        assertEquals(listOf("com.other.internal"), config.excludePackages)
+    }
+
+    @Test
+    fun `exportUrl is read from the args, then the system property, then the environment variable`() {
+        val properties = mapOf("otherlode.export.url" to "http://from-property:1")
+        val env = mapOf("OTHERLODE_EXPORT_URL" to "http://from-env:2")
+
+        assertEquals(
+            "http://from-args:3",
+            AgentConfig.parse("exportUrl=http://from-args:3", env = env::get, systemProperties = properties::get).exportUrl,
+        )
+        assertEquals("http://from-property:1", AgentConfig.parse(null, env = env::get, systemProperties = properties::get).exportUrl)
+        assertEquals("http://from-env:2", AgentConfig.parse(null, env = env::get, systemProperties = { null }).exportUrl)
+    }
+
+    @Test
+    fun `the old endpoint key is an unknown option and the default URL is used`() {
+        val warnings =
+            warningsFrom { assertEquals("http://localhost:4319", parseQuietly("endpoint=http://collector.example.com").exportUrl) }
+
+        assertEquals(1, warnings.count { it.contains("unknown agent option 'endpoint'") && it.contains("exportUrl") }, "$warnings")
+    }
+
+    @Test
+    fun `an exportUrl with a query string falls back to the default with a warning`() {
+        val warnings =
+            warningsFrom { assertEquals("http://localhost:4319", parseQuietly("exportUrl=http://host:4319/base?key=1").exportUrl) }
+
+        assertEquals(1, warnings.count { it.contains("exportUrl") && it.contains("query") }, "$warnings")
+    }
+
+    @Test
+    fun `an exportUrl with a fragment falls back to the default with a warning`() {
+        val warnings = warningsFrom { assertEquals("http://localhost:4319", parseQuietly("exportUrl=http://host:4319/base#top").exportUrl) }
+
+        assertEquals(1, warnings.count { it.contains("exportUrl") && it.contains("fragment") }, "$warnings")
+    }
+
+    @Test
+    fun `an exportUrl with a path keeps its path`() {
+        assertEquals("http://host:4319/ingest/v2", parseQuietly("exportUrl=http://host:4319/ingest/v2").exportUrl)
+    }
+
+    @Test
+    fun `serviceVersion falls back to service version in OTEL_RESOURCE_ATTRIBUTES`() {
+        val env = mapOf("OTEL_RESOURCE_ATTRIBUTES" to "service.name=x,service.version=2.4.1")
+
+        assertEquals("2.4.1", parseQuietly("", env = env::get).serviceVersion)
+    }
+
+    @Test
+    fun `serviceVersion falls back to service version in the otel resource attributes property`() {
+        val config =
+            AgentConfig.parse(
+                null,
+                env = mapOf("OTEL_RESOURCE_ATTRIBUTES" to "service.version=from-env")::get,
+                systemProperties = mapOf("otel.resource.attributes" to "service.version=from-property")::get,
+                detectServiceName = { null },
+            )
+
+        assertEquals("from-property", config.serviceVersion)
+    }
+
+    @Test
+    fun `each Otherlode source beats service version in the OpenTelemetry attributes`() {
+        val otelEnv = "OTEL_RESOURCE_ATTRIBUTES" to "service.version=from-otel"
+
+        assertEquals("from-args", parseQuietly("serviceVersion=from-args", env = mapOf(otelEnv)::get).serviceVersion)
+        assertEquals(
+            "from-property",
+            AgentConfig
+                .parse(
+                    null,
+                    env = mapOf(otelEnv)::get,
+                    systemProperties = mapOf("otherlode.service.version" to "from-property")::get,
+                    detectServiceName = { null },
+                ).serviceVersion,
+        )
+        assertEquals(
+            "from-env",
+            parseQuietly("", env = mapOf(otelEnv, "OTHERLODE_SERVICE_VERSION" to "from-env")::get).serviceVersion,
+        )
+    }
+
+    @Test
+    fun `a blank Otherlode serviceVersion or a blank OpenTelemetry one falls through`() {
+        val env = mapOf("OTEL_RESOURCE_ATTRIBUTES" to "service.version=from-otel")
+
+        assertEquals("from-otel", parseQuietly("serviceVersion=  ", env = env::get).serviceVersion)
+        assertEquals(null, parseQuietly("", env = mapOf("OTEL_RESOURCE_ATTRIBUTES" to "service.version=%20")::get).serviceVersion)
+    }
+
+    @Test
+    fun `service instance id in the OpenTelemetry attributes is ignored`() {
+        val env = mapOf("OTEL_RESOURCE_ATTRIBUTES" to "service.instance.id=pod-7")
+        val first = parseQuietly("", env = env::get).serviceInstanceId
+        val second = parseQuietly("", env = env::get).serviceInstanceId
+
+        assertTrue(first != "pod-7" && second != "pod-7")
+        assertTrue(first != second, "each parse draws a fresh random id")
+        UUID.fromString(first)
     }
 
     /** Parses [agentArgs] with no environment or system properties unless given, so the JVM running the tests cannot change the result. */

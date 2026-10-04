@@ -29,8 +29,8 @@ object TypeMatchPolicy {
     const val AGENT_PACKAGE_PREFIX = "dev.otherlode."
 
     /**
-     * Whether a fully qualified [className] is in scope: matched by [instrumentedPackagePrefixes]
-     * and not matched by [excludedPackagePrefixes]. This is the string-only half of
+     * Whether a fully qualified [className] is in scope: matched by [includePackages]
+     * and not matched by [excludePackages]. This is the string-only half of
      * [typeNameMatcher], usable before a [TypeDescription] exists at all (the class-bytes capture,
      * the static scanner's pre-filter).
      *
@@ -42,12 +42,12 @@ object TypeMatchPolicy {
      */
     fun isIncluded(
         className: String,
-        instrumentedPackagePrefixes: List<String>,
-        excludedPackagePrefixes: List<String>,
+        includePackages: List<String>,
+        excludePackages: List<String>,
     ): Boolean {
         if (className.startsWith(AGENT_PACKAGE_PREFIX)) return false
-        if (instrumentedPackagePrefixes.none { isUnderPrefix(className, it) }) return false
-        return excludedPackagePrefixes.none { isUnderPrefix(className, it) }
+        if (includePackages.none { isUnderPrefix(className, it) }) return false
+        return excludePackages.none { isUnderPrefix(className, it) }
     }
 
     /**
@@ -66,11 +66,11 @@ object TypeMatchPolicy {
      * [isTurnedAwayByShape].
      */
     fun typeNameMatcher(
-        instrumentedPackagePrefixes: List<String>,
-        excludedPackagePrefixes: List<String>,
+        includePackages: List<String>,
+        excludePackages: List<String>,
     ): ElementMatcher.Junction<TypeDescription> =
         any<TypeDescription>().and { typeDescription: TypeDescription ->
-            isIncluded(typeDescription.name, instrumentedPackagePrefixes, excludedPackagePrefixes) &&
+            isIncluded(typeDescription.name, includePackages, excludePackages) &&
                 !isTurnedAwayByShape(
                     typeDescription.name,
                     typeDescription.isSynthetic,

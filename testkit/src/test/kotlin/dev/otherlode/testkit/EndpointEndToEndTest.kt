@@ -84,12 +84,12 @@ class EndpointEndToEndTest {
 
         val config =
             AgentConfig.parse(
-                "endpoint=${target.endpoint}," +
+                "exportUrl=${target.exportUrl}," +
                     "flushIntervalSeconds=1," +
                     "serviceName=testkit-endpoint-e2e," +
                     "serviceInstanceId=e2e-endpoint-1",
             )
-        val exporter = HttpOtlpStyleExporter(target.endpoint)
+        val exporter = HttpOtlpStyleExporter(target.exportUrl)
         val exportScheduler = ExportScheduler(config, TestResources.forConfig(config), ProbeRegistry(), registry, exporter)
         scheduler = exportScheduler
         exportScheduler.start()

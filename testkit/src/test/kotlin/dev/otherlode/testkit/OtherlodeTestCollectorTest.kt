@@ -61,7 +61,7 @@ class OtherlodeTestCollectorTest {
         return started
     }
 
-    private fun exporterFor(target: OtherlodeTestCollector) = HttpOtlpStyleExporter(target.endpoint)
+    private fun exporterFor(target: OtherlodeTestCollector) = HttpOtlpStyleExporter(target.exportUrl)
 
     private fun methodProbe(
         classId: Int,
@@ -1115,7 +1115,7 @@ class OtherlodeTestCollectorTest {
             .newHttpClient()
             .send(
                 HttpRequest
-                    .newBuilder(URI.create("${target.endpoint}/v1/otherlode/$path"))
+                    .newBuilder(URI.create("${target.exportUrl}/v1/otherlode/$path"))
                     .header("Content-Type", "application/x-protobuf")
                     .POST(HttpRequest.BodyPublishers.ofByteArray(body))
                     .build(),
@@ -2246,7 +2246,7 @@ class OtherlodeTestCollectorTest {
         for (path in listOf("deltas", "manifest", "static-baseline")) {
             val request =
                 HttpRequest
-                    .newBuilder(URI.create("${target.endpoint}/v1/otherlode/$path"))
+                    .newBuilder(URI.create("${target.exportUrl}/v1/otherlode/$path"))
                     .POST(HttpRequest.BodyPublishers.ofByteArray(byteArrayOf(0x7f, 0x7f, 0x7f)))
                     .build()
             val response = client.send(request, HttpResponse.BodyHandlers.discarding())

@@ -5,7 +5,9 @@ import java.lang.System.Logger.Level
 
 /**
  * The resource values OpenTelemetry's own settings give, resolved as its Java agent resolves them.
- * [AgentConfig] falls back to these when Otherlode's own sources name no value.
+ * [AgentConfig] falls back to these when Otherlode's own sources name no value. They are the service
+ * name, the `service.namespace`, the `service.version` and the deployment environment. The instance
+ * id is never read from here.
  *
  * [serviceNameSetting] is the `otel.service.name` setting. [attributes] is the parsed
  * `otel.resource.attributes` setting. Every value in both is trimmed and not blank.
@@ -25,6 +27,9 @@ internal class OtelResourceSettings(
     /** The `service.namespace` attribute, unless [ServiceIdentityValues.usable] skips it. */
     val serviceNamespace: String? =
         ServiceIdentityValues.usable(attributes["service.namespace"], "service.namespace in the resource attributes")
+
+    /** The `service.version` attribute. */
+    val serviceVersion: String? get() = attributes["service.version"]
 
     val environment: String? get() = attributes["deployment.environment.name"] ?: attributes["deployment.environment"]
 
@@ -82,7 +87,7 @@ internal class OtelResourceSettings(
                     log.log(
                         Level.WARNING,
                         "otherlode: ignoring all of $source, since its entry '$pair' is not key=value; " +
-                            "no service name, namespace or environment is read from it",
+                            "no service name, namespace, version or environment is read from it",
                     )
                     return emptyMap()
                 }

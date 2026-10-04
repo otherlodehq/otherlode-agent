@@ -51,7 +51,7 @@ count. Results go to `build/results/jmh/results.txt`.
 ## Attach it to an app
 
 ```
--javaagent:/path/to/otherlode-agent-<version>.jar=serviceName=my-service,endpoint=http://localhost:4319,includePackages=com.acme.myservice
+-javaagent:/path/to/otherlode-agent-<version>.jar=serviceName=my-service,exportUrl=http://localhost:4319,includePackages=com.acme.myservice
 ```
 
 Options (comma-separated `key=value`, `includePackages`/`excludePackages` use
@@ -63,10 +63,10 @@ described below):
 |---|---|---|
 | `serviceName` | detected, else `unknown_service:java` | Reported to the collector. Falls back to OpenTelemetry's settings and then to detection; see "Reading OpenTelemetry's settings" below. |
 | `serviceNamespace` | *(none)* | The group the service belongs to, as OpenTelemetry's `service.namespace`. A service is known by its namespace and its name together. Falls back to OpenTelemetry's settings. With none, the service is in the unspecified namespace. A name or namespace of `.` or `..` is ignored with a warning, since no URL can name it. |
-| `serviceVersion` | *(none)* | Reported to the collector. |
-| `serviceInstanceId` | random UUID | Reported to the collector. |
+| `serviceVersion` | *(none)* | Reported to the collector. Falls back to OpenTelemetry's `service.version` resource attribute. |
+| `serviceInstanceId` | random UUID | Reported to the collector. Never read from OpenTelemetry's `service.instance.id`. |
 | `environment` | *(none)*, `test` for a test run | Reported to the collector. Falls back to OpenTelemetry's `deployment.environment.name`, then `deployment.environment`, then `test` when `testRun` is on. |
-| `endpoint` | `http://localhost:4319` | Collector base URL. |
+| `exportUrl` | `http://localhost:4319` | Base URL of the collector. The exporter appends `/v1/otherlode/...` to it, so a path is kept but a query string or fragment is refused with a warning and the default is used. |
 | `authToken` | *(none)* | Bearer token sent to the collector as `Authorization: Bearer <token>`. Prefer setting it through `OTHERLODE_AUTH_TOKEN` rather than this option: agent arguments are visible to every user on the host via `ps`, and an environment variable is not. |
 | `flushIntervalSeconds` | `60` | How often deltas/manifest updates are sent, in whole seconds from 1 to 86400. Any other value falls back to the default with a warning. |
 | `includePackages` | *(required)* | Only instrument types whose name starts with one of these prefixes, `;`-separated, written as dotted packages (`com.acme`, not `com.acme.*` or `com/acme`, which match nothing and are dropped with a warning). Without a usable prefix the agent logs an ERROR and stays disabled for the life of the JVM: nothing is instrumented and nothing is exported. The ERROR suggests the main class's package when it can find one. |
@@ -96,7 +96,7 @@ uppercase it for the environment variable (prefixed `OTHERLODE_`). For example:
 
 A service that already runs OpenTelemetry has named itself once in
 OpenTelemetry's settings. Otherlode reads those, so its findings carry the same
-name as the service's traces. The service name, the namespace and the
+name as the service's traces. The service name, the namespace, the version and the
 environment each come from the first of these sources that gives a value
 that is not blank, and each value is trimmed:
 
@@ -117,7 +117,7 @@ that is not blank, and each value is trimmed:
 4. For the name only, OpenTelemetry's default `unknown_service:java`.
 5. For the environment only, `test` when `testRun` is on.
 
-The resource-attribute keys are `service.name`, `service.namespace`, and
+The resource-attribute keys are `service.name`, `service.namespace`, `service.version`, and
 `deployment.environment.name`, then the older `deployment.environment`.
 Each OpenTelemetry setting comes whole from one place, so a set
 `otel.resource.attributes` system property hides `OTEL_RESOURCE_ATTRIBUTES`
@@ -330,13 +330,13 @@ tasks pass it to the demo server, and the report names the namespace.
 
 The `testkit` module is an embeddable collector for your own tests. It
 speaks the agent's real wire protocol, so the agent under test runs exactly
-as it does in production: start the collector, point the agent's `endpoint=`
+as it does in production: start the collector, point the agent's `exportUrl=`
 at it, exercise your app, then ask the collector what it saw.
 
 ```kotlin
 OtherlodeTestCollector.start().use { collector ->
     // Launch your app with
-    // -javaagent:otherlode-agent.jar=endpoint=${collector.endpoint},flushIntervalSeconds=1,includePackages=com.acme
+    // -javaagent:otherlode-agent.jar=exportUrl=${collector.exportUrl},flushIntervalSeconds=1,includePackages=com.acme
     // and exercise it, then:
     collector.awaitProbe("com.acme.OrderService", "checkout", Duration.ofSeconds(10))
     collector.awaitNextFlush(Duration.ofSeconds(10))
@@ -412,7 +412,7 @@ tasks.test {
     jvmArgs(
         "-javaagent:/path/to/otherlode-agent.jar=serviceName=my-service,testRun=true," +
             "staticBaselineEnabled=true,serviceInstanceId=my-service-unit-tests," +
-            "includePackages=com.acme.myservice,endpoint=http://localhost:4319",
+            "includePackages=com.acme.myservice,exportUrl=http://localhost:4319",
     )
 }
 ```

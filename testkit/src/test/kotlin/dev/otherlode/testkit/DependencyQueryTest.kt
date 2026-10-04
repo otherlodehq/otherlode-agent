@@ -29,7 +29,7 @@ import kotlin.test.assertTrue
 
 class DependencyQueryTest {
     private val collector = OtherlodeTestCollector.start()
-    private val exporter = HttpOtlpStyleExporter(collector.endpoint)
+    private val exporter = HttpOtlpStyleExporter(collector.exportUrl)
 
     @AfterTest
     fun tearDown() {

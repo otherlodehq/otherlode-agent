@@ -84,7 +84,7 @@ tasks.register("runDemo") {
                 "-javaagent:${agentJar.absolutePath}=" +
                     "serviceName=otherlode-demo," +
                     "flushIntervalSeconds=$flushIntervalSeconds," +
-                    "endpoint=http://localhost:$collectorPort," +
+                    "exportUrl=http://localhost:$collectorPort," +
                     "includePackages=com.example.demo.server," +
                     "staticBaselineEnabled=true"
             val server = startProcess("server", javaBin, listOf(agentArg, "-cp", appClasspath, demoServerMainClass))
@@ -154,7 +154,7 @@ tasks.register("runSpringDemo") {
                     "serviceName=otherlode-spring-demo," +
                     "serviceVersion=spring-demo," +
                     "flushIntervalSeconds=$flushIntervalSeconds," +
-                    "endpoint=http://localhost:$collectorPort," +
+                    "exportUrl=http://localhost:$collectorPort," +
                     "includePackages=com.example.demo.spring," +
                     "staticBaselineEnabled=true"
             val server =
@@ -377,7 +377,7 @@ fun stackAgentArg(
         "serviceVersion=${service.version}," +
         "serviceInstanceId=$instanceId," +
         "flushIntervalSeconds=$flushIntervalSeconds," +
-        "endpoint=$stackEndpoint," +
+        "exportUrl=$stackEndpoint," +
         "includePackages=$includePackages," +
         "staticBaselineEnabled=true"
 }

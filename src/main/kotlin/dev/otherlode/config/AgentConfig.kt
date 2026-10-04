@@ -10,9 +10,9 @@ import java.util.UUID
  * `-javaagent:otherlode-agent.jar=key=value,key=value` command line.
  *
  * A value cannot contain a comma, since the comma is the pair separator and
- * there is no quoting. A value that needs one (an endpoint with a query
- * string, a token) is set through the matching system property or
- * environment variable instead; see [parse].
+ * there is no quoting. A value that needs one is set through the matching
+ * system property or environment variable instead, as is a secret such as
+ * a token, which a command line shows to every user on the host; see [parse].
  */
 data class AgentConfig(
     /**
@@ -26,6 +26,10 @@ data class AgentConfig(
      * unspecified namespace. The agent never works one out for itself.
      */
     val serviceNamespace: String?,
+    /**
+     * The service version. When no Otherlode source sets it, it comes from `service.version` in
+     * OpenTelemetry's resource attributes. It has no default: null is an unversioned service.
+     */
     val serviceVersion: String?,
     val serviceInstanceId: String,
     /**
@@ -34,8 +38,11 @@ data class AgentConfig(
      * source names one and [testRun] is on, it is [TEST_RUN_ENVIRONMENT].
      */
     val environment: String?,
-    /** Base URL of the collector. The exporter appends `/v1/otherlode/{deltas,manifest,static-baseline}`. */
-    val collectorEndpoint: String,
+    /**
+     * Base URL of the collector. The exporter appends `/v1/otherlode/{deltas,manifest,static-baseline}`
+     * to it, so a query string or fragment is refused.
+     */
+    val exportUrl: String,
     /**
      * Sent to the collector as `Authorization: Bearer <token>`. Prefer the `OTHERLODE_AUTH_TOKEN`
      * environment variable over the `authToken` agent option: a `-javaagent` argument is visible
@@ -43,18 +50,19 @@ data class AgentConfig(
      * way is readable by anyone who can list processes.
      */
     val authToken: String?,
+    /** How often the agent flushes. Set in whole seconds by `flushIntervalSeconds`; held as a [Duration]. */
     val flushInterval: Duration,
     /**
      * Only types under one of these prefixes are instrumented. Required: when empty,
      * [dev.otherlode.Agent] refuses to start, logs one ERROR and instruments and exports
      * nothing.
      */
-    val instrumentedPackagePrefixes: List<String>,
+    val includePackages: List<String>,
     /**
-     * A type under one of these prefixes is never instrumented, even if [instrumentedPackagePrefixes]
+     * A type under one of these prefixes is never instrumented, even if [includePackages]
      * also matches it. Exclusion always wins over inclusion.
      */
-    val excludedPackagePrefixes: List<String>,
+    val excludePackages: List<String>,
     /**
      * Off unless explicitly enabled. A full classpath scan reads every class under the include
      * rules, a cost that scales with the adopter's classpath, so it does not inherit this agent's
@@ -99,7 +107,7 @@ data class AgentConfig(
          */
         const val TEST_RUN_ENVIRONMENT = "test"
 
-        private const val DEFAULT_ENDPOINT = "http://localhost:4319"
+        private const val DEFAULT_EXPORT_URL = "http://localhost:4319"
         private val DEFAULT_FLUSH_INTERVAL: Duration = Duration.ofSeconds(60)
         private val MAX_FLUSH_INTERVAL: Duration = Duration.ofDays(1)
         private val log = System.getLogger(AgentConfig::class.java.name)
@@ -111,7 +119,7 @@ data class AgentConfig(
                 "serviceVersion",
                 "serviceInstanceId",
                 "environment",
-                "endpoint",
+                "exportUrl",
                 "authToken",
                 "flushIntervalSeconds",
                 "includePackages",
@@ -132,7 +140,7 @@ data class AgentConfig(
          * A blank value at any source counts as unset and falls through to the next one, so a
          * blank `authToken` option leaves `OTHERLODE_AUTH_TOKEN` in force.
          *
-         * The service name, the namespace and the environment go on past Otherlode's three sources, in
+         * The service name, the namespace, the version and the environment go on past Otherlode's three sources, in
          * this order, and the first value that is not blank wins:
          *
          * 1. OpenTelemetry's own settings, resolved as its Java agent resolves them by
@@ -143,6 +151,9 @@ data class AgentConfig(
          *    empty.
          * 3. For the name only, [DEFAULT_SERVICE_NAME].
          * 4. For the environment only, [TEST_RUN_ENVIRONMENT] when [testRun] is on.
+         *
+         * The instance id is never read from OpenTelemetry: it is a fresh random UUID per process unless
+         * an Otherlode source sets it.
          *
          * [OtelResourceSettings] lists the resource-attribute keys each value reads.
          */
@@ -163,10 +174,10 @@ data class AgentConfig(
 
             val prefixes = parsePackagePrefixes(resolve("includePackages"))
             val excludedPrefixes = parsePackagePrefixes(resolve("excludePackages"))
-            val endpoint = parseEndpoint(resolve("endpoint"))
+            val exportUrl = parseExportUrl(resolve("exportUrl"))
             val authToken = resolve("authToken")
-            if (authToken != null && endpoint.startsWith("http://")) {
-                log.log(Level.WARNING, "otherlode: endpoint uses plain http, so the auth token is sent unencrypted")
+            if (authToken != null && exportUrl.startsWith("http://")) {
+                log.log(Level.WARNING, "otherlode: exportUrl uses plain http, so the auth token is sent unencrypted")
             }
             val testRun = parseBoolean("testRun", resolve("testRun"), default = false)
             return AgentConfig(
@@ -176,14 +187,14 @@ data class AgentConfig(
                         ?: ServiceIdentityValues.usable(detectedServiceName(detectServiceName), "service name detection")
                         ?: DEFAULT_SERVICE_NAME,
                 serviceNamespace = resolveIdentity("serviceNamespace", options, systemProperties, env) ?: otel.serviceNamespace,
-                serviceVersion = resolve("serviceVersion"),
+                serviceVersion = resolve("serviceVersion") ?: otel.serviceVersion,
                 serviceInstanceId = resolve("serviceInstanceId") ?: UUID.randomUUID().toString(),
                 environment = resolve("environment") ?: otel.environment ?: TEST_RUN_ENVIRONMENT.takeIf { testRun },
-                collectorEndpoint = endpoint,
+                exportUrl = exportUrl,
                 authToken = authToken,
                 flushInterval = parseFlushInterval(resolve("flushIntervalSeconds")),
-                instrumentedPackagePrefixes = prefixes,
-                excludedPackagePrefixes = excludedPrefixes,
+                includePackages = prefixes,
+                excludePackages = excludedPrefixes,
                 staticBaselineEnabled = parseBoolean("staticBaselineEnabled", resolve("staticBaselineEnabled"), default = false),
                 enabled = parseBoolean("enabled", resolve("enabled"), default = true),
                 endpointsEnabled = parseBoolean("endpointsEnabled", resolve("endpointsEnabled"), default = true),
@@ -289,24 +300,41 @@ data class AgentConfig(
         /**
          * The exporter appends `/v1/otherlode/...` to this, so a trailing slash is dropped rather than
          * producing a `//` in every request path. The scheme is lowercased, since URL schemes are
-         * case-insensitive and anything reading the endpoint afterwards can then compare it
+         * case-insensitive and anything reading the URL afterwards can then compare it
          * exactly; the host and path are kept as given. A value that is not an absolute http(s) URL
-         * with a host falls back to the default with a warning: left as is, `URI.create` would
-         * throw on every attempt of every flush, so the collector would never be reached and the
-         * log would fill with the same stack trace at each tick.
+         * with a host falls back to the default with a warning: left as is, `URI.create` would throw on
+         * every attempt of every flush, so the collector would never be reached and the log would fill
+         * with the same stack trace at each tick. A query string or a fragment falls back the same way,
+         * since the appended path would land inside it.
          */
-        private fun parseEndpoint(raw: String?): String {
-            if (raw == null) return DEFAULT_ENDPOINT
+        private fun parseExportUrl(raw: String?): String {
+            if (raw == null) return DEFAULT_EXPORT_URL
             val trimmed = raw.trim().trimEnd('/')
             val uri = runCatching { URI(trimmed) }.getOrNull()
-            if (uri == null || uri.scheme?.lowercase() !in setOf("http", "https") || uri.host == null) {
-                log.log(
-                    Level.WARNING,
-                    "otherlode: endpoint must be an absolute http or https URL, ignoring '$raw' and using the default $DEFAULT_ENDPOINT",
-                )
-                return DEFAULT_ENDPOINT
+            val reason =
+                when {
+                    uri == null || uri.scheme?.lowercase() !in setOf("http", "https") || uri.host == null -> {
+                        "exportUrl must be an absolute http or https URL"
+                    }
+
+                    uri.rawQuery != null -> {
+                        "exportUrl must not have a query string"
+                    }
+
+                    uri.rawFragment != null -> {
+                        "exportUrl must not have a fragment"
+                    }
+
+                    else -> {
+                        null
+                    }
+                }
+            if (reason != null) {
+                log.log(Level.WARNING, "otherlode: $reason, ignoring '$raw' and using the default $DEFAULT_EXPORT_URL")
+                return DEFAULT_EXPORT_URL
             }
-            return uri.scheme.lowercase() + trimmed.substring(uri.scheme.length)
+            val scheme = checkNotNull(uri).scheme
+            return scheme.lowercase() + trimmed.substring(scheme.length)
         }
 
         /**

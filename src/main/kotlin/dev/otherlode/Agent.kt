@@ -110,7 +110,7 @@ object Agent {
 
     /**
      * Returns what was started, or null if the agent did not start: [AgentConfig.enabled] is
-     * false, [AgentConfig.instrumentedPackagePrefixes] is empty, or the bootstrap holder could not
+     * false, [AgentConfig.includePackages] is empty, or the bootstrap holder could not
      * be installed. Both configuration checks run before anything is constructed, so a refused
      * start leaves no thread, transformer or registry behind. `internal` rather than `private` so a
      * test can drive this directly with a real [Instrumentation] and stop what it started,
@@ -126,7 +126,7 @@ object Agent {
             log.log(Level.INFO, "otherlode: disabled by configuration, nothing will be instrumented or exported")
             return null
         }
-        if (config.instrumentedPackagePrefixes.isEmpty()) {
+        if (config.includePackages.isEmpty()) {
             log.log(Level.ERROR, IncludeRulesRefusal.message(suggestionForThisJvm()))
             return null
         }
@@ -138,7 +138,7 @@ object Agent {
         // load are shared: the loaded-class count and the external-class mapping must agree on a
         // jar's dependency id.
         val dependencyResolver =
-            DependencyResolver(dependencyRegistry, JarClassifier(config.instrumentedPackagePrefixes, config.excludedPackagePrefixes))
+            DependencyResolver(dependencyRegistry, JarClassifier(config.includePackages, config.excludePackages))
         val externalClassRegistry =
             ExternalClassRegistry(
                 dependencyRegistry::isListingComplete,
@@ -198,14 +198,14 @@ object Agent {
         try {
             // Made once here and shared, so every payload this process sends names the same run.
             val resource = ResourceAttributes.forNewRun(config)
-            val exporter = HttpOtlpStyleExporter(config.collectorEndpoint, config.authToken)
+            val exporter = HttpOtlpStyleExporter(config.exportUrl, config.authToken)
             // Shared by the scan, which sends first with the exporter's full retries, and the
             // scheduler, which resends what failed with one attempt per chunk.
             val staticBaselineSender =
                 if (config.staticBaselineEnabled) {
                     StaticBaselineSender(
                         exporter,
-                        retryExporter = HttpOtlpStyleExporter(config.collectorEndpoint, config.authToken, maxAttempts = 1),
+                        retryExporter = HttpOtlpStyleExporter(config.exportUrl, config.authToken, maxAttempts = 1),
                     )
                 } else {
                     null
@@ -319,7 +319,7 @@ object Agent {
         mismatchDetector: StaticBaselineMismatchDetector,
         referenceFilter: BaselineReferenceFilter,
     ): Thread {
-        val scanner = StaticBaselineScanner(config.instrumentedPackagePrefixes, config.excludedPackagePrefixes)
+        val scanner = StaticBaselineScanner(config.includePackages, config.excludePackages)
         val publisher =
             StaticBaselinePublisher(
                 scanner::scan,
@@ -370,8 +370,8 @@ object Agent {
     ) {
         val lister =
             StartupClasspathLister(
-                config.instrumentedPackagePrefixes,
-                config.excludedPackagePrefixes,
+                config.includePackages,
+                config.excludePackages,
                 onNotADependency = registry::recordNotADependency,
                 keepClassNames = config.staticBaselineEnabled,
             )

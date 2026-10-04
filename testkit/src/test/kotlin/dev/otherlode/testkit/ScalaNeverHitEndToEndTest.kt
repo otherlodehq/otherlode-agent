@@ -78,7 +78,7 @@ class ScalaNeverHitEndToEndTest {
         val config =
             AgentConfig.parse(
                 "includePackages=$PACKAGE," +
-                    "endpoint=${target.endpoint}," +
+                    "exportUrl=${target.exportUrl}," +
                     "flushIntervalSeconds=1," +
                     "serviceName=testkit-scala-$module," +
                     "serviceInstanceId=scala-$module",
@@ -93,7 +93,7 @@ class ScalaNeverHitEndToEndTest {
         driver.getMethod("callSimpleAllOmitted").invoke(null)
 
         val exportScheduler =
-            ExportScheduler(config, TestResources.forConfig(config), registry, EndpointRegistry(), HttpOtlpStyleExporter(target.endpoint))
+            ExportScheduler(config, TestResources.forConfig(config), registry, EndpointRegistry(), HttpOtlpStyleExporter(target.exportUrl))
         scheduler = exportScheduler
         exportScheduler.start()
         target.awaitProbe("$PACKAGE.Driver\$", "callSimpleNoneOmitted", Duration.ofSeconds(10))
