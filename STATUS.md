@@ -228,9 +228,14 @@ adopter's collector forwards to one multi-tenant backend.
    - Server: it is not published. Settled on 2026-09-27: GitHub
      Actions builds it and deploys it to GCP Cloud Run by digest,
      through Workload Identity Federation (chunk 10 of the server plan).
+7. **Measure the overhead.** Grilled on 2026-10-04; the entry "Runtime
+   overhead: grilled, to build" below. Before release: the PetClinic macro
+   harness with its headline and ceiling numbers in the README, the hot-path
+   JMH suite, and the deterministic CI checks.
 
 After release: naming polish (`this$0`, facade names, the demo printer),
-the perf deferrals, gzip, a collector config file, agent-level redaction
+the server's performance-only deferrals, the overhead entry's after-release
+items, gzip, a collector config file, agent-level redaction
 (parked in the server's STATUS, item 18, with its trigger), and the
 routine and OpenTelemetry edge cases in the entries below.
 
@@ -308,38 +313,111 @@ Parked from the same review, none a one-way door: a WARNING for an
 still run with `enabled=false`; no warning for `otelBridgeEnabled=true` with
 `endpointsEnabled=false`.
 
-### Runtime overhead is unmeasured: to grill
+### Runtime overhead: grilled, to build
 
-Raised 2026-10-03, not yet grilled. The design calls the woven code close to
-nothing in several places and nothing measures it. `./gradlew jmh` times
-`BranchSiteAnalyzer.analyze` only, which is transform time. Unmeasured: the
-per-hit cost in the adopter's code, startup, heap held by the registry, and
-the cost of one flush. The woven work keeps growing (the `<clinit>` prelude,
-the omission loop in `$default`, a map lookup per request in endpoint advice,
-the lambda-factory hook, a `getAllLoadedClasses()` walk every flush), and the
-one number that is measured moved 27% on `demo` in a single chunk of the
-readable-findings round.
+Raised 2026-10-03, grilled 2026-10-04 with Luke. The design calls the woven
+code close to nothing in several places and nothing measures it. `./gradlew
+jmh` times `BranchSiteAnalyzer.analyze` only, which is transform time, and
+that one number moved 27% on `demo` in a single chunk of the readable-findings
+round. Unmeasured: the per-hit cost in the adopter's code, startup, heap, and
+the cost of one flush, while the woven work keeps growing (the `<clinit>`
+prelude, the omission loop in `$default`, a map lookup per request in endpoint
+advice, the lambda-factory hook, a `getAllLoadedClasses()` walk every flush).
 
-Proposed for the grill, in order:
+Settled:
 
-1. Hot-path JMH: a fixture woven through the real pipeline against its
-   unwoven bytes, a branchy method and an endpoint dispatch, at one thread
-   and at one per core. The multi-thread run checks the non-atomic `arr[N]++`
-   for cache-line contention when every core runs one hot method, which
-   JaCoCo's precedent does not answer since JaCoCo mostly runs in test JVMs.
-2. Startup: time to first request for `demo-spring` with no agent, the agent,
-   and the agent with the static baseline.
-3. One flush and the registry's heap on a Spring Boot app of about 10k loaded
-   classes, plus the off-heap copy the JVM keeps of each woven class once
-   the transformer is retransformation-capable (ADR 0053), and the extra
-   class-file read per woven class (ADR 0052).
+- **Two kinds of number.** A macro run is what the README publishes, since it
+  answers what an adopter asks before adding a `-javaagent` to production. A
+  micro suite catches regressions and isolates contention, and stays
+  internal: nanoseconds per probe say nothing about a service until you know
+  how many probes a request crosses.
+- **Macro subject.** `spring-petclinic-rest` with Postgres and k6, the setup
+  OpenTelemetry's `benchmark-overhead` uses (fresh Postgres per run, 30s
+  warmup, closed loop), so the number reads against theirs. `demo-spring` was
+  rejected: about 15 probes, so a request crosses almost no woven code and the
+  number would flatter. Two runs: the headline, `includePackages` covering
+  PetClinic, and the ceiling, widened to `org.springframework`, which ADR 0033
+  accepts as an adopter's choice. Three variants of each: no agent, the default
+  agent, the agent with the static baseline. Metrics: OpenTelemetry's set
+  (startup, allocation, heap, GC pauses, threads, mean and p95 latency,
+  throughput, CPU, network) plus RSS and NMT class space, where ADR 0053's
+  off-heap copy and ADR 0052's extra class-file read land. Startup is one row,
+  time to first 200, not its own item. The agent exports to the
+  `otherlode-collector` image at the same version, logging only, so the flush's
+  encode and send are the real ones and its CPU is in the headline.
+- **Where it lives.** `benchmark-overhead/`, a standalone Gradle build in this
+  repo consuming the shaded jar, outside `settings.gradle.kts` and `check`.
+- **Machine and report.** A manual workflow on `ubuntu-latest`, JDK 21 with
+  G1, five runs per variant, the median with min and max. The README names
+  the runner, JDK, agent version and commit, publishes both macro numbers and
+  promises nothing. If the spread swamps the budget, move to a dedicated GCP
+  VM.
+- **Budget.** Under 3% on throughput and p95 for the headline run. A target,
+  not a gate: a miss reopens the hot-path design (striping, per-thread arrays)
+  as its own grill, reading the micro suite's contention run. The ceiling run
+  has no budget.
+- **Micro suite.** In the existing JMH source set. Four shapes, each woven
+  through the real transformer against its unwoven bytes in one JVM through
+  separate loaders, at one thread and one per core: an entry-only method, a
+  branchy method with a loop and a `when`, a `$default` call with omissions,
+  and an endpoint dispatch through `OtherlodeEndpoints.hit` with a registered
+  entry. `-prof gc` on all four. The per-core run of the entry-only method is
+  the contention measurement: every core writing one array element is true
+  sharing, and JaCoCo's `arr[i] = true` precedent comes from test JVMs. JDK 25
+  is a second leg here only; JDK 17 joins if it becomes the floor.
+- **CI.** Deterministic checks only, in `check`: zero allocation on the woven
+  hot path, and no woven corpus method crossing 8000 bytes (the size guard's
+  own test once it lands). The count of methods crossing 325 is reported,
+  never gated. No timing fails a build.
+- **Ceiling-run failures.** A broken app blocks 0.1.0 (startup failure, a
+  wrong response, a `VerifyError`). Skipped classes and slow methods are
+  published beside the ceiling number.
+- **Before 0.1.0** (checklist item 7): the macro harness with both numbers in
+  the README, the micro suite, the CI checks. **After:** one flush and the
+  registry's heap timed on their own, a nightly schedule with results
+  committed to the repo, and the size guard below.
 
-Questions to settle: whether item 1 lands before release (its number is the
-one a README would publish, and an adopter asks for it before adding a
-`-javaagent` to production); whether these join the "perf deferrals" in the
-after-release line above; what, if anything, gates CI (shared runners are too
-noisy for thresholds); and which JDKs and collectors count. Load tests shaped
-like one adopter's traffic wait for an adopter.
+**Code size, measured.** Nothing in the weaver checks HotSpot's limits. Over
+8000 bytes (`HugeMethodLimit`) a method is never JIT-compiled; over 325
+(`FreqInlineSize`) a hot one is no longer inlined; over 65535 the class file
+cannot be written. A scratch harness on 2026-10-04 ran the real transformer
+(`OtherlodeInstrumentation.install` against a held transformer) over the five
+benchmark corpora and read each method's code length before and after:
+
+- A probe costs about 13 bytes: 13 to 15 for method entry (Advice adds a
+  `goto; nop`), 24 to 28 per two-way site, 11 to 14 per switch case. Small
+  methods roughly double; large ones grow 10 to 40%.
+- Nothing crosses 8000 or 65535. The largest original method is 4410 bytes
+  (demo `computeDependencyReport`, 5304 woven), the largest library one 2936
+  (Ktor `respondStaticPath`). None starts above 6000.
+- 168 methods cross 325, 103 in spring-webmvc, among them the per-request
+  `RequestMappingHandlerAdapter.invokeHandlerMethod` (324 to 534). Most
+  accessors cross C1's 35 and the trivial size of 6. The macro run measures
+  what that costs.
+- 65535 comes far sooner than 64 KB for branch-dense code: blocks of `if (x ==
+  k) y++` fail at about 17 KB original. Through the real JVM path the failure
+  is clean (`MethodTooLargeException`, a WARNING, `recordSkipped`, the class in
+  the skipped list, the original bytes defined and run), but the whole class
+  loses its probes for one method.
+
+The size guard, after release: the analyser bounds each method's woven size
+from its original length and its sites, with a margin for ASM widening jumps
+past 32 KB, and when the bound crosses 8000 from below or nears 65535, drops
+that method's branch probes through ADR 0025's drop mechanism, keeps its
+METHOD probe and logs a WARNING naming it. No wire field: a missing branch
+finding is a missed finding, not a false one, the trade ADR 0052 made for a
+method whose sites do not pair. Recorded as an amendment to ADR 0052's
+consequences when built.
+
+### A Scala 3 enum nested in a class fails to transform
+
+Found 2026-10-04 by the overhead grill's size count. Running the real
+transformer over the `scala` benchmark corpus, `EnumHolder$Inner$` fails with
+ByteBuddy's "Illegal modifiers 16385" (`ACC_PUBLIC | ACC_ENUM`). The class is
+skipped and reported, so it is not a false finding, but its probes are lost.
+`ScalacMatrixTest` runs the analyser only and never reaches ByteBuddy, so
+nothing covers it. Not yet investigated: which release emits the flags, and
+whether a top-level Scala 3 enum's module class transforms.
 
 ### An unread body is an unread shape: landed
 
