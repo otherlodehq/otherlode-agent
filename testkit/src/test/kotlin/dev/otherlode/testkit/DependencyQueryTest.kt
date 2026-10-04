@@ -26,6 +26,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
+import dev.otherlode.testkit.DependencyDiscoverySource as RefDiscoverySource
 
 class DependencyQueryTest {
     private val collector = OtherlodeTestCollector.start()
@@ -140,7 +141,7 @@ class DependencyQueryTest {
         assertEquals(listOf(DependencyIdentityRef("com.fasterxml.jackson.core", "jackson-databind", setOf("2.15.1"))), jackson.identities)
         assertEquals(12L, jackson.loadedClassesTotal)
         assertEquals(10, jackson.classCount)
-        assertEquals(setOf(DependencyDiscoverySource.STARTUP_CLASSPATH), jackson.discoverySources)
+        assertEquals(setOf(RefDiscoverySource.STARTUP_CLASSPATH), jackson.discoverySources)
         assertEquals(DependencyUsage.NO_LIVE_REFERENCE, jackson.status)
 
         assertEquals(":commons-lang3", collector.dependency(null, "commons-lang3").identityKey)

@@ -21,6 +21,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import dev.otherlode.testkit.ProbeKind as RefProbeKind
+import dev.otherlode.testkit.RoutineKind as RefRoutineKind
 
 /**
  * Findings judge the merged hits of every instance by name, as the server does. Every test sends
@@ -137,7 +139,8 @@ class CrossInstanceFindingsTest {
         parameterName = "p$parameterIndex",
     )
 
-    private fun ProbeRef.id() = "${className.removePrefix("com.acme.")}#$methodName${if (kind == ProbeKind.BRANCH) "/$branchIndex" else ""}"
+    private fun ProbeRef.id() =
+        "${className.removePrefix("com.acme.")}#$methodName${if (kind == RefProbeKind.BRANCH) "/$branchIndex" else ""}"
 
     @Test
     fun `a class one instance constructed and another only loaded has no never-hit row and is not never instantiated`() {
@@ -157,7 +160,7 @@ class CrossInstanceFindingsTest {
             "the second instance's zero constructor and zero run are not rows",
         )
         assertEquals(emptyList(), target.neverInstantiated())
-        assertEquals(emptyList(), target.neverInitialised())
+        assertEquals(emptyList(), target.neverInitialized())
     }
 
     @Test
@@ -435,7 +438,7 @@ class CrossInstanceFindingsTest {
 
             assertEquals(emptyList(), target.neverHit(), "routine instance first: $routineFirst")
             assertEquals(
-                listOf("ab01" to RoutineKind.NULL_DEFAULT),
+                listOf("ab01" to RefRoutineKind.NULL_DEFAULT),
                 target.neverHitRoutineOutcomes().map { it.branchKey to it.routine },
                 "routine instance first: $routineFirst",
             )

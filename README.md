@@ -349,22 +349,19 @@ OtherlodeTestCollector.start().use { collector ->
 
 Class names are the dotted binary names the manifest carries
 (`com.acme.OrdersKt` for a Kotlin file's top-level functions,
-`com.acme.Outer$Inner` for a nested class). `kotlinKind` says what kind of
-class kotlinc made, so a test can tell a file facade from a class without
-reading the name. A function in a `@file:JvmMultifileClass` file lives in
-its part class, such as `com.acme.Orders__OrderTotalsKt`, not in the facade
-Kotlin callers name.
+`com.acme.Outer$Inner` for a nested class). A function in a
+`@file:JvmMultifileClass` file lives in its part class, such as
+`com.acme.Orders__OrderTotalsKt`, not in the facade Kotlin callers name.
 
-Queries cover methods (`wasHit`, `hitCount`, `neverHit`, `skippedClasses`,
-`unreportedClasses`), branch outcomes (`neverHitRoutineOutcomes`), classes
-(`neverInitialised`, `neverInstantiated`, `kotlinKind`), endpoints
+Queries cover methods (`wasHit`, `hitCount`, `neverHit`, `skippedClasses`),
+branch outcomes (`neverHitRoutineOutcomes`), classes
+(`neverInitialized`, `neverInstantiated`), endpoints
 (`wasCalled`, `callCount`, `neverCalled`, `endpoints`,
 `disabledEndpointModules`), optional parameters (`omissionCount`,
-`neverSupplied`, `alwaysSupplied`), the call graph (`callEdges`,
-`unreachedClusters`), dependencies (`dependency`, `unloadedDependencies`,
-`unreferencedDependencies`, `unreachedDependencies`, `absentReferences`), a
-clean shutdown (`endedCleanly`, `instancesEndedCleanly`) and, when the agent
-runs with `staticBaselineEnabled=true`, `neverLoaded`. Waits cover the next
+`neverSupplied`, `alwaysSupplied`), the call graph (`unreachedClusters`),
+dependencies (`dependency`, `unloadedDependencies`,
+`unreferencedDependencies`, `unreachedDependencies`, `absentReferences`) and,
+when the agent runs with `staticBaselineEnabled=true`, `neverLoaded`. Waits cover the next
 flush, a settled state, a probe, an endpoint and a dependency
 (`awaitNextFlush`, `awaitSettled`, `awaitProbe`, `awaitEndpoint`,
 `awaitDependency`, `awaitDependenciesListed`). Asking about a probe the
@@ -394,10 +391,34 @@ its class file, so neither tool's results change. An agent that adds or
 reorders a method's conditional jumps ahead of this one, as AspectJ's weaver
 can, leaves that method with its entry probe but no branch probes.
 
-The module isn't published yet. Use it from a multi-project build as
-`testImplementation(project(":testkit"))`, or build the jar with
-`./gradlew :testkit:jar`. It brings only the wire classes onto your test
-classpath, never the agent itself, which runs from its `-javaagent` jar.
+The first heartbeat has 15 seconds to arrive; set
+`otherlode.testkit.startup.timeout.seconds` to change that.
+
+The testkit and the agent are one version. The collector rejects a payload
+from an agent of another version, and the failure names both versions: use the
+testkit of the agent's version. Result types and enums only grow in a minor
+release, so a `when` over `ProbeKind`, `GeneratedBy`, `RoutineKind`,
+`UnreadShape`, `RootKind`, `ClassFinding`, `EndpointDiscoverySource`,
+`DependencyDiscoverySource` or `DependencyUsage` needs an `else` branch.
+`GeneratedBy`, `RoutineKind` and `UnreadShape` have no "none" value: the field
+on `ProbeRef` is null when the probe has no mark.
+
+The same collector works from Java:
+
+```java
+try (OtherlodeTestCollector collector = OtherlodeTestCollector.start()) {
+    // Launch your app with -javaagent:otherlode-agent.jar=exportUrl=<collector.getExportUrl()>,...
+    collector.awaitProbe("com.acme.OrderService", "checkout", Duration.ofSeconds(10));
+    assertTrue(collector.wasHit("com.acme.OrderService", "checkout"));
+    assertTrue(collector.neverHit().isEmpty());
+}
+```
+
+The module isn't published yet. Build the jar with
+`./gradlew :testkit:shadowJar` and put it on your test classpath. It bundles the wire classes and
+protobuf-java under `dev.otherlode.testkit.shaded`, so the only dependency it
+brings onto your test classpath is kotlin-stdlib, and never the agent itself,
+which runs from its `-javaagent` jar.
 
 ## Name the tests that call your code
 

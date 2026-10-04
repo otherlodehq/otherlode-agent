@@ -46,6 +46,9 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import dev.otherlode.testkit.ProbeKind as RefProbeKind
+import dev.otherlode.testkit.RoutineKind as RefRoutineKind
+import dev.otherlode.testkit.UnreadShape as RefUnreadShape
 
 class OtherlodeTestCollectorTest {
     private var collector: OtherlodeTestCollector? = null
@@ -480,9 +483,9 @@ class OtherlodeTestCollectorTest {
 
         assertEquals(2, neverHit.size)
         assertEquals("a", neverHit[0].methodName)
-        assertEquals(ProbeKind.METHOD, neverHit[0].kind)
+        assertEquals(RefProbeKind.METHOD, neverHit[0].kind)
         assertEquals("b", neverHit[1].methodName)
-        assertEquals(ProbeKind.BRANCH, neverHit[1].kind)
+        assertEquals(RefProbeKind.BRANCH, neverHit[1].kind)
         assertEquals(1, neverHit[1].branchIndex)
     }
 
@@ -554,7 +557,7 @@ class OtherlodeTestCollectorTest {
         val neverHit = target.neverHit()
 
         assertEquals(listOf("f"), neverHit.map { it.methodName })
-        assertEquals(ProbeKind.METHOD, neverHit.single().kind)
+        assertEquals(RefProbeKind.METHOD, neverHit.single().kind)
     }
 
     @Test
@@ -1975,7 +1978,7 @@ class OtherlodeTestCollectorTest {
             "Repo's constructor belongs to the cluster that first uses the class, and <clinit> is never listed",
         )
         assertEquals(
-            ClassFinding.NEVER_INITIALISED,
+            ClassFinding.NEVER_INITIALIZED,
             cluster.wholeClasses.single { it.className == "com.acme.Repo" }.finding,
             "Repo's initialiser never ran, so the cluster holds the whole class with its finding",
         )
@@ -2327,7 +2330,7 @@ class OtherlodeTestCollectorTest {
 
         assertEquals(listOf("record"), target.neverHit().map { it.methodName }, "the routine outcome is not a never-hit row")
         val routine = target.neverHitRoutineOutcomes().single()
-        assertEquals(listOf<Any?>("handle", 1, RoutineKind.THROW_ONLY), listOf(routine.methodName, routine.branchIndex, routine.routine))
+        assertEquals(listOf<Any?>("handle", 1, RefRoutineKind.THROW_ONLY), listOf(routine.methodName, routine.branchIndex, routine.routine))
         // The call the routine outcome guards starts at handle, which ran, so record roots a
         // cluster reached from a hit method rather than one behind an untaken outcome.
         val cluster = target.unreachedClusters().single()
@@ -2352,7 +2355,7 @@ class OtherlodeTestCollectorTest {
 
         assertEquals(listOf("price"), target.neverHit().map { it.methodName })
         val unread = target.neverHitUnreadShapes().single()
-        assertEquals(listOf<Any?>("hashCode", UnreadShape.CASE_CLASS), listOf(unread.methodName, unread.unreadShape))
+        assertEquals(listOf<Any?>("hashCode", RefUnreadShape.CASE_CLASS), listOf(unread.methodName, unread.unreadShape))
         assertTrue(target.neverHitRoutineOutcomes().isEmpty())
     }
 
@@ -2380,7 +2383,10 @@ class OtherlodeTestCollectorTest {
 
         assertTrue(target.neverHit().isEmpty())
         val unread = target.neverHitUnreadShapes().single()
-        assertEquals(listOf<Any?>(ProbeKind.BRANCH, 1, UnreadShape.CASE_CLASS), listOf(unread.kind, unread.branchIndex, unread.unreadShape))
+        assertEquals(
+            listOf<Any?>(RefProbeKind.BRANCH, 1, RefUnreadShape.CASE_CLASS),
+            listOf(unread.kind, unread.branchIndex, unread.unreadShape),
+        )
     }
 
     @Test
@@ -2427,7 +2433,7 @@ class OtherlodeTestCollectorTest {
         assertEquals(listOf("record"), target.neverHit().map { it.methodName }, "the unread outcome is not a never-hit row")
         val unread = target.neverHitUnreadShapes().single()
         assertEquals(
-            listOf<Any?>("handle", 1, UnreadShape.COROUTINE_MACHINERY),
+            listOf<Any?>("handle", 1, RefUnreadShape.COROUTINE_MACHINERY),
             listOf(unread.methodName, unread.branchIndex, unread.unreadShape),
         )
         assertTrue(target.neverHitRoutineOutcomes().isEmpty())
@@ -2759,7 +2765,7 @@ class OtherlodeTestCollectorTest {
         val cluster = target.unreachedClusters().single()
         assertEquals(RootKind.UNTAKEN_OUTCOME, cluster.rootKind)
         assertEquals(
-            listOf("com.acme.App", "handle", ProbeKind.BRANCH, 1, 11),
+            listOf("com.acme.App", "handle", RefProbeKind.BRANCH, 1, 11),
             with(cluster.root) { listOf(className, methodName, kind, branchIndex, line) },
         )
         assertTrue(cluster.root in target.neverHit(), "the root is the same ref neverHit lists for the outcome")
@@ -2768,7 +2774,7 @@ class OtherlodeTestCollectorTest {
         // and the cluster holds it whole.
         assertEquals(listOf("com.acme.Legacy" to ClassFinding.NEVER_INSTANTIATED), cluster.wholeClasses.map { it.className to it.finding })
         assertEquals(listOf("<init>", "apply"), cluster.methods.map { it.methodName })
-        assertTrue(cluster.methods.all { it.kind == ProbeKind.METHOD })
+        assertTrue(cluster.methods.all { it.kind == RefProbeKind.METHOD })
         assertEquals(emptyList(), cluster.reachedFrom)
     }
 
@@ -3037,10 +3043,11 @@ class OtherlodeTestCollectorTest {
         assertEquals(listOf("Twice#<clinit>/1"), target.neverHit().filter { it.className == "com.acme.Twice" }.map { it.id() })
     }
 
-    private fun ProbeRef.id() = "${className.removePrefix("com.acme.")}#$methodName${if (kind == ProbeKind.BRANCH) "/$branchIndex" else ""}"
+    private fun ProbeRef.id() =
+        "${className.removePrefix("com.acme.")}#$methodName${if (kind == RefProbeKind.BRANCH) "/$branchIndex" else ""}"
 
     @Test
-    fun `neverInitialised lists a loaded class whose initialiser never ran, and neverHit folds every method of it`() {
+    fun `neverInitialized lists a loaded class whose initialiser never ran, and neverHit folds every method of it`() {
         val target = startCollector()
         collect(
             target,
@@ -3057,9 +3064,9 @@ class OtherlodeTestCollectorTest {
             2 to 1,
         )
 
-        val audit = target.neverInitialised().single()
+        val audit = target.neverInitialized().single()
         assertEquals("com.acme.Audit", audit.className)
-        assertEquals(ClassFinding.NEVER_INITIALISED, audit.finding)
+        assertEquals(ClassFinding.NEVER_INITIALIZED, audit.finding)
         assertEquals(listOf("<init>", "record"), audit.methods, "<clinit> is a class state, never listed as a method")
         assertEquals(1, audit.instancesLoading)
         assertEquals(emptyList(), target.neverInstantiated(), "a never-initialised class is not also never instantiated")
@@ -3091,7 +3098,7 @@ class OtherlodeTestCollectorTest {
         assertEquals("com.acme.Printer", printer.className)
         assertEquals(ClassFinding.NEVER_INSTANTIATED, printer.finding)
         assertEquals(listOf("<init>", "make", "print"), printer.methods)
-        assertEquals(emptyList(), target.neverInitialised())
+        assertEquals(emptyList(), target.neverInitialized())
         assertEquals(
             listOf("Greeter#greet", "Printer#make/1", "Utils#name"),
             target.neverHit().map { it.id() },
@@ -3118,7 +3125,7 @@ class OtherlodeTestCollectorTest {
             2 to 2,
         )
 
-        assertEquals(listOf("com.acme.Idle"), target.neverInitialised().map { it.className })
+        assertEquals(listOf("com.acme.Idle"), target.neverInitialized().map { it.className })
         assertEquals(emptyList(), target.neverInstantiated())
         assertEquals(listOf("Busy#unused"), target.neverHit().map { it.id() })
     }
@@ -3226,10 +3233,10 @@ class OtherlodeTestCollectorTest {
         val cluster = target.unreachedClusters().single()
         assertEquals(RootKind.CLASS_FINDING, cluster.rootKind)
         assertEquals("com.acme.Audit", cluster.root.className)
-        assertEquals(ClassFinding.NEVER_INITIALISED, cluster.rootFinding)
+        assertEquals(ClassFinding.NEVER_INITIALIZED, cluster.rootFinding)
         assertEquals(listOf("App#run"), cluster.reachedFrom.map { it.id() })
         assertEquals(
-            listOf("com.acme.Audit" to ClassFinding.NEVER_INITIALISED, "com.acme.Sink" to null),
+            listOf("com.acme.Audit" to ClassFinding.NEVER_INITIALIZED, "com.acme.Sink" to null),
             cluster.wholeClasses.map { it.className to it.finding },
         )
         assertEquals(listOf("Audit#record", "Sink#write"), cluster.methods.map { it.id() }, "<clinit> is never listed")

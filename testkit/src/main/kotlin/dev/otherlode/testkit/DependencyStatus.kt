@@ -1,9 +1,9 @@
 package dev.otherlode.testkit
 
-import dev.otherlode.export.DependencyDiscoverySource
-
-/** What the collector's rules say about one dependency. Findings sort in this order. */
-enum class DependencyUsage {
+/**
+ * What the collector's rules say about one dependency. Findings sort in this order. Values may be added in a minor release, so a `when` over this enum needs an `else` branch.
+ */
+public enum class DependencyUsage {
     /** Listed from an instance's startup classpath, and no instance loaded a class from it. */
     UNLOADED,
 
@@ -36,7 +36,8 @@ enum class DependencyUsage {
  * One `groupId:artifactId` a dependency carries, with every non-empty version any instance listed
  * it at. [groupId] is empty for an identity read from the jar's filename, which carries no group.
  */
-data class DependencyIdentityRef(
+@ConsistentCopyVisibility
+public data class DependencyIdentityRef internal constructor(
     val groupId: String,
     val artifactId: String,
     val versions: Set<String>,
@@ -47,7 +48,8 @@ data class DependencyIdentityRef(
  * itself for a class-level reference ([methodName] null). [neverLoaded] is true for a site the
  * static baseline declared in a class no manifest from that instance ever named.
  */
-data class DependencyReferenceSite(
+@ConsistentCopyVisibility
+public data class DependencyReferenceSite internal constructor(
     val className: String,
     val methodName: String?,
     val neverLoaded: Boolean,
@@ -70,7 +72,8 @@ data class DependencyReferenceSite(
  * [DependencyUsage.UNREACHED] or [DependencyUsage.NO_LIVE_REFERENCE] dependency these are the dead
  * references, and for [DependencyUsage.UNREFERENCED] the list is empty.
  */
-data class DependencyStatus(
+@ConsistentCopyVisibility
+public data class DependencyStatus internal constructor(
     val identityKey: String,
     val status: DependencyUsage,
     val identities: List<DependencyIdentityRef>,
@@ -84,7 +87,8 @@ data class DependencyStatus(
  * A referenced class no loader could find, with every site that references it: code guarded by a
  * check for an optional library, for one. It maps to no dependency, so it is listed on its own.
  */
-data class AbsentReference(
+@ConsistentCopyVisibility
+public data class AbsentReference internal constructor(
     val className: String,
     val sites: List<DependencyReferenceSite>,
 )
@@ -94,6 +98,6 @@ data class AbsentReference(
  * instead of reading as unloaded or unreferenced. The message names every identity the collector
  * does know, or says that no instance has listed any dependency yet.
  */
-class UnknownDependencyException(
+public class UnknownDependencyException internal constructor(
     message: String,
 ) : RuntimeException(message)

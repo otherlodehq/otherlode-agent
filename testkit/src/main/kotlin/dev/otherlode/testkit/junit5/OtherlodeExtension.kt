@@ -42,9 +42,9 @@ import java.util.concurrent.TimeoutException
  * `endpoint` option works without further wiring. The agent always needs `includePackages`: without
  * it the agent refuses to start and no heartbeat ever arrives. [beforeAll] waits for the agent's
  * first liveness heartbeat once per test JVM, with a timeout named by the
- * `otherlode.testkit.startupTimeoutSeconds` system property, defaulting to 15 seconds.
+ * `otherlode.testkit.startup.timeout.seconds` system property, defaulting to 15 seconds.
  */
-class OtherlodeExtension :
+public class OtherlodeExtension :
     BeforeAllCallback,
     ParameterResolver {
     override fun beforeAll(context: ExtensionContext) {
@@ -102,12 +102,12 @@ class OtherlodeExtension :
         val collector: OtherlodeTestCollector,
     )
 
-    companion object {
+    public companion object {
         private val NAMESPACE = ExtensionContext.Namespace.create(OtherlodeExtension::class.java)
         private const val COLLECTOR_KEY = "collector"
         private const val HEARTBEAT_SEEN_KEY = "heartbeat-seen"
         private const val PORT_PROPERTY = "otherlode.testkit.port"
-        private const val STARTUP_TIMEOUT_PROPERTY = "otherlode.testkit.startupTimeoutSeconds"
+        private const val STARTUP_TIMEOUT_PROPERTY = "otherlode.testkit.startup.timeout.seconds"
         private const val DEFAULT_PORT = 4319
         private const val DEFAULT_STARTUP_TIMEOUT_SECONDS = 15L
 
@@ -120,7 +120,8 @@ class OtherlodeExtension :
          * Throws [IllegalStateException] if no test class has run with [OtherlodeExtension]
          * registered yet.
          */
-        fun collector(): OtherlodeTestCollector =
+        @JvmStatic
+        public fun collector(): OtherlodeTestCollector =
             sharedCollector
                 ?: throw IllegalStateException(
                     "OtherlodeExtension has not run yet: add @ExtendWith(OtherlodeExtension::class) to a test class first",

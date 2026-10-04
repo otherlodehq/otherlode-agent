@@ -1,8 +1,13 @@
 import org.gradle.api.tasks.bundling.Jar
+import java.util.zip.ZipFile
 
 plugins {
     kotlin("jvm") version "2.2.21"
     `jvm-test-suite`
+    id("com.gradleup.shadow") version "8.3.11"
+    // 0.18.2 is the newest release (2026-09-02). It reads Kotlin 2.1 and later metadata, which
+    // covers this module's 2.2.21, and its only change since 0.18.1 is a configuration crash fix.
+    id("org.jetbrains.kotlinx.binary-compatibility-validator") version "0.18.2"
 }
 
 group = "dev.otherlode"
@@ -46,6 +51,7 @@ dependencies {
 
 kotlin {
     jvmToolchain(21)
+    explicitApi()
 }
 
 java {
@@ -53,8 +59,122 @@ java {
     targetCompatibility = JavaVersion.VERSION_21
 }
 
+// The plain jar keeps its own classifier so it cannot overwrite the shadow jar, which is the
+// testkit artifact. Both carry the version the agent's jar carries: the testkit reads it back from
+// its package to refuse an agent of another version.
 tasks.jar {
     archiveBaseName.set("otherlode-testkit")
+    archiveClassifier.set("plain")
+    manifest {
+        attributes("Implementation-Version" to project.version)
+    }
+}
+
+// Licence texts the shadow jar carries under META-INF, taken from the files the agent jar already
+// uses: the repository's LICENSE and the protobuf-java text under licenses/. The NOTICE is this
+// module's own.
+val bundledLicenseFiles =
+    mapOf(
+        "META-INF/LICENSE" to rootProject.layout.projectDirectory.file("LICENSE"),
+        "META-INF/NOTICE" to layout.projectDirectory.file("NOTICE"),
+        "META-INF/licenses/protobuf-java/LICENSE" to rootProject.layout.projectDirectory.file("licenses/protobuf-java/LICENSE"),
+    )
+
+tasks.shadowJar {
+    archiveBaseName.set("otherlode-testkit")
+    archiveClassifier.set("")
+
+    // kotlin-stdlib is the testkit's one runtime dependency; the adopter's own copy serves it.
+    dependencies {
+        exclude(dependency("org.jetbrains.kotlin:kotlin-stdlib"))
+        exclude(dependency("org.jetbrains:annotations"))
+    }
+
+    // The wire module and protobuf-java travel inside the jar under the testkit's own prefix, so a
+    // test classpath that carries another protobuf, or the wire module at another version, never
+    // meets these copies.
+    relocate("com.google.protobuf", "dev.otherlode.testkit.shaded.protobuf")
+    relocate("dev.otherlode.export", "dev.otherlode.testkit.shaded.export")
+    relocate("dev.otherlode.proto", "dev.otherlode.testkit.shaded.proto")
+    relocate("dev.otherlode.registry", "dev.otherlode.testkit.shaded.registry")
+
+    // The schema files protobuf-java and the wire module ship as resources would otherwise sit
+    // unrelocated on an adopter's classpath; the generated classes carry their own descriptors.
+    exclude("google/protobuf/**", "otherlode/**")
+
+    // META-INF/LICENSE and META-INF/NOTICE must describe this jar, not whichever dependency
+    // shadow copied first, so every dependency's own copies are dropped and the files above go in.
+    exclude("META-INF/LICENSE", "META-INF/LICENSE.txt", "META-INF/NOTICE", "META-INF/NOTICE.txt", "META-INF/licenses/**")
+    for ((entry, source) in bundledLicenseFiles) {
+        from(source) {
+            into(entry.substringBeforeLast('/'))
+            rename { entry.substringAfterLast('/') }
+        }
+    }
+
+    manifest {
+        attributes("Implementation-Version" to project.version)
+    }
+}
+
+tasks.build {
+    dependsOn(tasks.shadowJar)
+}
+
+// Fails the build if the shadow jar is not what an adopter's test classpath can take: only the
+// testkit's own classes, protobuf and the wire module present only relocated, no copy of
+// kotlin-stdlib, and the licence files in place.
+val verifyTestkitJar by tasks.registering {
+    dependsOn(tasks.shadowJar)
+    val jarFile = tasks.shadowJar.flatMap { it.archiveFile }
+    inputs.file(jarFile)
+    inputs.property("licenseEntries", bundledLicenseFiles.keys.sorted())
+    doLast {
+        ZipFile(jarFile.get().asFile).use { zip ->
+            val names =
+                zip
+                    .entries()
+                    .asSequence()
+                    .map { it.name }
+                    .toList()
+            val classes = names.filter { it.endsWith(".class") }
+            val foreign = classes.filterNot { it.startsWith("dev/otherlode/testkit/") }
+            check(foreign.isEmpty()) { "testkit jar carries classes outside dev/otherlode/testkit/: ${foreign.take(10)}" }
+            val unrelocated =
+                names.filter {
+                    it.startsWith("com/google/protobuf/") ||
+                        it.startsWith("dev/otherlode/export/") ||
+                        it.startsWith("dev/otherlode/proto/") ||
+                        it.startsWith("dev/otherlode/registry/")
+                }
+            check(unrelocated.isEmpty()) { "testkit jar carries unrelocated entries: ${unrelocated.take(10)}" }
+            val schemaFiles = names.filter { it.endsWith(".proto") }
+            check(schemaFiles.isEmpty()) { "testkit jar carries unrelocated schema files: $schemaFiles" }
+            val kotlinClasses = names.filter { it.startsWith("kotlin/") }
+            check(kotlinClasses.isEmpty()) { "testkit jar must not bundle kotlin-stdlib, found: ${kotlinClasses.take(10)}" }
+            check(classes.any { it.startsWith("dev/otherlode/testkit/shaded/protobuf/") }) {
+                "testkit jar is missing the relocated protobuf-java"
+            }
+            check(classes.any { it.startsWith("dev/otherlode/testkit/shaded/export/") }) {
+                "testkit jar is missing the relocated wire module"
+            }
+            val missing = bundledLicenseFiles.keys.filterNot { it in names }
+            check(missing.isEmpty()) { "testkit jar is missing licence entries: $missing" }
+            val notice = zip.getInputStream(zip.getEntry("META-INF/NOTICE")).bufferedReader().use { it.readLine() }
+            check(notice == "Otherlode testkit") { "testkit jar's META-INF/NOTICE is not this module's own; first line is \"$notice\"" }
+            val manifest = zip.getInputStream(zip.getEntry("META-INF/MANIFEST.MF")).bufferedReader().readText()
+            check("Implementation-Version: ${project.version}" in manifest) { "testkit jar's manifest does not carry the project version" }
+        }
+    }
+}
+
+// A Java caller of every public query, compiled and never run: it fails the build when a change
+// makes the API unusable from Java.
+val javaApiTest = sourceSets.create("javaApiTest")
+dependencies {
+    "javaApiTestImplementation"(sourceSets.main.get().output)
+    "javaApiTestImplementation"(kotlin("stdlib"))
+    "javaApiTestCompileOnly"("org.junit.jupiter:junit-jupiter-api:5.10.1")
 }
 
 // The Scala fixture modules, wired in the way the root build wires them: a task dependency and two
@@ -129,7 +249,9 @@ testing {
                 // available inside a suite's own dependencies block, so this names the same
                 // artifact directly, as the endpoints-spring-webmvc and endpoints-jaxrs suites
                 // already do.
-                implementation(project())
+                // The shadow jar, so the relocation and the manifest version are exercised exactly as
+                // an adopter's classpath sees them. kotlin-stdlib arrives through kotlin-test-junit5.
+                implementation(files(tasks.shadowJar))
                 implementation("org.jetbrains.kotlin:kotlin-test-junit5:2.2.21")
                 implementation(files(depUsedJar, depUnusedJar))
             }
@@ -165,4 +287,6 @@ testing {
 
 tasks.check {
     dependsOn(testing.suites.named("agentTest"))
+    dependsOn(verifyTestkitJar)
+    dependsOn(tasks.named("compileJavaApiTestJava"))
 }

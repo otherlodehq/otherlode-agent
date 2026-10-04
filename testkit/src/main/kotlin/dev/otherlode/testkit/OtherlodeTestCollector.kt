@@ -5,17 +5,10 @@ import com.sun.net.httpserver.HttpServer
 import dev.otherlode.export.BranchSite
 import dev.otherlode.export.CallEdge
 import dev.otherlode.export.CallEdgeKind
-import dev.otherlode.export.DisabledEndpointModule
-import dev.otherlode.export.EndpointDiscoverySource
-import dev.otherlode.export.GeneratedBy
 import dev.otherlode.export.KotlinKind
-import dev.otherlode.export.ProbeKind
 import dev.otherlode.export.ProbeManifest
 import dev.otherlode.export.ProtoPayloadCodec
 import dev.otherlode.export.ResourceAttributes
-import dev.otherlode.export.RoutineKind
-import dev.otherlode.export.SkippedClass
-import dev.otherlode.export.UnreadShape
 import dev.otherlode.export.UnreportedClass
 import dev.otherlode.registry.RouteTemplateNormalizer
 import java.net.InetSocketAddress
@@ -32,6 +25,10 @@ import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.read
 import kotlin.concurrent.withLock
 import kotlin.concurrent.write
+import dev.otherlode.export.GeneratedBy as WireGeneratedBy
+import dev.otherlode.export.ProbeKind as WireProbeKind
+import dev.otherlode.export.RoutineKind as WireRoutineKind
+import dev.otherlode.export.UnreadShape as WireUnreadShape
 
 /**
  * An embeddable collector that speaks the same wire protocol the Otherlode agent sends: delta
@@ -55,7 +52,7 @@ import kotlin.concurrent.write
  * merges into one [EndpointRef] whose call count sums every instance's latest total, the same
  * cross-instance aggregation [hitCount] already does for method probes by class and method name.
  *
- * The findings ([neverHit], [neverHitRoutineOutcomes], [neverHitUnreadShapes], [neverInitialised],
+ * The findings ([neverHit], [neverHitRoutineOutcomes], [neverHitUnreadShapes], [neverInitialized],
  * [neverInstantiated], [unreachedClusters], [neverSupplied], [alwaysSupplied]) judge the merged hits
  * of every instance heard from, by name, as the server judges every in-scope instance: a probe,
  * class or call edge one instance reported is the same one in another, whatever class id each
@@ -78,16 +75,18 @@ import kotlin.concurrent.write
  * from, would break that assumption. Such a payload is answered 400, nothing from it is kept, and
  * the reason is recorded in [rejectedPayloads]. A payload that does not decode, or that fails
  * while it is applied, is treated the same way, and so is one a collector forwarded after stripping
- * fields it did not know: this collector expects the agent's payloads directly and whole. From then on [awaitSettled] and every other
+ * fields it did not know: this collector expects the agent's payloads directly and whole. So is a payload whose agent version
+ * differs from this testkit's, when both are known: the two are released as one version. From then on [awaitSettled] and every other
  * query and wait throw [IllegalStateException] listing the recorded reasons, so a test fails
  * even if it never calls [rejectedPayloads].
  *
  * Close this with [close], typically from a `.use { }` block, once a test is done with it.
  */
-class OtherlodeTestCollector private constructor(
+public class OtherlodeTestCollector internal constructor(
     private val server: HttpServer,
     private val executor: ExecutorService,
     private val servesOneJvm: Boolean,
+    private val testkitVersion: String,
 ) : AutoCloseable {
     private data class ProbeKey(
         val serviceInstanceId: String,
@@ -100,7 +99,7 @@ class OtherlodeTestCollector private constructor(
         val methodName: String,
         val methodDescriptor: String,
         val line: Int,
-        val kind: ProbeKind,
+        val kind: WireProbeKind,
         val branchIndex: Int?,
         val inline: Boolean,
         val parameterIndex: Int? = null,
@@ -109,7 +108,7 @@ class OtherlodeTestCollector private constructor(
         val targetClassName: String? = null,
         val calls: List<CallEdge> = emptyList(),
         val inlinedFromClassName: String? = null,
-        val generatedBy: GeneratedBy = GeneratedBy.NONE,
+        val generatedBy: WireGeneratedBy = WireGeneratedBy.NONE,
         val referencedClasses: List<String> = emptyList(),
         val branchKey: String? = null,
         val branchSites: List<BranchSite> = emptyList(),
@@ -118,10 +117,10 @@ class OtherlodeTestCollector private constructor(
         val parameterNames: List<String> = emptyList(),
         val genericSignature: String = "",
         val extensionReceiver: Boolean = false,
-        val unreadShape: UnreadShape = UnreadShape.NONE,
+        val unreadShape: WireUnreadShape = WireUnreadShape.NONE,
     ) {
         /** Whether the method is generated or an unread shape: no node, but looked through. */
-        fun isLookedThrough(): Boolean = generatedBy != GeneratedBy.NONE || unreadShape != UnreadShape.NONE
+        fun isLookedThrough(): Boolean = generatedBy != WireGeneratedBy.NONE || unreadShape != WireUnreadShape.NONE
     }
 
     /** A class's superclass and direct interfaces, by class name, which call-edge resolution walks. */
@@ -136,16 +135,16 @@ class OtherlodeTestCollector private constructor(
         val methodDescriptor: String,
         val inline: Boolean,
         val calls: List<CallEdge>,
-        val generatedBy: GeneratedBy = GeneratedBy.NONE,
+        val generatedBy: WireGeneratedBy = WireGeneratedBy.NONE,
         val referencedClasses: List<String> = emptyList(),
         val static: Boolean = false,
         val parameterNames: List<String> = emptyList(),
         val genericSignature: String = "",
         val extensionReceiver: Boolean = false,
-        val unreadShape: UnreadShape = UnreadShape.NONE,
+        val unreadShape: WireUnreadShape = WireUnreadShape.NONE,
     ) {
         /** Whether the method is generated or an unread shape: no node, but looked through. */
-        fun isLookedThrough(): Boolean = generatedBy != GeneratedBy.NONE || unreadShape != UnreadShape.NONE
+        fun isLookedThrough(): Boolean = generatedBy != WireGeneratedBy.NONE || unreadShape != WireUnreadShape.NONE
     }
 
     /**
@@ -335,7 +334,7 @@ class OtherlodeTestCollector private constructor(
      */
     private data class LocationKey(
         val method: NodeKey,
-        val kind: ProbeKind,
+        val kind: WireProbeKind,
         val parameterIndex: Int?,
         val outcome: OutcomeId?,
     )
@@ -358,17 +357,17 @@ class OtherlodeTestCollector private constructor(
         val static: Boolean,
         val lambdaBody: Boolean,
         val overridable: Boolean,
-        val generatedBy: GeneratedBy,
+        val generatedBy: WireGeneratedBy,
         val inlinedFromClassName: String?,
-        val routine: RoutineKind,
-        val unreadShape: UnreadShape,
+        val routine: WireRoutineKind,
+        val unreadShape: WireUnreadShape,
         val targetClassName: String?,
         val parameterName: String?,
     ) {
         val newest: Map.Entry<ProbeKey, StoredProbe> get() = members.first()
 
         /** Whether the location is generated or an unread shape: no node, but looked through. */
-        val isLookedThrough: Boolean get() = generatedBy != GeneratedBy.NONE || unreadShape != UnreadShape.NONE
+        val isLookedThrough: Boolean get() = generatedBy != WireGeneratedBy.NONE || unreadShape != WireUnreadShape.NONE
     }
 
     /** Scopes a per-instance id (`dependency_id`, `class_id`) or a class name to the instance that reported it. */
@@ -514,7 +513,7 @@ class OtherlodeTestCollector private constructor(
     private val onlyInstance = AtomicReference<String?>()
 
     /** Base URL to pass as an agent's `exportUrl=` option, for example `http://localhost:54321`. */
-    val exportUrl: String = "http://localhost:${server.address.port}"
+    public val exportUrl: String = "http://localhost:${server.address.port}"
 
     /**
      * Blocks until a delta batch arrives that was received after this call began, including an
@@ -522,7 +521,7 @@ class OtherlodeTestCollector private constructor(
      * a liveness heartbeat. Throws [TimeoutException] if [timeout] elapses first.
      */
     @Throws(TimeoutException::class)
-    fun awaitNextFlush(timeout: Duration) {
+    public fun awaitNextFlush(timeout: Duration) {
         checkNoRejections()
         val start = deltaBatchSeq.get()
         awaitUntil(timeout, "no delta batch arrived within $timeout") { deltaBatchSeq.get() > start }
@@ -542,7 +541,7 @@ class OtherlodeTestCollector private constructor(
      * Throws [TimeoutException] if [timeout] elapses before two batches arrive.
      */
     @Throws(TimeoutException::class)
-    fun awaitSettled(timeout: Duration) {
+    public fun awaitSettled(timeout: Duration) {
         checkNoRejections()
         val start = deltaBatchSeq.get()
         awaitUntil(timeout, "fewer than two delta batches arrived within $timeout") { deltaBatchSeq.get() >= start + 2 }
@@ -556,7 +555,7 @@ class OtherlodeTestCollector private constructor(
      * elapses first.
      */
     @Throws(TimeoutException::class)
-    fun awaitProbe(
+    public fun awaitProbe(
         className: String,
         methodName: String,
         timeout: Duration,
@@ -598,7 +597,8 @@ class OtherlodeTestCollector private constructor(
      * Throws [UnknownProbeException] if no such probe was ever declared; see that type's doc for
      * the four cases it distinguishes.
      */
-    fun wasHit(
+    @JvmOverloads
+    public fun wasHit(
         className: String,
         methodName: String,
         methodDescriptor: String? = null,
@@ -611,7 +611,8 @@ class OtherlodeTestCollector private constructor(
      *
      * Throws [UnknownProbeException] if no such probe was ever declared.
      */
-    fun hitCount(
+    @JvmOverloads
+    public fun hitCount(
         className: String,
         methodName: String,
         methodDescriptor: String? = null,
@@ -625,7 +626,8 @@ class OtherlodeTestCollector private constructor(
      *
      * Throws [UnknownProbeException] if no such omission probe was ever declared.
      */
-    fun omissionCount(
+    @JvmOverloads
+    public fun omissionCount(
         className: String,
         methodName: String,
         parameterIndex: Int,
@@ -637,7 +639,8 @@ class OtherlodeTestCollector private constructor(
         }
 
     /** Like [omissionCount], but selects the optional parameter by [parameterName] instead of index. */
-    fun omissionCount(
+    @JvmOverloads
+    public fun omissionCount(
         className: String,
         methodName: String,
         parameterName: String,
@@ -705,7 +708,7 @@ class OtherlodeTestCollector private constructor(
      * server's merge keeps any such mark. The row's line is the highest of the omission probes'
      * lines, each as its newest instance reports it, leaving out `-1`; it is `-1` when every one is.
      */
-    fun neverSupplied(): List<OptionalParameterRef> =
+    public fun neverSupplied(): List<OptionalParameterRef> =
         checked {
             optionalParameterFindings { omitted, targetHits, overridable -> !overridable && omitted == targetHits }
         }
@@ -717,7 +720,7 @@ class OtherlodeTestCollector private constructor(
      * target, overridable or not. A target with no
      * method probe at all, or an inline target, is skipped, the same as [neverSupplied].
      */
-    fun alwaysSupplied(): List<OptionalParameterRef> = checked { optionalParameterFindings { omitted, _, _ -> omitted == 0L } }
+    public fun alwaysSupplied(): List<OptionalParameterRef> = checked { optionalParameterFindings { omitted, _, _ -> omitted == 0L } }
 
     /**
      * Groups every `OPTIONAL_ARGUMENT` location, merged across instances, by the parameter it
@@ -731,7 +734,7 @@ class OtherlodeTestCollector private constructor(
         claims: (omitted: Long, targetHits: Long, overridable: Boolean) -> Boolean,
     ): List<OptionalParameterRef> =
         mergedLocations()
-            .filter { it.key.kind == ProbeKind.OPTIONAL_ARGUMENT }
+            .filter { it.key.kind == WireProbeKind.OPTIONAL_ARGUMENT }
             .groupBy {
                 OmissionTargetKey(
                     it.targetClassName ?: it.key.method.className,
@@ -777,7 +780,7 @@ class OtherlodeTestCollector private constructor(
             ?.filter { key ->
                 val probe = probesByKey[key]
                 probe != null &&
-                    probe.kind == ProbeKind.METHOD &&
+                    probe.kind == WireProbeKind.METHOD &&
                     probe.methodName == methodName &&
                     (methodDescriptor == null || probe.methodDescriptor == methodDescriptor)
             }?.takeIf { it.isNotEmpty() }
@@ -846,7 +849,7 @@ class OtherlodeTestCollector private constructor(
      *
      * The class-finding rules apply as well. A `<clinit>` is never listed, since it is a class
      * state. A constructor is listed only as an unused overload, when another constructor of its
-     * class ran. A method that can only run through a class finding ([neverInitialised],
+     * class ran. A method that can only run through a class finding ([neverInitialized],
      * [neverInstantiated]) is left out, and so is a never-hit lambda body whose every creator is
      * such a method or a never-hit method listed here. A BRANCH probe in a method left out this way
      * is left out too.
@@ -868,8 +871,7 @@ class OtherlodeTestCollector private constructor(
      * marked unread. That is a fact about the agent, not about the adopter's code.
      * [neverHitUnreadShapes] lists those.
      */
-    fun neverHit(): List<ProbeRef> =
-        checked { neverHitRows().filter { it.routine == RoutineKind.NONE && it.unreadShape == UnreadShape.NONE } }
+    public fun neverHit(): List<ProbeRef> = checked { neverHitRows().filter { it.routine == null && it.unreadShape == null } }
 
     /**
      * Every never-hit BRANCH probe that [neverHit] leaves out only because its outcome is routine,
@@ -880,8 +882,8 @@ class OtherlodeTestCollector private constructor(
      * gives, is not listed here either: a site folds before any of its outcomes can count as
      * routine.
      */
-    fun neverHitRoutineOutcomes(): List<ProbeRef> =
-        checked { neverHitRows().filter { it.routine != RoutineKind.NONE && it.unreadShape == UnreadShape.NONE } }
+    public fun neverHitRoutineOutcomes(): List<ProbeRef> =
+        checked { neverHitRows().filter { it.routine != null && it.unreadShape == null } }
 
     /**
      * Every never-hit METHOD or BRANCH probe that [neverHit] leaves out only because it is an unread
@@ -893,7 +895,7 @@ class OtherlodeTestCollector private constructor(
      * gives, is not listed here either. The probes of an unread method do not fold: that method is
      * no row of [neverHit], so nothing would carry them.
      */
-    fun neverHitUnreadShapes(): List<ProbeRef> = checked { neverHitRows().filter { it.unreadShape != UnreadShape.NONE } }
+    public fun neverHitUnreadShapes(): List<ProbeRef> = checked { neverHitRows().filter { it.unreadShape != null } }
 
     /** Every [neverHit] row with routine outcomes still in. */
     private fun neverHitRows(): List<ProbeRef> {
@@ -901,7 +903,7 @@ class OtherlodeTestCollector private constructor(
         val locations = mergedLocations()
         val candidates =
             locations.filter {
-                it.key.kind != ProbeKind.OPTIONAL_ARGUMENT && !it.inline && it.generatedBy == GeneratedBy.NONE && it.hits <= 0L &&
+                it.key.kind != WireProbeKind.OPTIONAL_ARGUMENT && !it.inline && it.generatedBy == WireGeneratedBy.NONE && it.hits <= 0L &&
                     isNeverHitRow(it, judgement)
             }
         val folded = foldedSites(locations, candidates)
@@ -928,19 +930,21 @@ class OtherlodeTestCollector private constructor(
         val neverHitMethods =
             locations
                 .filter {
-                    it.key.kind == ProbeKind.METHOD && !it.inline && it.generatedBy == GeneratedBy.NONE &&
-                        it.unreadShape == UnreadShape.NONE && it.hits <= 0L
+                    it.key.kind == WireProbeKind.METHOD && !it.inline && it.generatedBy == WireGeneratedBy.NONE &&
+                        it.unreadShape == WireUnreadShape.NONE && it.hits <= 0L
                 }.mapTo(HashSet()) { it.key.method }
         val guardOutcomes =
             candidates
-                .filter { it.key.kind == ProbeKind.BRANCH && it.routine == RoutineKind.NONE && it.unreadShape == UnreadShape.NONE }
-                .mapTo(HashSet()) { it.key.method to it.key.outcome }
+                .filter {
+                    it.key.kind == WireProbeKind.BRANCH && it.routine == WireRoutineKind.NONE &&
+                        it.unreadShape == WireUnreadShape.NONE
+                }.mapTo(HashSet()) { it.key.method to it.key.outcome }
         val guards = siteGuards()
         val outcomeIds = branchOutcomeIds()
         return candidates
             .filter { location ->
                 val branchIndex = location.newest.value.branchIndex
-                if (location.key.kind != ProbeKind.BRANCH || branchIndex == null) return@filter false
+                if (location.key.kind != WireProbeKind.BRANCH || branchIndex == null) return@filter false
                 val method = location.key.method
                 val instance = location.newest.key.serviceInstanceId
                 val guard = guards[OutcomeKey(instance, method, branchIndex)]?.let { outcomeIds[OutcomeKey(instance, method, it)] }
@@ -953,7 +957,7 @@ class OtherlodeTestCollector private constructor(
         val ids = HashMap<OutcomeKey, OutcomeId>()
         for ((key, probe) in probesByKey) {
             val branchIndex = probe.branchIndex
-            if (probe.kind != ProbeKind.BRANCH || branchIndex == null) continue
+            if (probe.kind != WireProbeKind.BRANCH || branchIndex == null) continue
             ids[OutcomeKey(key.serviceInstanceId, NodeKey(probe.className, probe.methodName, probe.methodDescriptor), branchIndex)] =
                 outcomeIdOf(probe)
         }
@@ -981,7 +985,7 @@ class OtherlodeTestCollector private constructor(
                     NodeKey(probe.className, probe.methodName, probe.methodDescriptor),
                     probe.kind,
                     probe.parameterIndex,
-                    if (probe.kind == ProbeKind.BRANCH) outcomeIdOf(probe) else null,
+                    if (probe.kind == WireProbeKind.BRANCH) outcomeIdOf(probe) else null,
                 )
             }.map { (key, entries) ->
                 val members = entries.sortedWith(newestFirst)
@@ -995,16 +999,16 @@ class OtherlodeTestCollector private constructor(
                     static = members.any { it.value.static },
                     lambdaBody = members.any { it.value.lambdaBody },
                     overridable = members.any { it.value.overridable },
-                    generatedBy = GeneratedBy.entries[members.maxOf { it.value.generatedBy.ordinal }],
+                    generatedBy = WireGeneratedBy.entries[members.maxOf { it.value.generatedBy.ordinal }],
                     inlinedFromClassName = members.mapNotNull { it.value.inlinedFromClassName }.maxOrNull(),
                     routine =
                         members
                             .map { (probeKey, probe) -> routineOf(probeKey, probe, routineKinds) }
-                            .firstOrNull { it != RoutineKind.NONE } ?: RoutineKind.NONE,
+                            .firstOrNull { it != WireRoutineKind.NONE } ?: WireRoutineKind.NONE,
                     unreadShape =
                         members
                             .map { (probeKey, probe) -> unreadOf(probeKey, probe, unreadOutcomes) }
-                            .firstOrNull { it != UnreadShape.NONE } ?: UnreadShape.NONE,
+                            .firstOrNull { it != WireUnreadShape.NONE } ?: WireUnreadShape.NONE,
                     targetClassName = members.mapNotNull { it.value.targetClassName }.maxOrNull(),
                     parameterName = members.first().value.parameterName,
                 )
@@ -1018,7 +1022,7 @@ class OtherlodeTestCollector private constructor(
     private fun siteGuards(): Map<OutcomeKey, Int> {
         val guards = HashMap<OutcomeKey, Int>()
         for ((key, probe) in probesByKey) {
-            if (probe.kind != ProbeKind.METHOD) continue
+            if (probe.kind != WireProbeKind.METHOD) continue
             val method = NodeKey(probe.className, probe.methodName, probe.methodDescriptor)
             for (site in probe.branchSites) {
                 val guard = site.guard ?: continue
@@ -1032,14 +1036,14 @@ class OtherlodeTestCollector private constructor(
      * The kind of every routine outcome, from the sites each instance's METHOD probes list. An
      * outcome absent from the map is not routine.
      */
-    private fun routineKinds(): Map<OutcomeKey, RoutineKind> {
-        val kinds = HashMap<OutcomeKey, RoutineKind>()
+    private fun routineKinds(): Map<OutcomeKey, WireRoutineKind> {
+        val kinds = HashMap<OutcomeKey, WireRoutineKind>()
         for ((key, probe) in probesByKey) {
-            if (probe.kind != ProbeKind.METHOD) continue
+            if (probe.kind != WireProbeKind.METHOD) continue
             val method = NodeKey(probe.className, probe.methodName, probe.methodDescriptor)
             for (site in probe.branchSites) {
                 for (outcome in site.outcomes) {
-                    if (outcome.routine == RoutineKind.NONE) continue
+                    if (outcome.routine == WireRoutineKind.NONE) continue
                     kinds[OutcomeKey(key.serviceInstanceId, method, outcome.branchIndex)] = outcome.routine
                 }
             }
@@ -1051,14 +1055,14 @@ class OtherlodeTestCollector private constructor(
      * The unread shape of every outcome the agent marked unread, from the sites each instance's
      * METHOD probes list. An outcome absent from the map is not marked; its method may still be.
      */
-    private fun unreadOutcomeShapes(): Map<OutcomeKey, UnreadShape> {
-        val shapes = HashMap<OutcomeKey, UnreadShape>()
+    private fun unreadOutcomeShapes(): Map<OutcomeKey, WireUnreadShape> {
+        val shapes = HashMap<OutcomeKey, WireUnreadShape>()
         for ((key, probe) in probesByKey) {
-            if (probe.kind != ProbeKind.METHOD) continue
+            if (probe.kind != WireProbeKind.METHOD) continue
             val method = NodeKey(probe.className, probe.methodName, probe.methodDescriptor)
             for (site in probe.branchSites) {
                 for (outcome in site.outcomes) {
-                    if (outcome.unreadShape == UnreadShape.NONE) continue
+                    if (outcome.unreadShape == WireUnreadShape.NONE) continue
                     shapes[OutcomeKey(key.serviceInstanceId, method, outcome.branchIndex)] = outcome.unreadShape
                 }
             }
@@ -1074,12 +1078,12 @@ class OtherlodeTestCollector private constructor(
     private fun unreadOf(
         key: ProbeKey,
         probe: StoredProbe,
-        unreadOutcomes: Map<OutcomeKey, UnreadShape>,
-    ): UnreadShape {
+        unreadOutcomes: Map<OutcomeKey, WireUnreadShape>,
+    ): WireUnreadShape {
         val branchIndex = probe.branchIndex
-        if (probe.kind != ProbeKind.BRANCH || branchIndex == null) return probe.unreadShape
+        if (probe.kind != WireProbeKind.BRANCH || branchIndex == null) return probe.unreadShape
         val method = NodeKey(probe.className, probe.methodName, probe.methodDescriptor)
-        val outcome = unreadOutcomes[OutcomeKey(key.serviceInstanceId, method, branchIndex)] ?: UnreadShape.NONE
+        val outcome = unreadOutcomes[OutcomeKey(key.serviceInstanceId, method, branchIndex)] ?: WireUnreadShape.NONE
         return if (outcome.ordinal > probe.unreadShape.ordinal) outcome else probe.unreadShape
     }
 
@@ -1087,12 +1091,12 @@ class OtherlodeTestCollector private constructor(
     private fun routineOf(
         key: ProbeKey,
         probe: StoredProbe,
-        routineKinds: Map<OutcomeKey, RoutineKind>,
-    ): RoutineKind {
+        routineKinds: Map<OutcomeKey, WireRoutineKind>,
+    ): WireRoutineKind {
         val branchIndex = probe.branchIndex
-        if (probe.kind != ProbeKind.BRANCH || branchIndex == null) return RoutineKind.NONE
+        if (probe.kind != WireProbeKind.BRANCH || branchIndex == null) return WireRoutineKind.NONE
         val method = NodeKey(probe.className, probe.methodName, probe.methodDescriptor)
-        return routineKinds[OutcomeKey(key.serviceInstanceId, method, branchIndex)] ?: RoutineKind.NONE
+        return routineKinds[OutcomeKey(key.serviceInstanceId, method, branchIndex)] ?: WireRoutineKind.NONE
     }
 
     /**
@@ -1108,7 +1112,7 @@ class OtherlodeTestCollector private constructor(
     ): Boolean {
         val method = location.key.method
         if (method in judgement.foldedMethods) return false
-        if (location.key.kind != ProbeKind.METHOD) return true
+        if (location.key.kind != WireProbeKind.METHOD) return true
         return when (method.methodName) {
             CLASS_INIT -> false
             CONSTRUCTOR -> method.className in judgement.constructed
@@ -1124,7 +1128,7 @@ class OtherlodeTestCollector private constructor(
      * Every method of such a class can only run through its initialiser, so [neverHit] and
      * [unreachedClusters] fold them into the class.
      */
-    fun neverInitialised(): List<ClassFindingRef> = checked { classFindingRefs(ClassFinding.NEVER_INITIALISED) }
+    public fun neverInitialized(): List<ClassFindingRef> = checked { classFindingRefs(ClassFinding.NEVER_INITIALIZED) }
 
     /**
      * Every class that some instance loaded, that is not never initialised, that has a judgeable
@@ -1137,7 +1141,7 @@ class OtherlodeTestCollector private constructor(
      * [neverHit] and [unreachedClusters] fold them into the class. Its static methods can still run,
      * so they stay rows of their own.
      */
-    fun neverInstantiated(): List<ClassFindingRef> = checked { classFindingRefs(ClassFinding.NEVER_INSTANTIATED) }
+    public fun neverInstantiated(): List<ClassFindingRef> = checked { classFindingRefs(ClassFinding.NEVER_INSTANTIATED) }
 
     /** The [ClassFindingRef] of each class [judgeClasses] gives [finding], sorted by class name. */
     private fun classFindingRefs(finding: ClassFinding): List<ClassFindingRef> =
@@ -1154,7 +1158,7 @@ class OtherlodeTestCollector private constructor(
                         nameIndex[className]
                             .orEmpty()
                             .mapNotNull { probesByKey[it] }
-                            .filter { it.kind == ProbeKind.METHOD && it.methodName != CLASS_INIT }
+                            .filter { it.kind == WireProbeKind.METHOD && it.methodName != CLASS_INIT }
                             .map { it.methodName }
                             .distinct()
                             .sorted(),
@@ -1168,7 +1172,7 @@ class OtherlodeTestCollector private constructor(
      */
     private fun judgeableMethods(): Map<NodeKey, JudgeableMethod> =
         mergedLocations()
-            .filter { it.key.kind == ProbeKind.METHOD && !it.inline && !it.isLookedThrough }
+            .filter { it.key.kind == WireProbeKind.METHOD && !it.inline && !it.isLookedThrough }
             .associate { it.key.method to JudgeableMethod(it.key.method, it.hits, it.static, it.lambdaBody) }
 
     /**
@@ -1190,7 +1194,7 @@ class OtherlodeTestCollector private constructor(
             }
         }
         probesByKey.values
-            .filter { it.kind == ProbeKind.METHOD }
+            .filter { it.kind == WireProbeKind.METHOD }
             .forEach { add(NodeKey(it.className, it.methodName, it.methodDescriptor), it.calls) }
         for ((className, declared) in consultedDeclaredClasses) {
             declared.methods.forEach { add(NodeKey(className, it.methodName, it.methodDescriptor), it.calls) }
@@ -1222,7 +1226,7 @@ class OtherlodeTestCollector private constructor(
             val finding =
                 when {
                     initialisers.isNotEmpty() && initialisers.all { it.hits == 0L } -> {
-                        ClassFinding.NEVER_INITIALISED
+                        ClassFinding.NEVER_INITIALIZED
                     }
 
                     constructors.isNotEmpty() &&
@@ -1241,7 +1245,7 @@ class OtherlodeTestCollector private constructor(
                     .filter { method ->
                         method.hits == 0L &&
                             (
-                                finding == ClassFinding.NEVER_INITIALISED ||
+                                finding == ClassFinding.NEVER_INITIALIZED ||
                                     method.key.methodName == CONSTRUCTOR ||
                                     (method.key.methodName != CLASS_INIT && !method.static)
                             )
@@ -1307,14 +1311,14 @@ class OtherlodeTestCollector private constructor(
             methodName = location.key.method.methodName,
             methodDescriptor = location.key.method.methodDescriptor,
             line = location.line,
-            kind = location.key.kind,
+            kind = location.key.kind.toTestkit(),
             branchIndex = location.branchIndex,
             inline = location.inline,
             inlinedFromClassName = location.inlinedFromClassName,
-            generatedBy = location.generatedBy,
+            generatedBy = location.generatedBy.toTestkit(),
             branchKey = location.key.outcome?.branchKey,
-            routine = location.routine,
-            unreadShape = location.unreadShape,
+            routine = location.routine.toTestkit(),
+            unreadShape = location.unreadShape.toTestkit(),
         )
 
     /**
@@ -1322,10 +1326,10 @@ class OtherlodeTestCollector private constructor(
      * accepted. Empty when the agent did not know its own version, as in a test JVM that runs the
      * agent from classes.
      */
-    fun agentVersion(serviceInstanceId: String): String? = checked { agentVersionByInstance[serviceInstanceId] }
+    internal fun agentVersion(serviceInstanceId: String): String? = checked { agentVersionByInstance[serviceInstanceId] }
 
     /** Every class reported as matched but not instrumented by any manifest, distinct by class name, sorted by name. */
-    fun skippedClasses(): List<SkippedClass> = checked { skippedByClassName.values.sortedBy { it.className } }
+    public fun skippedClasses(): List<SkippedClass> = checked { skippedByClassName.values.sortedBy { it.className } }
 
     /**
      * Whether [serviceInstanceId] has sent a delta batch with `final_flush` set, meaning its
@@ -1333,10 +1337,10 @@ class OtherlodeTestCollector private constructor(
      * all: this collector cannot tell the two apart, since an instance the agent never contacted
      * leaves no other trace either.
      */
-    fun endedCleanly(serviceInstanceId: String): Boolean = checked { serviceInstanceId in instancesThatEndedCleanly }
+    internal fun endedCleanly(serviceInstanceId: String): Boolean = checked { serviceInstanceId in instancesThatEndedCleanly }
 
     /** Every instance id that has sent a delta batch with `final_flush` set. See [endedCleanly]. */
-    fun instancesEndedCleanly(): Set<String> = checked { instancesThatEndedCleanly.toSet() }
+    internal fun instancesEndedCleanly(): Set<String> = checked { instancesThatEndedCleanly.toSet() }
 
     /**
      * Class names a sweep reported as loaded but unreported, sorted. Empty until a manifest
@@ -1346,7 +1350,7 @@ class OtherlodeTestCollector private constructor(
      * [neverLoaded] already leaves them out; this exposes them so a test can assert the blind
      * spot itself rather than only its absence from a claim.
      */
-    fun unreportedClasses(): List<String> = checked { unreportedByClassName.keys.sorted() }
+    internal fun unreportedClasses(): List<String> = checked { unreportedByClassName.keys.sorted() }
 
     /**
      * What kind of class kotlinc says [className] is, from its manifest record or, for a class
@@ -1355,7 +1359,7 @@ class OtherlodeTestCollector private constructor(
      * report names a [KotlinKind.FILE_FACADE] or a [KotlinKind.MULTIFILE_CLASS_PART] by its
      * source file.
      */
-    fun kotlinKind(className: String): KotlinKind? =
+    internal fun kotlinKind(className: String): KotlinKind? =
         checked { kotlinKindByClassName[className] ?: consultedDeclaredClasses[className]?.kotlinKind }
 
     /**
@@ -1372,7 +1376,7 @@ class OtherlodeTestCollector private constructor(
      * method is inline, generated or an unread shape is excluded the same way, since an unread shape
      * is compiler output the agent could not read.
      */
-    fun neverLoaded(): List<String> {
+    public fun neverLoaded(): List<String> {
         return checked {
             check(completedScans.isNotEmpty()) { "no complete static baseline scan has been received yet" }
             return consultedDeclaredNames.filter { it !in dynamicallyKnownClassNames && it !in consultedAllInlineOrGeneratedNames }.sorted()
@@ -1389,14 +1393,14 @@ class OtherlodeTestCollector private constructor(
      * Throws [UnknownProbeException] if no manifest probe and no complete-baseline declaration ever
      * named [methodName] on [className]; a known method with no callees returns an empty list.
      */
-    fun callEdges(
+    internal fun callEdges(
         className: String,
         methodName: String,
     ): List<CallEdge> {
         return checked {
             val fromManifest =
                 nameIndex[className].orEmpty().mapNotNull { key ->
-                    probesByKey[key]?.takeIf { it.kind == ProbeKind.METHOD && it.methodName == methodName }
+                    probesByKey[key]?.takeIf { it.kind == WireProbeKind.METHOD && it.methodName == methodName }
                 }
             val fromBaseline = consultedDeclaredClasses[className]?.methods?.filter { it.methodName == methodName }.orEmpty()
             if (fromManifest.isEmpty() && fromBaseline.isEmpty()) {
@@ -1419,7 +1423,7 @@ class OtherlodeTestCollector private constructor(
      * merged across instances by its method and branch key, or its branch index when it has no key,
      * in a method node with hits. A BRANCH probe that is inline or generated is never an outcome
      * node, by the rule that keeps its method out of the graph. A class node is a class that holds a
-     * class finding: never loaded, [neverInitialised] or [neverInstantiated]. It stands for the
+     * class finding: never loaded, [neverInitialized] or [neverInstantiated]. It stands for the
      * never-hit methods that finding covers, which are never method nodes of their own. For a
      * never-loaded class that is every method node of the class.
      *
@@ -1450,7 +1454,7 @@ class OtherlodeTestCollector private constructor(
      * node. For a virtual call it also walks down from the owner to every known transitive subtype
      * with one, `<init>` and `<clinit>` excepted. See [computeCallGraph].
      */
-    fun unreachedClusters(): List<UnreachedCluster> {
+    public fun unreachedClusters(): List<UnreachedCluster> {
         return checked {
             val graph = computeCallGraph()
 
@@ -1660,7 +1664,7 @@ class OtherlodeTestCollector private constructor(
         val branchIds = branchOutcomeIds()
         val sitesByMethod =
             probesByKey.entries
-                .filter { (_, probe) -> probe.kind == ProbeKind.METHOD && probe.branchSites.isNotEmpty() }
+                .filter { (_, probe) -> probe.kind == WireProbeKind.METHOD && probe.branchSites.isNotEmpty() }
                 .groupBy(
                     { (key, probe) ->
                         InstanceKey(key.serviceInstanceId, NodeKey(probe.className, probe.methodName, probe.methodDescriptor))
@@ -1670,7 +1674,7 @@ class OtherlodeTestCollector private constructor(
         val locations = mergedLocations()
         val mergedIndex =
             locations
-                .filter { it.key.kind == ProbeKind.BRANCH && it.key.outcome != null }
+                .filter { it.key.kind == WireProbeKind.BRANCH && it.key.outcome != null }
                 .associate { (it.key.method to it.key.outcome) to it.branchIndex }
 
         fun mergedIndexOf(
@@ -1681,8 +1685,8 @@ class OtherlodeTestCollector private constructor(
         return locations
             .filter {
                 val outcome = it.key.outcome
-                it.key.kind == ProbeKind.BRANCH && outcome != null && !it.inline && it.generatedBy == GeneratedBy.NONE &&
-                    it.unreadShape == UnreadShape.NONE && it.routine == RoutineKind.NONE && it.hits == 0L && isHit(it.key.method)
+                it.key.kind == WireProbeKind.BRANCH && outcome != null && !it.inline && it.generatedBy == WireGeneratedBy.NONE &&
+                    it.unreadShape == WireUnreadShape.NONE && it.routine == WireRoutineKind.NONE && it.hits == 0L && isHit(it.key.method)
             }.associate { location ->
                 val instance = location.newest.key.serviceInstanceId
                 val method = location.key.method
@@ -1816,7 +1820,7 @@ class OtherlodeTestCollector private constructor(
         }
         val hitGeneratedCallers = mutableMapOf<NodeKey, NodeInfo>()
         mergedLocations()
-            .filter { it.key.kind == ProbeKind.METHOD && !it.inline && it.isLookedThrough && it.hits > 0L }
+            .filter { it.key.kind == WireProbeKind.METHOD && !it.inline && it.isLookedThrough && it.hits > 0L }
             .forEach { location ->
                 val key = location.key.method
                 if (key in nodes) return@forEach
@@ -1835,7 +1839,7 @@ class OtherlodeTestCollector private constructor(
     private fun buildTransparentMethods(): Map<NodeKey, Set<CallEdge>> {
         val transparent = mutableMapOf<NodeKey, MutableSet<CallEdge>>()
         mergedLocations()
-            .filter { it.key.kind == ProbeKind.METHOD && !it.inline && it.isLookedThrough }
+            .filter { it.key.kind == WireProbeKind.METHOD && !it.inline && it.isLookedThrough }
             .forEach { location ->
                 transparent.getOrPut(location.key.method) { mutableSetOf() } += location.members.flatMap { it.value.calls }
             }
@@ -1871,7 +1875,7 @@ class OtherlodeTestCollector private constructor(
             edge.guard?.let { guard -> instances.firstNotNullOfOrNull { branchIds[OutcomeKey(it, method, guard)] } },
         )
         for (location in mergedLocations()) {
-            if (location.key.kind != ProbeKind.METHOD || location.inline || location.isLookedThrough) continue
+            if (location.key.kind != WireProbeKind.METHOD || location.inline || location.isLookedThrough) continue
             val nodeKey = location.key.method
             val edges =
                 location.members
@@ -1992,7 +1996,7 @@ class OtherlodeTestCollector private constructor(
      *
      * Throws [UnknownEndpointException] if no manifest ever mentioned this endpoint.
      */
-    fun wasCalled(
+    public fun wasCalled(
         verb: String,
         routeTemplate: String,
     ): Boolean = checked { callCount(verb, routeTemplate) > 0L }
@@ -2006,7 +2010,7 @@ class OtherlodeTestCollector private constructor(
      *
      * Throws [UnknownEndpointException] if no manifest ever mentioned this endpoint.
      */
-    fun callCount(
+    public fun callCount(
         verb: String,
         routeTemplate: String,
     ): Long {
@@ -2022,7 +2026,7 @@ class OtherlodeTestCollector private constructor(
      * summed call count is zero, sorted by route template then verb. An endpoint discovered by
      * dispatch was called, so it appears here only until its first count arrives.
      */
-    fun neverCalled(): List<EndpointRef> =
+    public fun neverCalled(): List<EndpointRef> =
         checked {
             endpointRefsByIdentity
                 .filterKeys { identity -> (endpointKeysByIdentity[identity]?.sumOf { endpointHitsByKey[it] ?: 0L } ?: 0L) <= 0L }
@@ -2031,10 +2035,14 @@ class OtherlodeTestCollector private constructor(
         }
 
     /** Every endpoint any instance ever reported, sorted by route template then verb. */
-    fun endpoints(): List<EndpointRef> = checked { endpointRefsByIdentity.values.sortedWith(compareBy({ it.routeTemplate }, { it.verb })) }
+    public fun endpoints(): List<EndpointRef> =
+        checked {
+            endpointRefsByIdentity.values.sortedWith(compareBy({ it.routeTemplate }, { it.verb }))
+        }
 
     /** Every endpoint module reported as disabled by any instance, distinct by module name, sorted by module name. */
-    fun disabledEndpointModules(): List<DisabledEndpointModule> = checked { disabledEndpointModulesByName.values.sortedBy { it.module } }
+    public fun disabledEndpointModules(): List<DisabledEndpointModule> =
+        checked { disabledEndpointModulesByName.values.sortedBy { it.module } }
 
     /**
      * Blocks until some manifest, from any instance, has mentioned the endpoint identified by
@@ -2042,7 +2050,7 @@ class OtherlodeTestCollector private constructor(
      * Throws [java.util.concurrent.TimeoutException] if [timeout] elapses first.
      */
     @Throws(TimeoutException::class)
-    fun awaitEndpoint(
+    public fun awaitEndpoint(
         verb: String,
         routeTemplate: String,
         timeout: Duration,
@@ -2100,7 +2108,7 @@ class OtherlodeTestCollector private constructor(
      * Throws [UnknownDependencyException] if no manifest has listed the dependency, naming the
      * identities this collector does know.
      */
-    fun dependency(
+    public fun dependency(
         groupId: String?,
         artifactId: String,
     ): DependencyStatus {
@@ -2125,7 +2133,7 @@ class OtherlodeTestCollector private constructor(
      * [TimeoutException] if [timeout] elapses first.
      */
     @Throws(TimeoutException::class)
-    fun awaitDependency(
+    public fun awaitDependency(
         groupId: String?,
         artifactId: String,
         timeout: Duration,
@@ -2147,7 +2155,7 @@ class OtherlodeTestCollector private constructor(
      * the flag, so this times out for it.
      */
     @Throws(TimeoutException::class)
-    fun awaitDependenciesListed(timeout: Duration) {
+    public fun awaitDependenciesListed(timeout: Duration) {
         checkNoRejections()
         awaitUntil(timeout, { dependenciesListedTimeoutMessage(timeout) }) {
             instanceIds.isNotEmpty() && instancesWaitingForDependencyListing().isEmpty()
@@ -2169,7 +2177,8 @@ class OtherlodeTestCollector private constructor(
      * `dependencies_listed`, and while no instance has been heard from. Before that point an empty
      * list could mean "not listed yet". Call [awaitDependenciesListed] first.
      */
-    fun unloadedDependencies(): List<DependencyStatus> = checked { dependenciesWithStatus(DependencyUsage.UNLOADED, needsSplit = false) }
+    public fun unloadedDependencies(): List<DependencyStatus> =
+        checked { dependenciesWithStatus(DependencyUsage.UNLOADED, needsSplit = false) }
 
     /**
      * Every loaded dependency nothing in the adopter's code references, sorted by
@@ -2183,7 +2192,7 @@ class OtherlodeTestCollector private constructor(
      * real answer is "unknown". Throws the same way as [unloadedDependencies] until every instance
      * heard from has sent `dependencies_listed`, and checks that first.
      */
-    fun unreferencedDependencies(): List<DependencyStatus> =
+    public fun unreferencedDependencies(): List<DependencyStatus> =
         checked { dependenciesWithStatus(DependencyUsage.UNREFERENCED, needsSplit = true) }
 
     /**
@@ -2192,7 +2201,10 @@ class OtherlodeTestCollector private constructor(
      * [DependencyStatus.sites]. Throws [IllegalStateException] under the same conditions as
      * [unreferencedDependencies].
      */
-    fun unreachedDependencies(): List<DependencyStatus> = checked { dependenciesWithStatus(DependencyUsage.UNREACHED, needsSplit = true) }
+    public fun unreachedDependencies(): List<DependencyStatus> =
+        checked {
+            dependenciesWithStatus(DependencyUsage.UNREACHED, needsSplit = true)
+        }
 
     /**
      * Every referenced class no loader could find, sorted by class name, with the sites that
@@ -2204,7 +2216,7 @@ class OtherlodeTestCollector private constructor(
      * `references_recorded`, which the agent sends only with `includePackages` set, since an
      * empty list would then say nothing.
      */
-    fun absentReferences(): List<AbsentReference> {
+    public fun absentReferences(): List<AbsentReference> {
         return checked {
             checkDependenciesListed()
             val report = computeDependencyReport(dependencyViews())
@@ -2282,7 +2294,7 @@ class OtherlodeTestCollector private constructor(
                 },
             loadedClassesTotal = finding.loadedClassesTotal,
             classCount = finding.classCount,
-            discoverySources = finding.discoverySources,
+            discoverySources = finding.discoverySources.map { it.toTestkit() }.toSortedSet(),
             sites = finding.sites,
         )
 
@@ -2296,7 +2308,7 @@ class OtherlodeTestCollector private constructor(
             val probes = probesByKey.filterKeys { it.serviceInstanceId == instanceId }
             val methodReferences =
                 probes
-                    .filterValues { it.kind == ProbeKind.METHOD }
+                    .filterValues { it.kind == WireProbeKind.METHOD }
                     .map { (key, probe) ->
                         HeldReferences(
                             className = probe.className,
@@ -2351,7 +2363,7 @@ class OtherlodeTestCollector private constructor(
      * query and wait throws [IllegalStateException]; this is the one method a test that expects a
      * rejection can still call. See the class doc.
      */
-    fun rejectedPayloads(): List<String> = rejections.toList()
+    public fun rejectedPayloads(): List<String> = rejections.toList()
 
     /** Stops the server. A wait in progress, or begun after this, fails at once. */
     override fun close() {
@@ -2438,7 +2450,7 @@ class OtherlodeTestCollector private constructor(
                             location.unreadShape,
                         )
                     nameIndex.computeIfAbsent(location.className) { ConcurrentHashMap.newKeySet() }.add(key)
-                    if (location.kind == ProbeKind.OPTIONAL_ARGUMENT) {
+                    if (location.kind == WireProbeKind.OPTIONAL_ARGUMENT) {
                         val targetClassName = location.targetClassName ?: location.className
                         omissionTargetIndex.computeIfAbsent(targetClassName) { ConcurrentHashMap.newKeySet() }.add(key)
                     }
@@ -2446,7 +2458,7 @@ class OtherlodeTestCollector private constructor(
                     classNamesByClassId[location.classId] = location.className
                 }
                 for (skipped in manifest.skippedClasses) {
-                    skippedByClassName.putIfAbsent(skipped.className, skipped)
+                    skippedByClassName.putIfAbsent(skipped.className, SkippedClass(skipped.className, skipped.reason))
                     dynamicallyKnownClassNames += skipped.className
                 }
                 // An unreported class loaded and reached no transformer, so the agent has nothing to say
@@ -2473,14 +2485,14 @@ class OtherlodeTestCollector private constructor(
                             routeTemplate = endpointLocation.routeTemplate,
                             verbatimTemplate = endpointLocation.verbatimTemplate,
                             framework = endpointLocation.framework,
-                            discoverySource = endpointLocation.discoverySource,
+                            discoverySource = endpointLocation.discoverySource.toTestkit(),
                             handlerClass = endpointLocation.handlerClass,
                             handlerMethod = endpointLocation.handlerMethod,
                             handlerDescriptor = endpointLocation.handlerDescriptor,
                         )
                 }
                 for (module in manifest.disabledEndpointModules) {
-                    disabledEndpointModulesByName.putIfAbsent(module.module, module)
+                    disabledEndpointModulesByName.putIfAbsent(module.module, DisabledEndpointModule(module.module, module.reason))
                 }
                 storeDependencyData(manifest)
             }
@@ -2549,8 +2561,8 @@ class OtherlodeTestCollector private constructor(
                         .filter {
                             it.methods.isNotEmpty() &&
                                 it.methods.all { method ->
-                                    method.inline || method.generatedBy != GeneratedBy.NONE ||
-                                        method.unreadShape != UnreadShape.NONE
+                                    method.inline || method.generatedBy != WireGeneratedBy.NONE ||
+                                        method.unreadShape != WireUnreadShape.NONE
                                 }
                         }.map { it.className }
                 for (declaredClass in baseline.declaredClasses) {
@@ -2636,6 +2648,11 @@ class OtherlodeTestCollector private constructor(
             return "$payload from instance $instanceId was forwarded by a collector that stripped fields its bindings " +
                 "did not know, so it may be missing data. The testkit must receive the agent's payloads directly"
         }
+        if (testkitVersion.isNotEmpty() && resource.agentVersion.isNotEmpty() && testkitVersion != resource.agentVersion) {
+            return "$payload from instance $instanceId comes from agent version ${resource.agentVersion}, but this testkit is " +
+                "version $testkitVersion. The agent and the testkit are released as one version: use the testkit " +
+                "of the agent's version, ${resource.agentVersion}"
+        }
         if (servesOneJvm) {
             onlyInstance.compareAndSet(null, instanceId)
             val only = onlyInstance.get()
@@ -2715,7 +2732,7 @@ class OtherlodeTestCollector private constructor(
         lock.withLock { condition.signalAll() }
     }
 
-    companion object {
+    public companion object {
         /** A class's static initialiser, a class state and never a method row. */
         private const val CLASS_INIT = "<clinit>"
 
@@ -2725,7 +2742,15 @@ class OtherlodeTestCollector private constructor(
          * Starts a collector bound to `localhost`. [port] `0` (the default) picks any free port,
          * read back afterwards from [exportUrl].
          */
-        fun start(port: Int = 0): OtherlodeTestCollector = create(port, servesOneJvm = false)
+        @JvmStatic
+        @JvmOverloads
+        public fun start(port: Int = 0): OtherlodeTestCollector = create(port, servesOneJvm = false, testkitVersion = ownVersion())
+
+        /** Starts a collector that reads its own version as [testkitVersion], so a test can set what a jar's manifest would carry. */
+        internal fun startAsVersion(
+            port: Int,
+            testkitVersion: String,
+        ): OtherlodeTestCollector = create(port, servesOneJvm = false, testkitVersion = testkitVersion)
 
         /**
          * Starts the collector [dev.otherlode.testkit.junit5.OtherlodeExtension] keeps for its own
@@ -2734,17 +2759,24 @@ class OtherlodeTestCollector private constructor(
          * can hold it. A child JVM a test launches with the agent is a second instance too, and
          * needs a collector of its own.
          */
-        internal fun startForOneJvm(port: Int): OtherlodeTestCollector = create(port, servesOneJvm = true)
+        internal fun startForOneJvm(port: Int): OtherlodeTestCollector = create(port, servesOneJvm = true, testkitVersion = ownVersion())
+
+        /** The version in this jar's manifest, empty when the classes run from a directory. */
+        private fun ownVersion(): String =
+            OtherlodeTestCollector::class.java.`package`
+                ?.implementationVersion
+                .orEmpty()
 
         private fun create(
             port: Int,
             servesOneJvm: Boolean,
+            testkitVersion: String,
         ): OtherlodeTestCollector {
             val httpServer = HttpServer.create(InetSocketAddress("localhost", port), 0)
             val executor =
                 Executors.newCachedThreadPool { runnable -> Thread(runnable, "otherlode-testkit-http").apply { isDaemon = true } }
             httpServer.executor = executor
-            val collector = OtherlodeTestCollector(httpServer, executor, servesOneJvm)
+            val collector = OtherlodeTestCollector(httpServer, executor, servesOneJvm, testkitVersion)
             httpServer.createContext("/v1/otherlode/deltas", collector::handleDeltaBatch)
             httpServer.createContext("/v1/otherlode/manifest", collector::handleManifest)
             httpServer.createContext("/v1/otherlode/static-baseline", collector::handleStaticBaseline)
@@ -2789,7 +2821,8 @@ class OtherlodeTestCollector private constructor(
  * [ProbeKind.OPTIONAL_ARGUMENT] probe whose target is one, and for a [ProbeKind.BRANCH] probe whose
  * own outcome the agent marked unread. It is exclusive with [routine].
  */
-data class ProbeRef(
+@ConsistentCopyVisibility
+public data class ProbeRef internal constructor(
     val className: String,
     val methodName: String,
     val methodDescriptor: String,
@@ -2803,17 +2836,17 @@ data class ProbeRef(
     val targetClassName: String? = null,
     val neverLoaded: Boolean = false,
     val inlinedFromClassName: String? = null,
-    val generatedBy: GeneratedBy = GeneratedBy.NONE,
+    val generatedBy: GeneratedBy? = null,
     val branchKey: String? = null,
-    val routine: RoutineKind = RoutineKind.NONE,
-    val unreadShape: UnreadShape = UnreadShape.NONE,
+    val routine: RoutineKind? = null,
+    val unreadShape: UnreadShape? = null,
 )
 
 /**
  * Which of the four root shapes an [UnreachedCluster] has. They call for different fixes, so they
- * are reported apart.
+ * are reported apart. Values may be added in a minor release, so a `when` over this enum needs an `else` branch.
  */
-enum class RootKind {
+public enum class RootKind {
     /**
      * The root is a method, and at least one of its in-scope callers is a method with hits. The
      * caller ran and its call was not behind an untaken outcome. That is mostly an override a
@@ -2836,7 +2869,7 @@ enum class RootKind {
      * no in-scope caller, or at least one caller is a method with hits, which
      * [UnreachedCluster.reachedFrom] names. Such a cluster is listed only when it holds more than
      * the methods the finding folds, since [OtherlodeTestCollector.neverLoaded],
-     * [OtherlodeTestCollector.neverInitialised] or [OtherlodeTestCollector.neverInstantiated] already lists
+     * [OtherlodeTestCollector.neverInitialized] or [OtherlodeTestCollector.neverInstantiated] already lists
      * the class.
      */
     CLASS_FINDING,
@@ -2844,27 +2877,28 @@ enum class RootKind {
 
 /**
  * A finding about a whole class rather than a method in it. A class holds at most one, the
- * strongest that applies, in the order listed.
+ * strongest that applies, in the order listed. Values may be added in a minor release, so a `when` over this enum needs an `else` branch.
  */
-enum class ClassFinding {
+public enum class ClassFinding {
     /** A complete static baseline declared the class and no manifest ever mentioned it. See [OtherlodeTestCollector.neverLoaded]. */
     NEVER_LOADED,
 
-    /** The class loaded and its static initialiser never ran. See [OtherlodeTestCollector.neverInitialised]. */
-    NEVER_INITIALISED,
+    /** The class loaded and its static initialiser never ran. See [OtherlodeTestCollector.neverInitialized]. */
+    NEVER_INITIALIZED,
 
     /** The class loaded, has instance methods, and none of its constructors ran. See [OtherlodeTestCollector.neverInstantiated]. */
     NEVER_INSTANTIATED,
 }
 
 /**
- * One class that holds a [finding], as [OtherlodeTestCollector.neverInitialised] or
+ * One class that holds a [finding], as [OtherlodeTestCollector.neverInitialized] or
  * [OtherlodeTestCollector.neverInstantiated] lists it. [methods] names the class's METHOD probes, one
  * entry per method name, sorted. It includes constructors as `<init>`, and inline and generated
  * methods, but never `<clinit>`, which is a class state. [instancesLoading] counts the instances
  * that loaded the class.
  */
-data class ClassFindingRef(
+@ConsistentCopyVisibility
+public data class ClassFindingRef internal constructor(
     val className: String,
     val finding: ClassFinding,
     val methods: List<String>,
@@ -2878,7 +2912,8 @@ data class ClassFindingRef(
  * [methods] lists its methods other than `<clinit>` and such a constructor, sorted the same way
  * [OtherlodeTestCollector.neverHit] sorts its results.
  */
-data class WholeClass(
+@ConsistentCopyVisibility
+public data class WholeClass internal constructor(
     val className: String,
     val finding: ClassFinding?,
     val methods: List<ProbeRef>,
@@ -2906,31 +2941,26 @@ data class WholeClass(
  * [neverLoadedClasses] counts the distinct classes with a method in the cluster that exists only
  * because a complete static baseline declared it; see [ProbeRef.neverLoaded].
  *
- * [rootSite] is set only for a [RootKind.UNTAKEN_OUTCOME] root: the site whose outcomes include
- * the root's [ProbeRef.branchIndex], with its condition and each outcome's role and guarded lines,
- * as the newest instance's METHOD probe listed it, its indexes renumbered to the merged ones every
- * ref carries. An outcome no merged location names is left out. It is null when no manifest
- * listed the site.
- *
  * [reachedFrom] is set for a [RootKind.REACHED_FROM_HIT] root, and for a [RootKind.CLASS_FINDING]
  * root that a method with hits calls: the methods with hits that call it, sorted the same way as
  * [members]. It is empty for every other root.
  */
-data class UnreachedCluster(
+@ConsistentCopyVisibility
+public data class UnreachedCluster internal constructor(
     val root: ProbeRef,
     val rootKind: RootKind,
     val members: List<ProbeRef>,
     val neverLoadedClasses: Int,
-    val rootSite: BranchSite? = null,
+    internal val rootSite: BranchSite? = null,
     val reachedFrom: List<ProbeRef> = emptyList(),
     val rootFinding: ClassFinding? = null,
     val wholeClasses: List<WholeClass> = emptyList(),
 ) {
     /** How many methods the cluster holds: [members] plus the methods of [wholeClasses]. */
-    val membersTotal: Int get() = members.size + wholeClasses.sumOf { it.methods.size }
+    public val membersTotal: Int get() = members.size + wholeClasses.sumOf { it.methods.size }
 
     /** Every method the cluster holds, [members] and the methods of [wholeClasses], sorted the same way as [members]. */
-    val methods: List<ProbeRef>
+    public val methods: List<ProbeRef>
         get() =
             (members + wholeClasses.flatMap { it.methods }).sortedWith(
                 compareBy({ it.className }, { it.methodName }, { it.line }, { it.branchIndex ?: -1 }),
@@ -2946,7 +2976,8 @@ data class UnreachedCluster(
  * raw value the manifests reported, the greatest when they differ, and null unless the target
  * crosses a class boundary.
  */
-data class OptionalParameterRef(
+@ConsistentCopyVisibility
+public data class OptionalParameterRef internal constructor(
     val className: String,
     val methodName: String,
     val methodDescriptor: String,
@@ -2969,7 +3000,7 @@ data class OptionalParameterRef(
  * 4. The class was never mentioned anywhere at all: not matched by `includePackages`, misspelled,
  *    or not loaded yet.
  */
-class UnknownProbeException(
+public class UnknownProbeException internal constructor(
     message: String,
 ) : RuntimeException(message)
 
@@ -2980,7 +3011,8 @@ class UnknownProbeException(
  * framework hook joins a handler to the endpoint: the method the framework invokes for it where
  * the framework exposes one, or the handler object's class where only the object is known.
  */
-data class EndpointRef(
+@ConsistentCopyVisibility
+public data class EndpointRef internal constructor(
     val verb: String,
     val routeTemplate: String,
     val verbatimTemplate: String,
@@ -3000,6 +3032,6 @@ data class EndpointRef(
  *    module and its reason, since the unmentioned endpoint may belong to one of them.
  * 2. No manifest, from any instance, ever mentioned this endpoint.
  */
-class UnknownEndpointException(
+public class UnknownEndpointException internal constructor(
     message: String,
 ) : RuntimeException(message)

@@ -1,0 +1,373 @@
+public final class dev/otherlode/testkit/AbsentReference {
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/util/List;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getClassName ()Ljava/lang/String;
+	public final fun getSites ()Ljava/util/List;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/otherlode/testkit/ClassFinding : java/lang/Enum {
+	public static final field NEVER_INITIALIZED Ldev/otherlode/testkit/ClassFinding;
+	public static final field NEVER_INSTANTIATED Ldev/otherlode/testkit/ClassFinding;
+	public static final field NEVER_LOADED Ldev/otherlode/testkit/ClassFinding;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Ldev/otherlode/testkit/ClassFinding;
+	public static fun values ()[Ldev/otherlode/testkit/ClassFinding;
+}
+
+public final class dev/otherlode/testkit/ClassFindingRef {
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ldev/otherlode/testkit/ClassFinding;
+	public final fun component3 ()Ljava/util/List;
+	public final fun component4 ()I
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getClassName ()Ljava/lang/String;
+	public final fun getFinding ()Ldev/otherlode/testkit/ClassFinding;
+	public final fun getInstancesLoading ()I
+	public final fun getMethods ()Ljava/util/List;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/otherlode/testkit/DependencyDiscoverySource : java/lang/Enum {
+	public static final field LOAD Ldev/otherlode/testkit/DependencyDiscoverySource;
+	public static final field STARTUP_CLASSPATH Ldev/otherlode/testkit/DependencyDiscoverySource;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Ldev/otherlode/testkit/DependencyDiscoverySource;
+	public static fun values ()[Ldev/otherlode/testkit/DependencyDiscoverySource;
+}
+
+public final class dev/otherlode/testkit/DependencyIdentityRef {
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/util/Set;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getArtifactId ()Ljava/lang/String;
+	public final fun getGroupId ()Ljava/lang/String;
+	public final fun getVersions ()Ljava/util/Set;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/otherlode/testkit/DependencyReferenceSite {
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Z
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getClassName ()Ljava/lang/String;
+	public final fun getMethodName ()Ljava/lang/String;
+	public final fun getNeverLoaded ()Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/otherlode/testkit/DependencyStatus {
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ldev/otherlode/testkit/DependencyUsage;
+	public final fun component3 ()Ljava/util/List;
+	public final fun component4 ()J
+	public final fun component5 ()Ljava/lang/Integer;
+	public final fun component6 ()Ljava/util/Set;
+	public final fun component7 ()Ljava/util/List;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getClassCount ()Ljava/lang/Integer;
+	public final fun getDiscoverySources ()Ljava/util/Set;
+	public final fun getIdentities ()Ljava/util/List;
+	public final fun getIdentityKey ()Ljava/lang/String;
+	public final fun getLoadedClassesTotal ()J
+	public final fun getSites ()Ljava/util/List;
+	public final fun getStatus ()Ldev/otherlode/testkit/DependencyUsage;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/otherlode/testkit/DependencyUsage : java/lang/Enum {
+	public static final field LOADED Ldev/otherlode/testkit/DependencyUsage;
+	public static final field NO_LIVE_REFERENCE Ldev/otherlode/testkit/DependencyUsage;
+	public static final field RESOURCES_ONLY Ldev/otherlode/testkit/DependencyUsage;
+	public static final field UNLOADED Ldev/otherlode/testkit/DependencyUsage;
+	public static final field UNREACHED Ldev/otherlode/testkit/DependencyUsage;
+	public static final field UNREFERENCED Ldev/otherlode/testkit/DependencyUsage;
+	public static final field USED Ldev/otherlode/testkit/DependencyUsage;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Ldev/otherlode/testkit/DependencyUsage;
+	public static fun values ()[Ldev/otherlode/testkit/DependencyUsage;
+}
+
+public final class dev/otherlode/testkit/DisabledEndpointModule {
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getModule ()Ljava/lang/String;
+	public final fun getReason ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/otherlode/testkit/EndpointDiscoverySource : java/lang/Enum {
+	public static final field DISPATCH Ldev/otherlode/testkit/EndpointDiscoverySource;
+	public static final field REGISTRATION Ldev/otherlode/testkit/EndpointDiscoverySource;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Ldev/otherlode/testkit/EndpointDiscoverySource;
+	public static fun values ()[Ldev/otherlode/testkit/EndpointDiscoverySource;
+}
+
+public final class dev/otherlode/testkit/EndpointRef {
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()Ljava/lang/String;
+	public final fun component5 ()Ldev/otherlode/testkit/EndpointDiscoverySource;
+	public final fun component6 ()Ljava/lang/String;
+	public final fun component7 ()Ljava/lang/String;
+	public final fun component8 ()Ljava/lang/String;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getDiscoverySource ()Ldev/otherlode/testkit/EndpointDiscoverySource;
+	public final fun getFramework ()Ljava/lang/String;
+	public final fun getHandlerClass ()Ljava/lang/String;
+	public final fun getHandlerDescriptor ()Ljava/lang/String;
+	public final fun getHandlerMethod ()Ljava/lang/String;
+	public final fun getRouteTemplate ()Ljava/lang/String;
+	public final fun getVerb ()Ljava/lang/String;
+	public final fun getVerbatimTemplate ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/otherlode/testkit/GeneratedBy : java/lang/Enum {
+	public static final field CASE_CLASS Ldev/otherlode/testkit/GeneratedBy;
+	public static final field DATA_CLASS Ldev/otherlode/testkit/GeneratedBy;
+	public static final field DEFAULT_IMPLS Ldev/otherlode/testkit/GeneratedBy;
+	public static final field ENUM Ldev/otherlode/testkit/GeneratedBy;
+	public static final field JVM_OVERLOADS Ldev/otherlode/testkit/GeneratedBy;
+	public static final field MULTIFILE_FACADE Ldev/otherlode/testkit/GeneratedBy;
+	public static final field RECORD Ldev/otherlode/testkit/GeneratedBy;
+	public static final field SCALA_OBJECT Ldev/otherlode/testkit/GeneratedBy;
+	public static final field STATIC_FORWARDER Ldev/otherlode/testkit/GeneratedBy;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Ldev/otherlode/testkit/GeneratedBy;
+	public static fun values ()[Ldev/otherlode/testkit/GeneratedBy;
+}
+
+public final class dev/otherlode/testkit/OptionalParameterRef {
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()I
+	public final fun component5 ()Ljava/lang/String;
+	public final fun component6 ()I
+	public final fun component7 ()Ljava/lang/String;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getClassName ()Ljava/lang/String;
+	public final fun getLine ()I
+	public final fun getMethodDescriptor ()Ljava/lang/String;
+	public final fun getMethodName ()Ljava/lang/String;
+	public final fun getParameterIndex ()I
+	public final fun getParameterName ()Ljava/lang/String;
+	public final fun getTargetClassName ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/otherlode/testkit/OtherlodeTestCollector : java/lang/AutoCloseable {
+	public static final field Companion Ldev/otherlode/testkit/OtherlodeTestCollector$Companion;
+	public final fun absentReferences ()Ljava/util/List;
+	public final fun alwaysSupplied ()Ljava/util/List;
+	public final fun awaitDependenciesListed (Ljava/time/Duration;)V
+	public final fun awaitDependency (Ljava/lang/String;Ljava/lang/String;Ljava/time/Duration;)V
+	public final fun awaitEndpoint (Ljava/lang/String;Ljava/lang/String;Ljava/time/Duration;)V
+	public final fun awaitNextFlush (Ljava/time/Duration;)V
+	public final fun awaitProbe (Ljava/lang/String;Ljava/lang/String;Ljava/time/Duration;)V
+	public final fun awaitSettled (Ljava/time/Duration;)V
+	public final fun callCount (Ljava/lang/String;Ljava/lang/String;)J
+	public fun close ()V
+	public final fun dependency (Ljava/lang/String;Ljava/lang/String;)Ldev/otherlode/testkit/DependencyStatus;
+	public final fun disabledEndpointModules ()Ljava/util/List;
+	public final fun endpoints ()Ljava/util/List;
+	public final fun getExportUrl ()Ljava/lang/String;
+	public final fun hitCount (Ljava/lang/String;Ljava/lang/String;)J
+	public final fun hitCount (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)J
+	public static synthetic fun hitCount$default (Ldev/otherlode/testkit/OtherlodeTestCollector;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)J
+	public final fun neverCalled ()Ljava/util/List;
+	public final fun neverHit ()Ljava/util/List;
+	public final fun neverHitRoutineOutcomes ()Ljava/util/List;
+	public final fun neverHitUnreadShapes ()Ljava/util/List;
+	public final fun neverInitialized ()Ljava/util/List;
+	public final fun neverInstantiated ()Ljava/util/List;
+	public final fun neverLoaded ()Ljava/util/List;
+	public final fun neverSupplied ()Ljava/util/List;
+	public final fun omissionCount (Ljava/lang/String;Ljava/lang/String;I)J
+	public final fun omissionCount (Ljava/lang/String;Ljava/lang/String;ILjava/lang/String;)J
+	public final fun omissionCount (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)J
+	public final fun omissionCount (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)J
+	public static synthetic fun omissionCount$default (Ldev/otherlode/testkit/OtherlodeTestCollector;Ljava/lang/String;Ljava/lang/String;ILjava/lang/String;ILjava/lang/Object;)J
+	public static synthetic fun omissionCount$default (Ldev/otherlode/testkit/OtherlodeTestCollector;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)J
+	public final fun rejectedPayloads ()Ljava/util/List;
+	public final fun skippedClasses ()Ljava/util/List;
+	public static final fun start ()Ldev/otherlode/testkit/OtherlodeTestCollector;
+	public static final fun start (I)Ldev/otherlode/testkit/OtherlodeTestCollector;
+	public final fun unloadedDependencies ()Ljava/util/List;
+	public final fun unreachedClusters ()Ljava/util/List;
+	public final fun unreachedDependencies ()Ljava/util/List;
+	public final fun unreferencedDependencies ()Ljava/util/List;
+	public final fun wasCalled (Ljava/lang/String;Ljava/lang/String;)Z
+	public final fun wasHit (Ljava/lang/String;Ljava/lang/String;)Z
+	public final fun wasHit (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Z
+	public static synthetic fun wasHit$default (Ldev/otherlode/testkit/OtherlodeTestCollector;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Z
+}
+
+public final class dev/otherlode/testkit/OtherlodeTestCollector$Companion {
+	public final fun start ()Ldev/otherlode/testkit/OtherlodeTestCollector;
+	public final fun start (I)Ldev/otherlode/testkit/OtherlodeTestCollector;
+	public static synthetic fun start$default (Ldev/otherlode/testkit/OtherlodeTestCollector$Companion;IILjava/lang/Object;)Ldev/otherlode/testkit/OtherlodeTestCollector;
+}
+
+public final class dev/otherlode/testkit/ProbeKind : java/lang/Enum {
+	public static final field BRANCH Ldev/otherlode/testkit/ProbeKind;
+	public static final field METHOD Ldev/otherlode/testkit/ProbeKind;
+	public static final field OPTIONAL_ARGUMENT Ldev/otherlode/testkit/ProbeKind;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Ldev/otherlode/testkit/ProbeKind;
+	public static fun values ()[Ldev/otherlode/testkit/ProbeKind;
+}
+
+public final class dev/otherlode/testkit/ProbeRef {
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component10 ()Z
+	public final fun component11 ()Ljava/lang/String;
+	public final fun component12 ()Z
+	public final fun component13 ()Ljava/lang/String;
+	public final fun component14 ()Ldev/otherlode/testkit/GeneratedBy;
+	public final fun component15 ()Ljava/lang/String;
+	public final fun component16 ()Ldev/otherlode/testkit/RoutineKind;
+	public final fun component17 ()Ldev/otherlode/testkit/UnreadShape;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ljava/lang/String;
+	public final fun component4 ()I
+	public final fun component5 ()Ldev/otherlode/testkit/ProbeKind;
+	public final fun component6 ()Ljava/lang/Integer;
+	public final fun component7 ()Z
+	public final fun component8 ()Ljava/lang/Integer;
+	public final fun component9 ()Ljava/lang/String;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getBranchIndex ()Ljava/lang/Integer;
+	public final fun getBranchKey ()Ljava/lang/String;
+	public final fun getClassName ()Ljava/lang/String;
+	public final fun getGeneratedBy ()Ldev/otherlode/testkit/GeneratedBy;
+	public final fun getInline ()Z
+	public final fun getInlinedFromClassName ()Ljava/lang/String;
+	public final fun getKind ()Ldev/otherlode/testkit/ProbeKind;
+	public final fun getLine ()I
+	public final fun getMethodDescriptor ()Ljava/lang/String;
+	public final fun getMethodName ()Ljava/lang/String;
+	public final fun getNeverLoaded ()Z
+	public final fun getOverridable ()Z
+	public final fun getParameterIndex ()Ljava/lang/Integer;
+	public final fun getParameterName ()Ljava/lang/String;
+	public final fun getRoutine ()Ldev/otherlode/testkit/RoutineKind;
+	public final fun getTargetClassName ()Ljava/lang/String;
+	public final fun getUnreadShape ()Ldev/otherlode/testkit/UnreadShape;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/otherlode/testkit/RootKind : java/lang/Enum {
+	public static final field CLASS_FINDING Ldev/otherlode/testkit/RootKind;
+	public static final field REACHED_FROM_HIT Ldev/otherlode/testkit/RootKind;
+	public static final field UNCALLED Ldev/otherlode/testkit/RootKind;
+	public static final field UNTAKEN_OUTCOME Ldev/otherlode/testkit/RootKind;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Ldev/otherlode/testkit/RootKind;
+	public static fun values ()[Ldev/otherlode/testkit/RootKind;
+}
+
+public final class dev/otherlode/testkit/RoutineKind : java/lang/Enum {
+	public static final field FINALLY_COPY Ldev/otherlode/testkit/RoutineKind;
+	public static final field NULL_DEFAULT Ldev/otherlode/testkit/RoutineKind;
+	public static final field THROW_ONLY Ldev/otherlode/testkit/RoutineKind;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Ldev/otherlode/testkit/RoutineKind;
+	public static fun values ()[Ldev/otherlode/testkit/RoutineKind;
+}
+
+public final class dev/otherlode/testkit/SkippedClass {
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getClassName ()Ljava/lang/String;
+	public final fun getReason ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/otherlode/testkit/UnknownDependencyException : java/lang/RuntimeException {
+}
+
+public final class dev/otherlode/testkit/UnknownEndpointException : java/lang/RuntimeException {
+}
+
+public final class dev/otherlode/testkit/UnknownProbeException : java/lang/RuntimeException {
+}
+
+public final class dev/otherlode/testkit/UnreachedCluster {
+	public final fun component1 ()Ldev/otherlode/testkit/ProbeRef;
+	public final fun component2 ()Ldev/otherlode/testkit/RootKind;
+	public final fun component3 ()Ljava/util/List;
+	public final fun component4 ()I
+	public final fun component6 ()Ljava/util/List;
+	public final fun component7 ()Ldev/otherlode/testkit/ClassFinding;
+	public final fun component8 ()Ljava/util/List;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getMembers ()Ljava/util/List;
+	public final fun getMembersTotal ()I
+	public final fun getMethods ()Ljava/util/List;
+	public final fun getNeverLoadedClasses ()I
+	public final fun getReachedFrom ()Ljava/util/List;
+	public final fun getRoot ()Ldev/otherlode/testkit/ProbeRef;
+	public final fun getRootFinding ()Ldev/otherlode/testkit/ClassFinding;
+	public final fun getRootKind ()Ldev/otherlode/testkit/RootKind;
+	public final fun getWholeClasses ()Ljava/util/List;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/otherlode/testkit/UnreadShape : java/lang/Enum {
+	public static final field CASE_CLASS Ldev/otherlode/testkit/UnreadShape;
+	public static final field COROUTINE_MACHINERY Ldev/otherlode/testkit/UnreadShape;
+	public static final field MULTIFILE_FACADE Ldev/otherlode/testkit/UnreadShape;
+	public static final field SCALA_ENUM Ldev/otherlode/testkit/UnreadShape;
+	public static final field SCALA_OBJECT Ldev/otherlode/testkit/UnreadShape;
+	public static final field STATIC_FORWARDER Ldev/otherlode/testkit/UnreadShape;
+	public static final field STRING_SWITCH Ldev/otherlode/testkit/UnreadShape;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Ldev/otherlode/testkit/UnreadShape;
+	public static fun values ()[Ldev/otherlode/testkit/UnreadShape;
+}
+
+public final class dev/otherlode/testkit/WholeClass {
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ldev/otherlode/testkit/ClassFinding;
+	public final fun component3 ()Ljava/util/List;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getClassName ()Ljava/lang/String;
+	public final fun getFinding ()Ldev/otherlode/testkit/ClassFinding;
+	public final fun getMethods ()Ljava/util/List;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/otherlode/testkit/junit5/OtherlodeExtension : org/junit/jupiter/api/extension/BeforeAllCallback, org/junit/jupiter/api/extension/ParameterResolver {
+	public static final field Companion Ldev/otherlode/testkit/junit5/OtherlodeExtension$Companion;
+	public fun <init> ()V
+	public fun beforeAll (Lorg/junit/jupiter/api/extension/ExtensionContext;)V
+	public static final fun collector ()Ldev/otherlode/testkit/OtherlodeTestCollector;
+	public fun resolveParameter (Lorg/junit/jupiter/api/extension/ParameterContext;Lorg/junit/jupiter/api/extension/ExtensionContext;)Ljava/lang/Object;
+	public fun supportsParameter (Lorg/junit/jupiter/api/extension/ParameterContext;Lorg/junit/jupiter/api/extension/ExtensionContext;)Z
+}
+
+public final class dev/otherlode/testkit/junit5/OtherlodeExtension$Companion {
+	public final fun collector ()Ldev/otherlode/testkit/OtherlodeTestCollector;
+}
+

@@ -20,6 +20,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
+import dev.otherlode.testkit.ProbeKind as RefProbeKind
 
 /**
  * Proves [OtherlodeTestCollector] against a real agent, not just hand-built payloads: a fixture class
@@ -170,7 +171,7 @@ class OtherlodeTestCollectorEndToEndTest {
         assertEquals(
             listOf(
                 "com.example.testkittarget.LegacyCalculator" to ClassFinding.NEVER_INSTANTIATED,
-                "com.example.testkittarget.LegacyFees" to ClassFinding.NEVER_INITIALISED,
+                "com.example.testkittarget.LegacyFees" to ClassFinding.NEVER_INITIALIZED,
             ),
             cluster.wholeClasses.map { it.className to it.finding },
         )
@@ -255,10 +256,10 @@ class OtherlodeTestCollectorEndToEndTest {
 
         // A class literal loads AuditTrail without running its static initialiser. It is a Kotlin
         // object, so it is never initialised, and a stronger finding rules out never instantiated.
-        val neverInitialised = target.neverInitialised()
-        assertEquals(listOf("$FIXTURES.AuditTrail"), neverInitialised.map { it.className })
-        assertEquals(listOf("<init>", "record"), neverInitialised.single().methods)
-        assertEquals(1, neverInitialised.single().instancesLoading)
+        val neverInitialized = target.neverInitialized()
+        assertEquals(listOf("$FIXTURES.AuditTrail"), neverInitialized.map { it.className })
+        assertEquals(listOf("<init>", "record"), neverInitialized.single().methods)
+        assertEquals(1, neverInitialized.single().instancesLoading)
 
         // LinePrinter has no static initialiser and ReportWriter's ran. Neither was created. Utils
         // holds only statics, Greeter has no constructor, and Counters is a used object, so none of
@@ -276,7 +277,7 @@ class OtherlodeTestCollectorEndToEndTest {
         val rows =
             target
                 .neverHit()
-                .filter { it.kind == ProbeKind.METHOD }
+                .filter { it.kind == RefProbeKind.METHOD }
                 .map { "${it.className.removePrefix("$FIXTURES.")}#${it.methodName}${it.methodDescriptor}" }
         assertTrue("Amount#<init>(II)V" in rows, "Amount's unused overload is a row: $rows")
         assertTrue("ReportWriter#footer()Ljava/lang/String;" in rows, "a never-instantiated class keeps its static methods: $rows")
@@ -420,8 +421,8 @@ class OtherlodeTestCollectorEndToEndTest {
         methods: Boolean = false,
     ): List<String> =
         rows
-            .filter { it.className == SITE_FOLDS && (methods || it.kind == ProbeKind.BRANCH) }
-            .map { "${it.methodName}:${it.line}${if (it.kind == ProbeKind.METHOD) " METHOD" else ""}" }
+            .filter { it.className == SITE_FOLDS && (methods || it.kind == RefProbeKind.BRANCH) }
+            .map { "${it.methodName}:${it.line}${if (it.kind == RefProbeKind.METHOD) " METHOD" else ""}" }
 
     @Test
     fun `a never-called method's sites fold into its row, routine outcomes included, observed only through the wire protocol`() {

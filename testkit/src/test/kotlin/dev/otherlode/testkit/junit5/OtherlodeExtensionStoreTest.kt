@@ -27,13 +27,13 @@ class OtherlodeExtensionStoreTest {
     @BeforeTest
     fun useAFreePortAndAShortTimeout() {
         previousPort = System.setProperty("otherlode.testkit.port", "0")
-        previousTimeout = System.setProperty("otherlode.testkit.startupTimeoutSeconds", "1")
+        previousTimeout = System.setProperty("otherlode.testkit.startup.timeout.seconds", "1")
     }
 
     @AfterTest
     fun restoreProperties() {
         restore("otherlode.testkit.port", previousPort)
-        restore("otherlode.testkit.startupTimeoutSeconds", previousTimeout)
+        restore("otherlode.testkit.startup.timeout.seconds", previousTimeout)
         runCatching { OtherlodeExtension.collector().close() }
     }
 
@@ -100,11 +100,23 @@ class OtherlodeExtensionStoreTest {
 
     @Test
     fun `a startup timeout property that is not a positive number fails naming the property`() {
-        System.setProperty("otherlode.testkit.startupTimeoutSeconds", "0")
+        System.setProperty("otherlode.testkit.startup.timeout.seconds", "0")
 
         val failure = assertFailsWith<IllegalStateException> { OtherlodeExtension().beforeAll(fakeContext()) }
 
-        assertTrue("otherlode.testkit.startupTimeoutSeconds" in failure.message.orEmpty(), failure.message)
+        assertTrue("otherlode.testkit.startup.timeout.seconds" in failure.message.orEmpty(), failure.message)
+    }
+
+    @Test
+    fun `the startup timeout is read under its new name and the old name is ignored`() {
+        System.setProperty("otherlode.testkit.startupTimeoutSeconds", "not a number")
+        try {
+            val failure = assertFailsWith<IllegalStateException> { OtherlodeExtension().beforeAll(fakeContext()) }
+
+            assertTrue("no delta batch arrived from the agent within 1s" in failure.message.orEmpty(), failure.message)
+        } finally {
+            System.clearProperty("otherlode.testkit.startupTimeoutSeconds")
+        }
     }
 
     private fun fakeContext(): ExtensionContext {

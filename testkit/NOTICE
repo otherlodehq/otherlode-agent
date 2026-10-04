@@ -1,0 +1,14 @@
+Otherlode testkit
+Copyright 2026 Luke Killick
+
+Licensed under the Apache License, Version 2.0. See LICENSE.
+
+The testkit jar bundles the following third-party component, relocated
+under the dev.otherlode.testkit.shaded package so it cannot collide with a
+copy on the adopter's test classpath. Its licence text is under
+META-INF/licenses/ in the jar and under licenses/ in the source tree.
+
+- Protocol Buffers Java runtime (com.google.protobuf:protobuf-java)
+  BSD 3-Clause. Copyright 2008 Google Inc.
+
+The testkit's one runtime dependency, kotlin-stdlib, is not bundled.
