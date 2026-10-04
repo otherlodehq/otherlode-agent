@@ -45,9 +45,10 @@ class CrossInstanceFindingsTest {
         probes: List<ProbeLocation>,
         vararg hits: Pair<Int, Int>,
         hitCount: Long = 1L,
+        version: String? = null,
     ) {
         val exporter = HttpOtlpStyleExporter(target.exportUrl)
-        val resource = ResourceAttributes("svc", null, instance, null, "run-$instance")
+        val resource = ResourceAttributes("svc", version, instance, null, "run-$instance")
         exporter.exportManifest(ProbeManifest(resource, probes))
         val kinds = probes.associate { (it.classId to it.probeIndex) to it.kind }
         exporter.exportDeltaBatch(
@@ -97,8 +98,9 @@ class CrossInstanceFindingsTest {
         target: OtherlodeTestCollector,
         instance: String,
         classes: List<DeclaredClass>,
+        version: String? = null,
     ) {
-        val resource = ResourceAttributes("svc", null, instance, null, "run-$instance")
+        val resource = ResourceAttributes("svc", version, instance, null, "run-$instance")
         HttpOtlpStyleExporter(target.exportUrl).exportStaticBaseline(StaticBaseline(resource, classes, scannedAt = 1L))
     }
 
@@ -379,6 +381,36 @@ class CrossInstanceFindingsTest {
             assertEquals("ab01", cluster.root.branchKey)
             target.close()
         }
+    }
+
+    @Test
+    fun `a declared guard never resolves in an instance of another service version`() {
+        val app =
+            DeclaredClass(
+                "com.acme.App",
+                listOf(DeclaredMethod("handle", "()V", calls = listOf(CallEdge("com.acme.Legacy", "run", "()V", false, guard = 0)))),
+            )
+        val legacy = DeclaredClass("com.acme.Legacy", listOf(DeclaredMethod("run", "()V")))
+        val target = startCollector()
+        send(target, "i-1", emptyList(), version = "v1")
+        send(
+            target,
+            "i-2",
+            listOf(
+                method(1, 0, "com.acme.App", "handle"),
+                branch(1, 1, "com.acme.App", "handle", 0, branchKey = "ab01"),
+                branch(1, 2, "com.acme.App", "handle", 1, branchKey = "ab02"),
+            ),
+            1 to 0,
+            1 to 2,
+            version = "v2",
+        )
+        sendBaseline(target, "i-1", listOf(app, legacy), version = "v1")
+
+        assertTrue(
+            target.unreachedClusters().none { it.rootKind == RootKind.UNTAKEN_OUTCOME },
+            "v2's branch index 0 may name another outcome, so the v1 scan's guard stays unresolved",
+        )
     }
 
     @Test

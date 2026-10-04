@@ -504,6 +504,9 @@ public class OtherlodeTestCollector internal constructor(
 
     /** The agent version each instance's accepted payloads named; empty when the agent did not know its own. */
     private val agentVersionByInstance = ConcurrentHashMap<String, String>()
+
+    /** The service version each instance's accepted payloads named; empty when it named none. */
+    private val serviceVersionByInstance = ConcurrentHashMap<String, String>()
     private val rejections = CopyOnWriteArrayList<String>()
 
     @Volatile
@@ -1883,9 +1886,17 @@ public class OtherlodeTestCollector internal constructor(
                     .toMutableSet()
             consultedDeclaredClasses[nodeKey.className]?.let { declared ->
                 // The scan kept is whichever arrived first, possibly from an instance that never loaded the class and so
-                // has no BRANCH probe to resolve a guard against; the instances that loaded it, newest first, are tried next,
-                // so the answer does not depend on which scan arrived first.
-                val instances = listOf(declared.serviceInstanceId) + location.members.map { it.key.serviceInstanceId }.distinct()
+                // has no BRANCH probe to resolve a guard against; the instances of the same service version that loaded it,
+                // newest first, are tried next, as the server does. Another version's indexes can name other outcomes. Unlike
+                // the server, two unversioned instances match: one testkit hears one test run's build, where the server's
+                // unversioned runs can span deploys.
+                val version = serviceVersionByInstance[declared.serviceInstanceId]
+                val instances =
+                    listOf(declared.serviceInstanceId) +
+                        location.members
+                            .map { it.key.serviceInstanceId }
+                            .distinct()
+                            .filter { serviceVersionByInstance[it] == version }
                 declared.methods
                     .filter { it.methodName == nodeKey.methodName && it.methodDescriptor == nodeKey.methodDescriptor }
                     .forEach { method -> method.calls.mapTo(edges) { guarded(it, instances, nodeKey) } }
@@ -2659,13 +2670,14 @@ public class OtherlodeTestCollector internal constructor(
             if (only != instanceId) {
                 return "$payload from instance $instanceId, but this collector serves one test JVM and already heard " +
                     "from instance $only. With Gradle's maxParallelForks above 1 every fork's agent posts to this one " +
-                    "port; give each fork its own otherlode.testkit.port and endpoint, or run one fork. A child JVM a " +
+                    "port; give each fork its own otherlode.testkit.port and exportUrl, or run one fork. A child JVM a " +
                     "test launches with the agent needs a collector of its own"
             }
         }
         val accepted = runIdByInstance.putIfAbsent(instanceId, resource.runId)
         if (accepted == null || accepted == resource.runId) {
             agentVersionByInstance[instanceId] = resource.agentVersion
+            serviceVersionByInstance[instanceId] = resource.serviceVersion.orEmpty()
             instanceRanks.computeIfAbsent(instanceId) { instanceRankSeq.incrementAndGet() }
             return null
         }
