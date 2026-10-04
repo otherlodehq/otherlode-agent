@@ -682,15 +682,6 @@ message DeclaredClass {
   KotlinKind kotlin_kind = 9;
 }
 
-// A class the static scanner found on the classpath but judged unsafe to
-// instrument without loading it, using the same @Target-legality check
-// applied at transform time. Kept separate from DeclaredClass so it is
-// never conflated with a confidently-dead class.
-message StaticallyUnsafeClass {
-  string class_name = 1;
-  string reason = 2;
-}
-
 // A class file the scanner found but could not read (a corrupt entry, an
 // unusual bytecode version). class_name is best-effort, derived from its
 // path within the classpath root rather than from parsed bytecode.
@@ -726,7 +717,8 @@ message UnprobedClass {
 message StaticBaseline {
   ResourceAttributes resource = 1;
   repeated DeclaredClass declared_classes = 2;
-  repeated StaticallyUnsafeClass statically_unsafe_classes = 3;
+  reserved 3;
+  reserved "statically_unsafe_classes";
   repeated UnreadableClass unreadable_classes = 4;
   int64 scanned_at = 5;
   repeated UnprobedClass unprobed_classes = 6;

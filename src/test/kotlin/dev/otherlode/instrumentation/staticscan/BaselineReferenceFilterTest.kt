@@ -88,7 +88,6 @@ class BaselineReferenceFilterTest {
                         referencedClasses = referencing,
                     ),
                 ),
-            staticallyUnsafeClasses = emptyList(),
             unreadableClasses = emptyList(),
             ownClassNames = setOf("com.acme.App", "com.acme.OwnOutOfScope", "com.acme.boot.NestedOwn"),
             flatJarClassNames = setOf("org.flat.InDependency", "org.flat.AdoptersJar"),

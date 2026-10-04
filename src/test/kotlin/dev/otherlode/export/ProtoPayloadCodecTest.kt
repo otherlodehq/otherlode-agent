@@ -1329,13 +1329,11 @@ class ProtoPayloadCodecTest {
     }
 
     @Test
-    fun `encodes and decodes a static baseline's statically-unsafe and unreadable classes`() {
+    fun `encodes and decodes a static baseline's unreadable classes`() {
         val baseline =
             StaticBaseline(
                 resource = ResourceAttributes("checkout", null, "instance-1", null, "run-1"),
                 declaredClasses = emptyList(),
-                staticallyUnsafeClasses =
-                    listOf(StaticallyUnsafeClass("com.example.Unsafe", "@kotlin.jvm.JvmName is not legal on TYPE")),
                 unreadableClasses =
                     listOf(UnreadableClass("com.example.Corrupt", "unexpected end of ZLIB input stream")),
                 scannedAt = 2000L,

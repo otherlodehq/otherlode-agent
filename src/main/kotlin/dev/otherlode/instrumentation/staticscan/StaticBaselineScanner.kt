@@ -4,7 +4,6 @@ import dev.otherlode.export.BodyKind
 import dev.otherlode.export.DeclaredClass
 import dev.otherlode.export.DeclaredMethod
 import dev.otherlode.export.KotlinKind
-import dev.otherlode.export.StaticallyUnsafeClass
 import dev.otherlode.export.UnprobedClass
 import dev.otherlode.export.UnreadableClass
 import dev.otherlode.instrumentation.ScalaClassDetector
@@ -21,8 +20,7 @@ import java.lang.System.Logger.Level
 import java.util.jar.JarFile
 
 /**
- * What one static baseline scan found. [staticallyUnsafeClasses] is always empty: the payload
- * carries the list, and no class is judged unsafe to instrument. [ownClassNames] is every class name the scan saw in a
+ * What one static baseline scan found. [ownClassNames] is every class name the scan saw in a
  * directory root or under `BOOT-INF/classes`/`WEB-INF/classes`, in scope or not: the adopter's own
  * code. [flatJarClassNames] is every class name it saw at the root of a jar, which may be the
  * adopter's own jar or a dependency on a flat classpath. Both are kept only to filter the scan's
@@ -30,7 +28,6 @@ import java.util.jar.JarFile
  */
 data class StaticScanResult(
     val declaredClasses: List<DeclaredClass>,
-    val staticallyUnsafeClasses: List<StaticallyUnsafeClass>,
     val unreadableClasses: List<UnreadableClass>,
     val unprobedClasses: List<UnprobedClass> = emptyList(),
     val ownClassNames: Set<String> = emptySet(),
@@ -40,7 +37,6 @@ data class StaticScanResult(
     fun allClassNames(): Set<String> =
         buildSet {
             declaredClasses.mapTo(this) { it.className }
-            staticallyUnsafeClasses.mapTo(this) { it.className }
             unreadableClasses.mapTo(this) { it.className }
             unprobedClasses.mapTo(this) { it.className }
         }
@@ -94,7 +90,7 @@ class StaticBaselineScanner(
         val ownClassNames = HashSet<String>()
         val flatJarClassNames = HashSet<String>()
 
-        fun toResult() = StaticScanResult(declared, emptyList(), unreadable, unprobed, ownClassNames, flatJarClassNames)
+        fun toResult() = StaticScanResult(declared, unreadable, unprobed, ownClassNames, flatJarClassNames)
     }
 
     /**

@@ -10,7 +10,6 @@ import dev.otherlode.export.DeclaredClass
 import dev.otherlode.export.DeclaredMethod
 import dev.otherlode.export.LineRange
 import dev.otherlode.export.ResourceAttributes
-import dev.otherlode.export.StaticallyUnsafeClass
 import dev.otherlode.export.UnprobedClass
 import dev.otherlode.export.UnreadableClass
 import kotlin.test.Test
@@ -44,7 +43,6 @@ class StaticBaselineChunkerTest {
         val result =
             StaticScanResult(
                 declaredClasses = listOf(declared("A", 3), declared("B", 3), declared("C", 1)),
-                staticallyUnsafeClasses = emptyList(),
                 unreadableClasses = emptyList(),
             )
 
@@ -60,7 +58,7 @@ class StaticBaselineChunkerTest {
 
     @Test
     fun `a class with more methods than the cap gets its own oversized chunk`() {
-        val result = StaticScanResult(listOf(declared("Big", 10)), emptyList(), emptyList())
+        val result = StaticScanResult(listOf(declared("Big", 10)), emptyList())
 
         val chunks = StaticBaselineChunker.chunk(result, resource, scannedAt = 1L, maxEntriesPerChunk = 4)
 
@@ -76,11 +74,10 @@ class StaticBaselineChunkerTest {
     }
 
     @Test
-    fun `unsafe, unreadable and unprobed classes count one entry each and share chunks with declared ones`() {
+    fun `unreadable and unprobed classes count one entry each and share chunks with declared ones`() {
         val result =
             StaticScanResult(
                 declaredClasses = listOf(declared("A", 2)),
-                staticallyUnsafeClasses = listOf(StaticallyUnsafeClass("U", "r")),
                 unreadableClasses = listOf(UnreadableClass("R", "r")),
                 unprobedClasses = listOf(UnprobedClass("P", "r")),
             )
@@ -89,8 +86,7 @@ class StaticBaselineChunkerTest {
 
         assertEquals(2, chunks.size)
         assertEquals(listOf("A"), chunks[0].declaredClasses.map { it.className })
-        assertEquals(listOf("U"), chunks[0].staticallyUnsafeClasses.map { it.className })
-        assertEquals(listOf("R"), chunks[1].unreadableClasses.map { it.className })
+        assertEquals(listOf("R"), chunks[0].unreadableClasses.map { it.className })
         assertEquals(listOf("P"), chunks[1].unprobedClasses.map { it.className })
     }
 
@@ -101,7 +97,6 @@ class StaticBaselineChunkerTest {
                 // "Heavy" weighs 1 method + 3 edges + 1 class record = 5, "Light" weighs
                 // 1 method + 0 edges + 1 = 2. A cap of 4 must not let both land in one chunk.
                 declaredClasses = listOf(declaredWithEdges("Heavy", edgesPerMethod = 3), declaredWithEdges("Light", edgesPerMethod = 0)),
-                staticallyUnsafeClasses = emptyList(),
                 unreadableClasses = emptyList(),
             )
 
@@ -115,7 +110,7 @@ class StaticBaselineChunkerTest {
 
     @Test
     fun `an empty scan still produces one chunk`() {
-        val chunks = StaticBaselineChunker.chunk(StaticScanResult(emptyList(), emptyList(), emptyList()), resource, 1L, 4)
+        val chunks = StaticBaselineChunker.chunk(StaticScanResult(emptyList(), emptyList()), resource, 1L, 4)
 
         assertEquals(1, chunks.size)
         assertEquals(0, chunks.single().chunkIndex)
@@ -133,12 +128,12 @@ class StaticBaselineChunkerTest {
                 referencedClasses = listOf("org.lib.C"),
             )
         val second = DeclaredClass("Second", listOf(DeclaredMethod("m", "()V")))
-        val result = StaticScanResult(listOf(first, second), emptyList(), emptyList())
+        val result = StaticScanResult(listOf(first, second), emptyList())
 
         val withReferences = StaticBaselineChunker.chunk(result, resource, scannedAt = 1L, maxEntriesPerChunk = 6)
         val withoutReferences =
             StaticBaselineChunker.chunk(
-                StaticScanResult(listOf(DeclaredClass("First", listOf(DeclaredMethod("m", "()V"))), second), emptyList(), emptyList()),
+                StaticScanResult(listOf(DeclaredClass("First", listOf(DeclaredMethod("m", "()V"))), second), emptyList()),
                 resource,
                 scannedAt = 1L,
                 maxEntriesPerChunk = 6,
@@ -176,7 +171,7 @@ class StaticBaselineChunkerTest {
 
         val chunks =
             StaticBaselineChunker.chunk(
-                StaticScanResult(listOf(first, second), emptyList(), emptyList()),
+                StaticScanResult(listOf(first, second), emptyList()),
                 resource,
                 scannedAt = 1L,
                 maxEntriesPerChunk = 11,

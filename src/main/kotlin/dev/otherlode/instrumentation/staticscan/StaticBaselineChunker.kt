@@ -3,7 +3,6 @@ package dev.otherlode.instrumentation.staticscan
 import dev.otherlode.export.DeclaredClass
 import dev.otherlode.export.ResourceAttributes
 import dev.otherlode.export.StaticBaseline
-import dev.otherlode.export.StaticallyUnsafeClass
 import dev.otherlode.export.UnprobedClass
 import dev.otherlode.export.UnreadableClass
 
@@ -52,7 +51,6 @@ object StaticBaselineChunker {
             val weight = (c.methods.size + c.methods.sumOf { it.calls.size } + sites + 1 + references).coerceAtLeast(1)
             place(weight) { declared += c }
         }
-        result.staticallyUnsafeClasses.forEach { c -> place(1) { unsafe += c } }
         result.unreadableClasses.forEach { c -> place(1) { unreadable += c } }
         result.unprobedClasses.forEach { c -> place(1) { unprobed += c } }
         if (current.size > 0 || chunks.isEmpty()) chunks += current
@@ -61,7 +59,6 @@ object StaticBaselineChunker {
             StaticBaseline(
                 resource = resource,
                 declaredClasses = chunk.declared,
-                staticallyUnsafeClasses = chunk.unsafe,
                 unreadableClasses = chunk.unreadable,
                 unprobedClasses = chunk.unprobed,
                 scannedAt = scannedAt,
@@ -73,7 +70,6 @@ object StaticBaselineChunker {
 
     private class Chunk {
         val declared = mutableListOf<DeclaredClass>()
-        val unsafe = mutableListOf<StaticallyUnsafeClass>()
         val unreadable = mutableListOf<UnreadableClass>()
         val unprobed = mutableListOf<UnprobedClass>()
         var size = 0

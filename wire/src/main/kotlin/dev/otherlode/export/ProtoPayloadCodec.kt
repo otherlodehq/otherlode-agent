@@ -34,7 +34,6 @@ import dev.otherlode.proto.ResourceAttributes as ProtoResourceAttributes
 import dev.otherlode.proto.RoutineKind as ProtoRoutineKind
 import dev.otherlode.proto.SkippedClass as ProtoSkippedClass
 import dev.otherlode.proto.StaticBaseline as ProtoStaticBaseline
-import dev.otherlode.proto.StaticallyUnsafeClass as ProtoStaticallyUnsafeClass
 import dev.otherlode.proto.UnprobedClass as ProtoUnprobedClass
 import dev.otherlode.proto.UnreadShape as ProtoUnreadShape
 import dev.otherlode.proto.UnreadableClass as ProtoUnreadableClass
@@ -598,7 +597,6 @@ object ProtoPayloadCodec {
             .newBuilder()
             .setResource(toProto(baseline.resource))
             .addAllDeclaredClasses(baseline.declaredClasses.map { toProto(it) })
-            .addAllStaticallyUnsafeClasses(baseline.staticallyUnsafeClasses.map { toProto(it) })
             .addAllUnreadableClasses(baseline.unreadableClasses.map { toProto(it) })
             .addAllUnprobedClasses(baseline.unprobedClasses.map { toProto(it) })
             .setScannedAt(baseline.scannedAt)
@@ -611,7 +609,6 @@ object ProtoPayloadCodec {
         StaticBaseline(
             resource = fromProto(baseline.resource),
             declaredClasses = baseline.declaredClassesList.map { fromProto(it) },
-            staticallyUnsafeClasses = baseline.staticallyUnsafeClassesList.map { fromProto(it) },
             unreadableClasses = baseline.unreadableClassesList.map { fromProto(it) },
             unprobedClasses = baseline.unprobedClassesList.map { fromProto(it) },
             scannedAt = baseline.scannedAt,
@@ -694,19 +691,6 @@ object ProtoPayloadCodec {
             parameterNames = method.parameterNamesList,
             genericSignature = method.genericSignature,
             extensionReceiver = method.extensionReceiver,
-        )
-
-    private fun toProto(unsafeClass: StaticallyUnsafeClass): ProtoStaticallyUnsafeClass =
-        ProtoStaticallyUnsafeClass
-            .newBuilder()
-            .setClassName(unsafeClass.className)
-            .setReason(unsafeClass.reason)
-            .build()
-
-    private fun fromProto(unsafeClass: ProtoStaticallyUnsafeClass): StaticallyUnsafeClass =
-        StaticallyUnsafeClass(
-            className = unsafeClass.className,
-            reason = unsafeClass.reason,
         )
 
     private fun toProto(unreadableClass: UnreadableClass): ProtoUnreadableClass =

@@ -294,14 +294,13 @@ class StaticBaselineScannerTest {
     }
 
     @Test
-    fun `declares a class annotated with JvmName, and reports nothing as statically unsafe`() {
+    fun `declares a class annotated with JvmName`() {
         val root = directoryRoot("com/example/target/WeirdName.class" to weirdNameBytes)
         val scanner = StaticBaselineScanner(listOf("com.example.target"))
 
         val result = scanner.scan(listOf(root))
 
         assertTrue(result.declaredClasses.any { it.className == "com.example.target.WeirdName" })
-        assertTrue(result.staticallyUnsafeClasses.isEmpty())
     }
 
     @Test
@@ -319,7 +318,6 @@ class StaticBaselineScannerTest {
 
         assertEquals(listOf("com.example.target.PlainAnnotation"), result.unprobedClasses.map { it.className })
         assertEquals(listOf("com.example.target.InitAnnotation"), result.declaredClasses.map { it.className })
-        assertTrue(result.staticallyUnsafeClasses.isEmpty())
         assertTrue(result.unreadableClasses.isEmpty())
     }
 
@@ -334,7 +332,6 @@ class StaticBaselineScannerTest {
         val result = scanner.scan(listOf(root))
 
         assertTrue(result.declaredClasses.any { it.className == "com.example.target.WeirdName" })
-        assertTrue(result.staticallyUnsafeClasses.isEmpty())
         assertTrue(result.unreadableClasses.isEmpty())
     }
 
@@ -370,7 +367,6 @@ class StaticBaselineScannerTest {
 
         val everyBucketName =
             declaredNames +
-                result.staticallyUnsafeClasses.map { it.className } +
                 result.unreadableClasses.map { it.className } +
                 result.unprobedClasses.map { it.className }
         assertTrue(
@@ -397,7 +393,6 @@ class StaticBaselineScannerTest {
 
         val everyBucketName =
             result.declaredClasses.map { it.className } +
-                result.staticallyUnsafeClasses.map { it.className } +
                 result.unreadableClasses.map { it.className } +
                 result.unprobedClasses.map { it.className }
         assertTrue("com.example.target.Holder" in everyBucketName)

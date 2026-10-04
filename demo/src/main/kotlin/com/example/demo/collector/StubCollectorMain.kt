@@ -249,7 +249,6 @@ private val staticallyDeclaredClasses = ConcurrentHashMap<String, List<DeclaredM
 // A declared class's superclass and interfaces, read the same way as a loaded class's
 // ClassLocation record.
 private val staticallyDeclaredSupertypes = ConcurrentHashMap<String, SupertypesInfo>()
-private val staticallyUnsafeClasses = ConcurrentHashMap<String, String>()
 private val staticallyUnreadableClasses = ConcurrentHashMap<String, String>()
 private val staticallyUnprobedClasses = ConcurrentHashMap<String, String>()
 
@@ -693,9 +692,6 @@ private fun handleStaticBaseline(exchange: HttpExchange) {
         externalClasses[InstanceClassKey(run, external.className)] =
             ExternalClassView(if (external.hasDependencyId()) external.dependencyId else null, external.absent)
     }
-    for (unsafe in baseline.staticallyUnsafeClassesList) {
-        staticallyUnsafeClasses[unsafe.className] = unsafe.reason
-    }
     for (unreadable in baseline.unreadableClassesList) {
         staticallyUnreadableClasses[unreadable.className] = unreadable.reason
     }
@@ -710,7 +706,7 @@ private fun handleStaticBaseline(exchange: HttpExchange) {
     println(
         "[static-baseline] service=${baseline.resource.serviceName}$namespace chunk=${baseline.chunkIndex + 1}/${baseline.chunkCount} " +
             "declared_classes=${baseline.declaredClassesList.size} " +
-            "statically_unsafe=${baseline.staticallyUnsafeClassesList.size} unreadable=${baseline.unreadableClassesList.size} " +
+            "unreadable=${baseline.unreadableClassesList.size} " +
             "unprobed=${baseline.unprobedClassesList.size} call_edges=$callEdgeCount",
     )
     respondOk(exchange)
@@ -1450,7 +1446,7 @@ private fun printEndpointReport() {
 /**
  * A class is "never loaded" only if the static scan declared it AND the reactive manifest never
  * once mentioned it, by name, for any reason - not even as a skipped class. A class already
- * counted as statically unsafe, unreadable, or unprobed is excluded: the static scanner could not
+ * counted as unreadable or unprobed is excluded: the static scanner could not
  * classify it as probe-eligible either way, so it is reported under its own heading instead.
  *
  * The diff only runs once every chunk of every scan has arrived. A partial scan can say
@@ -1498,12 +1494,6 @@ internal fun printNeverLoadedReport() {
         staticallyUnprobedClasses.entries
             .sortedBy { it.key }
             .forEach { (className, reason) -> println("  UNPROBED: $className - $reason") }
-    }
-    if (staticallyUnsafeClasses.isNotEmpty()) {
-        println("statically unsafe (would be skipped if it ever loaded): ${staticallyUnsafeClasses.size}")
-        staticallyUnsafeClasses.entries
-            .sortedBy { it.key }
-            .forEach { (className, reason) -> println("  STATICALLY UNSAFE: $className - $reason") }
     }
     if (staticallyUnreadableClasses.isNotEmpty()) {
         println("statically unreadable (class file found but could not be parsed): ${staticallyUnreadableClasses.size}")

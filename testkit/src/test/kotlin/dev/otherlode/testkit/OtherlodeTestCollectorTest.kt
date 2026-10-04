@@ -28,7 +28,6 @@ import dev.otherlode.export.ResourceAttributes
 import dev.otherlode.export.RoutineKind
 import dev.otherlode.export.SkippedClass
 import dev.otherlode.export.StaticBaseline
-import dev.otherlode.export.StaticallyUnsafeClass
 import dev.otherlode.export.UnprobedClass
 import dev.otherlode.export.UnreadShape
 import dev.otherlode.export.UnreadableClass
@@ -1021,7 +1020,6 @@ class OtherlodeTestCollectorTest {
                         DeclaredClass("com.acme.Loaded", listOf(DeclaredMethod("m", "()V"))),
                         DeclaredClass("com.acme.Dead", listOf(DeclaredMethod("m", "()V"))),
                     ),
-                staticallyUnsafeClasses = listOf(StaticallyUnsafeClass("com.acme.Unsafe", "jvmname")),
                 unreadableClasses = listOf(UnreadableClass("com.acme.Bad", "corrupt")),
                 unprobedClasses = listOf(UnprobedClass("com.acme.Marker", "interface only")),
                 scannedAt = 1000L,

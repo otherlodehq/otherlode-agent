@@ -1371,7 +1371,7 @@ public class OtherlodeTestCollector internal constructor(
      *
      * Throws [IllegalStateException] if no static baseline scan has ever completed: an empty list
      * would read as "nothing is dead", when the real answer is "no idea yet". A class in the
-     * unsafe, unreadable, or unprobed baseline buckets is never counted as declared here, so it
+     * unreadable or unprobed baseline buckets is never counted as declared here, so it
      * never appears in this list either. A declared class whose every declared method is inline
      * or generated is also excluded: Kotlin callers never invoke such a class's methods directly,
      * and the compiler will emit a generated method again regardless of what the adopter does, so

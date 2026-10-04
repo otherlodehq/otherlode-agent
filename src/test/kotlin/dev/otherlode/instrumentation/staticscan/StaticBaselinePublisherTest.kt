@@ -37,7 +37,6 @@ class StaticBaselinePublisherTest {
     private fun scanOf(vararg classNames: String) =
         StaticScanResult(
             declaredClasses = classNames.map { DeclaredClass(it, listOf(DeclaredMethod("m", "()V"))) },
-            staticallyUnsafeClasses = emptyList(),
             unreadableClasses = emptyList(),
         )
 
@@ -93,7 +92,6 @@ class StaticBaselinePublisherTest {
         val scan =
             StaticScanResult(
                 declaredClasses = listOf(DeclaredClass("A", listOf(DeclaredMethod("m", "()V")))),
-                staticallyUnsafeClasses = emptyList(),
                 unreadableClasses = emptyList(),
                 unprobedClasses = listOf(UnprobedClass("P", "no concrete methods to probe")),
             )

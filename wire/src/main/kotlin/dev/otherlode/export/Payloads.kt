@@ -709,16 +709,6 @@ data class DeclaredClass(
 )
 
 /**
- * A class the static scanner found on the classpath but judged unsafe to instrument without
- * loading it. Kept separate from [DeclaredClass] so it is never conflated with a confidently-dead
- * class.
- */
-data class StaticallyUnsafeClass(
-    val className: String,
-    val reason: String,
-)
-
-/**
  * A class file the scanner found but could not read. [className] is best-effort, derived from its
  * path within the classpath root rather than from parsed bytecode.
  */
@@ -753,7 +743,6 @@ data class UnprobedClass(
 data class StaticBaseline(
     val resource: ResourceAttributes,
     val declaredClasses: List<DeclaredClass>,
-    val staticallyUnsafeClasses: List<StaticallyUnsafeClass> = emptyList(),
     val unreadableClasses: List<UnreadableClass> = emptyList(),
     val unprobedClasses: List<UnprobedClass> = emptyList(),
     val scannedAt: Long,
