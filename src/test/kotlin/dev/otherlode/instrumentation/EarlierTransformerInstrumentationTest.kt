@@ -11,6 +11,7 @@ import dev.otherlode.export.ResourceAttributes
 import dev.otherlode.export.RoutineKind
 import dev.otherlode.instrumentation.branch.ScalaFixtures
 import dev.otherlode.instrumentation.branch.SitePairing
+import dev.otherlode.instrumentation.branch.UnreadShapeCounts
 import dev.otherlode.registry.ProbeMeta
 import dev.otherlode.registry.ProbeRegistry
 import net.bytebuddy.agent.ByteBuddyAgent
@@ -542,7 +543,8 @@ class EarlierTransformerInstrumentationTest {
     fun `a class defined from bytes with no class file behind it is analysed from its received bytes`() {
         val bytes = File("build/classes/java/test/com/example/target/BranchTarget.class").readBytes()
         val registry = ProbeRegistry()
-        val otherlode = OtherlodeInstrumentation(AgentConfig.parse("includePackages=$TARGET"), registry)
+        val counts = UnreadShapeCounts()
+        val otherlode = OtherlodeInstrumentation(AgentConfig.parse("includePackages=$TARGET"), registry, unreadShapeCounts = counts)
         installed = otherlode to otherlode.install(instrumentation)
         val loader = BytesOnlyClassLoader(javaClass.classLoader, "$TARGET.BranchTarget", bytes)
 
@@ -562,6 +564,7 @@ class EarlierTransformerInstrumentationTest {
             records.any { it.level == JulLevel.FINE && "no class file" in it.message && "$TARGET.BranchTarget" in it.message },
             "one FINE line says the class file was missing",
         )
+        assertEquals(1, counts.receivedBytesClasses(), "and the class is counted for the first flush's INFO line")
     }
 
     /** Defines one class from [bytes] and serves no class file for it. */

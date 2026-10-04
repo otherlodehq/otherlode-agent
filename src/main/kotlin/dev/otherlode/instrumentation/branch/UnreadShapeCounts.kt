@@ -22,11 +22,13 @@ enum class UnreadCause {
 /**
  * Thread-safe totals of the methods reported as unread shapes across every class this agent
  * instruments, by [UnreadShape] family, with the Scala 3 releases the agent has not read that
- * they came from.
+ * they came from. Branch outcomes reported as unread shapes are totalled apart, in families of
+ * their own, and so are the classes analysed from the bytes they arrived as.
  *
- * [dev.otherlode.instrumentation.OtherlodeInstrumentation] calls [record] once per transformed
- * class that has any. [dev.otherlode.export.ExportScheduler] reads [total], [countOf] and
- * [unreadReleases] to log one summary the first time a flush finds the total above zero.
+ * [dev.otherlode.instrumentation.OtherlodeInstrumentation] calls [record] and [recordOutcomes] once
+ * per transformed class that has any. [dev.otherlode.export.ExportScheduler] reads [total], [countOf],
+ * [outcomeTotal] and [unreadReleases] to log one summary the first time a flush finds either total
+ * above zero.
  */
 class UnreadShapeCounts {
     private val countsByFamily: Map<UnreadShape, AtomicLong> =
@@ -35,6 +37,10 @@ class UnreadShapeCounts {
     private val classesWarned = ConcurrentHashMap.newKeySet<String>()
     private val releases = ConcurrentHashMap.newKeySet<String>()
     private val methodsByCause: Map<UnreadCause, AtomicLong> = UnreadCause.entries.associateWith { AtomicLong(0) }
+    private val outcomesByFamily: Map<UnreadShape, AtomicLong> =
+        UnreadShape.entries.filter { it != UnreadShape.NONE }.associateWith { AtomicLong(0) }
+    private val outcomeClassesSeen = ConcurrentHashMap.newKeySet<String>()
+    private val receivedBytesClasses = ConcurrentHashMap.newKeySet<String>()
 
     /**
      * Adds [className]'s unread methods, keyed by family, the first time a class of that name is
@@ -58,6 +64,37 @@ class UnreadShapeCounts {
         releases += release
         return classesWarned.add(className)
     }
+
+    /**
+     * Adds [className]'s branch outcomes that are unread shapes, keyed by family, the first time a
+     * class of that name is recorded. An outcome is unread because its code has the outline of
+     * compiler output that no source produces, so these are counted under
+     * [UnreadCause.UNREAD_STRUCTURE] and name no release.
+     */
+    fun recordOutcomes(
+        className: String,
+        outcomesByFamily: Map<UnreadShape, Int>,
+    ) {
+        if (outcomesByFamily.isEmpty() || !outcomeClassesSeen.add(className)) return
+        for ((family, count) in outcomesByFamily) this.outcomesByFamily.getValue(family).addAndGet(count.toLong())
+    }
+
+    /** The number of unread branch outcomes, every family included. */
+    fun outcomeTotal(): Long = outcomesByFamily.values.sumOf { it.get() }
+
+    /** How many branch outcomes were unread shapes of [family]. */
+    fun outcomeCountOf(family: UnreadShape): Long = outcomesByFamily[family]?.get() ?: 0
+
+    /** How many classes had at least one unread branch outcome. */
+    fun outcomeClasses(): Int = outcomeClassesSeen.size
+
+    /** Notes that [className] had no class file and was analysed from the bytes it arrived as. */
+    fun recordReceivedBytesClass(className: String) {
+        receivedBytesClasses += className
+    }
+
+    /** How many classes were analysed from the bytes they arrived as, for want of a class file. */
+    fun receivedBytesClasses(): Int = receivedBytesClasses.size
 
     /** How many of the unread methods were counted under [cause], each class under the cause of its first record. */
     fun countOf(cause: UnreadCause): Long = methodsByCause.getValue(cause).get()

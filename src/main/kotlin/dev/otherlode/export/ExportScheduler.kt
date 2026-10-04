@@ -71,6 +71,7 @@ class ExportScheduler(
     private var executor: ScheduledExecutorService? = null
     private val branchDropsLogged = AtomicBoolean(false)
     private val unreadShapesLogged = AtomicBoolean(false)
+    private val receivedBytesClassesLogged = AtomicBoolean(false)
 
     /** Set once a manifest carrying `dependenciesListed = true` was confirmed; see [sendDependenciesListedIfDue]. */
     private val dependenciesListedSent = AtomicBoolean(false)
@@ -188,6 +189,7 @@ class ExportScheduler(
         try {
             maybeLogBranchDrops()
             maybeLogUnreadShapes()
+            maybeLogReceivedBytesClasses()
             maybeSweep(final)
             // Read after the sweep, so this flush's delta sends carry the counts of this generation.
             val generation = dependencyRegistry.countGeneration
@@ -268,17 +270,26 @@ class ExportScheduler(
     }
 
     /**
-     * Logs one WARNING counting the methods reported as unread shapes, by family, the first time a
-     * flush finds any. It names each Scala 3 release the agent has not read and, when some classes
-     * name no compiler the agent could read, says how many methods those are and that a
-     * hand-written override of case-class plumbing is counted there too. Nothing is logged on a flush that finds none
-     * yet, and nothing is logged again once it has. See [UnreadShapeCounts].
+     * Logs one WARNING counting the methods and branch outcomes reported as unread shapes, by
+     * family, the first time a flush finds any. It names each Scala 3 release the agent has not
+     * read and, when some classes name no compiler the agent could read, says how many methods
+     * those are and that a hand-written override of case-class plumbing is counted there too.
+     * Nothing is logged on a flush that finds none yet, and nothing is logged again once it has.
+     * See [UnreadShapeCounts].
      */
     private fun maybeLogUnreadShapes() {
         if (unreadShapesLogged.get()) return
         val total = unreadShapeCounts.total()
-        if (total <= 0) return
+        val outcomes = unreadShapeCounts.outcomeTotal()
+        if (total <= 0 && outcomes <= 0) return
         if (!unreadShapesLogged.compareAndSet(false, true)) return
+        val parts = mutableListOf<String>()
+        if (total > 0) parts += methodsSummary(total)
+        if (outcomes > 0) parts += outcomesSummary(outcomes)
+        log.log(Level.WARNING, "otherlode: ${parts.joinToString(" ")} A newer agent may read them.")
+    }
+
+    private fun methodsSummary(total: Long): String {
         val families =
             UnreadShape.entries
                 .filter { it != UnreadShape.NONE && unreadShapeCounts.countOf(it) > 0 }
@@ -300,17 +311,44 @@ class ExportScheduler(
             if (structure == 0L) {
                 ""
             } else {
-                " ${count(structure, "of them is", "of them are")} scalac's plumbing in a shape this agent does not read, such " +
-                    "as an enum declared inside a class."
+                " ${count(structure, "of them is", "of them are")} compiler output in a shape no hand-written code takes and this " +
+                    "agent does not read, such as the plumbing of a Scala enum declared inside a class or a method of a Kotlin " +
+                    "multi-file facade that is not a forwarder."
             }
         val classes = unreadShapeCounts.classes()
+        return "${count(total, "method", "methods")} in ${count(classes.toLong(), "class", "classes")} " +
+            "${if (total == 1L) "looks" else "look"} like compiler output this agent has not read, and " +
+            "${if (total == 1L) "is reported as an unread shape" else "are reported as unread shapes"} rather than dead code " +
+            "($families).$releaseNote$versionBlindNote$structureNote"
+    }
+
+    private fun outcomesSummary(outcomes: Long): String {
+        val families =
+            UnreadShape.entries
+                .filter { it != UnreadShape.NONE && unreadShapeCounts.outcomeCountOf(it) > 0 }
+                .joinToString(", ") { "${unreadShapeCounts.outcomeCountOf(it)} ${familyLabel(it)}" }
+        val classes = unreadShapeCounts.outcomeClasses()
+        return "${count(outcomes, "branch outcome", "branch outcomes")} in ${count(classes.toLong(), "class", "classes")} " +
+            "${if (outcomes == 1L) "sits" else "sit"} in compiler output in a shape this agent does not read, and " +
+            "${if (outcomes == 1L) "is reported as an unread shape" else "are reported as unread shapes"} rather than dead code " +
+            "($families)."
+    }
+
+    /**
+     * Logs one INFO line counting the classes analysed from the bytes they arrived as, the first
+     * time a flush finds any. A class whose loader serves no class file has no source of shape other
+     * than those bytes, and another agent may have changed them. See [UnreadShapeCounts].
+     */
+    private fun maybeLogReceivedBytesClasses() {
+        if (receivedBytesClassesLogged.get()) return
+        val classes = unreadShapeCounts.receivedBytesClasses()
+        if (classes <= 0) return
+        if (!receivedBytesClassesLogged.compareAndSet(false, true)) return
         log.log(
-            Level.WARNING,
-            "otherlode: ${count(total, "method", "methods")} in ${count(classes.toLong(), "class", "classes")} " +
-                "${if (total == 1L) "looks" else "look"} like compiler output this agent has not read, and " +
-                "${if (total == 1L) "is reported as an unread shape" else "are reported as unread shapes"} rather than dead code " +
-                "($families)." +
-                "$releaseNote$versionBlindNote$structureNote A newer agent may read them.",
+            Level.INFO,
+            "otherlode: ${count(classes.toLong(), "class", "classes")} had no class file, so " +
+                "${if (classes == 1) "its shape was" else "their shapes were"} read from the bytes " +
+                "${if (classes == 1) "it" else "they"} arrived as, which another agent may have changed.",
         )
     }
 

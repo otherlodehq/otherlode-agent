@@ -5,6 +5,7 @@ import dev.otherlode.export.BranchRole
 import dev.otherlode.export.ConditionPart
 import dev.otherlode.export.LineRange
 import dev.otherlode.export.RoutineKind
+import dev.otherlode.export.UnreadShape
 import dev.otherlode.export.BranchSite as BranchSitePayload
 
 /**
@@ -17,6 +18,10 @@ import dev.otherlode.export.BranchSite as BranchSitePayload
  * otherwise. Such a case has no [caseKey].
  *
  * [routine] is the outcome's routine kind from [RoutineClassifier], or [RoutineKind.NONE].
+ *
+ * [unreadShape] says the outcome sits in compiler output the agent does not read, or is
+ * [UnreadShape.NONE]. An outcome is routine or an unread shape, so [routine] is [RoutineKind.NONE]
+ * whenever this is set.
  */
 data class KeptBranchOutcome(
     val branchIndex: Int,
@@ -27,6 +32,7 @@ data class KeptBranchOutcome(
     val partlyGuardedLines: List<LineRange> = emptyList(),
     val caseLabel: List<ConditionPart> = emptyList(),
     val routine: RoutineKind = RoutineKind.NONE,
+    val unreadShape: UnreadShape = UnreadShape.NONE,
 )
 
 /**
@@ -56,6 +62,7 @@ data class KeptBranchSite(
                         it.partlyGuardedLines,
                         it.caseLabel,
                         it.routine,
+                        it.unreadShape,
                     )
                 },
             guard = guard,
@@ -90,6 +97,20 @@ data class KeptBranchSite(
                 val outcomes =
                     site.probedPositions.mapIndexed { probed, offset ->
                         val role = roles[offset]
+                        val unread =
+                            when {
+                                site.unreadShape != UnreadShape.NONE -> site.unreadShape
+                                offset == site.unreadOutcome -> UnreadShape.SWITCH_LOWERING
+                                else -> UnreadShape.NONE
+                            }
+                        val routine =
+                            if (unread ==
+                                UnreadShape.NONE
+                            ) {
+                                siteGuards?.routineKinds?.getOrNull(probed) ?: RoutineKind.NONE
+                            } else {
+                                RoutineKind.NONE
+                            }
                         KeptBranchOutcome(
                             firstBranchIndexes[position] + offset,
                             role.role,
@@ -98,7 +119,8 @@ data class KeptBranchSite(
                             siteGuards?.guardedLines?.getOrNull(probed).orEmpty(),
                             siteGuards?.partlyGuardedLines?.getOrNull(probed).orEmpty(),
                             role.caseLabel,
-                            siteGuards?.routineKinds?.getOrNull(probed) ?: RoutineKind.NONE,
+                            routine,
+                            unread,
                         )
                     }
                 kept += KeptBranchSite(site, siteKeys[site.siteIndex], outcomes, siteGuards?.guard)

@@ -19,6 +19,7 @@ import dev.otherlode.instrumentation.branch.BranchSite
 import dev.otherlode.instrumentation.branch.BranchSiteAnalyzer
 import dev.otherlode.instrumentation.branch.DefaultSite
 import dev.otherlode.instrumentation.branch.HandlerForwarder
+import dev.otherlode.instrumentation.branch.KeptBranchSite
 import dev.otherlode.instrumentation.branch.ScalaReleases
 import dev.otherlode.instrumentation.branch.SitePairing
 import dev.otherlode.instrumentation.branch.UnreadCause
@@ -632,6 +633,7 @@ class OtherlodeInstrumentation(
                     )
                 }
             }
+        recordUnreadOutcomes(typeDescription.name, keptSites)
         recordBranchDrops(typeDescription.name, branchSites)
         // Slots are packed per default site, one per optional parameter, appended after the
         // method and branch slots: bit i's slot is siteBase + bitCount(optionalBits & ((1 << i) - 1)),
@@ -1038,6 +1040,20 @@ class OtherlodeInstrumentation(
         }
     }
 
+    /** Tallies [unreadShapeCounts] with the outcomes of [typeName]'s [keptSites] that are unread shapes of their own, by family. */
+    private fun recordUnreadOutcomes(
+        typeName: String,
+        keptSites: List<KeptBranchSite>,
+    ) {
+        val unread =
+            keptSites
+                .flatMap { it.outcomes }
+                .filter { it.unreadShape != UnreadShape.NONE }
+                .groupingBy { it.unreadShape }
+                .eachCount()
+        unreadShapeCounts.recordOutcomes(typeName, unread)
+    }
+
     /**
      * Tallies [branchDropCounts] with [typeName]'s dropped sites, grouped by reason, and logs one
      * DEBUG line naming the total and each reason's own count when anything was dropped. A no-op
@@ -1100,6 +1116,7 @@ class OtherlodeInstrumentation(
         val classFile = locateClassBytes(typeDescription, classLoader)
         if (classFile == null && received != null) {
             log.log(Level.DEBUG, "otherlode: no class file found for ${typeDescription.name}; its shape is read from the received bytes")
+            unreadShapeCounts.recordReceivedBytesClass(typeDescription.name)
         }
         return ClassBytesSource(
             analysed = classFile ?: received,

@@ -34,12 +34,17 @@ object ConditionFingerprinter {
      * indexed by encounter ordinal. [conditionOf] writes the condition of the site at an ordinal
      * from the same window as its fingerprint, and gives an empty list when that site has no
      * window or [ConditionWriter] cannot write it.
+     *
+     * [unreadCollisionOutcomes] holds, by ordinal, the outcome offset of each `equals` check's
+     * not-equal side that only a hash collision can reach, in a switch on `String.hashCode()` that
+     * [SwitchLowering] could not read: 0 when the check jumps on not-equal, 1 when it falls through.
      */
     class MethodResult(
         val fingerprints: List<String?>,
         val caseKeys: List<List<Int>?>,
         val conditionOf: (ordinal: Int) -> List<ConditionPart> = { emptyList() },
         val loweredSwitches: List<LoweredSwitch> = emptyList(),
+        val unreadCollisionOutcomes: Map<Int, Int> = emptyMap(),
     )
 
     /**
@@ -434,12 +439,23 @@ object ConditionFingerprinter {
                     },
                     windowStartOf = { windowStartBySite[it] },
                 )
+            // With no local variable table, every local looks like a compiler temporary, so no
+            // collision side is taken for an unread lowering.
+            val isCompilerTemp = { slot: Int, index: Int -> localVars.isNotEmpty() && localAt(slot, index) == null }
+            val scan = if (hasSwitch) SwitchLowering.scan(insns, instructionIndexOfLabel, depthAt, enumMappings, isCompilerTemp) else null
             val loweredSwitches =
-                if (hasSwitch) {
-                    loweredSwitches(view, instructionIndexOfLabel, zeroPointAt, depthAt, siteInstructionIndexes, ::localNameAt)
+                if (scan != null) {
+                    loweredSwitches(scan.readings, view, zeroPointAt, siteInstructionIndexes, ::localNameAt)
                 } else {
                     emptyList()
                 }
+            val ordinalOfSite = siteInstructionIndexes.withIndex().associate { (ordinal, index) -> index to ordinal }
+            val unreadCollisionOutcomes =
+                scan
+                    ?.unreadCollisions
+                    .orEmpty()
+                    .mapNotNull { check -> ordinalOfSite[check.jump]?.let { it to if (check.fallsThroughWhenEqual) 0 else 1 } }
+                    .toMap()
             onResult(
                 MethodResult(
                     fingerprints,
@@ -453,26 +469,25 @@ object ConditionFingerprinter {
                         }
                     },
                     loweredSwitches = loweredSwitches,
+                    unreadCollisionOutcomes = unreadCollisionOutcomes,
                 ),
             )
         }
 
         /**
-         * The switches [SwitchLowering] reads in this method, by site ordinal. A switch whose
+         * The switches [SwitchLowering] reads in this method, [readings], by site ordinal. A switch whose
          * lowering names an instruction that is not a tracked site is left out. A rebuilt site's
          * fingerprint is its [SwitchLowering.Reading.kindToken] followed by the subject's window,
          * with any enum map read replaced by a token naming the enum class. It is null when no
          * point before the subject is known to leave the stack empty.
          */
         private fun loweredSwitches(
+            readings: List<SwitchLowering.Reading>,
             view: MethodInstructionsView,
-            indexOfLabel: Map<Label, Int>,
             zeroPointAt: IntArray,
-            depthAt: IntArray,
             siteInstructionIndexes: List<Int>,
             localNameAt: (varIndex: Int, instructionIndex: Int) -> String?,
         ): List<LoweredSwitch> {
-            val readings = SwitchLowering.read(insns, indexOfLabel, depthAt, enumMappings)
             if (readings.isEmpty()) return emptyList()
             val ordinalOf = HashMap<Int, Int>()
             siteInstructionIndexes.forEachIndexed { ordinal, index -> ordinalOf[index] = ordinal }

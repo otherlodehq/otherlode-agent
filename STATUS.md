@@ -412,9 +412,21 @@ fixes re-reviewed by a fresh Opus reviewer, one commit each:
    Scala 3.3 at its default Java 8 target writes `valueOf` and `fromOrdinal`
    with a `StringBuilder`, which reads as unread shapes until it is read (ADR
    0055, amended).
-7. Unread shapes for the other outlines: multi-file facade, coroutine
-   machinery, string-switch collision side; the INFO count of classes analysed
-   from received bytes.
+7. Unread shapes for the other outlines. Landed 2026-10-04. A kept site in a
+   suspend-shaped method fed by kotlinc's `label`, its prologue marker local or
+   the `dup` marker form, matching no read shape, gives every outcome
+   `COROUTINE_MACHINERY`; the collision side of each bucket's last check in an
+   unread string lowering over a compiler temporary is `SWITCH_LOWERING` (kotlinc
+   and javac); a facade method that is no forwarder is `MULTIFILE_FACADE`; and
+   classes analysed from their received bytes are counted in one INFO line on
+   the first flush. The review found two outlines marking the adopter's own
+   code, a local holding the public marker and a hand-written `hashCode()`
+   switch, now excluded (ADR 0054, amended), and one reader gap in real output:
+   a string `when` whose `null` shares a branch with a literal
+   (`"a", null -> ...`) is not read by ADR 0038's lowering, so its collision
+   sides read as unread shapes, not dead code; kotlinx-coroutines' `DebugKt`
+   has one. Reading it is after release. As in step 6, outcome counts and the
+   received-bytes count are taken before ADR 0007's commit point.
 8. Testkit: `neverHit()` leaves unread shapes out, `neverHitUnreadShapes()`,
    clusters, never-supplied and always-supplied; the stub collector's output.
 9. `otherlode-server`: store both oneofs and `agent_version`, count unread

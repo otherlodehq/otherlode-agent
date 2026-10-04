@@ -76,18 +76,35 @@ internal object SwitchLowering {
     )
 
     /**
+     * What [scan] found in one method: the [readings] of the switches it could read back to their
+     * source cases, and the [unreadCollisions] it could not, one per hash bucket of a switch on
+     * `String.hashCode()` that no reading covers.
+     */
+    class Scan(
+        val readings: List<Reading>,
+        val unreadCollisions: List<CaseCheck>,
+    )
+
+    /**
      * The lowered switches in [insns]. [indexOfLabel] places each label before an instruction.
      * [depthAt] gives the operand stack depth before each instruction, or -1 when it is unknown.
      * [enumMappings] reads the map arrays a class declares.
+     *
+     * A switch on `String.hashCode()` that no reading covers has its buckets' last `equals` checks
+     * listed in [Scan.unreadCollisions], each with [CaseCheck.collisionOnly] set. The source never
+     * writes a switch on a string's hash code over a chain of `equals` checks against literals with
+     * that hash, so the shape is a compiler's lowering in a form this object does not read.
      */
-    fun read(
+    fun scan(
         insns: List<Insn>,
         indexOfLabel: Map<Label, Int>,
         depthAt: IntArray,
         enumMappings: EnumSwitchMappings,
-    ): List<Reading> {
+        isCompilerTemp: (slot: Int, instructionIndex: Int) -> Boolean = { _, _ -> false },
+    ): Scan {
         val code = Code(insns, indexOfLabel, depthAt)
         val readings = mutableListOf<Reading>()
+        val unreadCollisions = mutableListOf<CaseCheck>()
         for (index in insns.indices) {
             if (insns[index] !is Insn.TableSwitch && insns[index] !is Insn.LookupSwitch) continue
             val reading =
@@ -95,10 +112,13 @@ internal object SwitchLowering {
                     ?: code.hashMatch(index)
                     ?: code.enumMapping(index, enumMappings)
                     ?: code.bootstrapSwitch(index)
-                    ?: continue
-            readings += reading
+            if (reading != null) {
+                readings += reading
+            } else {
+                unreadCollisions += code.unreadStringBuckets(index, isCompilerTemp)
+            }
         }
-        return readings
+        return Scan(readings, unreadCollisions)
     }
 
     /** Whether [insn] reads javac's or kotlinc's enum map array. */
@@ -302,6 +322,46 @@ internal object SwitchLowering {
         }
 
         /**
+         * The last `equals` check of each bucket of the switch at [hash], when it switches on
+         * `String.hashCode()` of a local and every bucket is a chain of `equals` checks against
+         * literals whose hash code is the bucket's key. Empty when any bucket is not such a chain.
+         * Each check is listed as [CaseCheck.collisionOnly]: its not-equal side is reached only by a
+         * different string with the same hash code. The prologue before the hash call and the code
+         * after the checks are not looked at, so it covers a lowering whose frame this object does
+         * not read, javac's two-switch form included.
+         */
+        fun unreadStringBuckets(
+            hash: Int,
+            isCompilerTemp: (slot: Int, instructionIndex: Int) -> Boolean,
+        ): List<CaseCheck> {
+            if (!isStringHashCode(hash - 1)) return emptyList()
+            val temp = varAt(hash - 2, Opcodes.ALOAD) ?: return emptyList()
+            // A lowering hashes a temporary the compiler made; an adopter who writes
+            // `switch (s.hashCode())` hashes a local of their own, which the table names.
+            if (!isCompilerTemp(temp, hash - 2)) return emptyList()
+            val lasts = mutableListOf<CaseCheck>()
+            for (entry in casesOf(hash)) {
+                var position = at(entry.target) ?: return emptyList()
+                var check = equalsCheckAt(position, temp) ?: return emptyList()
+                var length = 0
+                while (true) {
+                    if (++length > MAX_BUCKET_CHAIN) return emptyList()
+                    val (literal, jump) = check
+                    if (literal.hashCode() != entry.key) return emptyList()
+                    val next = if (jump.opcode == Opcodes.IFNE) position + 4 else at(jump.target) ?: return emptyList()
+                    val following = equalsCheckAt(next, temp)
+                    if (following == null) {
+                        lasts += CaseCheck(position + 3, literal, fallsThroughWhenEqual = jump.opcode == Opcodes.IFEQ, collisionOnly = true)
+                        break
+                    }
+                    check = following
+                    position = next
+                }
+            }
+            return lasts
+        }
+
+        /**
          * Where control lands from [index] after any chain of `goto`s, or null when one leads
          * nowhere known. A coverage agent's probe before a `goto` is stepped over: JaCoCo plants
          * `aload <probes>; <index>; iconst_1; bastore` on the collision path and the default path
@@ -471,6 +531,9 @@ internal object SwitchLowering {
 
     /** The longest `goto` chain [throughGotos] follows before giving up. */
     private const val MAX_GOTO_CHAIN = 8
+
+    /** The most `equals` checks one hash bucket is followed through, far past any real collision chain. */
+    private const val MAX_BUCKET_CHAIN = 1000
 
     /** How many instructions JaCoCo's probe takes: the array load, the index, the `1`, the store. */
     private const val COVERAGE_PROBE_LENGTH = 4

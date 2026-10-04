@@ -1183,6 +1183,10 @@ object BranchSiteAnalyzer {
      * fingerprint. A rebuilt site whose default only throws joins
      * [throwingDefaultOrdinalsByMethod], and a case check's outcome only a hash collision reaches
      * joins [unprobedOutcomesByMethod]. [enumMappings] reads the enum map arrays.
+     *
+     * A string switch lowering [SwitchLowering] cannot read leaves its sites as plain numeric ones,
+     * except that each bucket's last `equals` check marks its collision-only outcome as
+     * [BranchSite.unreadOutcome].
      */
     private fun attachConditionFingerprints(
         sites: MutableList<BranchSite>,
@@ -1215,6 +1219,10 @@ object BranchSiteAnalyzer {
                         caseKeys = result.caseKeys[ordinal],
                         condition = if (site.dropReason == null) conditionOf(result, ordinal) else emptyList(),
                     )
+            }
+            for ((ordinal, offset) in result.unreadCollisionOutcomes) {
+                val position = siteIndices[ordinal]
+                sites[position] = sites[position].copy(unreadOutcome = offset)
             }
             for (lowered in result.loweredSwitches) {
                 val ordinals = lowered.loweringOrdinals + listOfNotNull(lowered.rebuiltOrdinal) + lowered.caseConditions.keys
@@ -2241,12 +2249,7 @@ object BranchSiteAnalyzer {
             methodName: String,
         ): Boolean {
             val getField = mostRecent as? RecentInsn.GetField ?: return false
-            if (getField.name != "label" || getField.descriptor != "I") return false
-            return if (methodName == "invokeSuspend") {
-                getField.owner == ownerInternalName
-            } else {
-                isContinuationOf(getField.owner, ownerInternalName)
-            }
+            return isLabelRead(getField, ownerInternalName, methodName)
         }
 
         /**
@@ -2340,6 +2343,47 @@ object BranchSiteAnalyzer {
             return isContinuationOf(getField.owner, ownerInternalName)
         }
 
+        /**
+         * Whether the operand of the jump or switch about to be visited comes from the coroutine
+         * state machine: [window], the last real instructions visited, most recent first, holds a
+         * read of the continuation's `label` field (the same `T` rule as shape (i)), a load of a
+         * local this method stored `IntrinsicsKt.getCOROUTINE_SUSPENDED()` in, or that call right
+         * after a `dup`, the stack form kotlinc writes. Asked of a site none of the shapes above
+         * read, whose operand then came from machinery in a form this agent does not read. The
+         * window is the last four instructions in linear order, labels not counted, with no
+         * dataflow behind it; kotlinc's own loads of `label` and the marker sit five or more
+         * instructions before the first conditional an adopter writes after a resumption.
+         *
+         * A bare call to `getCOROUTINE_SUSPENDED()` is not enough: the marker is public, and an
+         * adopter's `value === COROUTINE_SUSPENDED` compiles to a load, the call and the compare,
+         * which is the adopter's own conditional.
+         */
+        fun isFedByMachinery(
+            window: List<RecentInsn>,
+            ownerInternalName: String,
+            methodName: String,
+            suspendedMarkerSlots: Set<Int>,
+        ): Boolean =
+            window.withIndex().any { (index, insn) ->
+                (insn == RecentInsn.SuspendedMarkerCall && window.getOrNull(index + 1) == RecentInsn.Dup) ||
+                    isTrackedSuspendedLoad(insn, suspendedMarkerSlots) ||
+                    (insn is RecentInsn.GetField && isLabelRead(insn, ownerInternalName, methodName))
+            }
+
+        /** Whether [getField] reads the `label` field of this method's continuation class. */
+        private fun isLabelRead(
+            getField: RecentInsn.GetField,
+            ownerInternalName: String,
+            methodName: String,
+        ): Boolean {
+            if (getField.name != "label" || getField.descriptor != "I") return false
+            return if (methodName == "invokeSuspend") {
+                getField.owner == ownerInternalName
+            } else {
+                isContinuationOf(getField.owner, ownerInternalName)
+            }
+        }
+
         private const val DEFAULT_IMPLS_SUFFIX = "\$DefaultImpls"
 
         /** What follows the owner in a continuation's name: the function's name, `$` and a number. */
@@ -2416,10 +2460,11 @@ object BranchSiteAnalyzer {
         /** The local-variable slot of this method's last parameter, the continuation for a suspend function. */
         private val lastParameterSlot = lastParameterLocalIndex(descriptor, isStatic)
 
-        /** The last three real instructions visited, most recent first. See [CoroutineShapes]. */
+        /** The last four real instructions visited, most recent first. See [CoroutineShapes]. */
         private var recentInsn1: RecentInsn = RecentInsn.None
         private var recentInsn2: RecentInsn = RecentInsn.None
         private var recentInsn3: RecentInsn = RecentInsn.None
+        private var recentInsn4: RecentInsn = RecentInsn.None
 
         /** Local slots this method assigned with `ASTORE` to hold an `IntrinsicsKt.getCOROUTINE_SUSPENDED()` result. */
         private val suspendedMarkerSlots = mutableSetOf<Int>()
@@ -2446,6 +2491,7 @@ object BranchSiteAnalyzer {
                 fillLines.putIfAbsent(fillStartsNext, currentLine)
                 fillStartsNext = -1
             }
+            recentInsn4 = recentInsn3
             recentInsn3 = recentInsn2
             recentInsn2 = recentInsn1
             recentInsn1 = insn
@@ -2496,7 +2542,8 @@ object BranchSiteAnalyzer {
                 resetMaskPhase()
             }
             if (eligible && ConditionalJump.isTracked(opcode)) {
-                recordSite(coroutineMachinery = suspendShaped && isCoroutineMachineryJump(opcode))
+                val machinery = suspendShaped && isCoroutineMachineryJump(opcode)
+                recordSite(coroutineMachinery = machinery, unreadMachinery = suspendShaped && !machinery && isFedByMachinery())
             }
             pendingSuspendedMarkerCall = false
             pushInsn(RecentInsn.Other)
@@ -2517,11 +2564,12 @@ object BranchSiteAnalyzer {
             if (defaultShaped) resetMaskPhase()
             pendingSuspendedMarkerCall = false
             if (eligible) {
+                val machinery = suspendShaped && CoroutineShapes.isLabelSwitch(recentInsn1, ownerInternalName, name)
                 recordSite(
                     switchOutcomeCount(dflt, labels),
                     isSwitch = true,
-                    coroutineMachinery =
-                        suspendShaped && CoroutineShapes.isLabelSwitch(recentInsn1, ownerInternalName, name),
+                    coroutineMachinery = machinery,
+                    unreadMachinery = suspendShaped && !machinery && isFedByMachinery(),
                 )
             }
             pushInsn(RecentInsn.Other)
@@ -2535,7 +2583,11 @@ object BranchSiteAnalyzer {
             if (defaultShaped) resetMaskPhase()
             pendingSuspendedMarkerCall = false
             if (eligible) {
-                recordSite(switchOutcomeCount(dflt, labels), isSwitch = true)
+                recordSite(
+                    switchOutcomeCount(dflt, labels),
+                    isSwitch = true,
+                    unreadMachinery = suspendShaped && isFedByMachinery(),
+                )
             }
             pushInsn(RecentInsn.Other)
         }
@@ -2562,6 +2614,15 @@ object BranchSiteAnalyzer {
                 }
             }
 
+        /** Whether the jump or switch about to be visited takes an operand from the coroutine state machine; see [CoroutineShapes.isFedByMachinery]. */
+        private fun isFedByMachinery(): Boolean =
+            CoroutineShapes.isFedByMachinery(
+                listOf(recentInsn1, recentInsn2, recentInsn3, recentInsn4),
+                ownerInternalName,
+                name,
+                suspendedMarkerSlots,
+            )
+
         /**
          * Records one tracked site at [currentLine], with [outcomeCount] outcomes. [isSwitch] is
          * true for a `TABLESWITCH` or `LOOKUPSWITCH`, and false for a conditional jump.
@@ -2574,11 +2635,15 @@ object BranchSiteAnalyzer {
          * [BranchDropReason.INLINED_OUT_OF_SCOPE]), and an origin inside scope keeps it labelled
          * with the origin's own line and class. Either way the site keeps its place in
          * [nextSiteIndex]'s numbering.
+         *
+         * [unreadMachinery] marks a site that is kept as an unread shape of
+         * [UnreadShape.COROUTINE_MACHINERY]; a site dropped for any reason carries no outcome to mark.
          */
         private fun recordSite(
             outcomeCount: Int = 2,
             isSwitch: Boolean = false,
             coroutineMachinery: Boolean = false,
+            unreadMachinery: Boolean = false,
         ) {
             val ordinal = nextMethodOrdinal++
             if (coroutineMachinery) {
@@ -2629,7 +2694,7 @@ object BranchSiteAnalyzer {
                         )
                     }
                 }
-            sites += site
+            sites += if (unreadMachinery && site.dropReason == null) site.copy(unreadShape = UnreadShape.COROUTINE_MACHINERY) else site
             onSiteIndexUsed()
         }
 
@@ -2643,10 +2708,10 @@ object BranchSiteAnalyzer {
                 }
 
                 Opcodes.ASTORE -> {
-                    if (pendingSuspendedMarkerCall) {
-                        suspendedMarkerSlots += varIndex
-                        pendingSuspendedMarkerCall = false
-                    }
+                    // kotlinc stores the marker once, in the prologue; a later store is the adopter's
+                    // own `val m = COROUTINE_SUSPENDED`, whose compares are the adopter's.
+                    if (pendingSuspendedMarkerCall && suspendedMarkerSlots.isEmpty()) suspendedMarkerSlots += varIndex
+                    pendingSuspendedMarkerCall = false
                     pushInsn(RecentInsn.Other)
                 }
 
@@ -2881,7 +2946,9 @@ object BranchSiteAnalyzer {
      *
      * In a class whose [kotlinKind] is [KotlinKind.MULTIFILE_CLASS_FACADE], a function that only
      * forwards to the same function on a part is [GeneratedBy.MULTIFILE_FACADE]; see
-     * [multifileFacadeForwarders].
+     * [multifileFacadeForwarders]. Any other method of the facade with a body of its own, apart
+     * from the constructor and the type initializer, is [UnreadShape.MULTIFILE_FACADE], since a
+     * facade holds no adopter code.
      *
      * In a class that [isScalaClass], a static forwarder, a case class's and its companion's
      * plumbing and an object's `writeReplace` are marked as [ScalaGeneratedMethods] reads them,
@@ -2957,6 +3024,18 @@ object BranchSiteAnalyzer {
                 scala.unreadRelease.takeIf { unread.isNotEmpty() },
                 scala.cause.takeIf { unread.isNotEmpty() },
             )
+        }
+        if (kotlinKind == KotlinKind.MULTIFILE_CLASS_FACADE) {
+            val unread =
+                methodAccess
+                    .filter { (key, access) ->
+                        key !in result &&
+                            key.first != "<init>" &&
+                            key.first != "<clinit>" &&
+                            access and (BODYLESS_FLAGS or Opcodes.ACC_SYNTHETIC or Opcodes.ACC_BRIDGE) == 0
+                    }.keys
+                    .associateWith { UnreadShape.MULTIFILE_FACADE }
+            return GeneratedMarks(result, unread, cause = UnreadCause.UNREAD_STRUCTURE.takeIf { unread.isNotEmpty() })
         }
         return GeneratedMarks(result)
     }

@@ -1265,6 +1265,124 @@ class ExportSchedulerTest {
     }
 
     @Test
+    fun `unread outcomes are summarised by family in their own sentence`() {
+        val unreadShapeCounts = UnreadShapeCounts()
+        unreadShapeCounts.recordOutcomes("com.acme.Foo", mapOf(UnreadShape.COROUTINE_MACHINERY to 4, UnreadShape.SWITCH_LOWERING to 2))
+        unreadShapeCounts.recordOutcomes("com.acme.Bar", mapOf(UnreadShape.SWITCH_LOWERING to 1))
+        val scheduler =
+            ExportScheduler(
+                config,
+                resource,
+                ProbeRegistry(),
+                EndpointRegistry(),
+                RecordingExporter(),
+                unreadShapeCounts = unreadShapeCounts,
+            )
+
+        val records = captureLogRecords(ExportScheduler::class.java.name) { scheduler.flush() }
+
+        val summary = records.single { it.message.contains("unread shape") }
+        assertEquals(JulLevel.WARNING, summary.level)
+        assertTrue(
+            summary.message.contains("7 branch outcomes in 2 classes sit in compiler output in a shape this agent does not read"),
+            summary.message,
+        )
+        assertTrue(summary.message.contains("4 coroutine machinery, 3 string switch lowering"), summary.message)
+        assertFalse(summary.message.contains("methods in"), summary.message)
+        assertTrue(summary.message.contains("A newer agent may read them"), summary.message)
+    }
+
+    @Test
+    fun `methods and outcomes share one warning`() {
+        val unreadShapeCounts = UnreadShapeCounts()
+        unreadShapeCounts.record("com.acme.Foo", null, UnreadCause.UNREAD_STRUCTURE, mapOf(UnreadShape.MULTIFILE_FACADE to 3))
+        unreadShapeCounts.recordOutcomes("com.acme.Bar", mapOf(UnreadShape.COROUTINE_MACHINERY to 2))
+        val scheduler =
+            ExportScheduler(
+                config,
+                resource,
+                ProbeRegistry(),
+                EndpointRegistry(),
+                RecordingExporter(),
+                unreadShapeCounts = unreadShapeCounts,
+            )
+
+        val records = captureLogRecords(ExportScheduler::class.java.name) { scheduler.flush() }
+
+        val summary = records.single { it.message.contains("unread shape") }
+        assertTrue(summary.message.contains("3 methods in 1 class look like compiler output"), summary.message)
+        assertTrue(summary.message.contains("3 Kotlin multi-file facade methods"), summary.message)
+        assertTrue(summary.message.contains("2 branch outcomes in 1 class sit in compiler output"), summary.message)
+    }
+
+    @Test
+    fun `the structure sentence names a multi-file facade as well as a Scala enum inside a class`() {
+        val unreadShapeCounts = UnreadShapeCounts()
+        unreadShapeCounts.record("com.acme.Foo", null, UnreadCause.UNREAD_STRUCTURE, mapOf(UnreadShape.MULTIFILE_FACADE to 1))
+        unreadShapeCounts.record("com.acme.Bar", null, UnreadCause.UNREAD_STRUCTURE, mapOf(UnreadShape.SCALA_ENUM to 2))
+        val scheduler =
+            ExportScheduler(
+                config,
+                resource,
+                ProbeRegistry(),
+                EndpointRegistry(),
+                RecordingExporter(),
+                unreadShapeCounts = unreadShapeCounts,
+            )
+
+        val records = captureLogRecords(ExportScheduler::class.java.name) { scheduler.flush() }
+
+        val summary = records.single { it.message.contains("unread shape") }
+        assertTrue(
+            summary.message.contains("3 of them are compiler output in a shape no hand-written code takes and this agent does not read"),
+            summary.message,
+        )
+        assertTrue(summary.message.contains("a Scala enum declared inside a class"), summary.message)
+        assertTrue(summary.message.contains("a method of a Kotlin multi-file facade that is not a forwarder"), summary.message)
+        assertFalse(summary.message.contains("cannot tell"), summary.message)
+    }
+
+    @Test
+    fun `the first flush that finds classes analysed from received bytes logs one INFO line with their count`() {
+        val unreadShapeCounts = UnreadShapeCounts()
+        unreadShapeCounts.recordReceivedBytesClass("com.acme.Foo")
+        unreadShapeCounts.recordReceivedBytesClass("com.acme.Bar")
+        val scheduler =
+            ExportScheduler(
+                config,
+                resource,
+                ProbeRegistry(),
+                EndpointRegistry(),
+                RecordingExporter(),
+                unreadShapeCounts = unreadShapeCounts,
+            )
+
+        val records =
+            captureLogRecords(ExportScheduler::class.java.name) {
+                scheduler.flush()
+                unreadShapeCounts.recordReceivedBytesClass("com.acme.Late")
+                scheduler.flush()
+            }
+
+        val line = records.single { it.message.contains("no class file") }
+        assertEquals(JulLevel.INFO, line.level)
+        assertEquals(
+            "otherlode: 2 classes had no class file, so their shapes were read from the bytes they arrived as, " +
+                "which another agent may have changed.",
+            line.message,
+        )
+    }
+
+    @Test
+    fun `nothing is logged about received bytes when every class had a class file`() {
+        val scheduler = ExportScheduler(config, resource, ProbeRegistry(), EndpointRegistry(), RecordingExporter())
+
+        val records = captureLogRecords(ExportScheduler::class.java.name) { scheduler.flush() }
+
+        assertTrue(records.none { it.message.contains("no class file") })
+    }
+
+    @Test
     fun `nothing about unread shapes is logged when there are none`() {
         val scheduler = ExportScheduler(config, resource, ProbeRegistry(), EndpointRegistry(), RecordingExporter())
 

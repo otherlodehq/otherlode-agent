@@ -1,6 +1,7 @@
 package dev.otherlode.instrumentation.branch
 
 import dev.otherlode.export.ConditionPart
+import dev.otherlode.export.UnreadShape
 
 /**
  * One tracked branch point found in a class: either a two-outcome [ConditionalJump] or a
@@ -47,6 +48,13 @@ import dev.otherlode.export.ConditionPart
  * [unprobedOutcome] is set for a conditional whose outcome at that offset only a hash collision can
  * reach: the not-equal side of the last `equals` check in a hash bucket of kotlinc's string `when`
  * or scalac's string `match`. It is treated the same way as a throwing default.
+ *
+ * [unreadShape] is set on a kept site whose operand comes from a continuation's `label` field or
+ * from the suspended marker, in a suspend-shaped method, in a shape [CoroutineShapes] does not
+ * read. Every outcome of the site is then an unread shape of that family. [unreadOutcome] is the
+ * offset of the one outcome of a string switch lowering that [SwitchLowering] could not read,
+ * which only a hash collision can reach; it is an unread shape of
+ * [UnreadShape.SWITCH_LOWERING] and still gets its probe.
  */
 data class BranchSite(
     val methodName: String,
@@ -63,6 +71,8 @@ data class BranchSite(
     val caseLabels: List<ConditionPart>? = null,
     val throwingDefault: Boolean = false,
     val unprobedOutcome: Int? = null,
+    val unreadShape: UnreadShape = UnreadShape.NONE,
+    val unreadOutcome: Int? = null,
 ) {
     /**
      * The offsets of the outcomes that get a probe, in offset order: every outcome less a
