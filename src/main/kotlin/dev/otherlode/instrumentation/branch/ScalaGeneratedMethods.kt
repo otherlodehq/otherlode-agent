@@ -18,8 +18,25 @@ import net.bytebuddy.jar.asm.Type
  * each generated method is recognised by its body, which is fixed compiler output whatever the
  * source layout. Every shape below was read out of `javap -c -p` over the
  * `:fixtures-scala2` and `:fixtures-scala3` modules, compiled with Scala 2.13.15 and 3.3.4
- * (`Targets.scala` and `CaseShapes.scala`). Output of another Scala version is expected to miss a
- * shape here and stay unmarked, since a body that is not exactly one of these marks nothing.
+ * (`Targets.scala` and `CaseShapes.scala`). A body that is not exactly one of these marks nothing,
+ * so a release that writes a shape not read here leaves that method unmarked.
+ *
+ * Those two releases are the baseline. The shapes other releases write are read beside them, never
+ * in place of them, each from `javap -c -p` over the same fixtures compiled by that release
+ * (`fixtures-compilers/scalac`, which `ScalacMatrixTest` compares against the baseline marks):
+ *
+ * - Scala 2.12.20: `hashCode` without the `productPrefix` mix, `equals` in source order,
+ *   `productElement` throwing through `Integer.toString`, and a private `readResolve` on every
+ *   serializable module class ([ClassShape.readResolveMatches]). These are read only in a class
+ *   2.12 may have written ([CaseClass.mayBeScala212]), and the `readResolve` only in a Scala 2
+ *   module class with no `writeReplace`.
+ * - Scala 2.13.17 and later, Scala 3.3.7 and later on the 3.3 line and 3.7.1 and later: `hashCode`
+ *   with the prefix hash folded into a constant ([matchesHashCode]).
+ * - Scala 3.3.8, 3.8.4 and later: `equals` through `Objects.equals` ([compareElements]).
+ * - Scala 3.7.0 and later: `fromProduct` reading the elements into locals first ([matchesFromProduct]).
+ * - Scala 3.7.3 to 3.8.3: `equals` through a copy of the cast instance ([matchesEqualsScala3]).
+ * - Scala 3.9.0: `productElement` and `productElementName` throwing through
+ *   `IndexOutOfBoundsException.<init>(int)` ([matchesIndexed]).
  */
 internal object ScalaGeneratedMethods {
     private const val MODULE_FIELD = "MODULE\$"
@@ -33,6 +50,9 @@ internal object ScalaGeneratedMethods {
     private const val RUNTIME = "scala/runtime/ScalaRunTime\$"
     private const val OUT_OF_BOUNDS = "java/lang/IndexOutOfBoundsException"
     private const val SERIALIZATION_PROXY = "scala/runtime/ModuleSerializationProxy"
+    private const val MURMUR = "scala/util/hashing/MurmurHash3\$"
+    private const val OBJECTS = "java/util/Objects"
+    private const val INTEGER = "java/lang/Integer"
 
     /** The seed of scalac's `hashCode` fold, `0xcafebabe`. */
     private const val HASH_SEED = -889275714
@@ -62,6 +82,8 @@ internal object ScalaGeneratedMethods {
     private val TUPLE2_SPECIALISED = setOf("I", "J", "D", "C", "Z")
 
     private val WRITE_REPLACE = "writeReplace" to "()Ljava/lang/Object;"
+    private val READ_RESOLVE = "readResolve" to "()Ljava/lang/Object;"
+    private val PRODUCT_ELEMENT_NAME = "productElementName" to "(I)Ljava/lang/String;"
 
     /**
      * The generated methods of the Scala class [classBytes], keyed by name and descriptor. The
@@ -72,7 +94,8 @@ internal object ScalaGeneratedMethods {
      * Each method gets at most one mark, tried in this order: [GeneratedBy.STATIC_FORWARDER] (see
      * [ClassShape.staticForwarders]), then [GeneratedBy.CASE_CLASS] on a case class's own plumbing
      * (see [caseClassPlumbing]), then [GeneratedBy.CASE_CLASS] on a companion's (see
-     * [companionPlumbing]), then [GeneratedBy.SCALA_OBJECT] (see [ClassShape.writeReplaceMatches]).
+     * [companionPlumbing]), then [GeneratedBy.SCALA_OBJECT] (see [ClassShape.writeReplaceMatches]
+     * and [ClassShape.readResolveMatches]).
      *
      * A class whose name ends in `$` reads its partner only when it declares an instance method
      * named `apply`, `unapply`, `toString` or `fromProduct`: without one, the companion rule has
@@ -100,6 +123,10 @@ internal object ScalaGeneratedMethods {
             }
         }
         if (shape.isModuleClass && shape.writeReplaceMatches()) result.putIfAbsent(WRITE_REPLACE, GeneratedBy.SCALA_OBJECT)
+        // Scala 2.12 writes the readResolve and no writeReplace; 2.13 the reverse, and Scala 3 neither.
+        if (!shape.isScala3 && shape.isModuleClass && WRITE_REPLACE !in shape.methods && shape.readResolveMatches()) {
+            result.putIfAbsent(READ_RESOLVE, GeneratedBy.SCALA_OBJECT)
+        }
         return result
     }
 
@@ -252,6 +279,18 @@ internal object ScalaGeneratedMethods {
                     Insn.Plain(Opcodes.ARETURN),
                 )
         }
+
+        /**
+         * Whether the class declares a private `readResolve()Ljava/lang/Object;` whose instructions
+         * are exactly `getstatic <Class>.MODULE$` and `areturn`. Scala 2.12.20 gives every
+         * serializable module class that method, and 2.13.15 and later and Scala 3 give none.
+         */
+        fun readResolveMatches(): Boolean {
+            val method = methods[READ_RESOLVE] ?: return false
+            return method.isPrivate &&
+                method.body ==
+                listOf(Insn.Field(Opcodes.GETSTATIC, internalName, MODULE_FIELD, "L$internalName;"), Insn.Plain(Opcodes.ARETURN))
+        }
     }
 
     /**
@@ -403,6 +442,14 @@ internal object ScalaGeneratedMethods {
     ) {
         val name: String get() = shape.internalName
         val isObject: Boolean get() = shape.isModuleClass
+
+        /**
+         * Whether Scala 2.12 may have written this class: a Scala 2 class with no
+         * `productElementName`, which 2.13 writes for every case class and case object and 2.12 for
+         * none. The shapes only 2.12 writes are read only in such a class, so a 2.13 method written
+         * by hand in 2.12's shape stays the adopter's.
+         */
+        val mayBeScala212: Boolean get() = !shape.isScala3 && PRODUCT_ELEMENT_NAME !in shape.methods
 
         val arity: Int? =
             (shape.methods["productArity" to "()I"]?.body)?.let { body ->
@@ -738,6 +785,20 @@ internal object ScalaGeneratedMethods {
      * with `Statics.longHash`, `doubleHash` or `floatHash` for `long`, `double` and `float`,
      * `anyHash` for a reference, `1231` or `1237` for a `boolean`, and as it is for `int`, `char`,
      * `byte` and `short` (`javap` over `Mixed`, `Hidden` and `Priv`).
+     *
+     * Three releases change that, each read with `javap` over the fixtures:
+     *
+     * - Scala 2.12.20 leaves the `productPrefix` mix out of the fold: the seed is stored and the
+     *   first element's mix follows it. That is read only in a class 2.12 may have written
+     *   ([CaseClass.mayBeScala212]).
+     * - Scala 2.13.17 and later, Scala 3.3.7 and later on the 3.3 line, and 3.7.1 and later (3.3.4
+     *   to 3.3.6, 3.4 to 3.6 and 3.7.0 write the older form), fold the prefix mix's argument into a constant, `productPrefix().hashCode()`
+     *   evaluated by the compiler (`sipush 2176` for `Cc`). A case class with no element is then
+     *   `ldc <that constant>; ireturn` (`Empty`: 67081517), and one with no primitive element is
+     *   `MurmurHash3$.productHash(this, <seed mixed with that constant>, true)`: `getstatic
+     *   MurmurHash3$.MODULE$; aload_0; ldc <constant>; iconst_1; invokevirtual productHash(Product,
+     *   int, boolean)`. The constant there is `MurmurHash3.mix(0xcafebabe, productPrefix().hashCode())`,
+     *   computed here, so a different literal is not scalac's.
      */
     private fun matchesHashCode(
         case: CaseClass,
@@ -745,19 +806,42 @@ internal object ScalaGeneratedMethods {
     ): Boolean {
         if (case.isObject) return body == listOf(Insn.IntConstant(case.shape.sourceName.hashCode()), Insn.Plain(Opcodes.IRETURN))
         val elements = case.elements ?: return false
+        val prefixHash = case.shape.sourceName.hashCode()
         if (elements.none { it.isPrimitive }) {
-            return body == runtimeCall("_hashCode", "(L$PRODUCT;)I")
+            return body == runtimeCall("_hashCode", "(L$PRODUCT;)I") ||
+                if (elements.isEmpty()) {
+                    body == listOf(Insn.IntConstant(prefixHash), Insn.Plain(Opcodes.IRETURN))
+                } else {
+                    body ==
+                        listOf(
+                            Insn.Field(Opcodes.GETSTATIC, MURMUR, MODULE_FIELD, "L$MURMUR;"),
+                            aload(0),
+                            Insn.IntConstant(murmurMix(HASH_SEED, prefixHash)),
+                            Insn.IntConstant(1),
+                            Insn.Call(Opcodes.INVOKEVIRTUAL, MURMUR, "productHash", "(L$PRODUCT;IZ)I"),
+                            Insn.Plain(Opcodes.IRETURN),
+                        )
+                }
         }
         val mix = Insn.Call(Opcodes.INVOKESTATIC, STATICS, "mix", "(II)I")
         val m = Match(body, firstLocal = 1)
         m.step(Insn.IntConstant(HASH_SEED))
         m.store(Opcodes.ISTORE, "acc")
-        m.load(Opcodes.ILOAD, "acc")
-        m.step(aload(0))
-        m.step(Insn.Call(Opcodes.INVOKEVIRTUAL, case.name, "productPrefix", "()L$STRING;"))
-        m.step(Insn.Call(Opcodes.INVOKEVIRTUAL, STRING, "hashCode", "()I"))
-        m.step(mix)
-        m.store(Opcodes.ISTORE, "acc")
+        val prefixMix: Match.() -> Unit = {
+            load(Opcodes.ILOAD, "acc")
+            either(
+                {
+                    step(aload(0))
+                    step(Insn.Call(Opcodes.INVOKEVIRTUAL, case.name, "productPrefix", "()L$STRING;"))
+                    step(Insn.Call(Opcodes.INVOKEVIRTUAL, STRING, "hashCode", "()I"))
+                },
+                { step(Insn.IntConstant(prefixHash)) },
+            )
+            step(mix)
+            store(Opcodes.ISTORE, "acc")
+        }
+        // Only Scala 2.12 leaves the prefix mix out.
+        if (case.mayBeScala212) m.optional(prefixMix) else m.prefixMix()
         for (element in elements) {
             m.load(Opcodes.ILOAD, "acc")
             m.step(aload(0))
@@ -806,22 +890,41 @@ internal object ScalaGeneratedMethods {
         return m.matched
     }
 
+    /** `Statics.mix` and `MurmurHash3.mix`: a Murmur3 step of [hash] with [data], then the rotate and multiply that close it. */
+    private fun murmurMix(
+        hash: Int,
+        data: Int,
+    ): Int {
+        var k = data * MURMUR_C1
+        k = Integer.rotateLeft(k, 15)
+        k *= MURMUR_C2
+        return Integer.rotateLeft(hash xor k, 13) * 5 + MURMUR_ADD
+    }
+
+    private const val MURMUR_C1 = 0xcc9e2d51L.toInt()
+    private const val MURMUR_C2 = 0x1b873593
+    private const val MURMUR_ADD = 0xe6546b64L.toInt()
+
     /**
-     * The element comparisons of `equals`, the same in both versions: every element of a primitive
-     * type first, then every other one, each in element order, each read through its accessor
-     * from `this` and from the other instance in slot [other] (`javap` over `Mixed`, whose `String`
-     * element comes before its `int` in the source and after it here). A mismatch jumps to [fail]:
+     * The element comparisons of `equals`: every element of a primitive type first, then every
+     * other one when [primitivesFirst], each in element order, each read through its accessor from
+     * `this` and from the other instance in slot [other] (`javap` over `Mixed`, whose `String`
+     * element comes before its `int` in the source and after it here). Scala 2.12.20 compares in
+     * source order instead, so [primitivesFirst] is false for it. A mismatch jumps to [fail]:
      * `if_icmpne` for `int`, `boolean`, `char`, `byte` and `short`; `lcmp`, `dcmpl` or `fcmpl` then
      * `ifne` for `long`, `double` and `float`; for a reference, either `BoxesRunTime.equals` then
      * `ifeq`, which scalac writes for a generic element, or the null-safe `Object.equals` it writes
-     * for `String` and `Option` elements.
+     * for `String` and `Option` elements. Scala 3.3.8, 3.8.4 and later write `java.util.Objects.equals`
+     * then `ifeq` for the null-safe case instead, which [objectsEquals] allows.
      */
     private fun Match.compareElements(
         elements: List<Element>,
         other: String,
         fail: String,
+        primitivesFirst: Boolean = true,
+        objectsEquals: Boolean = false,
     ) {
-        for (element in elements.filter { it.isPrimitive } + elements.filterNot { it.isPrimitive }) {
+        for (element in if (primitivesFirst) elements.filter { it.isPrimitive } + elements.filterNot { it.isPrimitive } else elements) {
             val i = element.index
             step(aload(0))
             step(element.read)
@@ -852,18 +955,17 @@ internal object ScalaGeneratedMethods {
                             jump(Opcodes.IFEQ, fail)
                         },
                         {
-                            store(Opcodes.ASTORE, "that$i")
-                            step(Insn.Plain(Opcodes.DUP))
-                            jump(Opcodes.IFNONNULL, "nonNull$i")
-                            step(Insn.Plain(Opcodes.POP))
-                            load(Opcodes.ALOAD, "that$i")
-                            jump(Opcodes.IFNULL, "next$i")
-                            jump(Opcodes.GOTO, fail)
-                            label("nonNull$i")
-                            load(Opcodes.ALOAD, "that$i")
-                            step(Insn.Call(Opcodes.INVOKEVIRTUAL, OBJECT, "equals", "(L$OBJECT;)Z"))
-                            jump(Opcodes.IFEQ, fail)
-                            label("next$i")
+                            if (objectsEquals) {
+                                either(
+                                    {
+                                        step(Insn.Call(Opcodes.INVOKESTATIC, OBJECTS, "equals", "(L$OBJECT;L$OBJECT;)Z"))
+                                        jump(Opcodes.IFEQ, fail)
+                                    },
+                                    { nullSafeEquals(i, fail) },
+                                )
+                            } else {
+                                nullSafeEquals(i, fail)
+                            }
                         },
                     )
                 }
@@ -873,6 +975,25 @@ internal object ScalaGeneratedMethods {
                 }
             }
         }
+    }
+
+    /** The null-safe `equals` of a reference element, as 2.13.15 and 3.3.4 inline it; [i] keeps its labels apart. */
+    private fun Match.nullSafeEquals(
+        i: Int,
+        fail: String,
+    ) {
+        store(Opcodes.ASTORE, "that$i")
+        step(Insn.Plain(Opcodes.DUP))
+        jump(Opcodes.IFNONNULL, "nonNull$i")
+        step(Insn.Plain(Opcodes.POP))
+        load(Opcodes.ALOAD, "that$i")
+        jump(Opcodes.IFNULL, "next$i")
+        jump(Opcodes.GOTO, fail)
+        label("nonNull$i")
+        load(Opcodes.ALOAD, "that$i")
+        step(Insn.Call(Opcodes.INVOKEVIRTUAL, OBJECT, "equals", "(L$OBJECT;)Z"))
+        jump(Opcodes.IFEQ, fail)
+        label("next$i")
     }
 
     /**
@@ -900,10 +1021,23 @@ internal object ScalaGeneratedMethods {
      * (`FE`, and `FZC`, which declares its own): `aload_1; astore a; aload a; instanceof X;
      * ifeq NO; [iconst_1; ifeq NO]; iconst_1; ireturn; NO: goto NO2; NO2: iconst_0; ireturn`, the
      * bracketed part only for an inner class (`FinalOuter$FInEmpty`).
+     *
+     * Scala 2.12.20 writes the same bodies but compares the elements in source order, so a
+     * reference element before a primitive one keeps its place (`Mixed`); [matchesEqualsScala2]
+     * tries both orders.
      */
     private fun matchesEqualsScala2(
         case: CaseClass,
         body: List<Insn>,
+    ): Boolean =
+        listOf(true, false).any { primitivesFirst ->
+            (primitivesFirst || case.mayBeScala212) && matchesEqualsScala2(case, body, primitivesFirst)
+        }
+
+    private fun matchesEqualsScala2(
+        case: CaseClass,
+        body: List<Insn>,
+        primitivesFirst: Boolean,
     ): Boolean {
         val elements = case.elements ?: return false
         val self = case.name
@@ -969,7 +1103,7 @@ internal object ScalaGeneratedMethods {
         m.step(Insn.TypeOperand(Opcodes.CHECKCAST, self))
         if (elements.isNotEmpty()) {
             m.store(Opcodes.ASTORE, "b")
-            m.compareElements(elements, "b", "false")
+            m.compareElements(elements, "b", "false", primitivesFirst)
         }
         val canEqualCall: Match.() -> Unit = {
             if (elements.isNotEmpty()) load(Opcodes.ALOAD, "b")
@@ -997,10 +1131,11 @@ internal object ScalaGeneratedMethods {
      * aload_1; astore a; aload a; instanceof X; ifeq NO
      * [aload a; checkcast X; invokevirtual <...>$$outer; aload_0; getfield $outer; if_acmpne NO]   (an inner class)
      * aload a; checkcast X; astore b
-     * with no elements:  aload b; aload_0; invokevirtual canEqual; goto TEST
+     * [aload b; astore c]                                                       (3.7.3 to 3.8.3)
+     * with no elements:  aload c; aload_0; invokevirtual canEqual; goto TEST
      *                    (or iconst_1; goto TEST, see [CaseClass.equalsMayOmitCanEqual])
-     * otherwise:         <comparisons against b, failing to MISS>
-     *                    aload b; aload_0; invokevirtual canEqual; ifeq MISS   (may be absent likewise)
+     * otherwise:         <comparisons against c, failing to MISS>
+     *                    aload c; aload_0; invokevirtual canEqual; ifeq MISS   (may be absent likewise)
      *                    iconst_1; goto JOIN; MISS: iconst_0; JOIN: goto TEST
      * NO: iconst_0; goto TEST
      * TEST: ifeq FALSE
@@ -1008,6 +1143,11 @@ internal object ScalaGeneratedMethods {
      * FALSE: iconst_0
      * END: ireturn
      * ```
+     *
+     * with `c` standing for `b` where the copy is absent. Scala 3.7.3 to 3.8.3 store the cast
+     * instance a second time, `aload b; astore c`, and read every element through the copy.
+     * Scala 3.3.8, 3.8.4 and later compare a null-safe reference element through
+     * `java.util.Objects.equals` (see [compareElements]).
      */
     private fun matchesEqualsScala3(
         case: CaseClass,
@@ -1035,8 +1175,15 @@ internal object ScalaGeneratedMethods {
         m.load(Opcodes.ALOAD, "a")
         m.step(Insn.TypeOperand(Opcodes.CHECKCAST, self))
         m.store(Opcodes.ASTORE, "b")
+        val copied =
+            m.optional {
+                load(Opcodes.ALOAD, "b")
+                store(Opcodes.ASTORE, "c")
+                true
+            } == true
+        val that = if (copied) "c" else "b"
         val canEqualCall: Match.() -> Unit = {
-            load(Opcodes.ALOAD, "b")
+            load(Opcodes.ALOAD, that)
             step(aload(0))
             step(Insn.Call(Opcodes.INVOKEVIRTUAL, self, "canEqual", "(L$OBJECT;)Z"))
         }
@@ -1044,7 +1191,7 @@ internal object ScalaGeneratedMethods {
             if (mayOmitCanEqual) m.either(canEqualCall) { step(Insn.IntConstant(1)) } else m.canEqualCall()
             m.jump(Opcodes.GOTO, "test")
         } else {
-            m.compareElements(elements, "b", "miss")
+            m.compareElements(elements, that, "miss", objectsEquals = true)
             val canEqualTest: Match.() -> Unit = {
                 canEqualCall()
                 jump(Opcodes.IFEQ, "miss")
@@ -1094,6 +1241,12 @@ internal object ScalaGeneratedMethods {
      * `athrow` in Scala 3.3.4, which writes a second, unreachable `athrow` after it when a
      * `tableswitch` shares one box (`P3`, three `double` elements). Each part named for one
      * version above counts only in a class of that version.
+     *
+     * Two releases word the out-of-range case differently, read with `javap` over `Cc`, `P3` and
+     * `Empty`: Scala 2.12.20 throws `new IndexOutOfBoundsException(Integer.toString(n))` (`new; dup;
+     * iload_1; invokestatic Integer.toString; invokespecial <init>(String); athrow`) in place of
+     * `Statics.ioobe`, and Scala 3.9.0 passes the index to `IndexOutOfBoundsException.<init>(int)`
+     * with no string conversion (`new; dup; iload_1; invokespecial <init>(I)V; athrow`).
      */
     private fun matchesIndexed(
         case: CaseClass,
@@ -1160,16 +1313,33 @@ internal object ScalaGeneratedMethods {
                 m.step(Insn.TypeOperand(Opcodes.NEW, OUT_OF_BOUNDS))
                 m.step(Insn.Plain(Opcodes.DUP))
                 m.step(Insn.Var(Opcodes.ILOAD, 1))
-                m.step(Insn.Call(Opcodes.INVOKESTATIC, BOXES, "boxToInteger", "(I)Ljava/lang/Integer;"))
-                m.step(Insn.Call(Opcodes.INVOKEVIRTUAL, "java/lang/Integer", "toString", "()L$STRING;"))
-                m.step(Insn.Call(Opcodes.INVOKESPECIAL, OUT_OF_BOUNDS, "<init>", "(L$STRING;)V"))
+                m.either(
+                    {
+                        step(Insn.Call(Opcodes.INVOKESTATIC, BOXES, "boxToInteger", "(I)Ljava/lang/Integer;"))
+                        step(Insn.Call(Opcodes.INVOKEVIRTUAL, INTEGER, "toString", "()L$STRING;"))
+                        step(Insn.Call(Opcodes.INVOKESPECIAL, OUT_OF_BOUNDS, "<init>", "(L$STRING;)V"))
+                    },
+                    { step(Insn.Call(Opcodes.INVOKESPECIAL, OUT_OF_BOUNDS, "<init>", "(I)V")) },
+                )
                 m.step(Insn.Plain(Opcodes.ATHROW))
                 if (shared != null) m.optional { step(Insn.Plain(Opcodes.ATHROW)) }
             } else {
-                m.step(Insn.Var(Opcodes.ILOAD, 1))
-                m.step(Insn.Call(Opcodes.INVOKESTATIC, STATICS, "ioobe", "(I)L$OBJECT;"))
-                if (names) m.step(Insn.TypeOperand(Opcodes.CHECKCAST, STRING))
-                m.step(areturn())
+                val ioobe: Match.() -> Unit = {
+                    step(Insn.Var(Opcodes.ILOAD, 1))
+                    step(Insn.Call(Opcodes.INVOKESTATIC, STATICS, "ioobe", "(I)L$OBJECT;"))
+                    if (names) step(Insn.TypeOperand(Opcodes.CHECKCAST, STRING))
+                    step(areturn())
+                }
+                // Scala 2.12's wording, in productElement only: 2.12 writes no productElementName.
+                val scala212: Match.() -> Unit = {
+                    step(Insn.TypeOperand(Opcodes.NEW, OUT_OF_BOUNDS))
+                    step(Insn.Plain(Opcodes.DUP))
+                    step(Insn.Var(Opcodes.ILOAD, 1))
+                    step(Insn.Call(Opcodes.INVOKESTATIC, INTEGER, "toString", "(I)L$STRING;"))
+                    step(Insn.Call(Opcodes.INVOKESPECIAL, OUT_OF_BOUNDS, "<init>", "(L$STRING;)V"))
+                    step(Insn.Plain(Opcodes.ATHROW))
+                }
+                if (!names && case.mayBeScala212) m.either(ioobe, scala212) else m.ioobe()
             }
             shared?.let { type ->
                 m.label("shared")
@@ -1190,11 +1360,12 @@ internal object ScalaGeneratedMethods {
      * - `unapply(<partner>)`: in Scala 3.3.4, `aload_1; areturn`, or `iconst_1; ireturn` returning
      *   `boolean` for a class with no elements. In Scala 2.13.15, see [matchesUnapplyScala2].
      * - `toString()`: `ldc "<partner's source name>"; areturn`.
-     * - Scala 3.3.4's `fromProduct(scala.Product)`: `new <partner>; dup`, the outer reference, then
+     * - Scala 3's `fromProduct(scala.Product)`: `new <partner>; dup`, the outer reference, then
      *   per element `aload_1; <index>; invokeinterface Product.productElement(I)` and its
      *   `BoxesRunTime.unboxTo...`, or `checkcast` to its type unless that is `Object`, then
      *   `invokespecial <partner>.<init>; areturn`, the constructor being the partner's primary
-     *   one. Its bridge returning `Object` is `aload_0;
+     *   one. Scala 3.7.0 and later read the elements into locals before the `new` (see
+     *   [matchesFromProduct]). Its bridge returning `Object` is `aload_0;
      *   aload_1; invokevirtual fromProduct; areturn`.
      *
      * The `unapply` and `fromProduct` shapes of one version count only in a companion of that
@@ -1365,17 +1536,36 @@ internal object ScalaGeneratedMethods {
         return m.matched
     }
 
-    /** Scala 3.3.4's `fromProduct`; see [companionPlumbing]. */
+    /**
+     * Scala 3's `fromProduct`; see [companionPlumbing]. Scala 3.3.4 builds the instance in one
+     * expression, the `new` before the element reads (`javap` over `Cc`, `Mixed`, `Outer$Inner`):
+     * `new; dup; [outer]; per element: aload_1; <index>; invokeinterface productElement; <unbox or
+     * checkcast>; invokespecial <init>`. Scala 3.7.0 and later read every element into a local first
+     * and build the instance after, the locals taking slots from 2 in element order, a `long` or
+     * `double` two wide: `per element: aload_1; <index>; invokeinterface productElement; <unbox or
+     * checkcast>; <store>; then new; dup; [outer]; per element: <load>; invokespecial <init>`.
+     */
     private fun matchesFromProduct(
         companion: ClassShape,
         partner: CaseClass,
         body: List<Insn>,
+    ): Boolean = listOf(false, true).any { viaLocals -> matchesFromProduct(companion, partner, body, viaLocals) }
+
+    private fun matchesFromProduct(
+        companion: ClassShape,
+        partner: CaseClass,
+        body: List<Insn>,
+        viaLocals: Boolean,
     ): Boolean {
         val elements = partner.elements ?: return false
         val m = Match(body)
-        m.step(Insn.TypeOperand(Opcodes.NEW, partner.name))
-        m.step(Insn.Plain(Opcodes.DUP))
-        val outer = m.optional { outerReference(companion.internalName, accessor = false) }
+        var outer: String? = null
+        if (!viaLocals) {
+            m.step(Insn.TypeOperand(Opcodes.NEW, partner.name))
+            m.step(Insn.Plain(Opcodes.DUP))
+            outer = m.optional { outerReference(companion.internalName, accessor = false) }
+        }
+        var slot = 2
         for (element in elements) {
             m.step(aload(1))
             m.step(Insn.IntConstant(element.index))
@@ -1396,6 +1586,20 @@ internal object ScalaGeneratedMethods {
                 else -> {
                     m.fail()
                 }
+            }
+            if (viaLocals) {
+                m.step(Insn.Var(element.type.getOpcode(Opcodes.ISTORE), slot))
+                slot += element.type.size
+            }
+        }
+        if (viaLocals) {
+            m.step(Insn.TypeOperand(Opcodes.NEW, partner.name))
+            m.step(Insn.Plain(Opcodes.DUP))
+            outer = m.optional { outerReference(companion.internalName, accessor = false) }
+            slot = 2
+            for (element in elements) {
+                m.step(Insn.Var(element.type.getOpcode(Opcodes.ILOAD), slot))
+                slot += element.type.size
             }
         }
         val constructor = "(${outer.orEmpty()}${elements.joinToString("") { it.type.descriptor }})V"

@@ -338,9 +338,24 @@ fixes re-reviewed by a fresh Opus reviewer, one commit each:
    a suspend forwarder. The sixth found the boxed-result acceptance also let a
    hand-written `super` call through a `$DefaultImpls` method be marked, and
    narrowed it to calls to the interface's own accessor. Seven Opus reviews.
-3. Scala fixture matrix, one build per variant boundary (2.12.20, 2.13.16,
-   2.13.18, 3.3.6, 3.3.7, 3.3.8, 3.7.0, 3.7.2, 3.8.3, 3.8.4, 3.9.0), and every
-   variant read, 2.12's `readResolve` included. No wire change.
+3. Scala fixture matrix and every variant read. Landed 2026-10-04.
+   `fixtures-compilers/scalac` compiles the baseline modules' sources with
+   2.12.20, 2.13.16, 2.13.18, 3.3.6, 3.3.7, 3.3.8, 3.7.0, 3.7.2, 3.8.3, 3.8.4
+   and 3.9.0, each with its own compiler and library (the `-version` output
+   and, for Scala 3, the `.tasty` header prove which ran), and
+   `ScalacMatrixTest` requires every method's mark to equal the 2.13.15 or
+   3.3.4 baseline's. The review found three over-matches and a fourth worth
+   closing: 2.12's shapes (no prefix mix, source-order `equals`, the
+   `Integer.toString` out-of-range, `readResolve`) were read in any class, so a
+   2.13 or Scala 3 override written by hand in that shape was hidden. They are
+   read only where 2.12 can have written the class: a Scala 2 class with no
+   `productElementName`, and for `readResolve` a Scala 2 module class with no
+   `writeReplace`. For step 6: the matcher's variants are a union with no
+   record of which release wrote which, so keying Scala 3 on the `.tasty`
+   release needs them tagged. For step 10: 3.3.3 and 3.4.0 name lambdas and
+   enum `$anon` constructors differently from 3.3.4, so the comparison, which
+   also checks method sets, fails on them; the canary has to compare marks of
+   the methods both builds have.
 4. Scala 3 enum plumbing, each body read with `javap` first.
 5. Wire: `UnreadShape`, the two oneofs, `agent_version`; codec, testkit decode,
    stub collector; `otherlode-collector` bindings bump.

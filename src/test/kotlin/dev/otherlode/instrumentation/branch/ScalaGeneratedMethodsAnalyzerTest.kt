@@ -2,6 +2,7 @@ package dev.otherlode.instrumentation.branch
 
 import dev.otherlode.export.CallEdge
 import dev.otherlode.export.GeneratedBy
+import dev.otherlode.instrumentation.CompilerFixtures
 import net.bytebuddy.jar.asm.Attribute
 import net.bytebuddy.jar.asm.ByteVector
 import net.bytebuddy.jar.asm.ClassReader
@@ -493,4 +494,267 @@ class ScalaGeneratedMethodsAnalyzerTest {
     @Test
     fun `scala 2 - a shape only the other Scala version writes is not marked`() =
         `a shape only the other Scala version writes is not marked`("scala2")
+
+    /**
+     * The variants later and earlier scalac releases write (the matcher's KDoc names each). For
+     * every one, the method is marked as the release wrote it, and is not once an instruction is
+     * added at its start or just before its last instruction, so the variant is read exactly.
+     */
+    private fun assertVariantReadExactly(
+        version: String,
+        simpleName: String,
+        names: Set<String>,
+        expected: GeneratedBy,
+        methods: Map<String, String>,
+    ) {
+        val build = CompilerFixtures.scalac(version)
+        val bytes = build.classBytes(simpleName)
+        val original = analyze(bytes, build.lookup)
+        val withExtra = analyze(withNop(bytes, names), build.lookup)
+        val withExtraAtEnd = analyze(withNop(bytes, names, beforeLast = true), build.lookup)
+        for ((name, descriptor) in methods) {
+            val label = "scalac $version $simpleName.$name"
+            assertEquals(expected, original.generatedBy(name, descriptor), label)
+            assertEquals(GeneratedBy.NONE, withExtra.generatedBy(name, descriptor), "$label with a nop")
+            assertEquals(GeneratedBy.NONE, withExtraAtEnd.generatedBy(name, descriptor), "$label with a nop before its last instruction")
+        }
+    }
+
+    @Test
+    fun `scala 2_12 - hashCode without the prefix mix, equals in source order and an out-of-range Integer_toString are read exactly`() {
+        assertVariantReadExactly(
+            "2.12.20",
+            "Mixed",
+            setOf("hashCode", "equals", "productElement"),
+            GeneratedBy.CASE_CLASS,
+            mapOf(
+                "hashCode" to "()I",
+                "equals" to "(Ljava/lang/Object;)Z",
+                "productElement" to "(I)Ljava/lang/Object;",
+            ),
+        )
+        assertVariantReadExactly(
+            "2.12.20",
+            "Empty",
+            setOf("productElement"),
+            GeneratedBy.CASE_CLASS,
+            mapOf("productElement" to "(I)Ljava/lang/Object;"),
+        )
+    }
+
+    /** [classBytes] with one more instance method, [name] [descriptor], whose body returns null. */
+    private fun withMethod(
+        classBytes: ByteArray,
+        name: String,
+        descriptor: String,
+        access: Int = Opcodes.ACC_PUBLIC,
+    ): ByteArray {
+        val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
+        val visitor =
+            object : ClassVisitor(Opcodes.ASM9, writer) {
+                override fun visitEnd() {
+                    val mv = super.visitMethod(access, name, descriptor, null, null)
+                    mv.visitCode()
+                    mv.visitInsn(Opcodes.ACONST_NULL)
+                    mv.visitInsn(Opcodes.ARETURN)
+                    mv.visitMaxs(0, 0)
+                    mv.visitEnd()
+                    super.visitEnd()
+                }
+            }
+        ClassReader(classBytes).accept(visitor, 0)
+        return writer.toByteArray()
+    }
+
+    @Test
+    fun `scala 2_12's own shapes are not read in a class 2_12 cannot have written`() {
+        val build = CompilerFixtures.scalac("2.12.20")
+        val shapes =
+            mapOf(
+                "hashCode" to "()I",
+                "equals" to "(Ljava/lang/Object;)Z",
+                "productElement" to "(I)Ljava/lang/Object;",
+            )
+
+        // Read as Scala 3, which never leaves the prefix mix out or writes these.
+        val asScala3 = analyze(relabelled(build.classBytes("Mixed"), asScala3 = true), build.lookup)
+        // Read as Scala 2.13, which gives every case class a productElementName.
+        val as213 = analyze(withMethod(build.classBytes("Mixed"), "productElementName", "(I)Ljava/lang/String;"), build.lookup)
+        for ((name, descriptor) in shapes) {
+            assertEquals(GeneratedBy.NONE, asScala3.generatedBy(name, descriptor), "Mixed.$name read as Scala 3")
+            assertEquals(GeneratedBy.NONE, as213.generatedBy(name, descriptor), "Mixed.$name in a class with productElementName")
+        }
+
+        val readResolve = "readResolve" to "()Ljava/lang/Object;"
+        val companionAsScala3 = analyze(relabelled(build.classBytes("Cc\$"), asScala3 = true), build.lookup)
+        val companionWithWriteReplace =
+            analyze(withMethod(build.classBytes("Cc\$"), "writeReplace", "()Ljava/lang/Object;", Opcodes.ACC_PRIVATE), build.lookup)
+        assertEquals(GeneratedBy.NONE, companionAsScala3.generatedBy(readResolve.first, readResolve.second), "readResolve read as Scala 3")
+        assertEquals(
+            GeneratedBy.NONE,
+            companionWithWriteReplace.generatedBy(readResolve.first, readResolve.second),
+            "readResolve beside a writeReplace, as 2.13 writes",
+        )
+    }
+
+    @Test
+    fun `scala 2_12's out-of-range wording is not read in productElementName, which 2_12 never writes`() {
+        val build = CompilerFixtures.scalac("2.12.20")
+        val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
+        val visitor =
+            object : ClassVisitor(Opcodes.ASM9, writer) {
+                override fun visitMethod(
+                    access: Int,
+                    name: String,
+                    descriptor: String,
+                    signature: String?,
+                    exceptions: Array<out String>?,
+                ): MethodVisitor? {
+                    // productElement's body, renamed to productElementName with the String return:
+                    // only the 2.12 out-of-range wording, nothing else that a String return changes.
+                    if (name != "productElement") return super.visitMethod(access, name, descriptor, signature, exceptions)
+                    return super.visitMethod(access, "productElementName", "(I)Ljava/lang/String;", null, exceptions)
+                }
+            }
+        ClassReader(build.classBytes("Empty")).accept(visitor, 0)
+
+        val analysis = analyze(writer.toByteArray(), build.lookup)
+        assertEquals(GeneratedBy.NONE, analysis.generatedBy("productElementName", "(I)Ljava/lang/String;"))
+    }
+
+    @Test
+    fun `scala 2_12 - a module class's readResolve is read exactly`() {
+        assertVariantReadExactly(
+            "2.12.20",
+            "Cc\$",
+            setOf("readResolve"),
+            GeneratedBy.SCALA_OBJECT,
+            mapOf("readResolve" to "()Ljava/lang/Object;"),
+        )
+    }
+
+    @Test
+    fun `scala 2_13_17 and later, and scala 3_3_7 and later - the folded prefix hash is read exactly`() {
+        for (version in listOf("2.13.18", "3.3.7", "3.9.0")) {
+            assertVariantReadExactly(version, "Cc", setOf("hashCode"), GeneratedBy.CASE_CLASS, mapOf("hashCode" to "()I"))
+            assertVariantReadExactly(version, "One", setOf("hashCode"), GeneratedBy.CASE_CLASS, mapOf("hashCode" to "()I"))
+            assertVariantReadExactly(version, "Empty", setOf("hashCode"), GeneratedBy.CASE_CLASS, mapOf("hashCode" to "()I"))
+        }
+    }
+
+    /** [classBytes] with every `ldc` of the int [from] in method [method] changed to [to]. */
+    private fun withConstant(
+        classBytes: ByteArray,
+        method: String,
+        from: Int,
+        to: Int,
+    ): ByteArray {
+        val writer = ClassWriter(0)
+        val visitor =
+            object : ClassVisitor(Opcodes.ASM9, writer) {
+                override fun visitMethod(
+                    access: Int,
+                    name: String,
+                    descriptor: String,
+                    signature: String?,
+                    exceptions: Array<out String>?,
+                ): MethodVisitor {
+                    val delegate = super.visitMethod(access, name, descriptor, signature, exceptions)
+                    if (name != method) return delegate
+                    return object : MethodVisitor(Opcodes.ASM9, delegate) {
+                        override fun visitLdcInsn(value: Any?) = super.visitLdcInsn(if (value == from) to else value)
+                    }
+                }
+            }
+        ClassReader(classBytes).accept(visitor, 0)
+        return writer.toByteArray()
+    }
+
+    @Test
+    fun `a folded hashCode constant other than the class name's hash is not marked`() {
+        val build = CompilerFixtures.scalac("2.13.18")
+        val empty = build.classBytes("Empty")
+        val one = build.classBytes("One")
+
+        assertEquals(GeneratedBy.CASE_CLASS, analyze(empty, build.lookup).generatedBy("hashCode", "()I"))
+        assertEquals(
+            GeneratedBy.NONE,
+            analyze(withConstant(empty, "hashCode", 67081517, 67081518), build.lookup).generatedBy("hashCode", "()I"),
+        )
+        assertEquals(
+            GeneratedBy.NONE,
+            analyze(withConstant(one, "hashCode", 741166282, 741166283), build.lookup).generatedBy("hashCode", "()I"),
+        )
+    }
+
+    @Test
+    fun `scala 3_3_8, 3_8_4 and later - an equals through Objects_equals is read exactly`() {
+        for (version in listOf("3.3.8", "3.8.4", "3.9.0")) {
+            assertVariantReadExactly(
+                version,
+                "Mixed",
+                setOf("equals"),
+                GeneratedBy.CASE_CLASS,
+                mapOf("equals" to "(Ljava/lang/Object;)Z"),
+            )
+        }
+    }
+
+    @Test
+    fun `scala 3_7_3 to 3_8_3 - an equals through a copy of the cast instance is read exactly`() {
+        for (simpleName in listOf("Mixed", "Empty", "Outer\$Inner")) {
+            assertVariantReadExactly(
+                "3.8.3",
+                simpleName,
+                setOf("equals"),
+                GeneratedBy.CASE_CLASS,
+                mapOf("equals" to "(Ljava/lang/Object;)Z"),
+            )
+        }
+    }
+
+    @Test
+    fun `scala 3_7_0 and later - a fromProduct that reads the elements into locals first is read exactly`() {
+        for (version in listOf("3.7.0", "3.9.0")) {
+            assertVariantReadExactly(
+                version,
+                "Cc\$",
+                setOf("fromProduct"),
+                GeneratedBy.CASE_CLASS,
+                mapOf("fromProduct" to "(Lscala/Product;)L$PACKAGE/Cc;"),
+            )
+            assertVariantReadExactly(
+                version,
+                "Mixed\$",
+                setOf("fromProduct"),
+                GeneratedBy.CASE_CLASS,
+                mapOf("fromProduct" to "(Lscala/Product;)L$PACKAGE/Mixed;"),
+            )
+            assertVariantReadExactly(
+                version,
+                "Outer\$Inner\$",
+                setOf("fromProduct"),
+                GeneratedBy.CASE_CLASS,
+                mapOf("fromProduct" to "(Lscala/Product;)L$PACKAGE/Outer\$Inner;"),
+            )
+        }
+    }
+
+    @Test
+    fun `scala 3_9_0 - an out-of-range index passed to IndexOutOfBoundsException_init is read exactly`() {
+        assertVariantReadExactly(
+            "3.9.0",
+            "Cc",
+            setOf("productElement", "productElementName"),
+            GeneratedBy.CASE_CLASS,
+            mapOf("productElement" to "(I)Ljava/lang/Object;", "productElementName" to "(I)Ljava/lang/String;"),
+        )
+        assertVariantReadExactly(
+            "3.9.0",
+            "Empty",
+            setOf("productElement"),
+            GeneratedBy.CASE_CLASS,
+            mapOf("productElement" to "(I)Ljava/lang/Object;"),
+        )
+    }
 }

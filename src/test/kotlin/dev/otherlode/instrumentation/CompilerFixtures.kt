@@ -26,17 +26,39 @@ object CompilerFixtures {
     /** The javac versions that also compile the pattern-switch sources. */
     val javacPatternVersions: List<String> get() = javacVersions.filter { it.toInt() >= 21 }
 
+    /** The scalac releases in the matrix, oldest first, as `gradle.properties` lists them. */
+    val scalacVersions: List<String> get() = listProperty("otherlode.fixtures.scalac.versions")
+
     /** The kotlinc releases whose default `-jvm-default` mode is `enable`; the earlier ones default to `disable`. */
     val kotlincJvmDefaultEnableVersions = setOf("2.2.21", "2.4.20")
 
     private const val KOTLIN_PACKAGE = "com/example/target/kotlinc"
     private const val JAVA_PACKAGE = "com/example/target/javac"
+    private const val SCALA_PACKAGE = "com/example/scalatarget"
 
     /** The build of kotlinc release [version]. */
     fun kotlinc(version: String): Build = Build(File(requiredProperty("otherlode.fixtures.kotlinc.$version.dir")), KOTLIN_PACKAGE)
 
     /** The build of javac [version]. */
     fun javac(version: String): Build = Build(File(requiredProperty("otherlode.fixtures.javac.$version.dir")), JAVA_PACKAGE)
+
+    /**
+     * The build of scalac release [version], which compiles `fixtures-scala3`'s sources for a 3.x
+     * release and `fixtures-scala2`'s for a 2.x one.
+     */
+    fun scalac(version: String): Build =
+        Build(File(requiredProperty("otherlode.fixtures.scalac.$version.dir")), SCALA_PACKAGE, listOf("com.example.scalatarget"))
+
+    /** The baseline build of the Scala line [version] belongs to: 2.13.15 for a 2.x release, 3.3.4 for a 3.x one. */
+    fun scalaBaseline(version: String): Build =
+        Build(
+            File(requiredProperty("otherlode.fixtures.${if (version.startsWith("3.")) "scala3" else "scala2"}.dir")),
+            SCALA_PACKAGE,
+            listOf("com.example.scalatarget"),
+        )
+
+    /** What scalac release [version] prints for `-version`, as the build recorded it. */
+    fun scalacVersionOutput(version: String): String = File(requiredProperty("otherlode.fixtures.scalac.$version.versionFile")).readText()
 
     private fun requiredProperty(name: String): String =
         System.getProperty(name) ?: error("system property $name is not set; run tests through the root Gradle build")
@@ -47,9 +69,21 @@ object CompilerFixtures {
     class Build(
         private val dir: File,
         private val packagePath: String,
+        private val includePackages: List<String> = listOf("com.example.target"),
     ) {
         /** The root of this build's class files, which a static scan can walk. */
         val directory: File get() = dir
+
+        /** Every class in this build's fixture package, nested ones included, by name as [classBytes] takes it. */
+        fun classNames(): List<String> {
+            val root = File(dir, packagePath)
+            return root
+                .walkTopDown()
+                .filter { it.isFile && it.extension == "class" }
+                .map { it.relativeTo(root).path.removeSuffix(".class") }
+                .sorted()
+                .toList()
+        }
 
         /** The raw bytes of fixture class [simpleName], which may be a nested name such as `Outer$Inner`. */
         fun classBytes(simpleName: String): ByteArray = File(dir, "$packagePath/$simpleName.class").readBytes()
@@ -65,7 +99,7 @@ object CompilerFixtures {
             BranchSiteAnalyzer.analyze(
                 classBytes(simpleName),
                 lookup,
-                includePackages = listOf("com.example.target"),
+                includePackages = includePackages,
             ) { _, _ -> true }
 
         /**
@@ -89,7 +123,7 @@ object CompilerFixtures {
                 },
                 ClassReader.SKIP_CODE,
             )
-            return BranchSiteAnalyzer.analyze(bytes, lookup, includePackages = listOf("com.example.target")) { name, descriptor ->
+            return BranchSiteAnalyzer.analyze(bytes, lookup, includePackages = includePackages) { name, descriptor ->
                 (name to descriptor) !in unprobed
             }
         }
@@ -99,14 +133,17 @@ object CompilerFixtures {
             BranchSiteAnalyzer.analyze(
                 classBytes(simpleName),
                 lookup,
-                includePackages = listOf("com.example.target"),
+                includePackages = includePackages,
             ) { name, _ -> name != "<init>" }
 
         /**
          * Every method of fixture class [simpleName] with the mark the analysis gives it, keyed by
          * name then descriptor, so an overloaded name keeps one entry per overload.
          */
-        fun marks(simpleName: String): Marks {
+        fun marks(simpleName: String): Marks = Marks(markEntries(simpleName))
+
+        /** Every method of fixture class [simpleName] as (name, descriptor, mark), in class-file order. */
+        fun markEntries(simpleName: String): List<Triple<String, String, GeneratedBy>> {
             val analysis = analyze(simpleName)
             val entries = mutableListOf<Triple<String, String, GeneratedBy>>()
             ClassReader(classBytes(simpleName)).accept(
@@ -121,7 +158,7 @@ object CompilerFixtures {
                 },
                 ClassReader.SKIP_CODE,
             )
-            return Marks(entries)
+            return entries
         }
     }
 

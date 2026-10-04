@@ -376,6 +376,11 @@ val kotlincMatrixClassesDirs =
     kotlincMatrix.associateWith { project(":fixtures-kotlinc").layout.buildDirectory.dir("classes/kotlinc/$it") }
 val javacMatrixClassesDirs =
     javacMatrix.associateWith { project(":fixtures-javac").layout.buildDirectory.dir("classes/javac/$it") }
+val scalacMatrix = providers.gradleProperty("otherlode.matrix.scalac").get().split(",")
+val scalacMatrixClassesDirs =
+    scalacMatrix.associateWith { project(":fixtures-scalac").layout.buildDirectory.dir("classes/scalac/$it") }
+val scalacMatrixVersionFiles =
+    scalacMatrix.associateWith { project(":fixtures-scalac").layout.buildDirectory.file("scalac-version/$it.txt") }
 
 // JaCoCo's own agent jar, for CoverageAgentOrderTest, which launches JVMs with it beside this
 // agent in each command-line order. The test needs only the jar's path, so it stays off the test
@@ -399,6 +404,7 @@ tasks.test {
         ":fixtures-kotlin-class-sam:classes",
         ":fixtures-kotlinc:classes",
         ":fixtures-javac:classes",
+        ":fixtures-scalac:classes",
     )
     // A fixture build is not on the test classpath, so its classes are declared as inputs here:
     // otherwise a fixture change would recompile the fixture and leave the test task up to date.
@@ -409,9 +415,13 @@ tasks.test {
         "classSam" to classSamFixtureClassesDir,
     ).plus(kotlincMatrixClassesDirs.map { (version, dir) -> "kotlinc$version" to dir })
         .plus(javacMatrixClassesDirs.map { (version, dir) -> "javac$version" to dir })
+        .plus(scalacMatrixClassesDirs.map { (version, dir) -> "scalac$version" to dir })
         .forEach { (name, dir) ->
             inputs.dir(dir).withPropertyName("fixtureClasses.$name").withPathSensitivity(PathSensitivity.RELATIVE)
         }
+    scalacMatrixVersionFiles.forEach { (version, file) ->
+        inputs.file(file).withPropertyName("scalacVersion.$version").withPathSensitivity(PathSensitivity.NONE)
+    }
     // KotlincMatrixTest reads the source's marker comments for line numbers, which the class files
     // alone do not reflect.
     inputs.file(kotlincSuspendsSource).withPropertyName("kotlincSuspendsSource").withPathSensitivity(PathSensitivity.NONE)
@@ -440,6 +450,13 @@ tasks.test {
         systemProperty("otherlode.fixtures.classsam.dir", classSamFixtureClassesDir.get().asFile.absolutePath)
         systemProperty("otherlode.fixtures.kotlinc.versions", kotlincMatrix.joinToString(","))
         systemProperty("otherlode.fixtures.javac.versions", javacMatrix.joinToString(","))
+        systemProperty("otherlode.fixtures.scalac.versions", scalacMatrix.joinToString(","))
+        scalacMatrixClassesDirs.forEach { (version, dir) ->
+            systemProperty("otherlode.fixtures.scalac.$version.dir", dir.get().asFile.absolutePath)
+        }
+        scalacMatrixVersionFiles.forEach { (version, file) ->
+            systemProperty("otherlode.fixtures.scalac.$version.versionFile", file.get().asFile.absolutePath)
+        }
         systemProperty("otherlode.fixtures.kotlinc.suspendsSource", kotlincSuspendsSource.absolutePath)
         kotlincMatrixClassesDirs.forEach { (version, dir) ->
             systemProperty("otherlode.fixtures.kotlinc.$version.dir", dir.get().asFile.absolutePath)

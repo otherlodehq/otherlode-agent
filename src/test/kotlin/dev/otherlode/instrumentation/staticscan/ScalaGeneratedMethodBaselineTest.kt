@@ -2,8 +2,11 @@ package dev.otherlode.instrumentation.staticscan
 
 import dev.otherlode.export.DeclaredMethod
 import dev.otherlode.export.GeneratedBy
+import dev.otherlode.instrumentation.CompilerFixtures
 import dev.otherlode.instrumentation.branch.ScalaCaseClassFixtures
 import dev.otherlode.instrumentation.branch.ScalaFixtures
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.MethodSource
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -14,6 +17,33 @@ import kotlin.test.assertTrue
  * included, and a default getter the mark of the method it fills a default for.
  */
 class ScalaGeneratedMethodBaselineTest {
+    companion object {
+        @JvmStatic
+        fun scalacVersions(): List<String> = CompilerFixtures.scalacVersions
+    }
+
+    @ParameterizedTest(name = "scalac {0}")
+    @MethodSource("scalacVersions")
+    fun `a scan of a scalac matrix build marks every declared method as the transform does`(version: String) {
+        val build = CompilerFixtures.scalac(version)
+        val declaredClasses = StaticBaselineScanner(listOf("com.example.scalatarget")).scan(listOf(build.directory)).declaredClasses
+        var compared = 0
+        var marked = 0
+        for (simpleName in build.classNames()) {
+            val declared = declaredClasses.singleOrNull { it.className == "com.example.scalatarget.$simpleName" } ?: continue
+            val transform = build.markEntries(simpleName).associate { (it.first to it.second) to it.third }
+            for (method in declared.methods) {
+                // The scan gives a default getter the mark of the method it fills a default for.
+                if ("\$default" in method.methodName) continue
+                val expected = transform[method.methodName to method.methodDescriptor] ?: continue
+                compared++
+                if (expected != GeneratedBy.NONE) marked++
+                assertEquals(expected, method.generatedBy, "scalac $version $simpleName.${method.methodName}${method.methodDescriptor}")
+            }
+        }
+        assertTrue(compared > 500 && marked > 300, "compared $compared methods, $marked marked")
+    }
+
     private fun `a scan marks what the transform marks`(module: String) {
         val declaredClasses =
             StaticBaselineScanner(listOf("com.example.scalatarget"))
