@@ -261,6 +261,26 @@ reviewed before it lands.
 4. **Versioning.** `version=0.1.0-SNAPSHOT` in `gradle.properties`, applied
    to every subproject; the collector reports its version.
 
+Landed so far:
+
+- Chunk 1 on 2026-10-04 in all three repos: agent `731b10d` (schema
+  published to the BSR by hand as `6678da8b`, since the renames are an
+  intended break the workflow's registry check refuses), collector
+  `61cfd15`, server `fa7250f`. The testkit rejects a stripped payload,
+  since it expects the agent's payloads directly. The server excludes a
+  stripped run in the one in-scope CTE and lists it only on the instances
+  page; server ADR 0054's consequences hold what building it settled.
+- Chunk 2 on 2026-10-04: agent `bfcd067`, site `ea29de9`.
+  `flushInterval` keeps its name, since it holds a `Duration`; the other
+  three fields follow their keys. The testkit's URL property is
+  `exportUrl`.
+- Chunk 4's collector half: collector `fbbc7fb` (`version` const, logged
+  at startup). The agent half waits on chunk 3a, and lands before 3b,
+  whose version check needs one version across the tree.
+- Chunk 3 is split: 3a merges findings across instances, 3b hardens the
+  surface (own types, shading, visibility, Java, ABI dump), so the dump
+  is taken once, after 3a's field removals.
+
 Parked from the same review, none a one-way door: a WARNING for an
 `OTHERLODE_*` variable or `otherlode.*` property the agent does not know
 (typos are silently ignored); option parsing and service-name detection
