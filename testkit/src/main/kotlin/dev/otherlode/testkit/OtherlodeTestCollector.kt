@@ -15,6 +15,7 @@ import dev.otherlode.export.ProtoPayloadCodec
 import dev.otherlode.export.ResourceAttributes
 import dev.otherlode.export.RoutineKind
 import dev.otherlode.export.SkippedClass
+import dev.otherlode.export.UnreadShape
 import dev.otherlode.export.UnreportedClass
 import dev.otherlode.registry.RouteTemplateNormalizer
 import java.net.InetSocketAddress
@@ -109,6 +110,7 @@ class OtherlodeTestCollector private constructor(
         val parameterNames: List<String> = emptyList(),
         val genericSignature: String = "",
         val extensionReceiver: Boolean = false,
+        val unreadShape: UnreadShape = UnreadShape.NONE,
     )
 
     /** A class's superclass and direct interfaces, by class name, which call-edge resolution walks. */
@@ -129,6 +131,7 @@ class OtherlodeTestCollector private constructor(
         val parameterNames: List<String> = emptyList(),
         val genericSignature: String = "",
         val extensionReceiver: Boolean = false,
+        val unreadShape: UnreadShape = UnreadShape.NONE,
     )
 
     /**
@@ -422,6 +425,9 @@ class OtherlodeTestCollector private constructor(
 
     /** The one run id accepted per instance id; see the class doc and [rejectionFor]. */
     private val runIdByInstance = ConcurrentHashMap<String, String>()
+
+    /** The agent version each instance's accepted payloads named; empty when the agent did not know its own. */
+    private val agentVersionByInstance = ConcurrentHashMap<String, String>()
     private val rejections = CopyOnWriteArrayList<String>()
 
     @Volatile
@@ -1131,6 +1137,13 @@ class OtherlodeTestCollector private constructor(
             branchKey = probe.branchKey,
             routine = routine,
         )
+
+    /**
+     * The agent version [serviceInstanceId] reported, or null when no payload from it has been
+     * accepted. Empty when the agent did not know its own version, as in a test JVM that runs the
+     * agent from classes.
+     */
+    fun agentVersion(serviceInstanceId: String): String? = checked { agentVersionByInstance[serviceInstanceId] }
 
     /** Every class reported as matched but not instrumented by any manifest, distinct by class name, sorted by name. */
     fun skippedClasses(): List<SkippedClass> = checked { skippedByClassName.values.sortedBy { it.className } }
@@ -2208,6 +2221,7 @@ class OtherlodeTestCollector private constructor(
                             location.parameterNames,
                             location.genericSignature,
                             location.extensionReceiver,
+                            location.unreadShape,
                         )
                     nameIndex.computeIfAbsent(location.className) { ConcurrentHashMap.newKeySet() }.add(key)
                     if (location.kind == ProbeKind.OPTIONAL_ARGUMENT) {
@@ -2339,6 +2353,7 @@ class OtherlodeTestCollector private constructor(
                                         it.parameterNames,
                                         it.genericSignature,
                                         it.extensionReceiver,
+                                        it.unreadShape,
                                     )
                                 },
                             superClassName = declaredClass.superClassName,
@@ -2410,8 +2425,11 @@ class OtherlodeTestCollector private constructor(
                     "test launches with the agent needs a collector of its own"
             }
         }
-        val accepted = runIdByInstance.putIfAbsent(instanceId, resource.runId) ?: return null
-        if (accepted == resource.runId) return null
+        val accepted = runIdByInstance.putIfAbsent(instanceId, resource.runId)
+        if (accepted == null || accepted == resource.runId) {
+            agentVersionByInstance[instanceId] = resource.agentVersion
+            return null
+        }
         return "$payload from instance $instanceId has run id ${resource.runId}, but this collector already " +
             "accepted run id $accepted for that instance and keys on the instance alone"
     }

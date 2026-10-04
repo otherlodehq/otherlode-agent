@@ -60,6 +60,35 @@ enum GeneratedBy {
   SCALA_OBJECT = 9;
 }
 
+// The family of compiler output a probe's code belongs to when the agent could not read its body.
+// An unread shape is a probe whose code has the outline of compiler output but whose body matches
+// no shape this agent has read for that compiler. It is a statement about the agent, not about who
+// wrote the code. A collector keeps the probe and its count, leaves it out of every never-hit
+// finding and the call graph, and lists it apart under its family.
+enum UnreadShape {
+  // Not an unread shape.
+  UNREAD_SHAPE_NONE = 0;
+  // A Scala case class's plumbing, or its companion's, in the outline GeneratedBy.CASE_CLASS reads
+  // but with a body the agent has not read for that compiler.
+  UNREAD_SHAPE_CASE_CLASS = 1;
+  // A static method with a `$` twin of the same name and descriptor, the outline of scalac's
+  // static forwarder, whose body the agent has not read.
+  UNREAD_SHAPE_STATIC_FORWARDER = 2;
+  // A Scala object's writeReplace or readResolve whose body the agent has not read.
+  UNREAD_SHAPE_SCALA_OBJECT = 3;
+  // Scala 3 enum plumbing whose body the agent has not read.
+  UNREAD_SHAPE_SCALA_ENUM = 4;
+  // A method of a Kotlin multi-file facade that is not a recognised forwarder. A facade holds no
+  // adopter code.
+  UNREAD_SHAPE_MULTIFILE_FACADE = 5;
+  // A jump or switch in a suspend-shaped method's state machine that matches none of the
+  // coroutine shapes the agent reads.
+  UNREAD_SHAPE_COROUTINE_MACHINERY = 6;
+  // The collision side of the last equals check in a bucket of a switch on String.hashCode(),
+  // when the agent cannot read the lowering.
+  UNREAD_SHAPE_SWITCH_LOWERING = 7;
+}
+
 // Who sent a payload. DeltaBatch, ProbeManifest and StaticBaseline each carry one, and one process
 // stamps the same values on all three.
 message ResourceAttributes {
@@ -83,6 +112,11 @@ message ResourceAttributes {
   // code. When no source names an environment, the agent sets it to "test" for a test run, so a
   // consumer that drops this field still keeps the run apart from production.
   bool test_run = 7;
+  // The agent's own version, as its jar manifest's Implementation-Version gives it. Empty when
+  // unknown, such as when the agent runs from classes in a test JVM. Every payload of a process
+  // carries the same value. An unread shape is a fact about one agent version, so a consumer reads
+  // it together with this.
+  string agent_version = 8;
 }
 
 // hits_total is a cumulative count from process start, not the count since
@@ -166,8 +200,15 @@ message ProbeLocation {
   // OPTIONAL_ARGUMENT probe as its target's own mark, so a collector leaves a generated method's
   // conditionals out of never-hit with the method, and abstains from never-supplied and
   // always-supplied on a generated target (a data class's copy) the way it abstains on an inline
-  // one. GENERATED_BY_NONE (the default) for an ordinary method the adopter wrote; see GeneratedBy.
-  GeneratedBy generated_by = 16;
+  // one. Unset (GENERATED_BY_NONE is never sent) for an ordinary method the adopter wrote; see
+  // GeneratedBy. Origin is one of three states: unset means the adopter's code, generated_by means
+  // recognised compiler output, and unread_shape means the outline of compiler output whose body
+  // matches no shape this agent has read for that compiler, which is a statement about the agent,
+  // not about who wrote the code.
+  oneof origin {
+    GeneratedBy generated_by = 16;
+    UnreadShape unread_shape = 26;
+  }
   // Set only for a METHOD probe: the out-of-scope classes this method's own bytecode references,
   // dotted. A reference is wider than a call edge: runtime-visible annotations, casts and type
   // tests, types in a descriptor or generic signature, catch types and class literals all count.
@@ -278,8 +319,13 @@ message BranchOutcome {
   // is one CODE part, and a string is one STRING_LITERAL part, so collector redaction covers it.
   // Such a CASE has no case_key.
   repeated ConditionPart case_label = 6;
-  // Why this outcome is routine, or ROUTINE_KIND_NONE when it is not.
-  RoutineKind routine = 7;
+  // Why this outcome is routine, or why it is an unread shape. Unset when it is neither and the
+  // outcome is judged like any other. An outcome inside an unread-shape method carries the
+  // method's unread shape; see ProbeLocation.origin.
+  oneof origin {
+    RoutineKind routine = 7;
+    UnreadShape unread_shape = 8;
+  }
 }
 
 // A run of consecutive source lines in one file, both ends inclusive.
@@ -570,9 +616,12 @@ message DeclaredMethod {
   // graph: for a class the agent both scanned and later loaded, the two describe the same
   // bytecode.
   repeated CallEdge calls = 4;
-  // Read from the same class shape the METHOD probe rule uses; see ProbeLocation.generated_by
-  // and GeneratedBy. GENERATED_BY_NONE for the class's own <clinit> entry.
-  GeneratedBy generated_by = 5;
+  // Read from the same class shape the METHOD probe rule uses; see ProbeLocation.origin,
+  // ProbeLocation.generated_by and GeneratedBy. Unset for the class's own <clinit> entry.
+  oneof origin {
+    GeneratedBy generated_by = 5;
+    UnreadShape unread_shape = 13;
+  }
   // The out-of-scope classes this method's own bytecode references, the same rule
   // ProbeLocation.referenced_classes uses.
   repeated string referenced_classes = 6;

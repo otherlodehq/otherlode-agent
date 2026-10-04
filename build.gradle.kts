@@ -434,6 +434,7 @@ tasks.test {
     inputs.files(coverageAgentOrderJacoco).withPropertyName("coverageAgentOrderJacoco")
     doFirst {
         systemProperty("otherlode.agent.shadedJar", shadedAgentJar.get().asFile.absolutePath)
+        systemProperty("otherlode.agent.version", project.version.toString())
         systemProperty("otherlode.jacoco.agentJar", coverageAgentOrderJacoco.singleFile.absolutePath)
         systemProperty("otherlode.fixtures.scala3.dir", scala3FixtureClassesDir.get().asFile.absolutePath)
         systemProperty("otherlode.fixtures.scala3.classpath", scala3FixtureRuntimeClasspath.get().asPath)
@@ -619,6 +620,7 @@ tasks.shadowJar {
     manifest {
         attributes(
             "Premain-Class" to agentMainClass,
+            "Implementation-Version" to project.version,
             "Can-Redefine-Classes" to "true",
             "Can-Retransform-Classes" to "true",
         )

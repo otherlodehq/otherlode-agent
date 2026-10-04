@@ -81,6 +81,39 @@ enum class KotlinKind {
 }
 
 /**
+ * The family of compiler output a probe's code belongs to when the agent could not read its body.
+ * An unread shape has the outline of compiler output, but its body matches no shape the agent has
+ * read for that compiler. It is a statement about the agent, not about who wrote the code. A
+ * collector keeps the probe and its count, leaves it out of every never-hit finding and the call
+ * graph, and lists it apart under its family.
+ */
+enum class UnreadShape {
+    /** Not an unread shape. */
+    NONE,
+
+    /** A Scala case class's plumbing, or its companion's, whose body the agent has not read. */
+    CASE_CLASS,
+
+    /** A static method with a `$` twin of the same name and descriptor, whose body is unread. */
+    STATIC_FORWARDER,
+
+    /** A Scala object's `writeReplace` or `readResolve` whose body the agent has not read. */
+    SCALA_OBJECT,
+
+    /** Scala 3 enum plumbing whose body the agent has not read. */
+    SCALA_ENUM,
+
+    /** A method of a Kotlin multi-file facade that is not a recognised forwarder. */
+    MULTIFILE_FACADE,
+
+    /** A jump or switch in a suspend-shaped method that matches no coroutine shape the agent reads. */
+    COROUTINE_MACHINERY,
+
+    /** The collision side of a bucket in a string switch's `hashCode` lowering the agent cannot read. */
+    SWITCH_LOWERING,
+}
+
+/**
  * Who sent a payload. [DeltaBatch], [ProbeManifest] and [StaticBaseline] each carry one, and one
  * process stamps the same value on all three.
  *
@@ -94,6 +127,10 @@ enum class KotlinKind {
  *
  * [testRun] marks a run in a JVM that runs the adopter's tests. It also comes last, with a
  * default, for the same reason.
+ *
+ * [agentVersion] is the agent's own version, from its jar manifest's `Implementation-Version`. It
+ * is empty when unknown, such as when the agent runs from classes in a test JVM. An unread shape
+ * is a fact about one agent version, so a consumer reads it together with this.
  */
 data class ResourceAttributes(
     val serviceName: String,
@@ -103,6 +140,7 @@ data class ResourceAttributes(
     val runId: String,
     val serviceNamespace: String? = null,
     val testRun: Boolean = false,
+    val agentVersion: String = "",
 ) {
     /** Holds the agent's `forNewRun`, which builds one from its configuration. */
     companion object
@@ -209,6 +247,10 @@ data class DeltaBatch(
  * when the class file names none or only some of them. [genericSignature] is the method's
  * `Signature` attribute as written, or empty. [extensionReceiver] is true when the first name
  * starts with `$this$` or is `$receiver`.
+ *
+ * [unreadShape] says the probe's code has the outline of compiler output whose body the agent has
+ * not read; see [UnreadShape]. It is exclusive with [generatedBy], which the wire cannot carry
+ * together with it, so building a location with both set fails.
  */
 data class ProbeLocation(
     val classId: Int,
@@ -236,7 +278,14 @@ data class ProbeLocation(
     val parameterNames: List<String> = emptyList(),
     val genericSignature: String = "",
     val extensionReceiver: Boolean = false,
-)
+    val unreadShape: UnreadShape = UnreadShape.NONE,
+) {
+    init {
+        require(generatedBy == GeneratedBy.NONE || unreadShape == UnreadShape.NONE) {
+            "a probe is generated or an unread shape, not both: $generatedBy and $unreadShape"
+        }
+    }
+}
 
 /** What one outcome of a [BranchSite] is within its site. */
 enum class BranchRole {
@@ -306,6 +355,9 @@ data class LineRange(
  * [ConditionPartKind.STRING_LITERAL] part. Such a case has no [caseKey].
  *
  * [routine] says why the outcome is routine, or is [RoutineKind.NONE] when it is not.
+ *
+ * [unreadShape] says the outcome sits in code whose body the agent has not read; see
+ * [UnreadShape]. It is exclusive with [routine], which the wire cannot carry together with it.
  */
 data class BranchOutcome(
     val branchIndex: Int,
@@ -315,7 +367,14 @@ data class BranchOutcome(
     val partlyGuardedLines: List<LineRange> = emptyList(),
     val caseLabel: List<ConditionPart> = emptyList(),
     val routine: RoutineKind = RoutineKind.NONE,
-)
+    val unreadShape: UnreadShape = UnreadShape.NONE,
+) {
+    init {
+        require(routine == RoutineKind.NONE || unreadShape == UnreadShape.NONE) {
+            "an outcome is routine or an unread shape, not both: $routine and $unreadShape"
+        }
+    }
+}
 
 /**
  * One kept conditional jump or switch in a method, with its outcomes listed inside it.
@@ -573,6 +632,9 @@ data class ProbeManifest(
  * [generatedBy] is read from the same bytecode shape [ProbeLocation.generatedBy] uses; see
  * [GeneratedBy]. Always [GeneratedBy.NONE] for the class's own `<clinit>` entry.
  *
+ * [unreadShape] follows the same rule as [ProbeLocation.unreadShape] and is exclusive with
+ * [generatedBy]. Always [UnreadShape.NONE] for the class's own `<clinit>` entry.
+ *
  * [referencedClasses] follows the same rule as [ProbeLocation.referencedClasses].
  *
  * [lambdaBody] follows the same rule as [ProbeLocation.lambdaBody]. Always false for the class's
@@ -601,7 +663,14 @@ data class DeclaredMethod(
     val parameterNames: List<String> = emptyList(),
     val genericSignature: String = "",
     val extensionReceiver: Boolean = false,
-)
+    val unreadShape: UnreadShape = UnreadShape.NONE,
+) {
+    init {
+        require(generatedBy == GeneratedBy.NONE || unreadShape == UnreadShape.NONE) {
+            "a method is generated or an unread shape, not both: $generatedBy and $unreadShape"
+        }
+    }
+}
 
 /**
  * [superClassName] and [interfaceNames] are the same fields [ClassLocation] carries for a

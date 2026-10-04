@@ -30,6 +30,7 @@ import dev.otherlode.proto.ProbeManifest as ProtoProbeManifest
 import dev.otherlode.proto.ResourceAttributes as ProtoResourceAttributes
 import dev.otherlode.proto.RoutineKind as ProtoRoutineKind
 import dev.otherlode.proto.StaticBaseline as ProtoStaticBaseline
+import dev.otherlode.proto.UnreadShape as ProtoUnreadShape
 
 class ProtoPayloadCodecTest {
     @Test
@@ -2734,5 +2735,171 @@ class ProtoPayloadCodecTest {
                 discoverySource = DependencyDiscoverySource.LOAD,
             )
         }
+    }
+
+    private fun origin(
+        generatedBy: GeneratedBy = GeneratedBy.NONE,
+        unreadShape: UnreadShape = UnreadShape.NONE,
+    ) = ProbeLocation(
+        classId = 0,
+        probeIndex = 0,
+        kind = ProbeKind.METHOD,
+        className = "com.example.Foo",
+        methodName = "bar",
+        methodDescriptor = "()V",
+        line = 10,
+        branchIndex = null,
+        generatedBy = generatedBy,
+        unreadShape = unreadShape,
+    )
+
+    @Test
+    fun `a probe location's origin round-trips as none, generated and unread, and none leaves the oneof unset`() {
+        val resource = ResourceAttributes("checkout", "1.0.0", "", null, "run-1")
+        for (location in listOf(origin(), origin(generatedBy = GeneratedBy.CASE_CLASS), origin(unreadShape = UnreadShape.SCALA_ENUM))) {
+            val manifest = ProbeManifest(resource = resource, probes = listOf(location))
+            val bytes = ProtoPayloadCodec.encode(manifest)
+            assertEquals(manifest, ProtoPayloadCodec.decodeProbeManifest(bytes))
+        }
+
+        val none = ProtoProbeManifest.parseFrom(ProtoPayloadCodec.encode(ProbeManifest(resource, listOf(origin())))).probesList.single()
+        assertEquals(ProtoProbeLocation.OriginCase.ORIGIN_NOT_SET, none.originCase)
+        val generated =
+            ProtoProbeManifest
+                .parseFrom(
+                    ProtoPayloadCodec.encode(ProbeManifest(resource, listOf(origin(generatedBy = GeneratedBy.ENUM)))),
+                ).probesList
+                .single()
+        assertEquals(ProtoProbeLocation.OriginCase.GENERATED_BY, generated.originCase)
+        val unread =
+            ProtoProbeManifest
+                .parseFrom(ProtoPayloadCodec.encode(ProbeManifest(resource, listOf(origin(unreadShape = UnreadShape.SWITCH_LOWERING)))))
+                .probesList
+                .single()
+        assertEquals(ProtoProbeLocation.OriginCase.UNREAD_SHAPE, unread.originCase)
+        assertEquals(ProtoUnreadShape.UNREAD_SHAPE_SWITCH_LOWERING, unread.unreadShape)
+    }
+
+    @Test
+    fun `every unread shape round-trips through a probe location`() {
+        val resource = ResourceAttributes("checkout", "1.0.0", "", null, "run-1")
+        val shapes = UnreadShape.entries.filter { it != UnreadShape.NONE }
+        val manifest = ProbeManifest(resource, shapes.map { origin(unreadShape = it) })
+
+        assertEquals(manifest, ProtoPayloadCodec.decodeProbeManifest(ProtoPayloadCodec.encode(manifest)))
+        assertEquals(7, shapes.size)
+    }
+
+    @Test
+    fun `a probe location or declared method refuses to be generated and unread at once`() {
+        assertFailsWith<IllegalArgumentException> { origin(GeneratedBy.ENUM, UnreadShape.CASE_CLASS) }
+        assertFailsWith<IllegalArgumentException> {
+            DeclaredMethod("m", "()V", generatedBy = GeneratedBy.ENUM, unreadShape = UnreadShape.CASE_CLASS)
+        }
+        assertFailsWith<IllegalArgumentException> {
+            BranchOutcome(0, BranchRole.TAKEN, routine = RoutineKind.THROW_ONLY, unreadShape = UnreadShape.CASE_CLASS)
+        }
+    }
+
+    @Test
+    fun `a declared method's origin round-trips as none, generated and unread`() {
+        val methods =
+            listOf(
+                DeclaredMethod("none", "()V"),
+                DeclaredMethod("generated", "()V", generatedBy = GeneratedBy.SCALA_OBJECT),
+                DeclaredMethod("unread", "()V", unreadShape = UnreadShape.MULTIFILE_FACADE),
+            )
+        val baseline =
+            StaticBaseline(
+                resource = ResourceAttributes("checkout", "1.0.0", "instance-1", "prod", "run-1"),
+                declaredClasses = listOf(DeclaredClass(className = "com.example.Foo", methods = methods)),
+                scannedAt = 1000L,
+            )
+
+        val bytes = ProtoPayloadCodec.encode(baseline)
+
+        assertEquals(baseline, ProtoPayloadCodec.decodeStaticBaseline(bytes))
+        val wire =
+            ProtoStaticBaseline
+                .parseFrom(bytes)
+                .declaredClassesList
+                .single()
+                .methodsList
+        assertEquals(
+            listOf(
+                dev.otherlode.proto.DeclaredMethod.OriginCase.ORIGIN_NOT_SET,
+                dev.otherlode.proto.DeclaredMethod.OriginCase.GENERATED_BY,
+                dev.otherlode.proto.DeclaredMethod.OriginCase.UNREAD_SHAPE,
+            ),
+            wire.map { it.originCase },
+        )
+    }
+
+    @Test
+    fun `a branch outcome's origin round-trips as none, routine and unread`() {
+        val site =
+            BranchSite(
+                siteIndex = 0,
+                siteKey = null,
+                line = 12,
+                outcomes =
+                    listOf(
+                        BranchOutcome(0, BranchRole.TAKEN),
+                        BranchOutcome(1, BranchRole.FALL_THROUGH, routine = RoutineKind.THROW_ONLY),
+                        BranchOutcome(2, BranchRole.CASE, caseKey = 1, unreadShape = UnreadShape.COROUTINE_MACHINERY),
+                    ),
+            )
+        val manifest =
+            ProbeManifest(
+                resource = ResourceAttributes("checkout", "1.0.0", "", null, "run-1"),
+                probes = listOf(origin().copy(branchSites = listOf(site))),
+            )
+
+        val bytes = ProtoPayloadCodec.encode(manifest)
+
+        assertEquals(manifest, ProtoPayloadCodec.decodeProbeManifest(bytes))
+        val outcomes =
+            ProtoProbeManifest
+                .parseFrom(bytes)
+                .probesList
+                .single()
+                .branchSitesList
+                .single()
+                .outcomesList
+        assertEquals(
+            listOf(
+                ProtoBranchOutcome.OriginCase.ORIGIN_NOT_SET,
+                ProtoBranchOutcome.OriginCase.ROUTINE,
+                ProtoBranchOutcome.OriginCase.UNREAD_SHAPE,
+            ),
+            outcomes.map { it.originCase },
+        )
+    }
+
+    @Test
+    fun `an unrecognized unread shape number on the wire is rejected like an unrecognized generated-by`() {
+        val wire =
+            ProtoProbeManifest
+                .newBuilder()
+                .setResource(ProtoResourceAttributes.newBuilder().setServiceName("checkout").setRunId("run-1"))
+                .addProbes(ProtoProbeLocation.newBuilder().setKind(ProtoProbeKind.METHOD).setUnreadShapeValue(99))
+                .build()
+                .toByteArray()
+
+        assertFailsWith<IllegalArgumentException> { ProtoPayloadCodec.decodeProbeManifest(wire) }
+    }
+
+    @Test
+    fun `the agent version round-trips on every payload and defaults to empty`() {
+        val resource = ResourceAttributes("checkout", "1.0.0", "instance-1", "prod", "run-1", agentVersion = "0.9.1")
+
+        val batch = DeltaBatch(resource, emptyList())
+        val manifest = ProbeManifest(resource, emptyList())
+        val baseline = StaticBaseline(resource, emptyList(), scannedAt = 1000L)
+
+        assertEquals("0.9.1", ProtoPayloadCodec.decodeDeltaBatch(ProtoPayloadCodec.encode(batch)).resource.agentVersion)
+        assertEquals("0.9.1", ProtoPayloadCodec.decodeProbeManifest(ProtoPayloadCodec.encode(manifest)).resource.agentVersion)
+        assertEquals("0.9.1", ProtoPayloadCodec.decodeStaticBaseline(ProtoPayloadCodec.encode(baseline)).resource.agentVersion)
+        assertEquals("", ResourceAttributes("checkout", null, "i", null, "r").agentVersion)
     }
 }

@@ -36,6 +36,7 @@ import dev.otherlode.proto.SkippedClass as ProtoSkippedClass
 import dev.otherlode.proto.StaticBaseline as ProtoStaticBaseline
 import dev.otherlode.proto.StaticallyUnsafeClass as ProtoStaticallyUnsafeClass
 import dev.otherlode.proto.UnprobedClass as ProtoUnprobedClass
+import dev.otherlode.proto.UnreadShape as ProtoUnreadShape
 import dev.otherlode.proto.UnreadableClass as ProtoUnreadableClass
 import dev.otherlode.proto.UnreportedClass as ProtoUnreportedClass
 
@@ -84,6 +85,7 @@ object ProtoPayloadCodec {
                 .setServiceInstanceId(resource.serviceInstanceId)
                 .setRunId(resource.runId)
                 .setTestRun(resource.testRun)
+                .setAgentVersion(resource.agentVersion)
         resource.serviceVersion?.let { builder.serviceVersion = it }
         resource.environment?.let { builder.environment = it }
         resource.serviceNamespace?.let { builder.serviceNamespace = it }
@@ -99,6 +101,7 @@ object ProtoPayloadCodec {
             runId = resource.runId,
             serviceNamespace = if (resource.hasServiceNamespace()) resource.serviceNamespace else null,
             testRun = resource.testRun,
+            agentVersion = resource.agentVersion,
         )
 
     private fun toProto(delta: ProbeDelta): ProtoProbeDelta =
@@ -198,7 +201,6 @@ object ProtoPayloadCodec {
                 .setTargetClassName(location.targetClassName ?: "")
                 .addAllCalls(location.calls.map { toProto(it) })
                 .setInlinedFromClassName(location.inlinedFromClassName ?: "")
-                .setGeneratedBy(toProto(location.generatedBy))
                 .addAllReferencedClasses(location.referencedClasses)
                 .setLambdaBody(location.lambdaBody)
                 .addAllBranchSites(location.branchSites.map { toProto(it) })
@@ -206,6 +208,7 @@ object ProtoPayloadCodec {
                 .addAllParameterNames(location.parameterNames)
                 .setGenericSignature(location.genericSignature)
                 .setExtensionReceiver(location.extensionReceiver)
+        setOrigin(location.generatedBy, location.unreadShape, { builder.generatedBy = it }, { builder.unreadShape = it })
         location.branchIndex?.let { builder.branchIndex = it }
         location.parameterIndex?.let { builder.parameterIndex = it }
         location.branchKey?.let { builder.branchKey = it }
@@ -233,7 +236,8 @@ object ProtoPayloadCodec {
             targetClassName = location.targetClassName.ifEmpty { null },
             calls = location.callsList.map { fromProto(it) },
             inlinedFromClassName = location.inlinedFromClassName.ifEmpty { null },
-            generatedBy = fromProto(location.generatedBy),
+            generatedBy = if (location.hasGeneratedBy()) fromProto(location.generatedBy) else GeneratedBy.NONE,
+            unreadShape = if (location.hasUnreadShape()) fromProto(location.unreadShape) else UnreadShape.NONE,
             referencedClasses = location.referencedClassesList,
             branchKey = if (location.hasBranchKey()) location.branchKey else null,
             lambdaBody = location.lambdaBody,
@@ -312,7 +316,9 @@ object ProtoPayloadCodec {
                 .addAllGuardedLines(outcome.guardedLines.map { toProto(it) })
                 .addAllPartlyGuardedLines(outcome.partlyGuardedLines.map { toProto(it) })
                 .addAllCaseLabel(outcome.caseLabel.map { toProto(it) })
-                .setRoutine(toProto(outcome.routine))
+        require(outcome.routine == RoutineKind.NONE || outcome.unreadShape == UnreadShape.NONE)
+        if (outcome.routine != RoutineKind.NONE) builder.routine = toProto(outcome.routine)
+        if (outcome.unreadShape != UnreadShape.NONE) builder.unreadShape = toProto(outcome.unreadShape)
         outcome.caseKey?.let { builder.caseKey = it }
         return builder.build()
     }
@@ -325,7 +331,8 @@ object ProtoPayloadCodec {
             guardedLines = outcome.guardedLinesList.map { fromProto(it) },
             partlyGuardedLines = outcome.partlyGuardedLinesList.map { fromProto(it) },
             caseLabel = outcome.caseLabelList.map { fromProto(it) },
-            routine = fromProto(outcome.routine),
+            routine = if (outcome.hasRoutine()) fromProto(outcome.routine) else RoutineKind.NONE,
+            unreadShape = if (outcome.hasUnreadShape()) fromProto(outcome.unreadShape) else UnreadShape.NONE,
         )
 
     private fun toProto(routine: RoutineKind): ProtoRoutineKind =
@@ -515,6 +522,44 @@ object ProtoPayloadCodec {
             }
         }
 
+    private fun setOrigin(
+        generatedBy: GeneratedBy,
+        unreadShape: UnreadShape,
+        setGenerated: (ProtoGeneratedBy) -> Unit,
+        setUnread: (ProtoUnreadShape) -> Unit,
+    ) {
+        require(generatedBy == GeneratedBy.NONE || unreadShape == UnreadShape.NONE) {
+            "generated and unread shape are one wire field: $generatedBy and $unreadShape"
+        }
+        if (generatedBy != GeneratedBy.NONE) setGenerated(toProto(generatedBy))
+        if (unreadShape != UnreadShape.NONE) setUnread(toProto(unreadShape))
+    }
+
+    private fun toProto(unreadShape: UnreadShape): ProtoUnreadShape =
+        when (unreadShape) {
+            UnreadShape.NONE -> ProtoUnreadShape.UNREAD_SHAPE_NONE
+            UnreadShape.CASE_CLASS -> ProtoUnreadShape.UNREAD_SHAPE_CASE_CLASS
+            UnreadShape.STATIC_FORWARDER -> ProtoUnreadShape.UNREAD_SHAPE_STATIC_FORWARDER
+            UnreadShape.SCALA_OBJECT -> ProtoUnreadShape.UNREAD_SHAPE_SCALA_OBJECT
+            UnreadShape.SCALA_ENUM -> ProtoUnreadShape.UNREAD_SHAPE_SCALA_ENUM
+            UnreadShape.MULTIFILE_FACADE -> ProtoUnreadShape.UNREAD_SHAPE_MULTIFILE_FACADE
+            UnreadShape.COROUTINE_MACHINERY -> ProtoUnreadShape.UNREAD_SHAPE_COROUTINE_MACHINERY
+            UnreadShape.SWITCH_LOWERING -> ProtoUnreadShape.UNREAD_SHAPE_SWITCH_LOWERING
+        }
+
+    private fun fromProto(unreadShape: ProtoUnreadShape): UnreadShape =
+        when (unreadShape) {
+            ProtoUnreadShape.UNREAD_SHAPE_NONE -> UnreadShape.NONE
+            ProtoUnreadShape.UNREAD_SHAPE_CASE_CLASS -> UnreadShape.CASE_CLASS
+            ProtoUnreadShape.UNREAD_SHAPE_STATIC_FORWARDER -> UnreadShape.STATIC_FORWARDER
+            ProtoUnreadShape.UNREAD_SHAPE_SCALA_OBJECT -> UnreadShape.SCALA_OBJECT
+            ProtoUnreadShape.UNREAD_SHAPE_SCALA_ENUM -> UnreadShape.SCALA_ENUM
+            ProtoUnreadShape.UNREAD_SHAPE_MULTIFILE_FACADE -> UnreadShape.MULTIFILE_FACADE
+            ProtoUnreadShape.UNREAD_SHAPE_COROUTINE_MACHINERY -> UnreadShape.COROUTINE_MACHINERY
+            ProtoUnreadShape.UNREAD_SHAPE_SWITCH_LOWERING -> UnreadShape.SWITCH_LOWERING
+            ProtoUnreadShape.UNRECOGNIZED -> throw IllegalArgumentException("unrecognized unread shape on the wire: $unreadShape")
+        }
+
     private fun toProto(generatedBy: GeneratedBy): ProtoGeneratedBy =
         when (generatedBy) {
             GeneratedBy.NONE -> ProtoGeneratedBy.GENERATED_BY_NONE
@@ -614,22 +659,24 @@ object ProtoPayloadCodec {
             kotlinKind = fromProto(declaredClass.kotlinKind),
         )
 
-    private fun toProto(method: DeclaredMethod): ProtoDeclaredMethod =
-        ProtoDeclaredMethod
-            .newBuilder()
-            .setMethodName(method.methodName)
-            .setMethodDescriptor(method.methodDescriptor)
-            .setInline(method.inline)
-            .addAllCalls(method.calls.map { toProto(it) })
-            .setGeneratedBy(toProto(method.generatedBy))
-            .addAllReferencedClasses(method.referencedClasses)
-            .setLambdaBody(method.lambdaBody)
-            .addAllBranchSites(method.branchSites.map { toProto(it) })
-            .setStatic(method.static)
-            .addAllParameterNames(method.parameterNames)
-            .setGenericSignature(method.genericSignature)
-            .setExtensionReceiver(method.extensionReceiver)
-            .build()
+    private fun toProto(method: DeclaredMethod): ProtoDeclaredMethod {
+        val builder =
+            ProtoDeclaredMethod
+                .newBuilder()
+                .setMethodName(method.methodName)
+                .setMethodDescriptor(method.methodDescriptor)
+                .setInline(method.inline)
+                .addAllCalls(method.calls.map { toProto(it) })
+                .addAllReferencedClasses(method.referencedClasses)
+                .setLambdaBody(method.lambdaBody)
+                .addAllBranchSites(method.branchSites.map { toProto(it) })
+                .setStatic(method.static)
+                .addAllParameterNames(method.parameterNames)
+                .setGenericSignature(method.genericSignature)
+                .setExtensionReceiver(method.extensionReceiver)
+        setOrigin(method.generatedBy, method.unreadShape, { builder.generatedBy = it }, { builder.unreadShape = it })
+        return builder.build()
+    }
 
     private fun fromProto(method: ProtoDeclaredMethod): DeclaredMethod =
         DeclaredMethod(
@@ -637,7 +684,8 @@ object ProtoPayloadCodec {
             methodDescriptor = method.methodDescriptor,
             inline = method.inline,
             calls = method.callsList.map { fromProto(it) },
-            generatedBy = fromProto(method.generatedBy),
+            generatedBy = if (method.hasGeneratedBy()) fromProto(method.generatedBy) else GeneratedBy.NONE,
+            unreadShape = if (method.hasUnreadShape()) fromProto(method.unreadShape) else UnreadShape.NONE,
             referencedClasses = method.referencedClassesList,
             lambdaBody = method.lambdaBody,
             branchSites = method.branchSitesList.map { fromProto(it) },

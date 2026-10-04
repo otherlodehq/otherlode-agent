@@ -19,6 +19,7 @@ import dev.otherlode.proto.ProbeManifest
 import dev.otherlode.proto.ResourceAttributes
 import dev.otherlode.proto.RoutineKind
 import dev.otherlode.proto.StaticBaseline
+import dev.otherlode.proto.UnreadShape
 import java.net.InetSocketAddress
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
@@ -98,6 +99,7 @@ private data class ProbeInfo(
     val parameterNames: List<String> = emptyList(),
     val genericSignature: String = "",
     val extensionReceiver: Boolean = false,
+    val unreadShape: UnreadShape = UnreadShape.UNREAD_SHAPE_NONE,
 )
 
 /** One method of one run: where a METHOD probe's branch sites are kept, for its BRANCH probes to find. */
@@ -162,6 +164,7 @@ private data class DeclaredMethodInfo(
     val parameterNames: List<String> = emptyList(),
     val genericSignature: String = "",
     val extensionReceiver: Boolean = false,
+    val unreadShape: UnreadShape = UnreadShape.UNREAD_SHAPE_NONE,
 )
 
 /** Scopes a dependency id to the run that reported it, for the same reason as [InstanceProbeKey]. */
@@ -227,6 +230,9 @@ private val dynamicallyKnownClassNames = Collections.newSetFromMap(ConcurrentHas
 
 /** Every run any delta batch has ever arrived from, heartbeat included. */
 private val allRuns = Collections.newSetFromMap(ConcurrentHashMap<Run, Boolean>())
+
+/** The agent version each run's flushes named; empty when the agent did not know its own. */
+private val agentVersionByRun = ConcurrentHashMap<Run, String>()
 
 /** Runs whose shutdown hook has sent a delta batch with `final_flush` set. */
 private val runsThatEndedCleanly = Collections.newSetFromMap(ConcurrentHashMap<Run, Boolean>())
@@ -518,11 +524,13 @@ private fun handleDeltaBatch(exchange: HttpExchange) {
         if (delta.firstLoadedAt > 0L) firstLoadedAt.merge(key, delta.firstLoadedAt, ::minOf)
     }
     if (batch.finalFlush) runsThatEndedCleanly += run
+    agentVersionByRun[run] = batch.resource.agentVersion
     val totalHits = latestHitsTotal.values.sum()
     val totalEndpointHits = latestEndpointHitsTotal.values.sum()
     val finalFlushSuffix = if (batch.finalFlush) " final=true" else ""
     println(
         "[flush] service=${batch.resource.serviceName}${namespaceField(batch.resource)} instance=${batch.resource.serviceInstanceId} " +
+            "agent_version=${batch.resource.agentVersion.ifEmpty { "unknown" }} " +
             "probes_with_activity=${batch.deltasList.size} total_hits=$totalHits " +
             "endpoints_with_activity=${batch.endpointDeltasList.size} total_endpoint_hits=$totalEndpointHits$finalFlushSuffix",
     )
@@ -555,6 +563,7 @@ private fun handleManifest(exchange: HttpExchange) {
                 parameterNames = location.parameterNamesList.toList(),
                 genericSignature = location.genericSignature,
                 extensionReceiver = location.extensionReceiver,
+                unreadShape = location.unreadShape,
             )
         if (location.branchSitesList.isNotEmpty()) {
             manifestBranchSites[InstanceMethodKey(run, location.classId, location.methodName, location.methodDescriptor)] =
@@ -657,6 +666,7 @@ private fun handleStaticBaseline(exchange: HttpExchange) {
                     it.parameterNamesList.toList(),
                     it.genericSignature,
                     it.extensionReceiver,
+                    it.unreadShape,
                 )
             }
         baselineReferences[InstanceClassKey(run, declaredClass.className)] =

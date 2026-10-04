@@ -147,7 +147,7 @@ adopter's collector forwards to one multi-tenant backend.
    - Review the surfaces ADR 0054 adds: the `UnreadShape` enum, the oneofs
      on `ProbeLocation`, `DeclaredMethod` and `BranchOutcome`,
      `ResourceAttributes.agent_version`, and the testkit's
-     `neverHitUnreadShapes()`.
+     `neverHitUnreadShapes()` and `agentVersion(serviceInstanceId)`.
    - Review the agent option names, which ADR 0016 makes a compatibility
      surface.
    - Settle versioning: the agent is `1.0-SNAPSHOT`, and no repo has
@@ -376,8 +376,20 @@ fixes re-reviewed by a fresh Opus reviewer, one commit each:
    overrides `productPrefix`, two case names with the same hash, and 3.10's
    companion, which drops the parameterised cases' fields (the canary will show
    it).
-5. Wire: `UnreadShape`, the two oneofs, `agent_version`; codec, testkit decode,
-   stub collector; `otherlode-collector` bindings bump.
+5. Wire. Landed 2026-10-04 in this repo. `UnreadShape`, `oneof origin` on
+   `ProbeLocation` (`generated_by` 16, `unread_shape` 26), `DeclaredMethod` (5,
+   13) and `BranchOutcome` (`routine` 7, `unread_shape` 8), and
+   `ResourceAttributes.agent_version` (8), filled from the agent jar's
+   `Implementation-Version`, which the shadow jar's manifest now carries. The
+   model refuses a probe that is both generated and unread. Moving the two
+   fields into oneofs is the intended break `buf breaking` reports, so the
+   schema was pushed to the registry by hand, as the buf workflow says an
+   intended break must be. The testkit stores both fields and gained a public
+   `agentVersion(serviceInstanceId)`, for item 4's review; nothing judges them
+   yet. For steps 8 and 9: an unread-shape method is no node, and like a
+   generated method (ADR 0024's amendment) the graph looks through it and a hit
+   one is a caller, or an unread forwarder would cut a path the way a marked
+   stub did in step 2.
 6. Unread shapes for Scala: the `.tasty` reader, the release table and its
    sweep script (sweeping 3.4.0 to 3.4.2, 3.5.0 to 3.5.1 and 3.6.0 to 3.6.3
    first), version-keyed and version-blind outlines, branch-site and omission
