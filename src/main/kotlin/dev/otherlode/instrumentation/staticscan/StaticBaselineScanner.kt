@@ -10,6 +10,7 @@ import dev.otherlode.export.UnreadableClass
 import dev.otherlode.instrumentation.ScalaClassDetector
 import dev.otherlode.instrumentation.TypeMatchPolicy
 import dev.otherlode.instrumentation.branch.BranchSiteAnalyzer
+import dev.otherlode.instrumentation.branch.ScalaReleases
 import net.bytebuddy.description.type.TypeDescription
 import net.bytebuddy.dynamic.ClassFileLocator
 import net.bytebuddy.pool.TypePool
@@ -163,9 +164,10 @@ class StaticBaselineScanner(
         if (root.isDirectory) {
             val locator = withSupportingTypesFallback(ClassFileLocator.ForFolder(root))
             val pool = TypePool.Default.WithLazyResolution.of(locator)
+            val resources = folderResources(root)
             candidateClassNamesInFolder(root).forEach { className ->
                 buckets.ownClassNames += className
-                classify(className, pool, locator, buckets)
+                classify(className, pool, locator, resources, buckets)
             }
             return
         }
@@ -190,6 +192,8 @@ class StaticBaselineScanner(
                 withSupportingTypesFallback(PrefixedJarClassFileLocator(jarFile, prefix))
             }
         val nestedPools = nestedLocators.mapValues { (_, locator) -> TypePool.Default.WithLazyResolution.of(locator) }
+        val flatResources = jarResources(jarFile, "")
+        val nestedResources = NESTED_CLASSES_PREFIXES.associateWith { prefix -> jarResources(jarFile, prefix) }
         val entries = jarFile.entries().asSequence().filter { !it.isDirectory && isClassEntry(it.name) }
         for (entry in entries) {
             val nestedPrefix = NESTED_CLASSES_PREFIXES.firstOrNull { entry.name.startsWith(it) }
@@ -217,9 +221,26 @@ class StaticBaselineScanner(
             if (!isClassEntry(relativeName)) continue
             val className = relativeName.removeSuffix(".class").replace('/', '.')
             if (nestedPrefix != null) buckets.ownClassNames += className else buckets.flatJarClassNames += className
-            classify(className, pool, locator, buckets)
+            classify(className, pool, locator, if (nestedPrefix != null) nestedResources.getValue(nestedPrefix) else flatResources, buckets)
         }
     }
+
+    /** Reads a resource by its path under the directory [root], the leading bytes of it at most. */
+    private fun folderResources(root: File): (String) -> ByteArray? =
+        { path ->
+            File(root, path).takeIf { it.isFile }?.inputStream()?.use { it.readNBytes(ScalaReleases.HEADER_BYTES) }
+        }
+
+    /** Reads a resource by its path under [prefix] inside [jarFile], the leading bytes of it at most. */
+    private fun jarResources(
+        jarFile: JarFile,
+        prefix: String,
+    ): (String) -> ByteArray? =
+        { path ->
+            jarFile.getJarEntry(prefix + path)?.let { entry ->
+                jarFile.getInputStream(entry).use { it.readNBytes(ScalaReleases.HEADER_BYTES) }
+            }
+        }
 
     private fun candidateClassNamesInFolder(root: File): List<String> =
         root
@@ -237,6 +258,7 @@ class StaticBaselineScanner(
         className: String,
         pool: TypePool,
         locator: ClassFileLocator,
+        resources: (String) -> ByteArray?,
         buckets: Buckets,
     ) {
         if (!looksInScope(className)) return
@@ -257,7 +279,7 @@ class StaticBaselineScanner(
                     )
                 return
             }
-            val scanned = declaredMethodsOf(typeDescription, className, locator, buckets.tableCache)
+            val scanned = declaredMethodsOf(typeDescription, className, locator, resources, buckets.tableCache)
             if (scanned.methods.isEmpty()) {
                 buckets.unprobed += UnprobedClass(className, "no concrete methods to probe")
                 return
@@ -329,6 +351,7 @@ class StaticBaselineScanner(
         typeDescription: TypeDescription,
         className: String,
         locator: ClassFileLocator,
+        resources: (String) -> ByteArray?,
         tableCache: BranchSiteAnalyzer.CrossClassTableCache,
     ): ScannedMethods {
         val classBytes =
@@ -349,6 +372,7 @@ class StaticBaselineScanner(
                     instrumentedPackagePrefixes,
                     excludedPackagePrefixes,
                     tableCache,
+                    resourceLookup = resources,
                 ) { name, descriptor -> (name to descriptor) in eligible }
             } else {
                 BranchSiteAnalyzer.Analysis.EMPTY
@@ -377,6 +401,11 @@ class StaticBaselineScanner(
                     sourceSignature.parameterNames,
                     sourceSignature.genericSignature,
                     sourceSignature.extensionReceiver,
+                    if (getterTarget != null) {
+                        analysis.unreadShape(getterTarget.targetName, getterTarget.targetDescriptor)
+                    } else {
+                        analysis.unreadShape(it.internalName, it.descriptor)
+                    },
                 )
             }
         val typeInitializer =

@@ -2,6 +2,7 @@ package dev.otherlode.instrumentation.branch
 
 import dev.otherlode.export.CallEdge
 import dev.otherlode.export.GeneratedBy
+import dev.otherlode.export.UnreadShape
 import dev.otherlode.instrumentation.CompilerFixtures
 import net.bytebuddy.jar.asm.Attribute
 import net.bytebuddy.jar.asm.ByteVector
@@ -17,6 +18,8 @@ import org.junit.jupiter.params.provider.MethodSource
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
+import kotlin.test.assertTrue
 
 /**
  * Proves the Scala generated-method rules at the analyser, over the Scala fixture modules' own class bytes and over
@@ -572,6 +575,35 @@ class ScalaGeneratedMethodsAnalyzerTest {
         return writer.toByteArray()
     }
 
+    /** [classBytes] with the private `writeReplace` scalac 2.13 writes for the module class [self]. */
+    private fun withScalacWriteReplace(
+        classBytes: ByteArray,
+        self: String,
+    ): ByteArray {
+        val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
+        val visitor =
+            object : ClassVisitor(Opcodes.ASM9, writer) {
+                override fun visitEnd() {
+                    val proxy = "scala/runtime/ModuleSerializationProxy"
+                    val mv = super.visitMethod(Opcodes.ACC_PRIVATE, "writeReplace", "()Ljava/lang/Object;", null, null)
+                    mv.visitCode()
+                    mv.visitTypeInsn(Opcodes.NEW, proxy)
+                    mv.visitInsn(Opcodes.DUP)
+                    mv.visitLdcInsn(
+                        net.bytebuddy.jar.asm.Type
+                            .getObjectType(self),
+                    )
+                    mv.visitMethodInsn(Opcodes.INVOKESPECIAL, proxy, "<init>", "(Ljava/lang/Class;)V", false)
+                    mv.visitInsn(Opcodes.ARETURN)
+                    mv.visitMaxs(0, 0)
+                    mv.visitEnd()
+                    super.visitEnd()
+                }
+            }
+        ClassReader(classBytes).accept(visitor, 0)
+        return writer.toByteArray()
+    }
+
     @Test
     fun `scala 2_12's own shapes are not read in a class 2_12 cannot have written`() {
         val build = CompilerFixtures.scalac("2.12.20")
@@ -593,13 +625,12 @@ class ScalaGeneratedMethodsAnalyzerTest {
 
         val readResolve = "readResolve" to "()Ljava/lang/Object;"
         val companionAsScala3 = analyze(relabelled(build.classBytes("Cc\$"), asScala3 = true), build.lookup)
-        val companionWithWriteReplace =
-            analyze(withMethod(build.classBytes("Cc\$"), "writeReplace", "()Ljava/lang/Object;", Opcodes.ACC_PRIVATE), build.lookup)
+        val companionWithWriteReplace = analyze(withScalacWriteReplace(build.classBytes("Cc\$"), "$PACKAGE/Cc\$"), build.lookup)
         assertEquals(GeneratedBy.NONE, companionAsScala3.generatedBy(readResolve.first, readResolve.second), "readResolve read as Scala 3")
         assertEquals(
             GeneratedBy.NONE,
             companionWithWriteReplace.generatedBy(readResolve.first, readResolve.second),
-            "readResolve beside a writeReplace, as 2.13 writes",
+            "readResolve beside scalac's own writeReplace, which only 2.13 writes",
         )
     }
 
@@ -1007,5 +1038,317 @@ class ScalaGeneratedMethodsAnalyzerTest {
 
         assertEquals(GeneratedBy.ENUM, build.marks("Gapped\$").of("fromOrdinal", "(I)$gapped"), "the unchanged body is read")
         assertEquals(GeneratedBy.NONE, analyze(writer.toByteArray(), build.lookup).generatedBy("fromOrdinal", "(I)$gapped"))
+    }
+
+    private fun tastyHeader(tooling: String): ByteArray = BrokenScalaFixtures.tastyHeader(tooling)
+
+    /** Serves the `.tasty` of [className] naming [tooling], and nothing else. */
+    private fun tastyOf(
+        className: String,
+        tooling: String?,
+    ): (String) -> ByteArray? = { path -> if (tooling != null && path == "$PACKAGE/$className.tasty") tastyHeader(tooling) else null }
+
+    private fun analyzeWith(
+        classBytes: ByteArray,
+        lookup: (String) -> ByteArray?,
+        resources: (String) -> ByteArray?,
+    ): BranchSiteAnalyzer.Analysis =
+        BranchSiteAnalyzer.analyze(classBytes, lookup, listOf("com.example.scalatarget"), resourceLookup = resources) { name, _ ->
+            name != "<clinit>"
+        }
+
+    private class Plumbing(
+        val simpleName: String,
+        val method: String,
+        val descriptor: String,
+        val tastyOwner: String,
+        val family: UnreadShape,
+    )
+
+    private val scala3Plumbing =
+        listOf(
+            Plumbing("Cc", "hashCode", "()I", "Cc", UnreadShape.CASE_CLASS),
+            Plumbing("Cc", "equals", "(Ljava/lang/Object;)Z", "Cc", UnreadShape.CASE_CLASS),
+            Plumbing("Cc", "_1", "()I", "Cc", UnreadShape.CASE_CLASS),
+            Plumbing("Cc\$", "apply", "(II)L$PACKAGE/Cc;", "Cc", UnreadShape.CASE_CLASS),
+            Plumbing("Cc\$", "unapply", "(L$PACKAGE/Cc;)L$PACKAGE/Cc;", "Cc", UnreadShape.CASE_CLASS),
+            Plumbing("Cc\$", "fromProduct", "(Lscala/Product;)L$PACKAGE/Cc;", "Cc", UnreadShape.CASE_CLASS),
+            Plumbing("Cc", "apply", "(II)L$PACKAGE/Cc;", "Cc", UnreadShape.STATIC_FORWARDER),
+            Plumbing("Cc\$", "writeReplace", "()Ljava/lang/Object;", "Cc", UnreadShape.SCALA_OBJECT),
+            Plumbing("Level\$", "values", "()[L$PACKAGE/Level;", "Level", UnreadShape.SCALA_ENUM),
+            Plumbing("Level", "productPrefix", "()Ljava/lang/String;", "Level", UnreadShape.SCALA_ENUM),
+        )
+
+    @Test
+    fun `scala 3 - a plumbing body that matches no read shape is hand-written on a read release`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        for (case in scala3Plumbing) {
+            val broken = withNop(build.classBytes(case.simpleName), setOf(case.method))
+            val label = "${case.simpleName}.${case.method}${case.descriptor}"
+
+            val analysis = analyzeWith(broken, build.lookup, tastyOf(case.tastyOwner, "Scala 3.3.4"))
+            // An enum's companion can hold no hand-written plumbing, so it stays unread there.
+            val expected = if (case.simpleName == "Level\$") case.family else UnreadShape.NONE
+
+            assertEquals(expected, analysis.unreadShape(case.method, case.descriptor), label)
+            assertEquals(GeneratedBy.NONE, analysis.generatedBy(case.method, case.descriptor), label)
+            assertNull(analysis.unreadRelease, label)
+        }
+    }
+
+    @Test
+    fun `scala 3 - in an enum's companion or case class an unread body stays an unread shape on a read release`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val read = tastyOf("Level", "Scala 3.3.4")
+        val companion = analyzeWith(withNop(build.classBytes("Level\$"), setOf("valueOf", "fromOrdinal")), build.lookup, read)
+        val singleton = build.classNames().first { it.startsWith("Suit\$\$anon") }
+        val case = analyzeWith(withNop(build.classBytes(singleton), setOf("toString")), build.lookup, tastyOf("Suit", "Scala 3.3.4"))
+
+        assertEquals(UnreadShape.SCALA_ENUM, companion.unreadShape("valueOf", "(Ljava/lang/String;)L$PACKAGE/Level;"))
+        assertEquals(UnreadShape.SCALA_ENUM, companion.unreadShape("fromOrdinal", "(I)L$PACKAGE/Level;"))
+        assertEquals(UnreadShape.SCALA_ENUM, case.unreadShape("toString", "()Ljava/lang/String;"))
+        assertNull(companion.unreadRelease, "a structure the agent knows it cannot read, not an unread release")
+    }
+
+    @Test
+    fun `scala 3 - an enum companion's ordinal(E) and writeReplace can be hand-written, so on a read release they are the adopter's`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val ordinal = "ordinal" to "(L$PACKAGE/Level;)I"
+        val writeReplace = "writeReplace" to "()Ljava/lang/Object;"
+        val broken = withNop(build.classBytes("Level\$"), setOf(ordinal.first, writeReplace.first))
+        val analysis = analyzeWith(broken, build.lookup, tastyOf("Level", "Scala 3.3.4"))
+
+        assertEquals(UnreadShape.NONE, analysis.unreadShape(ordinal.first, ordinal.second))
+        assertEquals(UnreadShape.NONE, analysis.unreadShape(writeReplace.first, writeReplace.second))
+        assertEquals(
+            UnreadShape.SCALA_ENUM,
+            analysis.unreadShape("ordinal", "(Ljava/lang/Object;)I"),
+            "the bridge, which a hand-written ordinal(Any) would clash with",
+        )
+    }
+
+    @Test
+    fun `scala 2_12 - a readResolve beside a hand-written writeReplace is still scalac's`() {
+        val build = CompilerFixtures.scalac("2.12.20")
+        val withHandWrittenWriteReplace =
+            withMethod(build.classBytes("Cc\$"), "writeReplace", "()Ljava/lang/Object;", Opcodes.ACC_PRIVATE)
+
+        assertEquals(
+            GeneratedBy.SCALA_OBJECT,
+            analyzeWith(withHandWrittenWriteReplace, build.lookup) { null }.generatedBy("readResolve", "()Ljava/lang/Object;"),
+        )
+    }
+
+    @Test
+    fun `scala 2 - a readResolve beside a writeReplace, or in an object that is not serializable, is the adopter's`() {
+        val build = CompilerFixtures.scalaBaseline("2.13.15")
+        val readResolve = "readResolve" to "()Ljava/lang/Object;"
+        val besideWriteReplace = withMethod(build.classBytes("Cc\$"), readResolve.first, readResolve.second, Opcodes.ACC_PRIVATE)
+        val plainObject =
+            withMethod(build.classBytes("Driver\$"), readResolve.first, readResolve.second, Opcodes.ACC_PRIVATE)
+
+        assertEquals(
+            UnreadShape.NONE,
+            analyzeWith(besideWriteReplace, build.lookup) { null }.unreadShape(readResolve.first, readResolve.second),
+        )
+        assertEquals(UnreadShape.NONE, analyzeWith(plainObject, build.lookup) { null }.unreadShape(readResolve.first, readResolve.second))
+    }
+
+    @Test
+    fun `scala 2_12 - a serializable object's readResolve with an unread body is an unread shape`() {
+        val build = CompilerFixtures.scalac("2.12.20")
+        val broken = withNop(build.classBytes("Cc\$"), setOf("readResolve"))
+
+        assertEquals(
+            UnreadShape.SCALA_OBJECT,
+            analyzeWith(broken, build.lookup) { null }.unreadShape("readResolve", "()Ljava/lang/Object;"),
+        )
+    }
+
+    @Test
+    fun `scala 3 - a plumbing body that matches no read shape is an unread shape on a release the agent has not read`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        for (case in scala3Plumbing) {
+            val broken = withNop(build.classBytes(case.simpleName), setOf(case.method))
+            val label = "${case.simpleName}.${case.method}${case.descriptor}"
+
+            val analysis = analyzeWith(broken, build.lookup, tastyOf(case.tastyOwner, "Scala 3.10.0"))
+
+            assertEquals(case.family, analysis.unreadShape(case.method, case.descriptor), label)
+            assertEquals(GeneratedBy.NONE, analysis.generatedBy(case.method, case.descriptor), label)
+            assertEquals("3.10.0", analysis.unreadRelease, label)
+        }
+    }
+
+    @Test
+    fun `scala 3 - a plumbing body that matches no read shape is an unread shape when no tasty file is readable`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        for (case in scala3Plumbing) {
+            val broken = withNop(build.classBytes(case.simpleName), setOf(case.method))
+            val label = "${case.simpleName}.${case.method}${case.descriptor}"
+
+            val analysis = analyzeWith(broken, build.lookup) { null }
+
+            assertEquals(case.family, analysis.unreadShape(case.method, case.descriptor), label)
+            assertNull(analysis.unreadRelease, "$label is version-blind")
+        }
+    }
+
+    @Test
+    fun `a tasty file that is not a tasty header leaves a Scala 3 class version-blind`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val broken = withNop(build.classBytes("Cc"), setOf("hashCode"))
+
+        val analysis = analyzeWith(broken, build.lookup) { byteArrayOf(1, 2, 3) }
+
+        assertEquals(UnreadShape.CASE_CLASS, analysis.unreadShape("hashCode", "()I"))
+        assertNull(analysis.unreadRelease)
+    }
+
+    @Test
+    fun `scala 3 - a method outside every outline stays the adopter's in all three cases`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val written = "(Ljava/lang/String;)L$PACKAGE/Written;"
+        val cases =
+            listOf(
+                Triple("Cc", "a", "()I"),
+                Triple("Written\$", "apply", written),
+                Triple("Level", "next", "()L$PACKAGE/Level;"),
+                Triple("Level\$", "parse", "(Ljava/lang/String;)L$PACKAGE/Level;"),
+            )
+        for ((simpleName, name, descriptor) in cases) {
+            val broken = withNop(build.classBytes(simpleName), setOf(name, "hashCode"))
+            val owner = simpleName.removeSuffix("$")
+            for (tooling in listOf("Scala 3.3.4", "Scala 3.10.0", null)) {
+                val analysis = analyzeWith(broken, build.lookup, tastyOf(owner, tooling))
+
+                assertEquals(UnreadShape.NONE, analysis.unreadShape(name, descriptor), "$simpleName.$name with $tooling")
+                assertEquals(GeneratedBy.NONE, analysis.generatedBy(name, descriptor), "$simpleName.$name with $tooling")
+            }
+        }
+    }
+
+    @Test
+    fun `a Scala 3 class asks for its release only when an outline method is unmarked`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val asked = mutableListOf<String>()
+        val resources = { path: String -> null.also { asked += path } }
+
+        analyzeWith(build.classBytes("Cc"), build.lookup, resources)
+        analyzeWith(build.classBytes("Cc\$"), build.lookup, resources)
+        assertEquals(emptyList(), asked, "every outline method of the real Cc and Cc\$ is marked")
+
+        analyzeWith(withNop(build.classBytes("Cc"), setOf("hashCode")), build.lookup, resources)
+        assertEquals(listOf("$PACKAGE/Cc.tasty"), asked)
+    }
+
+    @Test
+    fun `a nested Scala 3 class takes its enclosing top-level class's release`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val inner = "Shape\$Circle"
+        val broken = withNop(build.classBytes(inner), setOf("hashCode"))
+        val asked = mutableListOf<String>()
+        val resources = { path: String ->
+            (
+                if (path ==
+                    "$PACKAGE/Shape.tasty"
+                ) {
+                    tastyHeader("Scala 3.10.0")
+                } else {
+                    null
+                }
+            ).also { asked += path }
+        }
+
+        val analysis = analyzeWith(broken, build.lookup, resources)
+
+        assertEquals(UnreadShape.CASE_CLASS, analysis.unreadShape("hashCode", "()I"))
+        assertEquals("3.10.0", analysis.unreadRelease)
+        assertEquals(listOf("$PACKAGE/Shape\$Circle.tasty", "$PACKAGE/Shape.tasty"), asked)
+    }
+
+    @Test
+    fun `the cache reads a top-level class's tasty once for the classes under it`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val cache = BranchSiteAnalyzer.CrossClassTableCache(16)
+        val asked = mutableListOf<String>()
+        val resources = { path: String -> (if (path == "$PACKAGE/Cc.tasty") tastyHeader("Scala 3.10.0") else null).also { asked += path } }
+
+        for (simpleName in listOf("Cc", "Cc\$", "Cc", "Cc\$")) {
+            val analysis =
+                BranchSiteAnalyzer.analyze(
+                    withNop(build.classBytes(simpleName), setOf("hashCode", "apply")),
+                    build.lookup,
+                    listOf("com.example.scalatarget"),
+                    tableCache = cache,
+                    resourceLookup = resources,
+                ) { name, _ -> name != "<clinit>" }
+            assertEquals("3.10.0", analysis.unreadRelease, simpleName)
+        }
+
+        assertEquals(1, asked.count { it == "$PACKAGE/Cc.tasty" })
+        assertEquals(1, asked.count { it == "$PACKAGE/Cc\$.tasty" })
+    }
+
+    @Test
+    fun `scala 2 - a broken plumbing body is an unread shape and no tasty is asked for`() {
+        val build = CompilerFixtures.scalaBaseline("2.13.16")
+        val cases =
+            listOf(
+                Plumbing("Cc", "hashCode", "()I", "Cc", UnreadShape.CASE_CLASS),
+                Plumbing("Cc", "equals", "(Ljava/lang/Object;)Z", "Cc", UnreadShape.CASE_CLASS),
+                Plumbing("Cc\$", "apply", "(II)L$PACKAGE/Cc;", "Cc", UnreadShape.CASE_CLASS),
+                Plumbing("Cc", "apply", "(II)L$PACKAGE/Cc;", "Cc", UnreadShape.STATIC_FORWARDER),
+                Plumbing("Cc\$", "writeReplace", "()Ljava/lang/Object;", "Cc", UnreadShape.SCALA_OBJECT),
+            )
+        for (case in cases) {
+            val broken = withNop(build.classBytes(case.simpleName), setOf(case.method))
+            val label = "${case.simpleName}.${case.method}${case.descriptor}"
+
+            val analysis = analyzeWith(broken, build.lookup) { error("a Scala 2 class has no tasty file to ask for") }
+
+            assertEquals(case.family, analysis.unreadShape(case.method, case.descriptor), label)
+            assertEquals(GeneratedBy.NONE, analysis.generatedBy(case.method, case.descriptor), label)
+            assertNull(analysis.unreadRelease, label)
+        }
+        val accessor = analyzeWith(withNop(build.classBytes("Cc"), setOf("a", "hashCode")), build.lookup) { null }
+        assertEquals(UnreadShape.NONE, accessor.unreadShape("a", "()I"), "a field accessor is the adopter's")
+    }
+
+    @Test
+    fun `a method is never both generated and an unread shape across the baseline builds`() {
+        for (version in listOf("2.13.16", "3.3.4")) {
+            val build = CompilerFixtures.scalaBaseline(version)
+            for (simpleName in build.classNames()) {
+                val bytes = withNop(build.classBytes(simpleName), setOf("hashCode", "apply", "equals", "toString"))
+                val analysis = analyzeWith(bytes, build.lookup) { null }
+                val methods = declaredMethods(bytes)
+                for ((name, descriptor) in methods) {
+                    assertTrue(
+                        analysis.generatedBy(name, descriptor) == GeneratedBy.NONE ||
+                            analysis.unreadShape(name, descriptor) == UnreadShape.NONE,
+                        "$version $simpleName.$name$descriptor",
+                    )
+                }
+            }
+        }
+    }
+
+    /** The name and descriptor of each method [classBytes] declares. */
+    private fun declaredMethods(classBytes: ByteArray): List<Pair<String, String>> {
+        val methods = mutableListOf<Pair<String, String>>()
+        ClassReader(classBytes).accept(
+            object : ClassVisitor(Opcodes.ASM9) {
+                override fun visitMethod(
+                    access: Int,
+                    name: String,
+                    descriptor: String,
+                    signature: String?,
+                    exceptions: Array<out String>?,
+                ): MethodVisitor? = null.also { methods += name to descriptor }
+            },
+            ClassReader.SKIP_CODE,
+        )
+        return methods
     }
 }

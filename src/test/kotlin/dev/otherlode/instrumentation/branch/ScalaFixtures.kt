@@ -36,13 +36,15 @@ object ScalaFixtures {
     /**
      * A child-first loader over the fixture module's own output plus its resolved Scala library
      * jars, so `com.example.scalatarget.*` is defined for the first time only after
-     * instrumentation is installed.
+     * instrumentation is installed. [classes] stands in for the module's output directory, such as
+     * a copy of it with some classes rewritten.
      */
     fun classLoader(
         module: String,
         parent: ClassLoader,
+        classes: File = outputDir(module),
     ): FixtureClassLoader {
-        val urls = (listOf(outputDir(module)) + runtimeClasspath(module)).map { it.toURI().toURL() }.toTypedArray()
+        val urls = (listOf(classes) + runtimeClasspath(module)).map { it.toURI().toURL() }.toTypedArray()
         return FixtureClassLoader(urls, parent, SCALA_TARGET_PACKAGE_PREFIX)
     }
 }

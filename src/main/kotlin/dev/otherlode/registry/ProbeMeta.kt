@@ -4,6 +4,7 @@ import dev.otherlode.export.BranchSite
 import dev.otherlode.export.CallEdge
 import dev.otherlode.export.GeneratedBy
 import dev.otherlode.export.ProbeKind
+import dev.otherlode.export.UnreadShape
 
 /**
  * Source-location metadata for one probe slot, used only to build the manifest payload.
@@ -32,6 +33,9 @@ import dev.otherlode.export.ProbeKind
  * [generatedBy] is set for a [ProbeKind.METHOD] probe, for a [ProbeKind.BRANCH] probe as the
  * mark of the method it sits in, and for a [ProbeKind.OPTIONAL_ARGUMENT] probe as its target's
  * mark. See [GeneratedBy].
+ *
+ * [unreadShape] is set where [generatedBy] is, the same way, and never beside a mark: the probe's
+ * code has the outline of compiler output but matches no shape the agent has read. See [UnreadShape].
  *
  * [referencedClasses] is populated only for a [ProbeKind.METHOD] probe: the out-of-scope classes
  * that method's bytecode references, dotted, with JDK classes and classes read from a classpath
@@ -70,6 +74,7 @@ data class ProbeMeta(
     val calls: List<CallEdge> = emptyList(),
     val inlinedFromClassName: String? = null,
     val generatedBy: GeneratedBy = GeneratedBy.NONE,
+    val unreadShape: UnreadShape = UnreadShape.NONE,
     val referencedClasses: List<String> = emptyList(),
     val branchKey: String? = null,
     val lambdaBody: Boolean = false,

@@ -390,10 +390,28 @@ fixes re-reviewed by a fresh Opus reviewer, one commit each:
    generated method (ADR 0024's amendment) the graph looks through it and a hit
    one is a caller, or an unread forwarder would cut a path the way a marked
    stub did in step 2.
-6. Unread shapes for Scala: the `.tasty` reader, the release table and its
-   sweep script (sweeping 3.4.0 to 3.4.2, 3.5.0 to 3.5.1 and 3.6.0 to 3.6.3
-   first), version-keyed and version-blind outlines, branch-site and omission
-   propagation, the static baseline, the WARNING and the first-flush summary.
+6. Unread shapes for Scala. Landed 2026-10-04. Outlines per class kind, the
+   `.tasty` reader (top-level file by name, cached per loader and per scan),
+   `scala3-read-releases.txt` (3.3.3 to 3.9.0, every one swept), version
+   keying, propagation to branch and omission probes and the static baseline,
+   a per-class WARNING for an unread release, and a first-flush summary that
+   separates unread releases from classes whose compiler cannot be told. On real
+   output no Scala 3 method is unread; a Scala 2 build's unread methods are the
+   fixtures' hand-written lookalikes and `Q`, scalac's own plumbing for a case
+   class whose element overrides a superclass `val`. The review narrowed the
+   Scala 2 object outlines, kept an enum's companion and case classes unread on
+   a read release (ADR 0054, amended), and made the scan's jar test able to
+   fail. A second review narrowed that hold to the methods scalac refuses to let
+   the adopter write, gave an enum declared inside a class (no `MODULE$`) its
+   outline, kept 2.12's `readResolve` beside a hand-written `writeReplace`, and
+   split the summary into three causes. Not done: unread shapes are recorded at
+   transform time, before ADR 0007's commit point, so a transform that then
+   fails is still counted in the summary; classes first loaded after the
+   summary are never logged; a local enum gets no outline; an enum inside a
+   class reports scalac's `ordinal(E)` as the adopter's on a read release; and
+   Scala 3.3 at its default Java 8 target writes `valueOf` and `fromOrdinal`
+   with a `StringBuilder`, which reads as unread shapes until it is read (ADR
+   0055, amended).
 7. Unread shapes for the other outlines: multi-file facade, coroutine
    machinery, string-switch collision side; the INFO count of classes analysed
    from received bytes.

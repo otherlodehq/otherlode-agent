@@ -6,6 +6,7 @@ import dev.otherlode.export.CallEdgeKind
 import dev.otherlode.export.ConditionPart
 import dev.otherlode.export.GeneratedBy
 import dev.otherlode.export.KotlinKind
+import dev.otherlode.export.UnreadShape
 import dev.otherlode.instrumentation.ScalaClassDetector
 import dev.otherlode.instrumentation.TypeMatchPolicy
 import net.bytebuddy.jar.asm.AnnotationVisitor
@@ -131,6 +132,15 @@ object BranchSiteAnalyzer {
          * each kept conditional's outcome offset that gets no probe; see [BranchSite.unprobedOutcome].
          */
         private val unprobedOutcomesByMethod: Map<Pair<String, String>, Map<Int, Int>> = emptyMap(),
+        private val unreadShapeByMethod: Map<Pair<String, String>, UnreadShape> = emptyMap(),
+        /**
+         * The Scala 3 release that compiled this class when its [unreadShape] methods are unread
+         * because the agent has not read that release. Null for every other class, version-blind
+         * unread shapes (Scala 2, or no `.tasty`) included.
+         */
+        val unreadRelease: String? = null,
+        /** Why this class's [unreadShape] methods are unread; null when it has none. */
+        val unreadCause: UnreadCause? = null,
     ) {
         /**
          * Each kept site of [sites], in site index order, with its outcomes numbered, given roles
@@ -242,6 +252,16 @@ object BranchSiteAnalyzer {
             descriptor: String,
         ): GeneratedBy = generatedByMethod[name to descriptor] ?: GeneratedBy.NONE
 
+        /**
+         * The family of compiler output this method has the outline of while its body matches no
+         * shape the agent has read, or [UnreadShape.NONE]. Never set for a method with a
+         * [generatedBy] mark.
+         */
+        fun unreadShape(
+            name: String,
+            descriptor: String,
+        ): UnreadShape = unreadShapeByMethod[name to descriptor] ?: UnreadShape.NONE
+
         companion object {
             val EMPTY = Analysis(emptyList(), emptyMap())
         }
@@ -290,8 +310,30 @@ object BranchSiteAnalyzer {
             return table
         }
 
+        private val releases =
+            object : LinkedHashMap<String, String>(16, 0.75f, true) {
+                override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean = size > maxEntries
+            }
+
+        /**
+         * The Scala 3 release named by the `.tasty` file of [internalName], read once per class
+         * name and remembered, an absent or unreadable file included. [read] returns null for a
+         * class with no readable `.tasty`. Keyed by the name each lookup tries, so the classes of
+         * one top-level class share its single file read.
+         */
+        internal fun getOrReadRelease(
+            internalName: String,
+            read: () -> String?,
+        ): String? {
+            synchronized(releases) { releases[internalName] }?.let { return it.takeIf { release -> release != NO_RELEASE } }
+            val release = read()
+            synchronized(releases) { releases[internalName] = release ?: NO_RELEASE }
+            return release
+        }
+
         private companion object {
             val UNREADABLE = Any()
+            const val NO_RELEASE = ""
         }
     }
 
@@ -600,6 +642,11 @@ object BranchSiteAnalyzer {
      *
      * [handlerInterfaces] names, by `Class.getName()`, the functional interfaces a framework takes
      * a handler as. The analysis yields [Analysis.handlerForwarders] only for those.
+     *
+     * [resourceLookup] reads the leading bytes of a resource that is not a class, by path, through
+     * the same loader [lookup] reads classes through. It finds the `.tasty` file that names the
+     * Scala 3 release which compiled a class (see [ScalaReleases]); one that returns null, or throws,
+     * leaves the class version-blind.
      */
     fun analyze(
         classBytes: ByteArray,
@@ -608,6 +655,7 @@ object BranchSiteAnalyzer {
         excludePackages: List<String> = emptyList(),
         tableCache: CrossClassTableCache? = null,
         handlerInterfaces: Set<String> = emptySet(),
+        resourceLookup: (path: String) -> ByteArray? = { null },
         methodFilter: (name: String, descriptor: String) -> Boolean,
     ): Analysis {
         val readClass = readOnce(lookup)
@@ -881,7 +929,7 @@ object BranchSiteAnalyzer {
         val resolvedGetters = scalaGetterSites.mapTo(mutableSetOf()) { it.getterName to it.getterDescriptor }
         val unresolvedScalaGetterSites = getterCandidateNames.filterNot { it in resolvedGetters }
         val hasTypeInitializer = ("<clinit>" to "()V") in methodAccess
-        val generatedByMethod =
+        val generatedMarks =
             computeGeneratedBy(
                 classBytes,
                 internalClassName,
@@ -893,7 +941,8 @@ object BranchSiteAnalyzer {
                 isKotlinClass,
                 interfaceInternalNames,
                 readClass,
-            )
+            ) { name -> ScalaReleases.releaseOf(name, resourceLookup, tableCache) }
+        val generatedByMethod = generatedMarks.generated
 
         val callEdgeEntryPoints = if (hasTypeInitializer) eligibleMethodKeys + ("<clinit>" to "()V") else eligibleMethodKeys
         val resolvedCalls =
@@ -961,6 +1010,9 @@ object BranchSiteAnalyzer {
             kotlinKind,
             sourceSignatures,
             unprobedOutcomesByMethod,
+            generatedMarks.unread,
+            generatedMarks.unreadRelease,
+            generatedMarks.cause,
         )
     }
 
@@ -2849,13 +2901,14 @@ object BranchSiteAnalyzer {
         isKotlinClass: Boolean,
         interfaceInternalNames: List<String>,
         lookup: (internalName: String) -> ByteArray?,
-    ): Map<Pair<String, String>, GeneratedBy> {
+        scalaReleaseOf: ((internalName: String) -> String?)? = { null },
+    ): GeneratedMarks {
         val result = mutableMapOf<Pair<String, String>, GeneratedBy>()
 
         if (internalClassName.endsWith(DEFAULT_IMPLS_SUFFIX)) {
             val interfaceInternalName = internalClassName.removeSuffix(DEFAULT_IMPLS_SUFFIX)
             for (key in defaultImplsForwarders(classBytes, interfaceInternalName)) result[key] = GeneratedBy.DEFAULT_IMPLS
-            return result
+            return GeneratedMarks(result)
         }
 
         if (superInternalName == "java/lang/Enum") {
@@ -2890,10 +2943,35 @@ object BranchSiteAnalyzer {
         }
 
         if (isScalaClass) {
-            for ((key, generatedBy) in ScalaGeneratedMethods.of(classBytes, lookup)) result.putIfAbsent(key, generatedBy)
+            // No release function means the caller wants the marks alone, as the method table does.
+            if (scalaReleaseOf == null) {
+                for ((key, generatedBy) in ScalaGeneratedMethods.of(classBytes, lookup)) result.putIfAbsent(key, generatedBy)
+                return GeneratedMarks(result)
+            }
+            val scala = ScalaGeneratedMethods.analyse(classBytes, lookup, scalaReleaseOf)
+            for ((key, generatedBy) in scala.generated) result.putIfAbsent(key, generatedBy)
+            val unread = scala.unread.filterKeys { it !in result }
+            return GeneratedMarks(
+                result,
+                unread,
+                scala.unreadRelease.takeIf { unread.isNotEmpty() },
+                scala.cause.takeIf { unread.isNotEmpty() },
+            )
         }
-        return result
+        return GeneratedMarks(result)
     }
+
+    /**
+     * What [computeGeneratedBy] found: the generated methods, the methods that are unread shapes
+     * (a method is in one of the two), and the Scala 3 release the unread shapes are keyed on, if
+     * any.
+     */
+    private class GeneratedMarks(
+        val generated: Map<Pair<String, String>, GeneratedBy>,
+        val unread: Map<Pair<String, String>, UnreadShape> = emptyMap(),
+        val unreadRelease: String? = null,
+        val cause: UnreadCause? = null,
+    )
 
     private const val DEFAULT_IMPLS_SUFFIX = "\$DefaultImpls"
 
@@ -4420,7 +4498,9 @@ object BranchSiteAnalyzer {
                 isScalaClass,
                 isKotlinClass,
                 interfaceInternalNames,
-            ) { null }
+                lookup = { null },
+                scalaReleaseOf = null,
+            ).generated
                 .filterValues { it in PASS_THROUGH_FORWARDERS }
                 .keys
         return MethodTable(

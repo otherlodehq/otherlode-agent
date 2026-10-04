@@ -3,6 +3,7 @@ package dev.otherlode.instrumentation.branch
 import dev.otherlode.export.GeneratedBy
 import dev.otherlode.instrumentation.CompilerFixtures
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.Test
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
 import java.io.File
@@ -27,10 +28,26 @@ class ScalacMatrixTest {
         fun scala3Versions(): List<String> = CompilerFixtures.scalacVersions.filter { it.startsWith("3.") }
 
         /**
-         * The 3.x releases in the matrix whose enum singleton cases have a `hashCode`. scalac writes
-         * one from 3.3.7 on the 3.3 line and from 3.7.3, so 3.3.3, 3.3.6, 3.7.0 and 3.7.2 have none.
+         * Whether the 3.x release [version] gives an enum singleton case a `hashCode`. scalac writes
+         * one from 3.3.7 on the 3.3 line and from 3.7.3, so 3.3.3, 3.3.6, 3.4.x to 3.6.x, 3.7.0 and
+         * 3.7.2 have none.
          */
-        private val VERSIONS_WITH_ENUM_HASH_CODE = setOf("3.3.7", "3.3.8", "3.8.3", "3.8.4", "3.9.0")
+        private fun hasEnumHashCode(version: String): Boolean {
+            val (minor, patch) = version.split(".").drop(1).map { it.substringBefore('-').toInt() }
+            return when (minor) {
+                3 -> patch >= 7
+                7 -> patch >= 3
+                else -> minor > 7
+            }
+        }
+
+        private const val SCALA_PACKAGE = "com/example/scalatarget"
+
+        /** scalac's infix for an anonymous class, `$$anon`. */
+        private const val ANONYMOUS = "${'$'}${'$'}anon"
+
+        /** An anonymous class's infix and the number scalac gives it. */
+        private val ANONYMOUS_NUMBER = Regex(Regex.escape(ANONYMOUS) + "\\${'$'}\\d+")
 
         private const val MODULE_READ_RESOLVE = "readResolve()Ljava/lang/Object;"
 
@@ -155,7 +172,7 @@ class ScalacMatrixTest {
                 .flatMap { owner -> build.markEntries(owner).filter { it.first == "hashCode" } }
 
         assertTrue(hashCodes.all { it.third == GeneratedBy.ENUM }, hashCodes.toString())
-        assertEquals(version in VERSIONS_WITH_ENUM_HASH_CODE, hashCodes.isNotEmpty(), "scalac $version")
+        assertEquals(hasEnumHashCode(version), hashCodes.isNotEmpty(), "scalac $version")
     }
 
     @ParameterizedTest(name = "scalac {0}")
@@ -171,6 +188,161 @@ class ScalacMatrixTest {
             assertTrue(marks.isNotEmpty(), "2.12 writes readResolve on every module class")
         }
         assertTrue(marks.all { it.second == GeneratedBy.SCALA_OBJECT }, marks.toString())
+    }
+
+    /** An owner's name with an anonymous class's number dropped, since scalac numbers them in source order. */
+    private fun stable(owner: String): String = owner.replace(ANONYMOUS_NUMBER, Regex.escapeReplacement(ANONYMOUS))
+
+    private fun unreadOf(build: CompilerFixtures.Build): List<String> =
+        build.classNames().flatMap { owner ->
+            build.unreadEntries(owner).map { (name, descriptor, family) -> "${stable(owner)}.$name$descriptor $family" }
+        }
+
+    /**
+     * The only unread shapes in a Scala 3 build, every release in the matrix being read: the
+     * plumbing of an enum declared inside a class (`EnumHolder.Inner`), whose companion has no
+     * `MODULE$` and so matches none of the read shapes, and which scalac refuses to let the adopter
+     * write. Its `ordinal(Inner)` can be written by hand and so is not among them.
+     */
+    private val scala3ReadUnread =
+        listOf(
+            "EnumHolder\$\$anon.readResolve()Ljava/lang/Object; SCALA_ENUM",
+            "EnumHolder\$Inner\$.values()[L$SCALA_PACKAGE/EnumHolder\$Inner; SCALA_ENUM",
+            "EnumHolder\$Inner\$.valueOf(Ljava/lang/String;)L$SCALA_PACKAGE/EnumHolder\$Inner; SCALA_ENUM",
+            "EnumHolder\$Inner\$.\$new(ILjava/lang/String;)L$SCALA_PACKAGE/EnumHolder\$Inner; SCALA_ENUM",
+            "EnumHolder\$Inner\$.fromOrdinal(I)L$SCALA_PACKAGE/EnumHolder\$Inner; SCALA_ENUM",
+            "EnumHolder\$Inner\$.ordinal(Ljava/lang/Object;)I SCALA_ENUM",
+        )
+
+    @ParameterizedTest(name = "scalac {0}")
+    @MethodSource("scala3Versions")
+    fun `a Scala 3 build's only unread shapes are the plumbing of an enum declared inside a class`(version: String) {
+        assertEquals(scala3ReadUnread.sorted(), unreadOf(CompilerFixtures.scalac(version)).sorted(), "scalac $version")
+    }
+
+    /**
+     * The methods every Scala 3 build reports as unread shapes when no `.tasty` file can be read,
+     * as `Owner.name`: the fixtures' hand-written methods inside an outline (`toString` of
+     * `Written`, `Multi`, `Svc`, `BodyVal` and `HandCopy`, `HandCopy.hashCode`, and the lookalikes
+     * of `CaseLookalikes.scala`), which with no compiler named cannot be told from scalac's, and the
+     * plumbing of the enum declared inside `EnumHolder`.
+     */
+    private val scala3VersionBlindUnread =
+        setOf(
+            "BodyVal.toString",
+            "E3.equals",
+            "EnumHolder\$\$anon.readResolve",
+            "EnumHolder\$Inner\$.\$new",
+            "EnumHolder\$Inner\$.fromOrdinal",
+            "EnumHolder\$Inner\$.ordinal",
+            "EnumHolder\$Inner\$.valueOf",
+            "EnumHolder\$Inner\$.values",
+            "FZC.canEqual",
+            "HandCopy.hashCode",
+            "HandCopy.toString",
+            "Lie\$.fromProduct",
+            "Lie._1",
+            "Lie.equals",
+            "Lie.hashCode",
+            "Lie.productArity",
+            "Lie.productElement",
+            "Lie.productElementName",
+            "Lie2\$.fromProduct",
+            "Lie2.equals",
+            "Lie2.hashCode",
+            "Lie2.productArity",
+            "Lie2.productElement",
+            "Lie2.productElementName",
+            "Multi.toString",
+            "NoCanEqual.equals",
+            "Svc.toString",
+            "UC2.canEqual",
+            "UC2.equals",
+            "Written.toString",
+        )
+
+    /**
+     * The methods a Scala 2 build reports as unread shapes, as `Owner.name`. A Scala 2 class names
+     * no compiler, so the rules are version-blind. Three groups:
+     *
+     * - The adopter's own overrides of plumbing, which scalac 2 cannot be told apart from: `toString`
+     *   of `Written`, `Multi`, `Svc`, `BodyVal` and `HandCopy`, `HandCopy.hashCode`, and the
+     *   lookalikes of `CaseLookalikes.scala` (`Lie`, `Lie2`, `E3`, `NoCanEqual`, `UC2`, `FZC`, and
+     *   `U0$.unapply`), each hand-written in or near scalac's shape.
+     * - `Q`, whose element overrides a supertype's `val`: scalac's own plumbing for it, which the
+     *   rules do not read because the constructor stores no element.
+     */
+
+    private val scala2Unread =
+        setOf(
+            "BodyVal.toString",
+            "E3.equals",
+            "FZC.canEqual",
+            "HandCopy.toString",
+            "HandCopy.hashCode",
+            "Lie.productArity",
+            "Lie.productElement",
+            "Lie.productElementName",
+            "Lie.hashCode",
+            "Lie.equals",
+            "Lie\$.unapply",
+            "Lie2.productArity",
+            "Lie2.productElement",
+            "Lie2.productElementName",
+            "Lie2.hashCode",
+            "Lie2.equals",
+            "Lie2\$.unapply",
+            "Multi.toString",
+            "NoCanEqual.equals",
+            "Q.productArity",
+            "Q.productElement",
+            "Q.productElementName",
+            "Q.hashCode",
+            "Q.equals",
+            "Q\$.unapply",
+            "Svc.toString",
+            "U0\$.unapply",
+            "UC2.canEqual",
+            "UC2.equals",
+            "Written.toString",
+        )
+
+    @ParameterizedTest(name = "scalac {0}")
+    @MethodSource("scala2Versions")
+    fun `a Scala 2 build has unread shapes only on the fixtures' hand-written lookalikes and Q`(version: String) {
+        val build = CompilerFixtures.scalac(version)
+        val unread =
+            build.classNames().flatMap { owner -> build.unreadEntries(owner).map { (name, _, _) -> "$owner.$name" } }.toSet()
+        // 2.12 writes no productElementName.
+        val expected =
+            if (version.startsWith(
+                    "2.12.",
+                )
+            ) {
+                scala2Unread.filterNot { it.endsWith(".productElementName") }.toSet()
+            } else {
+                scala2Unread
+            }
+
+        assertEquals(expected.sorted(), unread.sorted(), "scalac $version")
+    }
+
+    @ParameterizedTest(name = "scalac {0}")
+    @MethodSource("scala3Versions")
+    fun `a Scala 3 build read with no tasty files reports the outline methods the rules leave unmarked`(version: String) {
+        val unread =
+            CompilerFixtures.scalac(version).withoutResources().let { build ->
+                build.classNames().flatMap { owner -> build.unreadEntries(owner).map { (name, _, _) -> "${stable(owner)}.$name" } }.toSet()
+            }
+
+        assertEquals(scala3VersionBlindUnread.sorted(), unread.sorted(), "scalac $version")
+    }
+
+    @Test
+    fun `every Scala 3 release in the matrix is on the read list`() {
+        val unread = CompilerFixtures.scalacVersions.filter { it.startsWith("3.") && !ScalaReleases.isRead(it) }
+
+        assertEquals(emptyList(), unread, "releases the matrix compiles with that scala3-read-releases.txt does not list")
     }
 
     /** The tooling string of a `.tasty` file: the header's magic, three version numbers, then the string. */

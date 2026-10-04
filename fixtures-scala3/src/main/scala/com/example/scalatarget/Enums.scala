@@ -87,3 +87,12 @@ enum Gapped {
 enum Sparse {
   case A, C, D
 }
+
+/** An enum declared inside a class, whose companion holds no `MODULE$`: scalac's plumbing the rules do not read. */
+class EnumHolder {
+  enum Inner {
+    case Up, Down
+  }
+
+  def first: Inner = Inner.Up
+}

@@ -29,3 +29,12 @@ Decided on 2026-10-03 with ADR 0054. Every exact-body rule was read off `javap` 
 - Compiling one Gradle build's fixtures with several kotlinc releases needs KGP's Build Tools API `compilerVersion` or a compile task run by hand. The first chunk that builds the Kotlin matrix confirms which works.
 - Scala 2 has no table, since its classes do not name the compiler: a new 2.12 or 2.13 release that changes a shape reads as unread shapes (ADR 0054) until the canary catches it and the agent reads it.
 - The 2026-10-03 sweep's outputs and scripts were scratch work; the sweep script the table needs is written fresh and kept in the repo.
+
+## Amended on 2026-10-04: a list of releases, and the sweep is the matrix test
+
+The table of read Scala 3 releases is a list, `scala3-read-releases.txt` in the agent's resources, not a map from release to shape variant. The matcher reads every variant as a union (ADR 0048, amended), so the only question the agent asks of a release is whether it was read, and a variant tag per release would answer nothing it uses. The cost is the one ADR 0048 already accepts: a class from one read release with a hand-written method in another read release's exact shape is marked generated.
+
+The sweep is the compiler matrix test run with the release list overridden, `-Potherlode.matrix.scalac=<releases>`, with gradle.properties' Scala 2 releases kept in the list. It passed for every release from 3.3.3 to 3.9.0 on 2026-10-04, which is what the list holds. A test requires every Scala 3 release in the matrix to be on the list.
+
+The matrix compiles with `-release 21`. Scala 3.3 with no `-release` targets Java 8 bytecode, where an enum's `valueOf` and `fromOrdinal` build their message with a `StringBuilder` rather than string concatenation, a shape not read; those two methods then report as unread shapes (ADR 0054 holds them, scalac refusing hand-written ones), never as dead code. Every other plumbing body was the same at both targets. Reading that shape, and a matrix entry for the default target, are recorded in `STATUS.md`.
+

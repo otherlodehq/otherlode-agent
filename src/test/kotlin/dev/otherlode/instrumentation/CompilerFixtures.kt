@@ -1,6 +1,7 @@
 package dev.otherlode.instrumentation
 
 import dev.otherlode.export.GeneratedBy
+import dev.otherlode.export.UnreadShape
 import dev.otherlode.instrumentation.branch.BranchSiteAnalyzer
 import net.bytebuddy.jar.asm.ClassReader
 import net.bytebuddy.jar.asm.ClassVisitor
@@ -70,7 +71,11 @@ object CompilerFixtures {
         private val dir: File,
         private val packagePath: String,
         private val includePackages: List<String> = listOf("com.example.target"),
+        private val servesResources: Boolean = true,
     ) {
+        /** This build as a loader that serves its classes but no other resource, so no `.tasty` is found. */
+        fun withoutResources(): Build = Build(dir, packagePath, includePackages, servesResources = false)
+
         /** The root of this build's class files, which a static scan can walk. */
         val directory: File get() = dir
 
@@ -91,6 +96,10 @@ object CompilerFixtures {
         /** Reads a class by internal name from this build alone, the way the agent reads one through its loader. */
         val lookup: (String) -> ByteArray? = { internalName -> File(dir, "$internalName.class").takeIf { it.isFile }?.readBytes() }
 
+        /** Reads the leading bytes of a non-class resource of this build, such as a Scala 3 class's `.tasty`, as the agent's loader would. */
+        val resources: (String) -> ByteArray? =
+            { path -> File(dir, path).takeIf { servesResources && it.isFile }?.inputStream()?.use { it.readNBytes(512) } }
+
         /**
          * The real analysis of fixture class [simpleName] with every method eligible, so marks
          * and default sites are read for all of them.
@@ -100,7 +109,32 @@ object CompilerFixtures {
                 classBytes(simpleName),
                 lookup,
                 includePackages = includePackages,
+                resourceLookup = resources,
             ) { _, _ -> true }
+
+        /** Every method of fixture class [simpleName] the analysis reports as an unread shape, as (name, descriptor, family). */
+        fun unreadEntries(simpleName: String): List<Triple<String, String, UnreadShape>> {
+            val analysis = analyze(simpleName)
+            val entries = mutableListOf<Triple<String, String, UnreadShape>>()
+            ClassReader(classBytes(simpleName)).accept(
+                object : ClassVisitor(Opcodes.ASM9) {
+                    override fun visitMethod(
+                        access: Int,
+                        name: String,
+                        descriptor: String,
+                        signature: String?,
+                        exceptions: Array<out String>?,
+                    ) = null.also {
+                        analysis.unreadShape(name, descriptor).takeIf { family -> family != UnreadShape.NONE }?.let {
+                            entries +=
+                                Triple(name, descriptor, it)
+                        }
+                    }
+                },
+                ClassReader.SKIP_CODE,
+            )
+            return entries
+        }
 
         /**
          * The analysis of fixture class [simpleName] with the methods the method tier probes: no

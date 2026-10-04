@@ -8,6 +8,8 @@ import dev.otherlode.dependencies.TestJars
 import dev.otherlode.instrumentation.LoadedClassSweep
 import dev.otherlode.instrumentation.branch.BranchDropCounts
 import dev.otherlode.instrumentation.branch.BranchDropReason
+import dev.otherlode.instrumentation.branch.UnreadCause
+import dev.otherlode.instrumentation.branch.UnreadShapeCounts
 import dev.otherlode.instrumentation.staticscan.StaticBaselineSender
 import dev.otherlode.registry.DependencyRegistry
 import dev.otherlode.registry.EndpointRegistry
@@ -1149,6 +1151,126 @@ class ExportSchedulerTest {
             }
 
         assertEquals(1, records.count { it.message.contains("branch sites") })
+    }
+
+    @Test
+    fun `the first flush that finds unread shapes logs one WARNING counting them by family and naming the unread releases`() {
+        val unreadShapeCounts = UnreadShapeCounts()
+        unreadShapeCounts.record(
+            "com.acme.Foo",
+            "3.10.0",
+            UnreadCause.UNREAD_RELEASE,
+            mapOf(
+                UnreadShape.CASE_CLASS to 5,
+                UnreadShape.SCALA_OBJECT to 2,
+            ),
+        )
+        unreadShapeCounts.record(
+            "com.acme.Bar",
+            null,
+            UnreadCause.VERSION_BLIND,
+            mapOf(
+                UnreadShape.CASE_CLASS to 1,
+                UnreadShape.STATIC_FORWARDER to 3,
+            ),
+        )
+        val scheduler =
+            ExportScheduler(
+                config,
+                resource,
+                ProbeRegistry(),
+                EndpointRegistry(),
+                RecordingExporter(),
+                unreadShapeCounts = unreadShapeCounts,
+            )
+
+        val records = captureLogRecords(ExportScheduler::class.java.name) { scheduler.flush() }
+
+        val summary = records.single { it.message.contains("unread shape") }
+        assertEquals(JulLevel.WARNING, summary.level)
+        assertTrue(summary.message.contains("11 methods in 2 classes"), summary.message)
+        assertTrue(summary.message.contains("6 Scala case-class plumbing"), summary.message)
+        assertTrue(summary.message.contains("2 Scala object serialization"), summary.message)
+        assertTrue(summary.message.contains("3 Scala static forwarders"), summary.message)
+        assertTrue(summary.message.contains("Scala 3 releases this agent has not read: 3.10.0."), summary.message)
+        assertTrue(summary.message.contains("4 of them are in classes whose compiler the agent cannot tell"), summary.message)
+        assertTrue(summary.message.contains("an override of case-class plumbing"), summary.message)
+        assertTrue(summary.message.contains("A newer agent may read them"), summary.message)
+    }
+
+    @Test
+    fun `the unread shape summary names no release when every unread shape is version-blind`() {
+        val unreadShapeCounts = UnreadShapeCounts()
+        unreadShapeCounts.record("com.acme.Foo", null, UnreadCause.VERSION_BLIND, mapOf(UnreadShape.CASE_CLASS to 1))
+        val scheduler =
+            ExportScheduler(
+                config,
+                resource,
+                ProbeRegistry(),
+                EndpointRegistry(),
+                RecordingExporter(),
+                unreadShapeCounts = unreadShapeCounts,
+            )
+
+        val records = captureLogRecords(ExportScheduler::class.java.name) { scheduler.flush() }
+
+        val summary = records.single { it.message.contains("unread shape") }
+        assertFalse(summary.message.contains("Scala 3 releases"), summary.message)
+        assertTrue(summary.message.contains("an override of case-class plumbing"), summary.message)
+    }
+
+    @Test
+    fun `an unread shape summary with only unread releases says nothing about classes whose compiler cannot be told`() {
+        val unreadShapeCounts = UnreadShapeCounts()
+        unreadShapeCounts.record("com.acme.Foo", "3.10.0", UnreadCause.UNREAD_RELEASE, mapOf(UnreadShape.SCALA_ENUM to 2))
+        val scheduler =
+            ExportScheduler(
+                config,
+                resource,
+                ProbeRegistry(),
+                EndpointRegistry(),
+                RecordingExporter(),
+                unreadShapeCounts = unreadShapeCounts,
+            )
+
+        val records = captureLogRecords(ExportScheduler::class.java.name) { scheduler.flush() }
+
+        val summary = records.single { it.message.contains("unread shape") }
+        assertFalse(summary.message.contains("cannot tell"), summary.message)
+        assertFalse(summary.message.contains("hand-written"), summary.message)
+    }
+
+    @Test
+    fun `the unread shape summary is logged only once, not on a second flush`() {
+        val unreadShapeCounts = UnreadShapeCounts()
+        unreadShapeCounts.record("com.acme.Foo", "3.10.0", UnreadCause.UNREAD_RELEASE, mapOf(UnreadShape.CASE_CLASS to 1))
+        val scheduler =
+            ExportScheduler(
+                config,
+                resource,
+                ProbeRegistry(),
+                EndpointRegistry(),
+                RecordingExporter(),
+                unreadShapeCounts = unreadShapeCounts,
+            )
+
+        val records =
+            captureLogRecords(ExportScheduler::class.java.name) {
+                scheduler.flush()
+                unreadShapeCounts.record("com.acme.Late", "3.11.0", UnreadCause.UNREAD_RELEASE, mapOf(UnreadShape.CASE_CLASS to 4))
+                scheduler.flush()
+            }
+
+        assertEquals(1, records.count { it.message.contains("unread shape") })
+    }
+
+    @Test
+    fun `nothing about unread shapes is logged when there are none`() {
+        val scheduler = ExportScheduler(config, resource, ProbeRegistry(), EndpointRegistry(), RecordingExporter())
+
+        val records = captureLogRecords(ExportScheduler::class.java.name) { scheduler.flush() }
+
+        assertTrue(records.none { it.message.contains("unread shape") })
     }
 
     @Test

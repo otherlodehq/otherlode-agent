@@ -6,6 +6,13 @@
 // own library on the compile classpath, and a second task per release records what that compiler
 // prints for -version, so the build shows which compiler ran. Never on the test classpath
 // directly: see the comment in fixtures-scala3/build.gradle.kts for why.
+//
+// The releases come from otherlode.matrix.scalac in gradle.properties, which -P overrides. A release
+// joins src/main/resources/dev/otherlode/scala3-read-releases.txt only after this sweep passes for
+// it, so the sweep over every Scala 3 release in that file is
+//   ./gradlew :test --tests '*ScalacMatrixTest*' -Potherlode.matrix.scalac=<every Scala 3 release in scala3-read-releases.txt>
+// with the Scala 2 releases of gradle.properties kept in the list: the Scala 2 parameterised tests
+// fail to start when no Scala 2 release is given.
 import java.io.ByteArrayOutputStream
 
 plugins {

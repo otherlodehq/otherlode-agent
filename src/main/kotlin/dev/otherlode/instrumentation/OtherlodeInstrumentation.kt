@@ -11,6 +11,7 @@ import dev.otherlode.config.AgentConfig
 import dev.otherlode.export.BodyKind
 import dev.otherlode.export.KotlinKind
 import dev.otherlode.export.ProbeKind
+import dev.otherlode.export.UnreadShape
 import dev.otherlode.instrumentation.branch.BranchDropCounts
 import dev.otherlode.instrumentation.branch.BranchDropReason
 import dev.otherlode.instrumentation.branch.BranchProbeAsmVisitorWrapper
@@ -18,7 +19,10 @@ import dev.otherlode.instrumentation.branch.BranchSite
 import dev.otherlode.instrumentation.branch.BranchSiteAnalyzer
 import dev.otherlode.instrumentation.branch.DefaultSite
 import dev.otherlode.instrumentation.branch.HandlerForwarder
+import dev.otherlode.instrumentation.branch.ScalaReleases
 import dev.otherlode.instrumentation.branch.SitePairing
+import dev.otherlode.instrumentation.branch.UnreadCause
+import dev.otherlode.instrumentation.branch.UnreadShapeCounts
 import dev.otherlode.instrumentation.endpoints.HandlerForwarders
 import dev.otherlode.instrumentation.staticscan.StaticBaselineMismatchDetector
 import dev.otherlode.registry.ExternalClassRegistry
@@ -119,6 +123,8 @@ class OtherlodeInstrumentation(
     captureClassBytes: Boolean = true,
     /** Where dropped branch sites are tallied; see [BranchDropCounts]. */
     private val branchDropCounts: BranchDropCounts = BranchDropCounts(),
+    /** Where the methods reported as unread shapes are tallied; see [UnreadShapeCounts]. */
+    private val unreadShapeCounts: UnreadShapeCounts = UnreadShapeCounts(),
     /** Where each out-of-scope class a transformed class references was found. */
     private val externalClassRegistry: ExternalClassRegistry = ExternalClassRegistry(),
     /**
@@ -573,6 +579,7 @@ class OtherlodeInstrumentation(
                         overridable = getterSite.overridable,
                         targetClassName = getterSite.targetClassName,
                         generatedBy = analysis.generatedBy(getterSite.targetName, getterSite.targetDescriptor),
+                        unreadShape = analysis.unreadShape(getterSite.targetName, getterSite.targetDescriptor),
                     )
                 } else {
                     val sourceSignature = analysis.sourceSignatureOf(it.internalName, it.descriptor)
@@ -589,6 +596,7 @@ class OtherlodeInstrumentation(
                                 if (paired) edge else edge.copy(guard = null)
                             },
                         generatedBy = analysis.generatedBy(it.internalName, it.descriptor),
+                        unreadShape = analysis.unreadShape(it.internalName, it.descriptor),
                         referencedClasses = references.keep(analysis.referencesOf(it.internalName, it.descriptor)),
                         lambdaBody = analysis.isLambdaBody(it.internalName, it.descriptor),
                         branchSites = if (paired) analysis.branchSitesOf(it.internalName, it.descriptor) else emptyList(),
@@ -599,6 +607,7 @@ class OtherlodeInstrumentation(
                     )
                 }
             }
+        recordUnreadShapes(typeDescription.name, analysis.unreadRelease, analysis.unreadCause, methodProbes)
         // Only a kept site gets slots in the array: BranchProbeAsmVisitorWrapper allocates them
         // per kept site, in the same siteIndex order, and branchSlotCapacity below is sized to
         // match. A branch inside an inline method's body is just as invisible to a Kotlin caller
@@ -618,6 +627,7 @@ class OtherlodeInstrumentation(
                         inlinedFromClassName = site.inlinedFromClassName,
                         branchKey = outcome.branchKey,
                         generatedBy = analysis.generatedBy(site.methodName, site.methodDescriptor),
+                        unreadShape = analysis.unreadShape(site.methodName, site.methodDescriptor),
                         siteIndex = site.siteIndex,
                     )
                 }
@@ -648,6 +658,7 @@ class OtherlodeInstrumentation(
                                 parameterName = site.parameterNames[bit] ?: "",
                                 overridable = site.overridable,
                                 generatedBy = analysis.generatedBy(site.targetName, site.targetDescriptor),
+                                unreadShape = analysis.unreadShape(site.targetName, site.targetDescriptor),
                             )
                         }
                 omissionBase += slots.size
@@ -996,6 +1007,38 @@ class OtherlodeInstrumentation(
     }
 
     /**
+     * Tallies [unreadShapeCounts] with the METHOD probes of [typeName] that are unread shapes. When
+     * the class is keyed on a Scala 3 [release] the agent has not read, logs one WARNING for the
+     * class naming the release and the number of methods, the first time the class is recorded.
+     * Classes without a release (Scala 2, or no `.tasty`) are counted for the first-flush summary
+     * and not warned about one by one.
+     */
+    private fun recordUnreadShapes(
+        typeName: String,
+        release: String?,
+        cause: UnreadCause?,
+        methodProbes: List<ProbeMeta>,
+    ) {
+        val unread = methodProbes.filter { it.kind == ProbeKind.METHOD && it.unreadShape != UnreadShape.NONE }
+        if (unread.isEmpty()) return
+        val warn =
+            unreadShapeCounts.record(
+                typeName,
+                release,
+                cause ?: UnreadCause.VERSION_BLIND,
+                unread.groupingBy { it.unreadShape }.eachCount(),
+            )
+        if (warn) {
+            log.log(
+                Level.WARNING,
+                "otherlode: $typeName was compiled by Scala $release, which this agent has not read; " +
+                    "${unread.size} ${if (unread.size == 1) "method that looks" else "methods that look"} like compiler output " +
+                    "${if (unread.size == 1) "is" else "are"} reported as unread shapes",
+            )
+        }
+    }
+
+    /**
      * Tallies [branchDropCounts] with [typeName]'s dropped sites, grouped by reason, and logs one
      * DEBUG line naming the total and each reason's own count when anything was dropped. A no-op
      * when nothing was.
@@ -1111,6 +1154,7 @@ class OtherlodeInstrumentation(
             config.excludedPackagePrefixes,
             tableCacheFor(classLoader),
             handlerForwarders.handlerInterfaces,
+            resourceLookup(classLoader),
         ) { name, descriptor -> (name to descriptor) in eligible }
     }
 
@@ -1134,6 +1178,20 @@ class OtherlodeInstrumentation(
             }
         }
     }
+
+    /**
+     * Reads the leading bytes of a resource that is not a class, such as a Scala 3 class's `.tasty`
+     * file, as a resource on [classLoader]. Any failure, including a missing resource, reads as no
+     * resource. The bootstrap loader serves none.
+     */
+    private fun resourceLookup(classLoader: ClassLoader?): (String) -> ByteArray? =
+        { path ->
+            try {
+                classLoader?.getResourceAsStream(path)?.use { it.readNBytes(ScalaReleases.HEADER_BYTES) }
+            } catch (_: Exception) {
+                null
+            }
+        }
 
     /**
      * Resolves `@ProbeIndex` to the instrumented method's own slot, as a constant folded into the

@@ -1,6 +1,7 @@
 package dev.otherlode.instrumentation.branch
 
 import dev.otherlode.export.GeneratedBy
+import dev.otherlode.export.UnreadShape
 import dev.otherlode.instrumentation.ScalaClassDetector
 import net.bytebuddy.jar.asm.Attribute
 import net.bytebuddy.jar.asm.ClassReader
@@ -129,8 +130,96 @@ internal object ScalaGeneratedMethods {
     fun of(
         classBytes: ByteArray,
         lookup: (internalName: String) -> ByteArray?,
-    ): Map<Pair<String, String>, GeneratedBy> {
+    ): Map<Pair<String, String>, GeneratedBy> = marksOf(readShape(classBytes), lookup)
+
+    /**
+     * What [analyse] found in one Scala class: its generated methods ([generated], what [of]
+     * returns), and the methods that sit in an outline of compiler output but match none of the
+     * shapes read ([unread], by family). [unreadRelease] is the Scala 3 release that compiled the
+     * class when [unread] holds methods because that release is not on the read list, and null when
+     * the class names no compiler (Scala 2, or Scala 3 with no readable `.tasty`) or the unread
+     * methods are none. A method is in one map at most.
+     */
+    class Result(
+        val generated: Map<Pair<String, String>, GeneratedBy>,
+        val unread: Map<Pair<String, String>, UnreadShape>,
+        val unreadRelease: String?,
+        /** Why [unread] holds methods; null when it holds none. */
+        val cause: UnreadCause? = null,
+    )
+
+    /**
+     * [of] plus the unread shapes of the class. An outline method the rules leave unmarked is an
+     * unread shape unless the class names its compiler and the agent has read that compiler, in
+     * which case the method is hand-written and stays ordinary (ADR 0054). A method scalac refuses to
+     * let the adopter write ([cannotBeHandWritten]) stays an unread shape on a read release too:
+     * there it is scalac's in a shape the rules do not read, such as an enum declared inside a class
+     * or one with backticked case names. [releaseOf] is asked, with the class's internal name, only when such a method
+     * exists and the class is Scala 3's.
+     */
+    fun analyse(
+        classBytes: ByteArray,
+        lookup: (internalName: String) -> ByteArray?,
+        releaseOf: (internalName: String) -> String?,
+    ): Result {
         val shape = readShape(classBytes)
+        val generated = marksOf(shape, lookup)
+        val candidates = outlineOf(shape, lookup, generated)
+        if (candidates.isEmpty()) return Result(generated, emptyMap(), null)
+        if (!shape.isScala3) return Result(generated, candidates, null, UnreadCause.VERSION_BLIND)
+        val release = releaseOf(shape.internalName)
+        return when {
+            release == null -> {
+                Result(generated, candidates, null, UnreadCause.VERSION_BLIND)
+            }
+
+            ScalaReleases.isRead(release) -> {
+                val held = candidates.filterKeys { shape.cannotBeHandWritten(it, lookup) }
+                Result(generated, held, null, UnreadCause.UNREAD_STRUCTURE.takeIf { held.isNotEmpty() })
+            }
+
+            else -> {
+                Result(generated, candidates, release, UnreadCause.UNREAD_RELEASE)
+            }
+        }
+    }
+
+    /**
+     * Whether scalac refuses a hand-written method [key] in this class, so a method of that name and
+     * descriptor can only be its own: the `values`, `valueOf`, `fromOrdinal`, `$new` and
+     * `ordinal(Object)` of an enum's companion (a hand-written one is a double definition), and any
+     * method of the class of an enum case, a class implementing `scala.runtime.EnumValue` whose
+     * superclass is a Scala enum, since a case has no body. A companion's `ordinal(E)` and
+     * `writeReplace` can be written by hand and are not held.
+     */
+    private fun ClassShape.cannotBeHandWritten(
+        key: Pair<String, String>,
+        lookup: (String) -> ByteArray?,
+    ): Boolean {
+        if (ENUM_VALUE in interfaces) return superName?.let { readClass(it, lookup) }?.let { ENUM in it.interfaces } == true
+        if (!isEnumCompanionShape(lookup)) return false
+        val (name, descriptor) = key
+        return name in REFUSED_COMPANION_METHODS || (name == "ordinal" && descriptor == "(L$OBJECT;)I")
+    }
+
+    /**
+     * A class named for an enum's companion that implements `scala.deriving.Mirror$Sum` and whose
+     * partner reads as an enum class. An enum declared inside a class has a companion with no
+     * `MODULE$`, so this does not require a module class.
+     */
+    private fun ClassShape.isEnumCompanionShape(lookup: (String) -> ByteArray?): Boolean =
+        internalName.endsWith("$") && MIRROR_SUM in interfaces && readClass(partnerName(this), lookup)?.isEnumClass() == true
+
+    private val REFUSED_COMPANION_METHODS = setOf("values", "valueOf", "fromOrdinal", "\$new")
+
+    /** A Scala 2 class marked serializable, as scalac writes a `writeReplace` or `readResolve` only for one. */
+    private val ClassShape.isSerializable: Boolean
+        get() = "java/io/Serializable" in interfaces || "scala/Serializable" in interfaces
+
+    private fun marksOf(
+        shape: ClassShape,
+        lookup: (internalName: String) -> ByteArray?,
+    ): Map<Pair<String, String>, GeneratedBy> {
         val result = mutableMapOf<Pair<String, String>, GeneratedBy>()
         for (key in shape.staticForwarders()) result.putIfAbsent(key, GeneratedBy.STATIC_FORWARDER)
         for (key in enumPlumbing(shape, lookup)) result.putIfAbsent(key, GeneratedBy.ENUM)
@@ -150,10 +239,214 @@ internal object ScalaGeneratedMethods {
         }
         if (shape.isModuleClass && shape.writeReplaceMatches()) result.putIfAbsent(WRITE_REPLACE, GeneratedBy.SCALA_OBJECT)
         // Scala 2.12 writes the readResolve and no writeReplace; 2.13 the reverse, and Scala 3 neither.
-        if (!shape.isScala3 && shape.isModuleClass && WRITE_REPLACE !in shape.methods && shape.readResolveMatches()) {
+        // A hand-written writeReplace beside 2.12's readResolve does not make it the adopter's.
+        if (!shape.isScala3 && shape.isModuleClass && !shape.writeReplaceMatches() && shape.readResolveMatches()) {
             result.putIfAbsent(READ_RESOLVE, GeneratedBy.SCALA_OBJECT)
         }
         return result
+    }
+
+    /**
+     * The outline of compiler output in [shape]: each method scalac writes for a plumbing family,
+     * named by its name and the descriptor derived from the class itself, whatever its body is,
+     * for the methods [generated] left unmarked. The outlines follow the order the marks are tried
+     * in, so a method is in the first family that names it:
+     *
+     * - [UnreadShape.STATIC_FORWARDER]: a static, non-synthetic, non-bridge method whose `$` twin
+     *   declares an instance method of the same name and descriptor.
+     * - [UnreadShape.SCALA_ENUM]: a Scala 3 enum's plumbing ([enumOutline]).
+     * - [UnreadShape.CASE_CLASS]: a case class's own plumbing ([caseClassOutline]) and its
+     *   companion's ([companionOutline]).
+     * - [UnreadShape.SCALA_OBJECT]: a module class's `writeReplace()` and, in Scala 2, `readResolve()`
+     *   when the class declares no `writeReplace`; in Scala 2, only for a serializable module class.
+     *
+     * A method outside every outline, such as a field accessor or a hand-written overload with
+     * another descriptor, is the adopter's code.
+     */
+    private fun outlineOf(
+        shape: ClassShape,
+        lookup: (String) -> ByteArray?,
+        generated: Map<Pair<String, String>, GeneratedBy>,
+    ): Map<Pair<String, String>, UnreadShape> {
+        val open = shape.methods.filterKeys { it !in generated }
+        if (open.isEmpty()) return emptyMap()
+        val result = LinkedHashMap<Pair<String, String>, UnreadShape>()
+
+        fun add(
+            keys: Collection<Pair<String, String>>,
+            family: UnreadShape,
+            static: Boolean = false,
+        ) {
+            for (key in keys) if (open[key]?.isStatic == static) result.putIfAbsent(key, family)
+        }
+        add(staticForwarderOutline(shape, open, lookup), UnreadShape.STATIC_FORWARDER, static = true)
+        add(enumOutline(shape, lookup), UnreadShape.SCALA_ENUM)
+        caseClassOf(shape)?.let { add(caseClassOutline(it), UnreadShape.CASE_CLASS) }
+        if (shape.internalName.endsWith("$") && open.any { (key, method) -> !method.isStatic && key.first in COMPANION_METHODS }) {
+            readClass(partnerName(shape), lookup)?.let(::caseClassOf)?.takeIf { !it.isObject }?.let { partner ->
+                add(companionOutline(shape, partner), UnreadShape.CASE_CLASS)
+            }
+        }
+        // Scala 3 gives every object a writeReplace. Scala 2 writes one (2.13) or a readResolve
+        // (2.12) only for a serializable object, so a readResolve beside scalac's own writeReplace
+        // is the adopter's, while one beside a hand-written writeReplace may be 2.12's.
+        if (shape.isModuleClass && (shape.isScala3 || shape.isSerializable)) {
+            add(listOf(WRITE_REPLACE), UnreadShape.SCALA_OBJECT)
+            if (!shape.isScala3 && !shape.writeReplaceMatches()) add(listOf(READ_RESOLVE), UnreadShape.SCALA_OBJECT)
+        }
+        return result
+    }
+
+    private fun staticForwarderOutline(
+        shape: ClassShape,
+        open: Map<Pair<String, String>, MethodShape>,
+        lookup: (String) -> ByteArray?,
+    ): List<Pair<String, String>> {
+        val excluded = Opcodes.ACC_SYNTHETIC or Opcodes.ACC_BRIDGE
+        val statics = open.filter { (key, method) -> method.isStatic && method.access and excluded == 0 && key.first != "<clinit>" }
+        if (statics.isEmpty()) return emptyList()
+        val twin = readClass("${shape.internalName}$", lookup)?.takeIf { it.isModuleClass } ?: return emptyList()
+        return statics.keys.filter { twin.methods[it]?.isStatic == false }
+    }
+
+    /** The descriptors a `copy` or an `apply` returning [returnType] has: each primary constructor's parameters, an outer reference left out. */
+    private fun constructionDescriptors(
+        shape: ClassShape,
+        returnType: String,
+    ): List<String> =
+        shape.methods.keys
+            .filter { (name, descriptor) -> name == "<init>" && shape.isPrimaryConstructor(descriptor) }
+            .map { (_, descriptor) ->
+                val parameters = Type.getArgumentTypes(descriptor).toList()
+                val outer = if (parameters.firstOrNull()?.descriptor == shape.outerFieldDescriptor) 1 else 0
+                "(${parameters.drop(outer).joinToString("") { it.descriptor }})$returnType"
+            }
+
+    /**
+     * Mirrors [enumPlumbing]: the methods of an enum class, its companion, a singleton case and a
+     * parameterised case that the enum rules read, with the descriptors they read them with.
+     */
+    private fun enumOutline(
+        shape: ClassShape,
+        lookup: (String) -> ByteArray?,
+    ): List<Pair<String, String>> {
+        if (!shape.isScala || !shape.isScala3) return emptyList()
+        val string = "L$STRING;"
+        val objectType = "L$OBJECT;"
+        if (shape.isEnumClass()) {
+            return listOf(
+                "productIterator" to "()$ITERATOR",
+                "productPrefix" to "()$string",
+                "productElementNames" to "()$ITERATOR",
+                "productElementName" to "(I)$string",
+            )
+        }
+        if (shape.internalName.endsWith("$") && MIRROR_SUM in shape.interfaces) {
+            val enumClass = readClass(shape.internalName.removeSuffix("$"), lookup)?.takeIf { it.isEnumClass() } ?: return emptyList()
+            val enumType = "L${enumClass.internalName};"
+            return listOf(
+                "values" to "()[$enumType",
+                "valueOf" to "($string)$enumType",
+                "fromOrdinal" to "(I)$enumType",
+                "\$new" to "(I$string)$enumType",
+                "ordinal" to "($enumType)I",
+                "ordinal" to "($objectType)I",
+            )
+        }
+        val singleton = ENUM_VALUE in shape.interfaces && MIRROR_SINGLETON in shape.interfaces && shape.isFinal
+        if (!singleton && !shape.declaresConstantOrdinal()) return emptyList()
+        val enumClass = shape.superName?.let { readClass(it, lookup) }?.takeIf { it.isEnumClass() } ?: return emptyList()
+        val family = enumFamilyOf(enumClass, lookup) ?: return emptyList()
+        if (!singleton) {
+            val fits = shape.isFinal && ENUM_VALUE !in shape.interfaces && family.ordinalOf(shape.sourceName) >= 0
+            return if (fits) listOf("ordinal" to "()I") else emptyList()
+        }
+        if (!shape.isEnumSingletonOf(enumClass)) return emptyList()
+        val product = "L$PRODUCT;"
+        return listOf(
+            "canEqual" to "($objectType)Z",
+            "productArity" to "()I",
+            "productElement" to "(I)$objectType",
+            "productElementName" to "(I)$string",
+            "fromProduct" to "($product)L$MIRROR_SINGLETON;",
+            "fromProduct" to "($product)$objectType",
+            READ_RESOLVE,
+            "ordinal" to "()I",
+            "productPrefix" to "()$string",
+            "toString" to "()$string",
+            "hashCode" to "()I",
+        )
+    }
+
+    /**
+     * The members scalac writes for a case class, whatever their bodies: the Product and
+     * `equals`, `hashCode` and `toString` members, `copy` (not on a case object) with the primary
+     * constructor's parameters, and an accessor per element, Scala 3's `_N()` or Scala 2's
+     * `<field>$access$N()`. When the elements cannot be worked out, the accessors are the methods
+     * named in either spelling with no parameters.
+     */
+    private fun caseClassOutline(case: CaseClass): List<Pair<String, String>> {
+        val string = "L$STRING;"
+        val keys =
+            mutableListOf(
+                "canEqual" to "(L$OBJECT;)Z",
+                "productArity" to "()I",
+                "productElement" to "(I)L$OBJECT;",
+                "productElementName" to "(I)$string",
+                "productElementNames" to "()$ITERATOR",
+                "productIterator" to "()$ITERATOR",
+                "productPrefix" to "()$string",
+                "hashCode" to "()I",
+                "toString" to "()$string",
+            )
+        if (!case.isObject) {
+            keys += "equals" to "(L$OBJECT;)Z"
+            for (descriptor in constructionDescriptors(case.shape, "L${case.name};")) keys += "copy" to descriptor
+        }
+        val elements = case.elements
+        if (elements != null) {
+            for (element in elements) {
+                val descriptor = "()${element.type}"
+                keys +=
+                    if (case.shape.isScala3) {
+                        "_${element.index + 1}" to descriptor
+                    } else {
+                        "${element.name}\$access\$${element.index}" to
+                            descriptor
+                    }
+            }
+        } else {
+            val pattern = if (case.shape.isScala3) ELEMENT_ALIAS else ACCESS_ACCESSOR
+            keys +=
+                case.shape.methods.keys
+                    .filter { (name, descriptor) -> pattern.matches(name) && descriptor.startsWith("()") }
+        }
+        return keys
+    }
+
+    /** The members scalac writes in the companion of the case class [partner], whatever their bodies. */
+    private fun companionOutline(
+        companion: ClassShape,
+        partner: CaseClass,
+    ): List<Pair<String, String>> {
+        val partnerType = "L${partner.name};"
+        val scala3 = companion.isScala3
+        val keys = mutableListOf("toString" to "()L$STRING;")
+        for (descriptor in constructionDescriptors(partner.shape, partnerType)) keys += "apply" to descriptor
+        val empty = partner.elements?.isEmpty()
+        val unapply =
+            when {
+                empty == true -> listOf("Z")
+                empty == false -> listOf(if (scala3) partnerType else "Lscala/Option;")
+                scala3 -> listOf("Z", partnerType)
+                else -> listOf("Z", "Lscala/Option;")
+            }
+        for (result in unapply) keys += "unapply" to "($partnerType)$result"
+        if (scala3) {
+            keys += "fromProduct" to "(L$PRODUCT;)$partnerType"
+            keys += "fromProduct" to "(L$PRODUCT;)L$OBJECT;"
+        }
+        return keys
     }
 
     private fun declaresCompanionCandidate(shape: ClassShape): Boolean =
@@ -717,7 +1010,8 @@ internal object ScalaGeneratedMethods {
         lookup: (String) -> ByteArray?,
     ): EnumFamily? {
         val companion = readClass("${enumClass.internalName}$", lookup) ?: return null
-        if (!companion.isScala3 || !companion.isModuleClass || MIRROR_SUM !in companion.interfaces) return null
+        // An enum declared inside a class has a companion with no MODULE$, so a module class is not required.
+        if (!companion.isScala3 || MIRROR_SUM !in companion.interfaces) return null
         return EnumFamily(enumClass, companion, lookup)
     }
 

@@ -1,0 +1,38 @@
+# The Scala 3 compiler releases whose output the agent's shape rules were checked against
+# (ADR 0055). One release per line, as the .tasty header spells it after "Scala ". A Scala 3
+# class compiled by a release on this list that has a plumbing-named method the rules leave
+# unmarked has a hand-written one, unless the class can hold no hand-written plumbing (an enum's
+# companion or case class); a release off the list makes that method an unread shape.
+#
+# A release joins only after the fixture sweep passes for it:
+#   ./gradlew :test --tests '*ScalacMatrixTest*' -Potherlode.matrix.scalac=<releases>
+# with gradle.properties' Scala 2 releases kept in <releases>.
+3.3.3
+3.3.4
+3.3.5
+3.3.6
+3.3.7
+3.3.8
+3.4.0
+3.4.1
+3.4.2
+3.4.3
+3.5.0
+3.5.1
+3.5.2
+3.6.0
+3.6.1
+3.6.2
+3.6.3
+3.6.4
+3.7.0
+3.7.1
+3.7.2
+3.7.3
+3.7.4
+3.8.0
+3.8.1
+3.8.2
+3.8.3
+3.8.4
+3.9.0
