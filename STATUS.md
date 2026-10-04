@@ -284,7 +284,8 @@ Landed so far:
   declared edge's guard falls back to an instance that loaded the class,
   so the answer no longer depends on scan arrival order. The fallback
   became an identity match in the same change as the server's (server ADR
-  0032, amended 2026-10-04): the scan's own site key, role and case, never
+  0032, amended 2026-10-04; agent `352934e` and `4e093ae`, server
+  `4b42ff2` and `95c615f`): the scan's own site key, role and case, never
   a bare index, and nothing for an outcome the scan cannot tell apart.
   Left as accepted: merged indexes can collide inside a root site when
   one testkit hears different builds, which the version check in 3b makes
