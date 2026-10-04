@@ -269,10 +269,7 @@ class OtherlodeInstrumentationTest {
     }
 
     @Test
-    fun `a class ByteBuddy cannot redefine is skipped on load and reported with its reason`() {
-        // The static scanner's own side of this is pinned by StaticBaselineScannerTest. Both tiers
-        // have to reach the same answer for the same class, or one reports a class dead that the
-        // other would never have instrumented.
+    fun `a file facade named by JvmName is woven and counted, not skipped`() {
         val registry = ProbeRegistry()
         val config = AgentConfig.parse("includePackages=com.example.target")
         installOnly(registry, config)
@@ -281,24 +278,21 @@ class OtherlodeInstrumentationTest {
         val records =
             captureLogRecords(OtherlodeInstrumentation::class.java.name) {
                 val weird = Class.forName("com.example.target.WeirdName", true, loader)
-                assertEquals("hello", weird.getMethod("topLevelFunction").invoke(null), "the class must still load and run")
+                repeat(2) { assertEquals("hello", weird.getMethod("topLevelFunction").invoke(null)) }
             }
 
-        assertTrue("com.example.target.WeirdName" !in registry.registeredClassNames(), "it is never registered, so it has no probes")
-        val skipped = registry.manifest(ResourceAttributes("test", null, "instance-1", null, "run-1")).skippedClasses.single()
-        assertEquals("com.example.target.WeirdName", skipped.className)
-        // The exact reason, not just "JvmName": letting the class through to ByteBuddy would fail
-        // it inside make() instead, and that failure's own message also names the annotation. Only
-        // the exact string, plus the absence of a failure warning, says the type matcher turned it
-        // away before ByteBuddy committed to rebasing it.
-        assertEquals(
-            "@kotlin.jvm.JvmName is not a legal annotation on a class per its own @Target",
-            skipped.reason,
-        )
-        assertTrue(
-            records.none { "instrumentation failed for" in it.message },
-            "the class is turned away by the type matcher, never by a transform failure",
-        )
+        assertTrue("com.example.target.WeirdName" in registry.registeredClassNames())
+        val manifest = registry.manifest(ResourceAttributes("test", null, "instance-1", null, "run-1"))
+        assertTrue(manifest.skippedClasses.isEmpty(), "${manifest.skippedClasses}")
+        val probe = manifest.probes.single { it.className == "com.example.target.WeirdName" && it.methodName == "topLevelFunction" }
+        val hits =
+            registry
+                .computeDeltaBatch(ResourceAttributes("test", null, "i-1", null, "run-1"))
+                .batch.deltas
+                .single { it.classId == probe.classId && it.probeIndex == probe.probeIndex }
+                .hitsTotal
+        assertEquals(2L, hits)
+        assertTrue(records.none { it.level.intValue() >= JulLevel.WARNING.intValue() }, "${records.map { it.message }}")
     }
 
     private fun fixtureLoader() = FixtureClassLoader(arrayOf(File("build/classes/java/test").toURI().toURL()), javaClass.classLoader)

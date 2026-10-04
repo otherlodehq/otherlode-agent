@@ -213,6 +213,27 @@ internal sealed class ProbeArrayForm : ProbeArrayLoad {
                 UNKNOWN_VERSION
             }
 
+        /**
+         * Whether a class woven at [wovenVersion] can be woven again in the same form from bytes at
+         * [receivedVersion]: a form chosen for one version may be illegal at the other, a dynamic
+         * constant below 55 or a private accessor on an interface below 52.
+         */
+        fun sameForm(
+            wovenVersion: Int,
+            receivedVersion: Int,
+            isInterface: Boolean,
+        ): Boolean = kindOf(wovenVersion, isInterface) == kindOf(receivedVersion, isInterface)
+
+        private fun kindOf(
+            majorVersion: Int,
+            isInterface: Boolean,
+        ): Int =
+            when {
+                majorVersion >= DYNAMIC_CONSTANT_VERSION -> 2
+                isInterface && majorVersion < INTERFACE_PRIVATE_METHOD_VERSION -> 0
+                else -> 1
+            }
+
         /** The form for [type], a class of [majorVersion] whose registered layout is [layoutHash] with [probeCount] probes. */
         fun of(
             majorVersion: Int,

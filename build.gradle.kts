@@ -34,6 +34,8 @@ allprojects {
 }
 
 evaluationDependsOn(":bootstrap")
+evaluationDependsOn(":asm-subroutines")
+val asmSubroutinesJar = project(":asm-subroutines").tasks.named("shadowJar")
 evaluationDependsOn(":fixtures-scala3")
 evaluationDependsOn(":fixtures-scala2")
 evaluationDependsOn(":fixtures-kotlin-jvm-default-disable")
@@ -57,6 +59,11 @@ dependencies {
     // branch-tracking tier's AsmVisitorWrapper uses directly instead of pulling
     // in a second, independently-versioned ASM dependency.
     implementation("net.bytebuddy:byte-buddy:1.18.12")
+
+    // ASM's JSRInlinerAdapter, relocated into Byte Buddy's ASM package, which bundles the core
+    // classes but not this one. The branch tier computes frames, which cannot handle the
+    // jsr/ret of a class file below version 50, so such a class is inlined first.
+    implementation(files(asmSubroutinesJar))
 
     // EndpointModule, AdviceBinder, and the ByteBuddy-facing types a per-framework endpoint
     // module is written against. A per-framework subproject depends on this module and never on
@@ -171,6 +178,10 @@ val verifyAgentJar by tasks.registering {
             check(bootstrapResourcePath in names) {
                 "agent jar is missing the embedded bootstrap holder at $bootstrapResourcePath"
             }
+            // The subroutine inliner reaches the jar from :asm-subroutines, relocated twice; without it every
+            // class below version 51 with a subroutine fails to weave.
+            val inliner = "dev/otherlode/shaded/bytebuddy/jar/asm/commons/JSRInlinerAdapter.class"
+            check(inliner in names) { "agent jar is missing ASM's subroutine inliner at $inliner" }
             val loose = names.filter { it.startsWith("dev/otherlode/bootstrap/") && it.endsWith(".class") }
             check(loose.isEmpty()) {
                 "agent jar must not carry the bootstrap holder as loose classes, found: $loose"

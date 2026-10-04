@@ -633,6 +633,29 @@ and pre-existing: an adopter class in a named module must read the boot
 loader's unnamed module to reach the holder, as the old prelude did; nothing
 adds that edge for adopter modules.
 
+Chunk 2 landed: type validation is off for the method tier; the endpoint
+modules and the lambda-factory hook keep it, since `DECORATE` never reaches
+the failing check and the class-version guard is the only one on their
+advice. The copied annotation check is gone from the type matcher and the
+scanner, whose statically unsafe list stays on the wire, empty, until chunk 3.
+ASM's `JSRInlinerAdapter` (Byte Buddy ships no tree or inliner) comes from a
+new `:asm-subroutines` module relocating asm-commons and asm-tree 9.10.1, Byte
+Buddy's own ASM release, into its ASM package; it runs below class-file
+version 51, where `jsr` is legal (JVMS 4.9.1), on the analysis bytes and as the
+outermost visitor of the rewrite. `WovenClassVerificationTest` defines and
+initialises every woven corpus class beside its unwoven twin and a fixture
+matrix at versions 45 to 69. The review found a re-weave writing a dynamic
+constant into bytes another tool downgraded to version 52, a
+`ClassFormatError` nobody logged: a re-weave whose arriving version needs a
+different probe form is refused. It also tightened the verifier (a woven
+`VerifyError` or `ClassFormatError` always fails it, two failures must share a
+root type, every class that fails to weave must name a missing type, per-corpus
+floors just under the measured counts), moved the inliner's cut-off from 50 to
+51, added a branchless old class and a used annotation type to the matrix, and
+restored a test that a class which failed to weave is left alone on
+retransformation. A review harness over junit 3.8.1 and xerces 2.11 wove all
+33 of their subroutine classes.
+
 ### HotSwap of a woven class with changed code: to grill
 
 Raised 2026-10-04 while landing ADR 0060. A woven class whose class file

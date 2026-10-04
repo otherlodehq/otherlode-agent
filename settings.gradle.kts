@@ -4,6 +4,7 @@ plugins {
 rootProject.name = "otherlode-agent"
 
 include("bootstrap")
+include("asm-subroutines")
 include("wire")
 include("fixtures-scala3")
 include("fixtures-scala2")

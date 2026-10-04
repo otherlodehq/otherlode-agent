@@ -147,13 +147,11 @@ open class LoadedClassSweep(
      * class carries its own `/0x...` suffix in its name, so it could not be joined to anything a
      * collector holds even if it were a blind spot.
      *
-     * One check from the type matcher is left out on purpose: whether the class carries an
-     * annotation that is illegal on a type. Reading a class's annotations resolves each
-     * annotation's own type and can load classes, and a sweep must not load anything in order to
-     * look. A class turned away for that reason is recorded as skipped, so it never reaches here.
-     * The same limit applies to a multi-file part. The type matcher takes that one kind of
-     * synthetic class, but only its `kotlin.Metadata` tells it apart, so the sweep drops every
-     * synthetic class. A part that reached no transformer is not reported.
+     * A multi-file part is left out on purpose. The type matcher takes that one kind of synthetic
+     * class, but only its `kotlin.Metadata` tells it apart, and reading a class's annotations
+     * resolves each annotation's own type and can load classes, which a sweep must not do in order
+     * to look. So the sweep drops every synthetic class, and a part that reached no transformer is
+     * not reported.
      */
     private fun isCandidate(loaded: Class<*>): Boolean {
         if (loaded.isArray || loaded.isPrimitive || loaded.isHidden) return false

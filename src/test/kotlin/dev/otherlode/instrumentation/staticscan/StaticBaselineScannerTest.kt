@@ -39,6 +39,35 @@ class StaticBaselineScannerTest {
 
     private fun classBytes(path: String): ByteArray = File("build/classes/$path").readBytes()
 
+    /** An annotation type named [internalName], with a static field and its initialiser when [withInitializer] is set. */
+    private fun annotationTypeBytes(
+        internalName: String,
+        withInitializer: Boolean,
+    ): ByteArray {
+        val cw = ClassWriter(ClassWriter.COMPUTE_FRAMES)
+        cw.visit(
+            Opcodes.V17,
+            Opcodes.ACC_PUBLIC or Opcodes.ACC_INTERFACE or Opcodes.ACC_ABSTRACT or Opcodes.ACC_ANNOTATION,
+            internalName,
+            null,
+            "java/lang/Object",
+            arrayOf("java/lang/annotation/Annotation"),
+        )
+        cw.visitSource("Annotation.java", null)
+        if (withInitializer) {
+            cw.visitField(Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC or Opcodes.ACC_FINAL, "ANSWER", "I", null, null).visitEnd()
+            val mv = cw.visitMethod(Opcodes.ACC_STATIC, "<clinit>", "()V", null, null)
+            mv.visitCode()
+            mv.visitIntInsn(Opcodes.BIPUSH, 42)
+            mv.visitFieldInsn(Opcodes.PUTSTATIC, internalName, "ANSWER", "I")
+            mv.visitInsn(Opcodes.RETURN)
+            mv.visitMaxs(0, 0)
+            mv.visitEnd()
+        }
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
     private val sampleTargetBytes = classBytes("java/test/com/example/target/SampleTarget.class")
     private val otherTargetBytes = classBytes("java/test/com/example/other/OtherTarget.class")
     private val weirdNameBytes = classBytes("kotlin/test/com/example/target/WeirdName.class")
@@ -265,22 +294,40 @@ class StaticBaselineScannerTest {
     }
 
     @Test
-    fun `reports a class with an illegal-target annotation as statically unsafe, not declared`() {
+    fun `declares a class annotated with JvmName, and reports nothing as statically unsafe`() {
         val root = directoryRoot("com/example/target/WeirdName.class" to weirdNameBytes)
         val scanner = StaticBaselineScanner(listOf("com.example.target"))
 
         val result = scanner.scan(listOf(root))
 
-        val unsafe = result.staticallyUnsafeClasses.single { it.className == "com.example.target.WeirdName" }
-        assertTrue("JvmName" in unsafe.reason)
-        assertTrue(result.declaredClasses.none { it.className == "com.example.target.WeirdName" })
+        assertTrue(result.declaredClasses.any { it.className == "com.example.target.WeirdName" })
+        assertTrue(result.staticallyUnsafeClasses.isEmpty())
     }
 
     @Test
-    fun `an annotation whose type cannot be resolved leaves the class declared, not unsafe or unreadable`() {
+    fun `an annotation type with nothing to probe is unprobed, and one with a static initialiser is declared`() {
+        val plain = annotationTypeBytes("com/example/target/PlainAnnotation", withInitializer = false)
+        val withClinit = annotationTypeBytes("com/example/target/InitAnnotation", withInitializer = true)
+        val root =
+            directoryRoot(
+                "com/example/target/PlainAnnotation.class" to plain,
+                "com/example/target/InitAnnotation.class" to withClinit,
+            )
+        val scanner = StaticBaselineScanner(listOf("com.example.target"))
+
+        val result = scanner.scan(listOf(root))
+
+        assertEquals(listOf("com.example.target.PlainAnnotation"), result.unprobedClasses.map { it.className })
+        assertEquals(listOf("com.example.target.InitAnnotation"), result.declaredClasses.map { it.className })
+        assertTrue(result.staticallyUnsafeClasses.isEmpty())
+        assertTrue(result.unreadableClasses.isEmpty())
+    }
+
+    @Test
+    fun `a class whose annotation types cannot be resolved is declared, not unreadable`() {
         // Stands in for a Spring Boot fat jar, where the system loader cannot see the annotation
-        // types packed under BOOT-INF/lib: ByteBuddy's type pool drops the unresolvable annotation
-        // rather than failing, so @JvmName is invisible here and the class is judged safe.
+        // types packed under BOOT-INF/lib: ByteBuddy's type pool drops an annotation it cannot
+        // resolve, so the class is described without it and declared.
         val root = directoryRoot("com/example/target/WeirdName.class" to weirdNameBytes)
         val scanner = StaticBaselineScanner(listOf("com.example.target"), supportingTypesLocator = ClassFileLocator.NoOp.INSTANCE)
 

@@ -1,7 +1,6 @@
 package dev.otherlode.instrumentation
 
 import dev.otherlode.export.KotlinKind
-import net.bytebuddy.description.annotation.AnnotationDescription
 import net.bytebuddy.description.method.MethodDescription
 import net.bytebuddy.description.type.TypeDescription
 import net.bytebuddy.matcher.ElementMatcher
@@ -11,7 +10,6 @@ import net.bytebuddy.matcher.ElementMatchers.isBridge
 import net.bytebuddy.matcher.ElementMatchers.isNative
 import net.bytebuddy.matcher.ElementMatchers.isTypeInitializer
 import net.bytebuddy.matcher.ElementMatchers.not
-import java.lang.annotation.ElementType
 
 /**
  * Which types and methods this agent instruments, and which types it refuses to touch at all.
@@ -19,7 +17,7 @@ import java.lang.annotation.ElementType
  * Shared between [OtherlodeInstrumentation] (matching a type as it loads) and the static baseline
  * scanner (matching a type read directly from bytecode, never loaded). Both need the exact same
  * answer for the exact same type, or a class could be classified as confidently dead by one tier
- * while the other tier would have skipped it as unsafe to instrument. This is also why
+ * while the other tier would have left it alone. This is also why
  * [isIncluded] and [typeNameMatcher] take both an include list and an exclude list rather than
  * offering an include-only overload: an overload that silently ignored excludes would be exactly
  * how the two tiers could drift apart.
@@ -533,20 +531,4 @@ object TypeMatchPolicy {
     private val SCALA3_METHOD_OWNED_LAMBDA_BODY_NAME = Regex("^.+\\\$\\\$anonfun\\\$\\d+$")
 
     private val KOTLINC_LAMBDA_BODY_NAME = Regex("^.+\\\$lambda\\\$\\d+(\\\$\\d+)*$")
-
-    /**
-     * The declared annotation that makes [typeDescription] unsafe for ByteBuddy to redefine, or
-     * null if there is none.
-     *
-     * ByteBuddy refuses to redefine any type carrying a declared annotation whose own `@Target`
-     * does not legally support [ElementType.TYPE]. Kotlin's compiler attaches
-     * `@kotlin.jvm.JvmName` directly onto the class file for a `@file:JvmName`-annotated source
-     * file, even though that annotation's own `@Target` only covers functions, properties, and
-     * files, not classes. The live type matcher turns such a class away, since a matched class is
-     * rebased and the rebase throws even when the transform changes nothing. The static scanner
-     * applies the same check, so the class lands in its unsafe bucket instead of being declared,
-     * which would read as never loaded.
-     */
-    fun unsafeAnnotation(typeDescription: TypeDescription): AnnotationDescription? =
-        typeDescription.declaredAnnotations.firstOrNull { !it.isSupportedOn(ElementType.TYPE) }
 }

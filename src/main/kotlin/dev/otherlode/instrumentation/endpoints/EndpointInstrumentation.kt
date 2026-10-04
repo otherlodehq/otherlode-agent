@@ -22,12 +22,10 @@ import java.util.concurrent.ConcurrentHashMap
  * Wires every discovered [EndpointModule]'s registration and dispatch advice into the JVM.
  *
  * This is a separate `AgentBuilder`/transformer pipeline from
- * [dev.otherlode.instrumentation.OtherlodeInstrumentation]: the method tier defines a
- * field and rewrites branches, which needs `REBASE`/`REDEFINE`, while an endpoint module only ever
- * adds advice to an existing method body. Using `DECORATE` for this pipeline (see [install]) keeps
- * an endpoint module's classes out of the annotation-legality validation that
- * `REBASE`/`REDEFINE` runs, the one [OtherlodeInstrumentation] otherwise has to work around class by
- * class for `@file:JvmName`-style classes.
+ * [dev.otherlode.instrumentation.OtherlodeInstrumentation]: the method tier can add a field and
+ * methods (below class-file version 55) and rewrites branches, which needs `REBASE`/`REDEFINE`,
+ * while an endpoint module only ever adds advice to an existing method body, which `DECORATE`
+ * supports (see [install]).
  *
  * When any module names a handler interface, [install] also installs a [LambdaFactoryHook], so a
  * handler written as a lambda or a method reference can be named. [lambdaFactoryShape]
@@ -109,9 +107,10 @@ class EndpointInstrumentation(
             AgentBuilder
                 .Default()
                 // DECORATE only weaves advice into existing method bodies; it never adds a field
-                // or a type initializer, and it skips the annotation-legality validation that
-                // REBASE/REDEFINE runs, which is what trips on a class carrying an
-                // illegally-targeted annotation such as @kotlin.jvm.JvmName. See ADR 0007.
+                // or a type initializer. ByteBuddy's type validation is left on here: DECORATE
+                // never describes the type for it, so what remains is the check of the written
+                // bytes against the class-file version, the one guard on the advice an endpoint
+                // module weaves.
                 .with(AgentBuilder.TypeStrategy.Default.DECORATE)
                 .with(AgentBuilder.InitializationStrategy.NoOp.INSTANCE)
                 // Describes an already-loaded class from the bytes passed in, which are the ones

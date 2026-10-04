@@ -13,7 +13,7 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class StaticBaselineMismatchDetector {
     /**
-     * Every class name the static scan saw, in any bucket (declared, unsafe, unreadable, unprobed).
+     * Every class name the static scan saw, in any bucket (declared, unreadable, unprobed).
      * A class the scan saw but could not classify is still not a blind spot. Null until the scan
      * for this process completes; no comparison is possible before then.
      */

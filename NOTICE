@@ -13,6 +13,9 @@ licenses/ in the source tree.
   Apache License 2.0. Copyright 2014 - Present Rafael Winterhalter.
   Byte Buddy itself bundles ASM (org.ow2.asm), BSD 3-Clause;
   see licenses/asm/LICENSE.
+  The jar also carries ASM's JSRInlinerAdapter and tree classes
+  (org.ow2.asm:asm-commons and asm-tree), BSD 3-Clause, relocated into
+  Byte Buddy's copy of the ASM package.
 - Protocol Buffers Java runtime (com.google.protobuf:protobuf-java)
   BSD 3-Clause. Copyright 2008 Google Inc.
 - Kotlin Standard Library (org.jetbrains.kotlin:kotlin-stdlib)

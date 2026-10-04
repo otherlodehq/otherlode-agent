@@ -59,8 +59,9 @@ class ClassBytesCapture(
     private companion object {
         /**
          * Bounds how many classes' bytes one thread can hold at once. Entries are consumed by the
-         * transform that follows them, so this only ever holds candidates ByteBuddy declined to
-         * transform (an unsafe annotation, no matching methods) until they age out.
+         * transform that follows them, so this only ever holds candidates the type matcher turned
+         * away by shape (synthetic, generated at runtime, a coroutine continuation) or classes
+         * already loaded that this agent never wove, until they age out.
          */
         const val MAX_ENTRIES_PER_THREAD = 64
     }

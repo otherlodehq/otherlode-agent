@@ -16,7 +16,7 @@ import dev.otherlode.export.UnreadableClass
  * [dev.otherlode.export.BranchSite.chunkWeight], plus one for its own class record, plus one per
  * referenced class on its methods and on the class itself, mirroring the weighting
  * [dev.otherlode.registry.ProbeRegistry] gives a manifest class for the same reason; every
- * unsafe, unreadable, or unprobed class counts as one.
+ * unreadable or unprobed class counts as one.
  * Classes are never split across chunks, so a declared class heavier than [maxEntriesPerChunk]
  * gets a chunk of its own. Every chunk carries the same resource and [scannedAt], and its own
  * `chunkIndex` out of `chunkCount`, so a collector can tell when it holds the whole scan.

@@ -47,6 +47,7 @@ import net.bytebuddy.description.modifier.Visibility
 import net.bytebuddy.description.type.TypeDescription
 import net.bytebuddy.dynamic.ClassFileLocator
 import net.bytebuddy.dynamic.DynamicType
+import net.bytebuddy.dynamic.scaffold.TypeValidation
 import net.bytebuddy.implementation.Implementation
 import net.bytebuddy.implementation.bytecode.Addition
 import net.bytebuddy.implementation.bytecode.ByteCodeAppender
@@ -213,7 +214,14 @@ class OtherlodeInstrumentation(
             // weave advice onto it. Every other tier already gates what it touches through its
             // own explicit matchers (methodMatcher, typeMatcher), so lifting ByteBuddy's blanket
             // exclusion here does not widen what actually gets instrumented.
-            .Default(ByteBuddy().ignore(none()))
+            //
+            // Validation is off. It checks the described type against rules the JVM does not
+            // enforce on a class it has already accepted, and every check it made on this agent's
+            // classes fired on the adopter's own bytes: an annotation whose @Target does not list
+            // the declaration it sits on, a receiver type it cannot resolve. It also rejects bytecode
+            // the class-file version does not allow, which the verifier test in the build covers
+            // for what this agent writes.
+            .Default(ByteBuddy().with(TypeValidation.DISABLED).ignore(none()))
             .ignore(any<TypeDescription>(), isBootstrapClassLoader<ClassLoader>().or(isExtensionClassLoader()))
             .or(ignoredNames())
             // A class already loaded is left alone unless this agent wove it; see isWoven.
@@ -272,7 +280,8 @@ class OtherlodeInstrumentation(
      */
     private class ReweaveRefused(
         className: String,
-    ) : IllegalStateException("otherlode: the class file of $className differs from the one it was woven from")
+        val reason: String,
+    ) : IllegalStateException("otherlode: $reason; $className cannot be woven again")
 
     /** Removes both transformers [install] registered. */
     fun uninstall(
@@ -399,7 +408,7 @@ class OtherlodeInstrumentation(
             val plan = if (alreadyLoaded.get() == true) wovenClasses.find(classLoader, typeName) else null
             when {
                 throwable is ReweaveRefused -> {
-                    if (plan?.firstLog(WeavePlan.LOGGED_REFUSAL) != false) logRefusal(typeName)
+                    if (plan?.firstLog(WeavePlan.LOGGED_REFUSAL) != false) logRefusal(throwable.reason)
                 }
 
                 alreadyLoaded.get() == true -> {
@@ -451,42 +460,7 @@ class OtherlodeInstrumentation(
     }
 
     private fun typeMatcher(): ElementMatcher.Junction<TypeDescription> =
-        TypeMatchPolicy
-            .typeNameMatcher(config.includePackages, config.excludePackages)
-            .and { typeDescription -> isSafeToInstrument(typeDescription) }
-
-    /**
-     * `AgentBuilder` commits to rebasing a type the moment it matches `.type(...)`. This happens
-     * before [instrument] (the `.transform()` callback) ever runs, so a type excluded here never
-     * reaches that callback at all.
-     *
-     * That early commitment is why this is the only point that can actually prevent the crash
-     * described below, rather than just contain its aftermath. Returning the original builder
-     * unchanged from [instrument] does not help: ByteBuddy's later `.make()` call still crashes
-     * on the already-rebased type regardless.
-     *
-     * ByteBuddy refuses to redefine any type that carries a declared annotation whose own
-     * `@Target` does not legally support `ElementType.TYPE`. It throws `IllegalStateException`
-     * deep inside its own validation. Kotlin's compiler attaches `@kotlin.jvm.JvmName` directly
-     * onto the class file for any `@file:JvmName`-annotated source file, even though that
-     * annotation's own `@Target` only covers functions, properties, and files, not classes. This
-     * trips the same check: legal bytecode, but not a shape ByteBuddy's redefinition path
-     * accepts.
-     *
-     * A class this agent already wove is never turned away here: its probes were delivered at the
-     * first weave, so recording it as skipped would contradict them. If the bytes that arrive for it
-     * carry such an annotation, ByteBuddy's validation fails and the listener logs the failed
-     * re-weave instead.
-     */
-    private fun isSafeToInstrument(typeDescription: TypeDescription): Boolean {
-        if (alreadyLoaded.get() == true) return true
-        val unsupported = TypeMatchPolicy.unsafeAnnotation(typeDescription) ?: return true
-        registry.recordSkipped(
-            typeDescription.name,
-            "@${unsupported.annotationType.name} is not a legal annotation on a class per its own @Target",
-        )
-        return false
-    }
+        TypeMatchPolicy.typeNameMatcher(config.includePackages, config.excludePackages)
 
     /**
      * Computes [typeDescription]'s probes from its class file and weaves them into [builder]. A
@@ -825,15 +799,34 @@ class OtherlodeInstrumentation(
         typeDescription: TypeDescription,
         classLoader: ClassLoader?,
     ): DynamicType.Builder<*> {
-        val plan = wovenClasses.find(classLoader, typeDescription.name) ?: throw ReweaveRefused(typeDescription.name)
+        val name = typeDescription.name
+        val plan = wovenClasses.find(classLoader, name) ?: throw ReweaveRefused(name, "no plan was stored for $name")
         // take is destructive, so it must not be called a second time for the same class.
-        val received = classBytesCapture?.take(typeDescription.internalName)
+        val received = classBytesCapture?.take(typeDescription.internalName)?.let(SubroutineInliner::inline)
         if (plan.hasClassFileHash) {
             val classFile = locateClassBytes(typeDescription, classLoader)
             if (classFile != null && WovenClasses.hashOf(classFile) != plan.classFileHash) {
-                if (plan.majorVersion < ProbeArrayForm.DYNAMIC_CONSTANT_VERSION) throw ReweaveRefused(typeDescription.name)
-                return refuseWithoutField(builder, typeDescription.name, plan)
+                return refuse(
+                    builder,
+                    name,
+                    plan,
+                    "the class file of $name differs from the one it was woven from, as after a recompile or a HotSwap",
+                )
             }
+        }
+        // The plan's form must stay legal for the bytes that arrive: a dynamic constant below
+        // version 55, or a private accessor on an interface below 52, would be a ClassFormatError.
+        val receivedVersion = received?.let(ProbeArrayForm::majorVersionOf)
+        if (receivedVersion != null &&
+            !ProbeArrayForm.sameForm(plan.majorVersion, receivedVersion, typeDescription.isInterface)
+        ) {
+            return refuse(
+                builder,
+                name,
+                plan,
+                "the bytes for $name arrive at class-file version $receivedVersion, where it was woven at " +
+                    "${plan.majorVersion}, and its probes' form cannot follow",
+            )
         }
         val view = plan.view()
         val pairing = SitePairing.ofStored(view.sequences, received)
@@ -852,14 +845,28 @@ class OtherlodeInstrumentation(
         return weave(builder, typeDescription, plan, view, pairing, reweaving = true)
     }
 
-    /** Logs that [className]'s class file changed under a woven class, so the redefinition is refused. */
-    private fun logRefusal(className: String) =
+    /** Logs that a woven class cannot be woven again, for [reason], so the redefinition is refused. */
+    private fun logRefusal(reason: String) =
         log.log(
             Level.WARNING,
-            "otherlode: the class file of $className differs from the one it was woven from, as after a recompile or a " +
-                "HotSwap; it cannot be woven again, so the JVM refuses the redefinition or retransformation, and the " +
-                "class keeps running with its probes",
+            "otherlode: $reason; it cannot be woven again, so the JVM refuses the redefinition or retransformation, " +
+                "and the class keeps running with its probes",
         )
+
+    /**
+     * Refuses a re-weave of the class [plan] describes, for [reason]. A class with a probe field
+     * throws [ReweaveRefused], handing the JVM no woven bytes, which lack the field it has; one woven
+     * with a dynamic constant has no field to miss, so [refuseWithoutField] adds one instead.
+     */
+    private fun refuse(
+        builder: DynamicType.Builder<*>,
+        className: String,
+        plan: WeavePlan,
+        reason: String,
+    ): DynamicType.Builder<*> {
+        if (plan.majorVersion < ProbeArrayForm.DYNAMIC_CONSTANT_VERSION) throw ReweaveRefused(className, reason)
+        return refuseWithoutField(builder, reason, plan)
+    }
 
     /**
      * Refuses a re-weave of a class woven with a dynamic constant, which has no probe field whose
@@ -870,10 +877,10 @@ class OtherlodeInstrumentation(
      */
     private fun refuseWithoutField(
         builder: DynamicType.Builder<*>,
-        className: String,
+        reason: String,
         plan: WeavePlan,
     ): DynamicType.Builder<*> {
-        if (plan.firstLog(WeavePlan.LOGGED_REFUSAL)) logRefusal(className)
+        if (plan.firstLog(WeavePlan.LOGGED_REFUSAL)) logRefusal(reason)
         // Public static final, the one shape a field may take on an interface as well as a class.
         return builder.defineField(
             MethodEntryAdvice.REFUSAL_MARKER_FIELD,
@@ -999,6 +1006,10 @@ class OtherlodeInstrumentation(
                         .on { method -> (method.internalName to method.descriptor) in bindings },
                 )
         }
+
+        // Added last, so it is the first visitor to see a method read from the class: see
+        // SubroutineInliner.wrapper.
+        instrumented = instrumented.visit(SubroutineInliner.wrapper())
 
         return instrumented
     }
@@ -1199,7 +1210,7 @@ class OtherlodeInstrumentation(
         classLoader: ClassLoader?,
     ): ClassBytesSource {
         // take is destructive, so it must not be called a second time for the same class.
-        val received = classBytesCapture?.take(typeDescription.internalName)
+        val received = classBytesCapture?.take(typeDescription.internalName)?.let(SubroutineInliner::inline)
         val classFile = locateClassBytes(typeDescription, classLoader)
         if (classFile == null && received != null) {
             log.log(Level.DEBUG, "otherlode: no class file found for ${typeDescription.name}; its shape is read from the received bytes")
@@ -1401,7 +1412,7 @@ class OtherlodeInstrumentation(
         // rather than failing the class over a resource it could do without.
         return try {
             val resolution = locator.locate(typeDescription.name)
-            if (resolution.isResolved) resolution.resolve() else null
+            if (resolution.isResolved) SubroutineInliner.inline(resolution.resolve()) else null
         } catch (_: Exception) {
             null
         }

@@ -8,6 +8,7 @@ import dev.otherlode.export.StaticallyUnsafeClass
 import dev.otherlode.export.UnprobedClass
 import dev.otherlode.export.UnreadableClass
 import dev.otherlode.instrumentation.ScalaClassDetector
+import dev.otherlode.instrumentation.SubroutineInliner
 import dev.otherlode.instrumentation.TypeMatchPolicy
 import dev.otherlode.instrumentation.branch.BranchSiteAnalyzer
 import dev.otherlode.instrumentation.branch.ScalaReleases
@@ -20,7 +21,8 @@ import java.lang.System.Logger.Level
 import java.util.jar.JarFile
 
 /**
- * What one static baseline scan found. [ownClassNames] is every class name the scan saw in a
+ * What one static baseline scan found. [staticallyUnsafeClasses] is always empty: the payload
+ * carries the list, and no class is judged unsafe to instrument. [ownClassNames] is every class name the scan saw in a
  * directory root or under `BOOT-INF/classes`/`WEB-INF/classes`, in scope or not: the adopter's own
  * code. [flatJarClassNames] is every class name it saw at the root of a jar, which may be the
  * adopter's own jar or a dependency on a flat classpath. Both are kept only to filter the scan's
@@ -87,13 +89,12 @@ class StaticBaselineScanner(
         /** One parsed-table cache per scan: a class many others reference is parsed once, not once per referencing class. */
         val tableCache = BranchSiteAnalyzer.CrossClassTableCache(SCAN_TABLE_CACHE_ENTRIES)
         val declared = mutableListOf<DeclaredClass>()
-        val unsafe = mutableListOf<StaticallyUnsafeClass>()
         val unreadable = mutableListOf<UnreadableClass>()
         val unprobed = mutableListOf<UnprobedClass>()
         val ownClassNames = HashSet<String>()
         val flatJarClassNames = HashSet<String>()
 
-        fun toResult() = StaticScanResult(declared, unsafe, unreadable, unprobed, ownClassNames, flatJarClassNames)
+        fun toResult() = StaticScanResult(declared, emptyList(), unreadable, unprobed, ownClassNames, flatJarClassNames)
     }
 
     /**
@@ -270,15 +271,6 @@ class StaticBaselineScanner(
             }
             val typeDescription = resolution.resolve()
             if (!typeNameMatcher.matches(typeDescription)) return
-            val unsafeAnnotation = TypeMatchPolicy.unsafeAnnotation(typeDescription)
-            if (unsafeAnnotation != null) {
-                buckets.unsafe +=
-                    StaticallyUnsafeClass(
-                        className,
-                        "@${unsafeAnnotation.annotationType.name} is not a legal annotation on a class per its own @Target",
-                    )
-                return
-            }
             val scanned = declaredMethodsOf(typeDescription, className, locator, resources, buckets.tableCache)
             if (scanned.methods.isEmpty()) {
                 buckets.unprobed += UnprobedClass(className, "no concrete methods to probe")
@@ -357,7 +349,7 @@ class StaticBaselineScanner(
         val classBytes =
             try {
                 val resolution = locator.locate(className)
-                if (resolution.isResolved) resolution.resolve() else null
+                if (resolution.isResolved) SubroutineInliner.inline(resolution.resolve()) else null
             } catch (_: IOException) {
                 null
             }
@@ -459,21 +451,11 @@ class StaticBaselineScanner(
 
     /**
      * A root's own locator only has the bytes for classes physically inside that root. Resolving
-     * a type can still need a supporting type's own bytecode. Checking whether a declared
-     * annotation's `@Target` permits [java.lang.annotation.ElementType.TYPE] needs the
-     * annotation's own class, which usually lives in a library jar elsewhere on the classpath, not
-     * in the root of the class that uses it. Falling back to [supportingTypesLocator] (the system
+     * a type can still need a supporting type's own bytecode, such as a supertype that lives in a
+     * library jar elsewhere on the classpath. Falling back to [supportingTypesLocator] (the system
      * classloader by default) resolves that without ever loading the type actually being scanned:
      * [ClassFileLocator.ForClassLoader] reads bytecode as a classloader resource, the same as any
      * other locator here, rather than calling `Class.forName`.
-     *
-     * When even the fallback cannot find an annotation's type, ByteBuddy's type pool drops that
-     * annotation from the class's declared annotations rather than failing, so the class is judged
-     * safe and declared. That is the right outcome: a skipped class always shows up in the
-     * manifest's skipped list when it loads, so declaring it here can never produce a false
-     * "never loaded". What is lost is only the "statically unsafe" label. This is the situation
-     * inside a Spring Boot fat jar, where the system loader sees `BOOT-INF/classes` but not the
-     * annotation types packed under `BOOT-INF/lib`.
      *
      * Every pool built over such a locator resolves lazily: a type it cannot find still answers
      * to its name, and only fails when a member or annotation is asked for. The type matcher's

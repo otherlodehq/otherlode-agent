@@ -242,11 +242,11 @@ class RetransformationInstrumentationTest {
     fun `a retransformation of a class this agent did not weave succeeds and changes nothing`() {
         val registry = CountingRegistry()
         val outOfScope = "$TARGET.SampleTarget"
-        val skipped = "$TARGET.WeirdName"
-        install(AgentConfig.parse("includePackages=$TARGET,excludePackages=$outOfScope"), registry)
+        val alsoOutOfScope = "$TARGET.WeirdName"
+        install(AgentConfig.parse("includePackages=$TARGET,excludePackages=$outOfScope;$alsoOutOfScope"), registry)
         val loader = fixtureLoader()
         val sample = Class.forName(outOfScope, true, loader)
-        val weird = Class.forName(skipped, true, loader)
+        val weird = Class.forName(alsoOutOfScope, true, loader)
         val before = registry.manifest(RESOURCE)
 
         instrumentation.retransformClasses(sample, weird)
@@ -256,7 +256,7 @@ class RetransformationInstrumentationTest {
         val after = registry.manifest(RESOURCE)
         assertTrue(registry.registrations.isEmpty(), "${registry.registrations}")
         assertEquals(before.skippedClasses, after.skippedClasses)
-        assertEquals(listOf(skipped), after.skippedClasses.map { it.className })
+        assertTrue(after.skippedClasses.isEmpty(), "${after.skippedClasses}")
         assertFalse(WovenBytes.isWoven(classBytesAfterRetransform(sample)))
     }
 
@@ -371,6 +371,7 @@ class RetransformationInstrumentationTest {
 
     private fun assertRefusedWithWarning(
         className: String = BRANCH_TARGET,
+        reason: String = "class file of $className differs from the one it was woven from",
         retransform: () -> Unit,
     ) {
         var refusal: Throwable? = null
@@ -380,7 +381,7 @@ class RetransformationInstrumentationTest {
         assertTrue(thrown is UnsupportedOperationException && "schema" in thrown.message.orEmpty(), "$thrown")
         assertTrue(
             records.any {
-                it.level == JulLevel.WARNING && "class file of $className differs from the one it was woven from" in it.message
+                it.level == JulLevel.WARNING && reason in it.message
             },
             "${records.map { it.message }}",
         )
@@ -502,6 +503,93 @@ class RetransformationInstrumentationTest {
 
         assertEquals("positive", branchTarget.getMethod("classify", Int::class.java).invoke(target, 5), "the woven class still runs")
         assertEquals(4L to listOf(1L, 3L), countsOf(registry, "classify"), "the call after the refusal is counted")
+    }
+
+    /**
+     * Bytes that arrive at a version whose probe form differs from the one the class was woven in,
+     * with the class file unchanged: a class woven with a dynamic constant redefined at version 52,
+     * where a dynamic constant is a `ClassFormatError`. The re-weave is refused, so the JVM rejects
+     * the redefinition and the class keeps counting.
+     */
+    @Test
+    fun `a redefinition at a version the class's probe form cannot follow is refused, and the class keeps counting`() {
+        val registry = CountingRegistry()
+        install(AgentConfig.parse("includePackages=$TARGET"), registry)
+        val classFile = EditableClassFile(legacy = false)
+        val (branchTarget, target) = loadAndDrive(classFile.loader(javaClass.classLoader))
+        val downgraded = LegacyFixtures.downgraded(classFile.file.readBytes())
+
+        assertRefusedWithWarning(reason = "arrive at class-file version 52, where it was woven at") {
+            instrumentation.redefineClasses(java.lang.instrument.ClassDefinition(branchTarget, downgraded))
+        }
+
+        branchTarget.getMethod("classify", Int::class.java).invoke(target, 5)
+        assertEquals(4L to listOf(1L, 3L), countsOf(registry, "classify"), "the call after the refusal is counted")
+    }
+
+    /**
+     * A class that failed to weave, here one whose method weaving would push past the class file's
+     * 64 KB limit, runs unwoven and is reported skipped; a later retransformation leaves it alone.
+     */
+    @Test
+    fun `a retransformation of a class that failed to weave succeeds and changes nothing`() {
+        val registry = CountingRegistry()
+        install(AgentConfig.parse("includePackages=$TARGET"), registry)
+        val name = "$TARGET.TooLarge"
+        val bytes = tooLargeToWeave(name.replace('.', '/'))
+        val loader =
+            object : ClassLoader(javaClass.classLoader) {
+                override fun findClass(requested: String): Class<*> =
+                    if (requested == name) defineClass(name, bytes, 0, bytes.size) else throw ClassNotFoundException(requested)
+
+                override fun getResourceAsStream(resource: String): java.io.InputStream? =
+                    if (resource == name.replace('.', '/') + ".class") bytes.inputStream() else super.getResourceAsStream(resource)
+            }
+        val type = Class.forName(name, true, loader)
+        assertEquals(listOf(name), registry.manifest(RESOURCE).skippedClasses.map { it.className })
+
+        instrumentation.retransformClasses(type)
+
+        assertEquals(1, type.getMethod("big", Int::class.java).invoke(null, 200))
+        assertEquals(listOf(name), registry.manifest(RESOURCE).skippedClasses.map { it.className }, "skipped once, not again")
+        assertTrue(registry.registrations.isEmpty(), "${registry.registrations}")
+        assertFalse(WovenBytes.isWoven(classBytesAfterRetransform(type)))
+    }
+
+    /**
+     * A class whose `static int big(int)` is 2000 blocks of `if (x == k) y++`, small enough to load
+     * and too large to write once every block carries branch probes.
+     */
+    private fun tooLargeToWeave(internalName: String): ByteArray {
+        val cw = ClassWriter(ClassWriter.COMPUTE_FRAMES)
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, internalName, null, "java/lang/Object", null)
+        cw.visitSource("TooLarge.java", null)
+        cw.visitMethod(Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC, "big", "(I)I", null, null).apply {
+            visitCode()
+            val start =
+                net.bytebuddy.jar.asm
+                    .Label()
+            visitLabel(start)
+            visitLineNumber(1, start)
+            visitInsn(Opcodes.ICONST_0)
+            visitVarInsn(Opcodes.ISTORE, 1)
+            repeat(2000) { i ->
+                val skip =
+                    net.bytebuddy.jar.asm
+                        .Label()
+                visitVarInsn(Opcodes.ILOAD, 0)
+                visitIntInsn(Opcodes.SIPUSH, 200 + i)
+                visitJumpInsn(Opcodes.IF_ICMPNE, skip)
+                visitIincInsn(1, 1)
+                visitLabel(skip)
+            }
+            visitVarInsn(Opcodes.ILOAD, 1)
+            visitInsn(Opcodes.IRETURN)
+            visitMaxs(0, 0)
+            visitEnd()
+        }
+        cw.visitEnd()
+        return cw.toByteArray()
     }
 
     /**
@@ -732,13 +820,13 @@ class RetransformationInstrumentationTest {
     }
 
     /**
-     * An earlier agent that adds a class annotation ByteBuddy cannot rebase past, on a
-     * retransformation. The class's probes were delivered at the first weave, so it must not be
-     * recorded as skipped now; the failed re-weave is logged instead, and the JVM refuses. The class
-     * is version 52: it has a probe field the unwoven bytes lack, which is what the JVM refuses.
+     * An earlier agent that adds a class annotation whose `@Target` does not list a type, on a
+     * retransformation. The bytes are legal to the JVM, and the agent weaves them again, so the
+     * class keeps counting and is not recorded as skipped. The class is version 52, with the probe
+     * field the unwoven bytes lack.
      */
     @Test
-    fun `a woven class whose retransformed bytes carry an illegal class annotation is not recorded as skipped`() {
+    fun `a woven class whose retransformed bytes carry a class annotation another agent added is woven again`() {
         val registry = CountingRegistry()
         val earlier =
             object : ClassFileTransformer {
@@ -758,20 +846,15 @@ class RetransformationInstrumentationTest {
         laterAgents += earlier
         instrumentation.addTransformer(earlier, true)
         install(AgentConfig.parse("includePackages=$TARGET"), registry)
-        val (branchTarget, _) = loadAndDrive(fixtureLoader(legacy = true))
+        val (branchTarget, target) = loadAndDrive(fixtureLoader(legacy = true))
 
-        var refusal: Throwable? = null
         val records =
-            captureLogRecords(OtherlodeInstrumentation::class.java.name) {
-                refusal = runCatching { instrumentation.retransformClasses(branchTarget) }.exceptionOrNull()
-            }
+            captureLogRecords(OtherlodeInstrumentation::class.java.name) { instrumentation.retransformClasses(branchTarget) }
+        branchTarget.getMethod("classify", Int::class.java).invoke(target, 5)
 
-        assertTrue(refusal is UnsupportedOperationException, "$refusal")
         assertTrue(registry.manifest(RESOURCE).skippedClasses.isEmpty(), "${registry.manifest(RESOURCE).skippedClasses}")
-        assertTrue(
-            records.any { it.level == JulLevel.WARNING && "could not weave $BRANCH_TARGET again" in it.message },
-            "${records.map { it.message }}",
-        )
+        assertTrue(records.none { it.level.intValue() >= JulLevel.WARNING.intValue() }, "${records.map { it.message }}")
+        assertEquals(4L to listOf(1L, 3L), countsOf(registry, "classify"))
     }
 
     /**
