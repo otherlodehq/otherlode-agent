@@ -12,6 +12,8 @@ import net.bytebuddy.jar.asm.Handle
 import net.bytebuddy.jar.asm.Label
 import net.bytebuddy.jar.asm.MethodVisitor
 import net.bytebuddy.jar.asm.Opcodes
+import org.junit.jupiter.params.ParameterizedTest
+import org.junit.jupiter.params.provider.MethodSource
 import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -22,8 +24,12 @@ import kotlin.test.assertEquals
  * method, and the forwarder shape counts only in a class scalac compiled.
  */
 class ScalaGeneratedMethodsAnalyzerTest {
-    private companion object {
-        const val PACKAGE = "com/example/scalatarget"
+    companion object {
+        /** The 3.3.4 baseline, named `baseline`, and every Scala 3 release in the matrix. */
+        @JvmStatic
+        fun scala3Builds(): List<String> = listOf("baseline") + CompilerFixtures.scalacVersions.filter { it.startsWith("3.") }
+
+        private const val PACKAGE = "com/example/scalatarget"
     }
 
     /** Reads a class of the fixture module [module] by internal name, as the agent's own lookup would. */
@@ -756,5 +762,250 @@ class ScalaGeneratedMethodsAnalyzerTest {
             GeneratedBy.CASE_CLASS,
             mapOf("productElement" to "(I)Ljava/lang/Object;"),
         )
+    }
+
+    private val scala3Versions: List<String> get() = CompilerFixtures.scalacVersions.filter { it.startsWith("3.") }
+
+    /**
+     * Every method of [simpleName] named in [methods] (name and descriptor) is [GeneratedBy.ENUM] as
+     * scalac [version] wrote it, and is [GeneratedBy.NONE] once one instruction is added at its start
+     * or just before its last instruction. A `hashCode` is expected only where the build has one.
+     */
+    private fun assertEnumReadExactly(
+        version: String,
+        simpleName: String,
+        methods: List<Pair<String, String>>,
+    ) {
+        val build = if (version == "3.3.4") CompilerFixtures.scalaBaseline(version) else CompilerFixtures.scalac(version)
+        val declared = build.markEntries(simpleName).map { it.first to it.second }.toSet()
+        val expected = methods.filter { it in declared }
+        assertEquals(
+            methods.filter { it.first != "hashCode" }.size,
+            expected.count { it.first != "hashCode" },
+            "scalac $version $simpleName",
+        )
+        val bytes = build.classBytes(simpleName)
+        val names = expected.map { it.first }.toSet()
+        val original = analyze(bytes, build.lookup)
+        val withExtra = analyze(withNop(bytes, names), build.lookup)
+        val withExtraAtEnd = analyze(withNop(bytes, names, beforeLast = true), build.lookup)
+        for ((name, descriptor) in expected) {
+            val label = "scalac $version $simpleName.$name$descriptor"
+            assertEquals(GeneratedBy.ENUM, original.generatedBy(name, descriptor), label)
+            assertEquals(GeneratedBy.NONE, withExtra.generatedBy(name, descriptor), "$label with a nop")
+            assertEquals(GeneratedBy.NONE, withExtraAtEnd.generatedBy(name, descriptor), "$label with a nop before its last instruction")
+        }
+    }
+
+    private val productForwarders =
+        listOf(
+            "productIterator" to "()Lscala/collection/Iterator;",
+            "productPrefix" to "()Ljava/lang/String;",
+            "productElementName" to "(I)Ljava/lang/String;",
+            "productElementNames" to "()Lscala/collection/Iterator;",
+        )
+
+    private fun companionMethods(enumName: String) =
+        listOf(
+            "values" to "()[L$PACKAGE/$enumName;",
+            "valueOf" to "(Ljava/lang/String;)L$PACKAGE/$enumName;",
+            "fromOrdinal" to "(I)L$PACKAGE/$enumName;",
+            "\$new" to "(ILjava/lang/String;)L$PACKAGE/$enumName;",
+            "ordinal" to "(L$PACKAGE/$enumName;)I",
+            "ordinal" to "(Ljava/lang/Object;)I",
+        )
+
+    private val singletonCaseMethods =
+        listOf(
+            "canEqual" to "(Ljava/lang/Object;)Z",
+            "productArity" to "()I",
+            "productElement" to "(I)Ljava/lang/Object;",
+            "productElementName" to "(I)Ljava/lang/String;",
+            "fromProduct" to "(Lscala/Product;)Lscala/deriving/Mirror\$Singleton;",
+            "fromProduct" to "(Lscala/Product;)Ljava/lang/Object;",
+            "readResolve" to "()Ljava/lang/Object;",
+            "productPrefix" to "()Ljava/lang/String;",
+            "toString" to "()Ljava/lang/String;",
+            "ordinal" to "()I",
+            "hashCode" to "()I",
+        )
+
+    @Test
+    fun `scala 3 - an enum class's Product forwarders are read exactly`() {
+        for (version in listOf("3.3.4") + scala3Versions) {
+            for (enumName in listOf("Suit", "Planet", "Shape", "Level", "Color")) {
+                assertEnumReadExactly(version, enumName, productForwarders)
+            }
+        }
+    }
+
+    @Test
+    fun `scala 3 - an enum companion's values, valueOf, fromOrdinal, new and ordinal are read exactly in each lowering`() {
+        for (version in listOf("3.3.4") + scala3Versions) {
+            // Suit has three cases and a hash switch in valueOf, Planet and Level two and a chain; Planet and Suit
+            // index $values inside a handler in fromOrdinal.
+            for (enumName in listOf("Suit", "Hue")) assertEnumReadExactly(version, "$enumName\$", companionMethods(enumName))
+            val withoutNew = companionMethods("Planet").filter { it.first != "\$new" }
+            assertEnumReadExactly(version, "Planet\$", withoutNew)
+            assertEnumReadExactly(version, "Level\$", companionMethods("Level"))
+            assertEnumReadExactly(version, "Color\$", companionMethods("Color"))
+        }
+    }
+
+    @Test
+    fun `scala 3 - the companion of an enum with a parameterised case reads its ordinal tests and new exactly`() {
+        for (version in listOf("3.3.4") + scala3Versions) {
+            val methods = companionMethods("Shape").filter { it.first != "values" && it.first != "valueOf" }
+            assertEnumReadExactly(version, "Shape\$", methods)
+            assertEnumReadExactly(version, "Shape\$Circle", listOf("ordinal" to "()I"))
+            assertEnumReadExactly(version, "Shape\$Square", listOf("ordinal" to "()I"))
+        }
+    }
+
+    @Test
+    fun `scala 3 - a singleton case's class is read exactly in both forms`() {
+        for (version in listOf("3.3.4") + scala3Versions) {
+            // $$anon$1 keeps the name and ordinal in fields; Planet's cases return constants.
+            assertEnumReadExactly(version, "Suit\$\$anon\$1", singletonCaseMethods)
+            assertEnumReadExactly(version, "Planet\$\$anon\$2", singletonCaseMethods)
+            assertEnumReadExactly(version, "Planet\$\$anon\$3", singletonCaseMethods)
+            assertEnumReadExactly(version, "EnumHost\$Mode\$\$anon\$6", singletonCaseMethods)
+        }
+    }
+
+    @Test
+    fun `scala 3 - a hand-written method on an enum, its companion or beside scalac's plumbing is not marked`() {
+        val lookup = fixtureLookup("scala3")
+        val level = analyze(lookup("$PACKAGE/Level")!!, lookup)
+        val levelCompanion = analyze(lookup("$PACKAGE/Level\$")!!, lookup)
+
+        for ((name, descriptor) in listOf(
+            "next" to "()L$PACKAGE/Level;",
+            "ordinalPlus" to "(I)I",
+            "valueOf" to "(Ljava/lang/String;I)L$PACKAGE/Level;",
+        )) {
+            assertEquals(GeneratedBy.NONE, level.generatedBy(name, descriptor), name)
+        }
+        assertEquals(GeneratedBy.NONE, levelCompanion.generatedBy("parse", "(Ljava/lang/String;)L$PACKAGE/Level;"))
+        assertEquals(GeneratedBy.NONE, levelCompanion.generatedBy("values", "(I)[L$PACKAGE/Level;"))
+        assertEquals(GeneratedBy.ENUM, levelCompanion.generatedBy("values", "()[L$PACKAGE/Level;"))
+    }
+
+    @Test
+    fun `scala 3 - a companion whose enum class cannot be read marks no enum plumbing`() {
+        val lookup = fixtureLookup("scala3")
+
+        val companion = analyze(lookup("$PACKAGE/Suit\$")!!) { null }
+        val singleton = analyze(lookup("$PACKAGE/Suit\$\$anon\$1")!!) { null }
+
+        for ((name, descriptor) in companionMethods("Suit") + singletonCaseMethods) {
+            assertEquals(GeneratedBy.NONE, companion.generatedBy(name, descriptor), "Suit$.$name$descriptor")
+            assertEquals(GeneratedBy.NONE, singleton.generatedBy(name, descriptor), "Suit$\$anon$1.$name$descriptor")
+        }
+    }
+
+    @Test
+    fun `scala 3 - an enum read as Scala 2 marks no enum plumbing`() {
+        val lookup = fixtureLookup("scala3")
+        val classes =
+            mapOf(
+                "Suit" to productForwarders,
+                "Suit\$" to companionMethods("Suit"),
+                "Suit\$\$anon\$1" to singletonCaseMethods,
+                "Planet\$\$anon\$2" to singletonCaseMethods,
+                "Shape\$Circle" to listOf("ordinal" to "()I"),
+            )
+
+        for ((simpleName, methods) in classes) {
+            val analysis = analyze(relabelled(lookup("$PACKAGE/$simpleName")!!, asScala3 = false), lookup)
+            for ((name, descriptor) in methods) {
+                assertEquals(GeneratedBy.NONE, analysis.generatedBy(name, descriptor), "$simpleName.$name$descriptor read as Scala 2")
+            }
+        }
+    }
+
+    /**
+     * The enum shapes a companion's other members, a parameterised case, an all-parameterised
+     * enum and dense case names give, and Scala 3.3.3's own wording, over the 3.3.4 baseline and
+     * every Scala 3 build in the matrix.
+     */
+    @ParameterizedTest(name = "scalac {0}")
+    @MethodSource("scala3Builds")
+    fun `scala 3 - enum plumbing beside other companion members, switching and throwing fromOrdinal and a dense valueOf are ENUM`(
+        version: String,
+    ) {
+        val build = if (version == "baseline") CompilerFixtures.scalaBaseline("3.3.4") else CompilerFixtures.scalac(version)
+        val tint = build.marks("Tint\$")
+        val op = build.marks("Op\$")
+        val term = build.marks("Term\$")
+        val axis = build.marks("Axis3\$")
+        val enumOf = { name: String -> "L$PACKAGE/$name;" }
+
+        assertEquals(GeneratedBy.ENUM, tint.of("values", "()[${enumOf("Tint")}"), "a given and nested members are not cases")
+        assertEquals(GeneratedBy.ENUM, tint.of("valueOf", "(Ljava/lang/String;)${enumOf("Tint")}"))
+        assertEquals(GeneratedBy.ENUM, tint.of("fromOrdinal", "(I)${enumOf("Tint")}"))
+        assertEquals(GeneratedBy.ENUM, tint.of("\$new", "(ILjava/lang/String;)${enumOf("Tint")}"))
+        assertEquals(GeneratedBy.ENUM, op.of("fromOrdinal", "(I)${enumOf("Op")}"), "three singletons beside a parameterised case")
+        assertEquals(GeneratedBy.ENUM, term.of("fromOrdinal", "(I)${enumOf("Term")}"), "no singleton case: only the throw")
+        assertEquals(GeneratedBy.ENUM, axis.of("valueOf", "(Ljava/lang/String;)${enumOf("Axis3")}"), "dense hashes: a tableswitch")
+        assertEquals(
+            GeneratedBy.ENUM,
+            build.marks("Gapped\$").of("fromOrdinal", "(I)${enumOf("Gapped")}"),
+            "a switch whose gap goes to the throw",
+        )
+        assertEquals(
+            GeneratedBy.ENUM,
+            build.marks("Sparse\$").of("valueOf", "(Ljava/lang/String;)${enumOf("Sparse")}"),
+            "a hash tableswitch with a gap",
+        )
+    }
+
+    @Test
+    fun `scala 3 - a fromOrdinal switch whose gap jumps to a case instead of the throw is not marked`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val writer = ClassWriter(0)
+        val visitor =
+            object : ClassVisitor(Opcodes.ASM9, writer) {
+                override fun visitMethod(
+                    access: Int,
+                    name: String,
+                    descriptor: String,
+                    signature: String?,
+                    exceptions: Array<out String>?,
+                ): MethodVisitor {
+                    val delegate = super.visitMethod(access, name, descriptor, signature, exceptions)
+                    if (name != "fromOrdinal") return delegate
+                    return object : MethodVisitor(Opcodes.ASM9, delegate) {
+                        override fun visitTableSwitchInsn(
+                            min: Int,
+                            max: Int,
+                            dflt: Label,
+                            vararg labels: Label,
+                        ) {
+                            // Every gap, which goes to the throw, goes to the first case instead.
+                            super.visitTableSwitchInsn(
+                                min,
+                                max,
+                                dflt,
+                                *labels
+                                    .map {
+                                        if (it ==
+                                            dflt
+                                        ) {
+                                            labels.first()
+                                        } else {
+                                            it
+                                        }
+                                    }.toTypedArray(),
+                            )
+                        }
+                    }
+                }
+            }
+        ClassReader(build.classBytes("Gapped\$")).accept(visitor, 0)
+        val gapped = "L$PACKAGE/Gapped;"
+
+        assertEquals(GeneratedBy.ENUM, build.marks("Gapped\$").of("fromOrdinal", "(I)$gapped"), "the unchanged body is read")
+        assertEquals(GeneratedBy.NONE, analyze(writer.toByteArray(), build.lookup).generatedBy("fromOrdinal", "(I)$gapped"))
     }
 }

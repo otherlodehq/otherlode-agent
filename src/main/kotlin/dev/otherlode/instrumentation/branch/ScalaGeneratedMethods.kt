@@ -37,9 +37,19 @@ import net.bytebuddy.jar.asm.Type
  * - Scala 3.7.3 to 3.8.3: `equals` through a copy of the cast instance ([matchesEqualsScala3]).
  * - Scala 3.9.0: `productElement` and `productElementName` throwing through
  *   `IndexOutOfBoundsException.<init>(int)` ([matchesIndexed]).
+ *
+ * A Scala 3 `enum`'s plumbing ([enumPlumbing]) was read from every release from 3.3.3 to 3.9.0.
+ * Its bodies are those of 3.3.4 with three exceptions: 3.3.3 words `valueOf`'s and `fromOrdinal`'s
+ * failures differently and, with 3.4.0 and 3.4.1, passes the companion to a singleton case's
+ * constructor in `$new`; 3.8.4 and later leave `scala.Product` out of the enum class's interfaces,
+ * which the rules do not read; and the singleton case's `hashCode`, `String.hashCode` of the case
+ * name, is written from 3.3.7 on the 3.3 line and from 3.7.3.
  */
 internal object ScalaGeneratedMethods {
     private const val MODULE_FIELD = "MODULE\$"
+
+    /** Scala 3.3.3's `valueOf` message recipe, which names no enum. */
+    private const val OLD_NO_CASE_RECIPE = "enum case not found: \u0001"
     private const val OUTER_FIELD = "\$outer"
     private const val OBJECT = "java/lang/Object"
     private const val STRING = "java/lang/String"
@@ -53,6 +63,19 @@ internal object ScalaGeneratedMethods {
     private const val MURMUR = "scala/util/hashing/MurmurHash3\$"
     private const val OBJECTS = "java/util/Objects"
     private const val INTEGER = "java/lang/Integer"
+    private const val ENUM = "scala/reflect/Enum"
+    private const val ENUM_VALUE = "scala/runtime/EnumValue"
+    private const val MIRROR_SUM = "scala/deriving/Mirror\$Sum"
+    private const val MIRROR_SINGLETON = "scala/deriving/Mirror\$Singleton"
+    private const val NO_SUCH_ELEMENT = "java/util/NoSuchElementException"
+    private const val ILLEGAL_ARGUMENT = "java/lang/IllegalArgumentException"
+    private const val STRING_CONCAT = "java/lang/invoke/StringConcatFactory"
+    private const val THROWABLE = "java/lang/Throwable"
+    private const val VALUES_FIELD = "\$values"
+    private const val CONCAT_DESCRIPTOR = "(Ljava/lang/String;)Ljava/lang/String;"
+
+    /** The flags scalac gives the static field of each enum case in the enum's companion, `ACC_ENUM` aside. */
+    private const val PLAIN_CASE_FIELD_FLAGS = Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC or Opcodes.ACC_FINAL
 
     /** The seed of scalac's `hashCode` fold, `0xcafebabe`. */
     private const val HASH_SEED = -889275714
@@ -87,12 +110,14 @@ internal object ScalaGeneratedMethods {
 
     /**
      * The generated methods of the Scala class [classBytes], keyed by name and descriptor. The
-     * caller has already found a `Scala` or `ScalaSig` attribute on the class. [lookup] reads a
-     * companion's partner as bytes, never loading it. A lookup that returns null or throws marks
+     * caller has already found a `Scala` or `ScalaSig` attribute on the class. [lookup] reads other
+     * classes as bytes, never loading them: a companion's partner, and for an enum its class,
+     * companion, singleton-case class and parameterised cases. A lookup that returns null or throws marks
      * nothing on the partner's account.
      *
      * Each method gets at most one mark, tried in this order: [GeneratedBy.STATIC_FORWARDER] (see
-     * [ClassShape.staticForwarders]), then [GeneratedBy.CASE_CLASS] on a case class's own plumbing
+     * [ClassShape.staticForwarders]), then [GeneratedBy.ENUM] on a Scala 3 enum's plumbing (see
+     * [enumPlumbing]), then [GeneratedBy.CASE_CLASS] on a case class's own plumbing
      * (see [caseClassPlumbing]), then [GeneratedBy.CASE_CLASS] on a companion's (see
      * [companionPlumbing]), then [GeneratedBy.SCALA_OBJECT] (see [ClassShape.writeReplaceMatches]
      * and [ClassShape.readResolveMatches]).
@@ -108,6 +133,7 @@ internal object ScalaGeneratedMethods {
         val shape = readShape(classBytes)
         val result = mutableMapOf<Pair<String, String>, GeneratedBy>()
         for (key in shape.staticForwarders()) result.putIfAbsent(key, GeneratedBy.STATIC_FORWARDER)
+        for (key in enumPlumbing(shape, lookup)) result.putIfAbsent(key, GeneratedBy.ENUM)
         caseClassOf(shape)?.let { case -> for (key in caseClassPlumbing(case)) result.putIfAbsent(key, GeneratedBy.CASE_CLASS) }
         if (shape.internalName.endsWith("$") && declaresCompanionCandidate(shape)) {
             val partner =
@@ -176,6 +202,21 @@ internal object ScalaGeneratedMethods {
 
     private val LOCAL_SUFFIX = Regex("\\$\\d+$")
 
+    /** One declared field: its access flags, name and descriptor. */
+    private class FieldShape(
+        val access: Int,
+        val name: String,
+        val descriptor: String,
+    )
+
+    /** One exception-table entry, its range and target as instruction indices. */
+    private data class Handler(
+        val start: Int,
+        val end: Int,
+        val target: Int,
+        val type: String?,
+    )
+
     /** One entry of a class's `InnerClasses` attribute. */
     private class InnerClassEntry(
         val name: String,
@@ -193,6 +234,7 @@ internal object ScalaGeneratedMethods {
     ) {
         var code: List<Insn>? = null
         var hasHandler = false
+        var handlers: List<Handler> = emptyList()
 
         val body: List<Insn>? get() = code?.takeIf { !hasHandler }
 
@@ -218,6 +260,10 @@ internal object ScalaGeneratedMethods {
         val outerFieldDescriptor: String?,
         val methods: Map<Pair<String, String>, MethodShape>,
         val innerClasses: List<InnerClassEntry>,
+        val access: Int,
+        val superName: String?,
+        val interfaces: List<String>,
+        val fields: List<FieldShape>,
     ) {
         /** A class compiled for a Scala `object`: its name ends in `$` and it holds its own instance in `MODULE$`. */
         val isModuleClass: Boolean get() = internalName.endsWith("$") && hasOwnModuleField
@@ -310,6 +356,10 @@ internal object ScalaGeneratedMethods {
         var hasScala2Attribute = false
         var hasOwnModuleField = false
         var outerFieldDescriptor: String? = null
+        var classAccess = 0
+        var classSuper: String? = null
+        var classInterfaces = emptyList<String>()
+        val fields = mutableListOf<FieldShape>()
         val methods = mutableMapOf<Pair<String, String>, MethodShape>()
         val innerClasses = mutableListOf<InnerClassEntry>()
 
@@ -325,6 +375,9 @@ internal object ScalaGeneratedMethods {
                 ) {
                     internalName = name
                     isFinal = access and Opcodes.ACC_FINAL != 0
+                    classAccess = access
+                    classSuper = superName
+                    classInterfaces = interfaceNames.orEmpty().toList()
                 }
 
                 override fun visitAttribute(attribute: Attribute) {
@@ -355,6 +408,7 @@ internal object ScalaGeneratedMethods {
                         hasOwnModuleField = true
                     }
                     if (access and Opcodes.ACC_STATIC == 0 && name == OUTER_FIELD) outerFieldDescriptor = descriptor
+                    fields += FieldShape(access, name, descriptor)
                     return null
                 }
 
@@ -368,9 +422,10 @@ internal object ScalaGeneratedMethods {
                     val method = MethodShape(access)
                     methods[name to descriptor] = method
                     val owner = internalName
-                    return BodyRecorder { code, hasHandler ->
+                    return BodyRecorder { code, hasHandler, handlers ->
                         method.code = code
                         method.hasHandler = hasHandler
+                        method.handlers = handlers
                         val constructions = code.orEmpty().count { it == Insn.TypeOperand(Opcodes.NEW, owner) }
                         val ownConstructorCalls =
                             code.orEmpty().count {
@@ -383,7 +438,20 @@ internal object ScalaGeneratedMethods {
             }
         ClassReader(classBytes).accept(visitor, ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
         val isScala3 = hasTasty || !hasScala2Attribute
-        return ClassShape(internalName, isScala, isScala3, isFinal, hasOwnModuleField, outerFieldDescriptor, methods, innerClasses)
+        return ClassShape(
+            internalName,
+            isScala,
+            isScala3,
+            isFinal,
+            hasOwnModuleField,
+            outerFieldDescriptor,
+            methods,
+            innerClasses,
+            classAccess,
+            classSuper,
+            classInterfaces,
+            fields,
+        )
     }
 
     /**
@@ -538,6 +606,632 @@ internal object ScalaGeneratedMethods {
          * every other class it is present (`UC2`, whose `canEqual` is `false`).
          */
         val equalsMayOmitCanEqual: Boolean get() = shape.isFinal && hasGeneratedCanEqual
+    }
+
+    /**
+     * The plumbing scalac 3 writes for an `enum`, read from `javap -c -p` over `Suit`, `Planet`,
+     * `Shape`, `Level`, `EnumHost.Mode`, `Hue` and `Color` in `Enums.scala`, `Switches.scala` and
+     * `Scala3Only.scala`. Four kinds of class carry it, told apart by structure only scalac writes:
+     *
+     * - The enum class: abstract, `ACC_ENUM`, extending `Object` and implementing `scala.reflect.Enum`
+     *   ([enumClassPlumbing]).
+     * - Its companion module class, which implements `scala.deriving.Mirror$Sum` and whose partner is an
+     *   enum class ([enumCompanionPlumbing]).
+     * - The class of a singleton case: final, implementing `scala.runtime.EnumValue` and
+     *   `scala.deriving.Mirror$Singleton`, extending an enum class ([singletonCasePlumbing]).
+     * - A parameterised case, a final case class extending an enum class ([parameterisedCasePlumbing]).
+     *   Only its `ordinal` is enum plumbing; the rest is the case class rules' to mark.
+     *
+     * The enum class and the companion are read together: every question about a case's name or ordinal
+     * is answered from the companion's case fields in declaration order, the `ACC_ENUM` field of a
+     * singleton case and the field holding a parameterised case's companion ([enumCases]).
+     */
+    private fun enumPlumbing(
+        shape: ClassShape,
+        lookup: (String) -> ByteArray?,
+    ): Set<Pair<String, String>> {
+        if (!shape.isScala || !shape.isScala3) return emptySet()
+        if (shape.isEnumClass()) return enumClassPlumbing(shape)
+        if (shape.isModuleClass && MIRROR_SUM in shape.interfaces) {
+            val enumClass = readClass(shape.internalName.removeSuffix("$"), lookup)?.takeIf { it.isEnumClass() } ?: return emptySet()
+            return enumCompanionPlumbing(EnumFamily(enumClass, shape, lookup), lookup)
+        }
+        val singleton = ENUM_VALUE in shape.interfaces && MIRROR_SINGLETON in shape.interfaces && shape.isFinal
+        if (!singleton && !shape.declaresConstantOrdinal()) return emptySet()
+        val superName = shape.superName ?: return emptySet()
+        val enumClass = readClass(superName, lookup)?.takeIf { it.isEnumClass() } ?: return emptySet()
+        val family = enumFamilyOf(enumClass, lookup) ?: return emptySet()
+        return if (singleton) singletonCasePlumbing(shape, family) else parameterisedCasePlumbing(shape, family)
+    }
+
+    /** Whether the class is a Scala 3 enum class: see [enumPlumbing]. */
+    private fun ClassShape.isEnumClass(): Boolean =
+        access and Opcodes.ACC_ENUM != 0 &&
+            access and Opcodes.ACC_ABSTRACT != 0 &&
+            superName == OBJECT &&
+            ENUM in interfaces
+
+    /**
+     * The fields that are the cases of the enum [enumName], in declaration order, which is ordinal
+     * order. A singleton case's field has `ACC_ENUM`. A parameterised case's field does not; it holds
+     * the case's companion, `<enum>$<case>$`, and is a case only when the class `<enum>$<case>`
+     * extends the enum: scalac writes a field of the same shape for a nested object, a nested case
+     * class's companion or a `given ... with` instance in the companion, which are not cases.
+     */
+    private fun ClassShape.enumCases(
+        enumName: String,
+        lookup: (String) -> ByteArray?,
+    ): List<FieldShape> =
+        fields.filter {
+            it.access and PLAIN_CASE_FIELD_FLAGS == PLAIN_CASE_FIELD_FLAGS &&
+                it.name != MODULE_FIELD &&
+                (
+                    it.access and Opcodes.ACC_ENUM != 0 ||
+                        (it.descriptor == "L$enumName\$${it.name}\$;" && superNameOf("$enumName\$${it.name}", lookup) == enumName)
+                )
+        }
+
+    private fun ClassShape.declaresConstantOrdinal(): Boolean {
+        val body = methods["ordinal" to "()I"]?.body ?: return false
+        return body.size == 2 && body[0] is Insn.IntConstant && body[1] == Insn.Plain(Opcodes.IRETURN)
+    }
+
+    /** The superclass of [internalName], read from its class file's header alone; null when it cannot be read. */
+    private fun superNameOf(
+        internalName: String,
+        lookup: (String) -> ByteArray?,
+    ): String? =
+        try {
+            lookup(internalName)?.let { ClassReader(it).superName }
+        } catch (_: Exception) {
+            null
+        }
+
+    private fun readClass(
+        internalName: String,
+        lookup: (String) -> ByteArray?,
+    ): ClassShape? =
+        try {
+            lookup(internalName)?.let(::readShape)
+        } catch (_: Exception) {
+            null
+        }
+
+    /** An enum class and its companion, with the cases the companion's fields name. */
+    private class EnumFamily(
+        val enumClass: ClassShape,
+        val companion: ClassShape,
+        lookup: (String) -> ByteArray?,
+    ) {
+        val cases: List<FieldShape> = companion.enumCases(enumClass.internalName, lookup)
+        val singletonType: String = "L${enumClass.internalName};"
+
+        /** Whether every case is a singleton, the shape that gives the companion a `$values` array. */
+        val allSingleton: Boolean get() = cases.isNotEmpty() && cases.all { it.descriptor == singletonType }
+
+        fun ordinalOf(name: String): Int = cases.indexOfFirst { it.name == name }
+    }
+
+    private fun enumFamilyOf(
+        enumClass: ClassShape,
+        lookup: (String) -> ByteArray?,
+    ): EnumFamily? {
+        val companion = readClass("${enumClass.internalName}$", lookup) ?: return null
+        if (!companion.isScala3 || !companion.isModuleClass || MIRROR_SUM !in companion.interfaces) return null
+        return EnumFamily(enumClass, companion, lookup)
+    }
+
+    /**
+     * The four `scala.Product` mixin forwarders of an enum class, each `Product`'s static method
+     * called with `this`: `productIterator`, `productPrefix`, `productElementName` and
+     * `productElementNames`. The static forwarders on the same class are marked
+     * [GeneratedBy.STATIC_FORWARDER] first.
+     */
+    private fun enumClassPlumbing(shape: ClassShape): Set<Pair<String, String>> =
+        shape
+            .instanceMethods()
+            .filter { (key, body) ->
+                when (key) {
+                    "productIterator" to "()$ITERATOR" -> {
+                        body == productForwarder("productIterator\$", "(L$PRODUCT;)$ITERATOR")
+                    }
+
+                    "productPrefix" to "()L$STRING;" -> {
+                        body == productForwarder("productPrefix\$", "(L$PRODUCT;)L$STRING;")
+                    }
+
+                    "productElementNames" to "()$ITERATOR" -> {
+                        body == productForwarder("productElementNames\$", "(L$PRODUCT;)$ITERATOR")
+                    }
+
+                    "productElementName" to "(I)L$STRING;" -> {
+                        body == productForwarder("productElementName\$", "(L$PRODUCT;I)L$STRING;", withIndex = true)
+                    }
+
+                    else -> {
+                        false
+                    }
+                }
+            }.mapTo(mutableSetOf()) { it.first }
+
+    /**
+     * The companion's `values`, `valueOf`, `fromOrdinal`, `$new` and `ordinal` (with its bridge), each
+     * only when its body is the one scalac writes for this enum's cases. `writeReplace` is the object
+     * rule's. An enum with a parameterised case gets no `values`, `valueOf` or `$values`, a `$new`
+     * only when it has a singleton case, and a `fromOrdinal` that tests ordinals instead of indexing
+     * the array.
+     */
+    private fun enumCompanionPlumbing(
+        family: EnumFamily,
+        lookup: (String) -> ByteArray?,
+    ): Set<Pair<String, String>> {
+        val companion = family.companion
+        val enumType = family.singletonType
+        val result = mutableSetOf<Pair<String, String>>()
+        for ((key, method) in companion.methods) {
+            if (method.isStatic) continue
+            val (name, descriptor) = key
+            val matched =
+                when {
+                    name == "values" && descriptor == "()[$enumType" -> {
+                        matchesEnumValues(family, method)
+                    }
+
+                    name == "valueOf" && descriptor == "(L$STRING;)$enumType" -> {
+                        matchesEnumValueOf(family, method)
+                    }
+
+                    name == "fromOrdinal" && descriptor == "(I)$enumType" -> {
+                        matchesEnumFromOrdinal(family, method)
+                    }
+
+                    name == "\$new" && descriptor == "(IL$STRING;)$enumType" -> {
+                        matchesEnumNew(family, method, lookup)
+                    }
+
+                    name == "ordinal" && descriptor == "($enumType)I" -> {
+                        method.body ==
+                            listOf(
+                                aload(1),
+                                Insn.Call(Opcodes.INVOKEVIRTUAL, family.enumClass.internalName, "ordinal", "()I"),
+                                Insn.Plain(Opcodes.IRETURN),
+                            )
+                    }
+
+                    name == "ordinal" && descriptor == "(L$OBJECT;)I" -> {
+                        method.body ==
+                            listOf(
+                                aload(0),
+                                aload(1),
+                                Insn.TypeOperand(Opcodes.CHECKCAST, family.enumClass.internalName),
+                                Insn.Call(Opcodes.INVOKEVIRTUAL, companion.internalName, "ordinal", "($enumType)I"),
+                                Insn.Plain(Opcodes.IRETURN),
+                            )
+                    }
+
+                    else -> {
+                        false
+                    }
+                }
+            if (matched) result += key
+        }
+        return result
+    }
+
+    /** `getstatic $values; invokevirtual <array>.clone; checkcast <array>; areturn`. */
+    private fun matchesEnumValues(
+        family: EnumFamily,
+        method: MethodShape,
+    ): Boolean {
+        val array = "[${family.singletonType}"
+        val holder = family.companion.fields.singleOrNull { it.name == VALUES_FIELD && it.descriptor == array }
+        return family.allSingleton &&
+            holder != null &&
+            method.body ==
+            listOf(
+                Insn.Field(Opcodes.GETSTATIC, family.companion.internalName, VALUES_FIELD, array),
+                Insn.Call(Opcodes.INVOKEVIRTUAL, array, "clone", "()L$OBJECT;"),
+                Insn.TypeOperand(Opcodes.CHECKCAST, array),
+                Insn.Plain(Opcodes.ARETURN),
+            )
+    }
+
+    /** The string-concatenation call that builds scalac's `has no case with <what>` message. */
+    private fun Match.noCaseMessage(
+        family: EnumFamily,
+        what: String,
+    ) {
+        val tail = " has no case with $what: \u0001"
+        take { insn ->
+            (insn as? Insn.Dynamic)?.takeIf { call ->
+                val recipe = call.arguments.singleOrNull() as? String
+                call.name == "makeConcatWithConstants" &&
+                    call.descriptor == CONCAT_DESCRIPTOR &&
+                    call.bootstrap.owner == STRING_CONCAT &&
+                    call.bootstrap.name == "makeConcatWithConstants" &&
+                    recipe != null &&
+                    recipe.startsWith("enum ") &&
+                    recipe.endsWith(tail) &&
+                    recipe.removePrefix("enum ").removeSuffix(tail).substringAfterLast('.') == family.enumClass.sourceName
+            }
+        }
+    }
+
+    /**
+     * `new <exception>; dup; <argument>; <message call>; invokespecial <init>(String); athrow`. Scala
+     * 3.3.3 words both differently: `valueOf`'s message is `"enum case not found: " + s`, with no enum
+     * name, and `fromOrdinal` passes the ordinal's string with no message call at all.
+     */
+    private fun Match.throwNoCase(
+        family: EnumFamily,
+        exception: String,
+        what: String,
+    ) {
+        step(Insn.TypeOperand(Opcodes.NEW, exception))
+        step(Insn.Plain(Opcodes.DUP))
+        if (what == "name") {
+            step(aload(1))
+            either({ noCaseMessage(family, what) }, { concatWithRecipe(OLD_NO_CASE_RECIPE) })
+        } else {
+            step(Insn.Var(Opcodes.ILOAD, 1))
+            step(Insn.Call(Opcodes.INVOKESTATIC, BOXES, "boxToInteger", "(I)Ljava/lang/Integer;"))
+            step(Insn.Call(Opcodes.INVOKEVIRTUAL, INTEGER, "toString", "()L$STRING;"))
+            optional { noCaseMessage(family, what) }
+        }
+        step(Insn.Call(Opcodes.INVOKESPECIAL, exception, "<init>", "(L$STRING;)V"))
+        step(Insn.Plain(Opcodes.ATHROW))
+    }
+
+    /** The string-concatenation call with exactly [recipe]. */
+    private fun Match.concatWithRecipe(recipe: String) {
+        take { insn ->
+            (insn as? Insn.Dynamic)?.takeIf { call ->
+                call.name == "makeConcatWithConstants" &&
+                    call.descriptor == CONCAT_DESCRIPTOR &&
+                    call.bootstrap.owner == STRING_CONCAT &&
+                    call.bootstrap.name == "makeConcatWithConstants" &&
+                    call.arguments.singleOrNull() == recipe
+            }
+        }
+    }
+
+    /** `aload_0; pop; getstatic <companion>.<case>; areturn`, the return of a matched case. */
+    private fun Match.returnCase(
+        family: EnumFamily,
+        case: FieldShape,
+    ) {
+        step(aload(0))
+        step(Insn.Plain(Opcodes.POP))
+        step(Insn.Field(Opcodes.GETSTATIC, family.companion.internalName, case.name, case.descriptor))
+        step(areturn())
+    }
+
+    /**
+     * `valueOf(String)`, in the two lowerings of the string match it is. Both open `aload_1; astore s`.
+     * With one or two cases, a chain per case in declaration order: `ldc <name>; aload s;
+     * Object.equals; ifeq NEXT; <return the case>`. With three or more, a switch on the string's hash
+     * (`aload s; ifnonnull H; iconst_0; goto S; H: aload s; String.hashCode; S:`), a `tableswitch` when
+     * the hashes are dense (`case X, Y, Z`) and a `lookupswitch` otherwise, whose buckets are in key
+     * order, each the same test followed by `goto DEFAULT`. The tail is `throw new IllegalArgumentException(
+     * "enum <enum> has no case with name: " + s)`. Two cases whose names share a hash share a bucket,
+     * a lowering not read here. An enum with a parameterised case has no `valueOf`.
+     */
+    private fun matchesEnumValueOf(
+        family: EnumFamily,
+        method: MethodShape,
+    ): Boolean {
+        val body = method.body ?: return false
+        if (!family.allSingleton) return false
+        val cases = family.cases
+        val chain =
+            Match(body).also { m ->
+                m.step(aload(1))
+                m.store(Opcodes.ASTORE, "s")
+                for ((index, case) in cases.withIndex()) {
+                    m.step(Insn.Constant(case.name))
+                    m.load(Opcodes.ALOAD, "s")
+                    m.step(Insn.Call(Opcodes.INVOKEVIRTUAL, OBJECT, "equals", "(L$OBJECT;)Z"))
+                    m.jump(Opcodes.IFEQ, "next$index")
+                    m.returnCase(family, case)
+                    m.label("next$index")
+                }
+                m.throwNoCase(family, ILLEGAL_ARGUMENT, "name")
+            }
+        if (chain.matched) return true
+        val byHash = cases.groupBy { it.name.hashCode() }
+        if (byHash.values.any { it.size > 1 }) return false
+        val keys = byHash.keys.sorted()
+        return Match(body)
+            .also { m ->
+                m.step(aload(1))
+                m.store(Opcodes.ASTORE, "s")
+                m.load(Opcodes.ALOAD, "s")
+                m.jump(Opcodes.IFNONNULL, "hash")
+                m.step(Insn.IntConstant(0))
+                m.jump(Opcodes.GOTO, "switch")
+                m.label("hash")
+                m.load(Opcodes.ALOAD, "s")
+                m.step(Insn.Call(Opcodes.INVOKEVIRTUAL, STRING, "hashCode", "()I"))
+                m.label("switch")
+                m.keyedSwitch(keys, keys.indices.map { "bucket$it" }, "default")
+                for ((index, key) in keys.withIndex()) {
+                    val case = byHash.getValue(key).single()
+                    m.label("bucket$index")
+                    m.step(Insn.Constant(case.name))
+                    m.load(Opcodes.ALOAD, "s")
+                    m.step(Insn.Call(Opcodes.INVOKEVIRTUAL, OBJECT, "equals", "(L$OBJECT;)Z"))
+                    m.jump(Opcodes.IFEQ, "miss$index")
+                    m.returnCase(family, case)
+                    m.label("miss$index")
+                    m.jump(Opcodes.GOTO, "default")
+                }
+                m.label("default")
+                m.throwNoCase(family, ILLEGAL_ARGUMENT, "name")
+            }.matched
+    }
+
+    /**
+     * `fromOrdinal(int)`, in two shapes. With only singleton cases it indexes `$values` inside a
+     * `Throwable` handler that rethrows as `NoSuchElementException`: `getstatic $values; iload_1;
+     * aaload; goto END; H: pop; <throw>; nop; nop; athrow; END: areturn`, the handler covering the
+     * first three instructions. An enum with a parameterised case tests ordinals instead,
+     * `iload_1; istore k` then, with one or two singleton cases, per case `<ordinal>; iload k;
+     * if_icmpne NEXT; <return the case>`, and with three or more `iload k` and a switch on the
+     * singleton ordinals whose targets return each case, before the throw. An enum with no singleton
+     * case is only the throw. The ordinal of a case is its position among all the companion's case
+     * fields, parameterised ones included.
+     */
+    private fun matchesEnumFromOrdinal(
+        family: EnumFamily,
+        method: MethodShape,
+    ): Boolean {
+        val code = method.code ?: return false
+        val array = "[${family.singletonType}"
+        if (family.allSingleton && family.companion.fields.any { it.name == VALUES_FIELD && it.descriptor == array }) {
+            val m = Match(code)
+            m.step(Insn.Field(Opcodes.GETSTATIC, family.companion.internalName, VALUES_FIELD, array))
+            m.step(Insn.Var(Opcodes.ILOAD, 1))
+            m.step(Insn.Plain(Opcodes.AALOAD))
+            m.jump(Opcodes.GOTO, "end")
+            m.label("handler")
+            m.step(Insn.Plain(Opcodes.POP))
+            m.throwNoCase(family, NO_SUCH_ELEMENT, "ordinal")
+            m.step(Insn.Plain(Opcodes.NOP))
+            m.step(Insn.Plain(Opcodes.NOP))
+            m.step(Insn.Plain(Opcodes.ATHROW))
+            m.label("end")
+            m.step(areturn())
+            val handler = m.labelIndex("handler")
+            if (m.matched && handler != null && method.handlers == listOf(Handler(0, 3, handler, THROWABLE))) return true
+        }
+        if (method.hasHandler) return false
+        val singletons = family.cases.withIndex().filter { (_, case) -> case.descriptor == family.singletonType }
+        if (singletons.isEmpty()) {
+            return Match(code).also { it.throwNoCase(family, NO_SUCH_ELEMENT, "ordinal") }.matched
+        }
+        val chain = Match(code)
+        chain.step(Insn.Var(Opcodes.ILOAD, 1))
+        chain.store(Opcodes.ISTORE, "k")
+        for ((ordinal, case) in singletons) {
+            chain.step(Insn.IntConstant(ordinal))
+            chain.load(Opcodes.ILOAD, "k")
+            chain.jump(Opcodes.IF_ICMPNE, "next$ordinal")
+            chain.returnCase(family, case)
+            chain.label("next$ordinal")
+        }
+        chain.throwNoCase(family, NO_SUCH_ELEMENT, "ordinal")
+        if (chain.matched) return true
+        val switch = Match(code)
+        switch.step(Insn.Var(Opcodes.ILOAD, 1))
+        switch.store(Opcodes.ISTORE, "k")
+        switch.load(Opcodes.ILOAD, "k")
+        switch.keyedSwitch(singletons.map { it.index }, singletons.map { "case${it.index}" }, "default")
+        for ((ordinal, case) in singletons) {
+            switch.label("case$ordinal")
+            switch.returnCase(family, case)
+        }
+        switch.label("default")
+        switch.throwNoCase(family, NO_SUCH_ELEMENT, "ordinal")
+        return switch.matched
+    }
+
+    /**
+     * The private `$new(int, String)`: `new <singleton class>; dup; aload_2; iload_1; invokespecial
+     * <init>(String, int); areturn`, where the class reads as the singleton-case class of this enum.
+     * Scala 3.3.3, 3.4.0 and 3.4.1 also pass the companion: `aload_0` after `iload_1`, to
+     * `<init>(String, int, <companion>)`.
+     */
+    private fun matchesEnumNew(
+        family: EnumFamily,
+        method: MethodShape,
+        lookup: (String) -> ByteArray?,
+    ): Boolean {
+        val body = method.body ?: return false
+        val created = (body.firstOrNull() as? Insn.TypeOperand)?.takeIf { it.opcode == Opcodes.NEW }?.type ?: return false
+        val singleton = readClass(created, lookup)
+        val companionType = "L${family.companion.internalName};"
+        return method.isPrivate &&
+            singleton != null &&
+            singleton.isEnumSingletonOf(family.enumClass) &&
+            (
+                body ==
+                    listOf(
+                        Insn.TypeOperand(Opcodes.NEW, created),
+                        Insn.Plain(Opcodes.DUP),
+                        aload(2),
+                        Insn.Var(Opcodes.ILOAD, 1),
+                        Insn.Call(Opcodes.INVOKESPECIAL, created, "<init>", "(L$STRING;I)V"),
+                        areturn(),
+                    ) ||
+                    body ==
+                    listOf(
+                        Insn.TypeOperand(Opcodes.NEW, created),
+                        Insn.Plain(Opcodes.DUP),
+                        aload(2),
+                        Insn.Var(Opcodes.ILOAD, 1),
+                        aload(0),
+                        Insn.Call(Opcodes.INVOKESPECIAL, created, "<init>", "(L$STRING;I$companionType)V"),
+                        areturn(),
+                    )
+            )
+    }
+
+    private fun ClassShape.isEnumSingletonOf(enumClass: ClassShape): Boolean =
+        isScala3 && isFinal && superName == enumClass.internalName && ENUM_VALUE in interfaces && MIRROR_SINGLETON in interfaces
+
+    /**
+     * A singleton case's class. Its `canEqual`, `productArity`, `productElement` and
+     * `productElementName` call `EnumValue`'s static twin with `this` (and the argument), its
+     * `fromProduct` calls `Mirror$Singleton.fromProduct$` and has a bridge returning `Object`, and its
+     * private `readResolve` is `getstatic <companion>.MODULE$; aload_0; invokevirtual ordinal;
+     * invokevirtual <companion>.fromOrdinal; areturn`. The name and ordinal come in two forms. Cases
+     * that share a class (`case A, B`) keep them in the fields `$name$N` and `_$ordinal$N` of one
+     * suffix and read them with `getfield`; a case with its own class (`case A extends E(1)`) returns
+     * constants, and the name must be a singleton case of the companion whose position is the
+     * constant `ordinal` returns. `productPrefix` and `toString` return the name, and `hashCode`
+     * (Scala 3.3.7 and later on the 3.3 line, 3.7.3 and later) is `String.hashCode` of it.
+     */
+    private fun singletonCasePlumbing(
+        shape: ClassShape,
+        family: EnumFamily,
+    ): Set<Pair<String, String>> {
+        if (!shape.isEnumSingletonOf(family.enumClass)) return emptySet()
+        val self = shape.internalName
+        val companion = family.companion.internalName
+        val enumType = family.singletonType
+        val enumValue = "L$ENUM_VALUE;"
+        val product = "L$PRODUCT;"
+        val singleton = "L$MIRROR_SINGLETON;"
+        val result = mutableSetOf<Pair<String, String>>()
+
+        fun forward(
+            loads: List<Insn>,
+            owner: String,
+            name: String,
+            descriptor: String,
+        ): List<Insn> =
+            loads +
+                Insn.Call(Opcodes.INVOKESTATIC, owner, name, descriptor) +
+                Insn.Plain(Type.getReturnType(descriptor).getOpcode(Opcodes.IRETURN))
+
+        val forwarders =
+            mapOf(
+                ("canEqual" to "(L$OBJECT;)Z") to
+                    forward(listOf(aload(0), aload(1)), ENUM_VALUE, "canEqual\$", "(${enumValue}L$OBJECT;)Z"),
+                ("productArity" to "()I") to forward(listOf(aload(0)), ENUM_VALUE, "productArity\$", "($enumValue)I"),
+                ("productElement" to "(I)L$OBJECT;") to
+                    forward(listOf(aload(0), Insn.Var(Opcodes.ILOAD, 1)), ENUM_VALUE, "productElement\$", "(${enumValue}I)L$OBJECT;"),
+                ("productElementName" to "(I)L$STRING;") to
+                    forward(listOf(aload(0), Insn.Var(Opcodes.ILOAD, 1)), ENUM_VALUE, "productElementName\$", "(${enumValue}I)L$STRING;"),
+                ("fromProduct" to "($product)$singleton") to
+                    forward(listOf(aload(0), aload(1)), MIRROR_SINGLETON, "fromProduct\$", "($singleton$product)$singleton"),
+                ("fromProduct" to "($product)L$OBJECT;") to
+                    listOf(aload(0), aload(1), Insn.Call(Opcodes.INVOKEVIRTUAL, self, "fromProduct", "($product)$singleton"), areturn()),
+            )
+        for ((key, expected) in forwarders) {
+            if (shape.methods[key]?.takeIf { !it.isStatic }?.body == expected) result += key
+        }
+        val readResolve = shape.methods[READ_RESOLVE]
+        val resolves =
+            listOf(
+                Insn.Field(Opcodes.GETSTATIC, companion, MODULE_FIELD, "L$companion;"),
+                aload(0),
+                Insn.Call(Opcodes.INVOKEVIRTUAL, self, "ordinal", "()I"),
+                Insn.Call(Opcodes.INVOKEVIRTUAL, companion, "fromOrdinal", "(I)$enumType"),
+                areturn(),
+            )
+        if (readResolve != null && readResolve.isPrivate && readResolve.body == resolves) result += READ_RESOLVE
+
+        val nameLoad = singletonNameLoad(shape, family) ?: return result
+        val ordinalKey = "ordinal" to "()I"
+        val ordinalBody = shape.methods[ordinalKey]?.takeIf { !it.isStatic }?.body
+        val ordinalMatches =
+            when (val first = nameLoad.first()) {
+                is Insn.Constant -> {
+                    ordinalBody ==
+                        listOf(Insn.IntConstant(family.ordinalOf(first.value as String)), Insn.Plain(Opcodes.IRETURN))
+                }
+
+                else -> {
+                    ordinalBody?.let { singletonOrdinalLoad(shape, nameLoad, it) } == true
+                }
+            }
+        if (ordinalMatches) result += ordinalKey
+        val prefix = nameLoad + areturn()
+        if (shape.methods["productPrefix" to "()L$STRING;"]?.takeIf { !it.isStatic }?.body ==
+            prefix
+        ) {
+            result += "productPrefix" to "()L$STRING;"
+        }
+        if (shape.methods["toString" to "()L$STRING;"]?.takeIf { !it.isStatic }?.body == prefix) result += "toString" to "()L$STRING;"
+        val hash = nameLoad + Insn.Call(Opcodes.INVOKEVIRTUAL, STRING, "hashCode", "()I") + Insn.Plain(Opcodes.IRETURN)
+        if (shape.methods["hashCode" to "()I"]?.takeIf { !it.isStatic }?.body == hash) result += "hashCode" to "()I"
+        return result
+    }
+
+    /**
+     * The instructions that push a singleton case's name: `ldc <name>` for a name that is a singleton
+     * case of the companion, or `aload_0; getfield $name$N` of a private final `String` field. Null
+     * for anything else.
+     */
+    private fun singletonNameLoad(
+        shape: ClassShape,
+        family: EnumFamily,
+    ): List<Insn>? {
+        val body = shape.methods["productPrefix" to "()L$STRING;"]?.takeIf { !it.isStatic }?.body ?: return null
+        if (body.size == 2 && body[1] == areturn()) {
+            val name = (body[0] as? Insn.Constant)?.value as? String ?: return null
+            val index = family.ordinalOf(name)
+            return if (index >= 0 && family.cases[index].descriptor == family.singletonType) listOf(body[0]) else null
+        }
+        val field = body.getOrNull(1) as? Insn.Field ?: return null
+        val declared = shape.fields.singleOrNull { it.name == field.name && it.descriptor == "L$STRING;" } ?: return null
+        val instanceField =
+            declared.access and (Opcodes.ACC_STATIC or Opcodes.ACC_PRIVATE or Opcodes.ACC_FINAL) ==
+                (Opcodes.ACC_PRIVATE or Opcodes.ACC_FINAL)
+        return if (instanceField &&
+            field.name.startsWith("\$name\$") &&
+            body == listOf(aload(0), Insn.Field(Opcodes.GETFIELD, shape.internalName, field.name, "L$STRING;"), areturn())
+        ) {
+            body.take(2)
+        } else {
+            null
+        }
+    }
+
+    /** Whether [body] reads the `_$ordinal$N` field whose suffix is the one of the `$name$N` field [nameLoad] reads. */
+    private fun singletonOrdinalLoad(
+        shape: ClassShape,
+        nameLoad: List<Insn>,
+        body: List<Insn>,
+    ): Boolean {
+        val suffix = (nameLoad.last() as Insn.Field).name.removePrefix("\$name\$")
+        val field = "_\$ordinal\$$suffix"
+        val declared = shape.fields.singleOrNull { it.name == field && it.descriptor == "I" } ?: return false
+        return declared.access and (Opcodes.ACC_STATIC or Opcodes.ACC_PRIVATE or Opcodes.ACC_FINAL) ==
+            (Opcodes.ACC_PRIVATE or Opcodes.ACC_FINAL) &&
+            body == listOf(aload(0), Insn.Field(Opcodes.GETFIELD, shape.internalName, field, "I"), Insn.Plain(Opcodes.IRETURN))
+    }
+
+    /**
+     * A parameterised case's `ordinal`: `<n>; ireturn`, where the companion's `n`th case is this
+     * class's own source name, held in a field of this class's module class.
+     */
+    private fun parameterisedCasePlumbing(
+        shape: ClassShape,
+        family: EnumFamily,
+    ): Set<Pair<String, String>> {
+        if (!shape.isFinal || ENUM_VALUE in shape.interfaces) return emptySet()
+        val index = family.ordinalOf(shape.sourceName)
+        val key = "ordinal" to "()I"
+        val fits = index >= 0 && family.cases[index].descriptor == "L${shape.internalName}$;"
+        return if (fits &&
+            shape.methods[key]?.body == listOf(Insn.IntConstant(index), Insn.Plain(Opcodes.IRETURN))
+        ) {
+            setOf(key)
+        } else {
+            emptySet()
+        }
     }
 
     private fun generatedCanEqual(self: String): List<Insn> =
@@ -1706,7 +2400,20 @@ internal object ScalaGeneratedMethods {
             val targets: List<Int>,
         ) : Insn
 
-        /** Any instruction no shape here contains, such as `iinc` or `invokedynamic`. */
+        data class LookupSwitch(
+            val keys: List<Int>,
+            val default: Int,
+            val targets: List<Int>,
+        ) : Insn
+
+        data class Dynamic(
+            val name: String,
+            val descriptor: String,
+            val bootstrap: Handle,
+            val arguments: List<Any?>,
+        ) : Insn
+
+        /** Any instruction no shape here contains, such as `iinc`. */
         data object Other : Insn
     }
 
@@ -1716,12 +2423,26 @@ internal object ScalaGeneratedMethods {
      * local-variable entries are not instructions; a label only gives a jump its target index.
      */
     private class BodyRecorder(
-        private val onEnd: (code: List<Insn>?, hasHandler: Boolean) -> Unit,
+        private val onEnd: (code: List<Insn>?, hasHandler: Boolean, handlers: List<Handler>) -> Unit,
     ) : MethodVisitor(Opcodes.ASM9) {
         private val raw = mutableListOf<Any>()
         private val labels = HashMap<Label, Int>()
         private var hasCode = false
         private var hasHandler = false
+        private val tryCatchBlocks = mutableListOf<PendingHandler>()
+
+        private class PendingHandler(
+            val start: Label,
+            val end: Label,
+            val target: Label,
+            val type: String?,
+        )
+
+        private class PendingLookup(
+            val keys: List<Int>,
+            val default: Label,
+            val targets: List<Label>,
+        )
 
         private class PendingJump(
             val opcode: Int,
@@ -1804,13 +2525,13 @@ internal object ScalaGeneratedMethods {
             descriptor: String,
             bootstrapMethodHandle: Handle,
             vararg bootstrapMethodArguments: Any?,
-        ) = add(Insn.Other)
+        ) = add(Insn.Dynamic(name, descriptor, bootstrapMethodHandle, bootstrapMethodArguments.toList()))
 
         override fun visitLookupSwitchInsn(
             dflt: Label,
             keys: IntArray,
             labels: Array<out Label>,
-        ) = add(Insn.Other)
+        ) = add(PendingLookup(keys.toList(), dflt, labels.toList()))
 
         override fun visitMultiANewArrayInsn(
             descriptor: String,
@@ -1824,15 +2545,20 @@ internal object ScalaGeneratedMethods {
             type: String?,
         ) {
             hasHandler = true
+            tryCatchBlocks += PendingHandler(start, end, handler, type)
         }
 
         override fun visitEnd() {
-            if (!hasCode) return onEnd(null, hasHandler)
+            if (!hasCode) return onEnd(null, hasHandler, emptyList())
             onEnd(
                 raw.map { insn ->
                     when (insn) {
                         is PendingJump -> {
                             Insn.Jump(insn.opcode, labels.getValue(insn.target))
+                        }
+
+                        is PendingLookup -> {
+                            Insn.LookupSwitch(insn.keys, labels.getValue(insn.default), insn.targets.map(labels::getValue))
                         }
 
                         is PendingSwitch -> {
@@ -1850,6 +2576,7 @@ internal object ScalaGeneratedMethods {
                     }
                 },
                 hasHandler,
+                tryCatchBlocks.map { Handler(labels.getValue(it.start), labels.getValue(it.end), labels.getValue(it.target), it.type) },
             )
         }
     }
@@ -1917,6 +2644,50 @@ internal object ScalaGeneratedMethods {
                 }
             }
         }
+
+        /**
+         * A switch on [keys], sorted ascending, either kind scalac lowers to: a `lookupswitch` on
+         * exactly [keys], or a `tableswitch` from the first key to the last whose gaps go to
+         * [default]. Key i jumps to [cases]`[i]`.
+         */
+        fun keyedSwitch(
+            keys: List<Int>,
+            cases: List<String>,
+            default: String,
+        ) {
+            take { insn ->
+                when (insn) {
+                    is Insn.LookupSwitch -> {
+                        insn.takeIf { switch ->
+                            switch.keys == keys &&
+                                bind(labels, default, switch.default) &&
+                                cases.zip(switch.targets).all { (name, target) -> bind(labels, name, target) }
+                        }
+                    }
+
+                    is Insn.TableSwitch -> {
+                        insn.takeIf { switch ->
+                            keys.isNotEmpty() &&
+                                switch.min == keys.first() &&
+                                switch.max == keys.last() &&
+                                bind(labels, default, switch.default) &&
+                                (switch.min..switch.max).withIndex().all { (index, key) ->
+                                    val case = keys.indexOf(key)
+                                    val target = switch.targets[index]
+                                    if (case < 0) target == switch.default else bind(labels, cases[case], target)
+                                }
+                        }
+                    }
+
+                    else -> {
+                        null
+                    }
+                }
+            }
+        }
+
+        /** The instruction index [name] is bound to, null while it is unbound. */
+        fun labelIndex(name: String): Int? = labels[name]
 
         /** A load of the slot bound to [name]. */
         fun load(

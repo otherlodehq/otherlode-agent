@@ -173,4 +173,41 @@ class ScalaGeneratedMethodBaselineTest {
 
     @Test
     fun `scala 2 - a scan marks what the transform marks`() = `a scan marks what the transform marks`("scala2")
+
+    @Test
+    fun `scala 3 - a scan marks an enum's plumbing as the transform does and leaves the adopter's methods`() {
+        val declaredClasses =
+            StaticBaselineScanner(listOf("com.example.scalatarget"))
+                .scan(listOf(ScalaFixtures.outputDir("scala3")))
+                .declaredClasses
+
+        fun method(
+            simpleName: String,
+            name: String,
+            descriptor: String,
+        ): DeclaredMethod =
+            declaredClasses
+                .single { it.className == "com.example.scalatarget.$simpleName" }
+                .methods
+                .single { it.methodName == name && it.methodDescriptor == descriptor }
+
+        val level = "Lcom/example/scalatarget/Level;"
+        assertEquals(GeneratedBy.ENUM, method("Level\$", "values", "()[$level").generatedBy)
+        assertEquals(GeneratedBy.ENUM, method("Level\$", "valueOf", "(Ljava/lang/String;)$level").generatedBy)
+        assertEquals(GeneratedBy.ENUM, method("Level\$", "fromOrdinal", "(I)$level").generatedBy)
+        assertEquals(GeneratedBy.ENUM, method("Level\$", "\$new", "(ILjava/lang/String;)$level").generatedBy)
+        assertEquals(GeneratedBy.ENUM, method("Level\$", "ordinal", "($level)I").generatedBy)
+        assertEquals(GeneratedBy.NONE, method("Level\$", "parse", "(Ljava/lang/String;)$level").generatedBy)
+        assertEquals(GeneratedBy.NONE, method("Level\$", "values", "(I)[$level").generatedBy)
+        assertEquals(GeneratedBy.STATIC_FORWARDER, method("Level", "values", "()[$level").generatedBy)
+        assertEquals(GeneratedBy.NONE, method("Level", "next", "()$level").generatedBy)
+
+        assertEquals(GeneratedBy.ENUM, method("Suit\$\$anon\$1", "toString", "()Ljava/lang/String;").generatedBy)
+        assertEquals(GeneratedBy.ENUM, method("Suit\$\$anon\$1", "ordinal", "()I").generatedBy)
+        assertEquals(GeneratedBy.ENUM, method("Planet\$\$anon\$2", "productPrefix", "()Ljava/lang/String;").generatedBy)
+        assertEquals(GeneratedBy.ENUM, method("Planet\$\$anon\$2", "readResolve", "()Ljava/lang/Object;").generatedBy)
+        assertEquals(GeneratedBy.ENUM, method("Shape\$Circle", "ordinal", "()I").generatedBy)
+        assertEquals(GeneratedBy.CASE_CLASS, method("Shape\$Circle", "hashCode", "()I").generatedBy)
+        assertEquals(GeneratedBy.NONE, method("Planet", "mass", "()I").generatedBy)
+    }
 }

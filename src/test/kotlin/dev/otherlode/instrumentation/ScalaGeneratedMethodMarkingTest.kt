@@ -706,4 +706,73 @@ class ScalaGeneratedMethodMarkingTest {
     @Test
     fun `scala 2 - a final case class with its own canEqual keeps the call in equals`() =
         `a final case class with its own canEqual keeps the call in equals`("scala2")
+
+    @Test
+    fun `scala 3 - an enum's plumbing is marked ENUM and what the adopter wrote is not`() {
+        val singletonCase =
+            setOf(
+                "canEqual",
+                "productArity",
+                "productElement",
+                "productElementName",
+                "fromProduct",
+                "readResolve",
+                "productPrefix",
+                "toString",
+                "ordinal",
+                "hashCode",
+            )
+        val companion = setOf("values", "valueOf", "\$new", "fromOrdinal", "ordinal")
+        val enumPlumbing =
+            mapOf(
+                "Suit\$" to companion,
+                "Suit\$\$anon\$1" to singletonCase,
+                "Planet\$" to companion,
+                "Planet\$\$anon\$2" to singletonCase,
+                "Planet\$\$anon\$3" to singletonCase,
+                "Shape\$" to companion,
+                "Shape\$\$anon\$4" to singletonCase,
+                "Level\$" to companion,
+                "Level\$\$anon\$5" to singletonCase,
+                "EnumHost\$Mode\$" to companion,
+                "EnumHost\$Mode\$\$anon\$6" to singletonCase,
+                "Color\$" to companion,
+                "Color\$\$anon\$1" to singletonCase,
+                "Color\$\$anon\$2" to singletonCase,
+            )
+        val enumClasses = listOf("Suit", "Planet", "Shape", "Level", "EnumHost\$Mode", "Color", "Shape\$Circle")
+        val probes = probesAfterLoading("scala3", *(enumPlumbing.keys + enumClasses).toTypedArray())
+
+        for ((simpleName, plumbing) in enumPlumbing) {
+            val methods =
+                probes.methodsOf(simpleName).filter {
+                    it.methodName != "<init>" && it.methodName != "writeReplace" && !it.methodDescriptor.startsWith("(I)[")
+                }
+            assertTrue(methods.isNotEmpty(), simpleName)
+            for (method in methods) {
+                val expected = if (method.methodName in plumbing) GeneratedBy.ENUM else GeneratedBy.NONE
+                assertEquals(expected, method.generatedBy, "$simpleName.${method.methodName}${method.methodDescriptor}")
+            }
+        }
+        for (enumName in enumClasses.dropLast(1)) {
+            val forwarders = probes.methodsOf(enumName).filter { it.static }
+            assertTrue(forwarders.all { it.generatedBy == GeneratedBy.STATIC_FORWARDER }, enumName)
+        }
+        for ((owner, name) in listOf("Level" to "next", "Level" to "ordinalPlus", "Level\$" to "parse", "Planet" to "mass")) {
+            assertEquals(GeneratedBy.NONE, probes.methodsOf(owner).single { it.methodName == name }.generatedBy, "$owner.$name")
+        }
+        assertEquals(
+            GeneratedBy.NONE,
+            probes.method("Level", "valueOf", "(Ljava/lang/String;I)Lcom/example/scalatarget/Level;").generatedBy,
+            "an overload of scalac's valueOf is the adopter's",
+        )
+        assertEquals(
+            GeneratedBy.NONE,
+            probes.method("Level\$", "values", "(I)[Lcom/example/scalatarget/Level;").generatedBy,
+            "an overload of scalac's values in the companion is the adopter's",
+        )
+        assertEquals(GeneratedBy.ENUM, probes.method("Shape\$Circle", "ordinal", "()I").generatedBy)
+        assertEquals(GeneratedBy.CASE_CLASS, probes.method("Shape\$Circle", "hashCode", "()I").generatedBy)
+        assertEquals(GeneratedBy.NONE, probes.method("Shape\$Circle", "radius", "()D").generatedBy)
+    }
 }

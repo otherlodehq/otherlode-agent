@@ -26,14 +26,21 @@ class ScalacMatrixTest {
         @JvmStatic
         fun scala3Versions(): List<String> = CompilerFixtures.scalacVersions.filter { it.startsWith("3.") }
 
+        /**
+         * The 3.x releases in the matrix whose enum singleton cases have a `hashCode`. scalac writes
+         * one from 3.3.7 on the 3.3 line and from 3.7.3, so 3.3.3, 3.3.6, 3.7.0 and 3.7.2 have none.
+         */
+        private val VERSIONS_WITH_ENUM_HASH_CODE = setOf("3.3.7", "3.3.8", "3.8.3", "3.8.4", "3.9.0")
+
         private const val MODULE_READ_RESOLVE = "readResolve()Ljava/lang/Object;"
 
         /**
-         * Scala 3.3.7 and later, and 3.7.3 and later, give the class of an enum singleton case
-         * (`Color$$anon$1`) a `hashCode`. That is enum plumbing, which the enum rules own, so the
-         * comparison leaves it out and the test only requires that it stays unmarked.
+         * An anonymous class's name, the shape of an enum singleton case's class (`Color$$anon$1`,
+         * `EnumHost$Mode$$anon$6`). Scala 3.3.7 and later on the 3.3 line, and 3.7.3 and later, give
+         * such a class a `hashCode` the baseline does not have. The fixtures declare no other
+         * anonymous class with a `hashCode`, so every one this matches is an enum case's.
          */
-        private val ENUM_SINGLETON_HASH_CODE = Regex("[A-Za-z0-9]+\\\$\\\$anon\\\$\\d+")
+        private val ENUM_SINGLETON_CLASS = Regex(".+\\\$\\\$anon\\\$\\d+")
     }
 
     private data class Method(
@@ -67,7 +74,7 @@ class ScalacMatrixTest {
             (isEnumSingletonHashCode(method) && version.startsWith("3."))
 
     private fun isEnumSingletonHashCode(method: Method) =
-        method.name == "hashCode" && method.descriptor == "()I" && ENUM_SINGLETON_HASH_CODE.matches(method.owner)
+        method.name == "hashCode" && method.descriptor == "()I" && ENUM_SINGLETON_CLASS.matches(method.owner)
 
     /**
      * The baseline's key for a method as release [version] spells it. Scala 2.12's `Int*` parameter
@@ -88,15 +95,23 @@ class ScalacMatrixTest {
         val baseline = marksOf(CompilerFixtures.scalaBaseline(version)).mapKeys { inReleaseTerms(version, it.key) }
         val actual = marksOf(CompilerFixtures.scalac(version))
         val findings = mutableListOf<String>()
+        // A method only one build has is a finding only when it is marked: releases name lambdas and
+        // anonymous classes' constructors differently (3.3.3 and 3.4.0 against 3.3.4), and an
+        // unmarked method has no mark to lose.
         for ((method, expected) in baseline) {
             val mark = actual[method]
             when {
-                mark == null && !absentIn(version, method) -> findings += "scalac $version: $method is only in the baseline"
-                mark != null && mark != expected -> findings += "scalac $version: $method expected $expected, got $mark"
+                mark == null && expected != GeneratedBy.NONE && !absentIn(version, method) -> {
+                    findings += "scalac $version: $method is only in the baseline, marked $expected"
+                }
+
+                mark != null && mark != expected -> {
+                    findings += "scalac $version: $method expected $expected, got $mark"
+                }
             }
         }
         for ((method, mark) in actual) {
-            if (method !in baseline && !addedIn(version, method)) {
+            if (method !in baseline && mark != GeneratedBy.NONE && !addedIn(version, method)) {
                 findings += "scalac $version: $method is only in this build, marked $mark"
             }
         }
@@ -131,15 +146,16 @@ class ScalacMatrixTest {
 
     @ParameterizedTest(name = "scalac {0}")
     @MethodSource("scala3Versions")
-    fun `an enum singleton case's hashCode is left unmarked`(version: String) {
+    fun `an enum singleton case's hashCode is ENUM in every build that has one`(version: String) {
         val build = CompilerFixtures.scalac(version)
         val hashCodes =
             build
                 .classNames()
-                .filter { ENUM_SINGLETON_HASH_CODE.matches(it) }
+                .filter { ENUM_SINGLETON_CLASS.matches(it) }
                 .flatMap { owner -> build.markEntries(owner).filter { it.first == "hashCode" } }
 
-        assertTrue(hashCodes.all { it.third == GeneratedBy.NONE }, hashCodes.toString())
+        assertTrue(hashCodes.all { it.third == GeneratedBy.ENUM }, hashCodes.toString())
+        assertEquals(version in VERSIONS_WITH_ENUM_HASH_CODE, hashCodes.isNotEmpty(), "scalac $version")
     }
 
     @ParameterizedTest(name = "scalac {0}")

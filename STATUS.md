@@ -356,7 +356,26 @@ fixes re-reviewed by a fresh Opus reviewer, one commit each:
    enum `$anon` constructors differently from 3.3.4, so the comparison, which
    also checks method sets, fails on them; the canary has to compare marks of
    the methods both builds have.
-4. Scala 3 enum plumbing, each body read with `javap` first.
+4. Scala 3 enum plumbing. Landed 2026-10-04. The enum class's `Product`
+   forwarders, the companion's `values`, `valueOf`, `fromOrdinal`, `$new` and
+   `ordinal`, a singleton case's plumbing (its `hashCode` from 3.3.7 on the 3.3
+   line and from 3.7.3) and a parameterised case's `ordinal` are `ENUM`, each by
+   exact body, recognised by structure only scalac writes (an abstract
+   `ACC_ENUM` class implementing `scala.reflect.Enum`), and checked on every
+   release from 3.3.3 to 3.9.0; 3.3.3 joined the matrix, which now flags only
+   marked methods present in one build. Two reviews: the first found a given,
+   a nested object or a nested case class in the companion counted as a case,
+   two `fromOrdinal` and one `valueOf` lowering unread, and 3.3.3's and
+   3.4.0-3.4.1's wording; the second found none of the fixes over-matched, and
+   that counting cases read each parameterised case's whole class (now only its
+   header). Each case still costs one class read per enum class transformed, a
+   number that grows with the square of the case count: about 6,900 reads for
+   an 80-case enum, once, at load. The overhead entry above should measure it.
+   Not read, and recorded: a Java-compatible enum (`extends java.lang.Enum`), an
+   enum declared inside a class or locally, backticked case names, an enum that
+   overrides `productPrefix`, two case names with the same hash, and 3.10's
+   companion, which drops the parameterised cases' fields (the canary will show
+   it).
 5. Wire: `UnreadShape`, the two oneofs, `agent_version`; codec, testkit decode,
    stub collector; `otherlode-collector` bindings bump.
 6. Unread shapes for Scala: the `.tasty` reader, the release table and its
