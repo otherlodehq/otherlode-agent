@@ -111,8 +111,11 @@ adopter's collector forwards to one multi-tenant backend.
    - An unread body reads as the adopter's code, found after item 3 landed:
      current Scala patch releases make every case class's `hashCode` dead code,
      and kotlinc 2.1 and earlier a never-hit stub per interface default method.
-     Settled on 2026-10-03 (ADRs 0054, 0055); the TODO entry "An unread body is
-     an unread shape" has the landing order. It lands before item 4 starts.
+     Settled on 2026-10-03 (ADRs 0054, 0055) and landed on 2026-10-04 in all
+     three repos: agent `1ccb7a5` to `a985ad1`, collector `cdf423b`, server
+     `b200bc2` and `6dbc56a`. Compiler output the agent has not read is an
+     unread shape, never a finding. The TODO entry "An unread body is an
+     unread shape" has each step and the shapes still unread.
    - Naming, after release: `Tariff$Companion`, `Cc$` and `Driver$` show
      their JVM names in the UI, and Scala signatures read with Java types and
      `x$0` parameter names. A data class property's getter reads as never
@@ -125,8 +128,9 @@ adopter's collector forwards to one multi-tenant backend.
    plan is the TODO entry "Another agent ahead of or behind this one". It
    sits here because the testkit's first report is wrong and the adopter's
    coverage report breaks.
-4. **Settle the one-way doors before anything is published.** Next up
-   (2026-09-27): every item 2 bullet from the real runs has landed, and
+4. **Settle the one-way doors before anything is published.** Next up.
+   Item 2's last bullet, unread shapes, landed on 2026-10-04. On 2026-09-27
+   every earlier item 2 bullet from the real runs had landed, and
    the simple items in 5 and 6 were cleared first on 2026-09-27; what is
    left in 5 is settled and planned in the server STATUS, and 6 is
    publishing. Item 4 is decisions, so it starts with a
@@ -289,6 +293,8 @@ The decisions, in short:
   `SCALA_OBJECT`; Scala 3 enum plumbing is read. A declared compiler list, one
   fixture build per variant boundary, an exact Scala 3 release table filled by a
   sweep script, and a scheduled canary on the newest release of each compiler.
+  ADR 0055's amendment made the table a list of read releases, swept by the
+  matrix test itself.
 - ADR 0026's gaps: kotlinc 2.1 and earlier's `disable`-mode stub forwarding to
   `$DefaultImpls` is marked and passes through; the `$DefaultImpls` forwarder
   rule accepts kotlinc's null checks; a record's methods are marked only with
@@ -444,7 +450,8 @@ fixes re-reviewed by a fresh Opus reviewer, one commit each:
    lets any mark win where the testkit lets any unmarked report make a node,
    and an edge from a loaded class the agent did not probe blocks a claim on
    the server where the testkit drops it. Both matter only with several
-   instances, or with unreported classes, in one test JVM.
+   instances, or with unreported classes, in one test JVM. The server's own
+   gaps are in its STATUS, under "Unread shapes and the agent version".
 10. The canary and the README. Landed 2026-10-04. `compiler-canary.yml` runs
     weekly: `.github/scripts/newest-compilers.sh` extends the kotlinc and
     scalac lists with the newest stable release of each line from Maven
@@ -453,7 +460,9 @@ fixes re-reviewed by a fresh Opus reviewer, one commit each:
     and listed. The kotlinc `-jvm-default` default became a rule ("enable from
     2.2"), so a new kotlinc fails only on a shape change. The README lists the
     compilers whose marks are exact. Run locally on 2026-10-04 with scalac
-    2.12.21 added (the only newer stable release): everything passed.
+    2.12.21 added (the only newer stable release): everything passed. Not yet
+    run on GitHub; the first scheduled run is Monday 2026-10-05, or start it by
+    hand from the Actions tab.
 
 Open from step 2's review, after release: kotlinc 2.2 and later under an
 explicit `-jvm-default=disable` make each implementing class's stub a bridge,
