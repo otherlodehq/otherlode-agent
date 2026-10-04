@@ -612,6 +612,42 @@ entry's moved items and its chunk 4, rerun on the fixed agent with each
 container pinned to its own cores, since on the 4-vCPU runner PetClinic
 averaged 1.6 of its 2 CPUs and throughput measured k6 instead.
 
+### The agent's heap after delivery: measured, to grill
+
+Measured 2026-10-04 on PetClinic REST (JDK 21, `-Xmx1g`, G1, a live
+collector, live heap after two full GCs, MAT on the dumps). Live heap over
+no agent: +9.6 MB with the headline config (1,489 probes), +114.7 MB with the
+ceiling (95,760 probes, 4,090 classes), about 1.2 KB a probe. Delivery frees
+only the in-flight wire objects (10.8 MB). What stays:
+
+- `ProbeRegistry`, 62.2 MB, of which `ClassEntry.probes` is 55.3 MB (about
+  578 B a probe: strings 25.9 MB of which 14.9 MB duplicate values, lists
+  13.3 MB with 38.5k empty and 118k of one element, `ProbeMeta` shells 9.2 MB).
+  After `advanceManifestBaseline` the only read of a delivered `ProbeMeta` is
+  its `kind` (`ProbeRegistry.kt:491`); the counting arrays are 2.4 MB.
+- `OtherlodeInstrumentation.tableCaches`, 34.0 MB: the per-loader
+  `CrossClassTableCache` of `MethodTable`s, read only at transform time and
+  held for the loader's life, which for the fat-jar loader is the process's.
+- `WovenClasses`, 4.5 MB: the stored plans ADR 0053 keeps for a re-weave.
+- `DependencyRegistry`, 1.3 to 2.0 MB, mostly loaded class names, by design.
+
+Native: the JVM's off-heap copy of each woven class's bytes (ADR 0053) is
++19 MB in the ceiling; the largest RSS item is G1 committing +195 MB of heap
+it grew to for transform-time garbage (217 GC pauses against 28), which it
+keeps. The headline config's +78 MB RSS is mostly native: metaspace,
+code cache, symbols and thread stacks for about 3.5k extra classes (ByteBuddy,
+the agent, the JDK HTTP client, which also initialises TLS for plain http).
+
+Candidate changes, for a grill: drop delivered `ProbeMeta` for a compact kind
+array (about 55 MB; makes the manifest permanently send-once, as it is in
+practice); release the table caches once transforms go quiet (about 34 MB);
+intern names and size lists when building probe metadata, call edges, tables
+and plans (15 to 25 MB); allocate less while weaving, so G1 does not grow;
+defer the HTTP client's TLS set-up for an `http` export URL. The full
+measurements, method and reproduction are in
+`docs/investigations/2026-10-04-agent-heap.md`, with the scripts in
+`docs/investigations/heap/`.
+
 ### A Scala 3 enum nested in a class fails to transform
 
 Found 2026-10-04 by the overhead grill's size count. Running the real
