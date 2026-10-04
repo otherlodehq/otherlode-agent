@@ -320,10 +320,7 @@ A once-per-process inventory of the classes and methods on the classpath under t
 _Avoid_: inventory, classpath scan (the scan is the act; the baseline is the payload)
 
 **Declared class**:
-A class the baseline found, read, judged safe to instrument, and that has at least one method to probe.
-
-**Statically unsafe class**:
-A class the baseline found that the agent would skip on load, for the same annotation reason.
+A class the baseline found and read, and that has at least one method to probe.
 
 **Unreadable class**:
 A class file the baseline could not read or resolve.

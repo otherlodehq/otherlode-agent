@@ -231,11 +231,18 @@ adopter's collector forwards to one multi-tenant backend.
 7. **Measure the overhead.** Grilled on 2026-10-04; the entry "Runtime
    overhead: grilled, to build" below. Before release: the PetClinic macro
    harness with its headline and ceiling numbers in the README, the hot-path
-   JMH suite, and the deterministic CI checks.
+   JMH suite, the deterministic CI checks, and, moved before release on
+   2026-10-04, the code-size guard, the flush and registry benchmark and the
+   nightly schedule.
+8. **Weave everything that can be woven, and never crash an adopter's
+   class.** Grilled on 2026-10-04; the entry "Probe arrays, validation and
+   placeholders: grilled, to build" below. A woven class could throw
+   `NullPointerException` where the original ran (ADR 0060), and 312 of the
+   ceiling run's 4462 matched classes were skipped, most of them needlessly
+   (ADRs 0058, 0059).
 
 After release: naming polish (`this$0`, facade names, the demo printer),
-the server's performance-only deferrals, the overhead entry's after-release
-items, gzip, a collector config file, agent-level redaction
+the server's performance-only deferrals, gzip, a collector config file, agent-level redaction
 (parked in the server's STATUS, item 18, with its trigger), and the
 routine and OpenTelemetry edge cases in the entries below.
 
@@ -373,9 +380,10 @@ Settled:
   wrong response, a `VerifyError`). Skipped classes and slow methods are
   published beside the ceiling number.
 - **Before 0.1.0** (checklist item 7): the macro harness with both numbers in
-  the README, the micro suite, the CI checks. **After:** one flush and the
-  registry's heap timed on their own, a nightly schedule with results
-  committed to the repo, and the size guard below.
+  the README, the micro suite, the CI checks, and (moved before release on
+  2026-10-04, Luke's rule being before release whenever there is a choice)
+  one flush and the registry's heap timed on their own, a nightly schedule
+  with results committed to the repo, and the size guard below.
 
 **Code size, measured.** Nothing in the weaver checks HotSpot's limits. Over
 8000 bytes (`HugeMethodLimit`) a method is never JIT-compiled; over 325
@@ -400,7 +408,7 @@ benchmark corpora and read each method's code length before and after:
   the skipped list, the original bytes defined and run), but the whole class
   loses its probes for one method.
 
-The size guard, after release: the analyser bounds each method's woven size
+The size guard, before release: the analyser bounds each method's woven size
 from its original length and its sites, with a margin for ASM widening jumps
 past 32 KB, and when the bound crosses 8000 from below or nears 65535, drops
 that method's branch probes through ADR 0025's drop mechanism, keeps its
@@ -530,45 +538,79 @@ after a 60 s warmup, a 30% drift. The default warmup went to 150 s.
   `ANNOTATION_TYPE` on an annotation type (`InstrumentedType.java:1759-1760`
   in byte-buddy 1.18.12's sources).
 
-### ByteBuddy's type validation skips classes that would weave: to grill
+### Probe arrays, validation and placeholders: grilled, to build
 
-Found 2026-10-04 by the overhead ceiling run (PetClinic REST, Spring Boot
-4.1.1, `includePackages=org.springframework`), which skipped 146 classes,
-reproduced offline with the agent jar and traced in byte-buddy 1.18.12's
-sources:
+Grilled on 2026-10-04 with Luke, from the overhead ceiling run (PetClinic
+REST on Spring Boot 4.1.1, `includePackages=org.springframework`), which wove
+4150 classes and skipped 312. ADRs 0058, 0059 and 0060, with 0004 and 0007
+amended; `CONTEXT.md` drops "statically unsafe class". The rule behind all of
+it: skip only what cannot be woven, and name every skip.
 
-- 90 throw "Cannot add @org.jspecify.annotations.Nullable() on ..." from
-  `InstrumentedType.Default.validated()` (`InstrumentedType.java:1789` fields,
-  `:1894` methods). All are spring-data-jpa, which is compiled by ajc 1.9.25.1:
-  ajc copies a TYPE_USE annotation in front of a field or return type into
-  `RuntimeVisibleAnnotations` as well as `RuntimeVisibleTypeAnnotations`, and
-  the declaration copy fails the `@Target(TYPE_USE)` check. javac 11, 21 and 22,
-  ecj and kotlinc emit only the type annotation and weave fine, with jspecify,
-  checker-qual and JetBrains annotations alike, so an adopter is hit only when
-  compiling with ajc. No ByteBuddy or AspectJ issue reports it.
-- 54 throw `NoSuchTypeException` for an absent optional type (Reactor,
-  Querydsl, `kotlin.reflect`): 25 inside `validated()`, 28 in
-  `InstrumentedType.Factory.Default.MODIFIABLE.represent` (`:465`, `:467`), one
-  in frame computation.
-- 2 throw "Cannot resolve Q from ..." resolving the receiver type of an
-  anonymous class in a static generic method (`validated()` `:1903`).
+**A woven class could crash where the original ran.** Probes read the class's
+`$otherlodeProbeCounts` field, which the class's own `<clinit>` fills. When a
+supertype's `<clinit>` runs the class's code first (JVMS 5.5), the field is
+null and the probe throws `NullPointerException`, leaving the class erroneous
+for the JVM's life. Reproduced with the agent jar: a Java superclass constant
+holding a subclass instance, an interface constant holding an anonymous
+implementation, a Kotlin sealed class or sealed interface whose companion
+holds a subtype instance, an enum constant body initialised by reflection.
+ADR 0060: from class-file version 55 every probe loads the array as a
+dynamic constant bootstrapped from `OtherlodeProbeArrays`, and the class gets
+no field, prelude or added method; below 55 every probe calls a private
+accessor that falls back to `resolve` while the field is null. JaCoCo 0.8.13
+splits the same way. A sentinel array is impossible (a static field is null
+until `<clinit>`, JVMS 5.4.2), and skipping the count would make an enum
+body's constructor a false never-hit.
 
-`ByteBuddy().with(TypeValidation.DISABLED)` at
-`OtherlodeInstrumentation.kt:211` recovers 95 of the 146 (all 90, both receiver
-failures, three of the absent types); the 95 define, verify and run. It also
-lets a `@file:JvmName` class weave: offline, a rebase adding a `public static
-final long[]` field fails with validation and succeeds without it, so
-`CLAUDE.md`'s "a no-op transform crashes identically" held only because
-validation was on, and `isSafeToInstrument`'s exclusion and the baseline's
-unsafe bucket rest on it. The cost: the same switch drops ByteBuddy's
-`ValidatingClassVisitor` (`TypeWriter.java:2441`), so a future mistake in the
-agent's own woven code for an old class-file version would fail the adopter's
-class at definition instead of leaving it uninstrumented. OpenTelemetry avoids
-all of this with `DECORATE` and a frozen instrumented type, which cannot add a
-field. Questions for the grill: disable validation, and if so what replaces the
-guard (a verifier pass in the test suite over the corpora, say); whether the
-`@JvmName` exclusion and the baseline's unsafe bucket go with it; and whether
-the 51 remaining absent-type failures are worth the `represent()` path.
+**The 312 skips:**
+
+- 166 were annotation types turned away by the agent's copy of ByteBuddy's
+  annotation check, which copied half the rule (ByteBuddy also accepts an
+  `ANNOTATION_TYPE` annotation on an annotation type,
+  `InstrumentedType.java:1759-1760`), with no log line. None had anything to
+  probe. The static baseline put every annotation type in its statically
+  unsafe bucket for the same reason.
+- 90 were spring-data-jpa classes compiled by ajc 1.9.25.1, which copies a
+  `TYPE_USE` annotation in front of a field or return type (jspecify's
+  `@Nullable`) into the declaration attribute; validation rejects the copy.
+  javac, ecj and kotlinc never do this.
+- 2 failed validation resolving an anonymous class's receiver type, and 3
+  named an absent type only inside validation.
+- 51 named an absent optional dependency (Reactor, Querydsl,
+  `kotlin.reflect`) in a signature, failing while ByteBuddy described the
+  class.
+
+ADR 0058: `TypeValidation.DISABLED`, as Elastic's agent runs. Every check it
+made fired on the adopter's bytes, never on the agent's, at every class-file
+version from 45 to 69; turning it off recovers 95 PetClinic classes and every
+`@file:JvmName` class. The copied check, the baseline's bucket and the wire's
+`statically_unsafe_classes` go, the field reserved, with the collector and
+server in lockstep. A verifier test in `check` replaces the guard: every
+corpus class and a fixture matrix of versions 45 to 69 are woven, defined
+and initialised, and a woven class may fail only where its unwoven twin
+fails. ASM's `JSRInlinerAdapter` runs first on class files below 50, since
+subroutine code failed whatever the setting (the branch tier computes
+frames). Every remaining skip logs one WARNING. ADR 0059: the AgentBuilder's
+pool describes a missing type as a placeholder (public, extends `Object`,
+with the type-variable count its references use), and a class whose own
+supertype is missing is still refused; a prototype wove all 51 to classes
+that load exactly as their twins do, and 1,772 others to identical bytes.
+
+Also settled: before release, a JFR profile of the agent's startup on the
+headline config (+2.7 s over 4.1 s with about 100 classes woven) and a heap
+histogram of the ceiling config after first delivery (about 1.5 KB of heap
+per probe), each reported as findings, with any design change grilled.
+
+Landing order, one chunk and one commit each: (1) probe arrays, ADR 0060,
+with a forked-JVM test of every crashing shape at versions 52 and 66 and a
+redefinition test of both forms; (2) validation off, the copied check
+removed, skips logged alike, the subroutine inliner and the verifier test;
+(3) the wire field removed and reserved, then `otherlode-collector`'s
+bindings, then `otherlode-server`'s bucket; (4) placeholders, with the
+supertype guard and the byte-identical regression test; then the overhead
+entry's moved items and its chunk 4, rerun on the fixed agent with each
+container pinned to its own cores, since on the 4-vCPU runner PetClinic
+averaged 1.6 of its 2 CPUs and throughput measured k6 instead.
 
 ### A Scala 3 enum nested in a class fails to transform
 

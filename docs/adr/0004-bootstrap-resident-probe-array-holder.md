@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted, amended by 0060
 ---
 
 # Initialise probe arrays through a bootstrap-resident holder
@@ -16,3 +16,5 @@ Setting a private non-final field reflectively after load, through ByteBuddy's `
 - If the holder cannot be installed at all (a read-only filesystem, a full `java.io.tmpdir`), the agent logs at ERROR and disables itself entirely, exporter included. A missing instance is visible at the collector; a zero-hit instance is not.
 - HotSpot prints a one-line CDS warning at startup about the appended bootstrap classpath. OpenTelemetry's agent causes the same one.
 - The shadow plugin explodes any embedded `.jar` it copies, which is why the resource has a `.bin` suffix. The `verifyAgentJar` task fails the build if the resource is missing or a holder class is present loose.
+
+Amended 2026-10-04 by 0060. The prelude alone left a window: a supertype's `<clinit>` can run the class's code before the class's own `<clinit>` fills the field, and the probes read null. From class-file version 55 the probes load the array as a dynamic constant bootstrapped from this holder, and the class gets no field or prelude; below 55 they call an accessor that falls back to `resolve` while the field is null. The holder is the one mechanism under both.

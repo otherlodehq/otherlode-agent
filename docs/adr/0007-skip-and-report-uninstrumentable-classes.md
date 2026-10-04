@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted, amended by 0058
 ---
 
 # Skip and report classes that cannot be instrumented safely
@@ -15,5 +15,7 @@ The wider rule this sets: missing data must never read as a confident dead-code 
 - Checking inside the transform callback. Does not work: `AgentBuilder` commits to rebasing a type the moment it matches `.type(...)`, so only the type matcher can keep a class out of the path that fails.
 
 ## Consequences
+
+Amended 2026-10-04 by 0058. The type-matcher exclusion described above is gone: the annotation check fired only because ByteBuddy's type validation was on, and with it off a `@file:JvmName` class weaves. "A no-op transform crashes identically" held only under validation. The listener half of this decision stands: a class ByteBuddy still cannot rebase is recorded as skipped and logged.
 
 The blast radius is small. `@file:JvmName` is mostly a library-author idiom, not something controllers and handlers reach for. Adding a field during a first-load transform is well established (JaCoCo has done it for over a decade); the ByteBuddy restriction on adding fields applies to retransforming already-loaded classes, which Otherlode never does (0013).
