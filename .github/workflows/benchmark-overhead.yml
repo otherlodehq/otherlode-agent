@@ -1,0 +1,55 @@
+name: benchmark-overhead
+
+on:
+  workflow_dispatch:
+    inputs:
+      collector_ref:
+        description: Branch, tag or commit of otherlodehq/otherlode-collector to build
+        default: master
+      repeats:
+        description: Runs per variant
+        default: "6"
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    name: benchmark (${{ matrix.config }})
+    runs-on: ubuntu-latest
+    # About five minutes a run: 18 runs at the default 6 repeats, plus image builds. More repeats need a longer limit.
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [headline, ceiling]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+      - run: ./gradlew shadowJar --no-daemon
+      - uses: actions/checkout@v4
+        with:
+          repository: otherlodehq/otherlode-collector
+          ref: ${{ inputs.collector_ref }}
+          path: otherlode-collector
+      - env:
+          REPEATS: ${{ inputs.repeats }}
+          CONFIG: ${{ matrix.config }}
+        run: >-
+          ./gradlew -p benchmark-overhead test --no-daemon
+          -PagentJar="$(ls "$GITHUB_WORKSPACE"/build/libs/otherlode-agent-*.jar | grep -v -e -plain -e -jmh | head -n 1)"
+          -PcollectorDir="$GITHUB_WORKSPACE/otherlode-collector"
+          -Pconfig="$CONFIG"
+          -Prepeats="$REPEATS"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: overhead-${{ matrix.config }}
+          path: benchmark-overhead/build/results
+      - name: Add the summary to the job page
+        if: always()
+        run: cat benchmark-overhead/build/results/${{ matrix.config }}/summary.md >> "$GITHUB_STEP_SUMMARY" || echo "No summary was written." >> "$GITHUB_STEP_SUMMARY"

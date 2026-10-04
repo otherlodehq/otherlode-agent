@@ -459,6 +459,55 @@ want of a class, and at most 20% of a corpus may be left out, so a wrong
 classpath cannot excuse everything. 58 spring-webmvc classes are left out that
 way.
 
+Chunk 3 landed: `benchmark-overhead/`, a standalone Gradle build run as
+`./gradlew -p benchmark-overhead test -PagentJar=... -PcollectorDir=...
+-Pconfig=headline|ceiling`, and the manual `benchmark-overhead` workflow, which
+runs both configs on `ubuntu-latest` and uploads the results. Settled while
+building, past what the grill decided: a 60 s warmup with a throwaway JFR
+recording, then a 180 s window, so three default flushes fall in it; the heap
+fixed at 1 GiB, PetClinic limited to 2 CPUs and 2 GiB, variant order rotated
+each repeat with 6 repeats by default so each variant takes each position
+equally often, Postgres 16.3, k6 2.3.0 with 5 virtual users; class space from
+`jcmd VM.metaspace` rather than Native Memory Tracking, which would slow every
+variant; CPU from the container's cgroup `cpu.stat`, since JFR's `jdk.CPULoad`
+is a share of the host; the collector pinned to `master` until 0.1.0 publishes
+an image. "Slow methods" beside the ceiling number come from
+`CodeSizeLimitsTest`'s report, which covers spring-webmvc, not from the macro
+run, which cannot see method sizes.
+
+The review changed what the numbers mean. k6 tagged each request with its URL,
+so every id started a metric series (400,000 in a 30 s window), and k6 ate the
+runner's CPU: a name tag per request and the `url` system tag off doubled
+local throughput. In a closed loop the container sits at its CPU limit and a
+faster variant allocates more in total, so the comparable figures are per
+request (CPU ms, KiB allocated, GC pause per 1000). A window counts only if its
+last third served within 10% of its first, either way; the first local runs,
+with a 10 s warmup, climbed fivefold through the window and showed the agent
+25% faster than no agent. Delta batches go out empty as a heartbeat, so
+an agent run must also show probes and endpoints in its manifests, no disabled
+endpoint module and no agent ERROR line, which Spring Boot's logging prints in
+its own format once it starts. The skipped count comes from the manifests: a
+class the type matcher turns away is recorded without a log line. The JFR recording stops as k6
+finishes rather than at exit, where it had taken in the agent's shutdown flush,
+and every variant gets the agent jar copied in, so the copy costs each
+variant's startup alike. The summary marks a change inside `none`'s own spread
+and warns about a run whose PetClinic averaged under 1.9 cores: CPU per request
+and throughput are one measurement while PetClinic is held at its limit, and
+not even that when it is not.
+
+A local headline run on 2026-10-04 (one repeat, 60 s warmup and window, a
+laptop, so indicative only, and confounded by order: none, agent and
+agent-baseline ran in that order and throughput fell in that order, while the
+two agent variants should match in a window, so the noise floor is about 4%):
+the agent at -2.4% throughput, +2.3% p95, +8% RSS; the baseline variant at
+-6.2% and +8.1%.
+Startup was 4.1 s without the agent and 6.8 s with it, the same +2.7 s every
+local run has shown, in Spring's own "process running for" too: the agent's
+startup cost on a Spring Boot 4 app with narrow include rules, outside the
+budget, which covers throughput and p95. Its cause is not yet looked at. A
+ceiling run on the same laptop, before the review's fixes, took startup from
+3.8 s to 17.4 s; the ceiling has not run on the fixed harness.
+
 **Found by the sweep, to fix later:**
 
 - A class that names an absent optional type is skipped even when the JVM
@@ -475,6 +524,46 @@ way.
   checks only `ElementType.TYPE`, while ByteBuddy also accepts
   `ANNOTATION_TYPE` on an annotation type (`InstrumentedType.java:1759-1760`
   in byte-buddy 1.18.12's sources).
+
+### ByteBuddy's type validation skips classes that would weave: to grill
+
+Found 2026-10-04 by the overhead ceiling run (PetClinic REST, Spring Boot
+4.1.1, `includePackages=org.springframework`), which skipped 146 classes,
+reproduced offline with the agent jar and traced in byte-buddy 1.18.12's
+sources:
+
+- 90 throw "Cannot add @org.jspecify.annotations.Nullable() on ..." from
+  `InstrumentedType.Default.validated()` (`InstrumentedType.java:1789` fields,
+  `:1894` methods). All are spring-data-jpa, which is compiled by ajc 1.9.25.1:
+  ajc copies a TYPE_USE annotation in front of a field or return type into
+  `RuntimeVisibleAnnotations` as well as `RuntimeVisibleTypeAnnotations`, and
+  the declaration copy fails the `@Target(TYPE_USE)` check. javac 11, 21 and 22,
+  ecj and kotlinc emit only the type annotation and weave fine, with jspecify,
+  checker-qual and JetBrains annotations alike, so an adopter is hit only when
+  compiling with ajc. No ByteBuddy or AspectJ issue reports it.
+- 54 throw `NoSuchTypeException` for an absent optional type (Reactor,
+  Querydsl, `kotlin.reflect`): 25 inside `validated()`, 28 in
+  `InstrumentedType.Factory.Default.MODIFIABLE.represent` (`:465`, `:467`), one
+  in frame computation.
+- 2 throw "Cannot resolve Q from ..." resolving the receiver type of an
+  anonymous class in a static generic method (`validated()` `:1903`).
+
+`ByteBuddy().with(TypeValidation.DISABLED)` at
+`OtherlodeInstrumentation.kt:211` recovers 95 of the 146 (all 90, both receiver
+failures, three of the absent types); the 95 define, verify and run. It also
+lets a `@file:JvmName` class weave: offline, a rebase adding a `public static
+final long[]` field fails with validation and succeeds without it, so
+`CLAUDE.md`'s "a no-op transform crashes identically" held only because
+validation was on, and `isSafeToInstrument`'s exclusion and the baseline's
+unsafe bucket rest on it. The cost: the same switch drops ByteBuddy's
+`ValidatingClassVisitor` (`TypeWriter.java:2441`), so a future mistake in the
+agent's own woven code for an old class-file version would fail the adopter's
+class at definition instead of leaving it uninstrumented. OpenTelemetry avoids
+all of this with `DECORATE` and a frozen instrumented type, which cannot add a
+field. Questions for the grill: disable validation, and if so what replaces the
+guard (a verifier pass in the test suite over the corpora, say); whether the
+`@JvmName` exclusion and the baseline's unsafe bucket go with it; and whether
+the 51 remaining absent-type failures are worth the `represent()` path.
 
 ### A Scala 3 enum nested in a class fails to transform
 

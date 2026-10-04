@@ -1,0 +1,18 @@
+# Copyright The OpenTelemetry Authors. SPDX-License-Identifier: Apache-2.0.
+# Modified from OpenTelemetry Java instrumentation's benchmark-overhead Dockerfile.petclinic: JDK 21
+# stages, PetClinic pinned to a recent commit, the jar copied to /app/petclinic.jar.
+FROM eclipse-temurin:21-jdk AS build
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+WORKDIR /build
+RUN git clone https://github.com/spring-petclinic/spring-petclinic-rest
+WORKDIR /build/spring-petclinic-rest
+# Pinned: ahead of tag v4.0.2, and the k6 script is written against this API.
+RUN git checkout afc8fc1d3b8ec8de69414482b3bd70a1da78cb95
+RUN ./mvnw -q package -DskipTests
+RUN cp target/spring-petclinic-rest-*.jar /petclinic.jar
+
+# A JDK rather than a JRE: the harness runs jcmd inside this container.
+FROM eclipse-temurin:21-jdk
+WORKDIR /app
+COPY --from=build /petclinic.jar /app/petclinic.jar
+EXPOSE 9966
