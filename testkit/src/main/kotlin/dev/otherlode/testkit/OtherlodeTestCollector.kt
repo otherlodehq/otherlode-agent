@@ -2,9 +2,11 @@ package dev.otherlode.testkit
 
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
+import dev.otherlode.export.BranchOutcome
 import dev.otherlode.export.BranchSite
 import dev.otherlode.export.CallEdge
 import dev.otherlode.export.CallEdgeKind
+import dev.otherlode.export.ConditionPartKind
 import dev.otherlode.export.KotlinKind
 import dev.otherlode.export.ProbeManifest
 import dev.otherlode.export.ProtoPayloadCodec
@@ -142,6 +144,7 @@ public class OtherlodeTestCollector internal constructor(
         val genericSignature: String = "",
         val extensionReceiver: Boolean = false,
         val unreadShape: WireUnreadShape = WireUnreadShape.NONE,
+        val branchSites: List<BranchSite> = emptyList(),
     ) {
         /** Whether the method is generated or an unread shape: no node, but looked through. */
         fun isLookedThrough(): Boolean = generatedBy != WireGeneratedBy.NONE || unreadShape != WireUnreadShape.NONE
@@ -191,8 +194,8 @@ public class OtherlodeTestCollector internal constructor(
 
     /**
      * A raw call edge with its guard resolved to the outcome it names: in the instance that reported
-     * a manifest edge, and for a declared edge in the scan's instance, else in the newest instance
-     * that reported the method. [edge] has its own raw guard cleared, since that index means nothing
+     * a manifest edge, and for a declared edge in the scan's instance, else by the site identity
+     * [declaredGuard] matches. [edge] has its own raw guard cleared, since that index means nothing
      * outside one instance. [guard] is null for an edge with no guard or whose guard names no BRANCH
      * probe there.
      */
@@ -504,9 +507,6 @@ public class OtherlodeTestCollector internal constructor(
 
     /** The agent version each instance's accepted payloads named; empty when the agent did not know its own. */
     private val agentVersionByInstance = ConcurrentHashMap<String, String>()
-
-    /** The service version each instance's accepted payloads named; empty when it named none. */
-    private val serviceVersionByInstance = ConcurrentHashMap<String, String>()
     private val rejections = CopyOnWriteArrayList<String>()
 
     @Volatile
@@ -1436,8 +1436,9 @@ public class OtherlodeTestCollector internal constructor(
      * node stands for is dropped. An outcome node has one caller: the outcome node its site's guard
      * names, or else its method. A guard is a branch index in the instance that reported the edge
      * or the site, so it is resolved to its outcome there before instances merge. A declared edge's
-     * guard is resolved in the scan's instance, else in the newest instance that reported the
-     * method, since the scan kept may come from an instance that never loaded the class.
+     * guard is resolved in the scan's instance, else by its site key, role and case in the newest
+     * instance that lists such an outcome, since the scan kept may come from an instance that never
+     * loaded the class.
      *
      * A root is a never-hit node with no caller or with a caller that is a method with hits, a
      * generated method with hits included, since code outside scope may call it. A method
@@ -1871,35 +1872,27 @@ public class OtherlodeTestCollector internal constructor(
 
         fun guarded(
             edge: CallEdge,
-            instances: List<String>,
+            instance: String,
             method: NodeKey,
-        ) = GuardedEdge(
-            edge.copy(guard = null),
-            edge.guard?.let { guard -> instances.firstNotNullOfOrNull { branchIds[OutcomeKey(it, method, guard)] } },
-        )
+        ) = GuardedEdge(edge.copy(guard = null), edge.guard?.let { branchIds[OutcomeKey(instance, method, it)] })
         for (location in mergedLocations()) {
             if (location.key.kind != WireProbeKind.METHOD || location.inline || location.isLookedThrough) continue
             val nodeKey = location.key.method
             val edges =
                 location.members
-                    .flatMap { (key, probe) -> probe.calls.map { guarded(it, listOf(key.serviceInstanceId), nodeKey) } }
+                    .flatMap { (key, probe) -> probe.calls.map { guarded(it, key.serviceInstanceId, nodeKey) } }
                     .toMutableSet()
             consultedDeclaredClasses[nodeKey.className]?.let { declared ->
-                // The scan kept is whichever arrived first, possibly from an instance that never loaded the class and so
-                // has no BRANCH probe to resolve a guard against; the instances of the same service version that loaded it,
-                // newest first, are tried next, as the server does. Another version's indexes can name other outcomes. Unlike
-                // the server, two unversioned instances match: one testkit hears one test run's build, where the server's
-                // unversioned runs can span deploys.
-                val version = serviceVersionByInstance[declared.serviceInstanceId]
-                val instances =
-                    listOf(declared.serviceInstanceId) +
-                        location.members
-                            .map { it.key.serviceInstanceId }
-                            .distinct()
-                            .filter { serviceVersionByInstance[it] == version }
                 declared.methods
                     .filter { it.methodName == nodeKey.methodName && it.methodDescriptor == nodeKey.methodDescriptor }
-                    .forEach { method -> method.calls.mapTo(edges) { guarded(it, instances, nodeKey) } }
+                    .forEach { method ->
+                        method.calls.mapTo(edges) { edge ->
+                            GuardedEdge(
+                                edge.copy(guard = null),
+                                edge.guard?.let { declaredGuard(it, declared, method, location, branchIds) },
+                            )
+                        }
+                    }
             }
             nodes[nodeKey] = NodeInfo(line = location.line, neverLoaded = false, hits = location.hits, edges = edges)
         }
@@ -1919,6 +1912,55 @@ public class OtherlodeTestCollector internal constructor(
             }
         }
         return nodes
+    }
+
+    /**
+     * Resolves a declared edge's [guard], a branch index in the scan's own build, to an outcome. The
+     * scan's instance resolves it when it has a BRANCH probe there. A scan can declare a class its
+     * instance never loaded, or a method that has no branch probes there, so otherwise the outcome
+     * is matched by identity, as the server matches it: the site key of the scan's own site at the
+     * guard, and the outcome's role and case, in the newest instance whose METHOD probe lists such
+     * an outcome. A site key digests the condition's bytecode, so this holds across builds, where a
+     * bare index can name another outcome. It holds only where the role and case name one outcome:
+     * nothing resolves for a site with no key, for an outcome that shares its role and case with
+     * another in its site on either side, for a case label holding a redacted literal or a
+     * placeholder, or for a match with no branch key. An instance whose match fails those tests is
+     * passed over for the next.
+     */
+    private fun declaredGuard(
+        guard: Int,
+        declared: DeclaredClassInfo,
+        method: DeclaredMethodInfo,
+        location: MergedLocation,
+        branchIds: Map<OutcomeKey, OutcomeId>,
+    ): OutcomeId? {
+        val nodeKey = location.key.method
+        branchIds[OutcomeKey(declared.serviceInstanceId, nodeKey, guard)]?.let { return it }
+        val site = method.branchSites.firstOrNull { site -> site.outcomes.any { it.branchIndex == guard } } ?: return null
+        val siteKey = site.siteKey ?: return null
+        val outcome = site.outcomes.first { it.branchIndex == guard }
+
+        fun BranchOutcome.sameCase(other: BranchOutcome) = role == other.role && caseKey == other.caseKey && caseLabel == other.caseLabel
+        if (site.outcomes.count { it.sameCase(outcome) } != 1) return null
+        if (outcome.caseLabel.any {
+                it.kind == ConditionPartKind.PLACEHOLDER ||
+                    (it.kind == ConditionPartKind.STRING_LITERAL && it.text == REDACTED_LITERAL)
+            }
+        ) {
+            return null
+        }
+        return location.members.firstNotNullOfOrNull { (key, probe) ->
+            probe.branchSites
+                .filter { it.siteKey == siteKey }
+                .flatMap { candidate ->
+                    candidate.outcomes
+                        .filter { it.sameCase(outcome) }
+                        .takeIf { it.size == 1 }
+                        .orEmpty()
+                }.firstNotNullOfOrNull { match ->
+                    branchIds[OutcomeKey(key.serviceInstanceId, nodeKey, match.branchIndex)]?.takeIf { it.branchKey != null }
+                }
+        }
     }
 
     /** A class's supertypes from either source: its manifest record, or a complete baseline's declaration. */
@@ -2594,6 +2636,7 @@ public class OtherlodeTestCollector internal constructor(
                                         it.genericSignature,
                                         it.extensionReceiver,
                                         it.unreadShape,
+                                        it.branchSites,
                                     )
                                 },
                             superClassName = declaredClass.superClassName,
@@ -2677,7 +2720,6 @@ public class OtherlodeTestCollector internal constructor(
         val accepted = runIdByInstance.putIfAbsent(instanceId, resource.runId)
         if (accepted == null || accepted == resource.runId) {
             agentVersionByInstance[instanceId] = resource.agentVersion
-            serviceVersionByInstance[instanceId] = resource.serviceVersion.orEmpty()
             instanceRanks.computeIfAbsent(instanceId) { instanceRankSeq.incrementAndGet() }
             return null
         }
@@ -2745,6 +2787,13 @@ public class OtherlodeTestCollector internal constructor(
     }
 
     public companion object {
+        /**
+         * The text a collector's redaction writes in place of a string literal (collector ADR 0001).
+         * One placeholder can stand for different literals, so a case label holding it never
+         * identifies an outcome.
+         */
+        private const val REDACTED_LITERAL = "…"
+
         /** A class's static initialiser, a class state and never a method row. */
         private const val CLASS_INIT = "<clinit>"
 

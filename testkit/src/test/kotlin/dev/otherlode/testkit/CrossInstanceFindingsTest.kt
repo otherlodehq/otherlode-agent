@@ -4,6 +4,8 @@ import dev.otherlode.export.BranchOutcome
 import dev.otherlode.export.BranchRole
 import dev.otherlode.export.BranchSite
 import dev.otherlode.export.CallEdge
+import dev.otherlode.export.ConditionPart
+import dev.otherlode.export.ConditionPartKind
 import dev.otherlode.export.DeclaredClass
 import dev.otherlode.export.DeclaredMethod
 import dev.otherlode.export.DeltaBatch
@@ -45,10 +47,9 @@ class CrossInstanceFindingsTest {
         probes: List<ProbeLocation>,
         vararg hits: Pair<Int, Int>,
         hitCount: Long = 1L,
-        version: String? = null,
     ) {
         val exporter = HttpOtlpStyleExporter(target.exportUrl)
-        val resource = ResourceAttributes("svc", version, instance, null, "run-$instance")
+        val resource = ResourceAttributes("svc", null, instance, null, "run-$instance")
         exporter.exportManifest(ProbeManifest(resource, probes))
         val kinds = probes.associate { (it.classId to it.probeIndex) to it.kind }
         exporter.exportDeltaBatch(
@@ -86,9 +87,11 @@ class CrossInstanceFindingsTest {
         taken: Int,
         fallThrough: Int,
         routine: RoutineKind = RoutineKind.NONE,
+        siteKey: String? = null,
+        siteIndex: Int = 0,
     ) = BranchSite(
-        0,
-        null,
+        siteIndex,
+        siteKey,
         3,
         listOf(BranchOutcome(taken, BranchRole.TAKEN, routine = routine), BranchOutcome(fallThrough, BranchRole.FALL_THROUGH)),
     )
@@ -98,9 +101,8 @@ class CrossInstanceFindingsTest {
         target: OtherlodeTestCollector,
         instance: String,
         classes: List<DeclaredClass>,
-        version: String? = null,
     ) {
-        val resource = ResourceAttributes("svc", version, instance, null, "run-$instance")
+        val resource = ResourceAttributes("svc", null, instance, null, "run-$instance")
         HttpOtlpStyleExporter(target.exportUrl).exportStaticBaseline(StaticBaseline(resource, classes, scannedAt = 1L))
     }
 
@@ -359,12 +361,26 @@ class CrossInstanceFindingsTest {
         val app =
             DeclaredClass(
                 "com.acme.App",
-                listOf(DeclaredMethod("handle", "()V", calls = listOf(CallEdge("com.acme.Legacy", "run", "()V", false, guard = 0)))),
+                listOf(
+                    DeclaredMethod(
+                        "handle",
+                        "()V",
+                        calls = listOf(CallEdge("com.acme.Legacy", "run", "()V", false, guard = 0)),
+                        branchSites = listOf(site(0, 1, siteKey = "s-if")),
+                    ),
+                ),
             )
         val legacy = DeclaredClass("com.acme.Legacy", listOf(DeclaredMethod("run", "()V")))
         val loaded =
             listOf(
-                method(1, 0, "com.acme.App", "handle", calls = listOf(CallEdge("com.acme.Legacy", "run", "()V", false, guard = 0))),
+                method(
+                    1,
+                    0,
+                    "com.acme.App",
+                    "handle",
+                    calls = listOf(CallEdge("com.acme.Legacy", "run", "()V", false, guard = 0)),
+                    branchSites = listOf(site(0, 1, siteKey = "s-if")),
+                ),
                 branch(1, 1, "com.acme.App", "handle", 0, branchKey = "ab01"),
                 branch(1, 2, "com.acme.App", "handle", 1, branchKey = "ab02"),
             )
@@ -384,33 +400,173 @@ class CrossInstanceFindingsTest {
     }
 
     @Test
-    fun `a declared guard never resolves in an instance of another service version`() {
-        val app =
+    fun `a declared guard falls back by site key, not by index, and never for a keyless site`() {
+        fun app(siteKey: String?) =
             DeclaredClass(
                 "com.acme.App",
-                listOf(DeclaredMethod("handle", "()V", calls = listOf(CallEdge("com.acme.Legacy", "run", "()V", false, guard = 0)))),
+                listOf(
+                    DeclaredMethod(
+                        "handle",
+                        "()V",
+                        calls = listOf(CallEdge("com.acme.Legacy", "run", "()V", false, guard = 0)),
+                        branchSites = listOf(site(0, 1, siteKey = siteKey)),
+                    ),
+                ),
             )
         val legacy = DeclaredClass("com.acme.Legacy", listOf(DeclaredMethod("run", "()V")))
-        val target = startCollector()
-        send(target, "i-1", emptyList(), version = "v1")
-        send(
-            target,
-            "i-2",
+        // Another build: a keyless site comes first, so the declared site's outcomes are indexes 2 and 3 and
+        // index 0 is k-x, which never ran. Matching by index, or a keyless site to a keyless site, would root a
+        // cluster at k-x.
+        val shifted =
             listOf(
-                method(1, 0, "com.acme.App", "handle"),
-                branch(1, 1, "com.acme.App", "handle", 0, branchKey = "ab01"),
-                branch(1, 2, "com.acme.App", "handle", 1, branchKey = "ab02"),
-            ),
-            1 to 0,
-            1 to 2,
-            version = "v2",
-        )
-        sendBaseline(target, "i-1", listOf(app, legacy), version = "v1")
+                method(
+                    1,
+                    0,
+                    "com.acme.App",
+                    "handle",
+                    branchSites = listOf(site(0, 1, siteIndex = 0), site(2, 3, siteKey = "s-if", siteIndex = 1)),
+                ),
+                branch(1, 1, "com.acme.App", "handle", 0, branchKey = "k-x"),
+                branch(1, 2, "com.acme.App", "handle", 1, branchKey = "k-y"),
+                branch(1, 3, "com.acme.App", "handle", 2, branchKey = "k-t"),
+                branch(1, 4, "com.acme.App", "handle", 3, branchKey = "k-f"),
+            )
+        for (siteKey in listOf("s-if", null)) {
+            val target = startCollector()
+            send(target, "i-1", emptyList())
+            send(target, "i-2", shifted, 1 to 0, 1 to 2, 1 to 4)
+            sendBaseline(target, "i-1", listOf(app(siteKey), legacy))
 
-        assertTrue(
-            target.unreachedClusters().none { it.rootKind == RootKind.UNTAKEN_OUTCOME },
-            "v2's branch index 0 may name another outcome, so the v1 scan's guard stays unresolved",
-        )
+            val outcomeRoots = target.unreachedClusters().filter { it.rootKind == RootKind.UNTAKEN_OUTCOME }
+            if (siteKey != null) {
+                assertEquals(listOf("k-t"), outcomeRoots.map { it.root.branchKey }, "matched by site key to k-t, not index 0's k-x")
+            } else {
+                assertEquals(emptyList(), outcomeRoots, "a keyless site resolves nothing")
+            }
+            target.close()
+        }
+    }
+
+    @Test
+    fun `a declared guard never matches a case it cannot tell apart`() {
+        val redacted = ConditionPart(ConditionPartKind.STRING_LITERAL, "…")
+        val clear = ConditionPart(ConditionPartKind.STRING_LITERAL, "b")
+        val stringType = ConditionPart(ConditionPartKind.CODE, "String")
+        val placeholder = ConditionPart(ConditionPartKind.PLACEHOLDER, "")
+        val cases =
+            listOf(
+                Triple("redacted twins", listOf(redacted, redacted), 1),
+                Triple("one type twice", listOf(stringType, stringType), 1),
+                Triple("one redacted label beside a clear one", listOf(redacted, clear), 0),
+                Triple("a placeholder label", listOf(placeholder, clear), 0),
+            )
+        for ((name, labels, guard) in cases) {
+            fun switch() =
+                BranchSite(
+                    0,
+                    "s-sw",
+                    3,
+                    labels.mapIndexed { i, label -> BranchOutcome(i, BranchRole.CASE, caseLabel = listOf(label)) } +
+                        BranchOutcome(labels.size, BranchRole.DEFAULT),
+                )
+            val app =
+                DeclaredClass(
+                    "com.acme.App",
+                    listOf(
+                        DeclaredMethod(
+                            "handle",
+                            "()V",
+                            calls = listOf(CallEdge("com.acme.Legacy", "run", "()V", false, guard = guard)),
+                            branchSites = listOf(switch()),
+                        ),
+                    ),
+                )
+            val target = startCollector()
+            send(target, "i-1", emptyList())
+            send(
+                target,
+                "i-2",
+                listOf(
+                    method(1, 0, "com.acme.App", "handle", branchSites = listOf(switch())),
+                    branch(1, 1, "com.acme.App", "handle", 0, branchKey = "k-a"),
+                    branch(1, 2, "com.acme.App", "handle", 1, branchKey = "k-b"),
+                    branch(1, 3, "com.acme.App", "handle", 2, branchKey = "k-d"),
+                ),
+                1 to 0,
+                1 to 2,
+                1 to 3,
+            )
+            sendBaseline(target, "i-1", listOf(app, DeclaredClass("com.acme.Legacy", listOf(DeclaredMethod("run", "()V")))))
+
+            assertEquals(
+                emptyList(),
+                target.unreachedClusters().filter { it.rootKind == RootKind.UNTAKEN_OUTCOME },
+                "$name: k-a never ran, and a match on it would root a false cluster",
+            )
+            target.close()
+        }
+    }
+
+    @Test
+    fun `a declared guard needs the instance's outcome to be told apart too`() {
+        val stringType = ConditionPart(ConditionPartKind.CODE, "String")
+        val a = ConditionPart(ConditionPartKind.STRING_LITERAL, "a")
+        val b = ConditionPart(ConditionPartKind.STRING_LITERAL, "b")
+
+        fun switch(labels: List<ConditionPart>) =
+            BranchSite(
+                0,
+                "s-sw",
+                3,
+                labels.mapIndexed { i, label -> BranchOutcome(i, BranchRole.CASE, caseLabel = listOf(label)) } +
+                    BranchOutcome(labels.size, BranchRole.DEFAULT),
+            )
+        // A later build can change a site without changing its key. A wrong match lands on the outcome at index 0,
+        // which never ran, and roots a false cluster.
+        val cases =
+            listOf(
+                Triple("the instance's case has a twin", stringType, listOf(stringType, stringType) to listOf("k-0", "k-1")),
+                Triple("the instance's match has no branch key", stringType, listOf(stringType, b) to listOf(null, "k-1")),
+                Triple("the instance's site has another case first", a, listOf(b, a) to listOf("k-b", "k-a")),
+            )
+        for ((name, declared, run) in cases) {
+            val (labels, keys) = run
+            val app =
+                DeclaredClass(
+                    "com.acme.App",
+                    listOf(
+                        DeclaredMethod(
+                            "handle",
+                            "()V",
+                            calls = listOf(CallEdge("com.acme.Legacy", "run", "()V", false, guard = 0)),
+                            branchSites = listOf(switch(listOf(declared))),
+                        ),
+                    ),
+                )
+            val target = startCollector()
+            send(target, "i-1", emptyList())
+            send(
+                target,
+                "i-2",
+                listOf(
+                    method(1, 0, "com.acme.App", "handle", branchSites = listOf(switch(labels))),
+                    branch(1, 1, "com.acme.App", "handle", 0, branchKey = keys[0]),
+                    branch(1, 2, "com.acme.App", "handle", 1, branchKey = keys[1]),
+                    branch(1, 3, "com.acme.App", "handle", 2, branchKey = "k-d"),
+                ),
+                1 to 0,
+                1 to 2,
+                1 to 3,
+            )
+            sendBaseline(target, "i-1", listOf(app, DeclaredClass("com.acme.Legacy", listOf(DeclaredMethod("run", "()V")))))
+
+            assertEquals(
+                emptyList(),
+                target.unreachedClusters().filter { it.rootKind == RootKind.UNTAKEN_OUTCOME },
+                "$name: the outcome at index 0 never ran, and a match on it would root a false cluster",
+            )
+            target.close()
+        }
     }
 
     @Test

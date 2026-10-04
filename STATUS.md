@@ -282,12 +282,13 @@ Landed so far:
 - Chunk 3a on 2026-10-04: agent `40f7bc2`. Two Opus reviews: a root site
   is renumbered to the merged branch indexes its root carries, and a
   declared edge's guard falls back to an instance that loaded the class,
-  so the answer no longer depends on scan arrival order. The server keeps
-  that gap (its STATUS, "A declared guard is lost when the scan's instance
-  never loaded the class"). Left as accepted: with different builds in
-  one testkit, a fallback guard index can name another outcome, and
-  merged indexes can collide inside a root site; both need mixed builds,
-  which the version check in 3b makes unlikely.
+  so the answer no longer depends on scan arrival order. The fallback
+  became an identity match in the same change as the server's (server ADR
+  0032, amended 2026-10-04): the scan's own site key, role and case, never
+  a bare index, and nothing for an outcome the scan cannot tell apart.
+  Left as accepted: merged indexes can collide inside a root site when
+  one testkit hears different builds, which the version check in 3b makes
+  unlikely.
 - Chunk 3b on 2026-10-04: agent `dc57547`. The testkit jar is the shadow
   jar; `verifyTestkitJar`, `apiCheck` (binary-compatibility-validator
   0.18.2, dump in `testkit/api/testkit.api`) and a compile-only Java
