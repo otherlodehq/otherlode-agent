@@ -612,6 +612,33 @@ entry's moved items and its chunk 4, rerun on the fixed agent with each
 container pinned to its own cores, since on the 4-vCPU runner PetClinic
 averaged 1.6 of its 2 CPUs and throughput measured k6 instead.
 
+### The agent's startup: measured, to grill
+
+Measured 2026-10-04 on PetClinic REST (Corretto 21.0.5 with CDS, medians of
+five to seven runs; profiles from async-profiler). "Process running for"
+rose from 3.2 s to 5.5 s with the headline config and to 15.1 s with the
+ceiling. Of the headline's +2.26 s, about 1.5 s is the JAX-RS endpoint
+module's type matcher, which runs on all 19.6k classes the JVM loads,
+whatever the include rules, parses each and walks its supertypes through
+fresh class-file reads (about 25.9k of them) in an app with no JAX-RS at all;
+about 0.45 s is weaving PetClinic's ~100 classes; about 0.4 s is `premain`
+(ByteBuddy's classes, an eagerly built `HttpClient`). Losing CDS costs
+nothing measurable. The ceiling's time scales with the classes woven, about
+3 ms each, and 47% of transform time is locating class files: about 111k
+reads through Spring Boot's nested-jar loader, mostly repeats that ByteBuddy's
+fresh-per-transform pool and the analyser's own lookups make. Background
+threads (JIT, the dependency listing) add 8 s of CPU, which a host with one
+or two CPUs would feel at startup.
+
+Candidate changes, for a grill with the heap entry below, since a shared
+type-pool cache trades startup for retained memory: gate the JAX-RS module
+per loader on its annotation class being present (about 1.5 s on every app
+without JAX-RS); a type pool shared across transforms per loader, also used by
+the analyser's lookups; `BranchKeys.digest` without `String.format` (0.3 s at
+the ceiling); a lazily built `HttpClient` (0.1 s). Full measurements, method and
+scripts in `docs/investigations/2026-10-04-agent-startup.md` and
+`docs/investigations/startup/`.
+
 ### The agent's heap after delivery: measured, to grill
 
 Measured 2026-10-04 on PetClinic REST (JDK 21, `-Xmx1g`, G1, a live
