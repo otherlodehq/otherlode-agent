@@ -656,6 +656,15 @@ restored a test that a class which failed to weave is left alone on
 retransformation. A review harness over junit 3.8.1 and xerces 2.11 wove all
 33 of their subroutine classes.
 
+Chunk 3 landed in all three repos: agent `e15268a` reserves
+`StaticBaseline.statically_unsafe_classes` (3) and drops
+`StaticallyUnsafeClass`, published to the BSR by hand as `582df6f7`, the
+intended break the workflow's registry check refuses; collector `083a65d`
+moves its bindings and drops the log field; server `e842933` stops writing
+bucket 1, and its migration 0010 deletes those rows (all test data, Luke
+said) and adds a check constraint refusing the code, with `bucketString`
+reading an unknown code as unknown.
+
 ### HotSwap of a woven class with changed code: to grill
 
 Raised 2026-10-04 while landing ADR 0060. A woven class whose class file
