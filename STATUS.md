@@ -261,7 +261,7 @@ after-release line above; what, if anything, gates CI (shared runners are too
 noisy for thresholds); and which JDKs and collectors count. Load tests shaped
 like one adopter's traffic wait for an adopter.
 
-### An unread body is an unread shape: settled, in progress
+### An unread body is an unread shape: landed in this repo and the collector; server in progress
 
 Grilled on 2026-10-03 with Luke; ADRs 0054 and 0055, with amendments to 0025,
 0026, 0038, 0048 and 0052. Terms: unread shape, read release. Every exact-body
@@ -440,8 +440,15 @@ fixes re-reviewed by a fresh Opus reviewer, one commit each:
    Also ADR 0024's amendment from step 2: the graph looks through a generated
    method along its own edges (`internal/store/graph.go` drops generated
    methods with `generated_by = 0` filters on nodes and edges).
-10. The scheduled canary job and the README's list of compilers whose marks are
-    exact.
+10. The canary and the README. Landed 2026-10-04. `compiler-canary.yml` runs
+    weekly: `.github/scripts/newest-compilers.sh` extends the kotlinc and
+    scalac lists with the newest stable release of each line from Maven
+    Central, and the matrix tests run over them; a red build is the signal. A
+    new Scala 3 release fails the read-list test by design, until it is swept
+    and listed. The kotlinc `-jvm-default` default became a rule ("enable from
+    2.2"), so a new kotlinc fails only on a shape change. The README lists the
+    compilers whose marks are exact. Run locally on 2026-10-04 with scalac
+    2.12.21 added (the only newer stable release): everything passed.
 
 Open from step 2's review, after release: kotlinc 2.2 and later under an
 explicit `-jvm-default=disable` make each implementing class's stub a bridge,

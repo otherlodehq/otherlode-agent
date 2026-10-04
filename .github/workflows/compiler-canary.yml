@@ -1,0 +1,50 @@
+name: compiler-canary
+
+on:
+  schedule:
+    - cron: '17 5 * * 1'
+  workflow_dispatch:
+
+# A red build is the whole output: the job publishes nothing and opens no issues.
+jobs:
+  canary:
+    name: an unread compiler release (a red build means a compiler writes a shape the agent has not read)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          # The same JDKs the build job installs, since the javac fixtures use 17, 21 and 25 as
+          # toolchains. The javac list is left as gradle.properties has it: a new javac comes in
+          # when these JDKs move, not from this job.
+          java-version: |
+            17
+            25
+            21
+      - uses: gradle/actions/setup-gradle@v4
+      # Extends the kotlinc and scalac lists in gradle.properties with the newest stable release of
+      # each (kotlinc, scalac 2.12, scalac 2.13, Scala 3) when it is not listed already.
+      - id: newest
+        run: .github/scripts/newest-compilers.sh --github
+      - name: Compile the fixtures with the newest compilers and run the matrix tests
+        run: >-
+          ./gradlew :test --no-daemon
+          --tests '*MatrixTest*'
+          ${{ steps.newest.outputs.args }}
+          -Potherlode.testJdk=21
+          -Porg.gradle.java.installations.fromEnv=JAVA_HOME_17_X64,JAVA_HOME_21_X64,JAVA_HOME_25_X64
+      - name: What a failure means
+        if: failure()
+        run: |
+          {
+            echo "A matrix test failed with the newest compiler releases (${{ steps.newest.outputs.args }})."
+            echo "Most likely a release writes a shape the agent has not read. Read it with javap, extend the rules,"
+            echo "and add a Scala 3 release to scala3-read-releases.txt once the matrix passes for it (ADR 0055)."
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "::error title=Unread compiler release::a matrix test failed with the newest compiler releases"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: canary-test-reports
+          path: build/reports/tests/

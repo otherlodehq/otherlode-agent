@@ -38,7 +38,7 @@ class KotlincMatrixTest {
          * method before kotlinc 2.2, and the interface's own method from 2.2, whose stub is a bridge.
          */
         private fun stubBody(version: String): CallEdge =
-            if (version in CompilerFixtures.kotlincJvmDefaultEnableVersions) {
+            if (CompilerFixtures.kotlincDefaultsToJvmDefaultEnable(version)) {
                 CallEdge("com.example.target.kotlinc.Describer", "plain", "()$STRING", virtual = false)
             } else {
                 CallEdge("com.example.target.kotlinc.Describer\$DefaultImpls", "plain", "($DESCRIBER)$STRING", virtual = false)
@@ -161,7 +161,7 @@ class KotlincMatrixTest {
     ) {
         val marks = CompilerFixtures.kotlinc(version).marks("Greeter\$DefaultImpls")
         val expected =
-            if (version in CompilerFixtures.kotlincJvmDefaultEnableVersions) GeneratedBy.DEFAULT_IMPLS else GeneratedBy.NONE
+            if (CompilerFixtures.kotlincDefaultsToJvmDefaultEnable(version)) GeneratedBy.DEFAULT_IMPLS else GeneratedBy.NONE
 
         assertEquals(expected, marks.of("greet", "($GREETER)Ljava/lang/String;"), "greet")
         assertEquals(expected, marks.of("tag", "(${GREETER}Ljava/lang/String;)Ljava/lang/String;"), "tag")
@@ -175,7 +175,7 @@ class KotlincMatrixTest {
     ) {
         val marks = CompilerFixtures.kotlinc(version).marks("Describer\$DefaultImpls")
         val expected =
-            if (version in CompilerFixtures.kotlincJvmDefaultEnableVersions) GeneratedBy.DEFAULT_IMPLS else GeneratedBy.NONE
+            if (CompilerFixtures.kotlincDefaultsToJvmDefaultEnable(version)) GeneratedBy.DEFAULT_IMPLS else GeneratedBy.NONE
 
         assertEquals(expected, marks.of("describe", "($DESCRIBER$STRING)$STRING"), "describe takes a non-null String")
         assertEquals(expected, marks.of("maybe", "($DESCRIBER$STRING)$STRING"), "maybe takes a nullable String")
@@ -212,7 +212,7 @@ class KotlincMatrixTest {
 
         assertEquals(GeneratedBy.NONE, marks.only("id"), "id is the class's own")
         assertEquals(GeneratedBy.NONE, marks.only("<init>"))
-        if (version in CompilerFixtures.kotlincJvmDefaultEnableVersions) {
+        if (CompilerFixtures.kotlincDefaultsToJvmDefaultEnable(version)) {
             stubs.forEach {
                 assertEquals(GeneratedBy.NONE, marks.only(it), it)
                 assertTrue(accessOf(version, "DescriberImpl", it) and Opcodes.ACC_BRIDGE != 0, "$it is a bridge")
@@ -236,7 +236,7 @@ class KotlincMatrixTest {
     ) {
         val marks = CompilerFixtures.kotlinc(version).marks("StringStore")
         val expected =
-            if (version in CompilerFixtures.kotlincJvmDefaultEnableVersions) GeneratedBy.NONE else GeneratedBy.DEFAULT_IMPLS
+            if (CompilerFixtures.kotlincDefaultsToJvmDefaultEnable(version)) GeneratedBy.NONE else GeneratedBy.DEFAULT_IMPLS
 
         assertEquals(expected, marks.of("load", "()Ljava/lang/String;"), "load returns the type argument through a checkcast")
         assertEquals(expected, marks.of("save", "(Ljava/lang/String;)Ljava/lang/String;"), "save takes the type argument")
@@ -250,7 +250,7 @@ class KotlincMatrixTest {
     ) {
         val marks = CompilerFixtures.kotlinc(version).marks("SubDescriberImpl")
         val expected =
-            if (version in CompilerFixtures.kotlincJvmDefaultEnableVersions) GeneratedBy.NONE else GeneratedBy.DEFAULT_IMPLS
+            if (CompilerFixtures.kotlincDefaultsToJvmDefaultEnable(version)) GeneratedBy.NONE else GeneratedBy.DEFAULT_IMPLS
 
         listOf("describe", "maybe", "plain", "getTitle").forEach { assertEquals(expected, marks.only(it), it) }
     }
@@ -269,7 +269,7 @@ class KotlincMatrixTest {
         val calls = CompilerFixtures.kotlinc(version).analyze("DescriberCaller").callsOf("call", "(L$DESCRIBER_IMPL;)$STRING")
         val defaultImpls = "com.example.target.kotlinc.Describer\$DefaultImpls"
 
-        if (version in CompilerFixtures.kotlincJvmDefaultEnableVersions) {
+        if (CompilerFixtures.kotlincDefaultsToJvmDefaultEnable(version)) {
             assertTrue(CallEdge("com.example.target.kotlinc.Describer", "plain", "()$STRING", virtual = false) in calls, "calls: $calls")
             assertTrue(
                 calls.none { it.className.endsWith("DescriberImpl") && it.methodName != "<clinit>" },
@@ -290,7 +290,7 @@ class KotlincMatrixTest {
     fun `a stub that boxes a primitive type argument before calling DefaultImpls is DEFAULT_IMPLS`(version: String) {
         val marks = CompilerFixtures.kotlinc(version).marks("IntTally")
         val expected =
-            if (version in CompilerFixtures.kotlincJvmDefaultEnableVersions) GeneratedBy.NONE else GeneratedBy.DEFAULT_IMPLS
+            if (CompilerFixtures.kotlincDefaultsToJvmDefaultEnable(version)) GeneratedBy.NONE else GeneratedBy.DEFAULT_IMPLS
 
         assertEquals(expected, marks.of("add", "(I)$STRING"))
     }
@@ -306,7 +306,7 @@ class KotlincMatrixTest {
                 .analyze("OpenDescriberCaller")
                 .callsOf("call", "(Lcom/example/target/kotlinc/OpenDescriber;)$STRING")
 
-        if (version in CompilerFixtures.kotlincJvmDefaultEnableVersions) {
+        if (CompilerFixtures.kotlincDefaultsToJvmDefaultEnable(version)) {
             assertTrue(CallEdge("com.example.target.kotlinc.OpenDescriber", "plain", "()$STRING", virtual = true) in calls, "calls: $calls")
         } else {
             assertTrue(
@@ -361,7 +361,7 @@ class KotlincMatrixTest {
             CallEdge("com.example.target.kotlinc.Describer\$DefaultImpls", "plain", "($DESCRIBER)$STRING", virtual = false)
 
         assertTrue(viaInterface in calls, "calls: $calls")
-        if (version in CompilerFixtures.kotlincJvmDefaultEnableVersions) {
+        if (CompilerFixtures.kotlincDefaultsToJvmDefaultEnable(version)) {
             assertTrue(defaultImplsBody !in calls, "the interface method holds the body: $calls")
         } else {
             assertTrue(defaultImplsBody in calls, "the abstract interface method's code is reached: $calls")
@@ -437,7 +437,7 @@ class KotlincMatrixTest {
         val intEcho = "Lcom/example/target/kotlinc/IntEcho;"
         val continuation = "Lkotlin/coroutines/Continuation;"
         val stubExpected =
-            if (version in CompilerFixtures.kotlincJvmDefaultEnableVersions) GeneratedBy.NONE else GeneratedBy.DEFAULT_IMPLS
+            if (CompilerFixtures.kotlincDefaultsToJvmDefaultEnable(version)) GeneratedBy.NONE else GeneratedBy.DEFAULT_IMPLS
 
         assertEquals(GeneratedBy.DEFAULT_IMPLS, forwarders.of("echo", "(${intEcho}I)Ljava/lang/Integer;"))
         assertEquals(GeneratedBy.DEFAULT_IMPLS, forwarders.of("later", "(${intEcho}I$continuation)Ljava/lang/Object;"))
@@ -450,7 +450,7 @@ class KotlincMatrixTest {
     fun `an override that only calls super is the stub's body under jvm-default disable and is marked like one`(version: String) {
         val marks = CompilerFixtures.kotlinc(version).marks("SuperDescriber")
         val expected =
-            if (version in CompilerFixtures.kotlincJvmDefaultEnableVersions) GeneratedBy.NONE else GeneratedBy.DEFAULT_IMPLS
+            if (CompilerFixtures.kotlincDefaultsToJvmDefaultEnable(version)) GeneratedBy.NONE else GeneratedBy.DEFAULT_IMPLS
 
         assertEquals(expected, marks.of("plain", "()$STRING"), "under enable, super.plain() is an invokespecial on the interface")
         assertEquals(GeneratedBy.NONE, marks.of("id", "()$STRING"))

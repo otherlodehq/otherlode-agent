@@ -30,8 +30,14 @@ object CompilerFixtures {
     /** The scalac releases in the matrix, oldest first, as `gradle.properties` lists them. */
     val scalacVersions: List<String> get() = listProperty("otherlode.fixtures.scalac.versions")
 
-    /** The kotlinc releases whose default `-jvm-default` mode is `enable`; the earlier ones default to `disable`. */
-    val kotlincJvmDefaultEnableVersions = setOf("2.2.21", "2.4.20")
+    /**
+     * Whether kotlinc release [version] defaults `-jvm-default` to `enable`, which it does from 2.2;
+     * the earlier releases default to `disable`. Versions compare as numbers, so 2.10 is after 2.2.
+     */
+    fun kotlincDefaultsToJvmDefaultEnable(version: String): Boolean {
+        val (major, minor) = version.split(".").map { it.takeWhile(Char::isDigit).toInt() }
+        return major > 2 || (major == 2 && minor >= 2)
+    }
 
     private const val KOTLIN_PACKAGE = "com/example/target/kotlinc"
     private const val JAVA_PACKAGE = "com/example/target/javac"

@@ -342,7 +342,13 @@ class ScalacMatrixTest {
     fun `every Scala 3 release in the matrix is on the read list`() {
         val unread = CompilerFixtures.scalacVersions.filter { it.startsWith("3.") && !ScalaReleases.isRead(it) }
 
-        assertEquals(emptyList(), unread, "releases the matrix compiles with that scala3-read-releases.txt does not list")
+        assertEquals(
+            emptyList(),
+            unread,
+            "Scala 3 releases compiled in the matrix but not read: sweep each one (run the matrix with " +
+                "-Potherlode.matrix.scalac=<releases>, Scala 2 releases kept in the list) and, if it passes, add it to " +
+                "scala3-read-releases.txt; if it fails, the release writes a shape the agent has not read",
+        )
     }
 
     /** The tooling string of a `.tasty` file: the header's magic, three version numbers, then the string. */

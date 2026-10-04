@@ -452,6 +452,32 @@ redaction is on. The run then reaches the backend as an ordinary run in the
 its environment with `upsert`, the test run lands in production's
 environment. So update the collector before you turn `testRun` on.
 
+## Which compilers' output the agent reads
+
+The agent tells a compiler's generated code (a data class's `copy`, a case
+class's `productElement`, a suspend function's state machine) from yours by
+the exact body the compiler wrote. Those bodies change between compiler
+releases, so the marks are exact only for releases the agent was checked
+against, with each one's output run through the real analyser (ADR 0055):
+
+- kotlinc 1.9.25, 2.1.21, 2.2.21 and 2.4.20. They stand for 1.9 to 2.4;
+  2.1.21 stands for the releases that default to `-jvm-default=disable`.
+- javac 17, 21 and 25.
+- scalac 2.12 and 2.13, version-blind: a Scala 2 class does not name its
+  compiler, so the rules read every variant found from 2.12.18 to 2.12.21 and
+  from 2.13.14 to 2.13.18.
+- Scala 3 from 3.3.3 to 3.9.0, one release at a time. A Scala 3 class names
+  the release that wrote it, and the agent reads the releases listed in
+  `src/main/resources/dev/otherlode/scala3-read-releases.txt`.
+
+Code in the outline of compiler output whose body the agent has not read, from
+any other compiler or a release that changed a shape, is reported as an unread
+shape: it is probed and counted, but never called dead code and never part of
+an unreached cluster, and the collector lists it apart. The agent logs a summary of unread shapes on its
+first flush, naming the Scala 3 releases it has not read. A scheduled CI job
+compiles the fixtures with the newest release of each compiler, so a change
+in a shape fails a build before it reaches a report.
+
 ## Design notes
 
 `docs/adr/` records the decisions behind the agent that are hard to reverse
