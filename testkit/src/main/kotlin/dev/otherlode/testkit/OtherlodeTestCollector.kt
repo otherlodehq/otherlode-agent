@@ -55,6 +55,13 @@ import kotlin.concurrent.write
  * merges into one [EndpointRef] whose call count sums every instance's latest total, the same
  * cross-instance aggregation [hitCount] already does for method probes by class and method name.
  *
+ * The findings ([neverHit], [neverHitRoutineOutcomes], [neverHitUnreadShapes], [neverInitialised],
+ * [neverInstantiated], [unreachedClusters], [neverSupplied], [alwaysSupplied]) judge the merged hits
+ * of every instance heard from, by name, as the server judges every in-scope instance: a probe,
+ * class or call edge one instance reported is the same one in another, whatever class id each
+ * assigned it. A branch outcome is the same outcome by its branch key when it has one, and by its
+ * branch index only when it has none. A finding therefore names no instance.
+ *
  * Dependency queries ([dependency], [unloadedDependencies], [unreferencedDependencies],
  * [unreachedDependencies], [absentReferences]) apply the collector's dependency rules within this
  * one test JVM and follow the same rule again: a dependency no manifest has listed throws
@@ -143,8 +150,8 @@ class OtherlodeTestCollector private constructor(
 
     /**
      * A declared class's methods and supertypes, read from a complete static baseline scan.
-     * [serviceInstanceId] names whichever instance's scan produced this record, used to label a
-     * never-loaded member's [ProbeRef.serviceInstanceId].
+     * [serviceInstanceId] names the instance whose scan produced this record, since a declared call
+     * edge's guard is a branch index in that instance's copy of the class.
      */
     private data class DeclaredClassInfo(
         val serviceInstanceId: String,
@@ -167,17 +174,38 @@ class OtherlodeTestCollector private constructor(
      * [hits] fixed at zero, since the dynamic tier never registered its class at all.
      */
     private data class NodeInfo(
-        val serviceInstanceId: String,
         val line: Int,
         val neverLoaded: Boolean,
         val hits: Long,
-        val edges: Set<CallEdge>,
+        val edges: Set<GuardedEdge>,
     )
 
-    /** One resolved call out of a method: the callee node and the guard the raw [CallEdge] carried. */
+    /**
+     * One outcome across instances, as the server's `probe_locations` names it: by [branchKey] when
+     * the outcome has one, otherwise by [branchIndex]. [branchIndex] is null whenever [branchKey] is set,
+     * since an index only names an outcome within one build.
+     */
+    private data class OutcomeId(
+        val branchKey: String?,
+        val branchIndex: Int?,
+    )
+
+    /**
+     * A raw call edge with its guard resolved to the outcome it names: in the instance that reported
+     * a manifest edge, and for a declared edge in the scan's instance, else in the newest instance
+     * that reported the method. [edge] has its own raw guard cleared, since that index means nothing
+     * outside one instance. [guard] is null for an edge with no guard or whose guard names no BRANCH
+     * probe there.
+     */
+    private data class GuardedEdge(
+        val edge: CallEdge,
+        val guard: OutcomeId?,
+    )
+
+    /** One resolved call out of a method: the callee node and the outcome guarding the call. */
     private data class ResolvedCall(
         val callee: NodeKey,
-        val guard: Int?,
+        val guard: OutcomeId?,
     )
 
     private class CallGraph(
@@ -195,17 +223,17 @@ class OtherlodeTestCollector private constructor(
 
     /**
      * One node of the cluster graph [unreachedClusters] grows clusters over: a method, or, when
-     * [branchIndex] is set, an outcome node in that method: a never-taken outcome, standing for the
+     * [outcome] is set, an outcome node in that method: a never-taken outcome, standing for the
      * code behind it. When [isClass] is true it is a class node, and [method] holds only the class
      * name. See [classNode].
      */
     private data class ClusterNode(
         val method: NodeKey,
-        val branchIndex: Int? = null,
+        val outcome: OutcomeId? = null,
         val isClass: Boolean = false,
     )
 
-    /** One outcome of one instance's method, by its branch index. */
+    /** One outcome of one instance's method, by its branch index in that instance. */
     private data class OutcomeKey(
         val serviceInstanceId: String,
         val method: NodeKey,
@@ -255,12 +283,16 @@ class OtherlodeTestCollector private constructor(
 
     /**
      * An outcome node: a judgeable outcome with no hits in a method with hits, merged across
-     * instances by its method and branch index. [ref] is one instance's BRANCH probe for it. [site]
-     * is the site that lists it on its method's METHOD probe, or null when no manifest listed one.
+     * instances by its method and [OutcomeId]. [ref] is the merged location's ref. [site] is the
+     * site that lists the outcome on its method's METHOD probe in the instance of the newest copy,
+     * its outcomes and guard renumbered to the merged branch indexes, or null when no manifest
+     * listed one. [siteGuard] is that site's guard, resolved in the same instance to the outcome it
+     * names, or null when the site has none or it names no BRANCH probe.
      */
     private data class OutcomeNode(
         val ref: ProbeRef,
         val site: BranchSite?,
+        val siteGuard: OutcomeId?,
     )
 
     /** Each node's callers and callees, over method, outcome and class nodes alike. */
@@ -275,12 +307,11 @@ class OtherlodeTestCollector private constructor(
     )
 
     /**
-     * Groups every omission probe naming one optional parameter, within one instance: see
+     * Groups every omission location naming one optional parameter across instances: see
      * [optionalParameterFindings]. [targetClassName] is the effective target class, already
      * resolved with `targetClassName ?: className`, not the raw wire value.
      */
     private data class OmissionTargetKey(
-        val serviceInstanceId: String,
         val targetClassName: String,
         val methodName: String,
         val methodDescriptor: String,
@@ -298,12 +329,47 @@ class OtherlodeTestCollector private constructor(
         val endpointId: Int,
     )
 
-    /** What one never-hit row stands for within an instance, whichever copy of its class holds it. */
-    private data class RowIdentity(
+    /**
+     * A probe's identity across instances and copies of its class, as the server's `probe_locations`
+     * groups it. [outcome] is null for any kind but BRANCH.
+     */
+    private data class LocationKey(
         val method: NodeKey,
         val kind: ProbeKind,
-        val branchIndex: Int?,
+        val parameterIndex: Int?,
+        val outcome: OutcomeId?,
     )
+
+    /**
+     * Every probe sharing one [LocationKey], merged the way the server's `probe_locations` merges
+     * its copies. [hits] sums every copy. [inline], [static] and [lambdaBody] hold when any copy says
+     * so, [generatedBy] and [inlinedFromClassName] are the greatest any copy gives, and [overridable]
+     * holds when any copy says so. [routine] and [unreadShape] are the first non-default value in
+     * newest-first order. [newest] is the copy of the newest instance, which supplies [line] and
+     * [parameterName]. [branchIndex] is the lowest any copy gives.
+     */
+    private class MergedLocation(
+        val key: LocationKey,
+        val members: List<Map.Entry<ProbeKey, StoredProbe>>,
+        val hits: Long,
+        val line: Int,
+        val branchIndex: Int?,
+        val inline: Boolean,
+        val static: Boolean,
+        val lambdaBody: Boolean,
+        val overridable: Boolean,
+        val generatedBy: GeneratedBy,
+        val inlinedFromClassName: String?,
+        val routine: RoutineKind,
+        val unreadShape: UnreadShape,
+        val targetClassName: String?,
+        val parameterName: String?,
+    ) {
+        val newest: Map.Entry<ProbeKey, StoredProbe> get() = members.first()
+
+        /** Whether the location is generated or an unread shape: no node, but looked through. */
+        val isLookedThrough: Boolean get() = generatedBy != GeneratedBy.NONE || unreadShape != UnreadShape.NONE
+    }
 
     /** Scopes a per-instance id (`dependency_id`, `class_id`) or a class name to the instance that reported it. */
     private data class InstanceKey<T>(
@@ -432,6 +498,10 @@ class OtherlodeTestCollector private constructor(
 
     /** The one run id accepted per instance id; see the class doc and [rejectionFor]. */
     private val runIdByInstance = ConcurrentHashMap<String, String>()
+
+    /** The order each instance was first heard from, later is larger: the testkit's stand-in for the server's run start. */
+    private val instanceRanks = ConcurrentHashMap<String, Long>()
+    private val instanceRankSeq = AtomicLong(0)
 
     /** The agent version each instance's accepted payloads named; empty when the agent did not know its own. */
     private val agentVersionByInstance = ConcurrentHashMap<String, String>()
@@ -618,17 +688,22 @@ class OtherlodeTestCollector private constructor(
     }
 
     /**
-     * Every optional parameter whose combined omission total equals its target's hit total within
-     * the same instance: every caller took the default, so the parameter can go. "Combined" matters
-     * because one parameter can carry more than one omission probe: a Scala constructor default
-     * gets both a module getter on the companion class and that class's own static forwarder, both
-     * resolving to the same target, so their omissions are summed and judged once rather than each
-     * read on its own; see [omissionCount]. Compared per instance, one row per instance, since an
-     * omission probe and its target's method probe only share a class ID within one instance.
-     * Claimed only when every probe naming the parameter is non-overridable, since an overridable
-     * target's omissions are spread across whichever override actually ran, which the manifest
-     * cannot relate back to one total. A target with no method probe at all (an abstract interface
-     * method) is skipped, and so is an inline target, the same reason [neverHit] excludes one.
+     * Every optional parameter whose combined omission total, summed over every instance, equals its
+     * target's hit total summed over every instance: every caller took the default, so the parameter
+     * can go. Each instance's omissions never exceed its own target hits, so equal sums mean equal
+     * counts in every instance. "Combined" matters because one parameter can carry more than one
+     * omission probe: a Scala constructor default gets both a module getter on the companion class
+     * and that class's own static forwarder, both resolving to the same target, so their omissions
+     * are summed and judged once rather than each read on its own; see [omissionCount]. One row per
+     * target class, method, descriptor and parameter index, however many instances reported it.
+     *
+     * Claimed only when no probe naming the parameter is overridable, since an overridable target's
+     * omissions are spread across whichever override actually ran, which the manifest cannot relate
+     * back to one total. A target with no method probe at all (an abstract interface method) is
+     * skipped, and so is an inline target, the same reason [neverHit] excludes one. When instances
+     * disagree about a probe's inline, generated or unread mark, the row is skipped, since the
+     * server's merge keeps any such mark. The row's line is the highest of the omission probes'
+     * lines, each as its newest instance reports it, leaving out `-1`; it is `-1` when every one is.
      */
     fun neverSupplied(): List<OptionalParameterRef> =
         checked {
@@ -636,57 +711,51 @@ class OtherlodeTestCollector private constructor(
         }
 
     /**
-     * Every optional parameter whose combined omission total stayed at zero while its target was
-     * called at least once in the same instance: the default value is dead. See [neverSupplied]
-     * for why "combined" matters. Claimed for any target, overridable or not. A target with no
+     * Every optional parameter whose combined omission total, summed over every instance, stayed at
+     * zero while its target was called at least once in some instance: the default value is dead.
+     * See [neverSupplied] for why "combined" matters and how instances merge. Claimed for any
+     * target, overridable or not. A target with no
      * method probe at all, or an inline target, is skipped, the same as [neverSupplied].
      */
     fun alwaysSupplied(): List<OptionalParameterRef> = checked { optionalParameterFindings { omitted, _, _ -> omitted == 0L } }
 
     /**
-     * Groups every `OPTIONAL_ARGUMENT` probe whose target is neither inline, generated nor an unread
-     * shape by the parameter it names, within one
-     * instance: `(service instance, target class, target method name and descriptor, parameter
-     * index)`. A group can hold more than one probe when a target has more than one omission
-     * probe resolving to it, the Scala constructor case [neverSupplied] documents. [claims] sees
-     * the group's summed omission total, its target's summed hit total, and its shared
-     * `overridable` flag (identical across every probe naming one parameter).
+     * Groups every `OPTIONAL_ARGUMENT` location, merged across instances, by the parameter it
+     * names: `(target class, target method name and descriptor, parameter index)`. A group can hold
+     * more than one location when a target has more than one omission probe resolving to it, the
+     * Scala constructor case [neverSupplied] documents. A group whose target is inline, generated
+     * or an unread shape in any location gives no row. [claims] sees the group's summed omission
+     * total, its target's summed hit total, and whether any location is overridable.
      */
     private fun optionalParameterFindings(
         claims: (omitted: Long, targetHits: Long, overridable: Boolean) -> Boolean,
     ): List<OptionalParameterRef> =
-        probesByKey.entries
-            .filter { (_, probe) ->
-                probe.kind == ProbeKind.OPTIONAL_ARGUMENT && !probe.inline && probe.generatedBy == GeneratedBy.NONE &&
-                    probe.unreadShape == UnreadShape.NONE
-            }.groupBy { (key, probe) ->
+        mergedLocations()
+            .filter { it.key.kind == ProbeKind.OPTIONAL_ARGUMENT }
+            .groupBy {
                 OmissionTargetKey(
-                    key.serviceInstanceId,
-                    probe.targetClassName ?: probe.className,
-                    probe.methodName,
-                    probe.methodDescriptor,
-                    probe.parameterIndex,
+                    it.targetClassName ?: it.key.method.className,
+                    it.key.method.methodName,
+                    it.key.method.methodDescriptor,
+                    it.key.parameterIndex,
                 )
             }.mapNotNull { (groupKey, members) ->
+                if (members.any { it.inline || it.isLookedThrough }) return@mapNotNull null
                 val targetKeys =
                     findMethodProbesOrNull(groupKey.targetClassName, groupKey.methodName, groupKey.methodDescriptor)
-                        ?.filter { it.serviceInstanceId == groupKey.serviceInstanceId }
-                        ?.takeIf { it.isNotEmpty() }
                         ?: return@mapNotNull null
                 val targetHits = targetKeys.sumOf { hitsByKey[it] ?: 0L }
                 if (targetHits <= 0L) return@mapNotNull null
-                val omitted = members.sumOf { (key, _) -> hitsByKey[key] ?: 0L }
-                val representative = members.first().value
-                if (!claims(omitted, targetHits, representative.overridable)) return@mapNotNull null
+                val omitted = members.sumOf { it.hits }
+                if (!claims(omitted, targetHits, members.any { it.overridable })) return@mapNotNull null
                 OptionalParameterRef(
-                    serviceInstanceId = groupKey.serviceInstanceId,
                     className = groupKey.targetClassName,
                     methodName = groupKey.methodName,
                     methodDescriptor = groupKey.methodDescriptor,
                     parameterIndex = groupKey.parameterIndex ?: -1,
-                    parameterName = representative.parameterName ?: "",
-                    line = representative.line,
-                    targetClassName = members.firstNotNullOfOrNull { it.value.targetClassName },
+                    parameterName = members.mapNotNull { it.parameterName }.maxOrNull() ?: "",
+                    line = members.map { it.line }.filter { it >= 0 }.maxOrNull() ?: -1,
+                    targetClassName = members.mapNotNull { it.targetClassName }.maxOrNull(),
                 )
             }.sortedWith(compareBy({ it.className }, { it.methodName }, { it.parameterIndex }))
 
@@ -751,9 +820,18 @@ class OtherlodeTestCollector private constructor(
     }
 
     /**
-     * Every manifest probe, method or branch, that its instance never reported a hit for, sorted
-     * by class name, method name, line, then branch index. Each instance is judged on its own hits;
-     * the server, and this collector's class findings and clusters, merge every instance.
+     * Every probe, method or branch, that no instance reported a hit for, sorted by class name,
+     * method name, line, then branch index. Probes merge across instances and across copies of a
+     * class two loaders defined, as the server merges them: a method is one row by class, name and
+     * descriptor, and a branch outcome is one row by its [ProbeRef.branchKey] when it has one and
+     * by its branch index when it has none, with the hits of every copy summed. A hit in any
+     * instance removes the row.
+     *
+     * Where copies disagree about a row's fields the server's choice applies. [ProbeRef.line] is the
+     * newest instance's, [ProbeRef.branchIndex] is the lowest any copy reports, a row is inline when
+     * any copy is, [ProbeRef.generatedBy] is the greatest mark any copy gives and
+     * [ProbeRef.inlinedFromClassName] the greatest name. A row is routine or an unread shape when
+     * any copy is, with the kind of the newest copy that gives one.
      *
      * A probe belonging to a Kotlin inline function, or a branch inside one, is left out: a
      * Kotlin caller copies the body into its own call site instead of invoking it, so a zero hit
@@ -820,76 +898,117 @@ class OtherlodeTestCollector private constructor(
     /** Every [neverHit] row with routine outcomes still in. */
     private fun neverHitRows(): List<ProbeRef> {
         val judgement = judgeClasses()
-        val routineKinds = routineKinds()
-        val unreadOutcomes = unreadOutcomeShapes()
-        // Two loaders can define one class in an instance. Such copies are one class by name, so a
-        // row is judged on the hits of every copy in the instance and listed once, from the copy
-        // with the lowest class id.
+        val locations = mergedLocations()
         val candidates =
-            probesByKey.entries
-                .filter { (_, probe) ->
-                    !probe.inline && probe.generatedBy == GeneratedBy.NONE && probe.kind != ProbeKind.OPTIONAL_ARGUMENT
-                }.groupBy { (key, probe) ->
-                    InstanceKey(
-                        key.serviceInstanceId,
-                        RowIdentity(NodeKey(probe.className, probe.methodName, probe.methodDescriptor), probe.kind, probe.branchIndex),
-                    )
-                }.values
-                .filter { copies ->
-                    copies.sumOf { (key, _) -> hitsByKey[key] ?: 0L } <= 0L &&
-                        isNeverHitRow(copies.first().value, judgement)
-                }.map { copies -> copies.minBy { (key, _) -> key.classId } }
-        val folded = foldedSiteProbes(candidates, routineKinds, unreadOutcomes)
+            locations.filter {
+                it.key.kind != ProbeKind.OPTIONAL_ARGUMENT && !it.inline && it.generatedBy == GeneratedBy.NONE && it.hits <= 0L &&
+                    isNeverHitRow(it, judgement)
+            }
+        val folded = foldedSites(locations, candidates)
         return candidates
-            .filter { (key, _) -> key !in folded }
-            .map { (key, probe) ->
-                neverHitRef(key, probe, routineOf(key, probe, routineKinds), unreadOf(key, probe, unreadOutcomes))
-            }.sortedWith(compareBy({ it.className }, { it.methodName }, { it.line }, { it.branchIndex ?: -1 }))
+            .filter { it.key !in folded }
+            .map(::neverHitRef)
+            .sortedWith(compareBy({ it.className }, { it.methodName }, { it.line }, { it.branchIndex ?: -1 }))
     }
 
     /**
-     * The BRANCH probes among [candidates] whose site folds into code that never ran. [candidates]
-     * are every probe that is a never-hit row or routine outcome by every other rule, one per row
-     * with its copies' hits summed. A site folds when its judgeable method was never hit in the
-     * same instance, summed across every copy of its class that instance loaded, whether or not the
-     * method is a row itself (a constructor that is not an unused overload is not, and its code
-     * never ran either). It also folds when its guard outcome is a BRANCH probe among [candidates]
-     * that is neither routine nor an unread shape. A site in an unread method never folds, since that
-     * method is not among the judgeable ones.
+     * Every location whose site folds into code that never ran. [candidates] are every location that
+     * is a never-hit row or routine outcome by every other rule, one per row with its copies' hits
+     * summed. A site folds when its judgeable method was never hit in any instance, whether or not
+     * the method is a row itself (a constructor that is not an unused overload is not, and its code
+     * never ran either). It also folds when its guard outcome is a BRANCH candidate that is neither
+     * routine nor an unread shape. The guard is the one the newest copy's own instance lists for the
+     * site, resolved in that instance to the outcome it names. A site in an unread method never
+     * folds, since that method is not among the judgeable ones.
      */
-    private fun foldedSiteProbes(
-        candidates: List<Map.Entry<ProbeKey, StoredProbe>>,
-        routineKinds: Map<OutcomeKey, RoutineKind>,
-        unreadOutcomes: Map<OutcomeKey, UnreadShape>,
-    ): Set<ProbeKey> {
+    private fun foldedSites(
+        locations: List<MergedLocation>,
+        candidates: List<MergedLocation>,
+    ): Set<LocationKey> {
         val neverHitMethods =
-            probesByKey.entries
-                .filter { (_, probe) ->
-                    probe.kind == ProbeKind.METHOD && !probe.inline && probe.generatedBy == GeneratedBy.NONE &&
-                        probe.unreadShape == UnreadShape.NONE
-                }.groupBy { (key, probe) ->
-                    InstanceKey(key.serviceInstanceId, NodeKey(probe.className, probe.methodName, probe.methodDescriptor))
-                }.filterValues { entries -> entries.sumOf { (key, _) -> hitsByKey[key] ?: 0L } <= 0L }
-                .keys
-        val guardOutcomes = HashSet<OutcomeKey>()
-        for ((key, probe) in candidates) {
+            locations
+                .filter {
+                    it.key.kind == ProbeKind.METHOD && !it.inline && it.generatedBy == GeneratedBy.NONE &&
+                        it.unreadShape == UnreadShape.NONE && it.hits <= 0L
+                }.mapTo(HashSet()) { it.key.method }
+        val guardOutcomes =
+            candidates
+                .filter { it.key.kind == ProbeKind.BRANCH && it.routine == RoutineKind.NONE && it.unreadShape == UnreadShape.NONE }
+                .mapTo(HashSet()) { it.key.method to it.key.outcome }
+        val guards = siteGuards()
+        val outcomeIds = branchOutcomeIds()
+        return candidates
+            .filter { location ->
+                val branchIndex = location.newest.value.branchIndex
+                if (location.key.kind != ProbeKind.BRANCH || branchIndex == null) return@filter false
+                val method = location.key.method
+                val instance = location.newest.key.serviceInstanceId
+                val guard = guards[OutcomeKey(instance, method, branchIndex)]?.let { outcomeIds[OutcomeKey(instance, method, it)] }
+                method in neverHitMethods || (guard != null && (method to guard) in guardOutcomes)
+            }.mapTo(HashSet()) { it.key }
+    }
+
+    /** The [OutcomeId] of every BRANCH probe, by the instance and branch index it is known by there. */
+    private fun branchOutcomeIds(): Map<OutcomeKey, OutcomeId> {
+        val ids = HashMap<OutcomeKey, OutcomeId>()
+        for ((key, probe) in probesByKey) {
             val branchIndex = probe.branchIndex
             if (probe.kind != ProbeKind.BRANCH || branchIndex == null) continue
-            if (routineOf(key, probe, routineKinds) != RoutineKind.NONE) continue
-            if (unreadOf(key, probe, unreadOutcomes) != UnreadShape.NONE) continue
-            guardOutcomes +=
-                OutcomeKey(key.serviceInstanceId, NodeKey(probe.className, probe.methodName, probe.methodDescriptor), branchIndex)
+            ids[OutcomeKey(key.serviceInstanceId, NodeKey(probe.className, probe.methodName, probe.methodDescriptor), branchIndex)] =
+                outcomeIdOf(probe)
         }
-        val guards = siteGuards()
-        return candidates
-            .filter { (key, probe) ->
-                val branchIndex = probe.branchIndex
-                if (probe.kind != ProbeKind.BRANCH || branchIndex == null) return@filter false
-                val method = NodeKey(probe.className, probe.methodName, probe.methodDescriptor)
-                val guard = guards[OutcomeKey(key.serviceInstanceId, method, branchIndex)]
-                InstanceKey(key.serviceInstanceId, method) in neverHitMethods ||
-                    (guard != null && OutcomeKey(key.serviceInstanceId, method, guard) in guardOutcomes)
-            }.mapTo(HashSet()) { it.key }
+        return ids
+    }
+
+    private fun outcomeIdOf(probe: StoredProbe): OutcomeId =
+        probe.branchKey?.let { OutcomeId(it, null) } ?: OutcomeId(null, probe.branchIndex)
+
+    /**
+     * Every probe merged by [LocationKey], each location's copies ordered newest instance first,
+     * then by class id and probe index.
+     */
+    private fun mergedLocations(): List<MergedLocation> {
+        val routineKinds = routineKinds()
+        val unreadOutcomes = unreadOutcomeShapes()
+        val newestFirst =
+            compareByDescending<Map.Entry<ProbeKey, StoredProbe>> { instanceRanks[it.key.serviceInstanceId] ?: 0L }
+                .thenBy { it.key.serviceInstanceId }
+                .thenBy { it.key.classId }
+                .thenBy { it.key.probeIndex }
+        return probesByKey.entries
+            .groupBy { (_, probe) ->
+                LocationKey(
+                    NodeKey(probe.className, probe.methodName, probe.methodDescriptor),
+                    probe.kind,
+                    probe.parameterIndex,
+                    if (probe.kind == ProbeKind.BRANCH) outcomeIdOf(probe) else null,
+                )
+            }.map { (key, entries) ->
+                val members = entries.sortedWith(newestFirst)
+                MergedLocation(
+                    key = key,
+                    members = members,
+                    hits = members.sumOf { (probeKey, _) -> hitsByKey[probeKey] ?: 0L },
+                    line = members.first().value.line,
+                    branchIndex = members.mapNotNull { it.value.branchIndex }.minOrNull(),
+                    inline = members.any { it.value.inline },
+                    static = members.any { it.value.static },
+                    lambdaBody = members.any { it.value.lambdaBody },
+                    overridable = members.any { it.value.overridable },
+                    generatedBy = GeneratedBy.entries[members.maxOf { it.value.generatedBy.ordinal }],
+                    inlinedFromClassName = members.mapNotNull { it.value.inlinedFromClassName }.maxOrNull(),
+                    routine =
+                        members
+                            .map { (probeKey, probe) -> routineOf(probeKey, probe, routineKinds) }
+                            .firstOrNull { it != RoutineKind.NONE } ?: RoutineKind.NONE,
+                    unreadShape =
+                        members
+                            .map { (probeKey, probe) -> unreadOf(probeKey, probe, unreadOutcomes) }
+                            .firstOrNull { it != UnreadShape.NONE } ?: UnreadShape.NONE,
+                    targetClassName = members.mapNotNull { it.value.targetClassName }.maxOrNull(),
+                    parameterName = members.first().value.parameterName,
+                )
+            }
     }
 
     /**
@@ -948,19 +1067,20 @@ class OtherlodeTestCollector private constructor(
     }
 
     /**
-     * The unread shape of [probe]: its own, which a BRANCH probe inherits from its method and an
-     * omission probe from its target, or else its outcome's. [UnreadShape.NONE] when neither is.
+     * The unread shape of [probe]: the greater of its own, which a BRANCH probe inherits from its
+     * method and an omission probe from its target, and its outcome's, as the server takes the
+     * greater of the two. [UnreadShape.NONE] when neither is.
      */
     private fun unreadOf(
         key: ProbeKey,
         probe: StoredProbe,
         unreadOutcomes: Map<OutcomeKey, UnreadShape>,
     ): UnreadShape {
-        if (probe.unreadShape != UnreadShape.NONE) return probe.unreadShape
         val branchIndex = probe.branchIndex
-        if (probe.kind != ProbeKind.BRANCH || branchIndex == null) return UnreadShape.NONE
+        if (probe.kind != ProbeKind.BRANCH || branchIndex == null) return probe.unreadShape
         val method = NodeKey(probe.className, probe.methodName, probe.methodDescriptor)
-        return unreadOutcomes[OutcomeKey(key.serviceInstanceId, method, branchIndex)] ?: UnreadShape.NONE
+        val outcome = unreadOutcomes[OutcomeKey(key.serviceInstanceId, method, branchIndex)] ?: UnreadShape.NONE
+        return if (outcome.ordinal > probe.unreadShape.ordinal) outcome else probe.unreadShape
     }
 
     /** The routine kind of [probe], a BRANCH probe of [key]'s instance, or [RoutineKind.NONE] for any other probe. */
@@ -983,21 +1103,22 @@ class OtherlodeTestCollector private constructor(
      * either.
      */
     private fun isNeverHitRow(
-        probe: StoredProbe,
+        location: MergedLocation,
         judgement: ClassJudgement,
     ): Boolean {
-        if (NodeKey(probe.className, probe.methodName, probe.methodDescriptor) in judgement.foldedMethods) return false
-        if (probe.kind != ProbeKind.METHOD) return true
-        return when (probe.methodName) {
+        val method = location.key.method
+        if (method in judgement.foldedMethods) return false
+        if (location.key.kind != ProbeKind.METHOD) return true
+        return when (method.methodName) {
             CLASS_INIT -> false
-            CONSTRUCTOR -> probe.className in judgement.constructed
+            CONSTRUCTOR -> method.className in judgement.constructed
             else -> true
         }
     }
 
     /**
      * Every class that some instance loaded, that has a judgeable static initialiser, and whose
-     * static initialiser never ran, sorted by class name. Nothing used its statics and nothing
+     * static initialiser ran in no instance, sorted by class name. Nothing used its statics and nothing
      * created an instance. A class with no static initialiser is never listed here.
      *
      * Every method of such a class can only run through its initialiser, so [neverHit] and
@@ -1008,7 +1129,7 @@ class OtherlodeTestCollector private constructor(
     /**
      * Every class that some instance loaded, that is not never initialised, that has a judgeable
      * constructor and a judgeable method that is neither static nor a constructor, and none of
-     * whose constructors ran, sorted by class name. No instance of it or of a subclass ever existed.
+     * whose constructors ran in any instance, sorted by class name. No instance of it or of a subclass ever existed.
      * A class with only static methods is never listed, and neither is an interface, which has no
      * constructor.
      *
@@ -1046,19 +1167,9 @@ class OtherlodeTestCollector private constructor(
      * by class, method and descriptor.
      */
     private fun judgeableMethods(): Map<NodeKey, JudgeableMethod> =
-        probesByKey.entries
-            .filter { (_, probe) ->
-                probe.kind == ProbeKind.METHOD && !probe.inline && probe.generatedBy == GeneratedBy.NONE &&
-                    probe.unreadShape == UnreadShape.NONE
-            }.groupBy { (_, probe) -> NodeKey(probe.className, probe.methodName, probe.methodDescriptor) }
-            .mapValues { (nodeKey, entries) ->
-                JudgeableMethod(
-                    nodeKey,
-                    entries.sumOf { (key, _) -> hitsByKey[key] ?: 0L },
-                    entries.any { (_, probe) -> probe.static },
-                    entries.any { (_, probe) -> probe.lambdaBody },
-                )
-            }
+        mergedLocations()
+            .filter { it.key.kind == ProbeKind.METHOD && !it.inline && !it.isLookedThrough }
+            .associate { it.key.method to JudgeableMethod(it.key.method, it.hits, it.static, it.lambdaBody) }
 
     /**
      * Every method some CREATES call edge names, with the methods whose edges name it: its
@@ -1189,27 +1300,21 @@ class OtherlodeTestCollector private constructor(
         return intoClassFindings to (folded - intoClassFindings)
     }
 
-    /** The [ProbeRef] [neverHit] lists for [probe]. */
-    private fun neverHitRef(
-        key: ProbeKey,
-        probe: StoredProbe,
-        routine: RoutineKind = RoutineKind.NONE,
-        unreadShape: UnreadShape = UnreadShape.NONE,
-    ): ProbeRef =
+    /** The [ProbeRef] [neverHit] lists for [location]. */
+    private fun neverHitRef(location: MergedLocation): ProbeRef =
         ProbeRef(
-            serviceInstanceId = key.serviceInstanceId,
-            className = probe.className,
-            methodName = probe.methodName,
-            methodDescriptor = probe.methodDescriptor,
-            line = probe.line,
-            kind = probe.kind,
-            branchIndex = probe.branchIndex,
-            inline = probe.inline,
-            inlinedFromClassName = probe.inlinedFromClassName,
-            generatedBy = probe.generatedBy,
-            branchKey = probe.branchKey,
-            routine = routine,
-            unreadShape = unreadShape,
+            className = location.key.method.className,
+            methodName = location.key.method.methodName,
+            methodDescriptor = location.key.method.methodDescriptor,
+            line = location.line,
+            kind = location.key.kind,
+            branchIndex = location.branchIndex,
+            inline = location.inline,
+            inlinedFromClassName = location.inlinedFromClassName,
+            generatedBy = location.generatedBy,
+            branchKey = location.key.outcome?.branchKey,
+            routine = location.routine,
+            unreadShape = location.unreadShape,
         )
 
     /**
@@ -1310,10 +1415,10 @@ class OtherlodeTestCollector private constructor(
      * The graph holds three kinds of node. A method node comes from a manifest METHOD probe, merged
      * across instances with hits summed, or from a non-inline declared method of a class a complete
      * static baseline declared but no manifest ever mentioned. Such a method carries
-     * [ProbeRef.neverLoaded] `true`, line `-1`, and the declaring instance's id. An outcome node is
-     * a BRANCH probe with no hits, merged across instances by its method and branch index, in a
-     * method node with hits. A BRANCH probe that is inline or generated is never an outcome node,
-     * by the rule that keeps its method out of the graph. A class node is a class that holds a
+     * [ProbeRef.neverLoaded] `true` and line `-1`. An outcome node is a BRANCH probe with no hits,
+     * merged across instances by its method and branch key, or its branch index when it has no key,
+     * in a method node with hits. A BRANCH probe that is inline or generated is never an outcome
+     * node, by the rule that keeps its method out of the graph. A class node is a class that holds a
      * class finding: never loaded, [neverInitialised] or [neverInstantiated]. It stands for the
      * never-hit methods that finding covers, which are never method nodes of their own. For a
      * never-loaded class that is every method node of the class.
@@ -1322,8 +1427,10 @@ class OtherlodeTestCollector private constructor(
      * other edge counts as a call from its method, or from the class node that stands for it. An
      * edge into a covered method goes into its class node, and an edge between two methods one class
      * node stands for is dropped. An outcome node has one caller: the outcome node its site's guard
-     * names, or else its method. Within one JVM a guard's branch index names one outcome of the
-     * caller's class, so it is looked up there directly.
+     * names, or else its method. A guard is a branch index in the instance that reported the edge
+     * or the site, so it is resolved to its outcome there before instances merge. A declared edge's
+     * guard is resolved in the scan's instance, else in the newest instance that reported the
+     * method, since the scan kept may come from an instance that never loaded the class.
      *
      * A root is a never-hit node with no caller or with a caller that is a method with hits, a
      * generated method with hits included, since code outside scope may call it. A method
@@ -1363,7 +1470,7 @@ class OtherlodeTestCollector private constructor(
             fun isNeverHit(node: ClusterNode) =
                 when {
                     node.isClass -> node in classNodes
-                    node.branchIndex != null -> node in outcomes
+                    node.outcome != null -> node in outcomes
                     else -> !isHit(node.method) && node.method !in coveredBy
                 }
 
@@ -1374,12 +1481,12 @@ class OtherlodeTestCollector private constructor(
             return neverHitNodes
                 .mapNotNull { node ->
                     val callers = clusterGraph.callersOf[node].orEmpty()
-                    val hitCallers = callers.filter { it.branchIndex == null && !it.isClass && isHit(it.method) }
+                    val hitCallers = callers.filter { it.outcome == null && !it.isClass && isHit(it.method) }
                     if (callers.isNotEmpty() && hitCallers.isEmpty()) return@mapNotNull null
                     val kind =
                         when {
                             node.isClass -> RootKind.CLASS_FINDING
-                            node.branchIndex != null -> RootKind.UNTAKEN_OUTCOME
+                            node.outcome != null -> RootKind.UNTAKEN_OUTCOME
                             callers.isEmpty() -> RootKind.UNCALLED
                             else -> RootKind.REACHED_FROM_HIT
                         }
@@ -1431,15 +1538,15 @@ class OtherlodeTestCollector private constructor(
         }
         val listsMoreThanRoot =
             members.any {
-                it != root && it.branchIndex == null &&
+                it != root && it.outcome == null &&
                     (it.isClass || (it.method.methodName != CLASS_INIT && it.method !in unjudged))
             }
-        if ((root.isClass || root.branchIndex != null) && !listsMoreThanRoot) return null
+        if ((root.isClass || root.outcome != null) && !listsMoreThanRoot) return null
 
         val methodsByClass = mutableMapOf<String, MutableList<NodeKey>>()
         for (member in members) {
             when {
-                member.branchIndex != null -> {}
+                member.outcome != null -> {}
 
                 member.isClass -> {
                     methodsByClass.getOrPut(member.method.className) { mutableListOf() } +=
@@ -1504,7 +1611,6 @@ class OtherlodeTestCollector private constructor(
     ): ProbeRef {
         val methods = info.methods.map { graph.nodes.getValue(it) }
         return ProbeRef(
-            serviceInstanceId = methods.first().serviceInstanceId,
             className = root.method.className,
             methodName = "",
             methodDescriptor = "",
@@ -1541,37 +1647,61 @@ class OtherlodeTestCollector private constructor(
     }
 
     /**
-     * Every outcome node, keyed by its [ClusterNode]: a BRANCH probe that is none of inline, generated
-     * or in an unread shape, whose hits summed across instances are zero, in a method [isHit] says has hits. Its
-     * site is looked up by branch index in the sites its method's METHOD probes list.
+     * Every outcome node, keyed by its [ClusterNode]: a BRANCH location that is none of inline,
+     * generated, in an unread shape or routine, whose hits summed across instances are zero, in a
+     * method [isHit] says has hits. Locations merge by method and [OutcomeId], so one outcome
+     * reported by several instances under different branch indexes is one node. Its site is looked
+     * up by branch index in the sites the METHOD probes of the newest copy's instance list.
      *
      * A routine outcome and an unread-shape outcome are never nodes, since neither is a finding, so a
      * call one guards starts at its method.
      */
     private fun buildOutcomeNodes(isHit: (NodeKey) -> Boolean): Map<ClusterNode, OutcomeNode> {
-        val routineKinds = routineKinds()
-        val unreadOutcomes = unreadOutcomeShapes()
+        val branchIds = branchOutcomeIds()
         val sitesByMethod =
-            probesByKey.values
-                .filter { it.kind == ProbeKind.METHOD && it.branchSites.isNotEmpty() }
-                .groupBy({ NodeKey(it.className, it.methodName, it.methodDescriptor) }, { it.branchSites })
-                .mapValues { (_, lists) -> lists.flatten() }
-        return probesByKey.entries
-            .filter { (_, probe) ->
-                probe.kind == ProbeKind.BRANCH && probe.branchIndex != null && !probe.inline && probe.generatedBy == GeneratedBy.NONE &&
-                    probe.unreadShape == UnreadShape.NONE
-            }.groupBy { (_, probe) -> ClusterNode(NodeKey(probe.className, probe.methodName, probe.methodDescriptor), probe.branchIndex) }
-            .filter { (node, entries) ->
-                isHit(node.method) &&
-                    entries.sumOf { (key, _) -> hitsByKey[key] ?: 0L } == 0L &&
-                    entries.all { (key, probe) ->
-                        routineOf(key, probe, routineKinds) == RoutineKind.NONE &&
-                            unreadOf(key, probe, unreadOutcomes) == UnreadShape.NONE
-                    }
-            }.mapValues { (node, entries) ->
-                val (key, probe) = entries.first()
-                val site = sitesByMethod[node.method]?.firstOrNull { site -> site.outcomes.any { it.branchIndex == node.branchIndex } }
-                OutcomeNode(neverHitRef(key, probe), site)
+            probesByKey.entries
+                .filter { (_, probe) -> probe.kind == ProbeKind.METHOD && probe.branchSites.isNotEmpty() }
+                .groupBy(
+                    { (key, probe) ->
+                        InstanceKey(key.serviceInstanceId, NodeKey(probe.className, probe.methodName, probe.methodDescriptor))
+                    },
+                    { (_, probe) -> probe.branchSites },
+                ).mapValues { (_, lists) -> lists.flatten() }
+        val locations = mergedLocations()
+        val mergedIndex =
+            locations
+                .filter { it.key.kind == ProbeKind.BRANCH && it.key.outcome != null }
+                .associate { (it.key.method to it.key.outcome) to it.branchIndex }
+
+        fun mergedIndexOf(
+            instance: String,
+            method: NodeKey,
+            rawIndex: Int,
+        ): Int? = branchIds[OutcomeKey(instance, method, rawIndex)]?.let { mergedIndex[method to it] }
+        return locations
+            .filter {
+                val outcome = it.key.outcome
+                it.key.kind == ProbeKind.BRANCH && outcome != null && !it.inline && it.generatedBy == GeneratedBy.NONE &&
+                    it.unreadShape == UnreadShape.NONE && it.routine == RoutineKind.NONE && it.hits == 0L && isHit(it.key.method)
+            }.associate { location ->
+                val instance = location.newest.key.serviceInstanceId
+                val method = location.key.method
+                val branchIndex = location.newest.value.branchIndex
+                val rawSite =
+                    sitesByMethod[InstanceKey(instance, method)]
+                        ?.firstOrNull { site -> site.outcomes.any { it.branchIndex == branchIndex } }
+                val guard = rawSite?.guard?.let { branchIds[OutcomeKey(instance, method, it)] }
+                // The site comes from one instance, so its indexes are renumbered to the merged ones the root
+                // and every other ref carry, as the server builds a root site from merged locations.
+                val site =
+                    rawSite?.copy(
+                        outcomes =
+                            rawSite.outcomes.mapNotNull { outcome ->
+                                mergedIndexOf(instance, method, outcome.branchIndex)?.let { outcome.copy(branchIndex = it) }
+                            },
+                        guard = rawSite.guard?.let { mergedIndexOf(instance, method, it) },
+                    )
+                ClusterNode(method, location.key.outcome) to OutcomeNode(neverHitRef(location), site, guard)
             }
     }
 
@@ -1610,8 +1740,7 @@ class OtherlodeTestCollector private constructor(
         }
         for ((node, outcome) in outcomes) {
             val guardNode =
-                outcome.site
-                    ?.guard
+                outcome.siteGuard
                     ?.let { ClusterNode(node.method, it) }
                     ?.takeIf { it != node && it in outcomes }
             link(guardNode ?: ClusterNode(node.method), node)
@@ -1677,26 +1806,21 @@ class OtherlodeTestCollector private constructor(
         val calls = mutableMapOf<NodeKey, Set<ResolvedCall>>()
         for ((nodeKey, info) in nodes) {
             val resolved = mutableSetOf<ResolvedCall>()
-            for (edge in info.edges) {
+            for (guarded in info.edges) {
                 val targets = mutableSetOf<NodeKey>()
-                resolve(edge, mutableSetOf(), targets)
+                resolve(guarded.edge, mutableSetOf(), targets)
                 targets -= nodeKey
-                targets.mapTo(resolved) { ResolvedCall(it, edge.guard) }
+                targets.mapTo(resolved) { ResolvedCall(it, guarded.guard) }
             }
             calls[nodeKey] = resolved
         }
         val hitGeneratedCallers = mutableMapOf<NodeKey, NodeInfo>()
-        probesByKey.entries
-            .filter { (_, probe) -> probe.kind == ProbeKind.METHOD && !probe.inline && probe.isLookedThrough() }
-            .groupBy { (_, probe) -> NodeKey(probe.className, probe.methodName, probe.methodDescriptor) }
-            .forEach { (key, entries) ->
-                // A key some instance reports unmarked is a node, with its own resolved calls.
+        mergedLocations()
+            .filter { it.key.kind == ProbeKind.METHOD && !it.inline && it.isLookedThrough && it.hits > 0L }
+            .forEach { location ->
+                val key = location.key.method
                 if (key in nodes) return@forEach
-                val hits = entries.sumOf { (probeKey, _) -> hitsByKey[probeKey] ?: 0L }
-                if (hits == 0L) return@forEach
-                val representative = entries.first()
-                hitGeneratedCallers[key] =
-                    NodeInfo(representative.key.serviceInstanceId, representative.value.line, neverLoaded = false, hits, emptySet())
+                hitGeneratedCallers[key] = NodeInfo(location.line, neverLoaded = false, location.hits, emptySet())
                 val targets = mutableSetOf<NodeKey>()
                 transparent[key].orEmpty().forEach { resolve(it, mutableSetOf(key), targets) }
                 calls[key] = targets.map { ResolvedCall(it, null) }.toSet()
@@ -1710,9 +1834,11 @@ class OtherlodeTestCollector private constructor(
      */
     private fun buildTransparentMethods(): Map<NodeKey, Set<CallEdge>> {
         val transparent = mutableMapOf<NodeKey, MutableSet<CallEdge>>()
-        probesByKey.values
-            .filter { it.kind == ProbeKind.METHOD && !it.inline && it.isLookedThrough() }
-            .forEach { transparent.getOrPut(NodeKey(it.className, it.methodName, it.methodDescriptor)) { mutableSetOf() } += it.calls }
+        mergedLocations()
+            .filter { it.key.kind == ProbeKind.METHOD && !it.inline && it.isLookedThrough }
+            .forEach { location ->
+                transparent.getOrPut(location.key.method) { mutableSetOf() } += location.members.flatMap { it.value.calls }
+            }
         for ((className, declared) in consultedDeclaredClasses) {
             for (method in declared.methods) {
                 if (method.inline || !method.isLookedThrough()) continue
@@ -1734,26 +1860,33 @@ class OtherlodeTestCollector private constructor(
      */
     private fun buildNodes(): Map<NodeKey, NodeInfo> {
         val nodes = mutableMapOf<NodeKey, NodeInfo>()
-        val manifestGroups =
-            probesByKey.entries
-                .filter { (_, probe) -> probe.kind == ProbeKind.METHOD && !probe.inline && !probe.isLookedThrough() }
-                .groupBy { (_, probe) -> NodeKey(probe.className, probe.methodName, probe.methodDescriptor) }
-        for ((nodeKey, entries) in manifestGroups) {
-            val hits = entries.sumOf { (key, _) -> hitsByKey[key] ?: 0L }
-            val edges = entries.flatMap { (_, probe) -> probe.calls }.toMutableSet()
-            consultedDeclaredClasses[nodeKey.className]
-                ?.methods
-                ?.filter { it.methodName == nodeKey.methodName && it.methodDescriptor == nodeKey.methodDescriptor }
-                ?.forEach { edges += it.calls }
-            val representative = entries.first()
-            nodes[nodeKey] =
-                NodeInfo(
-                    serviceInstanceId = representative.key.serviceInstanceId,
-                    line = representative.value.line,
-                    neverLoaded = false,
-                    hits = hits,
-                    edges = edges,
-                )
+        val branchIds = branchOutcomeIds()
+
+        fun guarded(
+            edge: CallEdge,
+            instances: List<String>,
+            method: NodeKey,
+        ) = GuardedEdge(
+            edge.copy(guard = null),
+            edge.guard?.let { guard -> instances.firstNotNullOfOrNull { branchIds[OutcomeKey(it, method, guard)] } },
+        )
+        for (location in mergedLocations()) {
+            if (location.key.kind != ProbeKind.METHOD || location.inline || location.isLookedThrough) continue
+            val nodeKey = location.key.method
+            val edges =
+                location.members
+                    .flatMap { (key, probe) -> probe.calls.map { guarded(it, listOf(key.serviceInstanceId), nodeKey) } }
+                    .toMutableSet()
+            consultedDeclaredClasses[nodeKey.className]?.let { declared ->
+                // The scan kept is whichever arrived first, possibly from an instance that never loaded the class and so
+                // has no BRANCH probe to resolve a guard against; the instances that loaded it, newest first, are tried next,
+                // so the answer does not depend on which scan arrived first.
+                val instances = listOf(declared.serviceInstanceId) + location.members.map { it.key.serviceInstanceId }.distinct()
+                declared.methods
+                    .filter { it.methodName == nodeKey.methodName && it.methodDescriptor == nodeKey.methodDescriptor }
+                    .forEach { method -> method.calls.mapTo(edges) { guarded(it, instances, nodeKey) } }
+            }
+            nodes[nodeKey] = NodeInfo(line = location.line, neverLoaded = false, hits = location.hits, edges = edges)
         }
         for ((className, declared) in consultedDeclaredClasses) {
             if (className in dynamicallyKnownClassNames) continue
@@ -1763,11 +1896,10 @@ class OtherlodeTestCollector private constructor(
                 if (nodeKey in nodes) continue
                 nodes[nodeKey] =
                     NodeInfo(
-                        serviceInstanceId = declared.serviceInstanceId,
                         line = -1,
                         neverLoaded = true,
                         hits = 0L,
-                        edges = method.calls.toSet(),
+                        edges = method.calls.mapTo(mutableSetOf()) { GuardedEdge(it.copy(guard = null), null) },
                     )
             }
         }
@@ -1843,7 +1975,6 @@ class OtherlodeTestCollector private constructor(
         key: NodeKey,
     ): ProbeRef =
         ProbeRef(
-            serviceInstanceId = info.serviceInstanceId,
             className = key.className,
             methodName = key.methodName,
             methodDescriptor = key.methodDescriptor,
@@ -2518,6 +2649,7 @@ class OtherlodeTestCollector private constructor(
         val accepted = runIdByInstance.putIfAbsent(instanceId, resource.runId)
         if (accepted == null || accepted == resource.runId) {
             agentVersionByInstance[instanceId] = resource.agentVersion
+            instanceRanks.computeIfAbsent(instanceId) { instanceRankSeq.incrementAndGet() }
             return null
         }
         return "$payload from instance $instanceId has run id ${resource.runId}, but this collector already " +
@@ -2637,14 +2769,14 @@ class OtherlodeTestCollector private constructor(
 }
 
 /**
- * One probe's identity and location, as reported by a manifest. See [OtherlodeTestCollector] for the
- * class name format. [inline] marks a Kotlin inline function, or a branch inside one: a Kotlin
- * caller copies the body instead of calling it, so a zero count is no evidence the code never ran.
+ * One probe's identity and location, merged across every instance that reported it. See
+ * [OtherlodeTestCollector] for the class name format and how instances merge. [inline] marks a
+ * Kotlin inline function, or a branch inside one: a Kotlin caller copies the body instead of
+ * calling it, so a zero count is no evidence the code never ran.
  * [parameterIndex], [parameterName], [overridable], and [targetClassName] are set only when [kind]
  * is [ProbeKind.OPTIONAL_ARGUMENT]. [neverLoaded] is true only for an
  * [OtherlodeTestCollector.unreachedClusters] member that exists solely because a complete static
- * baseline declared it: its [line] is `-1`, since the static scan records no line, and its
- * [serviceInstanceId] names the instance whose scan declared it rather than one that loaded it.
+ * baseline declared it: its [line] is `-1`, since the static scan records no line.
  * [inlinedFromClassName] is set only for a [ProbeKind.BRANCH] probe that is a kept inlined copy:
  * the dotted name of the class whose inline function the compiler copied it from.
  * [generatedBy] is set when [kind] is [ProbeKind.METHOD], for a [ProbeKind.BRANCH] probe as the
@@ -2658,7 +2790,6 @@ class OtherlodeTestCollector private constructor(
  * own outcome the agent marked unread. It is exclusive with [routine].
  */
 data class ProbeRef(
-    val serviceInstanceId: String,
     val className: String,
     val methodName: String,
     val methodDescriptor: String,
@@ -2777,7 +2908,9 @@ data class WholeClass(
  *
  * [rootSite] is set only for a [RootKind.UNTAKEN_OUTCOME] root: the site whose outcomes include
  * the root's [ProbeRef.branchIndex], with its condition and each outcome's role and guarded lines,
- * as the method's METHOD probe listed it. It is null when no manifest listed the site.
+ * as the newest instance's METHOD probe listed it, its indexes renumbered to the merged ones every
+ * ref carries. An outcome no merged location names is left out. It is null when no manifest
+ * listed the site.
  *
  * [reachedFrom] is set for a [RootKind.REACHED_FROM_HIT] root, and for a [RootKind.CLASS_FINDING]
  * root that a method with hits calls: the methods with hits that call it, sorted the same way as
@@ -2809,11 +2942,11 @@ data class UnreachedCluster(
  * [OtherlodeTestCollector.alwaysSupplied]. [className], [methodName], and [methodDescriptor] name the
  * target function the parameter belongs to, not the synthetic `$default` method its omission
  * probe actually sits in: for a Scala constructor default getter, [className] is the constructor's
- * own class, not the companion module class the getter's slot lives on. [targetClassName] carries
- * the same raw value the manifest reported, null unless the target crosses a class boundary.
+ * own class, not the companion module class the getter's slot lives on. [targetClassName] is the
+ * raw value the manifests reported, the greatest when they differ, and null unless the target
+ * crosses a class boundary.
  */
 data class OptionalParameterRef(
-    val serviceInstanceId: String,
     val className: String,
     val methodName: String,
     val methodDescriptor: String,
