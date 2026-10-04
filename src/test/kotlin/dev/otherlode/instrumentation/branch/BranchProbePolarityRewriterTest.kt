@@ -39,15 +39,17 @@ class BranchProbePolarityRewriterTest {
                 .describe("com.example.target.BranchTarget")
                 .resolve()
         val counts = LongArray(capacity)
+        val woven = "com/example/polarity/BranchTarget${loads.incrementAndGet()}"
         val loaded =
             ByteBuddy()
                 .redefine<Any>(typeDescription, locator)
-                .name("com.example.polarity.BranchTarget${loads.incrementAndGet()}")
+                .name(woven.replace('/', '.'))
                 .defineField(MethodEntryAdvice.PROBE_ARRAY_FIELD, LongArray::class.java, Visibility.PRIVATE, Ownership.STATIC)
                 .initializer(LoadedTypeInitializer.ForStaticField(MethodEntryAdvice.PROBE_ARRAY_FIELD, counts))
                 .visit(
                     BranchProbeAsmVisitorWrapper(
                         eligibleMethods = { name, _ -> eligibleMethod(name) },
+                        probeArray = FieldProbeArrayLoad(woven),
                         probeIndexBase = 0,
                         branchSlotCapacity = capacity,
                         unprobedOutcomesByMethod = unprobedOutcomesByMethod,

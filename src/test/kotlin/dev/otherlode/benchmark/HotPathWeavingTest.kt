@@ -15,8 +15,6 @@ import kotlin.test.assertTrue
 class HotPathWeavingTest {
     private val weaver = HotPathWeaver()
 
-    private fun hasProbeField(shape: HotPathShape): Boolean = shape.javaClass.declaredFields.any { it.name == PROBE_FIELD }
-
     private fun hits(
         className: String,
         kind: ProbeKind,
@@ -39,9 +37,8 @@ class HotPathWeavingTest {
     }
 
     @Test
-    fun `the woven entry-only fixture declares the probe field and counts its method entry`() {
+    fun `the woven entry-only fixture counts its method entry`() {
         val shape = weaver.woven(EntryOnlyFixture::class.java)
-        assertTrue(hasProbeField(shape))
         shape.call(1)
         assertEquals(1L, hits(EntryOnlyFixture::class.java.name, ProbeKind.METHOD, "call"))
     }
@@ -49,7 +46,6 @@ class HotPathWeavingTest {
     @Test
     fun `the woven branchy fixture counts a branch outcome`() {
         val shape = weaver.woven(BranchyFixture::class.java)
-        assertTrue(hasProbeField(shape))
         shape.call(1)
         assertTrue(hits(BranchyFixture::class.java.name, ProbeKind.BRANCH) > 0L)
     }
@@ -69,17 +65,24 @@ class HotPathWeavingTest {
     @Test
     fun `the woven default-argument fixture counts omitted parameters`() {
         val shape = weaver.woven(DefaultArgumentFixture::class.java)
-        assertTrue(hasProbeField(shape))
         shape.call(1)
         // call omits b, c and d once, then c and d once: two of the three parameters are omitted twice.
         assertEquals(5L, hits(DefaultArgumentFixture::class.java.name, ProbeKind.OPTIONAL_ARGUMENT))
     }
 
     @Test
-    fun `the unwoven copies declare no probe field`() {
-        for (fixture in FIXTURES) {
-            assertTrue(!hasProbeField(weaver.unwoven(fixture)), "${fixture.simpleName} has a probe field")
-        }
+    fun `the unwoven copies count nothing`() {
+        val resource = ResourceAttributes("test", null, "instance-1", null, "run-1")
+        for (fixture in FIXTURES) weaver.woven(fixture).call(1)
+
+        fun totals() =
+            weaver.registry
+                .computeDeltaBatch(resource)
+                .batch.deltas
+                .associate { (it.classId to it.probeIndex) to it.hitsTotal }
+        val before = totals()
+        for (fixture in FIXTURES) repeat(10) { weaver.unwoven(fixture).call(it) }
+        assertEquals(before, totals(), "a call to an unwoven copy reached a probe")
     }
 
     @Test
@@ -112,7 +115,6 @@ class HotPathWeavingTest {
     }
 
     private companion object {
-        const val PROBE_FIELD = "\$otherlodeProbeCounts"
         val FIXTURES = listOf(EntryOnlyFixture::class.java, BranchyFixture::class.java, DefaultArgumentFixture::class.java)
     }
 }

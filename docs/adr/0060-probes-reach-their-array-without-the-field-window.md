@@ -25,5 +25,6 @@ Below version 55, the class keeps the field and the prelude, and every probe sit
 - In compiled code both forms cost the same as the field read: C2 treats a resolved dynamic constant as a constant, and inlines the accessor and folds the trusted static final, null check included (0.44 ns a call before and after in the prototype).
 - Most adopter code compiles to version 61 or later (Spring Boot 3 and 4 require Java 17; Kotlin's Gradle plugin targets the toolchain), so most woven classes keep their class file's shape, which also leaves another agent's redefinition (0053) nothing added to reproduce.
 - Both forms are woven identically on a re-weave from the stored plan (0053); a test covers a redefinition of each.
-- A forked-JVM test reproduces every crashing shape above at versions 52 and 66 and checks the counts taken during the supertype's initialisation.
+- A version 55 class has no field whose absence would make the JVM reject unwoven bytes, so a re-weave refused because the class file changed hands back the received bytes plus a synthetic `$otherlodeRefused` field, which the JVM rejects as a schema change, keeping 0053's outcome.
+- A forked-JVM test reproduces every crashing shape above at versions 52 and 65 and checks the counts taken during the supertype's initialisation.
 - The documentation that called a null field impossible (`OtherlodeProbeArrays`' Javadoc, `ProbeArrayInitializer`'s KDoc) is corrected with the change.

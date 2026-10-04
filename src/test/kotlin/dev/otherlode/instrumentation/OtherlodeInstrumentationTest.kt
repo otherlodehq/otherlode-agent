@@ -66,18 +66,18 @@ class OtherlodeInstrumentationTest {
      * A debugger's HotSwap writes the recompiled class file before it redefines the class. The
      * agent cannot weave the class again from a class file that is not the one its slots were
      * numbered from, so it hands back nothing, and the JVM refuses the redefinition because the
-     * new bytes lack the probe field. What it must not do is report the class it has already
+     * new bytes lack the probe field of a class below version 55 (the fixture is version 52). What it must not do is report the class it has already
      * delivered probes for as a skipped class too. A WARNING names the agent and the cause, since
      * the JVM's own message does neither.
      */
     @Test
-    fun `redefining a woven class after its class file changed on disk is refused and records no skip for it`() {
+    fun `redefining a woven version 52 class after its class file changed on disk is refused and records no skip for it`() {
         val registry = ProbeRegistry()
         installOnly(registry, AgentConfig.parse("includePackages=com.example.target"))
         val dir = Files.createTempDirectory("otherlode-hotswap").toFile()
         val classFile = File(dir, "com/example/target/SampleTarget.class")
         classFile.parentFile.mkdirs()
-        File("build/classes/java/test/com/example/target/SampleTarget.class").copyTo(classFile)
+        LegacyFixtures.copyDowngraded(File("build/classes/java/test/com/example/target/SampleTarget.class"), classFile)
         val targetClass =
             Class.forName(
                 "com.example.target.SampleTarget",
@@ -386,10 +386,15 @@ class OtherlodeInstrumentationTest {
     }
 
     @Test
-    fun `the counts field is public static final and holds the registry's own array`() {
+    fun `the counts field of a version 52 class is public static final and holds the registry's own array`() {
         val registry = ProbeRegistry()
         val config = AgentConfig.parse("includePackages=com.example.target")
-        val target = install(registry, config)
+        installOnly(registry, config)
+        val target =
+            Class
+                .forName("com.example.target.SampleTarget", true, LegacyFixtures.loader(javaClass.classLoader))
+                .getDeclaredConstructor()
+                .newInstance()
 
         val field = target.javaClass.getDeclaredField("\$otherlodeProbeCounts")
         val modifiers = field.modifiers
@@ -414,7 +419,7 @@ class OtherlodeInstrumentationTest {
     }
 
     @Test
-    fun `a type with its own clinit gets one METHOD probe, incremented once by the woven prelude`() {
+    fun `a type with its own clinit gets one METHOD probe, incremented once`() {
         val registry = ProbeRegistry()
         val config = AgentConfig.parse("includePackages=com.example.target")
         install(registry, config)

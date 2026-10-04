@@ -5,7 +5,7 @@ import net.bytebuddy.asm.Advice;
 /**
  * Inlined into every woven Kotlin {@code $default} method's entry point.
  *
- * {@code probes} is the same counts array {@link MethodEntryAdvice} writes to: an omission probe
+ * {@code probes} is the same counts array {@link MethodEntryAdvice} writes to, loaded the same way: an omission probe
  * shares its class's one array with the method and branch tiers, rather than keeping a separate
  * structure. {@code mask} is the caller's actual argument mask, read live. {@code base} and
  * {@code optional} are per-method constants bound at weave time: {@code base} is this
@@ -22,7 +22,7 @@ public class OptionalArgumentAdvice {
 
     @Advice.OnMethodEnter
     public static void onEnter(
-            @Advice.FieldValue(MethodEntryAdvice.PROBE_ARRAY_FIELD) long[] probes,
+            @ProbeArray long[] probes,
             @MaskArgument int mask,
             @OmissionBase int base,
             @OptionalBits int optional) {

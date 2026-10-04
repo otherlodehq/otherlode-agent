@@ -25,12 +25,15 @@ internal class DefaultSiteBinding(
  * by its length.
  *
  * [classFileHash] is [WovenClasses.hashOf] the class file the first weave read, when it read one.
+ * [majorVersion] is the class-file version of the bytes the first weave rewrote; it picks the
+ * [ProbeArrayForm], and a later weave uses the same one so the class keeps the members it has.
  */
 internal class WeavePlan private constructor(
     val classFileHash: Long,
     val hasClassFileHash: Boolean,
     val layoutHash: Long,
     val probeCount: Int,
+    val majorVersion: Int,
     private val typeInitializerSlot: Int,
     val branchWrapper: Boolean,
     val branchBase: Int,
@@ -124,6 +127,7 @@ internal class WeavePlan private constructor(
         private val classFileHash: Long?,
         private val layoutHash: Long,
         private val probeCount: Int,
+        private val majorVersion: Int,
         private val typeInitializerProbeIndex: Int?,
         private val branchWrapper: Boolean,
         private val branchBase: Int,
@@ -214,6 +218,7 @@ internal class WeavePlan private constructor(
                 classFileHash != null,
                 layoutHash,
                 probeCount,
+                majorVersion,
                 typeInitializerProbeIndex ?: -1,
                 branchWrapper,
                 branchBase,

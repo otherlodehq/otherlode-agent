@@ -612,6 +612,27 @@ entry's moved items and its chunk 4, rerun on the fixed agent with each
 container pinned to its own cores, since on the 4-vCPU runner PetClinic
 averaged 1.6 of its 2 CPUs and throughput measured k6 instead.
 
+Chunk 1 landed: probes reach their array through `ProbeArrayForm`. From
+class-file version 55 every probe site loads a dynamic constant bootstrapped by
+`OtherlodeProbeArrays.probeArray`, one constant-pool entry per class, and the
+class gets nothing else; a class with its own `<clinit>` gets an ordinary entry
+probe there. Below 55 the field and prelude stay and every site calls the
+private accessor. The form comes from the received bytes' version and is stored
+in the plan, so a re-weave keeps it. `ProbeArrayWindowTest` forks the agent jar
+over six shapes (superclass constant, interface constant, a superclass calling a
+subclass's static method with a branch, an enum body by `Class.forName`, a
+Kotlin sealed class and sealed interface) at versions 52 and 65; all twelve
+crashed on `0cb8706` and pass, with the window's counts landing. Review added
+the refusal for a version 55 class whose class file changed, which the chunk
+had left accepting unwoven bytes (Luke chose refusal, ADR 0053 amended): the
+bytes handed back carry a `public static final` marker field, public and final
+because a private one is illegal on an interface, where ByteBuddy rejected it
+and the JVM took the unwoven bytes after all, a case the second review caught
+and a test now pins along with a HotSwap-shaped `redefineClasses`. Not covered
+and pre-existing: an adopter class in a named module must read the boot
+loader's unnamed module to reach the holder, as the old prelude did; nothing
+adds that edge for adopter modules.
+
 ### The agent's startup: measured, to grill
 
 Measured 2026-10-04 on PetClinic REST (Corretto 21.0.5 with CDS, medians of

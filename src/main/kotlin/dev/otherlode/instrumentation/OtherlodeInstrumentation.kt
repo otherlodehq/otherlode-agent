@@ -5,6 +5,7 @@ import dev.otherlode.advice.MethodEntryAdvice
 import dev.otherlode.advice.OmissionBase
 import dev.otherlode.advice.OptionalArgumentAdvice
 import dev.otherlode.advice.OptionalBits
+import dev.otherlode.advice.ProbeArray
 import dev.otherlode.advice.ProbeIndex
 import dev.otherlode.bootstrap.OtherlodeProbeArrays
 import dev.otherlode.config.AgentConfig
@@ -90,17 +91,21 @@ private fun bindingFor(
  * to start with one.
  *
  * Each matched type is registered with [ProbeRegistry] once, after its rewrite succeeds; see
- * [TransformResultListener]. It gets its own
- * `public static final long[]` field, and a `<clinit>` prelude that fills it with one call to the
- * bootstrap-resident [OtherlodeProbeArrays], which asks the registry for the array registered a
- * moment earlier. Every probe in that class then reaches [MethodEntryAdvice] with a direct read
- * of its own array and a constant slot index. No lookup by class or method name is involved on
- * any hot path; the one lookup happens once per class, at initialisation.
+ * [TransformResultListener]. Its probes reach its own array, which the bootstrap-resident
+ * [OtherlodeProbeArrays] asks the registry for, through the [ProbeArrayForm] its class-file
+ * version selects. From version 55 every probe loads the array as a dynamic constant and the class
+ * gets no member at all. Below it the class gets a `public static final long[]` field, a `<clinit>`
+ * prelude that fills it with one call to the holder, and a private accessor every probe calls,
+ * which falls back to the holder while the field is still null. A supertype's initializer can run
+ * the class's code before the class's own `<clinit>`, and a probe must not read a null array there.
+ * Either way a probe is a load of the array and a constant slot index. No lookup by class or
+ * method name is involved on any hot path; the one lookup happens once per class.
  *
  * Interfaces are instrumented the same way. The JVM only allows public static final fields on an
  * interface, which rules out setting the field reflectively after load (the JDK refuses
- * reflective writes to static finals); a woven `<clinit>` is the one mechanism that works for
- * classes and interfaces alike, so it is the only one used.
+ * reflective writes to static finals); the dynamic constant and the woven `<clinit>` are the
+ * mechanisms that work for classes and interfaces alike. An interface below version 52 cannot
+ * have a private method, so it gets the field and the prelude and no accessor.
  *
  * This registers a transformer for classes as they load. It does not retransform classes already
  * loaded when [install] runs. That matches the agent's static `premain` attach model, where the
@@ -259,10 +264,11 @@ class OtherlodeInstrumentation(
     }
 
     /**
-     * Thrown from [reweave] when the class file of a woven class is not the one it was woven from.
-     * ByteBuddy reports it to [TransformResultListener.onError] and hands back no bytes, so the
-     * JVM refuses the redefinition or retransformation: the bytes it is left with lack the probe
-     * field.
+     * Thrown from [reweave] when the class file of a woven class that carries the probe field is not
+     * the one it was woven from. ByteBuddy reports it to [TransformResultListener.onError] and hands
+     * back no bytes, so the JVM refuses the redefinition or retransformation: the bytes it is left
+     * with lack the probe field. A class woven with a dynamic constant has no field to miss, so
+     * [reweave] refuses it another way.
      */
     private class ReweaveRefused(
         className: String,
@@ -330,10 +336,10 @@ class OtherlodeInstrumentation(
      * "Not instrumented" is an honest state to report; "in the manifest, permanently zero" is not.
      *
      * So no probe reaches [ProbeRegistry] until `onTransformation`, which ByteBuddy calls only
-     * after `make()` has produced the bytes. The class is defined after this returns and its
-     * `<clinit>` prelude runs later still, so the array is always registered before anything
-     * looks it up. This covers the range ByteBuddy can see; a class that fails past `getBytes()`,
-     * such as one the verifier rejects, stays out of the manifest until it is confirmed defined.
+     * after `make()` has produced the bytes. The class is defined after this returns and nothing
+     * looks its array up before it runs, so the array is always registered first. This covers the
+     * range ByteBuddy can see; a class that fails past `getBytes()`, such as one the verifier
+     * rejects, stays out of the manifest until it is confirmed defined.
      * Endpoints are declared on their own path and do not go through this listener.
      *
      * The class's forwarder table entries are written here too, so a transform that failed writes
@@ -393,22 +399,15 @@ class OtherlodeInstrumentation(
             val plan = if (alreadyLoaded.get() == true) wovenClasses.find(classLoader, typeName) else null
             when {
                 throwable is ReweaveRefused -> {
-                    if (plan?.firstLog(WeavePlan.LOGGED_REFUSAL) != false) {
-                        log.log(
-                            Level.WARNING,
-                            "otherlode: the class file of $typeName differs from the one it was woven from, as after a " +
-                                "recompile or a HotSwap; it cannot be woven again, so the JVM refuses this redefinition " +
-                                "or retransformation",
-                        )
-                    }
+                    if (plan?.firstLog(WeavePlan.LOGGED_REFUSAL) != false) logRefusal(typeName)
                 }
 
                 alreadyLoaded.get() == true -> {
                     if (plan?.firstLog(WeavePlan.LOGGED_FAILURE) != false) {
                         log.log(
                             Level.WARNING,
-                            "otherlode: could not weave $typeName again for a redefinition or retransformation; the JVM " +
-                                "refuses it, and the class keeps running with its probes",
+                            "otherlode: could not weave $typeName again for a redefinition or retransformation; " +
+                                whenNotWoven(plan),
                             throwable,
                         )
                     }
@@ -420,6 +419,20 @@ class OtherlodeInstrumentation(
                 }
             }
         }
+
+        /**
+         * What follows from a woven class failing to weave again, as opposed to being refused, which
+         * hands the JVM no woven bytes. A class with a probe field makes the JVM refuse them, as they
+         * lack it, and keeps running with its probes. A class woven with a dynamic constant has
+         * nothing the JVM could miss, so it accepts them and the class runs unwoven from then on.
+         * That needs ByteBuddy to fail on a plan it wove once already.
+         */
+        private fun whenNotWoven(plan: WeavePlan?): String =
+            if (plan != null && plan.majorVersion >= ProbeArrayForm.DYNAMIC_CONSTANT_VERSION) {
+                "the JVM redefines the class with its bytes unwoven, so it stops counting"
+            } else {
+                "the JVM refuses the redefinition or retransformation, and the class keeps running with its probes"
+            }
 
         /**
          * Runs for every class ByteBuddy considered, whatever the outcome. A pending entry still
@@ -668,10 +681,9 @@ class OtherlodeInstrumentation(
             }
         logUnprobedDefaults(typeDescription, defaultSites, analysis)
         // The type initializer's own probe, when the class declares one, is appended after every
-        // other slot category (method, branch, omission). It carries no advice of its own: the
-        // woven <clinit> prelude increments it directly, right after it fills the counts field, so
-        // placement past the last advice-bound slot is only a matter of convenience, not a
-        // constraint the prelude's own bytecode depends on.
+        // other slot category (method, branch, omission). Where the class has a prelude, the prelude
+        // increments it right after it fills the counts field; otherwise entry advice on the
+        // <clinit> does. Placement past the last other slot is a convenience, not a constraint.
         val typeInitializerProbe =
             if (analysis.hasTypeInitializer) {
                 ProbeMeta(
@@ -702,6 +714,7 @@ class OtherlodeInstrumentation(
                 classFileHash = if (source.hasClassFile) analysedBytes?.let(WovenClasses::hashOf) else null,
                 layoutHash = layoutHash,
                 probeCount = probes.size,
+                majorVersion = ProbeArrayForm.majorVersionOf(source.received ?: analysedBytes),
                 typeInitializerProbeIndex = typeInitializerProbeIndex,
                 branchWrapper = branchSites.isNotEmpty(),
                 branchBase = methodProbes.size,
@@ -817,7 +830,10 @@ class OtherlodeInstrumentation(
         val received = classBytesCapture?.take(typeDescription.internalName)
         if (plan.hasClassFileHash) {
             val classFile = locateClassBytes(typeDescription, classLoader)
-            if (classFile != null && WovenClasses.hashOf(classFile) != plan.classFileHash) throw ReweaveRefused(typeDescription.name)
+            if (classFile != null && WovenClasses.hashOf(classFile) != plan.classFileHash) {
+                if (plan.majorVersion < ProbeArrayForm.DYNAMIC_CONSTANT_VERSION) throw ReweaveRefused(typeDescription.name)
+                return refuseWithoutField(builder, typeDescription.name, plan)
+            }
         }
         val view = plan.view()
         val pairing = SitePairing.ofStored(view.sequences, received)
@@ -836,10 +852,47 @@ class OtherlodeInstrumentation(
         return weave(builder, typeDescription, plan, view, pairing, reweaving = true)
     }
 
+    /** Logs that [className]'s class file changed under a woven class, so the redefinition is refused. */
+    private fun logRefusal(className: String) =
+        log.log(
+            Level.WARNING,
+            "otherlode: the class file of $className differs from the one it was woven from, as after a recompile or a " +
+                "HotSwap; it cannot be woven again, so the JVM refuses the redefinition or retransformation, and the " +
+                "class keeps running with its probes",
+        )
+
     /**
-     * Weaves [plan] into [builder]: the counts field and the `<clinit>` prelude that fills it, entry
-     * advice on every method the plan gave a slot, branch probes on every method the plan gave a
-     * run that [pairing] pairs, and omission advice on every `$default` method in the plan.
+     * Refuses a re-weave of a class woven with a dynamic constant, which has no probe field whose
+     * absence would make the JVM reject unwoven bytes: it would accept them, and the class would run
+     * code the manifest does not describe without counting. So the bytes handed back are the
+     * received ones plus one field, which the JVM rejects as a schema change, the outcome a class
+     * with a probe field gets (ADR 0053).
+     */
+    private fun refuseWithoutField(
+        builder: DynamicType.Builder<*>,
+        className: String,
+        plan: WeavePlan,
+    ): DynamicType.Builder<*> {
+        if (plan.firstLog(WeavePlan.LOGGED_REFUSAL)) logRefusal(className)
+        // Public static final, the one shape a field may take on an interface as well as a class.
+        return builder.defineField(
+            MethodEntryAdvice.REFUSAL_MARKER_FIELD,
+            Int::class.javaPrimitiveType!!,
+            Visibility.PUBLIC,
+            Ownership.STATIC,
+            FieldManifestation.FINAL,
+            SyntheticState.SYNTHETIC,
+        )
+    }
+
+    /**
+     * Weaves [plan] into [builder]: the probes' route to the counts array, entry advice on every
+     * method the plan gave a slot, branch probes on every method the plan gave a run that [pairing]
+     * pairs, and omission advice on every `$default` method in the plan.
+     *
+     * The route is the [ProbeArrayForm] the plan's class-file version selects: a dynamic constant
+     * and nothing added to the class from version 55, otherwise the field, its `<clinit>` prelude
+     * and an accessor every probe calls.
      *
      * The plan's ordinals are the class file's. Pairing guarantees an eligible method's tracked
      * instructions match the received bytes' one for one, so they name the same instructions there,
@@ -855,28 +908,60 @@ class OtherlodeInstrumentation(
         pairing: SitePairing,
         reweaving: Boolean,
     ): DynamicType.Builder<*> {
-        var instrumented =
-            builder
-                .defineField(
-                    MethodEntryAdvice.PROBE_ARRAY_FIELD,
-                    LongArray::class.java,
-                    Visibility.PUBLIC,
-                    Ownership.STATIC,
-                    FieldManifestation.FINAL,
-                    SyntheticState.SYNTHETIC,
-                ).initializer(
-                    ProbeArrayInitializer(typeDescription.name, plan.layoutHash, plan.probeCount, plan.typeInitializerProbeIndex),
-                )
+        val form = ProbeArrayForm.of(plan.majorVersion, typeDescription, plan.layoutHash, plan.probeCount)
+        var instrumented: DynamicType.Builder<*> = builder
+        if (form.hasField) {
+            instrumented =
+                instrumented
+                    .defineField(
+                        MethodEntryAdvice.PROBE_ARRAY_FIELD,
+                        LongArray::class.java,
+                        Visibility.PUBLIC,
+                        Ownership.STATIC,
+                        FieldManifestation.FINAL,
+                        SyntheticState.SYNTHETIC,
+                    ).initializer(
+                        ProbeArrayInitializer(typeDescription.name, plan.layoutHash, plan.probeCount, plan.typeInitializerProbeIndex),
+                    )
+        }
+        if (form is ProbeArrayForm.Accessor) {
+            instrumented =
+                instrumented
+                    .defineMethod(
+                        MethodEntryAdvice.PROBE_ARRAY_ACCESSOR,
+                        LongArray::class.java,
+                        Visibility.PRIVATE,
+                        Ownership.STATIC,
+                        SyntheticState.SYNTHETIC,
+                    ).intercept(Implementation.Simple(form.accessorBody()))
+                    .defineMethod(
+                        MethodEntryAdvice.PROBE_ARRAY_SLOW_PATH,
+                        LongArray::class.java,
+                        Visibility.PRIVATE,
+                        Ownership.STATIC,
+                        SyntheticState.SYNTHETIC,
+                    ).intercept(Implementation.Simple(form.slowPathBody()))
+        }
 
         // One Advice visitor for the whole class, with each method's slot resolved from its
         // signature at weave time. One visitor per method would stack N method visitors, each
         // checking every method against its own matcher, so transform cost would grow with the
         // square of the method count.
-        val slotBySignature = view.entrySlots
+        //
+        // With a dynamic constant there is no prelude to count the <clinit> probe, so the type
+        // initializer is an ordinary entry-probe method whose body starts with that increment.
+        val typeInitializerSlot = plan.typeInitializerProbeIndex
+        val slotBySignature =
+            if (!form.hasField && typeInitializerSlot != null) {
+                view.entrySlots + (("<clinit>" to "()V") to typeInitializerSlot)
+            } else {
+                view.entrySlots
+            }
         instrumented =
             instrumented.visit(
                 Advice
                     .withCustomMapping()
+                    .bind(ProbeArrayMapping(form))
                     .bind(ProbeIndexMapping(slotBySignature))
                     .to(MethodEntryAdvice::class.java)
                     .on { method -> (method.internalName to method.descriptor) in slotBySignature },
@@ -888,6 +973,7 @@ class OtherlodeInstrumentation(
                 instrumented.visit(
                     BranchProbeAsmVisitorWrapper(
                         eligibleMethods = { name, descriptor -> (name to descriptor) in eligible },
+                        probeArray = form,
                         probeIndexBase = plan.branchBase,
                         branchSlotCapacity = if (reweaving) Int.MAX_VALUE else plan.branchSlotCapacity,
                         droppedOrdinalsByMethod = view::droppedOrdinalsOf,
@@ -905,6 +991,7 @@ class OtherlodeInstrumentation(
                 instrumented.visit(
                     Advice
                         .withCustomMapping()
+                        .bind(ProbeArrayMapping(form))
                         .bind(OmissionBaseMapping(bindings))
                         .bind(OptionalBitsMapping(bindings))
                         .bind(MaskArgumentMapping(bindings))
@@ -1210,6 +1297,20 @@ class OtherlodeInstrumentation(
             }
         }
 
+    /** Resolves `@ProbeArray` to the class's [ProbeArrayForm] load, inlined into the advice. */
+    private class ProbeArrayMapping(
+        private val form: ProbeArrayForm,
+    ) : Advice.OffsetMapping.Factory<ProbeArray> {
+        override fun getAnnotationType(): Class<ProbeArray> = ProbeArray::class.java
+
+        override fun make(
+            target: ParameterDescription.InDefinedShape,
+            annotation: AnnotationDescription.Loadable<ProbeArray>,
+            adviceType: Advice.OffsetMapping.Factory.AdviceType,
+        ): Advice.OffsetMapping =
+            Advice.OffsetMapping { _, _, _, _, _ -> Advice.OffsetMapping.Target.ForStackManipulation(form.asStackManipulation()) }
+    }
+
     /**
      * Resolves `@ProbeIndex` to the instrumented method's own slot, as a constant folded into the
      * inlined advice, so one [Advice] visitor serves every probed method in the class.
@@ -1346,6 +1447,10 @@ class OtherlodeInstrumentation(
      * class's own original static initializer, so a static method probed in this class can be
      * called from that initializer and find the field already set, and the type initializer's own
      * probe is counted whether or not the original body that follows this prelude later throws.
+     *
+     * The field is still null until this runs, which a supertype's initializer can precede: the
+     * class's code runs inside it, before the class's own `<clinit>`. That is why probes in a class
+     * that has the field read it through [ProbeArrayForm.Accessor] and not directly.
      */
     private class ProbeArrayInitializer(
         private val className: String,

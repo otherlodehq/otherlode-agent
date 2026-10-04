@@ -30,15 +30,17 @@ class BranchDropRewriterTest {
         val typePool = TypePool.Default.of(locator)
         val typeDescription = typePool.describe("com.example.target.$fixture").resolve()
         val counts = LongArray(capacity)
+        val woven = "com/example/dropguard/$fixture$eligibleMethod$capacity"
         val loaded =
             ByteBuddy()
                 .redefine<Any>(typeDescription, locator)
-                .name("com.example.dropguard.$fixture$eligibleMethod$capacity")
+                .name(woven.replace('/', '.'))
                 .defineField(MethodEntryAdvice.PROBE_ARRAY_FIELD, LongArray::class.java, Visibility.PRIVATE, Ownership.STATIC)
                 .initializer(LoadedTypeInitializer.ForStaticField(MethodEntryAdvice.PROBE_ARRAY_FIELD, counts))
                 .visit(
                     BranchProbeAsmVisitorWrapper(
                         eligibleMethods = { name, _ -> name == eligibleMethod },
+                        probeArray = FieldProbeArrayLoad(woven),
                         probeIndexBase = 0,
                         branchSlotCapacity = capacity,
                         droppedOrdinalsByMethod = droppedOrdinalsByMethod,

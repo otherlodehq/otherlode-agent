@@ -1,6 +1,6 @@
 package dev.otherlode.instrumentation.branch
 
-import dev.otherlode.advice.MethodEntryAdvice
+import dev.otherlode.instrumentation.ProbeArrayLoad
 import net.bytebuddy.jar.asm.Label
 import net.bytebuddy.jar.asm.MethodVisitor
 import net.bytebuddy.jar.asm.Opcodes
@@ -8,7 +8,7 @@ import net.bytebuddy.jar.asm.Opcodes
 /**
  * Splits each [ConditionalJump] into two private edges, one per outcome. It splits each
  * `TABLESWITCH`/`LOOKUPSWITCH` into one private edge per case, plus the default. Every edge
- * increments its own slot in the class's shared `$otherlodeProbeCounts` array:
+ * increments its own slot in the class's shared counts array, which [probeArray] loads:
  *
  * ```
  * IFEQ original_target              IFEQ taken
@@ -58,7 +58,7 @@ import net.bytebuddy.jar.asm.Opcodes
  */
 class BranchProbeMethodVisitor(
     methodVisitor: MethodVisitor,
-    private val ownerInternalName: String,
+    private val probeArray: ProbeArrayLoad,
     private val probeIndexBase: Int,
     private val droppedOrdinals: Set<Int> = emptySet(),
     private val throwingDefaultOrdinals: Set<Int> = emptySet(),
@@ -196,7 +196,7 @@ class BranchProbeMethodVisitor(
     }
 
     private fun emitProbeIncrement(index: Int) {
-        super.visitFieldInsn(Opcodes.GETSTATIC, ownerInternalName, MethodEntryAdvice.PROBE_ARRAY_FIELD, "[J")
+        probeArray.load(mv)
         pushInt(index)
         super.visitInsn(Opcodes.DUP2)
         super.visitInsn(Opcodes.LALOAD)

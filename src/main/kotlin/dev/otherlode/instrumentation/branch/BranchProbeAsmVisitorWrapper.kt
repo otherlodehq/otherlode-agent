@@ -1,5 +1,6 @@
 package dev.otherlode.instrumentation.branch
 
+import dev.otherlode.instrumentation.ProbeArrayLoad
 import net.bytebuddy.asm.AsmVisitorWrapper
 import net.bytebuddy.description.field.FieldDescription
 import net.bytebuddy.description.field.FieldList
@@ -19,6 +20,8 @@ import net.bytebuddy.pool.TypePool
  *
  * Rewriting a conditional jump into two edges introduces new basic blocks. The class file's stack
  * map frames then need recomputing, so [mergeWriter] asks ByteBuddy's writer to do that.
+ *
+ * [probeArray] emits the load of the class's counts array at every probe.
  *
  * [probeIndexBase] is where branch slots start in the class's shared probe array. Method-entry
  * probes occupy `[0, probeIndexBase)`.
@@ -53,6 +56,7 @@ import net.bytebuddy.pool.TypePool
  */
 class BranchProbeAsmVisitorWrapper(
     private val eligibleMethods: (name: String, descriptor: String) -> Boolean,
+    private val probeArray: ProbeArrayLoad,
     private val probeIndexBase: Int,
     private val branchSlotCapacity: Int = Int.MAX_VALUE,
     private val droppedOrdinalsByMethod: (name: String, descriptor: String) -> Set<Int> = { _, _ -> emptySet() },
@@ -81,7 +85,6 @@ class BranchProbeAsmVisitorWrapper(
         writerFlags: Int,
         readerFlags: Int,
     ): ClassVisitor {
-        val ownerInternalName = instrumentedType.internalName
         var nextSlot = 0
         var slotsWanted = 0
         val wantedByMethod = LinkedHashMap<Pair<String, String>, Int>()
@@ -115,7 +118,7 @@ class BranchProbeAsmVisitorWrapper(
                 }
                 return BranchProbeMethodVisitor(
                     delegate,
-                    ownerInternalName,
+                    probeArray,
                     probeIndexBase,
                     droppedOrdinalsByMethod(name, descriptor),
                     throwingDefaultOrdinalsByMethod(name, descriptor),

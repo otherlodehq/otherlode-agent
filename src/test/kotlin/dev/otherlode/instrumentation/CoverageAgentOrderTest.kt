@@ -1,13 +1,11 @@
 package dev.otherlode.instrumentation
 
-import com.sun.net.httpserver.HttpServer
 import dev.otherlode.export.ClassLocation
 import dev.otherlode.export.DeltaBatch
 import dev.otherlode.export.GeneratedBy
 import dev.otherlode.export.ProbeKind
 import dev.otherlode.export.ProbeLocation
 import dev.otherlode.export.ProbeManifest
-import dev.otherlode.export.ProtoPayloadCodec
 import dev.otherlode.export.RoutineKind
 import dev.otherlode.instrumentation.branch.SitePairing
 import org.jacoco.core.data.ExecutionData
@@ -18,11 +16,8 @@ import org.jacoco.core.runtime.OfflineInstrumentationAccessGenerator
 import org.junit.jupiter.api.AfterAll
 import org.junit.jupiter.api.TestInstance
 import java.io.File
-import java.net.InetAddress
-import java.net.InetSocketAddress
 import java.nio.file.Files
 import java.nio.file.Path
-import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -122,37 +117,6 @@ class CoverageAgentOrderTest {
         }
     }
 
-    /** Collects the manifests and delta batches one fixture JVM posts, and answers every post with 200. */
-    private class Receiver : AutoCloseable {
-        val manifests = CopyOnWriteArrayList<ProbeManifest>()
-        val batches = CopyOnWriteArrayList<DeltaBatch>()
-        val failures = CopyOnWriteArrayList<String>()
-        private val server = HttpServer.create(InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0)
-
-        val endpoint: String get() = "http://${server.address.address.hostAddress.let {
-            if (':' in it) "[$it]" else it
-        }}:${server.address.port}"
-
-        init {
-            server.createContext("/") { exchange ->
-                val body = exchange.requestBody.readBytes()
-                try {
-                    when (exchange.requestURI.path) {
-                        "/v1/otherlode/manifest" -> manifests += ProtoPayloadCodec.decodeProbeManifest(body)
-                        "/v1/otherlode/deltas" -> batches += ProtoPayloadCodec.decodeDeltaBatch(body)
-                    }
-                } catch (e: Exception) {
-                    failures += "${exchange.requestURI.path}: $e"
-                }
-                exchange.sendResponseHeaders(200, -1)
-                exchange.close()
-            }
-            server.start()
-        }
-
-        override fun close() = server.stop(0)
-    }
-
     private fun launch(
         name: String,
         jacoco: JacocoPosition?,
@@ -161,7 +125,7 @@ class CoverageAgentOrderTest {
         val jacocoJar = checkNotNull(System.getProperty("otherlode.jacoco.agentJar")) { "otherlode.jacoco.agentJar is not set" }
         val execFile = jacoco?.let { tempDir.resolve("$name.exec").toFile() }
         val outputFile = tempDir.resolve("$name.log").toFile()
-        Receiver().use { receiver ->
+        AgentReceiver().use { receiver ->
             val otherlodeArg =
                 "-javaagent:$agentJar=serviceName=coverage-agent-order,includePackages=$TARGET," +
                     "flushIntervalSeconds=1,exportUrl=${receiver.endpoint}"

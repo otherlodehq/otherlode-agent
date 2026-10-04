@@ -38,6 +38,7 @@ evaluationDependsOn(":fixtures-scala3")
 evaluationDependsOn(":fixtures-scala2")
 evaluationDependsOn(":fixtures-kotlin-jvm-default-disable")
 evaluationDependsOn(":fixtures-kotlin-class-sam")
+evaluationDependsOn(":fixtures-probe-window")
 evaluationDependsOn(":demo-spring")
 evaluationDependsOn(":endpoints-ktor-3")
 
@@ -364,6 +365,17 @@ val jvmDefaultDisableFixtureRuntimeClasspath =
     project(":fixtures-kotlin-jvm-default-disable").configurations.named("runtimeClasspath")
 val classSamFixtureClassesDir = project(":fixtures-kotlin-class-sam").layout.buildDirectory.dir("classes/kotlin/main")
 
+// The probe-window fixtures (ADR 0060), compiled once at class-file version 52 and once at the
+// toolchain's own: each form's Java and Kotlin class directories, and the Kotlin stdlib the Kotlin
+// ones link against.
+val probeWindowProject = project(":fixtures-probe-window")
+val probeWindowForms = listOf("legacy", "modern")
+val probeWindowClassesDirs =
+    probeWindowForms.associateWith { form ->
+        listOf("java", "kotlin").map { probeWindowProject.layout.buildDirectory.dir("classes/$it/$form") }
+    }
+val probeWindowKotlinStdlib = probeWindowProject.configurations.named("kotlinStdlib")
+
 // The compiler matrix (ADR 0055): one fixture build per kotlinc release and per javac version, each
 // compiled by that compiler (see fixtures-compilers). Same arrangement as above, a task dependency
 // and a system property per build holding its class directory, named by the release.
@@ -401,6 +413,7 @@ tasks.test {
         ":fixtures-scala2:classes",
         ":fixtures-kotlin-jvm-default-disable:classes",
         ":fixtures-kotlin-class-sam:classes",
+        ":fixtures-probe-window:classes",
         ":fixtures-kotlinc:classes",
         ":fixtures-javac:classes",
         ":fixtures-scalac:classes",
@@ -420,6 +433,11 @@ tasks.test {
         }
     scalacMatrixVersionFiles.forEach { (version, file) ->
         inputs.file(file).withPropertyName("scalacVersion.$version").withPathSensitivity(PathSensitivity.NONE)
+    }
+    probeWindowClassesDirs.forEach { (form, dirs) ->
+        dirs.forEachIndexed { index, dir ->
+            inputs.dir(dir).withPropertyName("fixtureClasses.probeWindow.$form.$index").withPathSensitivity(PathSensitivity.RELATIVE)
+        }
     }
     // KotlincMatrixTest reads the source's marker comments for line numbers, which the class files
     // alone do not reflect.
@@ -448,6 +466,13 @@ tasks.test {
             jvmDefaultDisableFixtureRuntimeClasspath.get().asPath,
         )
         systemProperty("otherlode.fixtures.classsam.dir", classSamFixtureClassesDir.get().asFile.absolutePath)
+        probeWindowClassesDirs.forEach { (form, dirs) ->
+            systemProperty(
+                "otherlode.fixtures.probewindow.$form.dirs",
+                dirs.joinToString(File.pathSeparator) { it.get().asFile.absolutePath },
+            )
+        }
+        systemProperty("otherlode.fixtures.probewindow.kotlinStdlib", probeWindowKotlinStdlib.get().singleFile.absolutePath)
         systemProperty("otherlode.fixtures.kotlinc.versions", kotlincMatrix.joinToString(","))
         systemProperty("otherlode.fixtures.javac.versions", javacMatrix.joinToString(","))
         systemProperty("otherlode.fixtures.scalac.versions", scalacMatrix.joinToString(","))

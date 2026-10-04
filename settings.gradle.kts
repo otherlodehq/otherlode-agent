@@ -9,6 +9,7 @@ include("fixtures-scala3")
 include("fixtures-scala2")
 include("fixtures-kotlin-jvm-default-disable")
 include("fixtures-kotlin-class-sam")
+include("fixtures-probe-window")
 
 include("fixtures-kotlinc")
 project(":fixtures-kotlinc").projectDir = file("fixtures-compilers/kotlinc")

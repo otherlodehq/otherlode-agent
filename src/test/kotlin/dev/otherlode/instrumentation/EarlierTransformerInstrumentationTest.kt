@@ -1,6 +1,5 @@
 package dev.otherlode.instrumentation
 
-import dev.otherlode.advice.MethodEntryAdvice
 import dev.otherlode.config.AgentConfig
 import dev.otherlode.export.BodyKind
 import dev.otherlode.export.GeneratedBy
@@ -384,7 +383,7 @@ class EarlierTransformerInstrumentationTest {
             val internalName = className.replace('.', '/')
             val received = assertNotNull(jacoco.received[internalName], "JaCoCo saw $className")
             assertFalse(
-                declaresField(received, MethodEntryAdvice.PROBE_ARRAY_FIELD),
+                WovenBytes.isWoven(received),
                 "JaCoCo received $className before this agent wove it",
             )
             // A JaCoCo agent on the test JVM instruments the fixture first; its output is then what
@@ -404,29 +403,6 @@ class EarlierTransformerInstrumentationTest {
             .map { File(it, "$internalName.class") }
             .first { it.exists() }
             .readBytes()
-
-    private fun declaresField(
-        bytes: ByteArray,
-        name: String,
-    ): Boolean {
-        var found = false
-        ClassReader(bytes).accept(
-            object : ClassVisitor(Opcodes.ASM9) {
-                override fun visitField(
-                    access: Int,
-                    fieldName: String,
-                    descriptor: String,
-                    signature: String?,
-                    value: Any?,
-                ): FieldVisitor? {
-                    if (fieldName == name) found = true
-                    return null
-                }
-            },
-            ClassReader.SKIP_CODE,
-        )
-        return found
-    }
 
     /** Whether a JaCoCo agent was on this JVM's command line, which instruments the fixtures before [JacocoAhead] can. */
     private fun isUnderJacocoAgent(): Boolean =

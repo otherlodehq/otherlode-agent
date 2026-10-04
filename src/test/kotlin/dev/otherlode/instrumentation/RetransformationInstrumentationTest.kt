@@ -1,6 +1,5 @@
 package dev.otherlode.instrumentation
 
-import dev.otherlode.advice.MethodEntryAdvice
 import dev.otherlode.config.AgentConfig
 import dev.otherlode.export.BodyKind
 import dev.otherlode.export.KotlinKind
@@ -129,6 +128,9 @@ class RetransformationInstrumentationTest {
         installed = otherlode to otherlode.install(instrumentation)
     }
 
+    /** The fixture loader for a class woven in the field-and-accessor form, which is version 52 here, or the dynamic-constant form. */
+    private fun fixtureLoader(legacy: Boolean): ClassLoader = if (legacy) LegacyFixtures.loader(javaClass.classLoader) else fixtureLoader()
+
     private fun fixtureLoader(): ClassLoader =
         FixtureClassLoader(
             arrayOf(File("build/classes/java/test").toURI().toURL(), File("build/classes/kotlin/test").toURI().toURL()),
@@ -147,31 +149,51 @@ class RetransformationInstrumentationTest {
 
     @Test
     fun `a retransformation with no other transformer re-weaves woven classes and keeps their counts`() {
-        retransformWovenClasses(laterAgent = null)
+        retransformWovenClasses(laterAgent = null, legacy = false)
     }
 
     @Test
     fun `a retransformation by an agent whose transformer returns null re-weaves woven classes to the same bytes`() {
-        retransformWovenClasses(LaterAgent(rewrite = false))
+        retransformWovenClasses(LaterAgent(rewrite = false), legacy = false)
     }
 
     @Test
     fun `a retransformation by an agent that changes a method body keeps that change and the probes counting`() {
-        retransformWovenClasses(LaterAgent(rewrite = true))
+        retransformWovenClasses(LaterAgent(rewrite = true), legacy = false)
+    }
+
+    @Test
+    fun `a retransformation of version 52 classes with no other transformer re-weaves them and keeps their counts`() {
+        retransformWovenClasses(laterAgent = null, legacy = true)
+    }
+
+    @Test
+    fun `a retransformation of version 52 classes by an agent whose transformer returns null re-weaves them to the same bytes`() {
+        retransformWovenClasses(LaterAgent(rewrite = false), legacy = true)
+    }
+
+    @Test
+    fun `a retransformation of version 52 classes by an agent that changes a method body keeps that change and the probes counting`() {
+        retransformWovenClasses(LaterAgent(rewrite = true), legacy = true)
     }
 
     /**
      * Loads and drives [WOVEN_CLASSES], retransforms them all in one batch, drives again, and checks
-     * that the batch succeeded, the counts carried on, and the registry saw each class once.
+     * that the batch succeeded, the counts carried on, and the registry saw each class once. With
+     * [legacy] the classes are version 52, so they carry the probe field and accessor; otherwise they
+     * carry neither and load a dynamic constant.
      */
-    private fun retransformWovenClasses(laterAgent: LaterAgent?) {
+    private fun retransformWovenClasses(
+        laterAgent: LaterAgent?,
+        legacy: Boolean,
+    ) {
         val registry = CountingRegistry()
         install(AgentConfig.parse("includePackages=$TARGET"), registry)
         laterAgent?.let {
             laterAgents += it
             instrumentation.addTransformer(it, true)
         }
-        val loader = fixtureLoader()
+        val loader = fixtureLoader(legacy)
         val classes = WOVEN_CLASSES.map { Class.forName(it, true, loader) }
         val branchTarget = classes.first()
         val target = branchTarget.getDeclaredConstructor().newInstance()
@@ -209,7 +231,8 @@ class RetransformationInstrumentationTest {
             for (className in WOVEN_CLASSES) {
                 val received = assertNotNull(laterAgent.received[className.replace('.', '/')], "the later agent saw $className")
                 assertEquals(2, received.size, "$className at load and at the retransformation")
-                assertTrue(declaresField(received[0], MethodEntryAdvice.PROBE_ARRAY_FIELD), "$className was woven")
+                assertEquals(legacy, WovenBytes.declaresField(received[0]), "$className has the probe field only at version 52")
+                assertEquals(!legacy, WovenBytes.loadsProbeConstant(received[0]), "$className loads the dynamic constant from version 55")
                 assertTrue(received[0].contentEquals(received[1]), "$className is woven again to the same bytes")
             }
         }
@@ -234,7 +257,7 @@ class RetransformationInstrumentationTest {
         assertTrue(registry.registrations.isEmpty(), "${registry.registrations}")
         assertEquals(before.skippedClasses, after.skippedClasses)
         assertEquals(listOf(skipped), after.skippedClasses.map { it.className })
-        assertFalse(declaresField(classBytesAfterRetransform(sample), MethodEntryAdvice.PROBE_ARRAY_FIELD))
+        assertFalse(WovenBytes.isWoven(classBytesAfterRetransform(sample)))
     }
 
     /** The bytes a capable transformer is handed for [cls] when it is retransformed. */
@@ -260,29 +283,6 @@ class RetransformationInstrumentationTest {
             instrumentation.removeTransformer(spy)
         }
         return assertNotNull(seen)
-    }
-
-    private fun declaresField(
-        bytes: ByteArray,
-        name: String,
-    ): Boolean {
-        var found = false
-        ClassReader(bytes).accept(
-            object : ClassVisitor(Opcodes.ASM9) {
-                override fun visitField(
-                    access: Int,
-                    fieldName: String,
-                    descriptor: String,
-                    signature: String?,
-                    value: Any?,
-                ): FieldVisitor? {
-                    if (fieldName == name) found = true
-                    return null
-                }
-            },
-            ClassReader.SKIP_CODE,
-        )
-        return found
     }
 
     private fun captureLogRecords(
@@ -313,17 +313,26 @@ class RetransformationInstrumentationTest {
         return synchronized(records) { records.toList() }
     }
 
-    /** Loads [BRANCH_TARGET] from a copy of its class file in a temporary directory, which a test may then edit. */
-    private class EditableClassFile {
+    /**
+     * Loads [BRANCH_TARGET] from a copy of its class file in a temporary directory, which a test may
+     * then edit. The copy is version 52 unless [legacy] is false: a class woven in the field form is
+     * the one whose redefinition the JVM refuses when the weave is refused.
+     */
+    private class EditableClassFile(
+        legacy: Boolean = true,
+        className: String = BRANCH_TARGET,
+    ) {
+        private val path = className.replace('.', '/') + ".class"
         val dir: File =
             java.nio.file.Files
                 .createTempDirectory("otherlode-class-file")
                 .toFile()
-        val file = File(dir, "com/example/target/BranchTarget.class")
+        val file = File(dir, path)
 
         init {
             file.parentFile.mkdirs()
-            File("build/classes/java/test/com/example/target/BranchTarget.class").copyTo(file)
+            val source = File("build/classes/java/test/$path")
+            if (legacy) LegacyFixtures.copyDowngraded(source, file) else source.copyTo(file)
         }
 
         /**
@@ -332,8 +341,7 @@ class RetransformationInstrumentationTest {
          */
         fun loader(parent: ClassLoader): ClassLoader =
             object : FixtureClassLoader(arrayOf(dir.toURI().toURL()), parent) {
-                override fun getResource(name: String): java.net.URL? =
-                    if (name == "com/example/target/BranchTarget.class") findResource(name) else super.getResource(name)
+                override fun getResource(name: String): java.net.URL? = if (name == path) findResource(name) else super.getResource(name)
             }
     }
 
@@ -361,7 +369,10 @@ class RetransformationInstrumentationTest {
         return branchTarget to target
     }
 
-    private fun assertRefusedWithWarning(retransform: () -> Unit) {
+    private fun assertRefusedWithWarning(
+        className: String = BRANCH_TARGET,
+        retransform: () -> Unit,
+    ) {
         var refusal: Throwable? = null
         val records =
             captureLogRecords(OtherlodeInstrumentation::class.java.name) { refusal = runCatching(retransform).exceptionOrNull() }
@@ -369,7 +380,7 @@ class RetransformationInstrumentationTest {
         assertTrue(thrown is UnsupportedOperationException && "schema" in thrown.message.orEmpty(), "$thrown")
         assertTrue(
             records.any {
-                it.level == JulLevel.WARNING && "class file of $BRANCH_TARGET differs from the one it was woven from" in it.message
+                it.level == JulLevel.WARNING && "class file of $className differs from the one it was woven from" in it.message
             },
             "${records.map { it.message }}",
         )
@@ -422,6 +433,75 @@ class RetransformationInstrumentationTest {
 
         assertEquals(4L to listOf(1L, 3L), countsOf(registry, "classify"))
         assertEquals(2L to listOf(0L, 2L, 0L, 0L), countsOf(registry, "classifyDense"))
+    }
+
+    /**
+     * A class woven from version 55 has no probe field whose absence would make the JVM reject
+     * unwoven bytes, so a refused re-weave hands back the received bytes plus one field, which the
+     * JVM rejects as a schema change. The class keeps running woven and counting, as one with a
+     * probe field does.
+     */
+    @Test
+    fun `a refused re-weave of a version 55 class is rejected by the JVM, and the class keeps counting`() {
+        val registry = CountingRegistry()
+        install(AgentConfig.parse("includePackages=$TARGET"), registry)
+        val classFile = EditableClassFile(legacy = false)
+        val (branchTarget, target) = loadAndDrive(classFile.loader(javaClass.classLoader))
+        val before = registry.manifest(RESOURCE)
+        classFile.file.writeBytes(replaceConstant(classFile.file.readBytes(), "positive", "POSITIVE"))
+
+        assertRefusedWithWarning { instrumentation.retransformClasses(branchTarget) }
+
+        assertEquals("positive", branchTarget.getMethod("classify", Int::class.java).invoke(target, 5), "the woven class still runs")
+        assertEquals(4L to listOf(1L, 3L), countsOf(registry, "classify"), "the call after the refusal is counted")
+        assertEquals(before.probes, registry.manifest(RESOURCE).probes)
+        assertTrue(registry.manifest(RESOURCE).skippedClasses.isEmpty())
+    }
+
+    /**
+     * The same for an interface: a field there must be public static final, so the marker is, or
+     * ByteBuddy would reject it and the JVM accept the interface's unwoven bytes.
+     */
+    @Test
+    fun `a refused re-weave of a version 55 interface is rejected by the JVM, and it keeps counting`() {
+        val registry = CountingRegistry()
+        install(AgentConfig.parse("includePackages=$TARGET"), registry)
+        val name = "$TARGET.DefaultMethodTarget"
+        val classFile = EditableClassFile(legacy = false, className = name)
+        val target = Class.forName(name, true, classFile.loader(javaClass.classLoader))
+        val staticThing = target.getMethod("staticThing")
+        staticThing.invoke(null)
+        classFile.file.writeBytes(replaceConstant(classFile.file.readBytes(), "static", "STATIC"))
+
+        assertRefusedWithWarning(name) { instrumentation.retransformClasses(target) }
+
+        assertEquals("static", staticThing.invoke(null), "the woven interface still runs")
+        val probe =
+            registry.manifest(RESOURCE).probes.single {
+                it.className == name && it.methodName == "staticThing" &&
+                    it.kind == ProbeKind.METHOD
+            }
+        assertEquals(2L, hitsOf(registry, probe), "the call after the refusal is counted")
+    }
+
+    /**
+     * A redefinition shaped like an IDE's HotSwap, which writes the class file and then redefines
+     * the class with it, of a class woven from version 55: the JVM rejects it as it does for a
+     * retransformation.
+     */
+    @Test
+    fun `a HotSwap-shaped redefinition of a version 55 class is refused, and the class keeps counting`() {
+        val registry = CountingRegistry()
+        install(AgentConfig.parse("includePackages=$TARGET"), registry)
+        val classFile = EditableClassFile(legacy = false)
+        val (branchTarget, target) = loadAndDrive(classFile.loader(javaClass.classLoader))
+        val edited = replaceConstant(classFile.file.readBytes(), "positive", "POSITIVE")
+        classFile.file.writeBytes(edited)
+
+        assertRefusedWithWarning { instrumentation.redefineClasses(java.lang.instrument.ClassDefinition(branchTarget, edited)) }
+
+        assertEquals("positive", branchTarget.getMethod("classify", Int::class.java).invoke(target, 5), "the woven class still runs")
+        assertEquals(4L to listOf(1L, 3L), countsOf(registry, "classify"), "the call after the refusal is counted")
     }
 
     /**
@@ -654,7 +734,8 @@ class RetransformationInstrumentationTest {
     /**
      * An earlier agent that adds a class annotation ByteBuddy cannot rebase past, on a
      * retransformation. The class's probes were delivered at the first weave, so it must not be
-     * recorded as skipped now; the failed re-weave is logged instead, and the JVM refuses.
+     * recorded as skipped now; the failed re-weave is logged instead, and the JVM refuses. The class
+     * is version 52: it has a probe field the unwoven bytes lack, which is what the JVM refuses.
      */
     @Test
     fun `a woven class whose retransformed bytes carry an illegal class annotation is not recorded as skipped`() {
@@ -677,7 +758,7 @@ class RetransformationInstrumentationTest {
         laterAgents += earlier
         instrumentation.addTransformer(earlier, true)
         install(AgentConfig.parse("includePackages=$TARGET"), registry)
-        val (branchTarget, _) = loadAndDrive(fixtureLoader())
+        val (branchTarget, _) = loadAndDrive(fixtureLoader(legacy = true))
 
         var refusal: Throwable? = null
         val records =

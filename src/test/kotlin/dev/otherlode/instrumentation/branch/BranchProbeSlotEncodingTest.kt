@@ -67,8 +67,14 @@ class BranchProbeSlotEncodingTest {
                 .redefine<Any>(typeDescription, locator)
                 .defineField(MethodEntryAdvice.PROBE_ARRAY_FIELD, LongArray::class.java, Visibility.PRIVATE, Ownership.STATIC)
                 .initializer(LoadedTypeInitializer.ForStaticField(MethodEntryAdvice.PROBE_ARRAY_FIELD, counts))
-                .visit(BranchProbeAsmVisitorWrapper(eligibleMethods = { _, _ -> true }, probeIndexBase = 0, branchSlotCapacity = slots))
-                .make()
+                .visit(
+                    BranchProbeAsmVisitorWrapper(
+                        eligibleMethods = { _, _ -> true },
+                        probeArray = FieldProbeArrayLoad(className.replace('.', '/')),
+                        probeIndexBase = 0,
+                        branchSlotCapacity = slots,
+                    ),
+                ).make()
                 .load(javaClass.classLoader, ClassLoadingStrategy.Default.WRAPPER)
                 .loaded
 

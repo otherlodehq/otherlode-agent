@@ -55,8 +55,8 @@ object BranchSiteAnalyzer {
          * from [dev.otherlode.instrumentation.TypeMatchPolicy.methodMatcher], so it
          * never contributes a [sites] entry or an ordinary method probe; this flag is what lets
          * [dev.otherlode.instrumentation.OtherlodeInstrumentation] give such a class one
-         * METHOD probe anyway, counted by the woven `<clinit>` prelude instead of by advice. A
-         * marker interface, or a class with only instance methods, has none.
+         * METHOD probe anyway, counted by the woven `<clinit>` prelude or by entry advice on the
+         * `<clinit>`. A marker interface, or a class with only instance methods, has none.
          */
         val hasTypeInitializer: Boolean = false,
         private val callEdgesByMethod: Map<Pair<String, String>, List<CallEdge>> = emptyMap(),
@@ -812,7 +812,7 @@ object BranchSiteAnalyzer {
                         // are worth capturing. <clinit> is always out of scope here too
                         // (methodFilter excludes it), but its own first line is still worth
                         // recording: OtherlodeInstrumentation gives a class with a type initializer of
-                        // its own one METHOD probe, counted by the woven prelude rather than advice.
+                        // its own one METHOD probe, counted by the prelude or by entry advice on the <clinit>.
                         // Its call candidates are still worth capturing too: this method may be a
                         // same-class pass-through (a bridge, an access$ accessor) referenced by a
                         // probed method elsewhere in the class. See ADR 0024.

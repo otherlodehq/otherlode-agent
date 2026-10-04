@@ -1,6 +1,6 @@
 # What the agent adds to PetClinic's startup, 2026-10-04
 
-Evidence for `STATUS.md`'s entry "The agent's startup and heap: measured, to grill". Measured against the agent jar built from `3707e98` by an Opus research agent; findings, not fixes. Scripts are beside this file in `startup/`; the profiles are not kept, and the scripts make new ones.
+Evidence for `STATUS.md`'s entry "The agent's startup: measured, to grill", which is grilled with the heap entry beside it. Measured against the agent jar built from `3707e98` by an Opus research agent; findings, not fixes. Scripts are beside this file in `startup/`; the profiles are not kept, and the scripts make new ones.
 
 ## Question
 
