@@ -80,6 +80,55 @@ class StubCollectorTest {
     }
 
     @Test
+    fun `a payload a collector stripped fields from is skipped and left out of the reports`() {
+        val stripped = resource("run-stripped").toBuilder().setFieldsStripped(true).build()
+        val probe =
+            ProbeLocation
+                .newBuilder()
+                .setClassId(0)
+                .setKind(ProbeKind.METHOD)
+                .setClassName("com.acme.stripped.OnlyInStrippedRun")
+                .setMethodName("check")
+                .setMethodDescriptor("()V")
+
+        assertEquals(
+            200,
+            post(
+                "manifest",
+                ProbeManifest
+                    .newBuilder()
+                    .setResource(stripped)
+                    .addProbes(probe)
+                    .build(),
+            ),
+        )
+        assertEquals(
+            200,
+            post(
+                "deltas",
+                DeltaBatch
+                    .newBuilder()
+                    .setResource(stripped)
+                    .setFinalFlush(true)
+                    .build(),
+            ),
+        )
+        assertEquals(
+            200,
+            post(
+                "static-baseline",
+                StaticBaseline
+                    .newBuilder()
+                    .setChunkCount(1)
+                    .setResource(stripped)
+                    .build(),
+            ),
+        )
+
+        assertTrue(neverHitReport().none { it.contains("OnlyInStrippedRun") })
+    }
+
+    @Test
     fun `a test run's payloads are answered 200 and left out of the reports`() {
         val testRun = resource("run-test").toBuilder().setTestRun(true).build()
         val probe =
@@ -255,7 +304,7 @@ class StubCollectorTest {
         fun outcome(
             branchIndex: Int,
             role: BranchRole,
-            routine: RoutineKind = RoutineKind.ROUTINE_KIND_NONE,
+            routine: RoutineKind = RoutineKind.ROUTINE_KIND_UNSPECIFIED,
         ) = BranchOutcome
             .newBuilder()
             .setBranchIndex(branchIndex)

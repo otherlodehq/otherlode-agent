@@ -11,10 +11,11 @@ lint:
     # ProbeKind_PROBE_KIND_METHOD, Java ProbeKind.PROBE_KIND_METHOD), and the
     # value names the collector and server read would change.
     - ENUM_VALUE_PREFIX
-    # GeneratedBy's zero value means "not generated", a legitimate and common
-    # value rather than an absent or invalid one, unlike ProbeKind's own
-    # PROBE_KIND_UNSPECIFIED. Naming it GENERATED_BY_UNSPECIFIED would
-    # misstate what it means for the sake of this rule alone.
+    # KotlinKind and BodyKind sit outside any oneof, and their zero value NONE is a
+    # real value ("not a Kotlin construct", "no body class"), not an absent or
+    # invalid one. Naming it UNSPECIFIED would misstate what it means for the
+    # sake of this rule alone. GeneratedBy, UnreadShape and RoutineKind are only
+    # set inside an origin oneof, so their zero values are UNSPECIFIED.
     - ENUM_ZERO_VALUE_SUFFIX
 breaking:
   use:

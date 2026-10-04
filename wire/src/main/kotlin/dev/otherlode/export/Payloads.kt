@@ -110,7 +110,7 @@ enum class UnreadShape {
     COROUTINE_MACHINERY,
 
     /** The collision side of a bucket in a string switch's `hashCode` lowering the agent cannot read. */
-    SWITCH_LOWERING,
+    STRING_SWITCH,
 }
 
 /**
@@ -131,6 +131,10 @@ enum class UnreadShape {
  * [agentVersion] is the agent's own version, from its jar manifest's `Implementation-Version`. It
  * is empty when unknown, such as when the agent runs from classes in a test JVM. An unread shape
  * is a fact about one agent version, so a consumer reads it together with this.
+ *
+ * [fieldsStripped] is set by a collector, never by the agent, when it removed a field its own
+ * bindings did not know before forwarding. A consumer makes no never-hit or cluster claim from a
+ * run that carried it. It comes last, with a default, like the other additions.
  */
 data class ResourceAttributes(
     val serviceName: String,
@@ -141,6 +145,7 @@ data class ResourceAttributes(
     val serviceNamespace: String? = null,
     val testRun: Boolean = false,
     val agentVersion: String = "",
+    val fieldsStripped: Boolean = false,
 ) {
     /** Holds the agent's `forNewRun`, which builds one from its configuration. */
     companion object

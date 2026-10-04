@@ -206,7 +206,7 @@ class UnreadOutlineAnalysisTest {
 
         val analysis = analyze(bytes, "stringWhen")
 
-        val switch = UnreadShape.SWITCH_LOWERING
+        val switch = UnreadShape.STRING_SWITCH
         val plain = UnreadShape.NONE
         assertEquals(
             listOf(
@@ -235,7 +235,7 @@ class UnreadOutlineAnalysisTest {
 
         val analysis = analyze(bytes, "stringStatement")
 
-        val switch = UnreadShape.SWITCH_LOWERING
+        val switch = UnreadShape.STRING_SWITCH
         val plain = UnreadShape.NONE
         assertEquals(
             listOf(

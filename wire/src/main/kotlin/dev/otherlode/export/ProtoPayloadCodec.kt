@@ -86,6 +86,7 @@ object ProtoPayloadCodec {
                 .setRunId(resource.runId)
                 .setTestRun(resource.testRun)
                 .setAgentVersion(resource.agentVersion)
+                .setFieldsStripped(resource.fieldsStripped)
         resource.serviceVersion?.let { builder.serviceVersion = it }
         resource.environment?.let { builder.environment = it }
         resource.serviceNamespace?.let { builder.serviceNamespace = it }
@@ -102,6 +103,7 @@ object ProtoPayloadCodec {
             serviceNamespace = if (resource.hasServiceNamespace()) resource.serviceNamespace else null,
             testRun = resource.testRun,
             agentVersion = resource.agentVersion,
+            fieldsStripped = resource.fieldsStripped,
         )
 
     private fun toProto(delta: ProbeDelta): ProtoProbeDelta =
@@ -337,7 +339,7 @@ object ProtoPayloadCodec {
 
     private fun toProto(routine: RoutineKind): ProtoRoutineKind =
         when (routine) {
-            RoutineKind.NONE -> ProtoRoutineKind.ROUTINE_KIND_NONE
+            RoutineKind.NONE -> ProtoRoutineKind.ROUTINE_KIND_UNSPECIFIED
             RoutineKind.NULL_DEFAULT -> ProtoRoutineKind.NULL_DEFAULT
             RoutineKind.THROW_ONLY -> ProtoRoutineKind.THROW_ONLY
             RoutineKind.FINALLY_COPY -> ProtoRoutineKind.FINALLY_COPY
@@ -345,7 +347,7 @@ object ProtoPayloadCodec {
 
     private fun fromProto(routine: ProtoRoutineKind): RoutineKind =
         when (routine) {
-            ProtoRoutineKind.ROUTINE_KIND_NONE -> RoutineKind.NONE
+            ProtoRoutineKind.ROUTINE_KIND_UNSPECIFIED -> RoutineKind.NONE
             ProtoRoutineKind.NULL_DEFAULT -> RoutineKind.NULL_DEFAULT
             ProtoRoutineKind.THROW_ONLY -> RoutineKind.THROW_ONLY
             ProtoRoutineKind.FINALLY_COPY -> RoutineKind.FINALLY_COPY
@@ -537,32 +539,32 @@ object ProtoPayloadCodec {
 
     private fun toProto(unreadShape: UnreadShape): ProtoUnreadShape =
         when (unreadShape) {
-            UnreadShape.NONE -> ProtoUnreadShape.UNREAD_SHAPE_NONE
+            UnreadShape.NONE -> ProtoUnreadShape.UNREAD_SHAPE_UNSPECIFIED
             UnreadShape.CASE_CLASS -> ProtoUnreadShape.UNREAD_SHAPE_CASE_CLASS
             UnreadShape.STATIC_FORWARDER -> ProtoUnreadShape.UNREAD_SHAPE_STATIC_FORWARDER
             UnreadShape.SCALA_OBJECT -> ProtoUnreadShape.UNREAD_SHAPE_SCALA_OBJECT
             UnreadShape.SCALA_ENUM -> ProtoUnreadShape.UNREAD_SHAPE_SCALA_ENUM
             UnreadShape.MULTIFILE_FACADE -> ProtoUnreadShape.UNREAD_SHAPE_MULTIFILE_FACADE
             UnreadShape.COROUTINE_MACHINERY -> ProtoUnreadShape.UNREAD_SHAPE_COROUTINE_MACHINERY
-            UnreadShape.SWITCH_LOWERING -> ProtoUnreadShape.UNREAD_SHAPE_SWITCH_LOWERING
+            UnreadShape.STRING_SWITCH -> ProtoUnreadShape.UNREAD_SHAPE_STRING_SWITCH
         }
 
     private fun fromProto(unreadShape: ProtoUnreadShape): UnreadShape =
         when (unreadShape) {
-            ProtoUnreadShape.UNREAD_SHAPE_NONE -> UnreadShape.NONE
+            ProtoUnreadShape.UNREAD_SHAPE_UNSPECIFIED -> UnreadShape.NONE
             ProtoUnreadShape.UNREAD_SHAPE_CASE_CLASS -> UnreadShape.CASE_CLASS
             ProtoUnreadShape.UNREAD_SHAPE_STATIC_FORWARDER -> UnreadShape.STATIC_FORWARDER
             ProtoUnreadShape.UNREAD_SHAPE_SCALA_OBJECT -> UnreadShape.SCALA_OBJECT
             ProtoUnreadShape.UNREAD_SHAPE_SCALA_ENUM -> UnreadShape.SCALA_ENUM
             ProtoUnreadShape.UNREAD_SHAPE_MULTIFILE_FACADE -> UnreadShape.MULTIFILE_FACADE
             ProtoUnreadShape.UNREAD_SHAPE_COROUTINE_MACHINERY -> UnreadShape.COROUTINE_MACHINERY
-            ProtoUnreadShape.UNREAD_SHAPE_SWITCH_LOWERING -> UnreadShape.SWITCH_LOWERING
+            ProtoUnreadShape.UNREAD_SHAPE_STRING_SWITCH -> UnreadShape.STRING_SWITCH
             ProtoUnreadShape.UNRECOGNIZED -> throw IllegalArgumentException("unrecognized unread shape on the wire: $unreadShape")
         }
 
     private fun toProto(generatedBy: GeneratedBy): ProtoGeneratedBy =
         when (generatedBy) {
-            GeneratedBy.NONE -> ProtoGeneratedBy.GENERATED_BY_NONE
+            GeneratedBy.NONE -> ProtoGeneratedBy.GENERATED_BY_UNSPECIFIED
             GeneratedBy.ENUM -> ProtoGeneratedBy.ENUM
             GeneratedBy.DATA_CLASS -> ProtoGeneratedBy.DATA_CLASS
             GeneratedBy.DEFAULT_IMPLS -> ProtoGeneratedBy.DEFAULT_IMPLS
@@ -574,12 +576,11 @@ object ProtoPayloadCodec {
             GeneratedBy.SCALA_OBJECT -> ProtoGeneratedBy.SCALA_OBJECT
         }
 
-    // GENERATED_BY_NONE is a legitimate value on the wire, unlike ProbeKind's own unspecified
-    // default: it means "not generated", not "never set". Only an enum value this codec does not
-    // know about is an error.
+    // Never written inside an origin oneof, but a peer can still set the oneof to its zero value, so it
+    // reads as unset, the same as an absent oneof.
     private fun fromProto(generatedBy: ProtoGeneratedBy): GeneratedBy =
         when (generatedBy) {
-            ProtoGeneratedBy.GENERATED_BY_NONE -> GeneratedBy.NONE
+            ProtoGeneratedBy.GENERATED_BY_UNSPECIFIED -> GeneratedBy.NONE
             ProtoGeneratedBy.ENUM -> GeneratedBy.ENUM
             ProtoGeneratedBy.DATA_CLASS -> GeneratedBy.DATA_CLASS
             ProtoGeneratedBy.DEFAULT_IMPLS -> GeneratedBy.DEFAULT_IMPLS

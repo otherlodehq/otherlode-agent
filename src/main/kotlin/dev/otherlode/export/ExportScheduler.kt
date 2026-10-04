@@ -368,7 +368,7 @@ class ExportScheduler(
             UnreadShape.SCALA_ENUM -> "Scala enum plumbing"
             UnreadShape.MULTIFILE_FACADE -> "Kotlin multi-file facade methods"
             UnreadShape.COROUTINE_MACHINERY -> "coroutine machinery"
-            UnreadShape.SWITCH_LOWERING -> "string switch lowering"
+            UnreadShape.STRING_SWITCH -> "string switch lowering"
         }
 
     /**

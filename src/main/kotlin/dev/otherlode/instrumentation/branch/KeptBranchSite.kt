@@ -100,7 +100,7 @@ data class KeptBranchSite(
                         val unread =
                             when {
                                 site.unreadShape != UnreadShape.NONE -> site.unreadShape
-                                offset == site.unreadOutcome -> UnreadShape.SWITCH_LOWERING
+                                offset == site.unreadOutcome -> UnreadShape.STRING_SWITCH
                                 else -> UnreadShape.NONE
                             }
                         val routine =

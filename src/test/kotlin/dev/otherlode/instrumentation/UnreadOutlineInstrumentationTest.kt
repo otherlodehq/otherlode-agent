@@ -115,10 +115,10 @@ class UnreadOutlineInstrumentationTest {
 
         val unread = method(run, "stringWhen").branchSites.flatMap { site -> site.outcomes.filter { it.unreadShape != UnreadShape.NONE } }
         assertEquals(4, unread.size)
-        assertTrue(unread.all { it.unreadShape == UnreadShape.SWITCH_LOWERING })
+        assertTrue(unread.all { it.unreadShape == UnreadShape.STRING_SWITCH })
         val branchIndexes = run.probes.filter { it.kind == ProbeKind.BRANCH && it.methodName == "stringWhen" }.map { it.branchIndex }
         assertTrue(unread.all { it.branchIndex in branchIndexes }, "each unread outcome has its own probe")
-        assertEquals(4L, run.counts.outcomeCountOf(UnreadShape.SWITCH_LOWERING))
+        assertEquals(4L, run.counts.outcomeCountOf(UnreadShape.STRING_SWITCH))
     }
 
     @Test

@@ -1267,8 +1267,8 @@ class ExportSchedulerTest {
     @Test
     fun `unread outcomes are summarised by family in their own sentence`() {
         val unreadShapeCounts = UnreadShapeCounts()
-        unreadShapeCounts.recordOutcomes("com.acme.Foo", mapOf(UnreadShape.COROUTINE_MACHINERY to 4, UnreadShape.SWITCH_LOWERING to 2))
-        unreadShapeCounts.recordOutcomes("com.acme.Bar", mapOf(UnreadShape.SWITCH_LOWERING to 1))
+        unreadShapeCounts.recordOutcomes("com.acme.Foo", mapOf(UnreadShape.COROUTINE_MACHINERY to 4, UnreadShape.STRING_SWITCH to 2))
+        unreadShapeCounts.recordOutcomes("com.acme.Bar", mapOf(UnreadShape.STRING_SWITCH to 1))
         val scheduler =
             ExportScheduler(
                 config,

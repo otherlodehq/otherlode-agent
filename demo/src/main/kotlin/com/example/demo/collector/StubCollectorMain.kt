@@ -92,14 +92,14 @@ private data class ProbeInfo(
     val overridable: Boolean = false,
     val targetClassName: String? = null,
     val inlinedFromClassName: String? = null,
-    val generatedBy: GeneratedBy = GeneratedBy.GENERATED_BY_NONE,
+    val generatedBy: GeneratedBy = GeneratedBy.GENERATED_BY_UNSPECIFIED,
     val siteIndex: Int? = null,
     val static: Boolean = false,
     val lambdaBody: Boolean = false,
     val parameterNames: List<String> = emptyList(),
     val genericSignature: String = "",
     val extensionReceiver: Boolean = false,
-    val unreadShape: UnreadShape = UnreadShape.UNREAD_SHAPE_NONE,
+    val unreadShape: UnreadShape = UnreadShape.UNREAD_SHAPE_UNSPECIFIED,
 )
 
 /** One method of one run: where a METHOD probe's branch sites are kept, for its BRANCH probes to find. */
@@ -158,22 +158,22 @@ private data class DeclaredMethodInfo(
     val methodDescriptor: String,
     val inline: Boolean,
     val calls: List<CallEdgeInfo> = emptyList(),
-    val generatedBy: GeneratedBy = GeneratedBy.GENERATED_BY_NONE,
+    val generatedBy: GeneratedBy = GeneratedBy.GENERATED_BY_UNSPECIFIED,
     val referencedClasses: List<String> = emptyList(),
     val static: Boolean = false,
     val parameterNames: List<String> = emptyList(),
     val genericSignature: String = "",
     val extensionReceiver: Boolean = false,
-    val unreadShape: UnreadShape = UnreadShape.UNREAD_SHAPE_NONE,
+    val unreadShape: UnreadShape = UnreadShape.UNREAD_SHAPE_UNSPECIFIED,
 )
 
 /** Whether this probe's method is generated or an unread shape: no node, no finding, but looked through. */
 private fun ProbeInfo.isLookedThrough(): Boolean =
-    generatedBy != GeneratedBy.GENERATED_BY_NONE || unreadShape != UnreadShape.UNREAD_SHAPE_NONE
+    generatedBy != GeneratedBy.GENERATED_BY_UNSPECIFIED || unreadShape != UnreadShape.UNREAD_SHAPE_UNSPECIFIED
 
 /** Whether this declared method is generated or an unread shape: no node, no finding, but looked through. */
 private fun DeclaredMethodInfo.isLookedThrough(): Boolean =
-    generatedBy != GeneratedBy.GENERATED_BY_NONE || unreadShape != UnreadShape.UNREAD_SHAPE_NONE
+    generatedBy != GeneratedBy.GENERATED_BY_UNSPECIFIED || unreadShape != UnreadShape.UNREAD_SHAPE_UNSPECIFIED
 
 /** Scopes a dependency id to the run that reported it, for the same reason as [InstanceProbeKey]. */
 private data class InstanceDependencyKey(
@@ -515,6 +515,7 @@ private fun handleShutdown(exchange: HttpExchange) {
 private fun handleDeltaBatch(exchange: HttpExchange) {
     val batch = DeltaBatch.parseFrom(exchange.requestBody.readBytes())
     val run = runOf(batch.resource) ?: return respondBadRequest(exchange, "delta batch")
+    if (batch.resource.fieldsStripped) return ignoreStripped(exchange, "delta batch", batch.resource)
     if (batch.resource.testRun) return ignoreTestRun(exchange, "delta batch", batch.resource)
     allRuns += run
     for (delta in batch.deltasList) {
@@ -548,6 +549,7 @@ private fun handleDeltaBatch(exchange: HttpExchange) {
 private fun handleManifest(exchange: HttpExchange) {
     val manifest = ProbeManifest.parseFrom(exchange.requestBody.readBytes())
     val run = runOf(manifest.resource) ?: return respondBadRequest(exchange, "manifest")
+    if (manifest.resource.fieldsStripped) return ignoreStripped(exchange, "manifest", manifest.resource)
     if (manifest.resource.testRun) return ignoreTestRun(exchange, "manifest", manifest.resource)
     for (location in manifest.probesList) {
         manifestProbes[InstanceProbeKey(run, location.classId, location.probeIndex)] =
@@ -659,6 +661,7 @@ private fun handleManifest(exchange: HttpExchange) {
 private fun handleStaticBaseline(exchange: HttpExchange) {
     val baseline = StaticBaseline.parseFrom(exchange.requestBody.readBytes())
     val run = runOf(baseline.resource) ?: return respondBadRequest(exchange, "static baseline")
+    if (baseline.resource.fieldsStripped) return ignoreStripped(exchange, "static baseline", baseline.resource)
     if (baseline.resource.testRun) return ignoreTestRun(exchange, "static baseline", baseline.resource)
     for (declaredClass in baseline.declaredClassesList) {
         staticallyDeclaredClasses[declaredClass.className] =
@@ -748,6 +751,19 @@ private fun ignoreTestRun(
     respondOk(exchange)
 }
 
+/** Skips a [payload] a collector forwarded after stripping fields it did not know, and keeps nothing from it. */
+private fun ignoreStripped(
+    exchange: HttpExchange,
+    payload: String,
+    resource: ResourceAttributes,
+) {
+    println(
+        "[fields-stripped] skipped $payload: service=${resource.serviceName}${namespaceField(resource)} " +
+            "instance=${resource.serviceInstanceId}, a collector stripped fields it did not know",
+    )
+    respondOk(exchange)
+}
+
 /** Answers 400 to a [payload] whose resource has no run id, and keeps nothing from it. */
 private fun respondBadRequest(
     exchange: HttpExchange,
@@ -798,11 +814,11 @@ internal fun printNeverHitReport() {
     // but the compiler will emit it again regardless of what the adopter does, so a zero hit
     // total is not a finding the adopter can act on. See ADR 0026.
     val (generatedNeverHit, notGeneratedNeverHit) =
-        notInlineNeverHit.partition { manifestProbes[it]?.generatedBy != GeneratedBy.GENERATED_BY_NONE }
+        notInlineNeverHit.partition { manifestProbes[it]?.generatedBy != GeneratedBy.GENERATED_BY_UNSPECIFIED }
     // An unread shape is compiler output the agent could not read, in a method or a branch probe
     // of one. It is kept and listed apart under its family, never a finding. See ADR 0054.
     val (unreadProbeNeverHit, judgeableNeverHit) =
-        notGeneratedNeverHit.partition { manifestProbes[it]?.unreadShape != UnreadShape.UNREAD_SHAPE_NONE }
+        notGeneratedNeverHit.partition { manifestProbes[it]?.unreadShape != UnreadShape.UNREAD_SHAPE_UNSPECIFIED }
     val judgement = judgeClasses()
 
     fun methodOf(key: InstanceProbeKey) = manifestProbes.getValue(key).let { NodeKey(it.className, it.methodName, it.methodDescriptor) }
@@ -819,14 +835,14 @@ internal fun printNeverHitReport() {
                 }
         }
     val folded = foldedSiteProbes(rowsAndRoutine, judgeableNeverHit)
-    val (unreadOutcomes, rowsAndRoutineRead) = (rowsAndRoutine - folded).partition { unreadOf(it) != UnreadShape.UNREAD_SHAPE_NONE }
-    val (routine, judgeable) = rowsAndRoutineRead.partition { routineOf(it) != RoutineKind.ROUTINE_KIND_NONE }
+    val (unreadOutcomes, rowsAndRoutineRead) = (rowsAndRoutine - folded).partition { unreadOf(it) != UnreadShape.UNREAD_SHAPE_UNSPECIFIED }
+    val (routine, judgeable) = rowsAndRoutineRead.partition { routineOf(it) != RoutineKind.ROUTINE_KIND_UNSPECIFIED }
     val unread = unreadProbeNeverHit + unreadOutcomes
     val judgeableTotal =
         judgeableKeys.count { key ->
             val probe = manifestProbes[key]
-            probe != null && !probe.inline && probe.generatedBy == GeneratedBy.GENERATED_BY_NONE &&
-                routineOf(key) == RoutineKind.ROUTINE_KIND_NONE && unreadOf(key) == UnreadShape.UNREAD_SHAPE_NONE
+            probe != null && !probe.inline && probe.generatedBy == GeneratedBy.GENERATED_BY_UNSPECIFIED &&
+                routineOf(key) == RoutineKind.ROUTINE_KIND_UNSPECIFIED && unreadOf(key) == UnreadShape.UNREAD_SHAPE_UNSPECIFIED
         }
     println()
     println("=== otherlode demo: dead code report ===")
@@ -908,7 +924,7 @@ private fun foldedSiteProbes(
         val info = manifestProbes[key] ?: continue
         val branchIndex = info.branchIndex
         if (info.kind != ProbeKind.BRANCH || branchIndex == null) continue
-        if (routineOf(key) != RoutineKind.ROUTINE_KIND_NONE || unreadOf(key) != UnreadShape.UNREAD_SHAPE_NONE) continue
+        if (routineOf(key) != RoutineKind.ROUTINE_KIND_UNSPECIFIED || unreadOf(key) != UnreadShape.UNREAD_SHAPE_UNSPECIFIED) continue
         guardOutcomes += methodOf(key, info) to branchIndex
     }
     return candidates
@@ -949,25 +965,26 @@ private fun branchRow(
 
 /**
  * The routine kind the agent gave the outcome of [key], a BRANCH probe, in its site on its run's
- * METHOD probe. [RoutineKind.ROUTINE_KIND_NONE] for any other probe, and for an outcome no site
+ * METHOD probe. [RoutineKind.ROUTINE_KIND_UNSPECIFIED] for any other probe, and for an outcome no site
  * lists.
  */
 private fun routineOf(key: InstanceProbeKey): RoutineKind {
-    val info = manifestProbes[key] ?: return RoutineKind.ROUTINE_KIND_NONE
-    val branchIndex = info.branchIndex ?: return RoutineKind.ROUTINE_KIND_NONE
-    return siteOf(key, info)?.outcomesList?.firstOrNull { it.branchIndex == branchIndex }?.routine ?: RoutineKind.ROUTINE_KIND_NONE
+    val info = manifestProbes[key] ?: return RoutineKind.ROUTINE_KIND_UNSPECIFIED
+    val branchIndex = info.branchIndex ?: return RoutineKind.ROUTINE_KIND_UNSPECIFIED
+    return siteOf(key, info)?.outcomesList?.firstOrNull { it.branchIndex == branchIndex }?.routine ?: RoutineKind.ROUTINE_KIND_UNSPECIFIED
 }
 
 /**
  * The unread shape of [key]: its own, which a BRANCH probe inherits from its method and an
  * omission probe from its target, or else the one its outcome carries in its site.
- * [UnreadShape.UNREAD_SHAPE_NONE] when neither is set.
+ * [UnreadShape.UNREAD_SHAPE_UNSPECIFIED] when neither is set.
  */
 private fun unreadOf(key: InstanceProbeKey): UnreadShape {
-    val info = manifestProbes[key] ?: return UnreadShape.UNREAD_SHAPE_NONE
-    if (info.unreadShape != UnreadShape.UNREAD_SHAPE_NONE) return info.unreadShape
-    val branchIndex = info.branchIndex ?: return UnreadShape.UNREAD_SHAPE_NONE
-    return siteOf(key, info)?.outcomesList?.firstOrNull { it.branchIndex == branchIndex }?.unreadShape ?: UnreadShape.UNREAD_SHAPE_NONE
+    val info = manifestProbes[key] ?: return UnreadShape.UNREAD_SHAPE_UNSPECIFIED
+    if (info.unreadShape != UnreadShape.UNREAD_SHAPE_UNSPECIFIED) return info.unreadShape
+    val branchIndex = info.branchIndex ?: return UnreadShape.UNREAD_SHAPE_UNSPECIFIED
+    return siteOf(key, info)?.outcomesList?.firstOrNull { it.branchIndex == branchIndex }?.unreadShape
+        ?: UnreadShape.UNREAD_SHAPE_UNSPECIFIED
 }
 
 /** An unread-shape family as the report names it. */
@@ -979,7 +996,7 @@ private fun unreadText(shape: UnreadShape): String =
         UnreadShape.UNREAD_SHAPE_SCALA_ENUM -> "scala enum"
         UnreadShape.UNREAD_SHAPE_MULTIFILE_FACADE -> "multifile facade"
         UnreadShape.UNREAD_SHAPE_COROUTINE_MACHINERY -> "coroutine machinery"
-        UnreadShape.UNREAD_SHAPE_SWITCH_LOWERING -> "switch lowering"
+        UnreadShape.UNREAD_SHAPE_STRING_SWITCH -> "string switch"
         else -> shape.name
     }
 
@@ -1792,8 +1809,8 @@ private fun buildOutcomeNodes(isHit: (NodeKey) -> Boolean): Map<ClusterNode, Out
                 probe.branchIndex != null &&
                 !probe.inline &&
                 !probe.isLookedThrough() &&
-                routineOf(key) == RoutineKind.ROUTINE_KIND_NONE &&
-                unreadOf(key) == UnreadShape.UNREAD_SHAPE_NONE
+                routineOf(key) == RoutineKind.ROUTINE_KIND_UNSPECIFIED &&
+                unreadOf(key) == UnreadShape.UNREAD_SHAPE_UNSPECIFIED
         }.groupBy { (_, probe) -> ClusterNode(NodeKey(probe.className, probe.methodName, probe.methodDescriptor), probe.branchIndex) }
         .filter { (node, entries) -> isHit(node.method) && entries.sumOf { (key, _) -> latestHitsTotal[key] ?: 0L } == 0L }
         .mapValues { (node, entries) ->

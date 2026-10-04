@@ -28,7 +28,9 @@ enum ProbeKind {
 // graph by default, since the compiler will emit the method again regardless of what the adopter
 // does; its hit count is still evidence, so the probe itself is kept rather than dropped.
 enum GeneratedBy {
-  GENERATED_BY_NONE = 0;
+  // Never written: GeneratedBy is only set inside an origin oneof, where unset means the adopter's
+  // code. A consumer reads this value as unset.
+  GENERATED_BY_UNSPECIFIED = 0;
   ENUM = 1;
   DATA_CLASS = 2;
   DEFAULT_IMPLS = 3;
@@ -66,8 +68,9 @@ enum GeneratedBy {
 // wrote the code. A collector keeps the probe and its count, leaves it out of every never-hit
 // finding and the call graph, and lists it apart under its family.
 enum UnreadShape {
-  // Not an unread shape.
-  UNREAD_SHAPE_NONE = 0;
+  // Never written: UnreadShape is only set inside an origin oneof, where unset means the adopter's
+  // code. A consumer reads this value as unset.
+  UNREAD_SHAPE_UNSPECIFIED = 0;
   // A Scala case class's plumbing, or its companion's, in the outline GeneratedBy.CASE_CLASS reads
   // but with a body the agent has not read for that compiler.
   UNREAD_SHAPE_CASE_CLASS = 1;
@@ -86,7 +89,7 @@ enum UnreadShape {
   UNREAD_SHAPE_COROUTINE_MACHINERY = 6;
   // The collision side of the last equals check in a bucket of a switch on String.hashCode(),
   // when the agent cannot read the lowering.
-  UNREAD_SHAPE_SWITCH_LOWERING = 7;
+  UNREAD_SHAPE_STRING_SWITCH = 7;
 }
 
 // Who sent a payload. DeltaBatch, ProbeManifest and StaticBaseline each carry one, and one process
@@ -117,6 +120,10 @@ message ResourceAttributes {
   // carries the same value. An unread shape is a fact about one agent version, so a consumer reads
   // it together with this.
   string agent_version = 8;
+  // Set by a collector, never by the agent, when it removed at least one field its own bindings did
+  // not know before forwarding the payload (redaction, collector ADR 0005). A consumer makes no
+  // never-hit or cluster claim from a run that carried it.
+  bool fields_stripped = 9;
 }
 
 // hits_total is a cumulative count from process start, not the count since
@@ -200,7 +207,7 @@ message ProbeLocation {
   // OPTIONAL_ARGUMENT probe as its target's own mark, so a collector leaves a generated method's
   // conditionals out of never-hit with the method, and abstains from never-supplied and
   // always-supplied on a generated target (a data class's copy) the way it abstains on an inline
-  // one. Unset (GENERATED_BY_NONE is never sent) for an ordinary method the adopter wrote; see
+  // one. Unset (GENERATED_BY_UNSPECIFIED is never sent) for an ordinary method the adopter wrote; see
   // GeneratedBy. Origin is one of three states: unset means the adopter's code, generated_by means
   // recognised compiler output, and unread_shape means the outline of compiler output whose body
   // matches no shape this agent has read for that compiler, which is a statement about the agent,
@@ -279,8 +286,9 @@ enum BranchRole {
 // reads it from the bytecode of the outcome's path. A collector keeps the probe and its count, but
 // leaves a routine outcome out of every never-hit finding and counts it apart.
 enum RoutineKind {
-  // Not routine: the outcome is judged like any other.
-  ROUTINE_KIND_NONE = 0;
+  // Never written: RoutineKind is only set inside an origin oneof, where unset means the outcome is
+  // judged like any other. A consumer reads this value as unset.
+  ROUTINE_KIND_UNSPECIFIED = 0;
   // The null side of a null check whose path calls nothing before it rejoins the other side or
   // leaves the method. It only yields null, a constant or a local, or returns early, as the null
   // side of `value?.length`, `?: 0.0` and `?: return` do.

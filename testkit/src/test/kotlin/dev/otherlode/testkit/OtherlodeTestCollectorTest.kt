@@ -1151,6 +1151,36 @@ class OtherlodeTestCollectorTest {
     }
 
     @Test
+    fun `a payload a collector stripped fields from is answered 400 on every endpoint, recorded, and fails every later query`() {
+        val target = startCollector()
+        val stripped = ResourceAttributes("svc", null, "i-1", null, "run-1", fieldsStripped = true)
+
+        val statuses =
+            listOf(
+                postStatus(
+                    target,
+                    "deltas",
+                    ProtoPayloadCodec.encode(DeltaBatch(stripped, listOf(ProbeDelta(1, 0, ProbeKind.METHOD, 1L, 1L)))),
+                ),
+                postStatus(
+                    target,
+                    "manifest",
+                    ProtoPayloadCodec.encode(ProbeManifest(stripped, listOf(methodProbe(1, 0, "com.acme.Foo", "bar", "()V", 1)))),
+                ),
+                postStatus(target, "static-baseline", ProtoPayloadCodec.encode(StaticBaseline(stripped, emptyList(), scannedAt = 1L))),
+            )
+
+        assertEquals(listOf(400, 400, 400), statuses)
+        assertEquals(3, target.rejectedPayloads().size)
+        assertTrue(
+            target.rejectedPayloads().all { "stripped fields" in it && "must receive the agent's payloads directly" in it },
+            "${target.rejectedPayloads()}",
+        )
+        assertFailsWith<IllegalStateException> { target.wasHit("com.acme.Foo", "bar") }
+        assertFailsWith<IllegalStateException> { target.awaitSettled(Duration.ofMillis(150)) }
+    }
+
+    @Test
     fun `a second run id under an instance id already heard from is answered 400, recorded, and fails every later query`() {
         val target = startCollector()
         val exporter = exporterFor(target)

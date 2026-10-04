@@ -68,7 +68,7 @@ class UnreadOutlineMatrixTest {
         val unread = sites.flatMap { it.outcomes }.filter { it.unreadShape != UnreadShape.NONE }
 
         assertTrue(unread.isNotEmpty(), "the lowering is not read, so its collision sides are reported")
-        assertTrue(unread.all { it.unreadShape == UnreadShape.SWITCH_LOWERING })
+        assertTrue(unread.all { it.unreadShape == UnreadShape.STRING_SWITCH })
     }
 
     @ParameterizedTest(name = "kotlinc {0}")

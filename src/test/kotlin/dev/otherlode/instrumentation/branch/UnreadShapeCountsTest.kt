@@ -44,14 +44,14 @@ class UnreadShapeCountsTest {
     fun `outcomes add up by family once per class name and stay apart from the method totals`() {
         val counts = UnreadShapeCounts()
 
-        counts.recordOutcomes("a.A", mapOf(UnreadShape.COROUTINE_MACHINERY to 4, UnreadShape.SWITCH_LOWERING to 2))
+        counts.recordOutcomes("a.A", mapOf(UnreadShape.COROUTINE_MACHINERY to 4, UnreadShape.STRING_SWITCH to 2))
         counts.recordOutcomes("a.A", mapOf(UnreadShape.COROUTINE_MACHINERY to 4))
-        counts.recordOutcomes("a.B", mapOf(UnreadShape.SWITCH_LOWERING to 1))
+        counts.recordOutcomes("a.B", mapOf(UnreadShape.STRING_SWITCH to 1))
         counts.recordOutcomes("a.C", emptyMap())
 
         assertEquals(7L, counts.outcomeTotal())
         assertEquals(4L, counts.outcomeCountOf(UnreadShape.COROUTINE_MACHINERY))
-        assertEquals(3L, counts.outcomeCountOf(UnreadShape.SWITCH_LOWERING))
+        assertEquals(3L, counts.outcomeCountOf(UnreadShape.STRING_SWITCH))
         assertEquals(2, counts.outcomeClasses())
         assertEquals(0L, counts.total())
         assertEquals(0, counts.classes())

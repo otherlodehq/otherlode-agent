@@ -54,7 +54,7 @@ import dev.otherlode.export.UnreadShape
  * read. Every outcome of the site is then an unread shape of that family. [unreadOutcome] is the
  * offset of the one outcome of a string switch lowering that [SwitchLowering] could not read,
  * which only a hash collision can reach; it is an unread shape of
- * [UnreadShape.SWITCH_LOWERING] and still gets its probe.
+ * [UnreadShape.STRING_SWITCH] and still gets its probe.
  */
 data class BranchSite(
     val methodName: String,

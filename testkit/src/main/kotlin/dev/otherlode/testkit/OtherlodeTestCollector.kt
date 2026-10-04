@@ -70,7 +70,8 @@ import kotlin.concurrent.write
  * an empty run id, or with a second run id under an instance id this collector has already heard
  * from, would break that assumption. Such a payload is answered 400, nothing from it is kept, and
  * the reason is recorded in [rejectedPayloads]. A payload that does not decode, or that fails
- * while it is applied, is treated the same way. From then on [awaitSettled] and every other
+ * while it is applied, is treated the same way, and so is one a collector forwarded after stripping
+ * fields it did not know: this collector expects the agent's payloads directly and whole. From then on [awaitSettled] and every other
  * query and wait throw [IllegalStateException] listing the recorded reasons, so a test fails
  * even if it never calls [rejectedPayloads].
  *
@@ -2214,8 +2215,8 @@ class OtherlodeTestCollector private constructor(
 
     /**
      * Why each payload this collector answered 400 was rejected, oldest first: an empty run id, a
-     * second run id under an instance id already heard from, or a body that did not decode or
-     * could not be applied. Empty when nothing was rejected. Once it is not empty, every other
+     * second run id under an instance id already heard from, a payload a collector forwarded after
+     * stripping fields it did not know, or a body that did not decode or could not be applied. Empty when nothing was rejected. Once it is not empty, every other
      * query and wait throws [IllegalStateException]; this is the one method a test that expects a
      * rejection can still call. See the class doc.
      */
@@ -2500,6 +2501,10 @@ class OtherlodeTestCollector private constructor(
     ): String? {
         val instanceId = resource.serviceInstanceId
         if (resource.runId.isEmpty()) return "$payload from instance $instanceId has an empty run id"
+        if (resource.fieldsStripped) {
+            return "$payload from instance $instanceId was forwarded by a collector that stripped fields its bindings " +
+                "did not know, so it may be missing data. The testkit must receive the agent's payloads directly"
+        }
         if (servesOneJvm) {
             onlyInstance.compareAndSet(null, instanceId)
             val only = onlyInstance.get()
