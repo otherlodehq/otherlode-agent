@@ -274,9 +274,19 @@ Landed so far:
   `flushInterval` keeps its name, since it holds a `Duration`; the other
   three fields follow their keys. The testkit's URL property is
   `exportUrl`.
-- Chunk 4's collector half: collector `fbbc7fb` (`version` const, logged
-  at startup). The agent half waits on chunk 3a, and lands before 3b,
-  whose version check needs one version across the tree.
+- Chunk 4 on 2026-10-04: collector `fbbc7fb` (`version` const, logged at
+  startup), agent `bf60db9` (`version=0.1.0-SNAPSHOT` in
+  `gradle.properties`, which every project reads; the root script's
+  version never reached subprojects, which were `unspecified`).
+- Chunk 3a on 2026-10-04: agent `40f7bc2`. Two Opus reviews: a root site
+  is renumbered to the merged branch indexes its root carries, and a
+  declared edge's guard falls back to an instance that loaded the class,
+  so the answer no longer depends on scan arrival order. The server keeps
+  that gap (its STATUS, "A declared guard is lost when the scan's instance
+  never loaded the class"). Left as accepted: with different builds in
+  one testkit, a fallback guard index can name another outcome, and
+  merged indexes can collide inside a root site; both need mixed builds,
+  which the version check in 3b makes unlikely.
 - Chunk 3 is split: 3a merges findings across instances, 3b hardens the
   surface (own types, shading, visibility, Java, ABI dump), so the dump
   is taken once, after 3a's field removals.
@@ -1585,11 +1595,10 @@ The testkit judges a never-hit row once per instance and name, summing the
 hits of every copy of a class two loaders defined in that instance; it used to
 list each copy's probes on their own. Open from that, found at review:
 
-- `neverHit()` judges each instance on its own hits, and a branch row groups
-  copies by `branch_index`, where the server merges every in-scope instance
-  and groups by `branch_key`. Settled 2026-10-04 (ADR 0056): the testkit
-  matches the server, built in chunk 3 of "One-way doors settled before
-  release".
+- `neverHit()` judged each instance on its own hits, and a branch row
+  grouped copies by `branch_index`. Landed 2026-10-04 (ADR 0056, agent
+  `40f7bc2`): the testkit merges across instances and groups by
+  `branch_key`, as the server does.
 - The demo's stub collector still judges each class copy on its own. It is
   the demo's printer and loads one copy.
 
