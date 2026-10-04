@@ -16,6 +16,7 @@ import dev.otherlode.proto.ProbeManifest
 import dev.otherlode.proto.ResourceAttributes
 import dev.otherlode.proto.RoutineKind
 import dev.otherlode.proto.StaticBaseline
+import dev.otherlode.proto.UnreadShape
 import dev.otherlode.proto.UnreportedClass
 import java.io.ByteArrayOutputStream
 import java.io.PrintStream
@@ -409,5 +410,147 @@ class StubCollectorTest {
         val report = neverHitReport()
         assertEquals(emptyList(), report.filter { it.contains("NEVER HIT:") && it.contains("Lone") })
         assertEquals(2, countOn(report, label) - before, "both outcomes of the constructor's site fold")
+    }
+
+    @Test
+    fun `an unread shape leaves NEVER HIT and is listed under UNREAD SHAPES with its family`() {
+        val className = "com.acme.unread.Plumbing"
+
+        fun method(
+            probeIndex: Int,
+            methodName: String,
+            line: Int,
+        ) = ProbeLocation
+            .newBuilder()
+            .setClassId(0)
+            .setProbeIndex(probeIndex)
+            .setKind(ProbeKind.METHOD)
+            .setClassName(className)
+            .setMethodName(methodName)
+            .setMethodDescriptor("()V")
+            .setLine(line)
+
+        fun branch(
+            probeIndex: Int,
+            methodName: String,
+            line: Int,
+            branchIndex: Int,
+        ) = ProbeLocation
+            .newBuilder()
+            .setClassId(0)
+            .setProbeIndex(probeIndex)
+            .setKind(ProbeKind.BRANCH)
+            .setClassName(className)
+            .setMethodName(methodName)
+            .setMethodDescriptor("()V")
+            .setLine(line)
+            .setSiteIndex(0)
+            .setBranchIndex(branchIndex)
+        val site =
+            BranchSite
+                .newBuilder()
+                .setSiteIndex(0)
+                .setLine(11)
+                .addOutcomes(BranchOutcome.newBuilder().setBranchIndex(0).setRole(BranchRole.TAKEN))
+                .addOutcomes(
+                    BranchOutcome
+                        .newBuilder()
+                        .setBranchIndex(1)
+                        .setRole(BranchRole.FALL_THROUGH)
+                        .setUnreadShape(UnreadShape.UNREAD_SHAPE_COROUTINE_MACHINERY),
+                )
+        val manifest =
+            ProbeManifest
+                .newBuilder()
+                .setResource(resource("run-unread"))
+                .addProbes(method(0, "hashCode", 4).setUnreadShape(UnreadShape.UNREAD_SHAPE_CASE_CLASS))
+                .addProbes(method(1, "real", 8))
+                .addProbes(method(2, "run", 10).addBranchSites(site))
+                .addProbes(branch(3, "run", 11, 0))
+                .addProbes(branch(4, "run", 11, 1))
+                .addProbes(method(5, "tally", 20).setUnreadShape(UnreadShape.UNREAD_SHAPE_SCALA_OBJECT))
+                .addProbes(branch(6, "tally", 21, 0).setUnreadShape(UnreadShape.UNREAD_SHAPE_SCALA_OBJECT))
+                .build()
+
+        fun hit(
+            probeIndex: Int,
+            kind: ProbeKind,
+        ) = ProbeDelta
+            .newBuilder()
+            .setClassId(0)
+            .setProbeIndex(probeIndex)
+            .setKind(kind)
+            .setHitsTotal(1)
+        val deltas =
+            DeltaBatch
+                .newBuilder()
+                .setResource(resource("run-unread"))
+                .addDeltas(hit(2, ProbeKind.METHOD))
+                .addDeltas(hit(3, ProbeKind.BRANCH))
+                .addDeltas(hit(5, ProbeKind.METHOD))
+                .build()
+        val label = "UNREAD SHAPES (not judged):"
+        val before = countOn(neverHitReport(), label)
+
+        assertEquals(200, post("manifest", manifest))
+        assertEquals(200, post("deltas", deltas))
+
+        val report = neverHitReport()
+        val rows = report.filter { it.contains("NEVER HIT:") && it.contains("Plumbing") }
+        assertEquals(1, rows.size, "only real, a read method, is a finding: $rows")
+        assertTrue(rows.single().contains("Plumbing#real:8"), rows.toString())
+        val unread = report.filter { it.contains("UNREAD [") && it.contains("Plumbing") }
+        assertEquals(3, unread.size, unread.toString())
+        assertTrue(unread.any { it.contains("[case class]") && it.contains("Plumbing#hashCode:4") }, unread.toString())
+        assertTrue(
+            unread.any {
+                it.contains("[coroutine machinery]") && it.contains("Plumbing#run:11") && it.contains("branch#1]")
+            },
+            unread.toString(),
+        )
+        assertTrue(
+            unread.any { it.contains("[scala object]") && it.contains("Plumbing#tally:21") && it.contains("branch#0]") },
+            unread.toString(),
+        )
+        assertEquals(3, countOn(report, label) - before)
+    }
+
+    @Test
+    fun `a class declared only of unread shapes plus nothing else is not never loaded`() {
+        val declared =
+            DeclaredClass
+                .newBuilder()
+                .setClassName("com.acme.unread.OnlyPlumbing")
+                .addMethods(
+                    DeclaredMethod
+                        .newBuilder()
+                        .setMethodName("hashCode")
+                        .setMethodDescriptor("()I")
+                        .setUnreadShape(UnreadShape.UNREAD_SHAPE_CASE_CLASS),
+                )
+        val dead =
+            DeclaredClass
+                .newBuilder()
+                .setClassName("com.acme.unread.ReallyDead")
+                .addMethods(DeclaredMethod.newBuilder().setMethodName("run").setMethodDescriptor("()V"))
+
+        assertEquals(
+            200,
+            post(
+                "static-baseline",
+                StaticBaseline
+                    .newBuilder()
+                    .setResource(resource("run-unread-baseline"))
+                    .setChunkCount(1)
+                    .setScannedAt(2L)
+                    .addDeclaredClasses(declared)
+                    .addDeclaredClasses(dead)
+                    .build(),
+            ),
+        )
+
+        val neverLoaded = report(::printNeverLoadedReport)
+        assertTrue(neverLoaded.none { it.contains("NEVER LOADED") && it.contains("OnlyPlumbing") }, neverLoaded.joinToString("\n"))
+        assertTrue(neverLoaded.any { it.contains("NEVER LOADED") && it.contains("ReallyDead") }, neverLoaded.joinToString("\n"))
     }
 }

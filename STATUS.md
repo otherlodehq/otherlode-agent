@@ -427,8 +427,14 @@ fixes re-reviewed by a fresh Opus reviewer, one commit each:
    sides read as unread shapes, not dead code; kotlinx-coroutines' `DebugKt`
    has one. Reading it is after release. As in step 6, outcome counts and the
    received-bytes count are taken before ADR 0007's commit point.
-8. Testkit: `neverHit()` leaves unread shapes out, `neverHitUnreadShapes()`,
-   clusters, never-supplied and always-supplied; the stub collector's output.
+8. Testkit and stub collector. Landed 2026-10-04. `neverHit()` leaves out an
+   unread-shape method, a branch probe in one, and an unread outcome;
+   `neverHitUnreadShapes()` lists them with `ProbeRef.unreadShape`, and
+   `neverHitRoutineOutcomes()` no longer includes them. Omission findings
+   abstain on an unread target, class judgements and never-loaded treat an
+   unread shape as a generated method, and the call graph looks through it and
+   counts a hit one as a caller (ADR 0024, amended). The stub collector applies
+   the same rules and prints an `UNREAD SHAPES` section.
 9. `otherlode-server`: store both oneofs and `agent_version`, count unread
    shapes per family in the report, label the rows, keep them out of the graph.
    Also ADR 0024's amendment from step 2: the graph looks through a generated

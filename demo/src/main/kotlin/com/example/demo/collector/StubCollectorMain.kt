@@ -167,6 +167,14 @@ private data class DeclaredMethodInfo(
     val unreadShape: UnreadShape = UnreadShape.UNREAD_SHAPE_NONE,
 )
 
+/** Whether this probe's method is generated or an unread shape: no node, no finding, but looked through. */
+private fun ProbeInfo.isLookedThrough(): Boolean =
+    generatedBy != GeneratedBy.GENERATED_BY_NONE || unreadShape != UnreadShape.UNREAD_SHAPE_NONE
+
+/** Whether this declared method is generated or an unread shape: no node, no finding, but looked through. */
+private fun DeclaredMethodInfo.isLookedThrough(): Boolean =
+    generatedBy != GeneratedBy.GENERATED_BY_NONE || unreadShape != UnreadShape.UNREAD_SHAPE_NONE
+
 /** Scopes a dependency id to the run that reported it, for the same reason as [InstanceProbeKey]. */
 private data class InstanceDependencyKey(
     val run: Run,
@@ -771,6 +779,12 @@ private fun respondBadRequest(
  * routine outcome inside folded code counts with that code. The rest are counted apart and listed
  * with their kind under ROUTINE OUTCOMES.
  *
+ * An unread shape is not a row and is not in the headline: a METHOD probe the agent marked unread,
+ * a BRANCH probe in such a method, or a BRANCH probe whose own outcome is unread. They are listed
+ * with their family under UNREAD SHAPES. A site in an unread method does not fold, since that
+ * method is not among the never-hit methods that fold sites. An unread outcome inside folded code
+ * counts with that code.
+ *
  * `internal` so a test can capture what it prints.
  */
 internal fun printNeverHitReport() {
@@ -783,8 +797,12 @@ internal fun printNeverHitReport() {
     // A generated probe, such as a data class's copy or an enum's values, is kept and counted,
     // but the compiler will emit it again regardless of what the adopter does, so a zero hit
     // total is not a finding the adopter can act on. See ADR 0026.
-    val (generatedNeverHit, judgeableNeverHit) =
+    val (generatedNeverHit, notGeneratedNeverHit) =
         notInlineNeverHit.partition { manifestProbes[it]?.generatedBy != GeneratedBy.GENERATED_BY_NONE }
+    // An unread shape is compiler output the agent could not read, in a method or a branch probe
+    // of one. It is kept and listed apart under its family, never a finding. See ADR 0054.
+    val (unreadProbeNeverHit, judgeableNeverHit) =
+        notGeneratedNeverHit.partition { manifestProbes[it]?.unreadShape != UnreadShape.UNREAD_SHAPE_NONE }
     val judgement = judgeClasses()
 
     fun methodOf(key: InstanceProbeKey) = manifestProbes.getValue(key).let { NodeKey(it.className, it.methodName, it.methodDescriptor) }
@@ -801,12 +819,14 @@ internal fun printNeverHitReport() {
                 }
         }
     val folded = foldedSiteProbes(rowsAndRoutine, judgeableNeverHit)
-    val (routine, judgeable) = (rowsAndRoutine - folded).partition { routineOf(it) != RoutineKind.ROUTINE_KIND_NONE }
+    val (unreadOutcomes, rowsAndRoutineRead) = (rowsAndRoutine - folded).partition { unreadOf(it) != UnreadShape.UNREAD_SHAPE_NONE }
+    val (routine, judgeable) = rowsAndRoutineRead.partition { routineOf(it) != RoutineKind.ROUTINE_KIND_NONE }
+    val unread = unreadProbeNeverHit + unreadOutcomes
     val judgeableTotal =
         judgeableKeys.count { key ->
             val probe = manifestProbes[key]
             probe != null && !probe.inline && probe.generatedBy == GeneratedBy.GENERATED_BY_NONE &&
-                routineOf(key) == RoutineKind.ROUTINE_KIND_NONE
+                routineOf(key) == RoutineKind.ROUTINE_KIND_NONE && unreadOf(key) == UnreadShape.UNREAD_SHAPE_NONE
         }
     println()
     println("=== otherlode demo: dead code report ===")
@@ -841,6 +861,19 @@ internal fun printNeverHitReport() {
         val kind = routineText(routineOf(key))
         println("  ROUTINE [$kind]: ${branchRow(key, info, info.branchIndex ?: -1)} $where [branch#${info.branchIndex}]")
     }
+    println("UNREAD SHAPES (not judged): ${unread.size}")
+    sortedForReport(unread).forEach { (key, info) ->
+        val where = "(instance ${key.run.serviceInstanceId}, class ${key.classId}, probe ${key.probeIndex})"
+        val family = unreadText(unreadOf(key))
+        val branchIndex = info.branchIndex
+        val row =
+            if (branchIndex == null) {
+                methodText(info.className, info.methodName, info.methodDescriptor, info.line)
+            } else {
+                "${branchRow(key, info, branchIndex)} [branch#$branchIndex]"
+            }
+        println("  UNREAD [$family]: $row $where")
+    }
     if (skippedClasses.isNotEmpty()) {
         println("skipped (matched but could not be instrumented): ${skippedClasses.size}")
         skippedClasses.entries
@@ -856,7 +889,7 @@ internal fun printNeverHitReport() {
  * [printNeverHitReport]; [neverHit] is every judgeable probe with no hits. A site folds when its
  * method's METHOD probe in the same run is in [neverHit], whether or not that probe is a row itself
  * (a lone constructor is not, and its code never ran either), or when the outcome its site names as
- * guard is a BRANCH probe among [candidates] that is not routine.
+ * guard is a BRANCH probe among [candidates] that is neither routine nor an unread shape.
  */
 private fun foldedSiteProbes(
     candidates: List<InstanceProbeKey>,
@@ -875,7 +908,7 @@ private fun foldedSiteProbes(
         val info = manifestProbes[key] ?: continue
         val branchIndex = info.branchIndex
         if (info.kind != ProbeKind.BRANCH || branchIndex == null) continue
-        if (routineOf(key) != RoutineKind.ROUTINE_KIND_NONE) continue
+        if (routineOf(key) != RoutineKind.ROUTINE_KIND_NONE || unreadOf(key) != UnreadShape.UNREAD_SHAPE_NONE) continue
         guardOutcomes += methodOf(key, info) to branchIndex
     }
     return candidates
@@ -924,6 +957,31 @@ private fun routineOf(key: InstanceProbeKey): RoutineKind {
     val branchIndex = info.branchIndex ?: return RoutineKind.ROUTINE_KIND_NONE
     return siteOf(key, info)?.outcomesList?.firstOrNull { it.branchIndex == branchIndex }?.routine ?: RoutineKind.ROUTINE_KIND_NONE
 }
+
+/**
+ * The unread shape of [key]: its own, which a BRANCH probe inherits from its method and an
+ * omission probe from its target, or else the one its outcome carries in its site.
+ * [UnreadShape.UNREAD_SHAPE_NONE] when neither is set.
+ */
+private fun unreadOf(key: InstanceProbeKey): UnreadShape {
+    val info = manifestProbes[key] ?: return UnreadShape.UNREAD_SHAPE_NONE
+    if (info.unreadShape != UnreadShape.UNREAD_SHAPE_NONE) return info.unreadShape
+    val branchIndex = info.branchIndex ?: return UnreadShape.UNREAD_SHAPE_NONE
+    return siteOf(key, info)?.outcomesList?.firstOrNull { it.branchIndex == branchIndex }?.unreadShape ?: UnreadShape.UNREAD_SHAPE_NONE
+}
+
+/** An unread-shape family as the report names it. */
+private fun unreadText(shape: UnreadShape): String =
+    when (shape) {
+        UnreadShape.UNREAD_SHAPE_CASE_CLASS -> "case class"
+        UnreadShape.UNREAD_SHAPE_STATIC_FORWARDER -> "static forwarder"
+        UnreadShape.UNREAD_SHAPE_SCALA_OBJECT -> "scala object"
+        UnreadShape.UNREAD_SHAPE_SCALA_ENUM -> "scala enum"
+        UnreadShape.UNREAD_SHAPE_MULTIFILE_FACADE -> "multifile facade"
+        UnreadShape.UNREAD_SHAPE_COROUTINE_MACHINERY -> "coroutine machinery"
+        UnreadShape.UNREAD_SHAPE_SWITCH_LOWERING -> "switch lowering"
+        else -> shape.name
+    }
 
 /** A routine kind as the report names it, the way the server's web UI reads it. */
 private fun routineText(kind: RoutineKind): String =
@@ -1017,7 +1075,7 @@ private val PRIMITIVE_NAMES =
 private fun judgeClasses(): ClassJudgement {
     val methods =
         manifestProbes.entries
-            .filter { (_, probe) -> probe.kind == ProbeKind.METHOD && !probe.inline && probe.generatedBy == GeneratedBy.GENERATED_BY_NONE }
+            .filter { (_, probe) -> probe.kind == ProbeKind.METHOD && !probe.inline && !probe.isLookedThrough() }
             .groupBy { (_, probe) -> NodeKey(probe.className, probe.methodName, probe.methodDescriptor) }
             .mapValues { (_, entries) ->
                 MethodFacts(
@@ -1291,7 +1349,7 @@ private fun printOmissionReport() {
     val omissionGroups =
         manifestProbes.entries
             .filter { (_, info) ->
-                info.kind == ProbeKind.OPTIONAL_ARGUMENT && !info.inline && info.generatedBy == GeneratedBy.GENERATED_BY_NONE
+                info.kind == ProbeKind.OPTIONAL_ARGUMENT && !info.inline && !info.isLookedThrough()
             }.groupBy { (key, info) ->
                 OmissionTargetKey(
                     key.run,
@@ -1398,7 +1456,7 @@ internal fun printNeverLoadedReport() {
     val neverLoadedAll = staticallyDeclaredClasses.filterKeys { it !in dynamicallyKnownClassNames }
     val (allInlineOrGenerated, neverLoaded) =
         neverLoadedAll.entries.partition { (_, methods) ->
-            methods.isNotEmpty() && methods.all { it.inline || it.generatedBy != GeneratedBy.GENERATED_BY_NONE }
+            methods.isNotEmpty() && methods.all { it.inline || it.isLookedThrough() }
         }
     println(
         "statically declared: ${staticallyDeclaredClasses.size}, confirmed loaded: " +
@@ -1412,8 +1470,8 @@ internal fun printNeverLoadedReport() {
         }
     // A class made only of inline functions is never loaded by a Kotlin caller at all, and the
     // compiler emits a generated method again regardless of what the adopter does, so a class
-    // whose every method is one or the other never loading is not evidence it is dead. See ADRs
-    // 0022 and 0026.
+    // whose every method is one or the other, or an unread shape, never loading is not evidence it
+    // is dead. See ADRs 0022, 0026 and 0054.
     if (allInlineOrGenerated.isNotEmpty()) {
         println("all inline or generated (not judged): ${allInlineOrGenerated.size}")
         allInlineOrGenerated.sortedBy { it.key }.forEach { (className, _) -> println("  ALL INLINE OR GENERATED: ${classText(className)}") }
@@ -1721,11 +1779,11 @@ private fun toClusterMember(
 ): ClusterMember = ClusterMember(key.className, key.methodName, key.methodDescriptor, info.neverLoaded)
 
 /**
- * Every outcome node, keyed by its [ClusterNode]: a BRANCH probe that is neither inline nor
- * generated, whose hits summed across runs are zero, in a method [isHit] says has hits. Its site is
+ * Every outcome node, keyed by its [ClusterNode]: a BRANCH probe that is none of inline, generated
+ * or in an unread shape, whose hits summed across runs are zero, in a method [isHit] says has hits. Its site is
  * the one its run's METHOD probe lists with that branch index.
  *
- * A routine outcome is never a node, so a call it guards starts at its method.
+ * A routine outcome and an unread-shape outcome are never nodes, so a call one guards starts at its method.
  */
 private fun buildOutcomeNodes(isHit: (NodeKey) -> Boolean): Map<ClusterNode, OutcomeNode> =
     manifestProbes.entries
@@ -1733,8 +1791,9 @@ private fun buildOutcomeNodes(isHit: (NodeKey) -> Boolean): Map<ClusterNode, Out
             probe.kind == ProbeKind.BRANCH &&
                 probe.branchIndex != null &&
                 !probe.inline &&
-                probe.generatedBy == GeneratedBy.GENERATED_BY_NONE &&
-                routineOf(key) == RoutineKind.ROUTINE_KIND_NONE
+                !probe.isLookedThrough() &&
+                routineOf(key) == RoutineKind.ROUTINE_KIND_NONE &&
+                unreadOf(key) == UnreadShape.UNREAD_SHAPE_NONE
         }.groupBy { (_, probe) -> ClusterNode(NodeKey(probe.className, probe.methodName, probe.methodDescriptor), probe.branchIndex) }
         .filter { (node, entries) -> isHit(node.method) && entries.sumOf { (key, _) -> latestHitsTotal[key] ?: 0L } == 0L }
         .mapValues { (node, entries) ->
@@ -1799,7 +1858,7 @@ private fun buildClusterGraph(
  * a partial scan cannot be diffed. A lookup that lands on a generated method, which is no node,
  * continues along that method's own edges, so a call reaches what the generated code runs, and a
  * generated method with hits is a caller in its own right, as in
- * OtherlodeTestCollector.computeCallGraph.
+ * OtherlodeTestCollector.computeCallGraph. An unread-shape method is treated the same way.
  */
 private fun computeCallGraph(): CallGraph {
     val scansComplete = scans.values.all { it.complete }
@@ -1849,7 +1908,7 @@ private fun computeCallGraph(): CallGraph {
     }
     val hitGeneratedCallers = mutableMapOf<NodeKey, NodeInfo>()
     manifestProbes.entries
-        .filter { (_, probe) -> probe.kind == ProbeKind.METHOD && !probe.inline && probe.generatedBy != GeneratedBy.GENERATED_BY_NONE }
+        .filter { (_, probe) -> probe.kind == ProbeKind.METHOD && !probe.inline && probe.isLookedThrough() }
         .groupBy { (_, probe) -> NodeKey(probe.className, probe.methodName, probe.methodDescriptor) }
         .forEach { (key, entries) ->
             // A key some instance reports unmarked is a node, with its own resolved calls.
@@ -1864,17 +1923,17 @@ private fun computeCallGraph(): CallGraph {
     return CallGraph(nodes, calls, hitGeneratedCallers)
 }
 
-/** Every generated method that is not inline, from manifests and [declaredClasses], with its edges. */
+/** Every generated or unread-shape method that is not inline, from manifests and [declaredClasses], with its edges. */
 private fun buildTransparentMethods(declaredClasses: Map<String, List<DeclaredMethodInfo>>): Map<NodeKey, Set<CallEdgeInfo>> {
     val transparent = mutableMapOf<NodeKey, MutableSet<CallEdgeInfo>>()
     for ((key, probe) in manifestProbes) {
-        if (probe.kind != ProbeKind.METHOD || probe.inline || probe.generatedBy == GeneratedBy.GENERATED_BY_NONE) continue
+        if (probe.kind != ProbeKind.METHOD || probe.inline || !probe.isLookedThrough()) continue
         transparent.getOrPut(NodeKey(probe.className, probe.methodName, probe.methodDescriptor)) { mutableSetOf() } +=
             manifestCallEdges[key].orEmpty()
     }
     for ((className, methods) in declaredClasses) {
         for (method in methods) {
-            if (method.inline || method.generatedBy == GeneratedBy.GENERATED_BY_NONE) continue
+            if (method.inline || !method.isLookedThrough()) continue
             transparent.getOrPut(NodeKey(className, method.methodName, method.methodDescriptor)) { mutableSetOf() } += method.calls
         }
     }
@@ -1882,18 +1941,18 @@ private fun buildTransparentMethods(declaredClasses: Map<String, List<DeclaredMe
 }
 
 /**
- * Every node: a manifest METHOD probe, non-inline and non-generated, merged across instances by
+ * Every node: a manifest METHOD probe, non-inline, non-generated and not an unread shape, merged across instances by
  * (class, method, descriptor) with hits summed and edges unioned with any matching declaration
  * from [declaredClasses]; plus, for a class [declaredClasses] names that no manifest ever
- * mentioned, each of its non-inline, non-generated declared methods, with zero hits. A generated
- * method is never a node: the compiler emits it again regardless of what the adopter does, so it
- * can neither root nor extend an unreached cluster.
+ * mentioned, each of its non-inline, non-generated, read declared methods, with zero hits. A
+ * generated method is never a node: the compiler emits it again regardless of what the adopter does,
+ * so it can neither root nor extend an unreached cluster. Neither is an unread-shape method.
  */
 private fun buildClusterNodes(declaredClasses: Map<String, List<DeclaredMethodInfo>>): Map<NodeKey, NodeInfo> {
     val nodes = mutableMapOf<NodeKey, NodeInfo>()
     val manifestGroups =
         manifestProbes.entries
-            .filter { (_, probe) -> probe.kind == ProbeKind.METHOD && !probe.inline && probe.generatedBy == GeneratedBy.GENERATED_BY_NONE }
+            .filter { (_, probe) -> probe.kind == ProbeKind.METHOD && !probe.inline && !probe.isLookedThrough() }
             .groupBy { (_, probe) -> NodeKey(probe.className, probe.methodName, probe.methodDescriptor) }
     for ((nodeKey, entries) in manifestGroups) {
         val hits = entries.sumOf { (key, _) -> latestHitsTotal[key] ?: 0L }
@@ -1907,7 +1966,7 @@ private fun buildClusterNodes(declaredClasses: Map<String, List<DeclaredMethodIn
     for ((className, methods) in declaredClasses) {
         if (className in dynamicallyKnownClassNames) continue
         for (method in methods) {
-            if (method.inline || method.generatedBy != GeneratedBy.GENERATED_BY_NONE) continue
+            if (method.inline || method.isLookedThrough()) continue
             val nodeKey = NodeKey(className, method.methodName, method.methodDescriptor)
             if (nodeKey in nodes) continue
             nodes[nodeKey] = NodeInfo(line = -1, neverLoaded = true, hits = 0L, edges = method.calls.toSet())

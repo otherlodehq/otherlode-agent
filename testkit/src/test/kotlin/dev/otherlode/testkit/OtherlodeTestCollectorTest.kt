@@ -30,6 +30,7 @@ import dev.otherlode.export.SkippedClass
 import dev.otherlode.export.StaticBaseline
 import dev.otherlode.export.StaticallyUnsafeClass
 import dev.otherlode.export.UnprobedClass
+import dev.otherlode.export.UnreadShape
 import dev.otherlode.export.UnreadableClass
 import dev.otherlode.export.UnreportedClass
 import java.net.URI
@@ -2302,6 +2303,283 @@ class OtherlodeTestCollectorTest {
         val cluster = target.unreachedClusters().single()
         assertEquals(RootKind.REACHED_FROM_HIT, cluster.rootKind)
         assertEquals("record", cluster.root.methodName)
+    }
+
+    @Test
+    fun `a never-hit method that is an unread shape is listed apart from neverHit with its family`() {
+        val target = startCollector()
+        val exporter = exporterFor(target)
+        exporter.exportManifest(
+            ProbeManifest(
+                ResourceAttributes("svc", null, "i-1", null, "run-1"),
+                probes =
+                    listOf(
+                        methodProbe(1, 0, "com.acme.Item", "hashCode", "()I", 4).copy(unreadShape = UnreadShape.CASE_CLASS),
+                        methodProbe(1, 1, "com.acme.Item", "price", "()I", 8),
+                    ),
+            ),
+        )
+
+        assertEquals(listOf("price"), target.neverHit().map { it.methodName })
+        val unread = target.neverHitUnreadShapes().single()
+        assertEquals(listOf<Any?>("hashCode", UnreadShape.CASE_CLASS), listOf(unread.methodName, unread.unreadShape))
+        assertTrue(target.neverHitRoutineOutcomes().isEmpty())
+    }
+
+    @Test
+    fun `a never-hit branch probe in an unread method is listed apart from neverHit`() {
+        val target = startCollector()
+        val exporter = exporterFor(target)
+        val resource = ResourceAttributes("svc", null, "i-1", null, "run-1")
+        exporter.exportManifest(
+            ProbeManifest(
+                resource,
+                probes =
+                    listOf(
+                        methodProbe(1, 0, "com.acme.Item", "hashCode", "()I", 4).copy(unreadShape = UnreadShape.CASE_CLASS),
+                        branchProbe(1, 1, "com.acme.Item", "hashCode", "()I", 5, branchIndex = 0, siteIndex = 0)
+                            .copy(unreadShape = UnreadShape.CASE_CLASS),
+                        branchProbe(1, 2, "com.acme.Item", "hashCode", "()I", 5, branchIndex = 1, siteIndex = 0)
+                            .copy(unreadShape = UnreadShape.CASE_CLASS),
+                    ),
+            ),
+        )
+        exporter.exportDeltaBatch(
+            DeltaBatch(resource, listOf(ProbeDelta(1, 0, ProbeKind.METHOD, 1L, 3L), ProbeDelta(1, 1, ProbeKind.BRANCH, 1L, 3L))),
+        )
+
+        assertTrue(target.neverHit().isEmpty())
+        val unread = target.neverHitUnreadShapes().single()
+        assertEquals(listOf<Any?>(ProbeKind.BRANCH, 1, UnreadShape.CASE_CLASS), listOf(unread.kind, unread.branchIndex, unread.unreadShape))
+    }
+
+    @Test
+    fun `an unread outcome is listed apart from neverHit and roots no cluster`() {
+        val target = startCollector()
+        val exporter = exporterFor(target)
+        val resource = ResourceAttributes("svc", null, "i-1", null, "run-1")
+        val site =
+            BranchSite(
+                siteIndex = 0,
+                siteKey = null,
+                line = 11,
+                outcomes =
+                    listOf(
+                        BranchOutcome(0, BranchRole.TAKEN),
+                        BranchOutcome(1, BranchRole.FALL_THROUGH, unreadShape = UnreadShape.COROUTINE_MACHINERY),
+                    ),
+            )
+        exporter.exportManifest(
+            ProbeManifest(
+                resource,
+                probes =
+                    listOf(
+                        methodProbe(
+                            1,
+                            0,
+                            "com.acme.App",
+                            "handle",
+                            "()V",
+                            10,
+                            calls = listOf(CallEdge("com.acme.Audit", "record", "()V", virtual = false, guard = 1)),
+                            branchSites = listOf(site),
+                        ),
+                        branchProbe(1, 1, "com.acme.App", "handle", "()V", 11, branchIndex = 0, siteIndex = 0),
+                        branchProbe(1, 2, "com.acme.App", "handle", "()V", 11, branchIndex = 1, siteIndex = 0),
+                        methodProbe(2, 0, "com.acme.Audit", "record", "()V", 3, static = true),
+                    ),
+            ),
+        )
+        exporter.exportDeltaBatch(
+            DeltaBatch(resource, listOf(ProbeDelta(1, 0, ProbeKind.METHOD, 1L, 5L), ProbeDelta(1, 1, ProbeKind.BRANCH, 1L, 5L))),
+        )
+
+        assertEquals(listOf("record"), target.neverHit().map { it.methodName }, "the unread outcome is not a never-hit row")
+        val unread = target.neverHitUnreadShapes().single()
+        assertEquals(
+            listOf<Any?>("handle", 1, UnreadShape.COROUTINE_MACHINERY),
+            listOf(unread.methodName, unread.branchIndex, unread.unreadShape),
+        )
+        assertTrue(target.neverHitRoutineOutcomes().isEmpty())
+        val cluster = target.unreachedClusters().single()
+        assertEquals(RootKind.REACHED_FROM_HIT, cluster.rootKind, "the call the unread outcome guards starts at handle, which ran")
+        assertEquals("record", cluster.root.methodName)
+    }
+
+    @Test
+    fun `neverSupplied and alwaysSupplied abstain for an unread-shape target`() {
+        val target = startCollector()
+        val exporter = exporterFor(target)
+        exporter.exportManifest(
+            ProbeManifest(
+                ResourceAttributes("svc", null, "i-1", null, "run-1"),
+                listOf(
+                    methodProbe(1, 0, "com.acme.Point", "copy", "(II)Lcom/acme/Point;", 10).copy(unreadShape = UnreadShape.CASE_CLASS),
+                    omissionProbe(1, 1, "com.acme.Point", "copy", "(II)Lcom/acme/Point;", 10, parameterIndex = 1, parameterName = "y")
+                        .copy(unreadShape = UnreadShape.CASE_CLASS),
+                    methodProbe(2, 0, "com.acme.Real", "go", "(II)V", 10),
+                    omissionProbe(2, 1, "com.acme.Real", "go", "(II)V", 10, parameterIndex = 1, parameterName = "y"),
+                ),
+            ),
+        )
+        exporter.exportDeltaBatch(
+            DeltaBatch(
+                ResourceAttributes("svc", null, "i-1", null, "run-1"),
+                listOf(
+                    ProbeDelta(1, 0, ProbeKind.METHOD, 1L, 4L),
+                    ProbeDelta(1, 1, ProbeKind.OPTIONAL_ARGUMENT, 1L, 4L),
+                    ProbeDelta(2, 0, ProbeKind.METHOD, 1L, 4L),
+                    ProbeDelta(2, 1, ProbeKind.OPTIONAL_ARGUMENT, 1L, 4L),
+                ),
+            ),
+        )
+
+        assertEquals(listOf("com.acme.Real"), target.neverSupplied().map { it.className }, "only the read target is judged")
+        assertTrue(target.alwaysSupplied().isEmpty())
+    }
+
+    @Test
+    fun `an unread-shape method is neither a cluster root nor a member`() {
+        val target = startCollector()
+        val exporter = exporterFor(target)
+        exporter.exportManifest(
+            ProbeManifest(
+                ResourceAttributes("svc", null, "i-1", null, "run-1"),
+                probes =
+                    listOf(
+                        methodProbe(
+                            1,
+                            0,
+                            "com.acme.Item",
+                            "hashCode",
+                            "()I",
+                            4,
+                            calls = listOf(CallEdge("com.acme.Item", "tally", "()I", false)),
+                        ).copy(unreadShape = UnreadShape.CASE_CLASS),
+                        methodProbe(1, 1, "com.acme.Item", "tally", "()I", 6),
+                        methodProbe(1, 2, "com.acme.Item", "live", "()I", 9),
+                    ),
+            ),
+        )
+        exporter.exportDeltaBatch(
+            DeltaBatch(
+                ResourceAttributes("svc", null, "i-1", null, "run-1"),
+                listOf(ProbeDelta(1, 1, ProbeKind.METHOD, 1L, 1L), ProbeDelta(1, 2, ProbeKind.METHOD, 1L, 1L)),
+            ),
+        )
+
+        assertTrue(target.unreachedClusters().isEmpty(), "an uncalled unread method roots nothing")
+        assertTrue(target.neverHit().isEmpty())
+    }
+
+    @Test
+    fun `a call that resolves to an unread-shape method reaches what it calls`() {
+        val target = startCollector()
+        val exporter = exporterFor(target)
+        exporter.exportManifest(
+            ProbeManifest(
+                ResourceAttributes("svc", null, "i-1", null, "run-1"),
+                probes =
+                    listOf(
+                        methodProbe(
+                            1,
+                            0,
+                            "com.acme.Caller",
+                            "call",
+                            "()V",
+                            1,
+                            calls = listOf(CallEdge("com.acme.Item", "hashCode", "()I", virtual = false)),
+                        ),
+                        methodProbe(
+                            2,
+                            0,
+                            "com.acme.Item",
+                            "hashCode",
+                            "()I",
+                            4,
+                            calls = listOf(CallEdge("com.acme.Helper", "help", "()V", false)),
+                        ).copy(unreadShape = UnreadShape.CASE_CLASS),
+                        methodProbe(3, 0, "com.acme.Helper", "help", "()V", 9),
+                        methodProbe(3, 1, "com.acme.Helper", "other", "()V", 12),
+                    ),
+            ),
+        )
+        exporter.exportDeltaBatch(
+            DeltaBatch(
+                ResourceAttributes("svc", null, "i-1", null, "run-1"),
+                listOf(ProbeDelta(1, 0, ProbeKind.METHOD, 1L, 2L), ProbeDelta(3, 1, ProbeKind.METHOD, 1L, 1L)),
+            ),
+        )
+
+        val cluster = target.unreachedClusters().single()
+        assertEquals("help", cluster.root.methodName)
+        assertEquals(RootKind.REACHED_FROM_HIT, cluster.rootKind)
+        assertEquals(listOf("com.acme.Caller"), cluster.reachedFrom.map { it.className })
+    }
+
+    @Test
+    fun `a hit unread-shape method is a hit caller, so what it reaches is reached from a hit`() {
+        val target = startCollector()
+        val exporter = exporterFor(target)
+        exporter.exportManifest(
+            ProbeManifest(
+                ResourceAttributes("svc", null, "i-1", null, "run-1"),
+                probes =
+                    listOf(
+                        methodProbe(
+                            1,
+                            0,
+                            "com.acme.D",
+                            "hashCode",
+                            "()I",
+                            4,
+                            calls = listOf(CallEdge("com.acme.Base", "hashCode", "()I", true)),
+                        ).copy(unreadShape = UnreadShape.CASE_CLASS),
+                        methodProbe(2, 0, "com.acme.Sub", "hashCode", "()I", 4),
+                    ),
+                classLocations = listOf(ClassLocation(2, "com.acme.Base", emptyList())),
+            ),
+        )
+        exporter.exportDeltaBatch(
+            DeltaBatch(ResourceAttributes("svc", null, "i-1", null, "run-1"), listOf(ProbeDelta(1, 0, ProbeKind.METHOD, 1L, 1000L))),
+        )
+
+        val cluster = target.unreachedClusters().single()
+        assertEquals("com.acme.Sub", cluster.root.className)
+        assertEquals(RootKind.REACHED_FROM_HIT, cluster.rootKind)
+        assertEquals(listOf("com.acme.D"), cluster.reachedFrom.map { it.className })
+    }
+
+    @Test
+    fun `neverLoaded treats a class of unread shapes plus its constructor as an all-generated class, not as never loaded`() {
+        val target = startCollector()
+        val exporter = exporterFor(target)
+        exporter.exportStaticBaseline(
+            StaticBaseline(
+                resource = ResourceAttributes("svc", null, "i-1", null, "run-1"),
+                declaredClasses =
+                    listOf(
+                        DeclaredClass(
+                            "com.acme.Item",
+                            listOf(
+                                DeclaredMethod("<init>", "(I)V"),
+                                DeclaredMethod("hashCode", "()I", unreadShape = UnreadShape.CASE_CLASS),
+                                DeclaredMethod("equals", "(Ljava/lang/Object;)Z", unreadShape = UnreadShape.CASE_CLASS),
+                            ),
+                        ),
+                        DeclaredClass(
+                            "com.acme.Facade",
+                            listOf(DeclaredMethod("f", "()V", unreadShape = UnreadShape.MULTIFILE_FACADE)),
+                        ),
+                        DeclaredClass("com.acme.Dead", listOf(DeclaredMethod("m", "()V"))),
+                    ),
+                scannedAt = 1000L,
+                chunkIndex = 0,
+                chunkCount = 1,
+            ),
+        )
+
+        assertEquals(listOf("com.acme.Dead", "com.acme.Item"), target.neverLoaded())
     }
 
     /**
