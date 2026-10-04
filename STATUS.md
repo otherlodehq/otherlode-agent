@@ -130,8 +130,9 @@ adopter's collector forwards to one multi-tenant backend.
    coverage report breaks.
 4. **Settle the one-way doors before anything is published.** Settled on
    2026-10-04 in a grilling session (ADRs 0056 and 0057, amendments to 0016,
-   0045 and 0054, collector ADR 0005, server ADR 0054); being built as the
-   TODO entry "One-way doors settled before release", four chunks.
+   0045 and 0054, collector ADR 0005, server ADR 0054) and built the same
+   day in all three repos; the TODO entry "One-way doors settled before
+   release" lists the commits.
    - Testkit API (ADR 0056): Java and Kotlin callers; the testkit owns its
      result types and shades wire and protobuf; data classes only grow, with
      internal constructors; enums grow in minor releases; findings merge
@@ -235,7 +236,7 @@ routine and OpenTelemetry edge cases in the entries below.
 
 ## TODO
 
-### One-way doors settled before release: in progress
+### One-way doors settled before release: landed
 
 Settled 2026-10-04 (checklist item 4). One Sonnet chunk and one commit each,
 reviewed before it lands.
@@ -287,6 +288,14 @@ Landed so far:
   one testkit, a fallback guard index can name another outcome, and
   merged indexes can collide inside a root site; both need mixed builds,
   which the version check in 3b makes unlikely.
+- Chunk 3b on 2026-10-04: agent `dc57547`. The testkit jar is the shadow
+  jar; `verifyTestkitJar`, `apiCheck` (binary-compatibility-validator
+  0.18.2, dump in `testkit/api/testkit.api`) and a compile-only Java
+  source set run under `check`, and the `agentTest` suite runs against the
+  shadow jar. Beyond the brief: the jar leaves out the `.proto` resources,
+  and `OtherlodeExtension.collector()` is `@JvmStatic`. For item 6: the
+  published testkit must be the shadow jar with kotlin-stdlib as its only
+  dependency; the project's default variant is the plain, unshaded jar.
 - Chunk 3 is split: 3a merges findings across instances, 3b hardens the
   surface (own types, shading, visibility, Java, ABI dump), so the dump
   is taken once, after 3a's field removals.
