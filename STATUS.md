@@ -1034,10 +1034,49 @@ generic signatures, parameter names, source files. Left alone: branch and site k
 fingerprints (unique), condition text (a possible follow-up). The five corpora's registrations
 retained 29.7 MB before and 21.8 MB after (one run each).
 
+The allocation pass (2026-10-05, async-profiler `event=alloc` on the ceiling config at `1e1746f`,
+JVM start to "Started"): the agent allocates about 6.5 GB of the 8.0 GB total (1.4 GB without the
+agent), with 75 to 78 young GCs against 21. Class-file reads are 1.41 GB, about 106 KB of garbage
+each through Boot's nested-jar loader (the byte cache holds: 46k lookups, 659 repeats from its cap);
+ByteBuddy's per-transform pool parses 6,472 distinct types 39,715 times, 1.42 GB, `java.*` alone
+11.8k parses of 275 types; the rebase's `prepare`, `represent` and `toTypeWriter` with their parses
+are about 1.7 GB. Local fixes, about 600 MB, are chunk 7a. Grilled the same day with Luke:
+
+- **JDK types parsed once (Q21).** One JVM-wide pool for bootstrap-loader types, about 275 entries,
+  which cannot go stale and never meets a placeholder. The per-loader cache of parsed descriptions
+  stays rejected (Q17) unless chunk 8's numbers miss the target.
+- **A woven class's own class file from its code source (Q22).** Read as the `ProtectionDomain`'s
+  code-source location plus the class's path, which names the copy the JVM defined, falling back to
+  the loader when absent or unreadable; about 493 MB at the ceiling. Package hints for cross-class
+  reads were rejected: a split package would make a hint read another jar's copy, and wrong call
+  edges for a duplicated class would be a silent error.
+- **`DECORATE` and an ASM entry probe (Q23).** Their own grill, before 0.1.0; the entry below.
+
+Landing order amended: (7a) local allocation fixes; (7b) the JDK-type pool and code-source reads;
+then (8) as above.
+
 The 2026-10-04 measurements, method and scripts are in
 `docs/investigations/2026-10-04-agent-startup.md`,
 `docs/investigations/2026-10-04-agent-heap.md` and the `startup/` and `heap/`
 directories beside them, until chunk 8.
+
+### `DECORATE` instead of `REBASE`, and the entry probe in ASM: to grill
+
+Raised 2026-10-05 by the startup allocation pass. The method tier rebases every woven class, and
+ByteBuddy's rebase (`MethodRegistry.prepare`, `InstrumentedType.Factory.represent`,
+`RebaseDynamicTypeBuilder.toTypeWriter`) with the type parses it triggers allocated about 1.7 GB of
+PetClinic ceiling startup's 6.5 GB, plus a share of its time. OpenTelemetry's agent uses
+`DECORATE`, which rewrites method bodies without describing the type for a rebase. Since ADR 0060 a
+class from version 55 gets nothing added, so `DECORATE` fits there; below 55 the probe field, the
+`<clinit>` prelude and the accessor would have to be written in ASM. It may also make ADR 0059's
+placeholder pool and the class header restorer redundant, since both exist to keep ByteBuddy's
+description of the type out of the written class. Writing the method-entry probe in the branch
+tier's ASM visitor instead of `Advice` would remove `Advice`'s per-instruction cost (125 MB of
+`getStackSize` under `BranchProbeMethodVisitor`) and the per-weave matcher work. To settle: whether
+to adopt either before 0.1.0 (Luke's rule says yes unless something blocks), what happens to ADRs
+0058 to 0061, how the version-below-55 form is written and verified, and how
+`WovenClassVerificationTest` and the corpus tests prove the switch byte-for-byte where it should be
+identical.
 
 ### A Scala 3 enum nested in a class fails to transform: closed by ADR 0058
 
