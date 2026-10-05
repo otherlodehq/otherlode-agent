@@ -1027,6 +1027,13 @@ did (pinned on four cap and endpoint combinations, 25 checked once). Changed fro
 delivering), covering classes not yet delivered and throwing on a delivered one. Over the five
 corpora (22,597 probes) the registry retained 11.0 MB after delivery before and 0.9 MB after.
 
+Chunk 6b landed: `MetadataCompaction.kt` holds `interned()` (`String.intern()`, no strong map) and
+`rightSized()`, applied where `ProbeMeta`, call edges, references, supertypes, kept branch sites
+and the table caches' `MethodTable`s are built. Interned: class, method and descriptor names,
+generic signatures, parameter names, source files. Left alone: branch and site keys and condition
+fingerprints (unique), condition text (a possible follow-up). The five corpora's registrations
+retained 29.7 MB before and 21.8 MB after (one run each).
+
 The 2026-10-04 measurements, method and scripts are in
 `docs/investigations/2026-10-04-agent-startup.md`,
 `docs/investigations/2026-10-04-agent-heap.md` and the `startup/` and `heap/`

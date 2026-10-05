@@ -6,6 +6,8 @@ import dev.otherlode.export.ConditionPart
 import dev.otherlode.export.LineRange
 import dev.otherlode.export.RoutineKind
 import dev.otherlode.export.UnreadShape
+import dev.otherlode.instrumentation.interned
+import dev.otherlode.instrumentation.rightSized
 import dev.otherlode.export.BranchSite as BranchSitePayload
 
 /**
@@ -53,21 +55,29 @@ data class KeptBranchSite(
             siteKey = siteKey,
             line = site.line,
             outcomes =
-                outcomes.map {
-                    BranchOutcome(
-                        it.branchIndex,
-                        it.role,
-                        it.caseKey,
-                        it.guardedLines,
-                        it.partlyGuardedLines,
-                        it.caseLabel,
-                        it.routine,
-                        it.unreadShape,
-                    )
-                },
+                outcomes
+                    .map {
+                        BranchOutcome(
+                            it.branchIndex,
+                            it.role,
+                            it.caseKey,
+                            it.guardedLines.compactRanges(),
+                            it.partlyGuardedLines.compactRanges(),
+                            it.caseLabel.rightSized(),
+                            it.routine,
+                            it.unreadShape,
+                        )
+                    }.rightSized(),
             guard = guard,
-            condition = site.condition,
+            condition = site.condition.rightSized(),
         )
+
+    private fun List<LineRange>.compactRanges(): List<LineRange> =
+        when (size) {
+            0 -> emptyList()
+            1 -> listOf(this[0].copy(sourceFile = this[0].sourceFile.interned()))
+            else -> map { it.copy(sourceFile = it.sourceFile.interned()) }
+        }
 
     companion object {
         /**

@@ -681,14 +681,14 @@ class OtherlodeInstrumentation(
                 if (getterSite != null) {
                     ProbeMeta(
                         ProbeKind.OPTIONAL_ARGUMENT,
-                        getterSite.targetName,
-                        getterSite.targetDescriptor,
+                        getterSite.targetName.interned(),
+                        getterSite.targetDescriptor.interned(),
                         line = getterSite.line,
                         inline = false,
                         parameterIndex = getterSite.parameterIndex,
-                        parameterName = getterSite.parameterName,
+                        parameterName = getterSite.parameterName.internedOrNull(),
                         overridable = getterSite.overridable,
-                        targetClassName = getterSite.targetClassName,
+                        targetClassName = getterSite.targetClassName.internedOrNull(),
                         generatedBy = analysis.generatedBy(getterSite.targetName, getterSite.targetDescriptor),
                         unreadShape = analysis.unreadShape(getterSite.targetName, getterSite.targetDescriptor),
                     )
@@ -697,23 +697,24 @@ class OtherlodeInstrumentation(
                     val paired = pairing.isPaired(it.internalName, it.descriptor)
                     ProbeMeta(
                         ProbeKind.METHOD,
-                        it.internalName,
-                        it.descriptor,
+                        it.internalName.interned(),
+                        it.descriptor.interned(),
                         line = analysis.firstLineOf(it.internalName, it.descriptor),
                         inline = analysis.isInline(it.internalName, it.descriptor),
                         // An unpaired method's sites are not reported, so no edge may name one as its guard.
                         calls =
-                            analysis.callsOf(it.internalName, it.descriptor).map { edge ->
-                                if (paired) edge else edge.copy(guard = null)
-                            },
+                            analysis
+                                .callsOf(it.internalName, it.descriptor)
+                                .map { edge -> if (paired) edge else edge.copy(guard = null) }
+                                .rightSized(),
                         generatedBy = analysis.generatedBy(it.internalName, it.descriptor),
                         unreadShape = analysis.unreadShape(it.internalName, it.descriptor),
                         referencedClasses = references.keep(analysis.referencesOf(it.internalName, it.descriptor)),
                         lambdaBody = analysis.isLambdaBody(it.internalName, it.descriptor),
                         branchSites = if (paired) analysis.branchSitesOf(it.internalName, it.descriptor) else emptyList(),
                         static = it.isStatic,
-                        parameterNames = sourceSignature.parameterNames,
-                        genericSignature = sourceSignature.genericSignature,
+                        parameterNames = sourceSignature.parameterNames.internedAll(),
+                        genericSignature = sourceSignature.genericSignature.interned(),
                         extensionReceiver = sourceSignature.extensionReceiver,
                     )
                 }
@@ -730,12 +731,12 @@ class OtherlodeInstrumentation(
                 kept.outcomes.map { outcome ->
                     ProbeMeta(
                         ProbeKind.BRANCH,
-                        site.methodName,
-                        site.methodDescriptor,
+                        site.methodName.interned(),
+                        site.methodDescriptor.interned(),
                         site.line,
                         branchIndex = outcome.branchIndex,
                         inline = analysis.isInline(site.methodName, site.methodDescriptor),
-                        inlinedFromClassName = site.inlinedFromClassName,
+                        inlinedFromClassName = site.inlinedFromClassName.internedOrNull(),
                         branchKey = outcome.branchKey,
                         generatedBy = analysis.generatedBy(site.methodName, site.methodDescriptor),
                         unreadShape = analysis.unreadShape(site.methodName, site.methodDescriptor),
@@ -763,12 +764,12 @@ class OtherlodeInstrumentation(
                         .map { bit ->
                             ProbeMeta(
                                 ProbeKind.OPTIONAL_ARGUMENT,
-                                site.targetName,
-                                site.targetDescriptor,
+                                site.targetName.interned(),
+                                site.targetDescriptor.interned(),
                                 line = site.defaultLines[bit] ?: -1,
                                 inline = analysis.isInline(site.targetName, site.targetDescriptor),
                                 parameterIndex = bit,
-                                parameterName = site.parameterNames[bit] ?: "",
+                                parameterName = (site.parameterNames[bit] ?: "").interned(),
                                 overridable = site.overridable,
                                 generatedBy = analysis.generatedBy(site.targetName, site.targetDescriptor),
                                 unreadShape = analysis.unreadShape(site.targetName, site.targetDescriptor),
@@ -789,7 +790,7 @@ class OtherlodeInstrumentation(
                     "<clinit>",
                     "()V",
                     line = analysis.firstLineOf("<clinit>", "()V"),
-                    calls = analysis.callsOf("<clinit>", "()V"),
+                    calls = analysis.callsOf("<clinit>", "()V").rightSized(),
                     referencedClasses = references.keep(analysis.referencesOf("<clinit>", "()V")),
                 )
             } else {
@@ -1261,8 +1262,8 @@ class OtherlodeInstrumentation(
                 plan.layoutHash,
                 probes,
                 classLoader,
-                analysis.superClassName,
-                analysis.interfaceNames,
+                analysis.superClassName.internedOrNull(),
+                analysis.interfaceNames.internedAll(),
                 references.keep(analysis.classReferences),
                 references.kept(),
                 analysis.sourceFile,
@@ -1296,10 +1297,11 @@ class OtherlodeInstrumentation(
         private val found = LinkedHashMap<String, ReferencedClassLocator.Found?>()
 
         fun keep(names: List<String>): List<String> =
-            names.filter { name ->
-                if (name !in found) found[name] = referencedClassLocator.locate(name, classLoader)
-                found[name] != null
-            }
+            names
+                .filter { name ->
+                    if (name !in found) found[name] = referencedClassLocator.locate(name, classLoader)
+                    found[name] != null
+                }.internedAll()
 
         /** Every name kept so far, with its location, or null for a class no loader could find. */
         fun kept(): Map<String, String?> = found.entries.mapNotNull { (name, where) -> where?.let { name to it.location } }.toMap()

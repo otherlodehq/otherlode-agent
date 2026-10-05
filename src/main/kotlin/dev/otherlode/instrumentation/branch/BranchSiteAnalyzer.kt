@@ -9,6 +9,10 @@ import dev.otherlode.export.KotlinKind
 import dev.otherlode.export.UnreadShape
 import dev.otherlode.instrumentation.ScalaClassDetector
 import dev.otherlode.instrumentation.TypeMatchPolicy
+import dev.otherlode.instrumentation.interned
+import dev.otherlode.instrumentation.internedAll
+import dev.otherlode.instrumentation.internedOrNull
+import dev.otherlode.instrumentation.rightSized
 import net.bytebuddy.jar.asm.AnnotationVisitor
 import net.bytebuddy.jar.asm.Attribute
 import net.bytebuddy.jar.asm.ClassReader
@@ -1724,7 +1728,16 @@ object BranchSiteAnalyzer {
                 implementedInterface: String?,
             ): CallEdge {
                 val captured = if (capturedCount == 0) 0 else capturedCount.coerceAtMost(parseParameterDescriptors(descriptor).size)
-                return CallEdge(owner, name, descriptor, virtual, kind, captured, guard, implementedInterface?.replace('/', '.'))
+                return CallEdge(
+                    owner.interned(),
+                    name.interned(),
+                    descriptor.interned(),
+                    virtual,
+                    kind,
+                    captured,
+                    guard,
+                    implementedInterface?.replace('/', '.')?.interned(),
+                )
             }
 
             fun visit(
@@ -1919,7 +1932,15 @@ object BranchSiteAnalyzer {
                         if (bodyAccess and BODYLESS_FLAGS != 0) continue
                         if (wouldNotBeProbedByMethodTier(bodyAccess, bodyName, table.isScalaClass, table.superInternalName)) continue
                         val bodyNonVirtual = bodyAccess and NON_VIRTUAL_FLAGS != 0
-                        edges += CallEdge(dottedOwner, bodyName, bodyDescriptor, !bodyNonVirtual, CallEdgeKind.CREATES, guard = guard)
+                        edges +=
+                            CallEdge(
+                                dottedOwner.interned(),
+                                bodyName.interned(),
+                                bodyDescriptor.interned(),
+                                !bodyNonVirtual,
+                                CallEdgeKind.CREATES,
+                                guard = guard,
+                            )
                     }
                 }
             }
@@ -4599,20 +4620,44 @@ object BranchSiteAnalyzer {
             ).generated
                 .filterValues { it in PASS_THROUGH_FORWARDERS }
                 .keys
+        val keys = HashMap<Pair<String, String>, Pair<String, String>>()
+
+        fun canonical(key: Pair<String, String>) = keys.getOrPut(key) { key.first.interned() to key.second.interned() }
         return MethodTable(
             classAccess,
-            methodAccess,
-            localNames,
-            firstLines,
-            rawCandidatesByMethod,
+            methodAccess.entries.associate { canonical(it.key) to it.value },
+            localNames.entries.associate { (key, names) ->
+                canonical(key) to
+                    if (names.isEmpty()) emptyMap() else names.mapValues { it.value.interned() }
+            },
+            firstLines.entries.associate { canonical(it.key) to it.value },
+            rawCandidatesByMethod.entries.associate { (key, candidates) ->
+                canonical(key) to
+                    candidates
+                        .map {
+                            it.copy(
+                                owner = it.owner.interned(),
+                                name = it.name.interned(),
+                                descriptor = it.descriptor.interned(),
+                                functionalInterface = it.functionalInterface.internedOrNull(),
+                            )
+                        }.rightSized()
+            },
             isScalaClass,
             hasEnclosingMethod,
-            rawReferencesByMethod,
-            internalName,
-            superInternalName,
-            interfaceInternalNames,
+            rawReferencesByMethod.entries.associate { (key, names) ->
+                canonical(key) to
+                    when (names.size) {
+                        0 -> emptySet()
+                        1 -> setOf(names.first().interned())
+                        else -> names.mapTo(LinkedHashSet(names.size * 2)) { it.interned() }
+                    }
+            },
+            internalName.interned(),
+            superInternalName.internedOrNull(),
+            interfaceInternalNames.internedAll(),
             kotlinKind,
-            forwarderKeys,
+            forwarderKeys.mapTo(LinkedHashSet()) { canonical(it) },
         )
     }
 }
