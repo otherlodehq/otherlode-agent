@@ -6,6 +6,7 @@ import dev.otherlode.export.ClassReferences
 import dev.otherlode.export.DeltaBatch
 import dev.otherlode.export.KotlinKind
 import dev.otherlode.export.ProbeDelta
+import dev.otherlode.export.ProbeKind
 import dev.otherlode.export.ProbeLocation
 import dev.otherlode.export.ProbeManifest
 import dev.otherlode.export.ResourceAttributes
@@ -76,6 +77,10 @@ import java.util.concurrent.atomic.AtomicLong
  * cross-restart visibility is the collector's job: it aggregates deltas
  * from every `service.instance.id` a service has ever reported, over time.
  *
+ * A class's manifest is send-once. When [advanceManifestBaseline] records it as delivered, the
+ * class's probe locations and its other manifest-only fields are released, and only each probe's
+ * kind stays, for the delta path. A delivered class's locations cannot be sent again.
+ *
  * @property confirmsDefinitions Switches the whole confirmation mechanism on: [computeManifestDeltas]
  * and [manifest] withhold a class's probe locations and its [ClassLocation] and [ClassReferences] records until the
  * class is confirmed defined, by a probe count above zero or a name [confirmFrom] is told the JVM
@@ -94,20 +99,43 @@ open class ProbeRegistry(
         val classLoaderId: Int,
     )
 
-    private class ClassEntry(
-        val classId: Int,
-        val className: String,
+    /**
+     * Everything about a class that only the manifest reads. A class's manifest is send-once, so
+     * this is dropped from its [ClassEntry] the moment the manifest is confirmed delivered, and
+     * the delta path, which needs only each probe's kind, never sees it.
+     */
+    private class ManifestData(
         val probes: List<ProbeMeta>,
-        val counts: LongArray,
         val superClassName: String?,
         val interfaceNames: List<String>,
-        val classLoaderRef: WeakReference<ClassLoader>?,
         val classReferences: List<String>,
         val sourceFile: String?,
         val bodyKind: BodyKind,
         val sourceName: String?,
         val kotlinKind: KotlinKind,
+    )
+
+    /**
+     * One registered class. [kinds] holds each probe's [ProbeKind] ordinal and outlives delivery,
+     * since every delta reports a probe's kind. [manifestData] is the rest of the class's
+     * metadata, and is null once the manifest carrying it was delivered: a delivered class's
+     * locations cannot be sent again.
+     */
+    private class ClassEntry(
+        val classId: Int,
+        val className: String,
+        val kinds: ByteArray,
+        val counts: LongArray,
+        val classLoaderRef: WeakReference<ClassLoader>?,
+        manifestData: ManifestData,
     ) {
+        /**
+         * Volatile because [advanceManifestBaseline] clears it on the flush thread while
+         * [computeManifestDeltas] reads it on a send-pool thread; readers take it once into a local.
+         */
+        @Volatile
+        var manifestData: ManifestData? = manifestData
+
         /** The last cumulative count successfully delivered to the collector, per probe. */
         var lastSent: LongArray = LongArray(counts.size)
 
@@ -222,16 +250,20 @@ open class ProbeRegistry(
                 ClassEntry(
                     classId = nextClassId.getAndIncrement(),
                     className = className,
-                    probes = probes,
+                    kinds = ByteArray(probes.size) { probes[it].kind.ordinal.toByte() },
                     counts = LongArray(probes.size),
-                    superClassName = superClassName,
-                    interfaceNames = interfaceNames,
                     classLoaderRef = weakClassLoaderRef(classLoader),
-                    classReferences = classReferences,
-                    sourceFile = sourceFile,
-                    bodyKind = bodyKind,
-                    sourceName = sourceName,
-                    kotlinKind = kotlinKind,
+                    manifestData =
+                        ManifestData(
+                            probes = probes,
+                            superClassName = superClassName,
+                            interfaceNames = interfaceNames,
+                            classReferences = classReferences,
+                            sourceFile = sourceFile,
+                            bodyKind = bodyKind,
+                            sourceName = sourceName,
+                            kotlinKind = kotlinKind,
+                        ),
                 )
             }
         return entry.counts
@@ -488,7 +520,7 @@ open class ProbeRegistry(
                 ProbeDelta(
                     classId = entry.classId,
                     probeIndex = index,
-                    kind = entry.probes[index].kind,
+                    kind = PROBE_KINDS[entry.kinds[index].toInt()],
                     firstSeenAt = entry.firstSeenAt[index],
                     hitsTotal = current,
                 )
@@ -555,8 +587,12 @@ open class ProbeRegistry(
     }
 
     /**
-     * A full manifest of every registered class, ignoring what was already delivered. The agent
-     * sends [computeManifestDeltas] instead; this is for a test.
+     * A manifest of every registered class whose manifest was not yet delivered. The agent sends
+     * [computeManifestDeltas] instead; this is for a test, and it covers only classes not yet
+     * delivered, because delivering a class drops the metadata a manifest is built from.
+     *
+     * Throws [IllegalStateException] naming the class when it meets one that was delivered, so a
+     * test that mixes delivery with this call fails instead of reading a partial manifest.
      *
      * [resource] names the instance and run the manifest's `class_id` values belong to: this
      * registry assigns them in its own load order, so a collector must key on both to avoid
@@ -566,46 +602,25 @@ open class ProbeRegistry(
     fun manifest(resource: ResourceAttributes): ProbeManifest {
         // One filtered list feeds both the locations and the class location records, so a withheld
         // class cannot appear in one and not the other.
-        val published = entriesByKey.values.filter { !confirmsDefinitions || isConfirmed(it) }
-        val locations =
-            published.flatMap { entry ->
-                entry.probes.mapIndexed { index, meta ->
-                    ProbeLocation(
-                        classId = entry.classId,
-                        probeIndex = index,
-                        kind = meta.kind,
-                        className = entry.className,
-                        methodName = meta.methodName,
-                        methodDescriptor = meta.methodDescriptor,
-                        line = meta.line,
-                        branchIndex = meta.branchIndex,
-                        inline = meta.inline,
-                        parameterIndex = meta.parameterIndex,
-                        parameterName = meta.parameterName,
-                        overridable = meta.overridable,
-                        targetClassName = meta.targetClassName,
-                        calls = meta.calls,
-                        inlinedFromClassName = meta.inlinedFromClassName,
-                        generatedBy = meta.generatedBy,
-                        unreadShape = meta.unreadShape,
-                        referencedClasses = meta.referencedClasses,
-                        branchKey = meta.branchKey,
-                        lambdaBody = meta.lambdaBody,
-                        branchSites = meta.branchSites,
-                        siteIndex = meta.siteIndex,
-                        static = meta.static,
-                        parameterNames = meta.parameterNames,
-                        genericSignature = meta.genericSignature,
-                        extensionReceiver = meta.extensionReceiver,
-                    )
+        val published =
+            entriesByKey.values
+                .filter { !confirmsDefinitions || isConfirmed(it) }
+                .map { entry ->
+                    entry to
+                        (
+                            entry.manifestData
+                                ?: throw IllegalStateException(
+                                    "the manifest of ${entry.className} was delivered, so its probe locations are gone",
+                                )
+                        )
                 }
-            }
+        val locations = published.flatMap { (entry, data) -> locationsOf(entry, data) }
         val skipped =
             skippedByClassName.map { (className, entry) ->
                 SkippedClass(className, entry.reason, entry.skippedAt)
             }
-        val classLocations = published.map(::classLocationOf)
-        val classReferences = published.mapNotNull(::classReferencesOf)
+        val classLocations = published.map { (entry, data) -> classLocationOf(entry, data) }
+        val classReferences = published.mapNotNull { (entry, data) -> classReferencesOf(entry, data) }
         val unreported =
             unreportedByClassName.map { (className, entry) ->
                 UnreportedClass(className, entry.firstSeenUnreportedAt)
@@ -620,20 +635,60 @@ open class ProbeRegistry(
         )
     }
 
-    private fun classLocationOf(entry: ClassEntry): ClassLocation =
+    private fun locationsOf(
+        entry: ClassEntry,
+        data: ManifestData,
+    ): List<ProbeLocation> =
+        data.probes.mapIndexed { index, meta ->
+            ProbeLocation(
+                classId = entry.classId,
+                probeIndex = index,
+                kind = meta.kind,
+                className = entry.className,
+                methodName = meta.methodName,
+                methodDescriptor = meta.methodDescriptor,
+                line = meta.line,
+                branchIndex = meta.branchIndex,
+                inline = meta.inline,
+                parameterIndex = meta.parameterIndex,
+                parameterName = meta.parameterName,
+                overridable = meta.overridable,
+                targetClassName = meta.targetClassName,
+                calls = meta.calls,
+                inlinedFromClassName = meta.inlinedFromClassName,
+                generatedBy = meta.generatedBy,
+                unreadShape = meta.unreadShape,
+                referencedClasses = meta.referencedClasses,
+                branchKey = meta.branchKey,
+                lambdaBody = meta.lambdaBody,
+                branchSites = meta.branchSites,
+                siteIndex = meta.siteIndex,
+                static = meta.static,
+                parameterNames = meta.parameterNames,
+                genericSignature = meta.genericSignature,
+                extensionReceiver = meta.extensionReceiver,
+            )
+        }
+
+    private fun classLocationOf(
+        entry: ClassEntry,
+        data: ManifestData,
+    ): ClassLocation =
         ClassLocation(
             entry.classId,
-            entry.superClassName,
-            entry.interfaceNames,
-            entry.sourceFile,
-            entry.bodyKind,
-            entry.sourceName,
-            entry.kotlinKind,
+            data.superClassName,
+            data.interfaceNames,
+            data.sourceFile,
+            data.bodyKind,
+            data.sourceName,
+            data.kotlinKind,
         )
 
     /** [entry]'s [ClassReferences] record, or null when it has no class-level references. */
-    private fun classReferencesOf(entry: ClassEntry): ClassReferences? =
-        entry.classReferences.takeIf { it.isNotEmpty() }?.let { ClassReferences(entry.classId, it) }
+    private fun classReferencesOf(
+        entry: ClassEntry,
+        data: ManifestData,
+    ): ClassReferences? = data.classReferences.takeIf { it.isNotEmpty() }?.let { ClassReferences(entry.classId, it) }
 
     /**
      * Returns only the probe locations for classes not yet included in a successfully sent
@@ -666,118 +721,104 @@ open class ProbeRegistry(
      *
      * Classes are never split across chunks, so [advanceManifestBaseline] on one chunk marks
      * exactly that chunk's classes as included. A single class with more locations than the cap
-     * gets a chunk of its own. Returns an empty list when there is nothing to send.
+     * gets a chunk of its own. Yields nothing when there is nothing to send.
+     *
+     * Chunks are built lazily, one when the consumer asks for it. A consumer that advances each
+     * chunk before asking for the next never holds more than one chunk's locations, because
+     * advancing releases the metadata they were built from. A class whose manifest was delivered
+     * while the sequence was being consumed is skipped.
      */
     open fun computeManifestDeltas(
         resource: ResourceAttributes,
         maxEntriesPerChunk: Int,
-    ): List<ManifestSnapshot> {
-        val chunks = mutableListOf<ManifestSnapshot>()
-        var locations = mutableListOf<ProbeLocation>()
-        var skipped = mutableListOf<SkippedClass>()
-        var classLocations = mutableListOf<ClassLocation>()
-        var classReferences = mutableListOf<ClassReferences>()
-        var stagedEntries = mutableListOf<Any>()
-        var stagedSkipped = mutableListOf<Any>()
-        var unreported = mutableListOf<UnreportedClass>()
-        var stagedUnreported = mutableListOf<Any>()
+    ): Sequence<ManifestSnapshot> =
+        sequence {
+            var locations = mutableListOf<ProbeLocation>()
+            var skipped = mutableListOf<SkippedClass>()
+            var classLocations = mutableListOf<ClassLocation>()
+            var classReferences = mutableListOf<ClassReferences>()
+            var stagedEntries = mutableListOf<Any>()
+            var stagedSkipped = mutableListOf<Any>()
+            var unreported = mutableListOf<UnreportedClass>()
+            var stagedUnreported = mutableListOf<Any>()
 
-        // The running chunk weight is tracked explicitly rather than derived from the staged
-        // lists' sizes: a class's call edges add to its weight but never become list entries of
-        // their own, since each edge nests inside its own ProbeLocation.calls rather than sitting
-        // beside it. Deriving the cap check from list sizes alone would silently ignore that
-        // weight the moment a chunk already held an earlier class's edges.
-        var chunkWeight = 0
+            // The running chunk weight is tracked explicitly rather than derived from the staged
+            // lists' sizes: a class's call edges add to its weight but never become list entries of
+            // their own, since each edge nests inside its own ProbeLocation.calls rather than sitting
+            // beside it. Deriving the cap check from list sizes alone would silently ignore that
+            // weight the moment a chunk already held an earlier class's edges.
+            var chunkWeight = 0
 
-        fun seal() {
-            chunks +=
-                ManifestSnapshot(
-                    ProbeManifest(
-                        resource,
-                        locations,
-                        skipped,
-                        classLocations = classLocations,
-                        unreportedClasses = unreported,
-                        classReferences = classReferences,
-                    ),
-                    stagedEntries,
-                    stagedSkipped,
-                    stagedUnreported,
-                )
-            locations = mutableListOf()
-            skipped = mutableListOf()
-            classLocations = mutableListOf()
-            classReferences = mutableListOf()
-            stagedEntries = mutableListOf()
-            stagedSkipped = mutableListOf()
-            unreported = mutableListOf()
-            stagedUnreported = mutableListOf()
-            chunkWeight = 0
-        }
-        for (entry in entriesByKey.values) {
-            if (entry.manifestIncluded) continue
-            if (confirmsDefinitions && !isConfirmed(entry)) continue
-            val weight =
-                entry.probes.size +
-                    entry.probes.sumOf { meta ->
-                        meta.calls.size + meta.referencedClasses.size + meta.branchSites.sumOf { it.chunkWeight }
-                    } + 1 + entry.classReferences.size
-            if (chunkWeight > 0 && chunkWeight + weight > maxEntriesPerChunk) seal()
-            stagedEntries += entry
-            entry.probes.forEachIndexed { index, meta ->
-                locations +=
-                    ProbeLocation(
-                        classId = entry.classId,
-                        probeIndex = index,
-                        kind = meta.kind,
-                        className = entry.className,
-                        methodName = meta.methodName,
-                        methodDescriptor = meta.methodDescriptor,
-                        line = meta.line,
-                        branchIndex = meta.branchIndex,
-                        inline = meta.inline,
-                        parameterIndex = meta.parameterIndex,
-                        parameterName = meta.parameterName,
-                        overridable = meta.overridable,
-                        targetClassName = meta.targetClassName,
-                        calls = meta.calls,
-                        inlinedFromClassName = meta.inlinedFromClassName,
-                        generatedBy = meta.generatedBy,
-                        unreadShape = meta.unreadShape,
-                        referencedClasses = meta.referencedClasses,
-                        branchKey = meta.branchKey,
-                        lambdaBody = meta.lambdaBody,
-                        branchSites = meta.branchSites,
-                        siteIndex = meta.siteIndex,
-                        static = meta.static,
-                        parameterNames = meta.parameterNames,
-                        genericSignature = meta.genericSignature,
-                        extensionReceiver = meta.extensionReceiver,
+            fun takeChunk(): ManifestSnapshot {
+                val chunk =
+                    ManifestSnapshot(
+                        ProbeManifest(
+                            resource,
+                            locations,
+                            skipped,
+                            classLocations = classLocations,
+                            unreportedClasses = unreported,
+                            classReferences = classReferences,
+                        ),
+                        stagedEntries,
+                        stagedSkipped,
+                        stagedUnreported,
                     )
+                locations = mutableListOf()
+                skipped = mutableListOf()
+                classLocations = mutableListOf()
+                classReferences = mutableListOf()
+                stagedEntries = mutableListOf()
+                stagedSkipped = mutableListOf()
+                unreported = mutableListOf()
+                stagedUnreported = mutableListOf()
+                chunkWeight = 0
+                return chunk
             }
-            classLocations += classLocationOf(entry)
-            classReferencesOf(entry)?.let { classReferences += it }
-            chunkWeight += weight
+            for (entry in entriesByKey.values) {
+                if (entry.manifestIncluded) continue
+                if (confirmsDefinitions && !isConfirmed(entry)) continue
+                var data = entry.manifestData ?: continue
+                val weight =
+                    data.probes.size +
+                        data.probes.sumOf { meta ->
+                            meta.calls.size + meta.referencedClasses.size + meta.branchSites.sumOf { it.chunkWeight }
+                        } + 1 + data.classReferences.size
+                if (chunkWeight > 0 && chunkWeight + weight > maxEntriesPerChunk) {
+                    yield(takeChunk())
+                    // The consumer ran between the read above and here, and may have delivered this class.
+                    data = entry.manifestData ?: continue
+                }
+                stagedEntries += entry
+                locations += locationsOf(entry, data)
+                classLocations += classLocationOf(entry, data)
+                classReferencesOf(entry, data)?.let { classReferences += it }
+                chunkWeight += weight
+            }
+            for ((className, entry) in skippedByClassName) {
+                if (entry.manifestIncluded) continue
+                if (chunkWeight > 0 && chunkWeight + 1 > maxEntriesPerChunk) {
+                    yield(takeChunk())
+                    if (entry.manifestIncluded) continue
+                }
+                stagedSkipped += entry
+                skipped += SkippedClass(className, entry.reason, entry.skippedAt)
+                chunkWeight += 1
+            }
+            // One entry each, the same weight a skipped class carries: both are a class name and a
+            // couple of scalars on the wire.
+            for ((className, entry) in unreportedByClassName) {
+                if (entry.manifestIncluded) continue
+                if (chunkWeight > 0 && chunkWeight + 1 > maxEntriesPerChunk) {
+                    yield(takeChunk())
+                    if (entry.manifestIncluded) continue
+                }
+                stagedUnreported += entry
+                unreported += UnreportedClass(className, entry.firstSeenUnreportedAt)
+                chunkWeight += 1
+            }
+            if (chunkWeight > 0) yield(takeChunk())
         }
-        for ((className, entry) in skippedByClassName) {
-            if (entry.manifestIncluded) continue
-            if (chunkWeight > 0 && chunkWeight + 1 > maxEntriesPerChunk) seal()
-            stagedSkipped += entry
-            skipped += SkippedClass(className, entry.reason, entry.skippedAt)
-            chunkWeight += 1
-        }
-        // One entry each, the same weight a skipped class carries: both are a class name and a
-        // couple of scalars on the wire.
-        for ((className, entry) in unreportedByClassName) {
-            if (entry.manifestIncluded) continue
-            if (chunkWeight > 0 && chunkWeight + 1 > maxEntriesPerChunk) seal()
-            stagedUnreported += entry
-            unreported += UnreportedClass(className, entry.firstSeenUnreportedAt)
-            chunkWeight += 1
-        }
-        if (chunkWeight > 0) seal()
-        return chunks
-    }
 
     /**
      * Marks every class staged by [snapshot] as included, so it is not sent again. Classes that
@@ -786,10 +827,24 @@ open class ProbeRegistry(
      *
      * Call this only after that manifest is confirmed delivered. A failed send must not call it,
      * so the next attempt's delta naturally includes the same classes again.
+     *
+     * A delivered class's probe locations, supertypes and references are released here and cannot
+     * be sent again: the manifest is send-once, and only each probe's kind is kept, for the delta
+     * path.
      */
     fun advanceManifestBaseline(snapshot: ManifestSnapshot) {
-        for (entry in snapshot.stagedEntries) (entry as ClassEntry).manifestIncluded = true
+        for (entry in snapshot.stagedEntries) {
+            (entry as ClassEntry).manifestIncluded = true
+            entry.manifestData = null
+        }
         for (entry in snapshot.stagedSkipped) (entry as SkippedEntry).manifestIncluded = true
         for (entry in snapshot.stagedUnreported) (entry as UnreportedEntry).manifestIncluded = true
+    }
+
+    /** How many registered classes still hold their manifest metadata; for tests. */
+    internal fun classesHoldingMetadata(): Int = entriesByKey.values.count { it.manifestData != null }
+
+    private companion object {
+        val PROBE_KINDS: List<ProbeKind> = ProbeKind.entries
     }
 }

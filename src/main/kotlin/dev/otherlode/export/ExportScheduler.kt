@@ -555,7 +555,11 @@ class ExportScheduler(
      * same way. A dependency, and a mapping to it, goes out only once its
      * counts were delivered; see [DependencyRegistry.isSendable].
      *
-     * `dependenciesListed` is read once, after the computes and before the
+     * Class chunks are built, sent and advanced one at a time, so the first flush holds one
+     * chunk rather than the whole manifest, and the first failure stops the send before the next
+     * chunk is built. Riders are small and computed up front.
+     *
+     * `dependenciesListed` is read once, after the riders are computed and before the
      * first send, so every chunk of one call carries the same value.
      *
      * Returns whether every send in the loop was confirmed. A call with
@@ -570,7 +574,7 @@ class ExportScheduler(
                     dependencyRegistry.computeManifestEntries(maxManifestEntriesPerChunk).map(::dependencyManifestRider) +
                     externalClassRegistry.computeManifestEntries(maxManifestEntriesPerChunk).map(::externalClassManifestRider)
             val listed = dependenciesListed
-            for (send in composeManifestSends(classChunks, riders, listed)) {
+            for (send in manifestSends(classChunks, riders, listed)) {
                 exporter.exportManifest(send.manifest)
                 send.probeSnapshot?.let(registry::advanceManifestBaseline)
                 send.riders.forEach { it.advance() }
@@ -615,30 +619,50 @@ class ExportScheduler(
      * minus that manifest's weight so far. A rider that fits nowhere, including when there are no
      * class chunks at all, becomes its own [ProbeManifest] with no probes, which a later rider may
      * then share.
+     *
+     * Lazy: a class chunk is taken from [classChunks] only when the consumer asks for the next
+     * send, and riders are placed chunk by chunk, each chunk taking every waiting rider that fits
+     * in order. That puts every rider where first-fit over all the chunks at once would, without
+     * building a later chunk before an earlier one was sent.
      */
-    private fun composeManifestSends(
-        classChunks: List<ProbeRegistry.ManifestSnapshot>,
+    private fun manifestSends(
+        classChunks: Sequence<ProbeRegistry.ManifestSnapshot>,
         riders: List<Rider<ProbeManifest>>,
         dependenciesListed: Boolean,
-    ): List<ManifestSend> {
-        val builders = classChunks.map { ManifestSendBuilder(it.manifest, it) }.toMutableList()
+    ): Sequence<ManifestSend> =
+        sequence {
+            val waiting = riders.toMutableList()
 
-        for (rider in riders) {
-            val target =
-                builders.firstOrNull { it.size + rider.size <= maxManifestEntriesPerChunk }
-                    ?: ManifestSendBuilder(emptyManifest(dependenciesListed), null).also(builders::add)
-            target.manifest = rider.attach(target.manifest)
-            target.size += rider.size
-            target.riders += rider
+            fun finish(builder: ManifestSendBuilder) =
+                ManifestSend(
+                    builder.manifest.copy(referencesRecorded = referencesRecorded, dependenciesListed = dependenciesListed),
+                    builder.probeSnapshot,
+                    builder.riders,
+                )
+            for (chunk in classChunks) {
+                val builder = ManifestSendBuilder(chunk.manifest, chunk)
+                val iterator = waiting.iterator()
+                while (iterator.hasNext()) {
+                    val rider = iterator.next()
+                    if (builder.size + rider.size > maxManifestEntriesPerChunk) continue
+                    builder.manifest = rider.attach(builder.manifest)
+                    builder.size += rider.size
+                    builder.riders += rider
+                    iterator.remove()
+                }
+                yield(finish(builder))
+            }
+            val own = mutableListOf<ManifestSendBuilder>()
+            for (rider in waiting) {
+                val target =
+                    own.firstOrNull { it.size + rider.size <= maxManifestEntriesPerChunk }
+                        ?: ManifestSendBuilder(emptyManifest(dependenciesListed), null).also(own::add)
+                target.manifest = rider.attach(target.manifest)
+                target.size += rider.size
+                target.riders += rider
+            }
+            for (builder in own) yield(finish(builder))
         }
-        return builders.map {
-            ManifestSend(
-                it.manifest.copy(referencesRecorded = referencesRecorded, dependenciesListed = dependenciesListed),
-                it.probeSnapshot,
-                it.riders,
-            )
-        }
-    }
 
     /**
      * Whether this instance records references, stamped on every manifest it sends: true exactly

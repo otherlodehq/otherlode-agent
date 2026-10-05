@@ -347,7 +347,7 @@ class ExportSchedulerTest {
                 override fun computeManifestDeltas(
                     resource: ResourceAttributes,
                     maxEntriesPerChunk: Int,
-                ): List<ProbeRegistry.ManifestSnapshot> = throw RuntimeException("boom")
+                ): Sequence<ProbeRegistry.ManifestSnapshot> = throw RuntimeException("boom")
             }
         val exporter = RecordingExporter()
         val scheduler = ExportScheduler(config, resource, registry, EndpointRegistry(), exporter)
@@ -1886,6 +1886,77 @@ class ExportSchedulerTest {
         assertEquals(1, scenario.flush().sumOf { it.dependencies.size })
     }
 
+    /**
+     * Sends six classes of 1, 3, 2, 4, 1 and 2 probes, one skipped class and [endpoints] endpoints
+     * under [cap], and describes each manifest sent as its probes, endpoint count and skipped count.
+     */
+    private fun packedManifests(
+        cap: Int,
+        endpoints: Int,
+    ): String {
+        val registry = ProbeRegistry()
+        for ((i, n) in listOf(1, 3, 2, 4, 1, 2).withIndex()) {
+            registry.register("com.example.C$i", 1L, (0 until n).map { ProbeMeta(ProbeKind.METHOD, "m$it", "()V", it) })
+        }
+        registry.recordSkipped("com.example.Skipped", "x")
+        val endpointRegistry = EndpointRegistry()
+        repeat(endpoints) {
+            endpointRegistry.register(key = Any(), framework = "http-server", verb = "GET", verbatimTemplate = "/p$it")
+        }
+        val exporter = RecordingExporter()
+        ExportScheduler(config, resource, registry, endpointRegistry, exporter, maxManifestEntriesPerChunk = cap).flush()
+        return exporter.manifests.joinToString(" | ") { m ->
+            m.probes.joinToString(",") { it.className.substringAfterLast('.') + it.probeIndex } +
+                " ep=${m.endpoints.size} sk=${m.skippedClasses.size}"
+        }
+    }
+
+    @Test
+    fun `manifest chunks and the riders packed onto them are the ones building every chunk up front produced`() {
+        val single =
+            "C00 ep=0 sk=0 | C10,C11,C12 ep=0 sk=0 | C20,C21 ep=0 sk=0 | " +
+                "C30,C31,C32,C33 ep=0 sk=0 | C40 ep=0 sk=0 | C50,C51 ep=0 sk=0"
+        assertEquals("$single |  ep=2 sk=1 |  ep=3 sk=0", packedManifests(cap = 3, endpoints = 5))
+        assertEquals(
+            "C00,C10,C11,C12 ep=0 sk=0 | C20,C21 ep=1 sk=0 | C30,C31,C32,C33 ep=0 sk=0 | C40,C50,C51 ep=0 sk=1 |  ep=6 sk=0",
+            packedManifests(cap = 6, endpoints = 7),
+        )
+        assertEquals(
+            "C00,C10,C11,C12 ep=0 sk=0 | C20,C21,C30,C31,C32,C33 ep=0 sk=0 | C40,C50,C51 ep=0 sk=1 |  ep=8 sk=0 |  ep=5 sk=0",
+            packedManifests(cap = 8, endpoints = 13),
+        )
+        assertEquals(
+            "C00,C10,C11,C12,C20,C21 ep=1 sk=0 | C30,C31,C32,C33,C40,C50,C51 ep=0 sk=1 |  ep=12 sk=0",
+            packedManifests(cap = 12, endpoints = 13),
+        )
+    }
+
+    @Test
+    fun `a failed manifest send leaves its classes pending and never builds the chunks after it`() {
+        var chunksBuilt = 0
+        val registry =
+            object : ProbeRegistry() {
+                override fun computeManifestDeltas(
+                    resource: ResourceAttributes,
+                    maxEntriesPerChunk: Int,
+                ): Sequence<ManifestSnapshot> = super.computeManifestDeltas(resource, maxEntriesPerChunk).onEach { chunksBuilt++ }
+            }
+        for (name in listOf("A", "B", "C")) {
+            registry.register("com.example.$name", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "m", "()V", 1)))
+        }
+        val exporter = RecordingExporter()
+        var sends = 0
+        exporter.beforeManifestSend = { if (++sends == 2) throw RuntimeException("collector unreachable") }
+        // Each class weighs 2, so a cap of 2 gives one class per chunk.
+        val scheduler = ExportScheduler(config, resource, registry, EndpointRegistry(), exporter, maxManifestEntriesPerChunk = 2)
+
+        scheduler.flush()
+
+        assertEquals(1, exporter.manifests.size)
+        assertEquals(2, chunksBuilt, "the third chunk is not built once the second send failed")
+        assertEquals(2, registry.classesHoldingMetadata(), "only the first chunk's class was delivered")
+    }
+
     @Test
     fun `a flush after the listing is delivered sends one manifest, even when a class registers during its delta send`() {
         val manifestComputed = AtomicReference(CountDownLatch(1))
@@ -1894,8 +1965,12 @@ class ExportSchedulerTest {
                 override fun computeManifestDeltas(
                     resource: ResourceAttributes,
                     maxEntriesPerChunk: Int,
-                ): List<ProbeRegistry.ManifestSnapshot> =
-                    super.computeManifestDeltas(resource, maxEntriesPerChunk).also { manifestComputed.get().countDown() }
+                ): Sequence<ProbeRegistry.ManifestSnapshot> =
+                    super
+                        .computeManifestDeltas(resource, maxEntriesPerChunk)
+                        .toList()
+                        .asSequence()
+                        .also { manifestComputed.get().countDown() }
             }
         val scenario = ListingScenario("a", probeRegistry = probeRegistry)
         scenario.flush()

@@ -1016,6 +1016,17 @@ where the method tier weaves nothing, and those would otherwise be dropped and r
 flush. The two locks are taken one after the other, never nested; a failure is logged once and
 never stops a flush.
 
+Chunk 6a landed: a `ClassEntry` keeps a `kinds` byte array for the delta path and holds the rest
+of its metadata (probe locations, supertypes, references, source file, body kind, source name,
+Kotlin kind) in one volatile `ManifestData` that `advanceManifestBaseline` nulls. ADR 0008 amended:
+the manifest is send-once. `computeManifestDeltas` yields chunks lazily and the scheduler sends and
+advances each before building the next, re-checking after each yield for a class delivered in
+between; riders still pack first-fit, taken chunk by chunk, which places each where the eager code
+did (pinned on four cap and endpoint combinations, 25 checked once). Changed from Q9:
+`ProbeRegistry.manifest(resource)` stays as the test helper it was (about 240 test call sites, none
+delivering), covering classes not yet delivered and throwing on a delivered one. Over the five
+corpora (22,597 probes) the registry retained 11.0 MB after delivery before and 0.9 MB after.
+
 The 2026-10-04 measurements, method and scripts are in
 `docs/investigations/2026-10-04-agent-startup.md`,
 `docs/investigations/2026-10-04-agent-heap.md` and the `startup/` and `heap/`

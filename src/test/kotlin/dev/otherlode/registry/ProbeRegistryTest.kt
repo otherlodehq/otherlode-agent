@@ -14,6 +14,7 @@ import java.lang.ref.WeakReference
 import java.net.URLClassLoader
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -582,10 +583,11 @@ class ProbeRegistryTest {
         registry.recordSkipped("com.example.Skipped", reason = "unsafe")
 
         val chunks =
-            registry.computeManifestDeltas(
-                ResourceAttributes("checkout", null, "instance-1", null, "run-1"),
-                maxEntriesPerChunk = 5,
-            )
+            registry
+                .computeManifestDeltas(
+                    ResourceAttributes("checkout", null, "instance-1", null, "run-1"),
+                    maxEntriesPerChunk = 5,
+                ).toList()
 
         // Each of Foo and Bar weighs 3 probes + 0 edges + 1 for its own class location record = 4.
         // Foo (4) fills the first chunk on its own, since Bar (4) would push it past 5. Bar and
@@ -612,7 +614,8 @@ class ProbeRegistryTest {
                 .computeManifestDeltas(
                     ResourceAttributes("checkout", null, "instance-1", null, "run-1"),
                     maxEntriesPerChunk = 4,
-                ).isEmpty(),
+                ).toList()
+                .isEmpty(),
         )
     }
 
@@ -622,10 +625,11 @@ class ProbeRegistryTest {
         registry.register("com.example.Foo", layoutHash = 1L, probes = methodProbes(1))
         registry.register("com.example.Bar", layoutHash = 1L, probes = methodProbes(1))
         val chunks =
-            registry.computeManifestDeltas(
-                ResourceAttributes("checkout", null, "instance-1", null, "run-1"),
-                maxEntriesPerChunk = 1,
-            )
+            registry
+                .computeManifestDeltas(
+                    ResourceAttributes("checkout", null, "instance-1", null, "run-1"),
+                    maxEntriesPerChunk = 1,
+                ).toList()
         assertEquals(2, chunks.size)
 
         registry.advanceManifestBaseline(chunks[0])
@@ -828,10 +832,11 @@ class ProbeRegistryTest {
         // ConcurrentHashMap, so which chunk lands first is not guaranteed; only that the two
         // classes never land in the same chunk.
         val chunks =
-            registry.computeManifestDeltas(
-                ResourceAttributes("checkout", null, "instance-1", null, "run-1"),
-                maxEntriesPerChunk = 6,
-            )
+            registry
+                .computeManifestDeltas(
+                    ResourceAttributes("checkout", null, "instance-1", null, "run-1"),
+                    maxEntriesPerChunk = 6,
+                ).toList()
 
         assertEquals(2, chunks.size)
         val classNamesPerChunk =
@@ -948,10 +953,11 @@ class ProbeRegistryTest {
         for (i in 1..5) registry.recordUnreported("com.example.Deflected$i")
 
         val chunks =
-            registry.computeManifestDeltas(
-                ResourceAttributes("checkout", null, "instance-1", null, "run-1"),
-                maxEntriesPerChunk = 2,
-            )
+            registry
+                .computeManifestDeltas(
+                    ResourceAttributes("checkout", null, "instance-1", null, "run-1"),
+                    maxEntriesPerChunk = 2,
+                ).toList()
 
         // Each unreported class weighs one, the same weight a skipped class carries, so a cap of
         // 2 packs exactly two per chunk.
@@ -1245,10 +1251,11 @@ class ProbeRegistryTest {
         // Heavy weighs 1 probe + 2 method references + 1 class location record + 2 class references = 6;
         // Light weighs 2. Without the references they would share a chunk under a cap of 6.
         val chunks =
-            registry.computeManifestDeltas(
-                ResourceAttributes("checkout", null, "instance-1", null, "run-1"),
-                maxEntriesPerChunk = 6,
-            )
+            registry
+                .computeManifestDeltas(
+                    ResourceAttributes("checkout", null, "instance-1", null, "run-1"),
+                    maxEntriesPerChunk = 6,
+                ).toList()
 
         assertEquals(2, chunks.size)
         assertEquals(
@@ -1293,11 +1300,69 @@ class ProbeRegistryTest {
         // condition parts = 10; Light weighs 2. Without the condition parts they would share a chunk
         // under a cap of 11.
         val chunks =
-            registry.computeManifestDeltas(
-                ResourceAttributes("checkout", null, "instance-1", null, "run-1"),
-                maxEntriesPerChunk = 11,
-            )
+            registry
+                .computeManifestDeltas(
+                    ResourceAttributes("checkout", null, "instance-1", null, "run-1"),
+                    maxEntriesPerChunk = 11,
+                ).toList()
 
         assertEquals(2, chunks.size)
+    }
+
+    @Test
+    fun `a delivered class drops its probe metadata and still reports every probe kind in deltas`() {
+        val registry = ProbeRegistry()
+        val kinds =
+            listOf(
+                ProbeKind.METHOD,
+                ProbeKind.BRANCH,
+                ProbeKind.OPTIONAL_ARGUMENT,
+                ProbeKind.METHOD,
+            )
+        val delivered =
+            registry.register(
+                "com.example.Delivered",
+                1L,
+                kinds.mapIndexed { i, kind -> ProbeMeta(kind, if (i == 3) "<clinit>" else "m$i", "()V", line = i) },
+            )
+        registry.register("com.example.Pending", 1L, methodProbes(2))
+        assertEquals(2, registry.classesHoldingMetadata())
+
+        val snapshot =
+            registry
+                .computeManifestDeltas(resource, maxEntriesPerChunk = 5)
+                .first { chunk -> chunk.manifest.probes.any { it.className == "com.example.Delivered" } }
+        registry.advanceManifestBaseline(snapshot)
+        delivered.fill(1L)
+
+        assertEquals(1, registry.classesHoldingMetadata())
+        val deltas = registry.computeDeltaBatch(resource).batch.deltas
+        assertEquals(kinds, deltas.sortedBy { it.probeIndex }.map { it.kind })
+    }
+
+    @Test
+    fun `computing manifest chunks while an earlier snapshot is advanced does not send the delivered class`() {
+        val registry = ProbeRegistry()
+        registry.register("com.example.Foo", 1L, methodProbes(1))
+        registry.register("com.example.Bar", 1L, methodProbes(1))
+        val everything = registry.computeManifestDelta(resource)
+        val chunks = registry.computeManifestDeltas(resource, maxEntriesPerChunk = 1).iterator()
+
+        val first = chunks.next()
+        registry.advanceManifestBaseline(everything)
+
+        assertTrue(first.manifest.probes.size == 1)
+        assertFalse(chunks.hasNext(), "the second class was delivered between the chunks, so it is not built")
+    }
+
+    @Test
+    fun `manifest throws naming a class once it was delivered`() {
+        val registry = ProbeRegistry()
+        registry.register("com.example.Foo", 1L, methodProbes(1))
+        registry.advanceManifestBaseline(registry.computeManifestDelta(resource))
+
+        val failure = assertFailsWith<IllegalStateException> { registry.manifest(resource) }
+
+        assertTrue("com.example.Foo" in failure.message.orEmpty())
     }
 }
