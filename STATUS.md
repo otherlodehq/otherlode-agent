@@ -904,7 +904,13 @@ measurements, method and reproduction are in
 `docs/investigations/2026-10-04-agent-heap.md`, with the scripts in
 `docs/investigations/heap/`.
 
-### A Scala 3 enum nested in a class fails to transform
+### A Scala 3 enum nested in a class fails to transform: closed by ADR 0058
+
+Closed 2026-10-05: "Illegal modifiers" was ByteBuddy's type validation, which
+ADR 0058 turned off. `EnumHolder$Inner$` weaves, the scala corpus weaves 307
+of 307 classes with none failed (`CodeSizeLimitsTest`'s report), and
+`WovenClassVerificationTest` defines and initialises it beside its unwoven
+twin. What follows is the finding as recorded.
 
 Found 2026-10-04 by the overhead grill's size count. Running the real
 transformer over the `scala` benchmark corpus, `EnumHolder$Inner$` fails with
