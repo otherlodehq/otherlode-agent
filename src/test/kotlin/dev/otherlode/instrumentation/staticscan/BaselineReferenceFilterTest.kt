@@ -1,6 +1,7 @@
 package dev.otherlode.instrumentation.staticscan
 
 import dev.otherlode.Agent
+import dev.otherlode.dependencies.DependencyListingRun
 import dev.otherlode.dependencies.StartupClasspathLister
 import dev.otherlode.dependencies.TestJars
 import dev.otherlode.export.DeclaredClass
@@ -22,6 +23,7 @@ import java.io.File
 import java.nio.file.Path
 import java.time.Duration
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -365,5 +367,24 @@ class BaselineReferenceFilterTest {
                 .externalClasses
                 .isEmpty(),
         )
+    }
+
+    @Test
+    fun `filter runs the dependency listing itself when nothing has, and maps references without waiting for a flush`() {
+        val dependencies = indexedRegistry()
+        val external = externalRegistry(dependencies)
+        val runs = AtomicInteger()
+        val listing =
+            DependencyListingRun {
+                runs.incrementAndGet()
+                dependencies.addListed("lib", "org.lib.Indexed")
+                dependencies.markListingComplete()
+            }
+        val filter = BaselineReferenceFilter(dependencies, external, listingWait = Duration.ofMillis(50), dependencyListing = listing)
+
+        val filtered = filter.filter(scanReferencingEverything())
+
+        assertEquals(1, runs.get())
+        assertEquals(listOf("org.lib.Indexed", "org.gone.Missing"), filtered.declaredClasses.single().referencedClasses)
     }
 }

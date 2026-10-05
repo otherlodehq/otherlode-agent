@@ -1,6 +1,7 @@
 package dev.otherlode.export
 
 import dev.otherlode.config.AgentConfig
+import dev.otherlode.dependencies.DependencyListingRun
 import dev.otherlode.instrumentation.LoadedClassSweep
 import dev.otherlode.instrumentation.PlaceholderCounts
 import dev.otherlode.instrumentation.branch.BranchDropCounts
@@ -69,6 +70,11 @@ class ExportScheduler(
     private val staticBaselineSender: StaticBaselineSender? = null,
     /** Classes woven over a placeholder for an absent type; see [maybeLogPlaceholders]. */
     private val placeholderCounts: PlaceholderCounts = PlaceholderCounts(),
+    /**
+     * The startup dependency listing, run at the top of the first flush so that flush's sweep and
+     * manifest see every dependency. The default has nothing to run.
+     */
+    private val dependencyListing: DependencyListingRun = DependencyListingRun {},
 ) {
     private val log = System.getLogger(ExportScheduler::class.java.name)
     private var executor: ScheduledExecutorService? = null
@@ -191,6 +197,7 @@ class ExportScheduler(
      */
     fun flush(final: Boolean = false) {
         try {
+            dependencyListing.runOnce()
             maybeLogBranchDrops()
             maybeLogPlaceholders()
             maybeLogUnreadShapes()

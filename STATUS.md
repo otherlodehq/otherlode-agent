@@ -973,6 +973,14 @@ not cached). Review made the form that is not told the loader cache nothing, sin
 shared one cache across every caller of it and could have mixed two loaders' names. ADR 0017
 amended.
 
+Chunk 2 landed: `BranchKeys.digest` hexes through a lookup table, its output pinned by
+`BranchKeysPinTest` from the unchanged code; one `HttpClient`, a `Lazy` shared by both exporters,
+built by the first send; the dependency listing is a `DependencyListingRun` that runs once, at
+the top of the first flush (before its sweep, so a listed jar registers as a startup dependency
+rather than one found at load) or from the baseline reference filter before it waits, whichever
+comes first. A process whose first flush is its shutdown flush lists inside the 10 s shutdown
+budget; a flat or fat jar's listing took 0.2 to 1 s in the measurements.
+
 The 2026-10-04 measurements, method and scripts are in
 `docs/investigations/2026-10-04-agent-startup.md`,
 `docs/investigations/2026-10-04-agent-heap.md` and the `startup/` and `heap/`

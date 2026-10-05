@@ -68,7 +68,7 @@ sealed interface DependencyOrigin {
  * `~/.m2`, would put the user's name on the wire. So [register] stores it with the home folder
  * written as `~` ([withHomeAsTilde]), and [homeDirectory] is `user.home` unless a test sets it.
  *
- * Safe to use from several threads: the listing thread registers, the sweep records loads and
+ * Safe to use from several threads: the listing registers, the sweep records loads and
  * registers jars found at load on the scheduler thread, and the send pool computes and advances.
  */
 class DependencyRegistry(

@@ -21,7 +21,10 @@ import java.time.Duration
  * the exception as a signal to leave the registry baseline untouched, and
  * retries the whole delta on the next flush.
  *
- * [httpClient]'s connect timeout and each request's [requestTimeout] are both
+ * The client is built on the first send, on whichever thread sends, not when the exporter is
+ * constructed: building a JDK [HttpClient] initialises the default `SSLContext` even for an `http`
+ * URL, which is a cost the `premain` thread should not pay. Exporters given the same [lazyClient]
+ * share one client. The client's connect timeout and each request's [requestTimeout] are both
  * bounded by default. Without a timeout, a collector that accepts a
  * connection but never responds would block a send indefinitely. This can
  * happen if the collector is wedged, or if the network silently drops
@@ -35,12 +38,14 @@ import java.time.Duration
 class HttpOtlpStyleExporter(
     private val endpoint: String,
     private val authToken: String? = null,
-    private val httpClient: HttpClient = HttpClient.newBuilder().connectTimeout(DEFAULT_TIMEOUT).build(),
+    httpClient: Lazy<HttpClient> = lazyClient(),
     private val maxAttempts: Int = 5,
     private val initialBackoff: Duration = Duration.ofMillis(200),
     private val maxBackoff: Duration = Duration.ofSeconds(30),
     private val requestTimeout: Duration = DEFAULT_TIMEOUT,
 ) : Exporter {
+    private val client: HttpClient by httpClient
+
     override fun exportDeltaBatch(batch: DeltaBatch) {
         post("$endpoint/v1/otherlode/deltas", ProtoPayloadCodec.encode(batch))
     }
@@ -70,7 +75,7 @@ class HttpOtlpStyleExporter(
                             .POST(HttpRequest.BodyPublishers.ofByteArray(body))
                     if (authToken != null) requestBuilder.header("Authorization", "Bearer $authToken")
                     val request = requestBuilder.build()
-                    httpClient.send(request, HttpResponse.BodyHandlers.discarding()).statusCode()
+                    client.send(request, HttpResponse.BodyHandlers.discarding()).statusCode()
                 } catch (e: Exception) {
                     lastError = e
                     null
@@ -92,6 +97,9 @@ class HttpOtlpStyleExporter(
     private fun isRetryable(status: Int): Boolean = isRetryableStatus(status)
 
     companion object {
+        /** A client built on first use, with the default connect timeout; pass one to several exporters to share it. */
+        fun lazyClient(): Lazy<HttpClient> = lazy { HttpClient.newBuilder().connectTimeout(DEFAULT_TIMEOUT).build() }
+
         private val DEFAULT_TIMEOUT: Duration = Duration.ofSeconds(10)
 
         /** 408 and 429 are the two 4xx codes that describe the server's state at that moment, not the request itself. */

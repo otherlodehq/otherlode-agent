@@ -1,5 +1,6 @@
 package dev.otherlode.instrumentation.staticscan
 
+import dev.otherlode.dependencies.DependencyListingRun
 import dev.otherlode.instrumentation.PlatformProvidedClasses
 import dev.otherlode.registry.DependencyRegistry
 import dev.otherlode.registry.ExternalClassRegistry
@@ -35,8 +36,10 @@ import java.time.Duration
  * baseline carries none and never disagrees with the transform path; a name the transform path
  * recorded first keeps that recording.
  *
- * [filter] first waits up to [listingWait] for the startup listing to end. If it failed or is still
- * running, every reference list is emptied: with no dependencies there is nothing to map a name to.
+ * [filter] first runs [dependencyListing] if no one has, on the scan's own thread, so the scan never
+ * waits for a flush that may be a minute away; then it waits up to [listingWait] for the startup
+ * listing to end. If it failed or is still running, every reference list is emptied: with no
+ * dependencies there is nothing to map a name to.
  * A failure is logged at INFO, a timeout at WARNING, one line either way.
  */
 class BaselineReferenceFilter(
@@ -44,6 +47,7 @@ class BaselineReferenceFilter(
     private val externalClasses: ExternalClassRegistry,
     private val listingWait: Duration = DEFAULT_LISTING_WAIT,
     private val providedByPlatform: (String) -> Boolean = PlatformProvidedClasses()::provides,
+    private val dependencyListing: DependencyListingRun = DependencyListingRun {},
 ) {
     private val log = System.getLogger(BaselineReferenceFilter::class.java.name)
 
@@ -54,6 +58,7 @@ class BaselineReferenceFilter(
      */
     fun filter(result: StaticScanResult): StaticScanResult {
         try {
+            dependencyListing.runOnce()
             when (dependencies.awaitListing(listingWait)) {
                 DependencyRegistry.ListingOutcome.COMPLETE -> {
                     return keepReferences(result)

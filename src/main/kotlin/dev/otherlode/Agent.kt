@@ -3,6 +3,7 @@ package dev.otherlode
 import dev.otherlode.config.AgentConfig
 import dev.otherlode.config.IncludeRulesRefusal
 import dev.otherlode.config.MainClassSuggestion
+import dev.otherlode.dependencies.DependencyListingRun
 import dev.otherlode.dependencies.DependencyResolver
 import dev.otherlode.dependencies.JarClassifier
 import dev.otherlode.dependencies.ListedDependency
@@ -201,18 +202,21 @@ object Agent {
         try {
             // Made once here and shared, so every payload this process sends names the same run.
             val resource = ResourceAttributes.forNewRun(config)
-            val exporter = HttpOtlpStyleExporter(config.exportUrl, config.authToken)
+            // One client for every exporter, built by the first send rather than on this thread.
+            val httpClient = HttpOtlpStyleExporter.lazyClient()
+            val exporter = HttpOtlpStyleExporter(config.exportUrl, config.authToken, httpClient)
             // Shared by the scan, which sends first with the exporter's full retries, and the
             // scheduler, which resends what failed with one attempt per chunk.
             val staticBaselineSender =
                 if (config.staticBaselineEnabled) {
                     StaticBaselineSender(
                         exporter,
-                        retryExporter = HttpOtlpStyleExporter(config.exportUrl, config.authToken, maxAttempts = 1),
+                        retryExporter = HttpOtlpStyleExporter(config.exportUrl, config.authToken, httpClient, maxAttempts = 1),
                     )
                 } else {
                     null
                 }
+            val dependencyListing = dependencyListingRun(config, dependencyRegistry)
             val started =
                 ExportScheduler(
                     config,
@@ -233,12 +237,14 @@ object Agent {
                     dependencyRegistry = dependencyRegistry,
                     externalClassRegistry = externalClassRegistry,
                     staticBaselineSender = staticBaselineSender,
+                    dependencyListing = dependencyListing,
                 )
             scheduler = started
             started.start()
             val scanWorker =
                 if (staticBaselineSender != null) {
-                    val referenceFilter = BaselineReferenceFilter(dependencyRegistry, externalClassRegistry)
+                    val referenceFilter =
+                        BaselineReferenceFilter(dependencyRegistry, externalClassRegistry, dependencyListing = dependencyListing)
                     staticBaselineScanThread(
                         config,
                         resource,
@@ -257,7 +263,6 @@ object Agent {
                 }, "otherlode-shutdown-hook")
             addShutdownHook(hook)
             shutdownHook = hook
-            startDependencyListing(config, dependencyRegistry)
             scanWorker?.start()
             return Running(
                 started,
@@ -363,15 +368,17 @@ object Agent {
     }
 
     /**
-     * Lists the startup classpath's dependencies on its own daemon thread, off `premain`: judging
-     * whether a jar is the adopter's own reads every entry name, and in a fat jar that means
-     * streaming each nested jar. Runs once per process, always. With the static baseline enabled
-     * it also keeps every dependency's class names for the registry's class index.
+     * The startup classpath listing, not yet run: judging whether a jar is the adopter's own reads
+     * every entry name, and in a fat jar that means streaming each nested jar, so it does not run
+     * on `premain`. The first flush runs it before its sweep, and the static baseline scan runs it
+     * before waiting on it, whichever comes first. It runs once per process, always. With the
+     * static baseline enabled it also keeps every dependency's class names for the registry's
+     * class index.
      */
-    private fun startDependencyListing(
+    private fun dependencyListingRun(
         config: AgentConfig,
         registry: DependencyRegistry,
-    ) {
+    ): DependencyListingRun {
         val lister =
             StartupClasspathLister(
                 config.includePackages,
@@ -379,17 +386,14 @@ object Agent {
                 onNotADependency = registry::recordNotADependency,
                 keepClassNames = config.staticBaselineEnabled,
             )
-        val worker =
-            Thread({
-                recordAgentJar(
-                    Agent::class.java.protectionDomain.codeSource
-                        ?.location,
-                    registry,
-                )
-                runDependencyListing(lister::list, registry)
-            }, "otherlode-dependency-listing")
-        worker.isDaemon = true
-        worker.start()
+        return DependencyListingRun {
+            recordAgentJar(
+                Agent::class.java.protectionDomain.codeSource
+                    ?.location,
+                registry,
+            )
+            runDependencyListing(lister::list, registry)
+        }
     }
 
     /**

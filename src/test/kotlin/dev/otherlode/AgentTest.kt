@@ -155,6 +155,25 @@ class AgentTest {
     }
 
     @Test
+    fun `a successful start spawns no dependency listing thread, since the first flush runs the listing`() {
+        val before = currentThreadNames()
+        val running =
+            Agent.start(
+                "includePackages=dev.otherlode.neverloaded.fixture,flushIntervalSeconds=3600",
+                ByteBuddyAgent.install(),
+            )
+
+        try {
+            assertNotNull(running)
+            Thread.sleep(200)
+            val started = currentThreadNames() - before
+            assertTrue(started.none { it.contains("listing") }, "unexpected listing thread: $started")
+        } finally {
+            running?.stop()
+        }
+    }
+
+    @Test
     fun `premain with no include rules returns quietly`() {
         val calls = mutableListOf<String>()
 
@@ -341,24 +360,35 @@ class AgentTest {
     }
 
     @Test
-    fun `start runs the dependency listing on its own thread and marks it complete`() {
+    fun `start leaves the dependency listing to the first flush, which runs it and marks it complete`() {
+        val collector = HttpServer.create(InetSocketAddress("localhost", 0), 0)
+        collector.createContext("/") { exchange ->
+            exchange.requestBody.readBytes()
+            exchange.sendResponseHeaders(200, -1)
+            exchange.close()
+        }
+        collector.start()
         val instrumentation = ByteBuddyAgent.install()
 
         val running =
             Agent.start(
-                "includePackages=dev.otherlode.neverloaded.fixture,flushIntervalSeconds=3600,endpointsEnabled=false",
+                "includePackages=dev.otherlode.neverloaded.fixture,flushIntervalSeconds=3600,endpointsEnabled=false," +
+                    "exportUrl=http://localhost:${collector.address.port}",
                 instrumentation,
             )
         try {
             assertNotNull(running)
-            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
-            while (!running.dependencyRegistry.isListingComplete && System.nanoTime() < deadline) Thread.sleep(20)
-            assertTrue(running.dependencyRegistry.isListingComplete, "the listing thread never finished")
+            assertFalse(running.dependencyRegistry.isListingComplete, "start must not list dependencies")
+
+            running.scheduler.flush()
+
+            assertTrue(running.dependencyRegistry.isListingComplete, "the first flush must have run the listing")
             // The test classpath carries the Kotlin stdlib as a jar, and nothing in it is under the include rules.
             assertTrue(running.dependencyRegistry.entries().any { entry -> entry.identities.any { it.artifactId == "kotlin-stdlib" } })
             assertEquals(0, running.dependencyRegistry.classIndexSize, "no class index without the static baseline")
         } finally {
             running?.stop()
+            collector.stop(0)
         }
     }
 

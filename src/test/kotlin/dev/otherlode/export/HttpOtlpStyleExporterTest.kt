@@ -4,6 +4,7 @@ import com.sun.net.httpserver.HttpServer
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.ServerSocket
+import java.net.http.HttpClient
 import java.time.Duration
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
@@ -237,5 +238,36 @@ class HttpOtlpStyleExporterTest {
 
         assertEquals(1, requestCount.get())
         assertEquals(401, failure.statusCode)
+    }
+
+    @Test
+    fun `constructing an exporter builds no client, and the first export builds it once`() {
+        val endpoint = startServer { 200 }
+        val built = AtomicInteger()
+        val client = lazy { built.incrementAndGet().let { HttpClient.newHttpClient() } }
+        val exporter = HttpOtlpStyleExporter(endpoint = endpoint, httpClient = client)
+        assertEquals(0, built.get())
+
+        val batch = DeltaBatch(ResourceAttributes("checkout", "1.0.0", "i-1", "test", "run-1"), emptyList())
+        exporter.exportDeltaBatch(batch)
+        exporter.exportDeltaBatch(batch)
+
+        assertEquals(1, built.get())
+    }
+
+    @Test
+    fun `two exporters sharing one lazy client build one client between them`() {
+        val endpoint = startServer { 200 }
+        val built = AtomicInteger()
+        val client = lazy { built.incrementAndGet().let { HttpClient.newHttpClient() } }
+        val first = HttpOtlpStyleExporter(endpoint = endpoint, httpClient = client)
+        val second = HttpOtlpStyleExporter(endpoint = endpoint, httpClient = client, maxAttempts = 1)
+        val batch = DeltaBatch(ResourceAttributes("checkout", "1.0.0", "i-1", "test", "run-1"), emptyList())
+
+        first.exportDeltaBatch(batch)
+        second.exportDeltaBatch(batch)
+
+        assertEquals(1, built.get())
+        assertEquals(2, requestCount.get())
     }
 }

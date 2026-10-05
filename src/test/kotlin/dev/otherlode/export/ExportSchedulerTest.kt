@@ -2,6 +2,7 @@ package dev.otherlode.export
 
 import dev.otherlode.Agent
 import dev.otherlode.config.AgentConfig
+import dev.otherlode.dependencies.DependencyListingRun
 import dev.otherlode.dependencies.LoadedDependencyCounter
 import dev.otherlode.dependencies.StartupClasspathLister
 import dev.otherlode.dependencies.TestJars
@@ -1988,5 +1989,93 @@ class ExportSchedulerTest {
         val entry = sent.indexOfFirst { it is ProbeManifest && it.dependencies.any { d -> d.dependencyId == listedId } }
         assertTrue(delta >= 0, "the counted class must go out on a confirmed delta batch")
         assertTrue(entry > delta, "the entry must follow its confirmed delta: delta at $delta, entry at $entry")
+    }
+
+    private fun listingScenario(
+        events: MutableList<String>,
+        listingRuns: AtomicInteger,
+    ): ExportScheduler {
+        val registry = ProbeRegistry(confirmsDefinitions = true)
+        val sweep = RecordingSweep(ByteBuddyAgent.install(), registry, config) { synchronized(events) { events += "sweep" } }
+        return ExportScheduler(
+            config,
+            resource,
+            registry,
+            EndpointRegistry(),
+            RecordingExporter(),
+            loadedClassSweep = sweep,
+            dependencyRegistry = DependencyRegistry().apply { markListingComplete() },
+            dependencyListing =
+                DependencyListingRun {
+                    listingRuns.incrementAndGet()
+                    synchronized(events) { events += "listing" }
+                },
+        )
+    }
+
+    @Test
+    fun `the first flush runs the dependency listing before its sweep, and a second flush does not run it again`() {
+        val events = mutableListOf<String>()
+        val listingRuns = AtomicInteger()
+        val scheduler = listingScenario(events, listingRuns)
+
+        scheduler.flush()
+        scheduler.flush()
+
+        assertEquals(listOf("listing", "sweep", "sweep"), synchronized(events) { events.toList() })
+        assertEquals(1, listingRuns.get())
+    }
+
+    @Test
+    fun `the shutdown flush runs the dependency listing when no flush ran before`() {
+        val events = mutableListOf<String>()
+        val listingRuns = AtomicInteger()
+        val scheduler = listingScenario(events, listingRuns)
+
+        scheduler.flushOnShutdown(Duration.ofSeconds(10))
+
+        assertEquals(1, listingRuns.get())
+        assertEquals(listOf("listing", "sweep"), synchronized(events) { events.toList() })
+    }
+
+    @Test
+    fun `a jar the first flush's own listing registers is a startup classpath dependency, not one discovered at load`(
+        @TempDir dir: Path,
+    ) {
+        val includes = listOf("com.acme")
+        val jar =
+            TestJars.write(
+                dir.resolve("listed-1.0.jar"),
+                listOf(TestJars.pom("org.listed", "listed", "1.0"), TestJars.loadableClassEntry("org.listed.One")),
+            )
+        val dependencyRegistry = DependencyRegistry()
+        val loaded = Class.forName("org.listed.One", true, URLClassLoader(arrayOf(jar.toUri().toURL()), null))
+        val agentConfig = AgentConfig.parse("serviceName=checkout,includePackages=com.acme")
+        val probeRegistry = ProbeRegistry()
+        val exporter = RecordingExporter()
+        val lister = StartupClasspathLister(includes, emptyList(), jar.toString())
+        val scheduler =
+            ExportScheduler(
+                agentConfig,
+                TestResources.forConfig(agentConfig),
+                probeRegistry,
+                EndpointRegistry(),
+                exporter,
+                loadedClassSweep =
+                    LoadedClassSweep(
+                        ByteBuddyAgent.install(),
+                        probeRegistry,
+                        agentConfig,
+                        LoadedDependencyCounter(dependencyRegistry, includes, emptyList()),
+                    ),
+                dependencyRegistry = dependencyRegistry,
+                dependencyListing = DependencyListingRun { Agent.runDependencyListing(lister::list, dependencyRegistry) },
+            )
+
+        scheduler.flush()
+        Reference.reachabilityFence(loaded)
+
+        val dependency = exporter.manifests.flatMap { it.dependencies }.single { d -> d.identities.any { it.artifactId == "listed" } }
+        assertEquals(DependencyDiscoverySource.STARTUP_CLASSPATH, dependency.discoverySource)
     }
 }

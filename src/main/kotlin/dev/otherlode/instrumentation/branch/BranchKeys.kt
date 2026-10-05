@@ -30,6 +30,11 @@ object BranchKeys {
 
     private const val SEPARATOR = "\u0000"
 
+    /** The key is the first 16 bytes of the digest, two hex digits each. */
+    private const val HEX_CHARS = 32
+
+    private val HEX_DIGITS = "0123456789abcdef".toCharArray()
+
     /**
      * One method's tracked sites collide when they share a [conditionFingerprint] and
      * [inlinedFromClassName]. A switch's [conditionFingerprint] never covers its case keys, so
@@ -161,6 +166,12 @@ object BranchKeys {
                 outcomeToken,
             ).joinToString(SEPARATOR)
         val hash = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
-        return hash.take(16).joinToString("") { "%02x".format(it) }
+        val hex = CharArray(HEX_CHARS)
+        for (i in 0 until HEX_CHARS / 2) {
+            val byte = hash[i].toInt()
+            hex[2 * i] = HEX_DIGITS[(byte shr 4) and 0xF]
+            hex[2 * i + 1] = HEX_DIGITS[byte and 0xF]
+        }
+        return String(hex)
     }
 }
