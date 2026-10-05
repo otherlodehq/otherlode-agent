@@ -237,11 +237,14 @@ adopter's collector forwards to one multi-tenant backend.
      release 21 to 17, since at 21 the dynamic-constant probe path had no
      window test on a JDK 17, and narrowed the JaCoCo-ahead comparison to
      drop only the two release-21 classes on 17.
-   - Luke's steps, needed before the rehearsal: the `releases@otherlode.dev`
-     mailbox (Google), the Portal account, the `dev.otherlode` namespace and
-     its TXT record on the apex `otherlode.dev`, a Portal user token, the
-     signing key and its upload to both keyservers, the four secrets in the
-     `release` environment, and the `v*` tag ruleset.
+   - Luke's steps, needed before the rehearsal. Done on 2026-10-05: the
+     `releases@otherlode.dev` group (Google Workspace, external posting on),
+     the signing key (fingerprints and expiry under "Reminders for expiring
+     keys and credentials") on keys.openpgp.org and keyserver.ubuntu.com, the
+     Portal account (`luke@otherlode.dev`), the `dev.otherlode` namespace,
+     verified by its TXT record on the apex `otherlode.dev`, and a Portal user
+     token. Left, once chunk 3 names them: the secrets in the `release`
+     environment and the `v*` tag ruleset.
    - A flaky test now blocks a release: `CodeSourceClassFileTest`'s warm-up
      tests failed on CI on 2026-10-05 (runs 37353518574 and 37360423743, a
      different test each time) and passed on rerun. To fix before `0.1.0`.
