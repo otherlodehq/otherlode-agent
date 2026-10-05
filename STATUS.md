@@ -1007,6 +1007,15 @@ primes the cache with a class's old file before a HotSwap-shaped redefinition to
 over the corpora fell from 715 to 236 (demo), 5,858 to 1,442 (spring-webmvc), 5,140 to 1,048
 (ktor-server-core) and 2,375 to 649 (scala); the woven bytes hash identically before and after.
 
+Chunk 5 landed: after each flush's sends (not the shutdown flush), the flush thread calls
+`OtherlodeInstrumentation.releaseQuietCaches()`, which removes the table cache and drops the
+byte-cache entries of every loader that was quiet since the previous call. Widened from the
+grilled wording ("no first weave"): a loader is active if it asked for its table cache or touched
+the byte cache from either tier, since the JAX-RS walk reads through the byte cache on loaders
+where the method tier weaves nothing, and those would otherwise be dropped and refilled on every
+flush. The two locks are taken one after the other, never nested; a failure is logged once and
+never stops a flush.
+
 The 2026-10-04 measurements, method and scripts are in
 `docs/investigations/2026-10-04-agent-startup.md`,
 `docs/investigations/2026-10-04-agent-heap.md` and the `startup/` and `heap/`

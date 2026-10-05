@@ -302,6 +302,12 @@ object BranchSiteAnalyzer {
         val size: Int
             get() = synchronized(tables) { tables.size }
 
+        /** Forgets every table and release held; the next lookup reads again. */
+        fun clear() {
+            synchronized(tables) { tables.clear() }
+            synchronized(releases) { releases.clear() }
+        }
+
         internal fun getOrRead(
             internalName: String,
             read: () -> MethodTable?,

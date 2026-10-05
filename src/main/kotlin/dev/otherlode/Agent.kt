@@ -247,6 +247,7 @@ object Agent {
                     externalClassRegistry = externalClassRegistry,
                     staticBaselineSender = staticBaselineSender,
                     dependencyListing = dependencyListing,
+                    releaseQuietCaches = otherlodeInstrumentation::releaseQuietCaches,
                 )
             scheduler = started
             started.start()

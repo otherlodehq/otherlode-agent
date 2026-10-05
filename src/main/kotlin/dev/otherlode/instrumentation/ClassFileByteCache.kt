@@ -4,6 +4,9 @@ import net.bytebuddy.agent.builder.AgentBuilder
 import net.bytebuddy.dynamic.ClassFileLocator
 import java.lang.ref.ReferenceQueue
 import java.lang.ref.WeakReference
+import java.util.Collections
+import java.util.IdentityHashMap
+import java.util.WeakHashMap
 
 /**
  * A JVM-wide, bounded cache of class-file bytes, in front of [ClassFileLocator.ForClassLoader].
@@ -25,6 +28,11 @@ import java.lang.ref.WeakReference
  * the class file and the one the class was woven from (ADR 0053), where a cached copy of a class
  * that was HotSwapped would let edited code through on the old plan.
  *
+ * Each lookup or store marks its loader active. [takeActiveLoaders] reports the marked loaders and
+ * clears the marks, and [dropLoadersNotIn] drops the entries of every loader that is neither in the
+ * set it is given nor marked since, which is how the agent releases the entries of a loader that has
+ * stopped defining classes. A dropped entry refills on demand.
+ *
  * An entry can be wrong only for a class whose file appears or changes during the process, a miss
  * for one that is added later or bytes for one that is rewritten; only [dropLoader] or [dropAll]
  * fixes it. The arrays handed out are shared, so a reader must not modify them.
@@ -35,6 +43,8 @@ class ClassFileByteCache(
     private val queue = ReferenceQueue<ClassLoader>()
     private val entries = LinkedHashMap<Key, ByteArray?>(INITIAL_CAPACITY, LOAD_FACTOR, true)
     private var weight = 0L
+    private val activeLoaders: MutableSet<ClassLoader> = Collections.newSetFromMap(WeakHashMap())
+    private var bootstrapActive = false
 
     /** The number of cached entries, negative ones included. */
     val size: Int get() =
@@ -71,6 +81,47 @@ class ClassFileByteCache(
         }
     }
 
+    /**
+     * The loaders (null for the bootstrap loader) that looked up or stored an entry since the last
+     * call, and clears the marks.
+     */
+    fun takeActiveLoaders(): Set<ClassLoader?> {
+        val taken = Collections.newSetFromMap(IdentityHashMap<ClassLoader?, Boolean>())
+        synchronized(this) {
+            taken.addAll(activeLoaders)
+            if (bootstrapActive) taken.add(null)
+            activeLoaders.clear()
+            bootstrapActive = false
+        }
+        return taken
+    }
+
+    /**
+     * Forgets the entries of every loader that is not in [keep] and has not been marked active since
+     * the marks were last cleared. Takes this cache's lock only.
+     */
+    fun dropLoadersNotIn(keep: Set<ClassLoader?>) {
+        synchronized(this) {
+            purge()
+            val iterator = entries.entries.iterator()
+            while (iterator.hasNext()) {
+                val entry = iterator.next()
+                val loader = entry.key.get()
+                val bootstrap = entry.key.isLoader(null)
+                val kept =
+                    if (bootstrap) {
+                        bootstrapActive || null in keep
+                    } else {
+                        loader == null || loader in activeLoaders || loader in keep
+                    }
+                if (!kept) {
+                    weight -= weightOf(entry.value)
+                    iterator.remove()
+                }
+            }
+        }
+    }
+
     /** Forgets everything cached. */
     fun dropAll() {
         synchronized(this) {
@@ -86,6 +137,10 @@ class ClassFileByteCache(
         }
     }
 
+    private fun markActive(classLoader: ClassLoader?) {
+        if (classLoader == null) bootstrapActive = true else activeLoaders.add(classLoader)
+    }
+
     private fun weightOf(bytes: ByteArray?): Long = bytes?.size?.toLong() ?: NEGATIVE_WEIGHT
 
     private fun lookup(
@@ -95,6 +150,7 @@ class ClassFileByteCache(
         val probe = Key(classLoader, name, null)
         synchronized(this) {
             purge()
+            markActive(classLoader)
             if (entries.containsKey(probe)) return Cached(entries[probe])
         }
         return Cached(null, miss = true)
@@ -109,6 +165,7 @@ class ClassFileByteCache(
         if (entryWeight > capBytes) return
         synchronized(this) {
             purge()
+            markActive(classLoader)
             val probe = Key(classLoader, name, null)
             if (entries.containsKey(probe)) {
                 weight -= weightOf(entries.put(probe, bytes))

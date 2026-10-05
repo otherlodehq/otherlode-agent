@@ -75,6 +75,11 @@ class ExportScheduler(
      * manifest see every dependency. The default has nothing to run.
      */
     private val dependencyListing: DependencyListingRun = DependencyListingRun {},
+    /**
+     * Releases transform-time caches of loaders that went quiet, called once per flush after its
+     * sends, the shutdown flush excepted. The default releases nothing.
+     */
+    private val releaseQuietCaches: () -> Unit = {},
 ) {
     private val log = System.getLogger(ExportScheduler::class.java.name)
     private var executor: ScheduledExecutorService? = null
@@ -82,6 +87,7 @@ class ExportScheduler(
     private val unreadShapesLogged = AtomicBoolean(false)
     private val placeholdersLogged = AtomicBoolean(false)
     private val receivedBytesClassesLogged = AtomicBoolean(false)
+    private val cacheReleaseFailureLogged = AtomicBoolean(false)
 
     /** Set once a manifest carrying `dependenciesListed = true` was confirmed; see [sendDependenciesListedIfDue]. */
     private val dependenciesListedSent = AtomicBoolean(false)
@@ -220,8 +226,20 @@ class ExportScheduler(
                 // never holds up a heartbeat or spends the shutdown budget.
                 if (!final) staticBaselineSender?.retryPending()
             }
+            if (!final) releaseCaches()
         } catch (t: Throwable) {
             log.log(Level.ERROR, "otherlode: flush failed outside its own send guards, will retry next flush", t)
+        }
+    }
+
+    /** Calls [releaseQuietCaches]; a failure is logged once and never reaches the flush. */
+    private fun releaseCaches() {
+        try {
+            releaseQuietCaches()
+        } catch (t: Throwable) {
+            if (cacheReleaseFailureLogged.compareAndSet(false, true)) {
+                log.log(Level.WARNING, "otherlode: releasing transform-time caches failed; the caches stay as they are", t)
+            }
         }
     }
 

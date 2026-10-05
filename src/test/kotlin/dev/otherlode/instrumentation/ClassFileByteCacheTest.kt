@@ -208,4 +208,44 @@ class ClassFileByteCacheTest {
         cache.read(loader, "a.Missing")
         return WeakReference(loader)
     }
+
+    @Test
+    fun `a loader that read or stored is reported active once, and the report clears the marks`() {
+        val loaderA = ServingLoader(mapOf("a.A" to bytes(10)))
+        val loaderB = ServingLoader(mapOf("a.A" to bytes(10)))
+        val cache = ClassFileByteCache()
+
+        cache.read(loaderA, "a.A")
+        cache.read(null, "java.lang.Object")
+        cache.read(loaderA, "a.A")
+
+        val active = cache.takeActiveLoaders()
+        assertTrue(loaderA in active)
+        assertTrue(null in active)
+        assertFalse(loaderB in active)
+        assertTrue(cache.takeActiveLoaders().isEmpty())
+    }
+
+    @Test
+    fun `dropping the loaders not in a set keeps active and listed loaders and drops the rest`() {
+        val quiet = ServingLoader(mapOf("a.A" to bytes(10)))
+        val listed = ServingLoader(mapOf("a.A" to bytes(10)))
+        val active = ServingLoader(mapOf("a.A" to bytes(10)))
+        val cache = ClassFileByteCache()
+        cache.read(quiet, "a.A")
+        cache.read(listed, "a.A")
+        cache.read(null, "java.lang.Object")
+        cache.takeActiveLoaders()
+        cache.read(active, "a.A")
+
+        cache.dropLoadersNotIn(setOf(listed))
+
+        assertEquals(2, cache.size)
+        cache.read(quiet, "a.A")
+        cache.read(listed, "a.A")
+        cache.read(active, "a.A")
+        assertEquals(2, quiet.readsOf("a.A"))
+        assertEquals(1, listed.readsOf("a.A"))
+        assertEquals(1, active.readsOf("a.A"))
+    }
 }

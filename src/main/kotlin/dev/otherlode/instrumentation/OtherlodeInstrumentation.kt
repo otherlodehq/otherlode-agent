@@ -77,6 +77,8 @@ import net.bytebuddy.pool.TypePool
 import net.bytebuddy.utility.JavaModule
 import java.lang.System.Logger.Level
 import java.lang.instrument.Instrumentation
+import java.util.Collections
+import java.util.IdentityHashMap
 import java.util.WeakHashMap
 
 private fun bindingFor(
@@ -199,11 +201,52 @@ class OtherlodeInstrumentation(
     private val tableCaches = WeakHashMap<ClassLoader, BranchSiteAnalyzer.CrossClassTableCache>()
     private val bootstrapTableCache = BranchSiteAnalyzer.CrossClassTableCache(TRANSFORM_TABLE_CACHE_ENTRIES)
 
+    private val tableActive: MutableSet<ClassLoader> = Collections.newSetFromMap(WeakHashMap())
+
+    @Volatile
+    private var bootstrapTableActive = false
+
     private fun tableCacheFor(classLoader: ClassLoader?): BranchSiteAnalyzer.CrossClassTableCache {
-        if (classLoader == null) return bootstrapTableCache
+        if (classLoader == null) {
+            bootstrapTableActive = true
+            return bootstrapTableCache
+        }
         return synchronized(tableCaches) {
+            tableActive.add(classLoader)
             tableCaches.getOrPut(classLoader) { BranchSiteAnalyzer.CrossClassTableCache(TRANSFORM_TABLE_CACHE_ENTRIES) }
         }
+    }
+
+    /**
+     * Releases what the transform path holds for every loader that has been quiet since the previous
+     * call: its table cache is removed (emptied, for the bootstrap loader) and its class-file bytes
+     * are dropped. A loader is active when it asked for its table cache or touched the byte cache,
+     * from either tier, in that span; the marks are cleared by each call, so a loader is released
+     * one or two calls after its last use. A later transform refills what was released, which costs
+     * time and nothing else.
+     *
+     * Meant for the flush thread. The two locks, `tableCaches` and the byte cache's, are taken one
+     * after the other and never nested, so no order of them can deadlock. A transform in flight
+     * keeps the table cache it already holds, which is garbage only after that transform.
+     */
+    fun releaseQuietCaches() {
+        val byteActive = classFileCache.takeActiveLoaders()
+        synchronized(tableCaches) {
+            val iterator = tableCaches.keys.iterator()
+            while (iterator.hasNext()) {
+                val loader = iterator.next()
+                if (loader !in tableActive && loader !in byteActive) iterator.remove()
+            }
+            tableActive.clear()
+        }
+        val bootstrapActive = bootstrapTableActive || null in byteActive
+        bootstrapTableActive = false
+        if (!bootstrapActive) bootstrapTableCache.clear()
+        val keep = Collections.newSetFromMap(IdentityHashMap<ClassLoader?, Boolean>())
+        keep.addAll(byteActive)
+        if (bootstrapActive) keep.add(null)
+        synchronized(tableCaches) { keep.addAll(tableCaches.keys) }
+        classFileCache.dropLoadersNotIn(keep)
     }
 
     /** How many parsed tables the cache for [classLoader] holds; for tests. */

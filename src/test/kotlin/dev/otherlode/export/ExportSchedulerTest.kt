@@ -2078,4 +2078,37 @@ class ExportSchedulerTest {
         val dependency = exporter.manifests.flatMap { it.dependencies }.single { d -> d.identities.any { it.artifactId == "listed" } }
         assertEquals(DependencyDiscoverySource.STARTUP_CLASSPATH, dependency.discoverySource)
     }
+
+    @Test
+    fun `each flush calls the quiet cache release once`() {
+        val calls = AtomicInteger()
+        val scheduler =
+            ExportScheduler(config, resource, ProbeRegistry(), EndpointRegistry(), RecordingExporter(), releaseQuietCaches = {
+                calls.incrementAndGet()
+            })
+
+        scheduler.flush()
+        scheduler.flush()
+
+        assertEquals(2, calls.get())
+    }
+
+    @Test
+    fun `a quiet cache release that throws does not stop the flush from sending its delta batch`() {
+        val exporter = RecordingExporter()
+        val scheduler =
+            ExportScheduler(
+                config,
+                resource,
+                ProbeRegistry(),
+                EndpointRegistry(),
+                exporter,
+                releaseQuietCaches = { throw IllegalStateException("release failed") },
+            )
+
+        scheduler.flush()
+        scheduler.flush()
+
+        assertEquals(2, exporter.deltaBatches.size)
+    }
 }
