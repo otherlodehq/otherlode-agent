@@ -554,6 +554,18 @@ startup 15.2 s to 64.0 s. The README carries the table. The headline budget
 (throughput and p95 within noise) holds. Startup is the cost that stands out,
 amplified on one core, and is the investigation below, still to grill.
 
+One flush timed on its own (2026-10-05): `FlushBenchmark` runs the real
+`ExportScheduler.flush()` over a registry filled from the real transformer's
+registrations, encoding every payload and sending nothing. At the five corpora
+together (1,195 classes, 22,597 probes): a steady flush with a tenth of probes
+changed 0.16 ms and 650 KB allocated, an empty heartbeat 0.04 ms and 200 KB, the
+first flush with the whole manifest 22 ms and 40 MB; at the demo's 2,623 probes
+0.02, 0.01 and 1.4 ms. Allocation is dominated by copying each count array, about
+8 bytes a probe a flush. The loaded-class sweep, timed against the benchmark
+JVM's own 4,900 classes, takes 0.5 ms. The first flush scales with the manifest:
+the ceiling's 100,302 probes would take about 100 ms and 180 MB once, which
+belongs to the heap investigation.
+
 The nightly schedule (a cron trigger and a job committing results to a
 `benchmark-results` branch) is built only as far as the brief: auto mode's
 classifier refused the workflow edit that adds a scheduled job pushing

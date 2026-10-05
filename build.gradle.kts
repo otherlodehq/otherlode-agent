@@ -624,6 +624,15 @@ jmh {
     jvmArgsAppend.add("-Djdk.attach.allowAttachSelf=true")
     providers.gradleProperty("otherlode.benchmark.include").orNull?.let { includes.add(it) }
     jvmArgsAppend.addAll(provider { benchmarkCorpusProperties().map { (key, value) -> "-D$key=$value" } })
+    jvmArgsAppend.addAll(
+        provider {
+            codeSizeClasspaths.map { (classSet, files) ->
+                val path = files.asPath
+                check(' ' !in path) { "code-size classpath $classSet has a space in its path: $path" }
+                "-Dotherlode.codesize.classpath.$classSet=$path"
+            }
+        },
+    )
     providers.gradleProperty("otherlode.benchmark.corpus").orNull?.let { selected ->
         benchmarkParameters.put("corpus", objects.listProperty<String>().value(selected.split(',').map { it.trim() }))
     }
@@ -631,6 +640,7 @@ jmh {
 
 tasks.named("jmh") {
     inputs.files(benchmarkCorpusFiles).withPropertyName("benchmarkCorpora")
+    inputs.files(codeSizeClasspaths.values).withPropertyName("codeSizeClasspaths")
 }
 
 // BenchmarkCorpusTest compiles against the benchmark's own corpus loader. So every build also
