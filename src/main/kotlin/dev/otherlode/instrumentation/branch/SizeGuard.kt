@@ -207,7 +207,7 @@ object SizeGuard {
      * A method with at most 8000 bytes of code that the entry probe alone pushes past 8000 is named in
      * [SizeGuardResult.entryPastLimit] and loses nothing, whether or not it has sites, since the
      * guard walks every probed method's length and not only those with sites. A class whose method
-     * lengths cannot be read is left alone.
+     * lengths cannot be read is left alone. [classReader] reads [classBytes] when the caller has one.
      */
     internal fun apply(
         sites: MutableList<BranchSite>,
@@ -215,10 +215,11 @@ object SizeGuard {
         receivedBytes: ByteArray?,
         isProbed: (name: String, descriptor: String) -> Boolean,
         droppedOrdinalsByMethod: MutableMap<Pair<String, String>, MutableSet<Int>>,
+        classReader: ClassReader? = null,
         jumpOpcodes: (Pair<String, String>) -> IntArray?,
     ): SizeGuardResult {
-        val lengths = readLengths(classBytes) ?: return SizeGuardResult.NONE
-        val received = receivedBytes?.takeIf { !it.contentEquals(classBytes) }?.let(::readLengths)
+        val lengths = readLengths(classBytes, classReader) ?: return SizeGuardResult.NONE
+        val received = receivedBytes?.takeIf { !it.contentEquals(classBytes) }?.let { readLengths(it) }
         val indicesByMethod = LinkedHashMap<Pair<String, String>, MutableList<Int>>()
         sites.forEachIndexed { index, site ->
             indicesByMethod.getOrPut(site.methodName to site.methodDescriptor) { mutableListOf() } += index
@@ -307,9 +308,12 @@ object SizeGuard {
         return guarded
     }
 
-    private fun readLengths(bytes: ByteArray): Map<Pair<String, String>, Int>? =
+    private fun readLengths(
+        bytes: ByteArray,
+        reader: ClassReader? = null,
+    ): Map<Pair<String, String>, Int>? =
         try {
-            codeLengths(bytes)
+            codeLengths(reader ?: ClassReader(bytes))
         } catch (_: RuntimeException) {
             null
         }
@@ -350,8 +354,10 @@ object SizeGuard {
         opcode in Opcodes.IFEQ..Opcodes.JSR || opcode == Opcodes.IFNULL || opcode == Opcodes.IFNONNULL
 
     /** The `Code` attribute's code length of each method, keyed by name and descriptor, read from the method table alone. */
-    internal fun codeLengths(classBytes: ByteArray): Map<Pair<String, String>, Int> {
-        val reader = ClassReader(classBytes)
+    internal fun codeLengths(classBytes: ByteArray): Map<Pair<String, String>, Int> = codeLengths(ClassReader(classBytes))
+
+    /** [codeLengths] over a reader the caller already holds. */
+    internal fun codeLengths(reader: ClassReader): Map<Pair<String, String>, Int> {
         val buffer = CharArray(reader.maxStringLength)
         var offset = reader.header + CLASS_HEADER_REST
         offset += 2 + 2 * reader.readUnsignedShort(offset)

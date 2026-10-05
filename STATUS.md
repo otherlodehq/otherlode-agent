@@ -1102,6 +1102,14 @@ ceiling rerun's unreported set is back to `MetaInfVersionsInfo` alone. `releaseQ
 the `java.*` pool when no loader was active since the previous call. ADR 0052 amended for the
 warm-up and its window.
 
+Chunk 7d landed: the main analysis pass records each method's tracked-instruction sequence for
+`SitePairing` while it visits, and one `ClassReader` over the analysed bytes serves the analysis,
+the condition fingerprinter, the size guard and (when the received bytes are the class file) the
+header restore, so the constant pool is decoded once. Woven bytes and manifests identical over the
+five corpora; ceiling startup allocation 6.13 to 6.02 GB. The stored plans' apparent growth (1.12 to
+1.30 KB a class) was attribution: since chunk 6a the registry no longer shares the interned names,
+so MAT counts them against the plans; reachable plan bytes are identical at `c4f91d7` and after.
+
 The 2026-10-04 write-ups were removed when this work landed (git history keeps them, at
 `2e0dbe4` and `5a47ad0`); their scripts are the manual profiling kit in
 `benchmark-overhead/profiling/`.

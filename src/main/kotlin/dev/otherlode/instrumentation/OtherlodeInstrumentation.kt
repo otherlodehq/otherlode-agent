@@ -62,6 +62,7 @@ import net.bytebuddy.implementation.bytecode.constant.LongConstant
 import net.bytebuddy.implementation.bytecode.constant.TextConstant
 import net.bytebuddy.implementation.bytecode.member.FieldAccess
 import net.bytebuddy.implementation.bytecode.member.MethodInvocation
+import net.bytebuddy.jar.asm.ClassReader
 import net.bytebuddy.jar.asm.MethodVisitor
 import net.bytebuddy.matcher.ElementMatcher
 import net.bytebuddy.matcher.ElementMatchers.any
@@ -609,7 +610,12 @@ class OtherlodeInstrumentation(
         placeholderPools.missingSupertype(typeDescription)?.let { throw PlaceholderRefusal.undefinable(it) }
         val source = readClassBytes(typeDescription, classLoader, protectionDomain)
         val analysedBytes = source.analysed
-        val restored = restoreHeader(builder, source.received ?: analysedBytes)
+        val restored =
+            if (source.receivedDiffers) {
+                restoreHeader(builder, source.received)
+            } else {
+                restoreHeader(builder, analysedBytes, source.analysedReader)
+            }
         val (analysedMethods, receivedMethods, analysis, pairing) = analyse(typeDescription, classLoader, source)
         val methods =
             receivedMethods?.let { received -> analysedMethods.filter { it.key in received } }
@@ -849,12 +855,11 @@ class OtherlodeInstrumentation(
                 }
             // The class file's tracked instructions of each eligible method, so a later weave pairs
             // the bytes that arrive then against them without reading or analysing anything.
-            val sequences = analysedBytes?.let { SitePairing.encodedSequences(it, eligible) }.orEmpty()
             for ((name, descriptor) in eligible) {
                 plan.branchEligible(
                     name,
                     descriptor,
-                    sequences[name to descriptor] ?: IntArray(0),
+                    analysis.trackedSequenceOf(name, descriptor),
                     analysis.droppedOrdinalsOf(name, descriptor),
                     analysis.throwingDefaultOrdinalsOf(name, descriptor),
                     analysis.unprobedOutcomesOf(name, descriptor),
@@ -929,7 +934,14 @@ class OtherlodeInstrumentation(
             ).map { ProbedMethod(it.internalName, it.descriptor, it.isStatic) }
         val receivedMethods =
             if (source.receivedDiffers) typeDescription.declaredMethods.mapTo(HashSet()) { it.internalName to it.descriptor } else null
-        val analysis = analyzeBytecode(analysedBytes, classLoader, analysedMethods, source.received.takeIf { source.receivedDiffers })
+        val analysis =
+            analyzeBytecode(
+                analysedBytes,
+                source.analysedReader,
+                classLoader,
+                analysedMethods,
+                source.received.takeIf { source.receivedDiffers },
+            )
         val pairing =
             if (source.receivedDiffers) {
                 SitePairing.of(analysedBytes!!, source.received!!, analysedMethods.map { it.key })
@@ -1057,10 +1069,11 @@ class OtherlodeInstrumentation(
     private fun restoreHeader(
         builder: DynamicType.Builder<*>,
         headerSource: ByteArray?,
+        reader: ClassReader? = null,
     ): DynamicType.Builder<*> {
         if (headerSource == null) return builder
         placeholderPools.noteAnnotationTypes(headerSource)
-        return builder.visit(ClassHeaderRestorer.wrapper(headerSource))
+        return builder.visit(if (reader == null) ClassHeaderRestorer.wrapper(headerSource) else ClassHeaderRestorer.wrapper(reader))
     }
 
     /** Logs that a woven class cannot be woven again, for [reason], so the redefinition is refused. */
@@ -1434,13 +1447,18 @@ class OtherlodeInstrumentation(
      * not byte-for-byte equal, which is what an earlier transformer leaves; only then do the
      * methods and branch sites need pairing. [hasClassFile] is whether the loader served a class
      * file at all.
+     *
+     * [analysedReader] reads [analysed]. Every pass over those bytes in one transform takes it, so
+     * the constant pool is decoded once. It is made on first use, and null when [analysed] is.
      */
     private class ClassBytesSource(
         val analysed: ByteArray?,
         val received: ByteArray?,
         val receivedDiffers: Boolean,
         val hasClassFile: Boolean,
-    )
+    ) {
+        val analysedReader: ClassReader? by lazy(LazyThreadSafetyMode.NONE) { analysed?.let(::ClassReader) }
+    }
 
     /**
      * Takes the received bytes from [classBytesCapture] and reads the class file through
@@ -1505,6 +1523,7 @@ class OtherlodeInstrumentation(
      */
     private fun analyzeBytecode(
         classBytes: ByteArray?,
+        classReader: ClassReader?,
         classLoader: ClassLoader?,
         methods: List<ProbedMethod>,
         receivedBytes: ByteArray?,
@@ -1512,7 +1531,8 @@ class OtherlodeInstrumentation(
         val eligible = methods.mapTo(HashSet()) { it.key }
         val bytes = classBytes ?: return BranchSiteAnalyzer.Analysis.EMPTY
         val lookup = crossClassLookup(classLoader)
-        return BranchSiteAnalyzer.analyze(
+        return BranchSiteAnalyzer.analyzeThrough(
+            classReader ?: ClassReader(bytes),
             bytes,
             lookup,
             config.includePackages,

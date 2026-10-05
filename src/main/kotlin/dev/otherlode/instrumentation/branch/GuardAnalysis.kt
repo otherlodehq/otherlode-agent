@@ -19,9 +19,14 @@ import net.bytebuddy.jar.asm.Opcodes
  *
  * [onEnd] receives a function that builds the recorded [MethodInstructions], once the method's
  * last event has been forwarded. Most methods have no kept site and never need them built.
+ *
+ * [onTracked] receives, just before [onEnd], the method's tracked instructions in
+ * [SitePairing.encodedSequences]' encoding, written as they are visited so no second pass over the
+ * class is needed. A method with none gets a shared empty array.
  */
 internal class InstructionRecorder(
     downstream: (InstructionRecorder) -> MethodVisitor,
+    private val onTracked: (IntArray) -> Unit = {},
     private val onEnd: (() -> MethodInstructions) -> Unit,
 ) : MethodVisitor(Opcodes.ASM9) {
     /** The ordinal of the last real instruction visited, or -1 before the first. */
@@ -40,9 +45,16 @@ internal class InstructionRecorder(
     private val tryCatchBlocks = mutableListOf<TryCatchLabels>()
     private val localVariables = mutableListOf<LocalVariableLabels>()
     private var hasSubroutine = false
+    private var tracked = NO_INTS
+    private var trackedSize = 0
 
     init {
         mv = downstream(this)
+    }
+
+    private fun track(value: Int) {
+        if (trackedSize == tracked.size) tracked = tracked.copyOf(maxOf(TRACKED_CAPACITY, trackedSize * 2))
+        tracked[trackedSize++] = value
     }
 
     private fun record(opcode: Int) {
@@ -167,6 +179,7 @@ internal class InstructionRecorder(
         label: Label,
     ) {
         if (opcode == Opcodes.JSR) hasSubroutine = true
+        if (ConditionalJump.isTracked(opcode)) track(opcode)
         record(opcode)
         branchTargets[lastOrdinal] = label
         super.visitJumpInsn(opcode, label)
@@ -193,6 +206,11 @@ internal class InstructionRecorder(
         dflt: Label,
         vararg labels: Label,
     ) {
+        track(Opcodes.TABLESWITCH)
+        track(min)
+        track(max)
+        track(labels.size)
+        for (label in labels) track(if (label === dflt) 1 else 0)
         record(Opcodes.TABLESWITCH)
         branchTargets[lastOrdinal] = SwitchLabels(dflt, labels)
         super.visitTableSwitchInsn(min, max, dflt, *labels)
@@ -203,6 +221,10 @@ internal class InstructionRecorder(
         keys: IntArray,
         labels: Array<out Label>,
     ) {
+        track(Opcodes.LOOKUPSWITCH)
+        track(keys.size)
+        for (key in keys) track(key)
+        for (label in labels) track(if (label === dflt) 1 else 0)
         record(Opcodes.LOOKUPSWITCH)
         branchTargets[lastOrdinal] = SwitchLabels(dflt, labels)
         super.visitLookupSwitchInsn(dflt, keys, labels)
@@ -218,6 +240,7 @@ internal class InstructionRecorder(
 
     override fun visitEnd() {
         super.visitEnd()
+        onTracked(if (trackedSize == 0) NO_INTS else tracked.copyOf(trackedSize))
         onEnd(::instructions)
     }
 
@@ -288,6 +311,8 @@ internal class InstructionRecorder(
 
     private companion object {
         const val INITIAL_CAPACITY = 64
+        const val TRACKED_CAPACITY = 8
+        val NO_INTS = IntArray(0)
     }
 }
 

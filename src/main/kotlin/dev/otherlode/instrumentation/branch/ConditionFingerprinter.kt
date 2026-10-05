@@ -74,13 +74,15 @@ object ConditionFingerprinter {
      * [language] is the class's source language, which decides how [MethodResult.conditionOf]
      * writes a condition. [isEnum] tells whether a class, by internal name, is an enum, and
      * answers false when it cannot tell. [enumMappings] reads the enum map arrays another class
-     * declares, for [MethodResult.loweredSwitches].
+     * declares, for [MethodResult.loweredSwitches]. [reader] reads [classBytes], for a caller that
+     * already holds one.
      */
     fun analyze(
         classBytes: ByteArray,
         language: SourceLanguage = SourceLanguage.JAVA,
         isEnum: (internalName: String) -> Boolean = { false },
         enumMappings: EnumSwitchMappings = EnumSwitchMappings { null },
+        reader: ClassReader = ClassReader(classBytes),
     ): Map<Pair<String, String>, MethodResult> {
         val results = mutableMapOf<Pair<String, String>, MethodResult>()
         val classVisitor =
@@ -109,7 +111,7 @@ object ConditionFingerprinter {
                         results[name to descriptor] = result
                     }
             }
-        ClassReader(classBytes).accept(classVisitor, ClassReader.SKIP_FRAMES)
+        reader.accept(classVisitor, ClassReader.SKIP_FRAMES)
         return results
     }
 

@@ -147,7 +147,22 @@ object BranchSiteAnalyzer {
         val unreadCause: UnreadCause? = null,
         /** What [SizeGuard] bounded and dropped. */
         val sizeGuard: SizeGuardResult = SizeGuardResult.NONE,
+        /**
+         * Per method the tracked-instruction recorder saw, its tracked instructions in
+         * [SitePairing.encodedSequences]' encoding. A method with none is absent.
+         */
+        private val trackedSequencesByMethod: Map<Pair<String, String>, IntArray> = emptyMap(),
     ) {
+        /**
+         * The class file's tracked instructions of [name]/[descriptor] as [SitePairing.encodedSequences]
+         * encodes them, or an empty array for a method with none. Only a method [analyze]'s
+         * `methodFilter` accepted is recorded.
+         */
+        fun trackedSequenceOf(
+            name: String,
+            descriptor: String,
+        ): IntArray = trackedSequencesByMethod[name to descriptor] ?: NO_SEQUENCE
+
         /**
          * Each kept site of [sites], in site index order, with its outcomes numbered, given roles
          * and keyed by [KeptBranchSite.of], and with its guard and guarded lines. This is the one
@@ -270,6 +285,8 @@ object BranchSiteAnalyzer {
 
         companion object {
             val EMPTY = Analysis(emptyList(), emptyMap())
+
+            private val NO_SEQUENCE = IntArray(0)
         }
     }
 
@@ -673,6 +690,36 @@ object BranchSiteAnalyzer {
         resourceLookup: (path: String) -> ByteArray? = { null },
         receivedBytes: ByteArray? = null,
         methodFilter: (name: String, descriptor: String) -> Boolean,
+    ): Analysis =
+        analyzeThrough(
+            ClassReader(classBytes),
+            classBytes,
+            lookup,
+            includePackages,
+            excludePackages,
+            tableCache,
+            handlerInterfaces,
+            resourceLookup,
+            receivedBytes,
+            methodFilter,
+        )
+
+    /**
+     * [analyze] over [classReader], which reads [classBytes]. A caller that holds a reader already
+     * passes it, so the constant pool's decoded names are shared with every other pass over the
+     * same bytes.
+     */
+    internal fun analyzeThrough(
+        classReader: ClassReader,
+        classBytes: ByteArray,
+        lookup: (internalName: String) -> ByteArray?,
+        includePackages: List<String>,
+        excludePackages: List<String>,
+        tableCache: CrossClassTableCache?,
+        handlerInterfaces: Set<String>,
+        resourceLookup: (path: String) -> ByteArray?,
+        receivedBytes: ByteArray?,
+        methodFilter: (name: String, descriptor: String) -> Boolean,
     ): Analysis {
         val readClass = readOnce(lookup)
         val sites = mutableListOf<BranchSite>()
@@ -702,6 +749,7 @@ object BranchSiteAnalyzer {
         val droppedOrdinalsByMethod = mutableMapOf<Pair<String, String>, MutableSet<Int>>()
         val rawReferencesByMethod = mutableMapOf<Pair<String, String>, MutableSet<String>>()
         val instructionsByMethod = mutableMapOf<Pair<String, String>, () -> MethodInstructions>()
+        val trackedSequencesByMethod = mutableMapOf<Pair<String, String>, IntArray>()
         val rawClassReferences = LinkedHashSet<String>()
         val classReferenceCollector = ReferenceCollector(rawClassReferences)
         val sourceSignatures = mutableMapOf<Pair<String, String>, SourceSignature>()
@@ -887,13 +935,16 @@ object BranchSiteAnalyzer {
                         )
 
                     if (!eligible) return siteVisitor { -1 }
-                    return InstructionRecorder({ recorder -> siteVisitor(recorder::lastOrdinal) }) {
+                    return InstructionRecorder(
+                        { recorder -> siteVisitor(recorder::lastOrdinal) },
+                        onTracked = { if (it.isNotEmpty()) trackedSequencesByMethod[name to descriptor] = it },
+                    ) {
                         instructionsByMethod[name to descriptor] = it
                     }
                 }
             }
 
-        ClassReader(classBytes).accept(classVisitor, ClassReader.SKIP_FRAMES)
+        classReader.accept(classVisitor, ClassReader.SKIP_FRAMES)
 
         val language =
             when {
@@ -906,6 +957,7 @@ object BranchSiteAnalyzer {
         attachConditionFingerprints(
             sites,
             classBytes,
+            classReader,
             language,
             enumTest(internalClassName, classAccess, readClass),
             EnumSwitchMappings(readClass),
@@ -914,7 +966,7 @@ object BranchSiteAnalyzer {
             unprobedOutcomesByMethod,
         )
         val sizeGuard =
-            SizeGuard.apply(sites, classBytes, receivedBytes, methodFilter, droppedOrdinalsByMethod) { key ->
+            SizeGuard.apply(sites, classBytes, receivedBytes, methodFilter, droppedOrdinalsByMethod, classReader) { key ->
                 instructionsByMethod[key]?.invoke()?.opcodes
             }
         val guardsByMethod =
@@ -1034,6 +1086,7 @@ object BranchSiteAnalyzer {
             generatedMarks.unreadRelease,
             generatedMarks.cause,
             sizeGuard,
+            trackedSequencesByMethod,
         )
     }
 
@@ -1212,6 +1265,7 @@ object BranchSiteAnalyzer {
     private fun attachConditionFingerprints(
         sites: MutableList<BranchSite>,
         classBytes: ByteArray,
+        classReader: ClassReader,
         language: SourceLanguage,
         isEnum: (internalName: String) -> Boolean,
         enumMappings: EnumSwitchMappings,
@@ -1221,7 +1275,7 @@ object BranchSiteAnalyzer {
     ) {
         val fingerprintsByMethod =
             try {
-                ConditionFingerprinter.analyze(classBytes, language, isEnum, enumMappings)
+                ConditionFingerprinter.analyze(classBytes, language, isEnum, enumMappings, classReader)
             } catch (_: Exception) {
                 return
             }

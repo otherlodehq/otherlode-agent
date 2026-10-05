@@ -37,8 +37,11 @@ import net.bytebuddy.pool.TypePool
  */
 internal object ClassHeaderRestorer {
     /** The wrapper that gives the written class the header [classBytes] carries. */
-    fun wrapper(classBytes: ByteArray): AsmVisitorWrapper {
-        val original = HeaderReader.read(classBytes)
+    fun wrapper(classBytes: ByteArray): AsmVisitorWrapper = wrapper(ClassReader(classBytes))
+
+    /** The wrapper that gives the written class the header [reader]'s class file carries. */
+    fun wrapper(reader: ClassReader): AsmVisitorWrapper {
+        val original = HeaderReader.read(reader)
         return object : AsmVisitorWrapper.AbstractBase() {
             override fun wrap(
                 instrumentedType: TypeDescription,
@@ -187,7 +190,7 @@ internal object ClassHeaderRestorer {
     )
 
     private object HeaderReader {
-        fun read(classBytes: ByteArray): Header {
+        fun read(reader: ClassReader): Header {
             var access = 0
             var signature: String? = null
             var nestHost: String? = null
@@ -195,7 +198,7 @@ internal object ClassHeaderRestorer {
             val nestMembers = mutableListOf<String>()
             val permitted = mutableListOf<String>()
             val inner = mutableListOf<InnerClassEntry>()
-            ClassReader(classBytes).accept(
+            reader.accept(
                 object : ClassVisitor(Opcodes.ASM9) {
                     override fun visit(
                         version: Int,
