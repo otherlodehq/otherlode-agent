@@ -665,7 +665,17 @@ bucket 1, and its migration 0010 deletes those rows (all test data, Luke
 said) and adds a check constraint refusing the code, with `bucketString`
 reading an unknown code as unknown.
 
-### Keep each method's original frames instead of recomputing them: to grill, before release
+### Keep each method's original frames instead of recomputing them: grilling, before release, ahead of ADR 0059
+
+Brought forward on 2026-10-05, Luke's call, to unblock ADR 0059: the
+placeholder pool's frame guards had a hole (a merge walks supertypes the guard
+never sees) and cost a class-file read per class load, and every guard was a
+symptom of recomputed frames. The built placeholder chunk, its frame guards and
+the review's fixes are parked in `git stash` ("chunk 4: placeholder type pool
+(ADR 0059) with frame guards, held until original frames land"), with ADR
+0059's first amendment; it lands after this, keeping the supertype guard,
+the signature restore (preferring the received bytes) and the counting, and
+dropping the frame guards and the per-class loader check.
 
 Raised 2026-10-05 while landing ADR 0059's amendment, as the wider fix for a
 class of problem that amendment only guards against. The branch tier makes ASM
