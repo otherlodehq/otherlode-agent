@@ -66,6 +66,9 @@ tasks.test {
     if (collectorDir.isPresent) systemProperty("bench.collectorDir", file(collectorDir.get()).absolutePath)
     systemProperty("bench.config", providers.gradleProperty("config").orElse("headline").get())
     systemProperty("bench.repeats", providers.gradleProperty("repeats").orElse("6").get())
-    systemProperty("bench.warmupSeconds", providers.gradleProperty("warmupSeconds").orElse("150").get())
+    systemProperty("bench.warmupSeconds", providers.gradleProperty("warmupSeconds").orElse("600").get())
+    systemProperty("bench.warmupSliceSeconds", providers.gradleProperty("warmupSliceSeconds").orElse("30").get())
+    systemProperty("bench.warmupMinSeconds", providers.gradleProperty("warmupMinSeconds").orElse("90").get())
+    systemProperty("bench.warmupSteadyDrift", providers.gradleProperty("warmupSteadyDrift").orElse("0.03").get())
     systemProperty("bench.windowSeconds", providers.gradleProperty("windowSeconds").orElse("180").get())
 }

@@ -57,7 +57,8 @@ object MetricNames {
             "manifestEndpoints",
             "manifestSkippedClasses",
         )
-    val ALL = K6 + JFR + PROCESS + COLLECTOR
+    val WARMUP = listOf("warmupSecondsUsed", "warmupSteady", "warmupLastSliceThroughputPerSec")
+    val ALL = K6 + JFR + PROCESS + COLLECTOR + WARMUP
 }
 
 /**
@@ -151,7 +152,7 @@ fun summaryMarkdown(
         .append('\n')
         .append(rule)
         .append('\n')
-    for (name in MetricNames.ALL) {
+    for (name in MetricNames.ALL - MetricNames.WARMUP.toSet()) {
         val spreads = variants.associateWith { v -> spread(byVariant.getValue(v).mapNotNull { it.metrics[name] }) }
         if (spreads.values.all { it == null }) continue
         val row = StringBuilder("| $name |")
@@ -170,6 +171,7 @@ fun summaryMarkdown(
     if (Variant.NONE in variants && byVariant.getValue(Variant.NONE).size > 1) {
         sb.append("\n\\* The median lies inside `none`'s own minimum to maximum: not told apart from run-to-run noise.\n")
     }
+    sb.append(warmupSection(variants, byVariant))
     sb.append("\n### Classes the agent skipped\n\n")
     var any = false
     for (v in variants.filter { it != Variant.NONE }) {
@@ -185,4 +187,22 @@ fun summaryMarkdown(
     }
     if (!any) sb.append("\nNo class was skipped.\n")
     return sb.toString()
+}
+
+/** Warmup length per variant as mean and range, with how many runs ended steady, or an empty string when no run recorded one. */
+private fun warmupSection(
+    variants: List<Variant>,
+    byVariant: Map<Variant, List<RunRecord>>,
+): String {
+    val sb = StringBuilder()
+    for (v in variants) {
+        val runs = byVariant.getValue(v)
+        val used = runs.mapNotNull { it.metrics["warmupSecondsUsed"] }
+        if (used.isEmpty()) continue
+        val steady = runs.count { it.metrics["warmupSteady"] == 1.0 }
+        sb.append(
+            "- ${v.id}: mean ${num(used.average())} s (${num(used.min())} to ${num(used.max())}), steady in $steady of ${runs.size}\n",
+        )
+    }
+    return if (sb.isEmpty()) "" else "\n### Warmup used\n\n$sb"
 }

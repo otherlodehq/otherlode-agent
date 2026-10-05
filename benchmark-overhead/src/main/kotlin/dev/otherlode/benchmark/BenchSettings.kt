@@ -9,6 +9,9 @@ data class BenchSettings(
     val config: Config,
     val repeats: Int,
     val warmupSeconds: Int,
+    val warmupSliceSeconds: Int,
+    val warmupMinSeconds: Int,
+    val warmupSteadyDrift: Double,
     val windowSeconds: Int,
     val agentJar: Path,
     val collectorDir: Path,
@@ -27,6 +30,11 @@ data class BenchSettings(
                 config = Config.parse(prop("bench.config")),
                 repeats = prop("bench.repeats").toInt().also { require(it >= 1) { "-Prepeats must be at least 1" } },
                 warmupSeconds = prop("bench.warmupSeconds").toInt(),
+                warmupSliceSeconds =
+                    prop("bench.warmupSliceSeconds").toInt().also { require(it >= 1) { "-PwarmupSliceSeconds must be at least 1" } },
+                warmupMinSeconds = prop("bench.warmupMinSeconds").toInt(),
+                warmupSteadyDrift =
+                    prop("bench.warmupSteadyDrift").toDouble().also { require(it >= 0) { "-PwarmupSteadyDrift must not be negative" } },
                 windowSeconds = prop("bench.windowSeconds").toInt().also { require(it >= 1) { "-PwindowSeconds must be at least 1" } },
                 agentJar =
                     Paths.get(prop("bench.agentJar")).also {

@@ -151,7 +151,7 @@ class Harness(
             metrics["startupMs"] = (System.nanoTime() - t0) / 1_000_000.0
             if (javaVersion == "unknown") javaVersion = exec(petclinic, "java", "-version").trim()
 
-            warmup(petclinic)
+            metrics += warmup(petclinic, dir)
 
             run(petclinic, "JFR.start", "settings=/app/overhead.jfc", "name=measure")
             val cpuBefore = CgroupCpu.parse(exec(petclinic, "cat", CPU_STAT))
@@ -276,17 +276,41 @@ class Harness(
     }
 
     /**
-     * Warms the JIT with the same load as the measured window. A throwaway recording runs through
-     * it: leaving the recording out of the warmup makes the measured one pay for JFR's own first
-     * use (class loading and JIT of its event code) inside the window, and the variants then
-     * disagree for reasons unrelated to the agent.
+     * Warms the JIT with the same load as the measured window, in slices of `warmupSliceSeconds`,
+     * until throughput is steady (see [warmupVerdict]) or `warmupSeconds` is spent. A throwaway
+     * recording runs through it: leaving the recording out of the warmup makes the measured one pay
+     * for JFR's own first use (class loading and JIT of its event code) inside the window, and the
+     * variants then disagree for reasons unrelated to the agent. Reaching the cap is not a failure
+     * here; the window's warmth rule judges the run.
      */
-    private fun warmup(petclinic: Box) {
-        if (settings.warmupSeconds <= 0) return
-        println("Warming up for ${settings.warmupSeconds} s...")
+    private fun warmup(
+        petclinic: Box,
+        dir: Path,
+    ): Map<String, Double> {
+        if (settings.warmupSeconds <= 0) return mapOf("warmupSecondsUsed" to 0.0, "warmupSteady" to 0.0)
+        val slice = settings.warmupSliceSeconds
+        println("Warming up in slices of $slice s, at least ${settings.warmupMinSeconds} s and at most ${settings.warmupSeconds} s...")
         run(petclinic, "JFR.start", "settings=/app/overhead.jfc", "name=warmup", "filename=/tmp/warmup.jfr")
-        runK6(settings.warmupSeconds, null, windowMillis = 0)
+        val throughputs = mutableListOf<Double>()
+        var verdict: WarmupVerdict
+        do {
+            val summary = dir.resolve("warmup-slice-${throughputs.size + 1}.json")
+            runK6(slice, summary, windowMillis = 0)
+            val requests =
+                K6Summary.parse(Files.readString(summary)).metrics["k6Requests"]
+                    ?: throw InvalidRunException("k6 reported no request count for a warmup slice")
+            throughputs += requests / slice
+            println("  warmup slice ${throughputs.size}: %.1f requests/s".format(java.util.Locale.ROOT, throughputs.last()))
+            verdict =
+                warmupVerdict(throughputs, slice, settings.warmupMinSeconds, settings.warmupSeconds, settings.warmupSteadyDrift)
+        } while (verdict == WarmupVerdict.CONTINUE)
         run(petclinic, "JFR.stop", "name=warmup")
+        println("Warmup ended after ${throughputs.size * slice} s: ${if (verdict == WarmupVerdict.STEADY) "steady" else "cap reached"}")
+        return linkedMapOf(
+            "warmupSecondsUsed" to (throughputs.size * slice).toDouble(),
+            "warmupSteady" to if (verdict == WarmupVerdict.STEADY) 1.0 else 0.0,
+            "warmupLastSliceThroughputPerSec" to throughputs.last(),
+        )
     }
 
     private fun measuredWindow(dir: Path): Map<String, Double> {
@@ -326,15 +350,17 @@ class Harness(
             k6.start()
             if (summaryOut != null) {
                 k6.copyFileFromContainer("/tmp/k6.json", summaryOut.toString())
-                Files.writeString(summaryOut.resolveSibling("k6.log"), k6.logs)
+                Files.writeString(summaryOut.resolveSibling(logName(summaryOut)), k6.logs)
             }
         } catch (e: Exception) {
-            if (summaryOut != null) runCatching { Files.writeString(summaryOut.resolveSibling("k6.log"), k6.logs) }
+            if (summaryOut != null) runCatching { Files.writeString(summaryOut.resolveSibling(logName(summaryOut)), k6.logs) }
             throw InvalidRunException("k6 failed: ${e.message}")
         } finally {
             runCatching { k6.stop() }
         }
     }
+
+    private fun logName(summary: Path): String = summary.fileName.toString().removeSuffix(".json") + ".log"
 
     private fun exec(
         container: Box,
@@ -442,6 +468,9 @@ class Harness(
                 "includePackages" to settings.config.includePackages,
                 "repeats" to settings.repeats.toString(),
                 "warmupSeconds" to settings.warmupSeconds.toString(),
+                "warmupSliceSeconds" to settings.warmupSliceSeconds.toString(),
+                "warmupMinSeconds" to settings.warmupMinSeconds.toString(),
+                "warmupSteadyDrift" to settings.warmupSteadyDrift.toString(),
                 "windowSeconds" to settings.windowSeconds.toString(),
             )
         return props.entries.joinToString("\n", postfix = "\n") { "${it.key}=${it.value}" }

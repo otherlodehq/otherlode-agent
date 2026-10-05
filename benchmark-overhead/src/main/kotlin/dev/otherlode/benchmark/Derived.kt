@@ -62,7 +62,8 @@ fun perRequest(metrics: Map<String, Double>): Map<String, Double> {
 /**
  * Why the run's window does not look steady, or null when it does: the last third of the window
  * served more than [MAX_WINDOW_DRIFT] more or fewer requests than the first. Records the ratio of
- * last to first in [metrics] as `warmupDrift`.
+ * last to first in [metrics] as `warmupDrift`. The advice for a rising window depends on `warmupSteady`: a
+ * warmup that hit its cap needs a longer cap, one judged steady needs a stricter rule.
  */
 fun warmthProblem(metrics: MutableMap<String, Double>): String? {
     val first = metrics["k6FirstThirdRequests"] ?: return "k6 reported no request count for the window's first third"
@@ -72,8 +73,12 @@ fun warmthProblem(metrics: MutableMap<String, Double>): String? {
     metrics["warmupDrift"] = drift
     return when {
         drift > 1 + MAX_WINDOW_DRIFT -> {
-            "the window's last third served %.0f%% more requests than its first, so the JVM was still warming up; raise -PwarmupSeconds"
-                .format(java.util.Locale.ROOT, (drift - 1) * 100)
+            val more = "the window's last third served %.0f%% more requests than its first".format(java.util.Locale.ROOT, (drift - 1) * 100)
+            if (metrics["warmupSteady"] == 1.0) {
+                "$more although the warmup was judged steady; lower -PwarmupSteadyDrift or lengthen -PwarmupSliceSeconds"
+            } else {
+                "$more, so the JVM was still warming up when the warmup reached its cap; raise -PwarmupSeconds"
+            }
         }
 
         drift < 1 - MAX_WINDOW_DRIFT -> {

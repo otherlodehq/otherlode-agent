@@ -7,7 +7,7 @@ with and without the agent. It is a standalone Gradle build, not part of the roo
 ## What it measures
 
 Each run starts a fresh Postgres, starts PetClinic in a container pinned to its own cores and limited to 2 GiB
-(`-Xms1g -Xmx1g -XX:+UseG1GC`), warms it up, then drives it with k6 for the measured window. The
+(`-Xms1g -Xmx1g -XX:+UseG1GC`), warms it up until throughput is steady, then drives it with k6 for the measured window. The
 agent exports to a real `otherlode-collector` container, logging only, so the flush's encoding and
 send are the real ones and their cost is in the numbers.
 
@@ -50,6 +50,20 @@ window walks the loaded classes to count dependency classes; the forward check f
 classes runs only on every tenth flush, about ten minutes in, so no window holds one and only the
 shutdown flush, after the window, runs it. The cgroup and JFR readings also span k6's container
 starting and stopping, about a second either side of the load, the same for every variant.
+
+## Warmup
+
+The warmup runs the measured window's k6 script and users in slices of `warmupSliceSeconds`, reading each
+slice's request count from its k6 summary and printing the slice's throughput. It ends when two
+consecutive slices each differ from the slice before them by at most `warmupSteadyDrift`, once at
+least `warmupMinSeconds` have passed, or at `warmupSeconds`. The minimum keeps an early flat patch in a
+slowly rising curve from ending it. With PetClinic pinned to one core the compiler threads share that
+core with the application, so how long warming takes varies by config and by run.
+
+Reaching the cap is not a failure by itself: the window's own rule (below) still judges the measured
+window. Each run records `warmupSecondsUsed`, `warmupSteady` (1 when the rule ended it, 0 at the cap)
+and `warmupLastSliceThroughputPerSec`, and the summary shows the mean and range of `warmupSecondsUsed`
+per variant. The raw k6 output of each slice is kept as `warmup-slice-<n>.json` in the run's directory.
 
 ## Core pinning
 
@@ -109,7 +123,10 @@ git clone https://github.com/otherlodehq/otherlode-collector /path/to/otherlode-
 | `-PcollectorDir` | required | A local clone of `otherlode-collector`; its `Dockerfile` is built. |
 | `-Pconfig` | `headline` | `headline` or `ceiling`. |
 | `-Prepeats` | `6` | Runs per variant. A multiple of three gives each variant each position equally often. |
-| `-PwarmupSeconds` | `150` | Warmup load before the measured window. On an `ubuntu-latest` runner PetClinic's throughput still climbed for about 45 s after a 60 s warmup. |
+| `-PwarmupSeconds` | `600` | The cap on the warmup load before the measured window. |
+| `-PwarmupSliceSeconds` | `30` | Length of each warmup slice. |
+| `-PwarmupMinSeconds` | `90` | The least warmup before steadiness may end it. |
+| `-PwarmupSteadyDrift` | `0.03` | How far a slice's throughput may differ from the slice before it, as a fraction, and still count as steady. |
 | `-PwindowSeconds` | `180` | Length of the measured window. |
 
 Give both paths absolute, as above, or relative to `benchmark-overhead/`: `-p` makes that Gradle's
@@ -141,7 +158,7 @@ log, stay in the results directory.
   (`cpuCoresAvg`), so the closed loop was limited by k6 or Postgres and its throughput would not
   describe PetClinic. CPU per request is still valid in such a run, but the run fails regardless.
 - The window was not steady: its last third served more than 10% more requests than its first,
-  so the JIT was still compiling when measurement began (raise `-PwarmupSeconds`), or more than
+  so the JIT was still compiling when measurement began (raise `-PwarmupSeconds` if the warmup hit its cap; lower `-PwarmupSteadyDrift` or lengthen `-PwarmupSliceSeconds` if it was judged steady), or more than
   10% fewer, so something degraded through it.
 - For an agent variant: the agent logged an error (`SEVERE: otherlode:` before Spring Boot sets up
   logging, a line at `ERROR` naming `otherlode:` after); the collector's `/metrics`
@@ -166,7 +183,7 @@ Under `benchmark-overhead/build/results/<config>/`:
 - `metadata.properties`: the runner's OS and CPU count, the PetClinic image's `java -version`, the
   agent jar's SHA-256 and modification time, the agent repository's commit and whether its tree was
   dirty (a local jar can predate the commit), the PetClinic commit, the collector
-  directory's commit, resolved image digests, and the repeats, window and warmup used.
+  directory's commit, resolved image digests, and the repeats, window and warmup settings used.
 - `runs/<variant>-r<N>/`: the raw k6 JSON and log, the JFR file, PetClinic's log, and the
   collector's log lines from the run.
 
