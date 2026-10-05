@@ -240,12 +240,15 @@ adopter's collector forwards to one multi-tenant backend.
    `NullPointerException` where the original ran (ADR 0060), and 312 of the
    ceiling run's 4462 matched classes were skipped, most of them needlessly
    (ADRs 0058, 0059).
-9. **Startup and heap.** Grilled and landed on 2026-10-05; the entry "The
-   agent's startup and heap: landed" below. On the runner the headline's
-   startup overhead went from +76% to +22.4%, inside the 25% target. The JAX-RS matcher costs
-   about 1.5 s on every app without JAX-RS, repeat class-file reads are half
-   the ceiling's transform time, and delivered probe metadata and
-   transform-time caches hold about 94 MB at the ceiling.
+9. **Startup and heap.** Grilled and landed on 2026-10-05; the entries "The
+   agent's startup and heap: landed" and "`DECORATE` instead of `REBASE`, and
+   the entry probe in ASM: landed" below. On the runner (`8139271`) the
+   headline's startup overhead went from +76% to +22.4%, inside the 25%
+   target, and the ceiling's retained heap after delivery from +117.5 MB to
+   +26.5 MB locally. The `DECORATE` round (`b1dec7d` to `a3c4330`) landed after
+   that run and has not been measured on the runner yet: the next nightly run
+   of the overhead benchmark on `master` is the first, and the ceiling's
+   one-core startup (58.2 s at `8139271`) is the number to read.
 
 After release: naming polish (`this$0`, facade names, the demo printer),
 the server's performance-only deferrals, gzip, a collector config file, agent-level redaction
@@ -326,7 +329,7 @@ Parked from the same review, none a one-way door: a WARNING for an
 still run with `enabled=false`; no warning for `otelBridgeEnabled=true` with
 `endpointsEnabled=false`.
 
-### Runtime overhead: landed, startup and heap grilled, to build
+### Runtime overhead: landed
 
 Raised 2026-10-03, grilled 2026-10-04 with Luke. The design calls the woven
 code close to nothing in several places and nothing measures it. `./gradlew
