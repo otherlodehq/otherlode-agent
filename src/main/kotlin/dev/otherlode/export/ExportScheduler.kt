@@ -3,7 +3,6 @@ package dev.otherlode.export
 import dev.otherlode.config.AgentConfig
 import dev.otherlode.dependencies.DependencyListingRun
 import dev.otherlode.instrumentation.LoadedClassSweep
-import dev.otherlode.instrumentation.PlaceholderCounts
 import dev.otherlode.instrumentation.branch.BranchDropCounts
 import dev.otherlode.instrumentation.branch.BranchDropReason
 import dev.otherlode.instrumentation.branch.UnreadCause
@@ -68,8 +67,6 @@ class ExportScheduler(
      * a flush whose own sends it confirmed. Null when the static baseline is off.
      */
     private val staticBaselineSender: StaticBaselineSender? = null,
-    /** Classes woven over a placeholder for an absent type; see [maybeLogPlaceholders]. */
-    private val placeholderCounts: PlaceholderCounts = PlaceholderCounts(),
     /**
      * The startup dependency listing, run at the top of the first flush so that flush's sweep and
      * manifest see every dependency. The default has nothing to run.
@@ -85,7 +82,6 @@ class ExportScheduler(
     private var executor: ScheduledExecutorService? = null
     private val branchDropsLogged = AtomicBoolean(false)
     private val unreadShapesLogged = AtomicBoolean(false)
-    private val placeholdersLogged = AtomicBoolean(false)
     private val receivedBytesClassesLogged = AtomicBoolean(false)
     private val cacheReleaseFailureLogged = AtomicBoolean(false)
 
@@ -205,7 +201,6 @@ class ExportScheduler(
         try {
             dependencyListing.runOnce()
             maybeLogBranchDrops()
-            maybeLogPlaceholders()
             maybeLogUnreadShapes()
             maybeLogReceivedBytesClasses()
             maybeSweep(final)
@@ -298,26 +293,6 @@ class ExportScheduler(
                     "$switchLowering switch lowering, $sizeGuard in methods whose branch probes would cross a code-size limit",
             )
         }
-    }
-
-    /**
-     * Logs one INFO line counting the classes woven over a placeholder for a type their classpath
-     * lacks, the first time a flush finds any. A class counts at its first weave, and a type used only
-     * as an annotation does not count. Nothing is logged on a flush that finds
-     * none yet, and nothing is logged again once it has. See [PlaceholderCounts].
-     */
-    private fun maybeLogPlaceholders() {
-        if (placeholdersLogged.get()) return
-        val classes = placeholderCounts.classes()
-        if (classes <= 0) return
-        if (!placeholdersLogged.compareAndSet(false, true)) return
-        val types = placeholderCounts.types().toLong()
-        log.log(
-            Level.INFO,
-            "otherlode: wove ${count(classes, "class that names", "classes that name")} " +
-                "${count(types, "type", "types")} missing from the classpath, usually an optional dependency. " +
-                "The weaver described each as an empty placeholder, and the woven code keeps the frames the class file has.",
-        )
     }
 
     /**

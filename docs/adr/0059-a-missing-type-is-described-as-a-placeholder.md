@@ -39,3 +39,12 @@ placeholder pool weave identical bytes and the same classes. The pool and `Place
 removed in a later chunk of the same round; the rule that a class whose own supertype is missing is
 refused and reported as skipped stays, walking supertype names through the agent's cached
 class-file reads.
+
+## Amendment, 2026-10-05: superseded, except the supertype rule
+
+The placeholder pool, `PlaceholderCounts` and the "placeholder" term are removed: under the method
+tier's decoration nothing describes a type a class names, and woven bytes, manifests and refusals
+over the corpora were identical without them. The rule that a class whose supertype is missing, at
+any depth, is refused and reported as skipped stays; `SupertypeGuard` walks super and interface
+names from class-file headers read through the agent's byte cache, treats `java.` names as present,
+and treats a class file it cannot read or parse as missing.

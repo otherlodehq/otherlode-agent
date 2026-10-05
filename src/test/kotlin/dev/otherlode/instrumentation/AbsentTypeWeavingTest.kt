@@ -28,12 +28,12 @@ import java.util.logging.LogRecord as JulLogRecord
 import java.util.logging.Logger as JulLogger
 
 /**
- * A type the classpath lacks is described as a placeholder while weaving, so a class that names an
- * optional dependency in a signature weaves and runs as it does without the agent. A class whose own
- * supertype is absent cannot be defined by the JVM at all and is refused. Classes are written with
- * ASM and woven by the agent's real transformer; no loader provides the types they name.
+ * A class that names a type the classpath lacks in a signature weaves and runs as it does without
+ * the agent, and keeps the header its class file has. A class whose own supertype is absent cannot
+ * be defined by the JVM at all and is refused. Classes are written with ASM and woven by the agent's
+ * real transformer; no loader provides the types they name.
  */
-class PlaceholderWeavingTest {
+class AbsentTypeWeavingTest {
     private val resource = ResourceAttributes("test", null, "instance-1", null, "run-1")
     private val registry = ProbeRegistry()
     private val transformer = HotPathWeaver.offlineTransformer(listOf(AbsentTypeFixtures.PACKAGE), registry)
@@ -43,7 +43,7 @@ class PlaceholderWeavingTest {
     /** Serves [classFiles] as resources and defines the bytes put in [defined]. */
     private class InMemoryLoader(
         private val classFiles: Map<String, ByteArray>,
-    ) : ClassLoader(PlaceholderWeavingTest::class.java.classLoader) {
+    ) : ClassLoader(AbsentTypeWeavingTest::class.java.classLoader) {
         val defined = HashMap<String, ByteArray>()
 
         override fun findClass(name: String): Class<*> {
@@ -75,16 +75,6 @@ class PlaceholderWeavingTest {
         val probes = registry.manifest(resource).probes.filter { it.methodName == "applyAsInt" }
         assertEquals(1, probes.count { it.kind == ProbeKind.METHOD })
         assertEquals(2, probes.count { it.kind == ProbeKind.BRANCH })
-    }
-
-    @Test
-    fun `the same class weaves with ByteBuddy's own pool too, since a decoration describes nothing the class names`() {
-        val name = internal("Holder")
-        val original = AbsentTypeFixtures.holder(name)
-        val loader = loaderOf(name to original)
-        val plain = HotPathWeaver.offlineTransformer(listOf(AbsentTypeFixtures.PACKAGE), ProbeRegistry(), describeMissingTypes = false)
-
-        assertNotNull(plain.transform(loader, name, null, null, original))
     }
 
     @Test
@@ -212,7 +202,7 @@ class PlaceholderWeavingTest {
     }
 
     @Test
-    fun `a loader that serves no class file for the class still weaves it over placeholders, and it runs`() {
+    fun `a loader that serves no class file for the class still weaves it, and it runs`() {
         val name = internal("Holder")
         val original = AbsentTypeFixtures.holder(name)
         val withoutFiles = loaderOf()
@@ -337,96 +327,6 @@ class PlaceholderWeavingTest {
         val skipped = registry.manifest(resource).skippedClasses.single { it.className == dotted }
         assertTrue(supertype in skipped.reason, skipped.reason)
         assertTrue(registry.manifest(resource).probes.none { it.className == dotted }, "no probe of a class that never defines")
-    }
-
-    @Test
-    fun `a strict pool still reports a type the classpath lacks as unresolved, and the placeholder pool describes it`() {
-        val locator = ClassFileLocator.NoOp.INSTANCE
-        val name = "com.example.absent.Missing"
-
-        val strict =
-            TypePool.Default.WithLazyResolution
-                .of(locator)
-                .describe(name)
-        val placeholder = PlaceholderPoolStrategy().typePool(locator, null).describe(name)
-
-        assertFalse(strict.isResolved)
-        assertTrue(placeholder.isResolved)
-        assertEquals(name, placeholder.resolve().name)
-        assertEquals(
-            "java.lang.Object",
-            placeholder
-                .resolve()
-                .superClass!!
-                .asErasure()
-                .name,
-        )
-    }
-
-    @Test
-    fun `a placeholder reports as many type variables as the parsed signatures give its name type arguments`() {
-        val name = internal("Holder")
-        val locator = ClassFileLocator.Simple.of(name.replace('/', '.'), AbsentTypeFixtures.holder(name))
-        val strategy = PlaceholderPoolStrategy()
-        val pool = strategy.typePool(locator, null)
-
-        val holder = pool.describe(name.replace('/', '.')).resolve()
-        val field = holder.declaredFields.single { it.name == "field" }
-        val missing = field.type.asErasure()
-
-        // The generic field type is ByteBuddy's lazily parameterized type: it throws when the counts disagree.
-        assertEquals(
-            listOf("java.lang.String", "java.lang.Integer"),
-            field.type.typeArguments.map { it.asErasure().name },
-        )
-        assertEquals(2, missing.typeVariables.size)
-        val wrapped = holder.declaredMethods.single { it.name == "wrap" }.returnType
-        assertEquals(1, wrapped.typeArguments.size)
-        assertEquals(1, wrapped.asErasure().typeVariables.size)
-        assertEquals(setOf("com.example.absent.Missing", "com.example.absent.Wrapped"), strategy.substituted())
-    }
-
-    @Test
-    fun `a class naming absent types is not counted as woven over a placeholder, since none is described`() {
-        val counts = PlaceholderCounts()
-        val captured = mutableListOf<ClassFileTransformer>()
-        OtherlodeInstrumentation(
-            AgentConfig.parse("includePackages=${AbsentTypeFixtures.PACKAGE}"),
-            registry,
-            captureClassBytes = false,
-            placeholderCounts = counts,
-        ).install(HotPathWeaver.capturing(ByteBuddyAgent.install(), captured))
-        val counted = captured.single()
-        val plainName = internal("Plain")
-        val plain = AbsentTypeFixtures.subtype(plainName, "java/lang/Object")
-        val holderName = internal("Holder")
-        val holder = AbsentTypeFixtures.holder(holderName)
-
-        assertNotNull(counted.transform(loaderOf(plainName to plain), plainName, null, null, plain))
-        assertEquals(0, counts.classes())
-        assertNotNull(counted.transform(loaderOf(holderName to holder), holderName, null, null, holder))
-
-        assertEquals(0, counts.classes())
-        assertEquals(0, counts.types())
-    }
-
-    @Test
-    fun `a class whose only absent type is a class-retention annotation is woven and not counted`() {
-        val counts = PlaceholderCounts()
-        val captured = mutableListOf<ClassFileTransformer>()
-        OtherlodeInstrumentation(
-            AgentConfig.parse("includePackages=${AbsentTypeFixtures.PACKAGE}"),
-            registry,
-            captureClassBytes = false,
-            placeholderCounts = counts,
-        ).install(HotPathWeaver.capturing(ByteBuddyAgent.install(), captured))
-        val name = internal("Annotated")
-        val original = AbsentTypeFixtures.annotated(name)
-
-        assertNotNull(captured.single().transform(loaderOf(name to original), name, null, null, original))
-
-        assertEquals(0, counts.classes())
-        assertEquals(0, counts.types())
     }
 
     /** Serves no class file and defines only what a test puts in [defined], as a loader does for bytes it holds in memory. */
@@ -560,25 +460,6 @@ class PlaceholderWeavingTest {
     }
 
     @Test
-    fun `a class with nothing to probe whose only absent type is a class-retention annotation is not counted`() {
-        val counts = PlaceholderCounts()
-        val captured = mutableListOf<ClassFileTransformer>()
-        OtherlodeInstrumentation(
-            AgentConfig.parse("includePackages=${AbsentTypeFixtures.PACKAGE}"),
-            registry,
-            captureClassBytes = false,
-            placeholderCounts = counts,
-        ).install(HotPathWeaver.capturing(ByteBuddyAgent.install(), captured))
-        val name = internal("MarkedInterface")
-        val original = AbsentTypeFixtures.abstractInterface(name, null, annotated = true)
-
-        assertNotNull(captured.single().transform(loaderOf(name to original), name, null, null, original))
-
-        assertEquals(0, counts.classes())
-        assertEquals(0, counts.types())
-    }
-
-    @Test
     fun `an interface whose superinterface is absent is refused and reported skipped, not woven`() {
         val name = internal("Extending")
         val original = AbsentTypeFixtures.interfaceExtending(name, AbsentTypeFixtures.ABSENT_PREFIX + "Contract")
@@ -599,7 +480,7 @@ class PlaceholderWeavingTest {
 
         val failure = assertFailsWith<Throwable> { transformer.transform(loader, child, null, null, childBytes) }
 
-        assertSkippedForSupertype(child, "com.example.placeholder.MemoryParent", failure)
+        assertSkippedForSupertype(child, "com.example.withabsent.MemoryParent", failure)
     }
 
     private fun classAccessOf(bytes: ByteArray): Int {

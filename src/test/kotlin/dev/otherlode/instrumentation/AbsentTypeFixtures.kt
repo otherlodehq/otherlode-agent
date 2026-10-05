@@ -10,7 +10,7 @@ import net.bytebuddy.jar.asm.Opcodes
  */
 internal object AbsentTypeFixtures {
     /** The package of every fixture. */
-    const val PACKAGE = "com.example.placeholder"
+    const val PACKAGE = "com.example.withabsent"
 
     /** The internal-name prefix of the types that exist nowhere. */
     const val ABSENT_PREFIX = "com/example/absent/"
@@ -184,17 +184,6 @@ internal object AbsentTypeFixtures {
         return MergeClasses(base to baseWriter.toByteArray(), a to sub(a, base), b to sub(b, base), c to cw.toByteArray())
     }
 
-    /** A class named [internalName] with one class-retention annotation of the absent type `Marker`. */
-    fun annotated(internalName: String): ByteArray {
-        val cw = ClassWriter(ClassWriter.COMPUTE_FRAMES)
-        cw.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, internalName, null, "java/lang/Object", null)
-        cw.visitSource("Annotated.java", null)
-        cw.visitAnnotation("L${ABSENT_PREFIX}Marker;", false).visitEnd()
-        cw.constructor("java/lang/Object")
-        cw.visitEnd()
-        return cw.toByteArray()
-    }
-
     /** One `InnerClasses` entry of [innerClassFixture]: [name], its outer class (null for a local or anonymous one), its simple name and flags. */
     class InnerEntry(
         val name: String,
@@ -251,13 +240,11 @@ internal object AbsentTypeFixtures {
 
     /**
      * A public interface named [internalName] with only abstract methods, so there is nothing to
-     * probe, whose class `Signature` is [signature] and which carries a class-retention annotation of
-     * the absent type `Marker` when [annotated].
+     * probe, whose class `Signature` is [signature].
      */
     fun abstractInterface(
         internalName: String,
         signature: String?,
-        annotated: Boolean = false,
     ): ByteArray {
         val cw = ClassWriter(ClassWriter.COMPUTE_FRAMES)
         cw.visit(
@@ -269,7 +256,6 @@ internal object AbsentTypeFixtures {
             null,
         )
         cw.visitSource("Abstract.java", null)
-        if (annotated) cw.visitAnnotation("L${ABSENT_PREFIX}Marker;", false).visitEnd()
         cw.visitMethod(Opcodes.ACC_PUBLIC or Opcodes.ACC_ABSTRACT, "find", "()Ljava/lang/Object;", null, null).visitEnd()
         cw.visitEnd()
         return cw.toByteArray()

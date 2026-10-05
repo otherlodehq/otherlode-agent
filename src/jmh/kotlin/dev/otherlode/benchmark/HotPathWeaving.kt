@@ -102,19 +102,16 @@ class HotPathWeaver {
          * invokes `transform` itself, so nothing else the JVM loads passes through it. Installing
          * it still points the JVM-wide `OtherlodeProbeArrays` resolver at [registry], so a woven
          * class initialised afterwards takes its array from the most recent call's registry.
-         * [describeMissingTypes] false weaves with ByteBuddy's own type pool, for comparing bytes.
          */
         fun offlineTransformer(
             includePackages: List<String>,
             registry: ProbeRegistry,
-            describeMissingTypes: Boolean = true,
         ): ClassFileTransformer {
             val captured = mutableListOf<ClassFileTransformer>()
             OtherlodeInstrumentation(
                 AgentConfig.parse("includePackages=" + includePackages.joinToString(";")),
                 registry,
                 captureClassBytes = false,
-                describeMissingTypes = describeMissingTypes,
             ).install(capturing(ByteBuddyAgent.install(), captured))
             return captured.single()
         }

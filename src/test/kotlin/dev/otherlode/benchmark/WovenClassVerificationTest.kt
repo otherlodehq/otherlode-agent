@@ -83,8 +83,8 @@ class WovenClassVerificationTest {
      * class annotations, the record components, and each field and method with its flags,
      * descriptor, signature, exceptions and annotations. The agent's own members are left out: the
      * probe field, its accessor methods, the refusal marker, and a `<clinit>` the class did not have.
-     * Nest members and inner classes are compared in order, not as sets, because the header restorer
-     * replays them in the order the class file has and a reordering would still be a rewrite.
+     * Nest members and inner classes are compared in order, not as sets, because the decoration
+     * writes them in the order the class file has and a reordering would still be a rewrite.
      */
     private fun structureOf(bytes: ByteArray): Map<String, String> {
         val node = ClassNode().also { ClassReader(bytes).accept(it, ClassReader.SKIP_CODE) }

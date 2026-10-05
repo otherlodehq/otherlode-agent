@@ -128,13 +128,6 @@ class OtherlodeInstrumentation(
      * written when its probes are, in [TransformResultListener].
      */
     private val handlerForwarders: HandlerForwarders = HandlerForwarders(),
-    /** Where classes woven over a placeholder are tallied; see [PlaceholderCounts]. */
-    private val placeholderCounts: PlaceholderCounts = PlaceholderCounts(),
-    /**
-     * Whether the weaving pool describes a type the classpath lacks as a placeholder. Always true for
-     * the agent; a test switches it off to weave with ByteBuddy's own pool and compare the bytes.
-     */
-    private val describeMissingTypes: Boolean = true,
     /**
      * The JVM-wide cache of class-file bytes every read of another class goes through. One instance
      * serves both tiers of the agent; see [ClassFileByteCache] for the two reads that bypass it.
@@ -145,8 +138,7 @@ class OtherlodeInstrumentation(
 ) {
     private val log = System.getLogger(OtherlodeInstrumentation::class.java.name)
 
-    private val jdkTypes = JdkTypePool()
-    private val placeholderPools = PlaceholderPoolStrategy(jdkTypes)
+    private val supertypeGuard = SupertypeGuard(classFileCache)
 
     private val referencedClassLocator = ReferencedClassLocator()
     private val classBytesCapture: ClassBytesCapture? = if (captureClassBytes) ClassBytesCapture(::isCandidateInternalName) else null
@@ -189,8 +181,7 @@ class OtherlodeInstrumentation(
      * are dropped. A loader is active when it asked for its table cache or touched the byte cache,
      * from either tier, in that span; the marks are cleared by each call, so a loader is released
      * one or two calls after its last use. A later transform refills what was released, which costs
-     * time and nothing else. The JVM-wide `java.` type pool is emptied when no loader at all was
-     * active in that span, bootstrap included, and refilled by the next transform.
+     * time and nothing else.
      *
      * Meant for the flush thread. The two locks, `tableCaches` and the byte cache's, are taken one
      * after the other and never nested, so no order of them can deadlock. A transform in flight
@@ -198,9 +189,7 @@ class OtherlodeInstrumentation(
      */
     fun releaseQuietCaches() {
         val byteActive = classFileCache.takeActiveLoaders()
-        var anyTableActive: Boolean
         synchronized(tableCaches) {
-            anyTableActive = tableActive.isNotEmpty()
             val iterator = tableCaches.keys.iterator()
             while (iterator.hasNext()) {
                 val loader = iterator.next()
@@ -209,7 +198,6 @@ class OtherlodeInstrumentation(
             tableActive.clear()
         }
         val bootstrapActive = bootstrapTableActive || null in byteActive
-        if (!anyTableActive && !bootstrapActive && byteActive.isEmpty()) jdkTypes.clear()
         bootstrapTableActive = false
         if (!bootstrapActive) bootstrapTableCache.clear()
         val keep = Collections.newSetFromMap(IdentityHashMap<ClassLoader?, Boolean>())
@@ -218,9 +206,6 @@ class OtherlodeInstrumentation(
         synchronized(tableCaches) { keep.addAll(tableCaches.keys) }
         classFileCache.dropLoadersNotIn(keep)
     }
-
-    /** How many `java.` type descriptions the shared pool holds; for tests. */
-    internal fun cachedJdkTypeCount(): Int = jdkTypes.cachedTypes()
 
     /** How many parsed tables the cache for [classLoader] holds; for tests. */
     internal fun cachedTableCount(classLoader: ClassLoader?): Int =
@@ -285,9 +270,9 @@ class OtherlodeInstrumentation(
             // The locator behind the pool and the supertype guard reads other classes' bytes through
             // the cache. ByteBuddy puts the received bytes of the class being transformed ahead of it.
             .with(classFileCache.locationStrategy())
-            // The pool ByteBuddy builds the type with; see PlaceholderPoolStrategy.
-            // The analyser's own reads, the static scanner and reference resolution keep strict pools.
-            .with(if (describeMissingTypes) placeholderPools else AgentBuilder.PoolStrategy.Default.FAST)
+            // The pool ByteBuddy describes the class with. A decoration resolves nothing the class
+            // names, so a pool per transform reads only the class's own bytes.
+            .with(AgentBuilder.PoolStrategy.Default.FAST)
             .with(TransformResultListener())
             .type(typeMatcher())
             .transform { builder, typeDescription, classLoader, _, protectionDomain ->
@@ -433,7 +418,6 @@ class OtherlodeInstrumentation(
             loaded: Boolean,
             dynamicType: DynamicType,
         ) {
-            if (alreadyLoaded.get() != true) placeholderCounts.record(placeholderPools.substantive())
             val pending = pendingRegistration.get() ?: return
             pendingRegistration.remove()
             registry.register(
@@ -480,7 +464,7 @@ class OtherlodeInstrumentation(
                 }
 
                 else -> {
-                    val refusal = generateSequence(throwable) { it.cause }.filterIsInstance<PlaceholderRefusal>().firstOrNull()
+                    val refusal = generateSequence(throwable) { it.cause }.filterIsInstance<SupertypeRefusal>().firstOrNull()
                     if (refusal != null) {
                         log.log(Level.WARNING, "otherlode: $typeName ${refusal.message}")
                         registry.recordSkipped(typeName, refusal.message.orEmpty())
@@ -519,7 +503,6 @@ class OtherlodeInstrumentation(
         ) {
             pendingRegistration.remove()
             alreadyLoaded.remove()
-            placeholderPools.release()
         }
     }
 
@@ -539,15 +522,9 @@ class OtherlodeInstrumentation(
         if (alreadyLoaded.get() == true) return reweave(builder, typeDescription, classLoader, protectionDomain)
         // The JVM cannot define a class whose own supertype is absent, so weaving it would publish
         // probes for a class that never loads. Failing here records it as skipped.
-        placeholderPools.missingSupertype(typeDescription)?.let { throw PlaceholderRefusal.undefinable(it) }
+        supertypeGuard.missingSupertype(typeDescription, classLoader)?.let { throw SupertypeRefusal.undefinable(it) }
         val source = readClassBytes(typeDescription, classLoader, protectionDomain)
         val analysedBytes = source.analysed
-        val restored =
-            if (source.receivedDiffers) {
-                restoreHeader(builder, source.received)
-            } else {
-                restoreHeader(builder, analysedBytes, source.analysedReader)
-            }
         val (analysedMethods, receivedMethods, analysis, pairing) = analyse(typeDescription, classLoader, source)
         val methods =
             receivedMethods?.let { received -> analysedMethods.filter { it.key in received } }
@@ -606,7 +583,7 @@ class OtherlodeInstrumentation(
             // that as nothing to probe would tell the sweep the class is accounted for and hide
             // the one case the warning above exists to report.
             if (analysedBytes != null) registry.recordNothingToProbe(typeDescription.name)
-            return restored
+            return builder
         }
         if (analysis.isKotlinClass && !analysis.hasLineNumbers) {
             log.log(
@@ -805,7 +782,7 @@ class OtherlodeInstrumentation(
         val built = plan.build()
         stage(typeDescription, classLoader, probes, analysis, references, built, sizeWarnings)
         return weave(
-            restored,
+            builder,
             typeDescription,
             built,
             built.view(),
@@ -957,7 +934,7 @@ class OtherlodeInstrumentation(
             )
         }
         return weave(
-            restoreHeader(builder, received ?: locateClassBytes(typeDescription, classLoader, protectionDomain)),
+            builder,
             typeDescription,
             plan,
             view,
@@ -989,23 +966,6 @@ class OtherlodeInstrumentation(
             { key -> view.sequences[key] },
             { key -> view.droppedOrdinalsOf(key.first, key.second) },
         )
-    }
-
-    /**
-     * Makes the class [builder] writes carry the header of [headerSource], which is the bytes the
-     * weave starts from: the received bytes, or the class file when none were received. Applied to
-     * every class the method tier writes, including one with nothing to probe, since ByteBuddy
-     * rewrites that one too. With no bytes at all there is nothing to restore from and [builder]
-     * comes back unchanged. See [ClassHeaderRestorer].
-     */
-    private fun restoreHeader(
-        builder: DynamicType.Builder<*>,
-        headerSource: ByteArray?,
-        reader: ClassReader? = null,
-    ): DynamicType.Builder<*> {
-        if (headerSource == null) return builder
-        placeholderPools.noteAnnotationTypes(headerSource)
-        return builder.visit(if (reader == null) ClassHeaderRestorer.wrapper(headerSource) else ClassHeaderRestorer.wrapper(reader))
     }
 
     /** Logs that a woven class cannot be woven again, for [reason], so the redefinition is refused. */
@@ -1057,8 +1017,8 @@ class OtherlodeInstrumentation(
      * and an accessor every probe calls.
      *
      * The visitors run in the reverse of the order they are added: the subroutine inliner first, then
-     * the omission probes, the branch rewrite, the entry probes, the class members and the header
-     * restorer. The branch rewrite reads the omission probes as instructions of the method, and
+     * the omission probes, the branch rewrite, the entry probes and the class members. The branch
+     * rewrite reads the omission probes as instructions of the method, and
      * never sees an entry probe.
      *
      * The plan's ordinals are the class file's. Pairing guarantees an eligible method's tracked
@@ -1069,7 +1029,6 @@ class OtherlodeInstrumentation(
      * version 50 carries frames. [sizeGuarded] names methods left out of the branch rewrite on top of
      * the ones [pairing] does not pair.
      *
-     * [builder] already carries the header restorer, see [restoreHeader].
      */
     private fun weave(
         builder: DynamicType.Builder<*>,
@@ -1391,7 +1350,7 @@ class OtherlodeInstrumentation(
                 classFileCache.locatorFor(classLoader),
             )
         return TypePool.Default
-            .WithLazyResolution(TypePool.CacheProvider.Simple(), locator, TypePool.Default.ReaderMode.FAST, jdkTypes)
+            .WithLazyResolution(TypePool.CacheProvider.Simple(), locator, TypePool.Default.ReaderMode.FAST)
             .describe(typeDescription.name)
             .resolve()
     }

@@ -49,9 +49,8 @@ import kotlin.test.assertTrue
  * on. A class the agent refuses because its own superclass or interface is not on its class set's
  * classpath, such as spring-webmvc's JSP tags, is left out of that share when it also fails to load
  * in a fresh loader for want of a class, since no JVM with that classpath could define it. A type
- * absent from a field or method signature does not excuse a class: the agent describes it as a
- * placeholder and weaves the class. At most
- * [MAX_EXCUSED_SHARE] of a corpus may be left out, so a wrong classpath cannot excuse everything.
+ * absent from a field or method signature does not excuse a class: a decoration describes nothing
+ * the class names, so the class weaves. At most [MAX_EXCUSED_SHARE] of a corpus may be left out, so a wrong classpath cannot excuse everything.
  */
 class CodeSizeLimitsTest {
     private val resource = ResourceAttributes("test", null, "instance-1", null, "run-1")

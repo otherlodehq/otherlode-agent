@@ -84,12 +84,8 @@ _Avoid_: proxy class (a Spring bean proxy is one shape of it), synthetic class (
 A method Hibernate's bytecode enhancement adds to an entity class the adopter wrote, named with the `$$_hibernate_` prefix, including a reader and writer per persistent field. Never probed, never declared, and passed through when the adopter's code calls one, the way a synthetic accessor is.
 _Avoid_: generated method (that is compiler output that stands for a declaration), synthetic method (a JVM flag; these are not synthetic)
 
-**Placeholder**:
-A type missing from the classpath that the agent describes, while weaving a class that names it, as an empty public class extending `Object` with the right number of type parameters. It only lets the weaver describe the class: it never enters a frame or the woven class's header, and a class whose supertype is missing, at any depth, is skipped.
-_Avoid_: stub type, fake class
-
 **Skipped class**:
-A class that matched the include rules but could not be instrumented, reported with a reason.
+A class that matched the include rules but could not be instrumented, reported with a reason. One whose superclass or an interface, at any depth, has no class file its loader can read is skipped on purpose, since the JVM cannot define it.
 _Avoid_: failed class, excluded class (excluded means outside `includePackages`)
 
 **Unconfirmed class**:

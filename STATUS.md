@@ -1140,7 +1140,7 @@ Found 2026-10-05 by `DECORATE` chunk 2's tests. The analyser picks the optional 
 says the first 32 are counted. A function needs 32 or more optional parameters to meet it. Fixing it
 adds a slot and moves that method's layout hash, which is free before release.
 
-### `DECORATE` instead of `REBASE`, and the entry probe in ASM: grilled, to build
+### `DECORATE` instead of `REBASE`, and the entry probe in ASM: landed
 
 Grilled on 2026-10-05 with Luke, from an Opus research pass with a standalone harness over 3,184
 corpus classes (byte-buddy 1.18.12; scratch in the session's `decorate/` directory). Findings:
@@ -1209,6 +1209,16 @@ methods differ only in the omission prefix; manifests identical, so no layout ha
 allocation per class down 13 to 19% more. ADRs 0002, 0021 and 0061 amended. Found while testing,
 not changed: mask bit 31 is never read as an optional parameter, so a `$default` counts its first 31
 optional parameters, not 32; fixing it moves slots and layout hashes, a follow-up below.
+
+Chunk 3 landed: `PlaceholderTypePool.kt` (the pool, `PlaceholderCounts`, the placeholder type) and
+`ClassHeaderRestorer` are removed, with the placeholder log line and the test toggle;
+`SupertypeGuard` keeps ADR 0059's one surviving rule on cached class-file headers. Woven bytes,
+canonical manifests and the 46 supertype refusals identical over the corpora and the version
+matrix; weaving 5 to 10% faster again. The chunk also showed that under the decoration nothing
+describes a `java.*` type, so 7b's shared JDK pool (Q21) never filled: it is removed too, with its
+quiet release, and the method tier's pool is ByteBuddy's plain one. `CONTEXT.md` drops
+"Placeholder" and says the supertype rule under "Skipped class"; ADR 0059 amended as superseded but
+for that rule.
 
 What follows is the entry as raised.
 
