@@ -240,6 +240,11 @@ adopter's collector forwards to one multi-tenant backend.
    `NullPointerException` where the original ran (ADR 0060), and 312 of the
    ceiling run's 4462 matched classes were skipped, most of them needlessly
    (ADRs 0058, 0059).
+9. **Startup and heap.** Grilled on 2026-10-05; the entry "The agent's
+   startup and heap: grilled, to build" below. The JAX-RS matcher costs
+   about 1.5 s on every app without JAX-RS, repeat class-file reads are half
+   the ceiling's transform time, and delivered probe metadata and
+   transform-time caches hold about 94 MB at the ceiling.
 
 After release: naming polish (`this$0`, facade names, the demo printer),
 the server's performance-only deferrals, gzip, a collector config file, agent-level redaction
@@ -320,7 +325,7 @@ Parked from the same review, none a one-way door: a WARNING for an
 still run with `enabled=false`; no warning for `otelBridgeEnabled=true` with
 `endpointsEnabled=false`.
 
-### Runtime overhead: landed, startup and heap to grill
+### Runtime overhead: landed, startup and heap grilled, to build
 
 Raised 2026-10-03, grilled 2026-10-04 with Luke. The design calls the woven
 code close to nothing in several places and nothing measures it. `./gradlew
@@ -553,7 +558,7 @@ startup 13.6 s to 23.9 s; ceiling 100,302 probes, throughput -4.9%, CPU per
 request +5.4%, p99 +5.2%, GC pause per 1000 requests +20%, RSS +306 MiB,
 startup 15.2 s to 64.0 s. The README carries the table. The headline budget
 (throughput and p95 within noise) holds. Startup is the cost that stands out,
-amplified on one core, and is the investigation below, still to grill.
+amplified on one core, and is the entry "The agent's startup and heap: grilled, to build" below.
 
 One flush timed on its own (2026-10-05): `FlushBenchmark` runs the real
 `ExportScheduler.flush()` over a registry filled from the real transformer's
@@ -841,68 +846,129 @@ edit deleted would read as never hit unless a collector learns the old entry
 is superseded, which may need a wire field), and whether that is worth it for a
 development convenience.
 
-### The agent's startup: measured, to grill
+### The agent's startup and heap: grilled, to build
 
-Measured 2026-10-04 on PetClinic REST (Corretto 21.0.5 with CDS, medians of
-five to seven runs; profiles from async-profiler). "Process running for"
-rose from 3.2 s to 5.5 s with the headline config and to 15.1 s with the
-ceiling. Of the headline's +2.26 s, about 1.5 s is the JAX-RS endpoint
-module's type matcher, which runs on all 19.6k classes the JVM loads,
-whatever the include rules, parses each and walks its supertypes through
-fresh class-file reads (about 25.9k of them) in an app with no JAX-RS at all;
-about 0.45 s is weaving PetClinic's ~100 classes; about 0.4 s is `premain`
-(ByteBuddy's classes, an eagerly built `HttpClient`). Losing CDS costs
-nothing measurable. The ceiling's time scales with the classes woven, about
-3 ms each, and 47% of transform time is locating class files: about 111k
-reads through Spring Boot's nested-jar loader, mostly repeats that ByteBuddy's
-fresh-per-transform pool and the analyser's own lookups make. Background
-threads (JIT, the dependency listing) add 8 s of CPU, which a host with one
-or two CPUs would feel at startup.
+Measured 2026-10-04 on PetClinic REST, re-measured at `c4f91d7` on 2026-10-05
+(Corretto 21.0.5 with CDS, a 12-core Mac, medians of five runs, async-profiler
+4.1; a live collector and live heap after two full GCs for the heap), and
+grilled the same day with Luke. Every item is before 0.1.0 (checklist item 9).
 
-Candidate changes, for a grill with the heap entry below, since a shared
-type-pool cache trades startup for retained memory: gate the JAX-RS module
-per loader on its annotation class being present (about 1.5 s on every app
-without JAX-RS); a type pool shared across transforms per loader, also used by
-the analyser's lookups; `BranchKeys.digest` without `String.format` (0.3 s at
-the ceiling); a lazily built `HttpClient` (0.1 s). Full measurements, method and
-scripts in `docs/investigations/2026-10-04-agent-startup.md` and
-`docs/investigations/startup/`.
+**Startup at `c4f91d7`.** "Process running for" goes from 3.24 s to 5.48 s with
+the headline config and to 13.84 s with the ceiling (4,208 classes, 98,546
+probes). ADRs 0058 to 0061 took 1.25 s off the ceiling, nearly all of it
+validation, and nothing off the headline. Of the headline's +2.24 s, about
+1.5 s is the JAX-RS module's type matcher, which reads every one of the ~19.6k
+classes the JVM loads and walks their supertypes (25.9k class-file reads) in
+an app with no JAX-RS, about 0.35 s is weaving PetClinic, and about 0.36 s is
+`premain` (building the transformer 125 ms, the `HttpClient` 109 ms). At the
+ceiling, locating class files is 51% of the 9.7 s of transform time: 92k reads
+through Spring Boot's nested-jar loader at about 54 microseconds each, about
+78k of them repeats of a supertype or referenced type. The largest readers are
+the JAX-RS matcher (25.9k), ByteBuddy's visibility check in
+`MethodRegistry.prepare` (24.6k, 1.56 s, which checks every inherited method's
+return and parameter types), the analyser's `crossClassLookup` (11.1k), ADR
+0059's supertype guard (10.4k), the rebase builder (8.3k), and `Advice.to`
+re-reading the advice class on every weave (4.1k). `BranchKeys.digest` is
+0.4 s, mostly `"%02x".format`. On the runner's single pinned core the headline
+went 13.6 s to 23.9 s and the ceiling 15.2 s to 64.0 s.
 
-### The agent's heap after delivery: measured, to grill
+**Heap at `c4f91d7`, ceiling, after delivery.** +117.5 MB live over no agent.
+`ProbeRegistry` 64.6 MB, of which `ClassEntry.probes` is 60.3 MB (612 B a
+probe; strings with many duplicates, tens of thousands of empty and
+single-element lists), and after delivery only each probe's `kind` is read.
+`OtherlodeInstrumentation.tableCaches` 33.9 MB, read only by a first weave's
+analysis and held for the loader's life. `WovenClasses` 4.7 MB, `DependencyRegistry`
+1.3 MB. Native: G1 commits +178 MB it grew to for transform-time garbage and
+keeps, the JVM's copy of woven bytes +20 MB. The first flush at the ceiling
+builds every manifest chunk before sending, about 180 MB and 100 ms, once.
 
-Measured 2026-10-04 on PetClinic REST (JDK 21, `-Xmx1g`, G1, a live
-collector, live heap after two full GCs, MAT on the dumps). Live heap over
-no agent: +9.6 MB with the headline config (1,489 probes), +114.7 MB with the
-ceiling (95,760 probes, 4,090 classes), about 1.2 KB a probe. Delivery frees
-only the in-flight wire objects (10.8 MB). What stays:
+Settled:
 
-- `ProbeRegistry`, 62.2 MB, of which `ClassEntry.probes` is 55.3 MB (about
-  578 B a probe: strings 25.9 MB of which 14.9 MB duplicate values, lists
-  13.3 MB with 38.5k empty and 118k of one element, `ProbeMeta` shells 9.2 MB).
-  After `advanceManifestBaseline` the only read of a delivered `ProbeMeta` is
-  its `kind` (`ProbeRegistry.kt:491`); the counting arrays are 2.4 MB.
-- `OtherlodeInstrumentation.tableCaches`, 34.0 MB: the per-loader
-  `CrossClassTableCache` of `MethodTable`s, read only at transform time and
-  held for the loader's life, which for the fat-jar loader is the process's.
-- `WovenClasses`, 4.5 MB: the stored plans ADR 0053 keeps for a re-weave.
-- `DependencyRegistry`, 1.3 to 2.0 MB, mostly loaded class names, by design.
+- **Target.** A startup target for the headline's time to first 200 on the
+  runner, not a gate, set as a percentage once the work below lands (starting
+  point: within 25% of no agent); a miss reopens the design. No target for the
+  ceiling, none for heap. The nightly harness watches both.
+- **JAX-RS gate.** A per-loader gate on `jakarta/ws/rs/Path.class` or
+  `javax/ws/rs/Path.class` being present, a cached `getResource` in a weak
+  map, ahead of every parsing check, as OpenTelemetry's `hasClassesNamed`
+  does; the bootstrap and platform loaders are ignored for this module only
+  (the JDK `HttpServer` module needs them); a per-loader bounded cache of the
+  supertype walk's answer. Include rules still do not apply (ADR 0017). A line
+  in ADR 0017's consequences.
+- **`BranchKeys.digest`.** A 16-entry hex lookup table, the derivation and
+  the `string` wire type unchanged, today's outputs pinned by a test first.
+  Raw 16-byte keys on the wire were considered, since the wire is still free
+  to change, and set aside: about 1.6 MB a ceiling manifest, against a
+  three-repo lockstep.
+- **`HttpClient`.** One client shared by both exporters, built lazily on the
+  export thread at the first send. Its TLS set-up stays, off the startup path;
+  no hand-rolled HTTP client.
+- **Dependency listing.** Started on the exporter thread at the first flush
+  rather than from `premain`, so its 0.9 s of CPU never competes with startup
+  on a one- or two-CPU host.
+- **Lambda-factory hook.** Stays synchronous in `premain` (26 ms), since moving
+  it widens ADR 0035's miss window.
+- **Declared methods only.** The method tier's ByteBuddy uses
+  `MethodGraph.Compiler.ForDeclaredMethods`, since it weaves declared methods
+  only and builds no visibility bridge. Conditional on a check against
+  byte-buddy 1.18.12's `MethodRegistry` and `MethodGraph` sources and
+  OpenTelemetry's `AgentInstaller` that nothing in a rebase needs inherited
+  methods, `WovenClassVerificationTest`, and ADR 0059's byte-identical
+  regression over the corpora; a dependency found goes back to Luke.
+- **Class-file byte cache.** One JVM-wide LRU of class-file bytes, negative
+  answers included, keyed by weak loader and name, capped at 16 MB, in front
+  of every locator the agent uses (the placeholder pool, `describeClassFile`,
+  `crossClassLookup`, the supertype guard, the JAX-RS walk). Parsed
+  descriptions are not cached: they are heavy, and locating is 51% of
+  transform time against parsing's 8%. Two reads bypass it, both in its KDoc
+  and tested: a class's own class file for its first analysis, and the
+  re-weave's class-file comparison (ADR 0053), where a stale copy would let a
+  HotSwapped class through on the old plan. `Advice` is built once, not per
+  weave.
+- **Releasing transform-time caches.** The flush thread clears a loader's
+  table cache and byte-cache entries when the loader had no first weave since
+  the previous flush. A later load refills them, at a cost in time only.
+- **Delivered probe metadata.** Once a class's manifest is delivered, the
+  registry keeps a compact kind array for it and drops its `ProbeMeta` list.
+  The manifest is send-once by design: a collector that loses an instance's
+  manifest cannot get it back without that instance restarting, which an
+  amendment to the registry ADR records. `ProbeRegistry.manifest(resource)`,
+  test-only, goes; its tests read delivered manifests.
+- **Manifest chunks one at a time.** Built, encoded, sent and advanced one
+  chunk at a time, so the first flush's peak is one chunk and each delivered
+  chunk's metadata is collectable before the next is built. The first failure
+  still stops the send.
+- **Interning and list sizing.** Names interned with `String.intern()` and
+  empty or single lists stored as `emptyList()`/`listOf(x)` wherever metadata
+  is built (probe metadata, call edges, referenced classes, tables), since the
+  peak before the first flush is what G1 sizes itself to.
+- **Kept as is.** `WovenClasses` plans (ADR 0053 needs them).
+- **Allocation.** One async-profiler allocation pass once the rest has landed;
+  local top allocators fixed in this work, anything structural back to Luke.
+  No target: how much G1 commits is the adopter's GC settings.
+- **`check`.** The JAX-RS gate rejects classes on a loader without JAX-RS
+  reading no class file (a counting locator); no `ProbeMeta` survives a
+  delivered manifest; the key-output pin. No timing gates a build.
+- **Records.** After-numbers go in this entry; both investigation docs are
+  removed when the work lands; their scripts move into `benchmark-overhead/`
+  as a manual profiling kit, and `benchmark-overhead/README.md`'s pointer to
+  `docs/investigations/` follows them. The design's registry section gains
+  the send-once property. No wire change, so `otherlode-collector` and
+  `otherlode-server` do not move.
 
-Native: the JVM's off-heap copy of each woven class's bytes (ADR 0053) is
-+19 MB in the ceiling; the largest RSS item is G1 committing +195 MB of heap
-it grew to for transform-time garbage (217 GC pauses against 28), which it
-keeps. The headline config's +78 MB RSS is mostly native: metaspace,
-code cache, symbols and thread stacks for about 3.5k extra classes (ByteBuddy,
-the agent, the JDK HTTP client, which also initialises TLS for plain http).
+Landing order, one Sonnet chunk and one commit each, reviewed in the main
+session, a large fix re-reviewed by Opus until reviewers and implementers are
+both happy: (1) the JAX-RS gate; (2) the digest, the lazy `HttpClient`, the
+deferred listing; (3) declared methods only, source check first; (4) the byte
+cache and `Advice` built once; (5) releasing caches when quiet; (6) delivered
+metadata, chunks one at a time, interning; (7) the allocation pass; (8)
+re-measure locally and on the runner, Luke sets the startup target, the
+scripts move, the docs go, this entry and the design updated.
 
-Candidate changes, for a grill: drop delivered `ProbeMeta` for a compact kind
-array (about 55 MB; makes the manifest permanently send-once, as it is in
-practice); release the table caches once transforms go quiet (about 34 MB);
-intern names and size lists when building probe metadata, call edges, tables
-and plans (15 to 25 MB); allocate less while weaving, so G1 does not grow;
-defer the HTTP client's TLS set-up for an `http` export URL. The full
-measurements, method and reproduction are in
-`docs/investigations/2026-10-04-agent-heap.md`, with the scripts in
-`docs/investigations/heap/`.
+The 2026-10-04 measurements, method and scripts are in
+`docs/investigations/2026-10-04-agent-startup.md`,
+`docs/investigations/2026-10-04-agent-heap.md` and the `startup/` and `heap/`
+directories beside them, until chunk 8.
 
 ### A Scala 3 enum nested in a class fails to transform: closed by ADR 0058
 
