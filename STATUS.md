@@ -300,6 +300,31 @@ routine and OpenTelemetry edge cases in the entries below.
 
 ## TODO
 
+### Reminders for expiring keys and credentials: to decide
+
+Raised 2026-10-05 by Luke while creating the release signing key. Nothing
+reminds anyone when a key, token or certificate the project depends on is
+about to expire, and an expired signing key stops releases cold (the Portal
+rejects a signature from an expired key). To decide: where the reminders
+live (a calendar, a scheduled job that opens an issue, the password
+manager's own reminders) and how far ahead they fire, then inventory every
+credential with an expiry or a rotation date across the three repos and the
+hosted stack, each with its owner and renewal steps.
+
+Known so far:
+
+- **Release signing key**, `Otherlode Releases <releases@otherlode.dev>`,
+  created 2026-10-05 with a two-year expiry: the primary and the signing
+  subkey expire on or about 2028-10-04 (`gpg --list-keys
+  releases@otherlode.dev` shows the exact date). Remind a month ahead, by
+  2028-09-04. Extending it needs the primary secret key and passphrase from
+  the password manager; after `gpg --quick-set-expire`, re-send the public
+  key to keys.openpgp.org and keyserver.ubuntu.com and replace the
+  `SIGNING_KEY` secret (ADR 0063).
+- To inventory: the Central Portal user token, the GitHub and Buf tokens CI
+  uses, the WorkOS and GCP credentials behind the hosted server, and the
+  `otherlode.dev` domain registration.
+
 ### One-way doors settled before release: landed
 
 Settled 2026-10-04 (checklist item 4). One Sonnet chunk and one commit each,
