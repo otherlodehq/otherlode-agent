@@ -7,15 +7,29 @@ package dev.otherlode.benchmark
  */
 const val MAX_WINDOW_DRIFT = 0.10
 
-/** Below this average, in cores, PetClinic was not held at its 2-CPU limit, so throughput measured the client or Postgres. */
-const val MIN_SATURATED_CORES = 1.9
+/** PetClinic must average at least this share of its pinned cores, or its throughput measured the client or Postgres. */
+const val MIN_SATURATION = 0.9
+
+/**
+ * Why PetClinic was not saturated, or null when it was: its container averaged under [MIN_SATURATION]
+ * of [pinnedCores], so the closed loop was limited by something other than PetClinic.
+ */
+fun saturationProblem(
+    cpuCoresAvg: Double,
+    pinnedCores: Int,
+): String? {
+    val floor = MIN_SATURATION * pinnedCores
+    if (cpuCoresAvg >= floor) return null
+    return "PetClinic averaged %.2f of its %d pinned core(s), under %.0f%%, so its throughput measured the client or Postgres"
+        .format(java.util.Locale.ROOT, cpuCoresAvg, pinnedCores, MIN_SATURATION * 100)
+}
 
 /**
  * CPU figures from two readings of the container's cgroup `cpu.stat` taken [elapsedSeconds] apart.
- * When the closed loop holds the container at its CPU limit, `cpuCoresAvg` sits at that limit for
+ * When the closed loop saturates the container's pinned cores, `cpuCoresAvg` sits at their count for
  * every variant, and CPU per request is the same measurement as throughput seen from the other side;
- * the summary warns about a run below [MIN_SATURATED_CORES]. `cpuThrottledMs` sums the time each
- * CPU's run queue spent throttled, so it can exceed the wall time.
+ * [saturationProblem] fails a run below [MIN_SATURATION]. `cpuThrottledMs` is zero without a quota
+ * and is kept so a harness change that restores one shows.
  */
 fun cpuMetrics(
     before: CgroupCpu,

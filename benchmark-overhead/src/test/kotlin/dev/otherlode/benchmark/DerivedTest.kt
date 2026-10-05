@@ -17,6 +17,21 @@ class DerivedTest {
     }
 
     @Test
+    fun `a run at or above 90 percent of its pinned cores is saturated`() {
+        assertNull(saturationProblem(1.0, 1))
+        assertNull(saturationProblem(0.9, 1))
+        assertNull(saturationProblem(3.6, 4))
+    }
+
+    @Test
+    fun `a run below 90 percent of its pinned cores is not saturated`() {
+        val problem = saturationProblem(0.85, 1)
+        assertNotNull(problem)
+        assertTrue("0.85" in problem!! && "1 pinned" in problem, problem)
+        assertNotNull(saturationProblem(3.5, 4))
+    }
+
+    @Test
     fun `per-request figures divide by the requests k6 completed`() {
         val m = perRequest(mapOf("k6Requests" to 1000.0, "cpuSeconds" to 2.0, "allocatedMiB" to 10.0, "gcPauseTotalMs" to 50.0))
         assertEquals(2.0, m["cpuMillisPerRequest"]!!, 1e-9)

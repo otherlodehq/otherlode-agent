@@ -66,6 +66,11 @@ class Harness(
             .get()
     }
 
+    private val cpuSplit: CpuSplit by lazy {
+        CpuSplit.of(
+            checkNotNull(dockerClient.infoCmd().exec().ncpu) { "Docker reported no CPU count" },
+        )
+    }
     private var javaVersion: String = "unknown"
     private val failures = mutableListOf<String>()
 
@@ -105,6 +110,7 @@ class Harness(
             .withExposedPorts(COLLECTOR_PORT)
             .withEnv("OTHERLODE_COLLECTOR_INSECURE_NO_AUTH", "1")
             .withEnv("OTHERLODE_COLLECTOR_RATE_LIMIT_RPS", "0")
+            .withCreateContainerCmdModifier { it.hostConfig!!.withCpusetCpus(cpuSplit.support) }
             .waitingFor(Wait.forHttp("/healthz").forPort(COLLECTOR_PORT))
             .also { it.start() }
 
@@ -132,6 +138,7 @@ class Harness(
                 .withUsername(DB_USER)
                 .withPassword(DB_PASS)
                 .withDatabaseName("petclinic")
+                .withCreateContainerCmdModifier { it.hostConfig!!.withCpusetCpus(cpuSplit.support) }
         val petclinic = petclinicContainer(variant)
         val metrics = linkedMapOf<String, Double>()
         var log = ""
@@ -212,6 +219,7 @@ class Harness(
         val checks = metrics["checksPassRate"] ?: 0.0
         if (checks < 1.0) problems += "k6 checks pass rate was $checks, below 1.0"
         warmthProblem(metrics)?.let { problems += it }
+        metrics["cpuCoresAvg"]?.let { saturationProblem(it, cpuSplit.petclinicCores)?.let { p -> problems += p } }
         if (problems.isNotEmpty()) throw InvalidRunException(problems.joinToString("; "))
 
         val skipped = if (variant == Variant.NONE) emptyList() else LogScan.skippedClasses(log)
@@ -244,7 +252,7 @@ class Harness(
                 it.withCopyFileToContainer(MountableFile.forHostPath(settings.agentJar), "/app/otherlode-agent.jar")
             }.withCreateContainerCmdModifier { cmd: CreateContainerCmd ->
                 cmd.hostConfig!!
-                    .withNanoCPUs(2_000_000_000L)
+                    .withCpusetCpus(cpuSplit.petclinic)
                     .withMemory(2L * 1024 * 1024 * 1024)
                     .withMemorySwap(2L * 1024 * 1024 * 1024)
             }.withCommand(*command.toTypedArray())
@@ -298,12 +306,12 @@ class Harness(
                 .withNetwork(network)
                 .withNetworkAliases("k6")
                 .withCopyFileToContainer(MountableFile.forHostPath(settings.projectDir.resolve("k6/overhead.js")), "/app/overhead.js")
-                .withCreateContainerCmdModifier { it.withUser("root") }
+                .withCreateContainerCmdModifier { it.withUser("root").hostConfig!!.withCpusetCpus(cpuSplit.k6) }
                 .withEnv("WINDOW_MS", windowMillis.toString())
                 .withCommand(
                     "run",
                     "-u",
-                    "5",
+                    cpuSplit.virtualUsers.toString(),
                     "--system-tags",
                     K6_SYSTEM_TAGS,
                     "--duration",
@@ -411,6 +419,9 @@ class Harness(
                 "runner.os" to "${System.getProperty("os.name")} ${System.getProperty("os.version")} ${System.getProperty("os.arch")}",
                 "runner.cpus" to Runtime.getRuntime().availableProcessors().toString(),
                 "docker.cpus" to info.ncpu.toString(),
+                "cpuset.petclinic" to cpuSplit.petclinic,
+                "cpuset.k6" to cpuSplit.k6,
+                "cpuset.postgresAndCollector" to cpuSplit.support,
                 "docker.memoryBytes" to info.memTotal.toString(),
                 "petclinic.java.version" to javaVersion.lines().joinToString(" | "),
                 "agent.jar" to settings.agentJar.fileName.toString(),

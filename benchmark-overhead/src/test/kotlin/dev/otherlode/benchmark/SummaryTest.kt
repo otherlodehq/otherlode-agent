@@ -83,19 +83,6 @@ class SummaryTest {
     }
 
     @Test
-    fun `a run below the CPU limit is warned about`() {
-        val runs =
-            listOf(
-                RunRecord(Config.HEADLINE, Variant.NONE, 1, mapOf("cpuCoresAvg" to 1.99), emptyList()),
-                RunRecord(Config.HEADLINE, Variant.AGENT, 1, mapOf("cpuCoresAvg" to 1.5), emptyList()),
-            )
-        val md = summaryMarkdown(Config.HEADLINE, runs)
-        assertTrue(md.contains("below its CPU limit"), md)
-        assertTrue(md.contains("agent repeat 1: 1.5 cores"), md)
-        assertTrue(!md.contains("none repeat 1"), md)
-    }
-
-    @Test
     fun `the skipped count comes from the manifests even when nothing was logged`() {
         val runs = listOf(RunRecord(Config.HEADLINE, Variant.AGENT, 1, mapOf("manifestSkippedClasses" to 1.0), emptyList()))
         val md = summaryMarkdown(Config.HEADLINE, runs)

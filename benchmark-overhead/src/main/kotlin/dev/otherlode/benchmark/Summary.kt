@@ -170,12 +170,6 @@ fun summaryMarkdown(
     if (Variant.NONE in variants && byVariant.getValue(Variant.NONE).size > 1) {
         sb.append("\n\\* The median lies inside `none`'s own minimum to maximum: not told apart from run-to-run noise.\n")
     }
-    val unsaturated = runs.filter { (it.metrics["cpuCoresAvg"] ?: MIN_SATURATED_CORES) < MIN_SATURATED_CORES }
-    if (unsaturated.isNotEmpty()) {
-        sb.append("\n### Warning: PetClinic below its CPU limit\n\n")
-        sb.append("These runs averaged under $MIN_SATURATED_CORES cores, so their throughput may measure the client or Postgres:\n\n")
-        unsaturated.forEach { sb.append("- ${it.variant.id} repeat ${it.repeat}: ${num(it.metrics.getValue("cpuCoresAvg"))} cores\n") }
-    }
     sb.append("\n### Classes the agent skipped\n\n")
     var any = false
     for (v in variants.filter { it != Variant.NONE }) {

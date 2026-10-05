@@ -6,7 +6,7 @@ with and without the agent. It is a standalone Gradle build, not part of the roo
 
 ## What it measures
 
-Each run starts a fresh Postgres, starts PetClinic in a container limited to 2 CPUs and 2 GiB
+Each run starts a fresh Postgres, starts PetClinic in a container pinned to its own cores and limited to 2 GiB
 (`-Xms1g -Xmx1g -XX:+UseG1GC`), warms it up, then drives it with k6 for the measured window. The
 agent exports to a real `otherlode-collector` container, logging only, so the flush's encoding and
 send are the real ones and their cost is in the numbers.
@@ -31,9 +31,9 @@ Per run it records:
   set size maximum, metaspace used, and network read and write rates. The recording starts with
   the window and is stopped as k6 finishes, so it holds neither the warmup nor the shutdown.
 - **CPU:** the container's CPU seconds across the window, from two readings of its cgroup's
-  `cpu.stat`, as average cores and per request, and the periods the CPU quota throttled it with
-  the throttled time summed over every CPU's run queue, which can exceed the wall time. JFR's `jdk.CPULoad` shares are kept too, but they are taken against the host's CPU
-  count, not the container's limit.
+  `cpu.stat`, as average cores and per request. With no quota the throttling fields stay at zero and
+  are kept only so a change that restores one shows. JFR's `jdk.CPULoad` shares are kept too, but
+  they are taken against the host's CPU count, not PetClinic's pinned cores.
 - **Manifests:** probes, endpoints and skipped classes, summed from the collector's log line for
   each manifest the run sent.
 - **End of window:** `VmRSS` and `VmHWM` from `/proc/1/status`, and class space committed and used
@@ -50,6 +50,31 @@ window walks the loaded classes to count dependency classes; the forward check f
 classes runs only on every tenth flush, about ten minutes in, so no window holds one and only the
 shutdown flush, after the window, runs it. The cgroup and JFR readings also span k6's container
 starting and stopping, about a second either side of the load, the same for every variant.
+
+## Core pinning
+
+PetClinic is pinned to dedicated cores with a cpuset (`HostConfig.withCpusetCpus`), not limited by a
+CFS quota, and no other container may use those cores. A quota let k6, Postgres, dockerd and the
+Gradle JVM compete with PetClinic for the same cores, so a closed loop measured the client. The split
+follows Docker's CPU count `n` (`docker info`, the VM's count under Docker Desktop):
+
+- PetClinic: `max(1, n / 4)` cores, at most 2, from core 0.
+- Postgres and the collector, sharing one set: `max(1, n / 4)` cores, the highest-numbered.
+- k6: every core left over, in between.
+
+| `n` | PetClinic | k6 | Postgres and collector |
+|---|---|---|---|
+| 4 | `0` | `1-2` | `3` |
+| 8 | `0-1` | `2-5` | `6-7` |
+| 12 | `0-1` | `2-8` | `9-11` |
+| 16 | `0-1` | `2-11` | `12-15` |
+
+k6 runs 4 virtual users per PetClinic core, closed loop, so PetClinic's cores stay busy; capping
+PetClinic at 2 cores keeps a run on a large host comparable with one on a 4-CPU runner. With 2 CPUs PetClinic keeps core 0 and k6, Postgres and the collector share core 1. With 1 CPU the
+split cannot keep PetClinic's core to itself and the harness stops. The memory limit stays at 2 GiB.
+The chosen sets are written to `metadata.properties` as `cpuset.petclinic`, `cpuset.k6` and
+`cpuset.postgresAndCollector`. The Gradle JVM and dockerd are not pinned; on a 4-CPU runner they
+share the cores of the other containers.
 
 ## The matrix
 
@@ -112,6 +137,9 @@ log, stay in the results directory.
 - PetClinic exits early, never logs its "Started PetClinicApplication" line, or its log contains
   `VerifyError`, in any variant.
 - The k6 checks pass rate is below 1.0. The script checks every response's status.
+- PetClinic was not saturated: its container averaged under 90% of its pinned cores over the window
+  (`cpuCoresAvg`), so the closed loop was limited by k6 or Postgres and its throughput would not
+  describe PetClinic. CPU per request is still valid in such a run, but the run fails regardless.
 - The window was not steady: its last third served more than 10% more requests than its first,
   so the JIT was still compiling when measurement began (raise `-PwarmupSeconds`), or more than
   10% fewer, so something degraded through it.
@@ -125,8 +153,7 @@ log, stay in the results directory.
 
 For every agent run the harness also counts the classes the agent skipped, from the manifests, and
 names those it logged an `instrumentation failed for <class>` warning for. They are published
-beside the numbers and are not a failure. The summary also warns about a run whose PetClinic
-averaged under 1.9 cores, since its throughput may measure k6 or Postgres instead, and marks with
+beside the numbers and are not a failure. The summary marks with
 `*` a change whose median lies inside `none`'s own minimum to maximum.
 
 ## Results
