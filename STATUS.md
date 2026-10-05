@@ -275,6 +275,17 @@ adopter's collector forwards to one multi-tenant backend.
      to bypass, and immutable releases are on. Workflows outside the
      secret-holding jobs still use v4 of every action, several majors behind;
      bumping them is a follow-up.
+   - Rehearsal 1 passed on 2026-10-06 (tag `rehearsal/1` at `3d3dd0e`, run
+     37386314582): signed with the release subkey, `verifyPublication`
+     passed, deployment `33c6eaa9-4638-4488-b156-77903a9f5b8d` reached
+     VALIDATED within seconds, and the API drop removed it (the status query
+     afterwards found nothing). Not yet known: whether a dropped deployment
+     frees its version; a `rehearsal/1-again` tag answers it.
+   - Left in item 6: chunk 4 (the collector's release pieces), then cutting
+     collector `v0.1.0` and agent `0.1.0`. Cutting them is a deliberate action
+     for a future session, Luke's call (2026-10-06): the agent's needs its
+     `## [0.1.0]` changelog section written, and the collector's must exist
+     first, since `release.sh` refuses an agent release until it does.
    - Luke's steps, needed before the rehearsal. Done on 2026-10-05: the
      `releases@otherlode.dev` group (Google Workspace, external posting on),
      the signing key (fingerprints and expiry under "Reminders for expiring
