@@ -2,6 +2,7 @@ package dev.otherlode.instrumentation.endpoints
 
 import dev.otherlode.bootstrap.OtherlodeEndpoints
 import dev.otherlode.instrumentation.BootstrapHolder
+import dev.otherlode.instrumentation.ClassFileByteCache
 import dev.otherlode.instrumentation.TypeMatchPolicy
 import dev.otherlode.instrumentation.endpoints.api.AdviceBinder
 import dev.otherlode.instrumentation.endpoints.api.EndpointModule
@@ -42,6 +43,8 @@ class EndpointInstrumentation(
     private val modules: List<EndpointModule>,
     lambdaFactoryShape: LambdaFactoryShape = LambdaFactoryShape.JDK,
     private val handlerForwarders: HandlerForwarders = HandlerForwarders(),
+    /** The cache the JAX-RS supertype walk and every other class-file read of this tier goes through. */
+    private val classFileCache: ClassFileByteCache = ClassFileByteCache(),
 ) {
     private val log = System.getLogger(EndpointInstrumentation::class.java.name)
     private val agentClassLoader = EndpointInstrumentation::class.java.classLoader
@@ -117,6 +120,7 @@ class EndpointInstrumentation(
                 // the advice is woven into, rather than from its Class object. On a first load
                 // every strategy reads the pool.
                 .with(AgentBuilder.DescriptionStrategy.Default.POOL_ONLY)
+                .with(classFileCache.locationStrategy())
                 .disableClassFormatChanges()
                 // Replaces AgentBuilder's own default ignore matcher, which skips bootstrap-loader
                 // classes among others. The JDK's own HttpServer classes load on the bootstrap

@@ -997,6 +997,16 @@ five benchmark corpora both compilers wove byte-identical classes and failed the
 spring-webmvc classes refused for a missing supertype, ADR 0059), so the corpora carry none of the
 shapes; in the experiment Spring 6.2.19's jars went from 46k class-file reads to 30k.
 
+Chunk 4 landed: `ClassFileByteCache`, one per agent and shared by both tiers, caches class-file
+bytes and misses by weak loader and name, LRU under 16 MB. It sits behind the method tier's and
+the endpoint tier's `LocationStrategy` (so ByteBuddy's pool, the placeholder pool and ADR 0059's
+supertype guard read through it), `describeClassFile` and `crossClassLookup`. A class's own class
+file for its first analysis and the re-weave comparison of ADR 0053 read uncached, and a test
+primes the cache with a class's old file before a HotSwap-shaped redefinition to pin the refusal.
+`Advice` takes its advice classes from memory, described once. Class-file reads through the loader
+over the corpora fell from 715 to 236 (demo), 5,858 to 1,442 (spring-webmvc), 5,140 to 1,048
+(ktor-server-core) and 2,375 to 649 (scala); the woven bytes hash identically before and after.
+
 The 2026-10-04 measurements, method and scripts are in
 `docs/investigations/2026-10-04-agent-startup.md`,
 `docs/investigations/2026-10-04-agent-heap.md` and the `startup/` and `heap/`

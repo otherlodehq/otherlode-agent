@@ -16,6 +16,7 @@ import dev.otherlode.export.HttpOtlpStyleExporter
 import dev.otherlode.export.ResourceAttributes
 import dev.otherlode.export.forNewRun
 import dev.otherlode.instrumentation.BootstrapInstallException
+import dev.otherlode.instrumentation.ClassFileByteCache
 import dev.otherlode.instrumentation.LoadedClassSweep
 import dev.otherlode.instrumentation.OtherlodeInstrumentation
 import dev.otherlode.instrumentation.PlaceholderCounts
@@ -157,6 +158,7 @@ object Agent {
         val endpointModules = if (config.endpointsEnabled) discoverEndpointModules(config) else null
         val handlerForwarders = HandlerForwarders(endpointModules.orEmpty().flatMapTo(sortedSetOf()) { it.handlerInterfaces })
 
+        val classFileCache = ClassFileByteCache()
         val otherlodeInstrumentation =
             OtherlodeInstrumentation(
                 config,
@@ -167,6 +169,7 @@ object Agent {
                 externalClassRegistry = externalClassRegistry,
                 handlerForwarders = handlerForwarders,
                 placeholderCounts = placeholderCounts,
+                classFileCache = classFileCache,
             )
         val transformer =
             try {
@@ -182,7 +185,13 @@ object Agent {
         var endpointTransformer: ResettableClassFileTransformer? = null
         if (endpointModules != null) {
             try {
-                val instance = EndpointInstrumentation(endpointRegistry, endpointModules, handlerForwarders = handlerForwarders)
+                val instance =
+                    EndpointInstrumentation(
+                        endpointRegistry,
+                        endpointModules,
+                        handlerForwarders = handlerForwarders,
+                        classFileCache = classFileCache,
+                    )
                 endpointTransformer = instance.install(instrumentation)
                 endpointInstrumentation = instance
             } catch (e: Throwable) {

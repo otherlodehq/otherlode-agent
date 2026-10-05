@@ -124,8 +124,9 @@ class RetransformationInstrumentationTest {
     private fun install(
         config: AgentConfig,
         registry: ProbeRegistry,
+        classFileCache: ClassFileByteCache = ClassFileByteCache(),
     ) {
-        val otherlode = OtherlodeInstrumentation(config, registry)
+        val otherlode = OtherlodeInstrumentation(config, registry, classFileCache = classFileCache)
         installed = otherlode to otherlode.install(instrumentation)
     }
 
@@ -497,6 +498,30 @@ class RetransformationInstrumentationTest {
         install(AgentConfig.parse("includePackages=$TARGET"), registry)
         val classFile = EditableClassFile(legacy = false)
         val (branchTarget, target) = loadAndDrive(classFile.loader(javaClass.classLoader))
+        val edited = replaceConstant(classFile.file.readBytes(), "positive", "POSITIVE")
+        classFile.file.writeBytes(edited)
+
+        assertRefusedWithWarning { instrumentation.redefineClasses(java.lang.instrument.ClassDefinition(branchTarget, edited)) }
+
+        assertEquals("positive", branchTarget.getMethod("classify", Int::class.java).invoke(target, 5), "the woven class still runs")
+        assertEquals(4L to listOf(1L, 3L), countsOf(registry, "classify"), "the call after the refusal is counted")
+    }
+
+    /**
+     * The class file comparison of a re-weave reads the loader, not the byte cache: the cache holds
+     * the class file as it was before the edit, because something looked the class up while another
+     * was woven, and a comparison that read it would find the class unchanged and weave the edited
+     * code on the old plan.
+     */
+    @Test
+    fun `a HotSwap-shaped redefinition of a class whose old class file is cached is still refused`() {
+        val registry = CountingRegistry()
+        val cache = ClassFileByteCache()
+        install(AgentConfig.parse("includePackages=$TARGET"), registry, cache)
+        val classFile = EditableClassFile(legacy = false)
+        val loader = classFile.loader(javaClass.classLoader)
+        assertTrue(cache.locatorFor(loader).locate(BRANCH_TARGET).isResolved, "the old class file is cached")
+        val (branchTarget, target) = loadAndDrive(loader)
         val edited = replaceConstant(classFile.file.readBytes(), "positive", "POSITIVE")
         classFile.file.writeBytes(edited)
 

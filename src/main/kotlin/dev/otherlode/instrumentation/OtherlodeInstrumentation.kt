@@ -149,10 +149,36 @@ class OtherlodeInstrumentation(
      * the agent; a test switches it off to weave with ByteBuddy's own pool and compare the bytes.
      */
     private val describeMissingTypes: Boolean = true,
+    /**
+     * The JVM-wide cache of class-file bytes every read of another class goes through. One instance
+     * serves both tiers of the agent; see [ClassFileByteCache] for the two reads that bypass it.
+     */
+    private val classFileCache: ClassFileByteCache = ClassFileByteCache(),
 ) {
     private val log = System.getLogger(OtherlodeInstrumentation::class.java.name)
 
     private val placeholderPools = PlaceholderPoolStrategy()
+
+    /**
+     * An advice class described once, with its class file held in memory, so `Advice` does not
+     * read it through a new locator for every woven class. The bindings stay per class.
+     */
+    private class AdviceSource(
+        advice: Class<*>,
+    ) {
+        val type: TypeDescription = TypeDescription.ForLoadedType.of(advice)
+        val locator: ClassFileLocator =
+            ClassFileLocator.Simple.of(
+                advice.name,
+                ClassFileLocator.ForClassLoader
+                    .of(advice.classLoader)
+                    .locate(advice.name)
+                    .resolve(),
+            )
+    }
+
+    private val methodEntryAdvice = AdviceSource(MethodEntryAdvice::class.java)
+    private val optionalArgumentAdvice = AdviceSource(OptionalArgumentAdvice::class.java)
 
     private val referencedClassLocator = ReferencedClassLocator()
     private val classBytesCapture: ClassBytesCapture? = if (captureClassBytes) ClassBytesCapture(::isCandidateInternalName) else null
@@ -269,6 +295,10 @@ class OtherlodeInstrumentation(
             // default describes a loaded class from its Class object, which carries the probe field
             // a re-weave is about to define. On a first load every strategy reads the pool.
             .with(AgentBuilder.DescriptionStrategy.Default.POOL_ONLY)
+            // The locator behind the pool, the supertype guard and the rebase reads other classes'
+            // bytes through the cache. ByteBuddy puts the received bytes of the class being
+            // transformed ahead of it.
+            .with(classFileCache.locationStrategy())
             // The pool ByteBuddy builds the type with; see PlaceholderPoolStrategy.
             // The analyser's own reads, the static scanner and reference resolution keep strict pools.
             .with(if (describeMissingTypes) placeholderPools else AgentBuilder.PoolStrategy.Default.FAST)
@@ -1092,7 +1122,7 @@ class OtherlodeInstrumentation(
                     .withCustomMapping()
                     .bind(ProbeArrayMapping(form))
                     .bind(ProbeIndexMapping(slotBySignature))
-                    .to(MethodEntryAdvice::class.java)
+                    .to(methodEntryAdvice.type, methodEntryAdvice.locator)
                     .on { method -> (method.internalName to method.descriptor) in slotBySignature },
             )
 
@@ -1126,7 +1156,7 @@ class OtherlodeInstrumentation(
                         .bind(OmissionBaseMapping(bindings))
                         .bind(OptionalBitsMapping(bindings))
                         .bind(MaskArgumentMapping(bindings))
-                        .to(OptionalArgumentAdvice::class.java)
+                        .to(optionalArgumentAdvice.type, optionalArgumentAdvice.locator)
                         .on { method -> (method.internalName to method.descriptor) in bindings },
                 )
         }
@@ -1382,7 +1412,7 @@ class OtherlodeInstrumentation(
         val locator =
             ClassFileLocator.Compound(
                 ClassFileLocator.Simple.of(typeDescription.name, classFile),
-                classFileLocatorFor(classLoader),
+                classFileCache.locatorFor(classLoader),
             )
         return TypePool.Default
             .WithLazyResolution(TypePool.CacheProvider.Simple(), locator, TypePool.Default.ReaderMode.FAST)
@@ -1430,7 +1460,7 @@ class OtherlodeInstrumentation(
      * instrumentation failure.
      */
     private fun crossClassLookup(classLoader: ClassLoader?): (String) -> ByteArray? {
-        val locator = classFileLocatorFor(classLoader)
+        val locator = classFileCache.locatorFor(classLoader)
         return { internalName ->
             try {
                 val resolution = locator.locate(internalName.replace('/', '.'))
@@ -1550,11 +1580,17 @@ class OtherlodeInstrumentation(
             }
     }
 
+    /**
+     * The class file of the class being woven, read from its loader on every call and never through
+     * [classFileCache]: it is read once per class for the first analysis anyway, and a re-weave
+     * compares it against the class file the class was woven from, where a cached copy of a
+     * HotSwapped class would match the old plan.
+     */
     private fun locateClassBytes(
         typeDescription: TypeDescription,
         classLoader: ClassLoader?,
     ): ByteArray? {
-        val locator = classFileLocatorFor(classLoader)
+        val locator = ClassFileByteCache.uncachedLocatorFor(classLoader)
         // Any failure reads as no class file: the transform then analyses the received bytes
         // rather than failing the class over a resource it could do without.
         return try {
@@ -1564,13 +1600,6 @@ class OtherlodeInstrumentation(
             null
         }
     }
-
-    private fun classFileLocatorFor(classLoader: ClassLoader?): ClassFileLocator =
-        if (classLoader != null) {
-            ClassFileLocator.ForClassLoader.of(classLoader)
-        } else {
-            ClassFileLocator.ForClassLoader.ofBootLoader()
-        }
 
     private fun methodMatcher(isScalaClass: Boolean): ElementMatcher.Junction<MethodDescription> =
         TypeMatchPolicy.methodMatcher(isScalaClass)
