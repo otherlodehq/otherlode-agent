@@ -37,6 +37,12 @@ jobs:
           ./gradlew build --no-daemon
           -Potherlode.testJdk=${{ matrix.test-jdk }}
           -Porg.gradle.java.installations.fromEnv=JAVA_HOME_17_X64,JAVA_HOME_21_X64,JAVA_HOME_25_X64,JAVA_HOME_${{ matrix.test-jdk }}_X64
+      # Builds the Central Portal deployment and checks it, with no key and no upload. One leg is
+      # enough: the deployment does not depend on the test JVM, and the testkit's Dokka run is slow.
+      - if: matrix.test-jdk == 21
+        run: >-
+          ./gradlew verifyPublication --no-daemon
+          -Porg.gradle.java.installations.fromEnv=JAVA_HOME_17_X64,JAVA_HOME_21_X64,JAVA_HOME_25_X64
       - uses: actions/upload-artifact@v4
         if: failure()
         with:

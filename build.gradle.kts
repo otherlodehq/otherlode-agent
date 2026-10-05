@@ -1,14 +1,22 @@
+import org.gradle.api.publish.maven.tasks.AbstractPublishToMaven
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
+import org.w3c.dom.Element
 import java.nio.ByteBuffer
+import java.util.zip.CRC32
 import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
 import javax.inject.Inject
+import javax.xml.parsers.DocumentBuilderFactory
 
 plugins {
     kotlin("jvm") version "2.2.21"
     id("com.gradleup.shadow") version "8.3.11"
     id("me.champeau.jmh") version "0.7.3"
+    `maven-publish`
+    signing
+    id("com.gradleup.nmcp") version "1.6.2"
+    id("com.gradleup.nmcp.aggregation") version "1.6.2"
 }
 
 group = "dev.otherlode"
@@ -847,4 +855,255 @@ tasks.shadowJar {
 
 tasks.build {
     dependsOn(tasks.shadowJar)
+}
+
+// The agent has no public API to document. The Portal accepts a jar holding only a README for code
+// like that.
+val agentJavadocReadme = layout.buildDirectory.file("javadoc-readme/README.md")
+val writeJavadocReadme by tasks.registering {
+    val readme = agentJavadocReadme
+    outputs.file(readme)
+    doLast {
+        readme.get().asFile.writeText(
+            "otherlode-agent is a -javaagent jar and has no public API to document.\n" +
+                "See https://github.com/otherlodehq/otherlode-agent for its configuration and use.\n",
+        )
+    }
+}
+val javadocJar by tasks.registering(Jar::class) {
+    archiveClassifier.set("javadoc")
+    from(writeJavadocReadme)
+}
+
+extra["otherlode.artifactId"] = "otherlode-agent"
+extra["otherlode.pomName"] = "Otherlode agent"
+extra["otherlode.pomDescription"] = "A Java agent that reports the code paths an application never runs."
+apply(from = layout.projectDirectory.file("gradle/publishing.gradle.kts"))
+
+dependencies {
+    nmcpAggregation(project(":"))
+    nmcpAggregation(project(":testkit"))
+}
+
+nmcpAggregation {
+    centralPortal {
+        username.set(providers.environmentVariable("MAVEN_CENTRAL_USERNAME"))
+        password.set(providers.environmentVariable("MAVEN_CENTRAL_PASSWORD"))
+        publishingType.set(providers.gradleProperty("otherlode.centralPublishingType").orElse("USER_MANAGED"))
+        publicationName.set("otherlode $version")
+    }
+    // Off sends .md5, .sha1 and .sha512 beside every artifact and no checksum beside a signature,
+    // which is what the Portal asks for: .md5 and .sha1 required, .asc files needing none
+    // (central.sonatype.org/publish/requirements).
+    publishAllChecksums.set(false)
+}
+
+// Only a publishing task orders the jar checks before itself; `shadowJar` finalising `verifyAgentJar`
+// does not make an upload wait for it.
+tasks.configureEach {
+    if (this is AbstractPublishToMaven || name.startsWith("nmcpZip") || name.startsWith("nmcpPublish") ||
+        name.startsWith("publishAggregation") || name.startsWith("publishAllPublications")
+    ) {
+        dependsOn(verifyAgentJar)
+        if (name.contains("Aggregation")) dependsOn(":testkit:verifyTestkitJar")
+    }
+}
+
+// Builds the Central Portal deployment and checks the zip as the Portal will see it. Not part of
+// `check`: the testkit's Dokka run makes it slow.
+val verifyPublication by tasks.registering {
+    group = "verification"
+    description = "Builds the Central Portal deployment zip and checks its contents."
+    val zipFile = tasks.named<Zip>("nmcpZipAggregation").flatMap { it.archiveFile }
+    val agentJar = tasks.shadowJar.flatMap { it.archiveFile }
+    // Resolved when the task graph is built, by which time the testkit project is configured.
+    val testkitJar =
+        providers.provider {
+            project(":testkit")
+                .tasks
+                .named<Jar>("shadowJar")
+                .get()
+                .archiveFile
+                .get()
+        }
+    dependsOn(tasks.named("nmcpZipAggregation"), ":testkit:shadowJar")
+    inputs.file(zipFile)
+    inputs.file(agentJar)
+    inputs.file(testkitJar)
+    val signed = providers.environmentVariable("SIGNING_KEY").filter { it.isNotBlank() }.isPresent
+    inputs.property("signed", signed)
+    val versionText = project.version.toString()
+    doLast {
+        val components = mapOf("otherlode-agent" to "agent", "otherlode-testkit" to "testkit")
+        val versionPattern = Regex.escape(versionText)
+        ZipFile(zipFile.get().asFile).use { zip ->
+            val names =
+                zip
+                    .entries()
+                    .asSequence()
+                    .filterNot { it.isDirectory }
+                    .map { it.name }
+                    .toSet()
+            val directories = names.map { it.substringBeforeLast('/') }.toSet()
+            val expectedDirectories = components.keys.map { "dev/otherlode/$it/$versionText" }.toSet()
+            check(directories == expectedDirectories) {
+                "deployment holds $directories, expected exactly $expectedDirectories"
+            }
+
+            fun text(name: String) = zip.getInputStream(zip.getEntry(name)).bufferedReader().use { it.readText() }
+
+            for (artifactId in components.keys) {
+                // A SNAPSHOT deployment names its files with a timestamp in place of the version.
+                val fileVersion =
+                    names
+                        .mapNotNull {
+                            Regex(
+                                "^dev/otherlode/$artifactId/$versionPattern/$artifactId-(.+)\\.pom$",
+                            ).find(it)?.groupValues?.get(1)
+                        }.singleOrNull() ?: error("$artifactId has no single .pom in the deployment")
+                val base = "dev/otherlode/$artifactId/$versionText/$artifactId-$fileVersion"
+                val artifacts =
+                    listOf(".jar", "-sources.jar", "-javadoc.jar", ".pom", ".module").map { base + it }
+                val missing = artifacts.filterNot { it in names }
+                check(missing.isEmpty()) { "$artifactId is missing $missing" }
+                for (artifact in artifacts) {
+                    for (checksum in listOf("md5", "sha1")) {
+                        check("$artifact.$checksum" in names) { "no .$checksum beside $artifact" }
+                    }
+                    if (signed) check("$artifact.asc" in names) { "no .asc beside $artifact" }
+                }
+                if (!signed) {
+                    val signatures = names.filter { it.endsWith(".asc") }
+                    check(signatures.isEmpty()) { "unsigned build carries signatures: $signatures" }
+                }
+
+                val pom =
+                    DocumentBuilderFactory
+                        .newInstance()
+                        .newDocumentBuilder()
+                        .parse(zip.getInputStream(zip.getEntry("$base.pom")))
+                        .documentElement
+
+                fun field(path: String): String? {
+                    var node: Element? = pom
+                    for (part in path.split('/')) {
+                        node =
+                            generateSequence(node?.firstChild) { it.nextSibling }
+                                .filterIsInstance<Element>()
+                                .firstOrNull { it.localName == part || it.tagName == part }
+                    }
+                    return node?.textContent?.trim()
+                }
+                val required =
+                    mapOf(
+                        "groupId" to "dev.otherlode",
+                        "artifactId" to artifactId,
+                        "version" to versionText,
+                        "url" to "https://github.com/otherlodehq/otherlode-agent",
+                        "licenses/license/name" to "The Apache License, Version 2.0",
+                        "licenses/license/url" to "https://www.apache.org/licenses/LICENSE-2.0.txt",
+                        "developers/developer/id" to "otherlode",
+                        "developers/developer/name" to "Luke Killick",
+                        "developers/developer/email" to "releases@otherlode.dev",
+                        "developers/developer/organization" to "Otherlode",
+                        "developers/developer/organizationUrl" to "https://otherlode.dev",
+                        "scm/url" to "https://github.com/otherlodehq/otherlode-agent",
+                        "scm/connection" to "scm:git:https://github.com/otherlodehq/otherlode-agent.git",
+                        "scm/developerConnection" to "scm:git:ssh://git@github.com/otherlodehq/otherlode-agent.git",
+                    )
+                for ((path, expected) in required) {
+                    check(field(path) == expected) { "$artifactId POM $path is \"${field(path)}\", expected \"$expected\"" }
+                }
+                for (path in listOf("name", "description")) {
+                    check(!field(path).isNullOrBlank()) { "$artifactId POM has no $path" }
+                }
+                val dependencies =
+                    generateSequence(pom.firstChild) { it.nextSibling }
+                        .filterIsInstance<Element>()
+                        .firstOrNull { it.tagName == "dependencies" }
+                        ?.getElementsByTagName("dependency")
+                        ?.let { list ->
+                            (0 until list.length).map {
+                                val dependency = list.item(it) as Element
+
+                                fun child(tag: String) = dependency.getElementsByTagName(tag).item(0)?.textContent
+                                "${child("groupId")}:${child("artifactId")}:${child("version")}:${child("scope")}"
+                            }
+                        }.orEmpty()
+                if (artifactId == "otherlode-agent") {
+                    check(
+                        generateSequence(pom.firstChild) { it.nextSibling }
+                            .filterIsInstance<Element>()
+                            .none { it.tagName == "dependencies" },
+                    ) { "the agent POM must declare no dependencies, found $dependencies" }
+                } else {
+                    check(dependencies == listOf("org.jetbrains.kotlin:kotlin-stdlib:2.2.21:runtime")) {
+                        "the testkit POM must list only kotlin-stdlib at runtime scope, found $dependencies"
+                    }
+                }
+            }
+
+            // Each published main jar is its shadowJar output entry for entry, and names this version in
+            // its manifest: the testkit refuses an agent whose Implementation-Version differs from its own.
+            val builtJars = mapOf("otherlode-agent" to agentJar.get().asFile, "otherlode-testkit" to testkitJar.get().asFile)
+            for ((artifactId, builtJar) in builtJars) {
+                val entry =
+                    names.single {
+                        Regex(
+                            "^dev/otherlode/$artifactId/$versionPattern/$artifactId-[^/]+(?<!-sources|-javadoc)\\.jar$",
+                        ).matches(it)
+                    }
+                val publishedEntries = mutableMapOf<String, Long>()
+                var manifest = ""
+                ZipInputStream(zip.getInputStream(zip.getEntry(entry))).use { stream ->
+                    generateSequence { stream.nextEntry }.filterNot { it.isDirectory }.forEach { jarEntry ->
+                        val bytes = stream.readAllBytes()
+                        publishedEntries[jarEntry.name] = CRC32().also { it.update(bytes) }.value
+                        if (jarEntry.name == "META-INF/MANIFEST.MF") manifest = String(bytes)
+                    }
+                }
+                if (artifactId == "otherlode-agent") {
+                    check("Premain-Class: dev.otherlode.Agent" in manifest) { "the published agent jar's manifest has no Premain-Class" }
+                }
+                check(Regex("(?m)^Implementation-Version: ${versionPattern}\\r?$").containsMatchIn(manifest)) {
+                    "the published $artifactId jar's manifest does not name version $versionText"
+                }
+                val built =
+                    ZipFile(builtJar).use { jar ->
+                        jar
+                            .entries()
+                            .asSequence()
+                            .filterNot { it.isDirectory }
+                            .associate { it.name to it.crc }
+                    }
+                check(built == publishedEntries) {
+                    "the published $artifactId jar differs from its shadowJar output: " +
+                        "only built ${(built.keys - publishedEntries.keys).take(5)}, " +
+                        "only published ${(publishedEntries.keys - built.keys).take(5)}, " +
+                        "different ${built.filter { (k, v) -> publishedEntries[k] != null && publishedEntries[k] != v }.keys.take(5)}"
+                }
+
+                // Gradle metadata: one variant, needing JVM 17, so an older consumer fails at resolution.
+                val module = text(names.single { it.startsWith("dev/otherlode/$artifactId/") && it.endsWith(".module") })
+                val variants =
+                    Regex(
+                        "\"name\"\\s*:\\s*\"([^\"]+)\"\\s*,\\s*\"attributes\"",
+                    ).findAll(module).map { it.groupValues[1] }.toList()
+                check(variants == listOf("shadowRuntimeElements")) { "$artifactId .module has variants $variants" }
+                check(Regex("\"org\\.gradle\\.jvm\\.version\"\\s*:\\s*17\\b").containsMatchIn(module)) {
+                    "$artifactId .module does not require JVM 17"
+                }
+            }
+        }
+    }
+}
+
+// The upload checks the exact deployment it sends: nmcp resolves the aggregation leniently, so a
+// testkit that failed to resolve would drop out of the bundle without an error, and an agent-only
+// release could not be taken back. A SNAPSHOT is refused as soon as the task graph is known.
+tasks.named("nmcpPublishAggregationToCentralPortal") { dependsOn(verifyPublication) }
+gradle.taskGraph.whenReady {
+    if (hasTask(":nmcpPublishAggregationToCentralPortal")) {
+        check(!version.toString().endsWith("-SNAPSHOT")) { "refusing to upload $version: the Portal takes no SNAPSHOT" }
+    }
 }

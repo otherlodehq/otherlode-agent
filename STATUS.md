@@ -237,6 +237,28 @@ adopter's collector forwards to one multi-tenant backend.
      release 21 to 17, since at 21 the dynamic-constant probe path had no
      window test on a JDK 17, and narrowed the JaCoCo-ahead comparison to
      drop only the two release-21 classes on 17.
+   - Chunk 2 landed on 2026-10-05: `maven-publish`, `signing` and nmcp 1.6.2
+     in the root and the testkit, through a shared `gradle/publishing.gradle.kts`.
+     Both publish the shadow component, with sources jars (main Kotlin and
+     Java only), javadoc jars (a README for the agent, Dokka for the testkit),
+     LICENSE and NOTICE in every jar, and `org.gradle.jvm.version` 17 in the
+     Gradle metadata, so a JVM 11 consumer fails at resolution. The testkit's
+     POM lists kotlin-stdlib at runtime scope, from its shadow variant. Gradle
+     names a signing key by the low 32 bits of its id and takes only eight hex
+     digits (`PgpKeyId`), so `SIGNING_KEY_ID` is reduced to those and defaults
+     to the release subkey's `BC8D3F42`: the `release` environment needs four
+     secrets, `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `SIGNING_KEY`
+     and `SIGNING_PASSWORD`. `verifyPublication` checks the deployment zip
+     (layout, checksums, signatures when signed, POM fields, dependencies,
+     both main jars against their shadowJar output and version, the `.module`
+     variants), runs in CI on the JDK 21 leg, and runs before every upload,
+     since nmcp resolves the aggregation leniently and a testkit that failed
+     to resolve would drop out silently. A SNAPSHOT upload is refused when the
+     task graph is built. Proved by a signed run with a throwaway subkey-only
+     export, ten signatures verified; nothing uploaded. For chunk 3: nmcp
+     prints the deployment id only in its log ("Nmcp: deployment bundle '<id>'
+     uploaded."), and retries the upload POST up to three times, so a lost
+     response can leave a duplicate deployment.
    - Luke's steps, needed before the rehearsal. Done on 2026-10-05: the
      `releases@otherlode.dev` group (Google Workspace, external posting on),
      the signing key (fingerprints and expiry under "Reminders for expiring

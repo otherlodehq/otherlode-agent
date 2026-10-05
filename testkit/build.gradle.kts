@@ -1,3 +1,4 @@
+import org.gradle.api.publish.maven.tasks.AbstractPublishToMaven
 import org.gradle.api.tasks.bundling.Jar
 import java.util.zip.ZipFile
 
@@ -8,6 +9,10 @@ plugins {
     // 0.18.2 is the newest release (2026-09-02). It reads Kotlin 2.1 and later metadata, which
     // covers this module's 2.2.21, and its only change since 0.18.1 is a configuration crash fix.
     id("org.jetbrains.kotlinx.binary-compatibility-validator") version "0.18.2"
+    `maven-publish`
+    signing
+    id("com.gradleup.nmcp")
+    id("org.jetbrains.dokka") version "2.2.0"
 }
 
 group = "dev.otherlode"
@@ -291,4 +296,26 @@ tasks.check {
     dependsOn(testing.suites.named("agentTest"))
     dependsOn(verifyTestkitJar)
     dependsOn(tasks.named("compileJavaApiTestJava"))
+}
+
+// kotlin-stdlib stays out of the shaded jar, and the shadow component's POM lists only the
+// `shadow` configuration. It goes on the published variant itself: a `shadow(...)` dependency would
+// also write a Class-Path entry into the jar's manifest.
+configurations.named("shadowRuntimeElements") {
+    dependencies.add(project.dependencies.create("org.jetbrains.kotlin:kotlin-stdlib:2.2.21"))
+}
+
+val javadocJar by tasks.registering(Jar::class) {
+    archiveBaseName.set("otherlode-testkit")
+    archiveClassifier.set("javadoc")
+    from(tasks.named("dokkaGeneratePublicationHtml"))
+}
+
+extra["otherlode.artifactId"] = "otherlode-testkit"
+extra["otherlode.pomName"] = "Otherlode testkit"
+extra["otherlode.pomDescription"] = "Assertions over the Otherlode agent's findings, for tests."
+apply(from = rootProject.file("gradle/publishing.gradle.kts"))
+
+tasks.configureEach {
+    if (this is AbstractPublishToMaven) dependsOn(verifyTestkitJar)
 }
