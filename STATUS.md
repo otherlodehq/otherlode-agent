@@ -320,7 +320,7 @@ Parked from the same review, none a one-way door: a WARNING for an
 still run with `enabled=false`; no warning for `otelBridgeEnabled=true` with
 `endpointsEnabled=false`.
 
-### Runtime overhead: grilled, to build
+### Runtime overhead: landed, startup and heap to grill
 
 Raised 2026-10-03, grilled 2026-10-04 with Luke. The design calls the woven
 code close to nothing in several places and nothing measures it. `./gradlew
@@ -591,7 +591,7 @@ across months is wanted, and adds nothing that is hard to add later.
   `ANNOTATION_TYPE` on an annotation type (`InstrumentedType.java:1759-1760`
   in byte-buddy 1.18.12's sources).
 
-### Probe arrays, validation and placeholders: grilled, to build
+### Probe arrays, validation and placeholders: landed
 
 Grilled on 2026-10-04 with Luke, from the overhead ceiling run (PetClinic
 REST on Spring Boot 4.1.1, `includePackages=org.springframework`), which wove
