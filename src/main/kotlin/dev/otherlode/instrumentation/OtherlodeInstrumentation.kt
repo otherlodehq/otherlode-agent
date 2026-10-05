@@ -49,6 +49,7 @@ import net.bytebuddy.description.type.TypeDescription
 import net.bytebuddy.dynamic.ClassFileLocator
 import net.bytebuddy.dynamic.DynamicType
 import net.bytebuddy.dynamic.VisibilityBridgeStrategy
+import net.bytebuddy.dynamic.scaffold.MethodGraph
 import net.bytebuddy.dynamic.scaffold.TypeValidation
 import net.bytebuddy.implementation.Implementation
 import net.bytebuddy.implementation.bytecode.Addition
@@ -239,10 +240,18 @@ class OtherlodeInstrumentation(
             // class that inherits a public method from a package-private one, which the adopter's
             // class does not have, and a bridge whose signature names a placeholder makes
             // getDeclaredMethods throw where the unwoven class returns.
+            //
+            // The method graph holds the class's own methods only. The tier weaves declared methods,
+            // builds no bridge and reads no Implementation.Target, so the default graph's walk over
+            // every supertype buys nothing: it resolves each inherited method's types, which is most
+            // of the transform's class-file reads, merges methods that differ only in return type
+            // into one node that Advice then wraps once, and lets an abstract inherited method stand
+            // in for the concrete one that implements it, which Advice skips.
             .Default(
                 ByteBuddy()
                     .with(TypeValidation.DISABLED)
                     .with(VisibilityBridgeStrategy.Default.NEVER)
+                    .with(MethodGraph.Compiler.ForDeclaredMethods.INSTANCE)
                     .with(FrameRefusingClassWriter)
                     .ignore(none()),
             ).ignore(any<TypeDescription>(), isBootstrapClassLoader<ClassLoader>().or(isExtensionClassLoader()))

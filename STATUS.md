@@ -981,6 +981,22 @@ rather than one found at load) or from the baseline reference filter before it w
 comes first. A process whose first flush is its shutdown flush lists inside the 10 s shutdown
 budget; a flat or fat jar's listing took 0.2 to 1 s in the measurements.
 
+Chunk 3 landed: the method tier's ByteBuddy uses `MethodGraph.Compiler.ForDeclaredMethods`, as
+OpenTelemetry's agent does (`AgentInstaller.java:124-127`, v2.32.0). An Opus check of byte-buddy
+1.18.12's sources found nothing in a rebase that needs inherited methods for this agent: the graph
+feeds `Advice`'s name-and-descriptor lookup, the rebase resolver (empty here), visibility bridges
+(`NEVER`) and `Implementation.Target`, which the agent never reads. It also found a bug the switch
+fixes: the default graph merges declared methods that differ only in return type into one node,
+which `Advice` wraps once, so the others registered METHOD probes that never counted, a false
+never-hit (scalac emits such overloads, `StringOps.map`, `Function.uncurried`); and Scala's
+`MapView*` classes failed to weave on a wildcard the default graph cannot erase.
+`DeclaredMethodsWeavingTest` pins both, failing on `f264cee`. A third shape the experiment saw only
+in scala-library 3.8.1 (`ArraySeq$ofUnit.update` represented by its abstract supertype method) did
+not reproduce with a minimal fixture or with 2.13's `ArraySeq$ofUnit`, so it has no test. Over the
+five benchmark corpora both compilers wove byte-identical classes and failed the same ones (46
+spring-webmvc classes refused for a missing supertype, ADR 0059), so the corpora carry none of the
+shapes; in the experiment Spring 6.2.19's jars went from 46k class-file reads to 30k.
+
 The 2026-10-04 measurements, method and scripts are in
 `docs/investigations/2026-10-04-agent-startup.md`,
 `docs/investigations/2026-10-04-agent-heap.md` and the `startup/` and `heap/`
