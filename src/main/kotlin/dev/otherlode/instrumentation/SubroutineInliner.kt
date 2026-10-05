@@ -107,7 +107,7 @@ internal object SubroutineInliner {
      * when the class file's version is below 51 and a no-op otherwise. ByteBuddy's `Compound` wraps
      * in the order the wrappers were added to the builder, so the first added is nearest the class
      * writer and the last added is the first to see a method read from the class. This wrapper
-     * therefore has to be added after every Advice and branch wrapper, so that none of them sees a
+     * therefore has to be added after every probe wrapper, so that none of them sees a
      * `jsr`.
      */
     fun wrapper(): AsmVisitorWrapper =

@@ -1,6 +1,5 @@
 package dev.otherlode.instrumentation
 
-import dev.otherlode.advice.MethodEntryAdvice
 import dev.otherlode.bootstrap.OtherlodeProbeArrays
 import net.bytebuddy.asm.AsmVisitorWrapper
 import net.bytebuddy.description.field.FieldDescription
@@ -67,7 +66,7 @@ internal object ProbeArrayMembers {
         return wrapping { MembersVisitor(it, form, className, layoutHash, probeCount, typeInitializerProbeIndex) }
     }
 
-    /** The wrapper that adds the marker field of a refused re-weave; see [MethodEntryAdvice.REFUSAL_MARKER_FIELD]. */
+    /** The wrapper that adds the marker field of a refused re-weave; see [ProbeArrayForm.REFUSAL_MARKER_FIELD]. */
     fun refusalMarkerWrapper(): AsmVisitorWrapper = wrapping { RefusalMarkerVisitor(it) }
 
     private fun wrapping(visitor: (ClassVisitor) -> ClassVisitor): AsmVisitorWrapper =
@@ -104,7 +103,7 @@ internal object ProbeArrayMembers {
             .filter(named<MethodDescription>("resolve"))
             .only
 
-    private fun push(
+    fun push(
         visitor: MethodVisitor,
         value: Int,
     ) {
@@ -180,7 +179,7 @@ internal object ProbeArrayMembers {
         }
 
         override fun visitEnd() {
-            cv.visitField(FIELD_ACCESS, MethodEntryAdvice.PROBE_ARRAY_FIELD, ARRAY_DESCRIPTOR, null, null)?.visitEnd()
+            cv.visitField(FIELD_ACCESS, ProbeArrayForm.PROBE_ARRAY_FIELD, ARRAY_DESCRIPTOR, null, null)?.visitEnd()
             if (!sawTypeInitializer) {
                 val initializer = cv.visitMethod(Opcodes.ACC_STATIC, TYPE_INITIALIZER, VOID_DESCRIPTOR, null, null)
                 initializer.visitCode()
@@ -198,9 +197,9 @@ internal object ProbeArrayMembers {
 
         private fun prelude(visitor: MethodVisitor) {
             resolve(visitor)
-            visitor.visitFieldInsn(Opcodes.PUTSTATIC, owner, MethodEntryAdvice.PROBE_ARRAY_FIELD, ARRAY_DESCRIPTOR)
+            visitor.visitFieldInsn(Opcodes.PUTSTATIC, owner, ProbeArrayForm.PROBE_ARRAY_FIELD, ARRAY_DESCRIPTOR)
             if (typeInitializerProbeIndex != null) {
-                visitor.visitFieldInsn(Opcodes.GETSTATIC, owner, MethodEntryAdvice.PROBE_ARRAY_FIELD, ARRAY_DESCRIPTOR)
+                visitor.visitFieldInsn(Opcodes.GETSTATIC, owner, ProbeArrayForm.PROBE_ARRAY_FIELD, ARRAY_DESCRIPTOR)
                 push(visitor, typeInitializerProbeIndex)
                 visitor.visitInsn(Opcodes.DUP2)
                 visitor.visitInsn(Opcodes.LALOAD)
@@ -248,17 +247,17 @@ internal object ProbeArrayMembers {
          * written from version 50, where the verifier requires one, and left out below it.
          */
         private fun writeAccessor() {
-            val visitor = cv.visitMethod(PRIVATE_SYNTHETIC, MethodEntryAdvice.PROBE_ARRAY_ACCESSOR, ARRAY_FACTORY_DESCRIPTOR, null, null)
+            val visitor = cv.visitMethod(PRIVATE_SYNTHETIC, ProbeArrayForm.PROBE_ARRAY_ACCESSOR, ARRAY_FACTORY_DESCRIPTOR, null, null)
             val done = Label()
             visitor.visitCode()
-            visitor.visitFieldInsn(Opcodes.GETSTATIC, owner, MethodEntryAdvice.PROBE_ARRAY_FIELD, ARRAY_DESCRIPTOR)
+            visitor.visitFieldInsn(Opcodes.GETSTATIC, owner, ProbeArrayForm.PROBE_ARRAY_FIELD, ARRAY_DESCRIPTOR)
             visitor.visitInsn(Opcodes.DUP)
             visitor.visitJumpInsn(Opcodes.IFNONNULL, done)
             visitor.visitInsn(Opcodes.POP)
             visitor.visitMethodInsn(
                 Opcodes.INVOKESTATIC,
                 owner,
-                MethodEntryAdvice.PROBE_ARRAY_SLOW_PATH,
+                ProbeArrayForm.PROBE_ARRAY_SLOW_PATH,
                 ARRAY_FACTORY_DESCRIPTOR,
                 isInterface,
             )
@@ -276,7 +275,7 @@ internal object ProbeArrayMembers {
          * for C1 to inline.
          */
         private fun writeSlowPath() {
-            val visitor = cv.visitMethod(PRIVATE_SYNTHETIC, MethodEntryAdvice.PROBE_ARRAY_SLOW_PATH, ARRAY_FACTORY_DESCRIPTOR, null, null)
+            val visitor = cv.visitMethod(PRIVATE_SYNTHETIC, ProbeArrayForm.PROBE_ARRAY_SLOW_PATH, ARRAY_FACTORY_DESCRIPTOR, null, null)
             visitor.visitCode()
             resolve(visitor)
             visitor.visitInsn(Opcodes.ARETURN)
@@ -289,7 +288,7 @@ internal object ProbeArrayMembers {
         visitor: ClassVisitor,
     ) : ClassVisitor(Opcodes.ASM9, visitor) {
         override fun visitEnd() {
-            cv.visitField(FIELD_ACCESS, MethodEntryAdvice.REFUSAL_MARKER_FIELD, "I", null, null)?.visitEnd()
+            cv.visitField(FIELD_ACCESS, ProbeArrayForm.REFUSAL_MARKER_FIELD, "I", null, null)?.visitEnd()
             super.visitEnd()
         }
     }

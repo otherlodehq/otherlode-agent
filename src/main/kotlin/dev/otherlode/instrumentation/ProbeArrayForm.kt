@@ -1,11 +1,8 @@
 package dev.otherlode.instrumentation
 
-import dev.otherlode.advice.MethodEntryAdvice
 import dev.otherlode.bootstrap.OtherlodeProbeArrays
 import net.bytebuddy.description.method.MethodDescription
 import net.bytebuddy.description.type.TypeDescription
-import net.bytebuddy.implementation.Implementation
-import net.bytebuddy.implementation.bytecode.StackManipulation
 import net.bytebuddy.implementation.bytecode.constant.JavaConstantValue
 import net.bytebuddy.jar.asm.MethodVisitor
 import net.bytebuddy.jar.asm.Opcodes
@@ -41,18 +38,6 @@ internal sealed class ProbeArrayForm : ProbeArrayLoad {
     /** Whether the class gets the `$otherlodeProbeCounts` field and the `<clinit>` prelude that fills it. */
     abstract val hasField: Boolean
 
-    /** The load as a [StackManipulation], for ByteBuddy's `Advice` to inline. */
-    fun asStackManipulation(): StackManipulation =
-        object : StackManipulation.AbstractBase() {
-            override fun apply(
-                methodVisitor: MethodVisitor,
-                implementationContext: Implementation.Context,
-            ): StackManipulation.Size {
-                load(methodVisitor)
-                return StackManipulation.Size(1, 1)
-            }
-        }
-
     /** A dynamic constant bootstrapped from the holder; the class gets no field, prelude or method. */
     class DynamicConstant(
         layoutHash: Long,
@@ -78,7 +63,7 @@ internal sealed class ProbeArrayForm : ProbeArrayLoad {
         }
     }
 
-    /** A call to the class's own accessor, [MethodEntryAdvice.PROBE_ARRAY_ACCESSOR]. */
+    /** A call to the class's own accessor, [ProbeArrayForm.PROBE_ARRAY_ACCESSOR]. */
     class Accessor(
         private val ownerInternalName: String,
         private val ownerIsInterface: Boolean,
@@ -89,7 +74,7 @@ internal sealed class ProbeArrayForm : ProbeArrayLoad {
             methodVisitor.visitMethodInsn(
                 Opcodes.INVOKESTATIC,
                 ownerInternalName,
-                MethodEntryAdvice.PROBE_ARRAY_ACCESSOR,
+                ProbeArrayForm.PROBE_ARRAY_ACCESSOR,
                 ARRAY_FACTORY_DESCRIPTOR,
                 ownerIsInterface,
             )
@@ -104,6 +89,21 @@ internal sealed class ProbeArrayForm : ProbeArrayLoad {
     }
 
     companion object {
+        /** Name of the field a class below version 55 holds its counts array in. */
+        const val PROBE_ARRAY_FIELD = "\$otherlodeProbeCounts"
+
+        /** Name of the private static synthetic accessor a class below version 55 loads its array through. */
+        const val PROBE_ARRAY_ACCESSOR = "\$otherlodeProbes"
+
+        /** Name of the accessor's slow path, called while the field is still null. */
+        const val PROBE_ARRAY_SLOW_PATH = "\$otherlodeProbesResolve"
+
+        /**
+         * A field added only to bytes handed back for a refused re-weave of a class woven with a
+         * dynamic constant, so the JVM rejects them as a schema change and the woven class keeps running.
+         */
+        const val REFUSAL_MARKER_FIELD = "\$otherlodeRefused"
+
         /** First class-file major version whose constant pool may hold a dynamic constant (Java 11). */
         const val DYNAMIC_CONSTANT_VERSION = 55
 

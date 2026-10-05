@@ -1,12 +1,5 @@
 package dev.otherlode.instrumentation
 
-import dev.otherlode.advice.MaskArgument
-import dev.otherlode.advice.MethodEntryAdvice
-import dev.otherlode.advice.OmissionBase
-import dev.otherlode.advice.OptionalArgumentAdvice
-import dev.otherlode.advice.OptionalBits
-import dev.otherlode.advice.ProbeArray
-import dev.otherlode.advice.ProbeIndex
 import dev.otherlode.bootstrap.OtherlodeProbeArrays
 import dev.otherlode.config.AgentConfig
 import dev.otherlode.export.BodyKind
@@ -81,15 +74,6 @@ import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.WeakHashMap
 
-private fun bindingFor(
-    bindings: Map<Pair<String, String>, DefaultSiteBinding>,
-    instrumentedMethod: MethodDescription,
-): DefaultSiteBinding =
-    bindings[instrumentedMethod.internalName to instrumentedMethod.descriptor]
-        ?: throw IllegalStateException(
-            "otherlode: no omission binding for ${instrumentedMethod.internalName}${instrumentedMethod.descriptor}",
-        )
-
 /**
  * Wires method-entry, branch, optional-argument and `<clinit>` probes into every type matched by
  * [AgentConfig.includePackages], less the bootstrap and platform loaders' classes that
@@ -163,27 +147,6 @@ class OtherlodeInstrumentation(
 
     private val jdkTypes = JdkTypePool()
     private val placeholderPools = PlaceholderPoolStrategy(jdkTypes)
-
-    /**
-     * An advice class described once, with its class file held in memory, so `Advice` does not
-     * read it through a new locator for every woven class. The bindings stay per class.
-     */
-    private class AdviceSource(
-        advice: Class<*>,
-    ) {
-        val type: TypeDescription = TypeDescription.ForLoadedType.of(advice)
-        val locator: ClassFileLocator =
-            ClassFileLocator.Simple.of(
-                advice.name,
-                ClassFileLocator.ForClassLoader
-                    .of(advice.classLoader)
-                    .locate(advice.name)
-                    .resolve(),
-            )
-    }
-
-    private val methodEntryAdvice = AdviceSource(MethodEntryAdvice::class.java)
-    private val optionalArgumentAdvice = AdviceSource(OptionalArgumentAdvice::class.java)
 
     private val referencedClassLocator = ReferencedClassLocator()
     private val classBytesCapture: ClassBytesCapture? = if (captureClassBytes) ClassBytesCapture(::isCandidateInternalName) else null
@@ -659,7 +622,7 @@ class OtherlodeInstrumentation(
         val keptSites = analysis.keptSites.filter { pairing.isPaired(it.site.methodName, it.site.methodDescriptor) }
         val references = ReferencesKept(classLoader)
 
-        // A resolved Scala default getter keeps its ordinary method-tier slot and advice; only its
+        // A resolved Scala default getter keeps its ordinary method-tier slot and entry probe; only its
         // manifest row changes, from a METHOD probe under the getter's own name to an
         // OPTIONAL_ARGUMENT probe naming the target it fills a default for.
         val scalaGetterSitesByKey = analysis.scalaGetterSites.associateBy { it.getterName to it.getterDescriptor }
@@ -769,7 +732,7 @@ class OtherlodeInstrumentation(
         logUnprobedDefaults(typeDescription, defaultSites, analysis)
         // The type initializer's own probe, when the class declares one, is appended after every
         // other slot category (method, branch, omission). Where the class has a prelude, the prelude
-        // increments it right after it fills the counts field; otherwise entry advice on the
+        // increments it right after it fills the counts field; otherwise the entry probe on the
         // <clinit> does. Placement past the last other slot is a convenience, not a constraint.
         val typeInitializerProbe =
             if (analysis.hasTypeInitializer) {
@@ -1085,13 +1048,18 @@ class OtherlodeInstrumentation(
     }
 
     /**
-     * Weaves [plan] into [builder]: the probes' route to the counts array, entry advice on every
+     * Weaves [plan] into [builder]: the probes' route to the counts array, entry probes on every
      * method the plan gave a slot, branch probes on every method the plan gave a run that [pairing]
-     * pairs, and omission advice on every `$default` method in the plan.
+     * pairs, and omission probes on every `$default` method in the plan.
      *
      * The route is the [ProbeArrayForm] the plan's class-file version selects: a dynamic constant
      * and nothing added to the class from version 55, otherwise the field, its `<clinit>` prelude
      * and an accessor every probe calls.
+     *
+     * The visitors run in the reverse of the order they are added: the subroutine inliner first, then
+     * the omission probes, the branch rewrite, the entry probes, the class members and the header
+     * restorer. The branch rewrite reads the omission probes as instructions of the method, and
+     * never sees an entry probe.
      *
      * The plan's ordinals are the class file's. Pairing guarantees an eligible method's tracked
      * instructions match the received bytes' one for one, so they name the same instructions there,
@@ -1122,10 +1090,10 @@ class OtherlodeInstrumentation(
                 )
         }
 
-        // One Advice visitor for the whole class, with each method's slot resolved from its
-        // signature at weave time. One visitor per method would stack N method visitors, each
-        // checking every method against its own matcher, so transform cost would grow with the
-        // square of the method count.
+        // One visitor for the whole class, with each method's slot resolved from its signature at
+        // weave time. One visitor per method would stack N method visitors, each checking every
+        // method against its own matcher, so transform cost would grow with the square of the
+        // method count.
         //
         // With a dynamic constant there is no prelude to count the <clinit> probe, so the type
         // initializer is an ordinary entry-probe method whose body starts with that increment.
@@ -1136,15 +1104,7 @@ class OtherlodeInstrumentation(
             } else {
                 view.entrySlots
             }
-        instrumented =
-            instrumented.visit(
-                Advice
-                    .withCustomMapping()
-                    .bind(ProbeArrayMapping(form))
-                    .bind(ProbeIndexMapping(slotBySignature))
-                    .to(methodEntryAdvice.type, methodEntryAdvice.locator)
-                    .on { method -> (method.internalName to method.descriptor) in slotBySignature },
-            )
+        instrumented = instrumented.visit(MethodProbes.entry(form, slotBySignature))
 
         if (plan.branchWrapper) {
             val eligible =
@@ -1167,18 +1127,7 @@ class OtherlodeInstrumentation(
         }
 
         if (view.defaultSites.isNotEmpty()) {
-            val bindings = view.defaultSites
-            instrumented =
-                instrumented.visit(
-                    Advice
-                        .withCustomMapping()
-                        .bind(ProbeArrayMapping(form))
-                        .bind(OmissionBaseMapping(bindings))
-                        .bind(OptionalBitsMapping(bindings))
-                        .bind(MaskArgumentMapping(bindings))
-                        .to(optionalArgumentAdvice.type, optionalArgumentAdvice.locator)
-                        .on { method -> (method.internalName to method.descriptor) in bindings },
-                )
+            instrumented = instrumented.visit(MethodProbes.omission(form, view.defaultSites))
         }
 
         // Added last, so it is the first visitor to see a method read from the class: see
@@ -1513,101 +1462,6 @@ class OtherlodeInstrumentation(
                 null
             }
         }
-
-    /** Resolves `@ProbeArray` to the class's [ProbeArrayForm] load, inlined into the advice. */
-    private class ProbeArrayMapping(
-        private val form: ProbeArrayForm,
-    ) : Advice.OffsetMapping.Factory<ProbeArray> {
-        override fun getAnnotationType(): Class<ProbeArray> = ProbeArray::class.java
-
-        override fun make(
-            target: ParameterDescription.InDefinedShape,
-            annotation: AnnotationDescription.Loadable<ProbeArray>,
-            adviceType: Advice.OffsetMapping.Factory.AdviceType,
-        ): Advice.OffsetMapping =
-            Advice.OffsetMapping { _, _, _, _, _ -> Advice.OffsetMapping.Target.ForStackManipulation(form.asStackManipulation()) }
-    }
-
-    /**
-     * Resolves `@ProbeIndex` to the instrumented method's own slot, as a constant folded into the
-     * inlined advice, so one [Advice] visitor serves every probed method in the class.
-     */
-    private class ProbeIndexMapping(
-        private val slotBySignature: Map<Pair<String, String>, Int>,
-    ) : Advice.OffsetMapping.Factory<ProbeIndex> {
-        override fun getAnnotationType(): Class<ProbeIndex> = ProbeIndex::class.java
-
-        override fun make(
-            target: ParameterDescription.InDefinedShape,
-            annotation: AnnotationDescription.Loadable<ProbeIndex>,
-            adviceType: Advice.OffsetMapping.Factory.AdviceType,
-        ): Advice.OffsetMapping =
-            Advice.OffsetMapping { _, instrumentedMethod, _, _, _ ->
-                val slot =
-                    slotBySignature[instrumentedMethod.internalName to instrumentedMethod.descriptor]
-                        ?: throw IllegalStateException(
-                            "otherlode: no probe slot for ${instrumentedMethod.internalName}${instrumentedMethod.descriptor}",
-                        )
-                Advice.OffsetMapping.Target.ForStackManipulation(IntegerConstant.forValue(slot))
-            }
-    }
-
-    /** Resolves `@OmissionBase` to a woven `$default` method's first omission probe's slot. */
-    private class OmissionBaseMapping(
-        private val bindings: Map<Pair<String, String>, DefaultSiteBinding>,
-    ) : Advice.OffsetMapping.Factory<OmissionBase> {
-        override fun getAnnotationType(): Class<OmissionBase> = OmissionBase::class.java
-
-        override fun make(
-            target: ParameterDescription.InDefinedShape,
-            annotation: AnnotationDescription.Loadable<OmissionBase>,
-            adviceType: Advice.OffsetMapping.Factory.AdviceType,
-        ): Advice.OffsetMapping =
-            Advice.OffsetMapping { _, instrumentedMethod, _, _, _ ->
-                Advice.OffsetMapping.Target.ForStackManipulation(IntegerConstant.forValue(bindingFor(bindings, instrumentedMethod).base))
-            }
-    }
-
-    /** Resolves `@OptionalBits` to a woven `$default` method's optional-parameter bitmask. */
-    private class OptionalBitsMapping(
-        private val bindings: Map<Pair<String, String>, DefaultSiteBinding>,
-    ) : Advice.OffsetMapping.Factory<OptionalBits> {
-        override fun getAnnotationType(): Class<OptionalBits> = OptionalBits::class.java
-
-        override fun make(
-            target: ParameterDescription.InDefinedShape,
-            annotation: AnnotationDescription.Loadable<OptionalBits>,
-            adviceType: Advice.OffsetMapping.Factory.AdviceType,
-        ): Advice.OffsetMapping =
-            Advice.OffsetMapping { _, instrumentedMethod, _, _, _ ->
-                Advice.OffsetMapping.Target.ForStackManipulation(
-                    IntegerConstant.forValue(bindingFor(bindings, instrumentedMethod).optionalBits),
-                )
-            }
-    }
-
-    /**
-     * Resolves `@MaskArgument` to a woven `$default` method's first mask `int`, read as a local
-     * variable at its own offset: the mask parameter's index differs per method, so it cannot be
-     * bound through a fixed `@Advice.Argument` index.
-     */
-    private class MaskArgumentMapping(
-        private val bindings: Map<Pair<String, String>, DefaultSiteBinding>,
-    ) : Advice.OffsetMapping.Factory<MaskArgument> {
-        override fun getAnnotationType(): Class<MaskArgument> = MaskArgument::class.java
-
-        override fun make(
-            target: ParameterDescription.InDefinedShape,
-            annotation: AnnotationDescription.Loadable<MaskArgument>,
-            adviceType: Advice.OffsetMapping.Factory.AdviceType,
-        ): Advice.OffsetMapping =
-            Advice.OffsetMapping { _, instrumentedMethod, _, _, _ ->
-                val maskParameterIndex = bindingFor(bindings, instrumentedMethod).maskParameterIndex
-                val maskParameter = instrumentedMethod.parameters[maskParameterIndex]
-                Advice.OffsetMapping.Target.ForVariable
-                    .ReadOnly(maskParameter.type, maskParameter.offset)
-            }
-    }
 
     /**
      * The class file of the class being woven, read on every call and never through

@@ -1,6 +1,5 @@
 package dev.otherlode.instrumentation
 
-import dev.otherlode.advice.MethodEntryAdvice
 import dev.otherlode.benchmark.HotPathWeaver
 import dev.otherlode.config.AgentConfig
 import dev.otherlode.export.ProbeKind
@@ -204,8 +203,8 @@ class DecoratedWeavingTest {
 
             assertTrue(WovenBytes.declaresField(woven.bytes), "$label has the probe field")
             val methods = methodsOf(woven.bytes)
-            val accessor = checkNotNull(methods[MethodEntryAdvice.PROBE_ARRAY_ACCESSOR]) { "$label has the accessor" }
-            val slowPath = checkNotNull(methods[MethodEntryAdvice.PROBE_ARRAY_SLOW_PATH]) { "$label has the slow path" }
+            val accessor = checkNotNull(methods[ProbeArrayForm.PROBE_ARRAY_ACCESSOR]) { "$label has the accessor" }
+            val slowPath = checkNotNull(methods[ProbeArrayForm.PROBE_ARRAY_SLOW_PATH]) { "$label has the slow path" }
             val synthetic = Opcodes.ACC_PRIVATE or Opcodes.ACC_STATIC or Opcodes.ACC_SYNTHETIC
             assertEquals(synthetic, accessor.access, label)
             assertEquals(synthetic, slowPath.access, label)
@@ -234,7 +233,7 @@ class DecoratedWeavingTest {
             val methods = methodsOf(woven.bytes)
             assertTrue("<clinit>" in methods, "$label gained a type initializer")
             assertEquals(Opcodes.ACC_STATIC, methods.getValue("<clinit>").access, label)
-            assertEquals(if (version >= 50) 1 else 0, methods.getValue(MethodEntryAdvice.PROBE_ARRAY_ACCESSOR).frames, label)
+            assertEquals(if (version >= 50) 1 else 0, methods.getValue(ProbeArrayForm.PROBE_ARRAY_ACCESSOR).frames, label)
 
             val type = Class.forName(fixture.name, true, woven.loader)
             assertEquals(7, type.getMethod("seven").invoke(null), label)
@@ -254,7 +253,7 @@ class DecoratedWeavingTest {
             assertTrue("<clinit>" in methods, label)
             assertEquals(
                 version >= ProbeArrayForm.INTERFACE_PRIVATE_METHOD_VERSION,
-                MethodEntryAdvice.PROBE_ARRAY_ACCESSOR in methods,
+                ProbeArrayForm.PROBE_ARRAY_ACCESSOR in methods,
                 label,
             )
 
@@ -265,7 +264,7 @@ class DecoratedWeavingTest {
     }
 
     @Test
-    fun `a class from version 55 gets no field and no accessor, and its type initializer is counted by entry advice`() {
+    fun `a class from version 55 gets no field and no accessor, and its type initializer is counted by its entry probe`() {
         for (version in listOf(55, 65)) {
             val fixture = VersionedFixtures.plain(version)
             val woven = weave(fixture)
@@ -273,10 +272,10 @@ class DecoratedWeavingTest {
             assertFalse(WovenBytes.declaresField(woven.bytes), "v$version has no probe field")
             assertTrue(WovenBytes.loadsProbeConstant(woven.bytes))
             val methods = methodsOf(woven.bytes)
-            assertFalse(MethodEntryAdvice.PROBE_ARRAY_ACCESSOR in methods, "v$version")
+            assertFalse(ProbeArrayForm.PROBE_ARRAY_ACCESSOR in methods, "v$version")
             val type = Class.forName(fixture.name, true, woven.loader)
             type.getDeclaredConstructor().newInstance()
-            assertEquals(1L, entries(woven.registry, fixture.name, "<clinit>"), "v$version: counted by entry advice")
+            assertEquals(1L, entries(woven.registry, fixture.name, "<clinit>"), "v$version: counted by its entry probe")
         }
     }
 
@@ -356,7 +355,7 @@ class DecoratedWeavingTest {
                     signature: String?,
                     exceptions: Array<out String>?,
                 ): MethodVisitor? {
-                    if (name != MethodEntryAdvice.PROBE_ARRAY_ACCESSOR) return null
+                    if (name != ProbeArrayForm.PROBE_ARRAY_ACCESSOR) return null
                     return object : MethodVisitor(Opcodes.ASM9) {
                         override fun visitMethodInsn(
                             opcode: Int,
@@ -365,7 +364,7 @@ class DecoratedWeavingTest {
                             descriptor: String,
                             isInterface: Boolean,
                         ) {
-                            if (name == MethodEntryAdvice.PROBE_ARRAY_SLOW_PATH) calls += isInterface
+                            if (name == ProbeArrayForm.PROBE_ARRAY_SLOW_PATH) calls += isInterface
                         }
                     }
                 }

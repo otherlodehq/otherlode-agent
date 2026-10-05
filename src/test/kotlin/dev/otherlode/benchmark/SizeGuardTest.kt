@@ -123,11 +123,11 @@ class SizeGuardTest {
         val originalLength = checkNotNull(SizeGuard.codeLengths(original)[key])
         val wovenLength = checkNotNull(SizeGuard.codeLengths(woven)[key])
         assertTrue(originalLength <= SizeGuard.WIDENING_THRESHOLD, "the method starts at $originalLength bytes")
-        // Exact growth, read from javap: the entry probe is 12 bytes (a 2-byte `ldc` of the constant, `iconst`,
-        // five for the increment, and the advice's `goto; nop`), each of the two sites adds 22 (two probes of
+        // Exact growth, read from javap: the entry probe is 8 bytes (a 2-byte `ldc` of the constant, `iconst`
+        // and five for the increment), each of the two sites adds 22 (two probes of
         // 8 and two `goto`s), and the outer site's `goto` to the far target is a `goto_w`, 2 bytes more.
         val unwidened = originalLength + SizeGuard.ENTRY_PROBE + 2 * SizeGuard.TWO_WAY_SITE
-        assertEquals(originalLength + 12 + 2 * 22 + 2, wovenLength)
+        assertEquals(originalLength + 8 + 2 * 22 + 2, wovenLength)
         assertTrue("goto_w" in javap(woven, name), "the woven method holds no goto_w")
         assertFalse("goto_w" in javap(original, name), "the original already held a goto_w")
         val analysis = BranchSiteAnalyzer.analyze(original, { null }, listOf("com.example.huge")) { n, _ -> n == "big" }
@@ -175,8 +175,8 @@ class SizeGuardTest {
 
     @Test
     fun `apply counts a dropped switch's padding in what the entry probe alone weighs`() {
-        // 7983 + 15 = 7998 fits, and the switch's 3 bytes of padding make 8001.
-        val (sites, _, result) = apply(listOf(site(isSwitch = true, outcomes = 3, dropped = true), site()), nopClass(7983))
+        // 7987 + 11 = 7998 fits, and the switch's 3 bytes of padding make 8001.
+        val (sites, _, result) = apply(listOf(site(isSwitch = true, outcomes = 3, dropped = true), site()), nopClass(7987))
         assertEquals(BranchDropReason.COROUTINE_MACHINERY, sites[0].dropReason)
         assertEquals(null, sites[1].dropReason)
         assertEquals(SizeGuardReason.ENTRY_PROBE_ALONE, result.entryPastLimit.getValue(key).reason)
@@ -184,9 +184,9 @@ class SizeGuardTest {
 
     @Test
     fun `apply names a method with no site when its entry probe takes it past the compile limit`() {
-        val (_, _, result) = apply(emptyList(), nopClass(7986))
+        val (_, _, result) = apply(emptyList(), nopClass(7990))
         assertEquals(SizeGuardReason.ENTRY_PROBE_ALONE, result.entryPastLimit.getValue(key).reason)
-        val (_, _, fits) = apply(emptyList(), nopClass(7985))
+        val (_, _, fits) = apply(emptyList(), nopClass(7989))
         assertTrue(fits.entryPastLimit.isEmpty())
         val (_, _, huge) = apply(emptyList(), nopClass(8001))
         assertTrue(huge.entryPastLimit.isEmpty(), "a method already over the limit is not named")
@@ -213,12 +213,12 @@ class SizeGuardTest {
         val (sites, _, result) = apply(List(2) { site() }, nopClass(65500))
         assertTrue(sites.all { it.dropReason == BranchDropReason.SIZE_GUARD })
         assertEquals(SizeGuardReason.CLASS_FILE_LIMIT, result.guarded.getValue(key).reason)
-        // 65520 + 15 is past the limit: the entry probe alone overflows, so nothing is dropped.
-        val (overflowing, _, skipped) = apply(List(2) { site() }, nopClass(65521))
+        // 65525 + 11 is past the limit: the entry probe alone overflows, so nothing is dropped.
+        val (overflowing, _, skipped) = apply(List(2) { site() }, nopClass(65525))
         assertTrue(overflowing.none { it.dropReason != null })
         assertTrue(skipped.guarded.isEmpty())
         // The switch's padding is part of what the entry probe alone weighs.
-        val (padded, _, paddedResult) = apply(listOf(site(isSwitch = true, outcomes = 2, dropped = true), site()), nopClass(65518))
+        val (padded, _, paddedResult) = apply(listOf(site(isSwitch = true, outcomes = 2, dropped = true), site()), nopClass(65522))
         assertTrue(padded[1].dropReason == null && paddedResult.guarded.isEmpty())
     }
 
@@ -244,7 +244,7 @@ class SizeGuardTest {
         assertTrue(SizeGuard.reweaveGuarded(nopClass(1000), listOf(key), { sequence }, { emptySet() }).isEmpty())
         assertTrue(SizeGuard.reweaveGuarded(received, listOf(key), { sequence }, { setOf(0, 1) }).isEmpty(), "nothing is kept to drop")
         assertTrue(
-            SizeGuard.reweaveGuarded(nopClass(65521), listOf(key), { sequence }, { emptySet() }).isEmpty(),
+            SizeGuard.reweaveGuarded(nopClass(65525), listOf(key), { sequence }, { emptySet() }).isEmpty(),
             "the entry probe overflows",
         )
     }

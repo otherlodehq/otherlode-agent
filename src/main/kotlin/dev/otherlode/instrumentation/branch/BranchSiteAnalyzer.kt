@@ -59,7 +59,7 @@ object BranchSiteAnalyzer {
          * from [dev.otherlode.instrumentation.TypeMatchPolicy.methodMatcher], so it
          * never contributes a [sites] entry or an ordinary method probe; this flag is what lets
          * [dev.otherlode.instrumentation.OtherlodeInstrumentation] give such a class one
-         * METHOD probe anyway, counted by the woven `<clinit>` prelude or by entry advice on the
+         * METHOD probe anyway, counted by the woven `<clinit>` prelude or by the entry probe on the
          * `<clinit>`. A marker interface, or a class with only instance methods, has none.
          */
         val hasTypeInitializer: Boolean = false,
@@ -898,7 +898,7 @@ object BranchSiteAnalyzer {
                         // are worth capturing. <clinit> is always out of scope here too
                         // (methodFilter excludes it), but its own first line is still worth
                         // recording: OtherlodeInstrumentation gives a class with a type initializer of
-                        // its own one METHOD probe, counted by the prelude or by entry advice on the <clinit>.
+                        // its own one METHOD probe, counted by the prelude or by the entry probe on the <clinit>.
                         // Its call candidates are still worth capturing too: this method may be a
                         // same-class pass-through (a bridge, an access$ accessor) referenced by a
                         // probed method elsewhere in the class. See ADR 0024.
@@ -2631,7 +2631,7 @@ object BranchSiteAnalyzer {
                 // kotlinc writes the test as IFEQ. A coverage agent registered ahead of this one
                 // (JaCoCo) hands over its own output, where every conditional jump is inverted
                 // around an inserted probe, so the same test arrives as IFNE. Either direction
-                // means "mask bit tested"; the advice reads the mask itself, not the branch.
+                // means "mask bit tested"; the omission probe reads the mask itself, not the branch.
                 if (phase == 3 && (opcode == Opcodes.IFEQ || opcode == Opcodes.IFNE)) {
                     optionalBits = optionalBits or pendingConstant
                     testedBit = Integer.numberOfTrailingZeros(pendingConstant)

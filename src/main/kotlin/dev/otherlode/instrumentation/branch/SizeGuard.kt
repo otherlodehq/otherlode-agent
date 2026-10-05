@@ -93,14 +93,13 @@ internal class SiteCost(
  * have grown them.
  *
  * The bound is the original length plus an upper bound on each construct the weave inserts. Each
- * constant below is read from what [BranchProbeMethodVisitor] and the entry advice emit:
+ * constant below is read from what [BranchProbeMethodVisitor] and the entry probe emit:
  *
  * - [ARRAY_LOAD] 3: `ldc_w` of the dynamic constant, or `invokestatic` of the accessor. Never more.
  * - [INDEX_PUSH] 3: `iconst`, `bipush` and `sipush` take 1 to 3 bytes; an index past 32767 is an
  *   `ldc` (2) or `ldc_w` (3).
  * - [PROBE_INCREMENT] 11: the load, the index, then `dup2 laload lconst_1 ladd lastore`, 5 bytes.
- * - [ENTRY_PROBE] 15: the same increment, plus [ADVICE_TAIL], the `goto` that replaces the advice's
- *   `return` and the `nop` ByteBuddy puts before the original code.
+ * - [ENTRY_PROBE] 11: the same increment.
  * - [TWO_WAY_SITE] 28: a conditional becomes `jump taken; probe; goto continue; taken: probe; goto
  *   target`, 31 bytes in place of the jump's 3. A site with one probed outcome takes less.
  * - [SWITCH_CASE] 14: each case, and the default when probed, gets a block of a probe and a `goto`.
@@ -133,9 +132,8 @@ object SizeGuard {
     const val INDEX_PUSH = 3
     const val PROBE_INCREMENT = ARRAY_LOAD + INDEX_PUSH + 5
 
-    /** The `goto` that replaces the advice's `return`, 3 bytes, and the `nop` ByteBuddy puts before the original code. */
-    const val ADVICE_TAIL = 4
-    const val ENTRY_PROBE = PROBE_INCREMENT + ADVICE_TAIL
+    /** The entry probe is one increment at the first instruction and nothing else: no jump, `nop` or frame. */
+    const val ENTRY_PROBE = PROBE_INCREMENT
 
     /** A conditional jump with a 16-bit offset. */
     private const val CONDITIONAL_JUMP = 3

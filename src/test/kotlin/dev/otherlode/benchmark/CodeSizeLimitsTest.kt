@@ -132,7 +132,7 @@ class CodeSizeLimitsTest {
                                 { name -> loader.getResourceAsStream("$name.class")?.use { it.readBytes() } },
                                 corpus.includePackages,
                             ) { name, descriptor -> (name + descriptor) in grown }
-                        // A `$default` method and a type initializer grow by other advice, which the branch guard does not bound.
+                        // A `$default` method and a type initializer grow by probes of their own, which the branch guard does not bound.
                         val probed =
                             grown.filterTo(mutableSetOf()) { method ->
                                 method != "<clinit>()V" &&

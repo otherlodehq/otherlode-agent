@@ -24,3 +24,12 @@ Two findings follow at the collector. An optional parameter is never supplied wh
 - Only the first mask int is bound, so parameters past the 32nd get no probe and one INFO line.
 - Omissions in a call from Kotlin to an inline function are invisible, because the call site inlines the body with the default already substituted. That is the same blind spot the method tier has for inline functions and is handled by ADR 0022.
 - The static baseline says nothing about parameters. It answers whether a class ever loaded; once a class loads, its omission probes are in the manifest like any other.
+
+## Amendment, 2026-10-05: the omission probe is branchless ASM
+
+The omission probes are written by the agent's ASM (`MethodProbes`), not an `Advice` loop: for each
+optional parameter bit `i`, the slot `base + rank(i)` gets `(mask >>> i) & 1` added, so a supplied
+parameter adds zero. Same slots, same counts; no label, local or frame. A supplied parameter's +0 is
+a read-modify-write like every other probe's, inside ADR 0003's accepted race. Mask bit 31 is never
+read as an optional parameter (the analyser's power-of-two test needs a positive value), so a
+`$default` counts its first 31 optional parameters; recorded in STATUS.

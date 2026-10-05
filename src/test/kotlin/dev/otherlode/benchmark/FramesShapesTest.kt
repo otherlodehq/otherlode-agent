@@ -316,8 +316,8 @@ class FramesShapesTest {
                 val originalFrames = frameCount(original)
                 val wovenFrames = frameCount(woven)
                 if (variant.label.endsWith("without frames")) {
-                    // ByteBuddy's own entry advice writes one frame per method for the jump that ends it; the
-                    // branch tier writes none, so no method has a second.
+                    // The probe-array accessor has one frame for its null test; the entry probe and the
+                    // branch tier write none, so no method has a second.
                     assertTrue(
                         frameCounts(woven).second <= 1,
                         "${variant.label}: $internalName gets no branch-tier frame where it had none",

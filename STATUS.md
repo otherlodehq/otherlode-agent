@@ -1132,6 +1132,14 @@ The 2026-10-04 write-ups were removed when this work landed (git history keeps t
 `2e0dbe4` and `5a47ad0`); their scripts are the manual profiling kit in
 `benchmark-overhead/profiling/`.
 
+### A `$default` method's 32nd optional parameter is never counted
+
+Found 2026-10-05 by `DECORATE` chunk 2's tests. The analyser picks the optional parameters of a
+`$default` method from its mask tests with a power-of-two check that needs a positive value, so bit
+31 (`Int.MIN_VALUE`) is never read as an optional parameter and gets no omission probe; ADR 0021
+says the first 32 are counted. A function needs 32 or more optional parameters to meet it. Fixing it
+adds a slot and moves that method's layout hash, which is free before release.
+
 ### `DECORATE` instead of `REBASE`, and the entry probe in ASM: grilled, to build
 
 Grilled on 2026-10-05 with Luke, from an Opus research pass with a standalone harness over 3,184
@@ -1190,6 +1198,17 @@ time per class fell 20 to 40% and allocation 25 to 40% over the corpora. Review 
 pre-55 initializer that loops to its first instruction and catches, a check that the interface
 accessor's slow-path call carries `itf`, and the strategy's fallback version. ADRs 0058 to 0061
 amended.
+
+Chunk 2 landed: `MethodProbes` writes the entry probe (`probes[slot]++`) and the branchless
+omission probes as ASM at a method's first instruction, in the positions the two `Advice` uses held;
+the `dev.otherlode.advice` package, its offset mappings and `ProbeArrayForm.asStackManipulation`
+are gone, and the probe member names live on `ProbeArrayForm`. `SizeGuard.ENTRY_PROBE` drops the
+`Advice` tail. Against `b1dec7d` over 1,350 classes and 12,326 methods: 9,382 entry-probed methods
+identical once `Advice`'s goto, frame, nop and moved line label are normalised; 189 `$default`
+methods differ only in the omission prefix; manifests identical, so no layout hash moved. Weave
+allocation per class down 13 to 19% more. ADRs 0002, 0021 and 0061 amended. Found while testing,
+not changed: mask bit 31 is never read as an optional parameter, so a `$default` counts its first 31
+optional parameters, not 32; fixing it moves slots and layout hashes, a follow-up below.
 
 What follows is the entry as raised.
 

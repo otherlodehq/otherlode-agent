@@ -13,3 +13,11 @@ Kotlin with the intrinsics suppressed by compiler flags. Rejected because the fa
 ## Consequences
 
 Advice classes stay tiny and live in their own package, `dev.otherlode.advice`. Everything else in the agent is Kotlin.
+
+## Amendment, 2026-10-05: the method tier has no advice classes
+
+The method tier's entry and omission probes are written as ASM instructions by `MethodProbes`, and
+`MethodEntryAdvice`, `OptionalArgumentAdvice` and their binding annotations are gone: nothing of
+the method tier is inlined from a class any more, so its visitors are ordinary Kotlin that runs only
+on the agent's own loader. The rule stands for the endpoint tier, whose advice ByteBuddy still
+inlines under stock `DECORATE`.

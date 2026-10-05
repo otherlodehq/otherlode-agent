@@ -1,6 +1,6 @@
 package dev.otherlode.instrumentation.branch
 
-import dev.otherlode.advice.MethodEntryAdvice
+import dev.otherlode.instrumentation.ProbeArrayForm
 import net.bytebuddy.ByteBuddy
 import net.bytebuddy.description.modifier.Ownership
 import net.bytebuddy.description.modifier.Visibility
@@ -65,8 +65,8 @@ class BranchProbeSlotEncodingTest {
         val loaded =
             ByteBuddy()
                 .redefine<Any>(typeDescription, locator)
-                .defineField(MethodEntryAdvice.PROBE_ARRAY_FIELD, LongArray::class.java, Visibility.PRIVATE, Ownership.STATIC)
-                .initializer(LoadedTypeInitializer.ForStaticField(MethodEntryAdvice.PROBE_ARRAY_FIELD, counts))
+                .defineField(ProbeArrayForm.PROBE_ARRAY_FIELD, LongArray::class.java, Visibility.PRIVATE, Ownership.STATIC)
+                .initializer(LoadedTypeInitializer.ForStaticField(ProbeArrayForm.PROBE_ARRAY_FIELD, counts))
                 .visit(
                     BranchProbeAsmVisitorWrapper(
                         eligibleMethods = { _, _ -> true },

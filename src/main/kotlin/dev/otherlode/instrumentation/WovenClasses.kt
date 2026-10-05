@@ -3,7 +3,7 @@ package dev.otherlode.instrumentation
 import dev.otherlode.instrumentation.branch.BranchProbeAsmVisitorWrapper
 import java.util.WeakHashMap
 
-/** A woven `$default` method's per-method constants for the optional-argument advice. */
+/** A woven `$default` method's per-method constants for its omission probes. */
 internal class DefaultSiteBinding(
     val base: Int,
     val optionalBits: Int,

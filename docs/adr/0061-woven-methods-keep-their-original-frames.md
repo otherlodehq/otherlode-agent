@@ -30,3 +30,12 @@ Under the decoration of ADR 0058's amendment no frame comes from ByteBuddy's reb
 `<clinit>` scaffold, with its two full frames, is not written, and the below-55 accessor's single
 frame is the agent's own, from version 50. `Advice` still writes the frames of its entry and
 omission probes until those move into the agent's ASM in the next chunk of the round.
+
+## Amendment, 2026-10-05: no frame comes from Advice
+
+The entry and omission probes are the agent's own ASM (ADR 0002's amendment), written at a method's
+first instruction with an empty stack, no label and no local, so they need no frame. `Advice` used
+to follow its entry probe with a `goto`, a full frame and a `nop`, and moved the first line-number
+entry onto a new label; none of that is written. With the rebase's frames gone too (the previous
+amendment), every frame in a woven method is the class file's own or one the branch tier writes at
+a label it inserts.

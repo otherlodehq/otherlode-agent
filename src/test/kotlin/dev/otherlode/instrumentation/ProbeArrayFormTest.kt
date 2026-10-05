@@ -1,6 +1,5 @@
 package dev.otherlode.instrumentation
 
-import dev.otherlode.advice.MethodEntryAdvice
 import dev.otherlode.benchmark.HotPathWeaver
 import dev.otherlode.export.ProbeKind
 import dev.otherlode.export.ResourceAttributes
@@ -32,7 +31,7 @@ class ProbeArrayFormTest {
         const val TARGET = "com.example.target"
         const val GENERATED = "com.example.generated"
         val RESOURCE = ResourceAttributes("test", null, "instance-1", null, "run-1")
-        val ACCESSORS = setOf(MethodEntryAdvice.PROBE_ARRAY_ACCESSOR, MethodEntryAdvice.PROBE_ARRAY_SLOW_PATH)
+        val ACCESSORS = setOf(ProbeArrayForm.PROBE_ARRAY_ACCESSOR, ProbeArrayForm.PROBE_ARRAY_SLOW_PATH)
         const val ACC_PRIVATE_STATIC_SYNTHETIC = Opcodes.ACC_PRIVATE or Opcodes.ACC_STATIC or Opcodes.ACC_SYNTHETIC
     }
 
@@ -119,7 +118,7 @@ class ProbeArrayFormTest {
                     signature: String?,
                     exceptions: Array<out String>?,
                 ): MethodVisitor? =
-                    if (name != MethodEntryAdvice.PROBE_ARRAY_SLOW_PATH) {
+                    if (name != ProbeArrayForm.PROBE_ARRAY_SLOW_PATH) {
                         null
                     } else {
                         object : MethodVisitor(Opcodes.ASM9) {

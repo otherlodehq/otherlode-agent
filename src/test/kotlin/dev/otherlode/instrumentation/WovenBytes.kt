@@ -1,6 +1,5 @@
 package dev.otherlode.instrumentation
 
-import dev.otherlode.advice.MethodEntryAdvice
 import net.bytebuddy.jar.asm.ClassReader
 import net.bytebuddy.jar.asm.ClassVisitor
 import net.bytebuddy.jar.asm.ConstantDynamic
@@ -15,7 +14,7 @@ internal object WovenBytes {
     /** Whether [bytes] declare a field called [name]. */
     fun declaresField(
         bytes: ByteArray,
-        name: String = MethodEntryAdvice.PROBE_ARRAY_FIELD,
+        name: String = ProbeArrayForm.PROBE_ARRAY_FIELD,
     ): Boolean {
         var found = false
         ClassReader(bytes).accept(

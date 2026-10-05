@@ -42,7 +42,7 @@ import java.security.ProtectionDomain
  * - The method graph of the class's own methods (`ForDeclaredMethods`). The tier weaves declared
  *   methods, builds no bridge and reads no `Implementation.Target`; the default graph resolves every
  *   inherited method's types and merges methods that differ only in return type into one node that
- *   `Advice` then wraps once.
+ *   a visitor then wraps once.
  * - No method ignored. ByteBuddy's default ignores every synthetic method, and a Kotlin `$default`
  *   method, which the omission tier weaves, is one; the tier's own matchers decide what is touched.
  * - The writer that refuses to compute a frame ([FrameRefusingClassWriter], ADR 0061).

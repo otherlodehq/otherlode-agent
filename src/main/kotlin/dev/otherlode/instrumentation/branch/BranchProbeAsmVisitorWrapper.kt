@@ -16,8 +16,8 @@ import net.bytebuddy.pool.TypePool
 
 /**
  * Hosts the branch-tracking tier's raw ASM rewrite inside ByteBuddy's own class-transform
- * pipeline. This weaves branch probes in the same pass as the method-entry
- * [net.bytebuddy.asm.Advice] tier, instead of using a second, competing transformer.
+ * pipeline. This weaves branch probes in the same pass as the method-entry probes,
+ * instead of using a second, competing transformer.
  *
  * Rewriting a conditional jump into two edges introduces new basic blocks, each needing a stack map
  * frame. No frame is ever computed. [mergeReader] asks for expanded frames, every frame the received
@@ -25,9 +25,8 @@ import net.bytebuddy.pool.TypePool
  * it inserts from the state of an ASM `AnalyzerAdapter` placed in front of it. The branch tier
  * writes no frame in a class below version 50, nor in one at version 50 without a StackMapTable
  * ([classHasFrames]): the analyser has no state after an unconditional jump in a class without
- * frames, and the JVM verifies such a class by type inference. ByteBuddy's Advice writes frames of
- * its own at 50, and the probe-array accessor writes one at every version below 55, which ASM
- * writes as a `StackMap` attribute below 50 that HotSpot ignores.
+ * frames, and the JVM verifies such a class by type inference. The probe-array accessor writes one
+ * frame at every version below 55, which ASM writes as a `StackMap` attribute below 50 that HotSpot ignores.
  * The writer is not asked to compute maximums either: [BranchProbeMethodVisitor.visitMaxs] adds the
  * probes' peak of six operand stack slots to a method it put a probe in.
  *
