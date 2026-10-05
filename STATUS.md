@@ -1053,7 +1053,7 @@ are about 1.7 GB. Local fixes, about 600 MB, are chunk 7a. Grilled the same day 
 - **`DECORATE` and an ASM entry probe (Q23).** Their own grill, before 0.1.0; the entry below.
 
 Landing order amended: (7a) local allocation fixes; (7b) the JDK-type pool and code-source reads;
-then (8) as above.
+(7c) the handler warm-up and the JDK pool's release; then (8) as above.
 
 Chunk 7a landed: one per-transform list of probed methods replaces repeated `MethodDescription`
 descriptor building; `BranchKeys` feeds a thread-local digest the same bytes part by part (pinned);
@@ -1077,6 +1077,30 @@ loader from inside a transform; it now triggers the nested load from a transform
 agent, with the same expectations. Ceiling, medians of three: total allocation 7.4 GB to 6.1 GB,
 agent stacks 6.0 to 4.7 GB, type parsing 1.42 GB to 0.54 GB, unprofiled young GCs 77 to 62,
 "Started" 8.0 s to 7.4 s.
+
+Closing measurements, local (2026-10-05, `8139271`, the same method and machine as `c4f91d7`'s,
+medians of five): headline startup 5.48 s to 3.83 s over no agent's 3.18 s (+0.66 s, +20.7%, from
++69%), ceiling 13.84 s to 8.55 s; pinned in Docker, the headline was +25.4% on one CPU and +24.0% on
+two (from +83%). Ceiling live heap after delivery +117.5 MB to +26.5 MB, `ProbeRegistry` 64.6 MB to
+3.0 MB, table and byte caches empty once quiet, G1 committed +178 to +90 MiB. Two findings, grilled
+with Luke the same day: the `java.*` pool (6.7 MB) was never released, so it joins the quiet release
+(Q18's rule); and 7b's code-source read opened Boot's `jar:nested:` handler inside the transform,
+loading its classes where no transformer sees them (17 Boot loader classes unreported at the
+ceiling, against one before), so jar shapes are warmed up first (Q24, below). Startup target (Q25):
+the headline config's time to first 200 within 25% of no agent on the runner, a target and not a
+gate, a miss being the trigger for the `DECORATE` grill.
+
+Chunk 7c landed: a directory is read from its code source at once (the JVM never lets the `file`
+handler be replaced); each jar shape (a jar file, a `jar:file:` location, a `jar:nested:` location)
+is read once on a warm-up thread outside any transform, created without inheriting thread-locals,
+while its transforms read through the loader; a miss of any kind returns the shape to unwarmed,
+and 16 leave it on the loader; a jar file's later URLs inherit the handler the warm-up used, so a
+handler factory registered afterwards (standalone Tomcat's) never runs in a transform. The first
+cut detected handler overrides through `java.protocol.handler.pkgs` only; review found that a
+factory or a location carrying its own handler bypass the property, so every jar shape warms. The
+ceiling rerun's unreported set is back to `MetaInfVersionsInfo` alone. `releaseQuietCaches` clears
+the `java.*` pool when no loader was active since the previous call. ADR 0052 amended for the
+warm-up and its window.
 
 The 2026-10-04 measurements, method and scripts are in
 `docs/investigations/2026-10-04-agent-startup.md`,

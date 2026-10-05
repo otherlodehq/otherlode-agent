@@ -18,6 +18,9 @@ import java.security.CodeSource
 import java.security.ProtectionDomain
 import java.security.cert.Certificate
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.Executor
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
@@ -33,6 +36,9 @@ import kotlin.test.assertTrue
  * loader only when that names nothing readable.
  */
 class CodeSourceClassFileTest {
+    /** Warms on the calling thread, so a jar shape is read on its first call; the warm-up tests use [ManualWarmer]. */
+    private val reader = CodeSourceClassFile(Executor { it.run() })
+
     private class CountingLoader : ClassLoader(getPlatformClassLoader()) {
         val reads = ConcurrentHashMap<String, AtomicInteger>()
 
@@ -71,8 +77,12 @@ class CodeSourceClassFileTest {
 
     private fun transformerOver(): ClassFileTransformer {
         val captured = mutableListOf<ClassFileTransformer>()
-        OtherlodeInstrumentation(AgentConfig.parse("includePackages=csrc"), ProbeRegistry(), captureClassBytes = false)
-            .install(HotPathWeaver.capturing(ByteBuddyAgent.install(), captured))
+        OtherlodeInstrumentation(
+            AgentConfig.parse("includePackages=csrc"),
+            ProbeRegistry(),
+            captureClassBytes = false,
+            codeSourceClassFile = reader,
+        ).install(HotPathWeaver.capturing(ByteBuddyAgent.install(), captured))
         return captured.single()
     }
 
@@ -150,8 +160,8 @@ class CodeSourceClassFileTest {
         val directory = directoryWith("csrc/100%/Caf\u00e9\$Inner" to bytes)
         val jar = jarWith("csrc/100%/Caf\u00e9\$Inner" to bytes)
 
-        assertContentEquals(bytes, CodeSourceClassFile.read(domainAt(directory.toURI().toURL()), "csrc/100%/Caf\u00e9\$Inner"))
-        assertContentEquals(bytes, CodeSourceClassFile.read(domainAt(jar.toURI().toURL()), "csrc/100%/Caf\u00e9\$Inner"))
+        assertContentEquals(bytes, reader.read(domainAt(directory.toURI().toURL()), "csrc/100%/Caf\u00e9\$Inner"))
+        assertContentEquals(bytes, reader.read(domainAt(jar.toURI().toURL()), "csrc/100%/Caf\u00e9\$Inner"))
     }
 
     @Test
@@ -160,8 +170,8 @@ class CodeSourceClassFileTest {
         assertNull(CodeSourceClassFile.urlOf(URL("http://example.invalid/app.jar"), "com/acme/Foo"))
         assertNull(CodeSourceClassFile.urlOf(URL("jar:http://example.invalid/app.jar!/"), "com/acme/Foo"))
         assertNull(CodeSourceClassFile.urlOf(URL("jar:file:/app.jar!/BOOT-INF/classes"), "com/acme/Foo"))
-        assertNull(CodeSourceClassFile.read(null, "com/acme/Foo"))
-        assertNull(CodeSourceClassFile.read(domainAt(null), "com/acme/Foo"))
+        assertNull(reader.read(null, "com/acme/Foo"))
+        assertNull(reader.read(domainAt(null), "com/acme/Foo"))
     }
 
     @Test
@@ -186,7 +196,7 @@ class CodeSourceClassFileTest {
 
         assertNotNull(woven)
         assertEquals(0, loader.readsOf("csrc/InJar"), "${loader.reads}")
-        assertContentEquals(bytes, CodeSourceClassFile.read(domainAt(jar.toURI().toURL()), "csrc/InJar"))
+        assertContentEquals(bytes, reader.read(domainAt(jar.toURI().toURL()), "csrc/InJar"))
     }
 
     @Test
@@ -195,7 +205,7 @@ class CodeSourceClassFileTest {
         val onDisk = generate("csrc/Copy", 2)
         val directory = directoryWith("csrc/Copy" to onDisk)
 
-        val read = CodeSourceClassFile.read(domainAt(directory.toURI().toURL()), "csrc/Copy")
+        val read = reader.read(domainAt(directory.toURI().toURL()), "csrc/Copy")
 
         assertContentEquals(onDisk, read)
         assertTrue(!received.contentEquals(read))
@@ -252,5 +262,261 @@ class CodeSourceClassFileTest {
         assertReadThroughLoader(domainAt(unknown), "csrc/Unknown", generate("csrc/Unknown", 1))
         assertReadThroughLoader(domainAt(URL("http://example.invalid/app.jar")), "csrc/Remote", generate("csrc/Remote", 1))
         assertEquals(false, opened)
+    }
+
+    private class RecordingHandler(
+        private val bytes: ByteArray?,
+    ) : URLStreamHandler() {
+        val openedOn = java.util.Collections.synchronizedList(mutableListOf<Thread>())
+        val parsedOn = java.util.Collections.synchronizedList(mutableListOf<Thread>())
+
+        override fun parseURL(
+            u: URL,
+            spec: String,
+            start: Int,
+            limit: Int,
+        ) {
+            parsedOn.add(Thread.currentThread())
+            super.parseURL(u, spec, start, limit)
+        }
+
+        override fun openConnection(url: URL): URLConnection {
+            openedOn.add(Thread.currentThread())
+            val content = bytes ?: throw java.io.IOException("no entry")
+            return object : URLConnection(url) {
+                override fun connect() = Unit
+
+                override fun getInputStream(): InputStream = ByteArrayInputStream(content)
+            }
+        }
+    }
+
+    private class ManualWarmer : Executor {
+        val pending = mutableListOf<Runnable>()
+
+        override fun execute(command: Runnable) {
+            pending.add(command)
+        }
+    }
+
+    private fun nestedDomain(handler: URLStreamHandler) = domainAt(URL(null, "jar:nested:/app.jar/!BOOT-INF/lib/x.jar!/", handler))
+
+    @Test
+    fun `a nested location is read through the loader until its warm-up has run`() {
+        val bytes = generate("csrc/Nested", 1)
+        val handler = RecordingHandler(bytes)
+        val warmer = ManualWarmer()
+        val reader = CodeSourceClassFile(warmer)
+        val domain = nestedDomain(handler)
+        val parsedBefore = handler.parsedOn.size
+
+        assertNull(reader.read(domain, "csrc/Nested"))
+        assertEquals(CodeSourceClassFile.State.WARMING, reader.stateOf("jar:nested"))
+        assertNull(reader.read(domain, "csrc/Nested"))
+        assertEquals(1, warmer.pending.size, "one warm-up per shape")
+        assertTrue(handler.openedOn.isEmpty(), "nothing opened before the warm-up")
+        assertEquals(parsedBefore, handler.parsedOn.size, "no class file URL built before the warm-up")
+
+        warmer.pending.single().run()
+
+        assertEquals(CodeSourceClassFile.State.WARMED, reader.stateOf("jar:nested"))
+        assertContentEquals(bytes, reader.read(domain, "csrc/Nested"))
+    }
+
+    @Test
+    fun `a warm-up that finds nothing lets a later class try again, until enough misses leave the shape on the loader`() {
+        val handler = RecordingHandler(null)
+        val warmer = ManualWarmer()
+        val reader = CodeSourceClassFile(warmer)
+        val domain = nestedDomain(handler)
+
+        repeat(CodeSourceClassFile.MAX_WARM_UP_ATTEMPTS - 1) { attempt ->
+            assertNull(reader.read(domain, "csrc/Gone$attempt"))
+            warmer.pending.last().run()
+            assertEquals(CodeSourceClassFile.State.NOT_WARMED, reader.stateOf("jar:nested"), "a miss may be one missing class")
+        }
+        assertNull(reader.read(domain, "csrc/GoneLast"))
+        warmer.pending.last().run()
+
+        assertEquals(CodeSourceClassFile.State.FAILED, reader.stateOf("jar:nested"))
+        assertNull(reader.read(domain, "csrc/GoneAfter"))
+        assertEquals(CodeSourceClassFile.MAX_WARM_UP_ATTEMPTS, warmer.pending.size, "a shape left on the loader is not warmed again")
+    }
+
+    @Test
+    fun `a warm-up that succeeds after a miss warms the shape`() {
+        val bytes = generate("csrc/Present", 1)
+        val warmer = ManualWarmer()
+        val reader = CodeSourceClassFile(warmer)
+        val missing = nestedDomain(RecordingHandler(null))
+        val present = nestedDomain(RecordingHandler(bytes))
+
+        assertNull(reader.read(missing, "csrc/Gone"))
+        warmer.pending.last().run()
+        assertNull(reader.read(present, "csrc/Present"))
+        warmer.pending.last().run()
+
+        assertEquals(CodeSourceClassFile.State.WARMED, reader.stateOf("jar:nested"))
+        assertContentEquals(bytes, reader.read(present, "csrc/Present"))
+    }
+
+    @Test
+    fun `the warm-up opens the code source on a thread other than the caller's`() {
+        val bytes = generate("csrc/Threaded", 1)
+        val opened = CountDownLatch(1)
+        val handler =
+            object : URLStreamHandler() {
+                @Volatile var thread: Thread? = null
+
+                override fun openConnection(url: URL): URLConnection {
+                    thread = Thread.currentThread()
+                    opened.countDown()
+                    return object : URLConnection(url) {
+                        override fun connect() = Unit
+
+                        override fun getInputStream(): InputStream = ByteArrayInputStream(bytes)
+                    }
+                }
+            }
+        val reader = CodeSourceClassFile()
+        val domain = nestedDomain(handler)
+
+        assertNull(reader.read(domain, "csrc/Threaded"))
+        assertTrue(opened.await(10, TimeUnit.SECONDS))
+
+        val warmThread = assertNotNull(handler.thread)
+        assertTrue(warmThread !== Thread.currentThread())
+        assertTrue(warmThread.isDaemon)
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+        while (reader.stateOf("jar:nested") != CodeSourceClassFile.State.WARMED && System.nanoTime() < deadline) Thread.sleep(5)
+        assertEquals(CodeSourceClassFile.State.WARMED, reader.stateOf("jar:nested"))
+    }
+
+    @Test
+    fun `the warm-up thread copies no inheritable thread-local of the transforming thread`() {
+        val copies = AtomicInteger()
+        val local =
+            object : InheritableThreadLocal<String>() {
+                override fun childValue(parentValue: String?): String? {
+                    copies.incrementAndGet()
+                    return parentValue
+                }
+            }
+        local.set("transform")
+        try {
+            val bytes = generate("csrc/Inherited", 1)
+            val reader = CodeSourceClassFile()
+            val domain = nestedDomain(RecordingHandler(bytes))
+
+            assertNull(reader.read(domain, "csrc/Inherited"))
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+            while (reader.stateOf("jar:nested") != CodeSourceClassFile.State.WARMED && System.nanoTime() < deadline) Thread.sleep(5)
+
+            assertEquals(CodeSourceClassFile.State.WARMED, reader.stateOf("jar:nested"))
+            assertEquals(0, copies.get(), "childValue is application code and must not run in a transform")
+        } finally {
+            local.remove()
+        }
+    }
+
+    @Test
+    fun `a location with a fragment is not read`() {
+        val bytes = generate("csrc/Fragment", 1)
+        val directory = directoryWith("csrc/Fragment" to bytes)
+        val warmer = ManualWarmer()
+
+        assertNull(CodeSourceClassFile(warmer).read(domainAt(URL(directory.toURI().toURL(), "#part")), "csrc/Fragment"))
+        assertTrue(warmer.pending.isEmpty())
+    }
+
+    @Test
+    fun `a directory is read on the first call, and jar shapes only after their warm-up`() {
+        val bytes = generate("csrc/Plain", 1)
+        val directory = directoryWith("csrc/Plain" to bytes)
+        val jar = jarWith("csrc/Plain" to bytes)
+        val jarLocation = URL("jar:" + jar.toURI().toURL() + "!/")
+        val warmer = ManualWarmer()
+        val reader = CodeSourceClassFile(warmer)
+
+        assertContentEquals(bytes, reader.read(domainAt(directory.toURI().toURL()), "csrc/Plain"))
+        assertTrue(warmer.pending.isEmpty(), "the file handler is always the JDK's")
+
+        assertNull(reader.read(domainAt(jar.toURI().toURL()), "csrc/Plain"))
+        assertNull(reader.read(domainAt(jarLocation), "csrc/Plain"))
+        assertEquals(2, warmer.pending.size, "a jar file and a jar location are warmed apart")
+        warmer.pending.toList().forEach { it.run() }
+
+        assertContentEquals(bytes, reader.read(domainAt(jar.toURI().toURL()), "csrc/Plain"))
+        assertContentEquals(bytes, reader.read(domainAt(jarLocation), "csrc/Plain"))
+        val other = generate("csrc/Other", 2)
+        val secondJar = jarWith("csrc/Other" to other)
+        assertContentEquals(
+            other,
+            reader.read(domainAt(secondJar.toURI().toURL()), "csrc/Other"),
+            "a second jar file reuses the warmed handler",
+        )
+        assertEquals(2, warmer.pending.size)
+    }
+
+    @Test
+    fun `a shape this does not read starts no warm-up`() {
+        val warmer = ManualWarmer()
+        val reader = CodeSourceClassFile(warmer)
+        val handler = RecordingHandler(generate("csrc/Odd", 1))
+
+        assertNull(reader.read(domainAt(URL(null, "jar:http://example.invalid/app.jar!/", handler)), "csrc/Odd"))
+        assertNull(reader.read(domainAt(URL(null, "jar:nested:/app.jar/!BOOT-INF/lib/x.jar", handler)), "csrc/Odd"))
+
+        assertTrue(warmer.pending.isEmpty())
+        assertTrue(handler.openedOn.isEmpty())
+    }
+
+    @Test
+    fun `an executor that refuses a warm-up counts as a miss, not a failure`() {
+        val reader = CodeSourceClassFile { throw IllegalStateException("unable to create a thread") }
+
+        assertNull(reader.read(nestedDomain(RecordingHandler(generate("csrc/Refused", 1))), "csrc/Refused"))
+
+        assertEquals(CodeSourceClassFile.State.NOT_WARMED, reader.stateOf("jar:nested"))
+    }
+
+    @Test
+    fun `an error inside a warm-up leaves the shape able to warm again`() {
+        val warmer = ManualWarmer()
+        val reader = CodeSourceClassFile(warmer)
+        val failing =
+            object : URLStreamHandler() {
+                override fun openConnection(url: URL): URLConnection = throw LinkageError("a handler class did not link")
+            }
+
+        assertNull(reader.read(nestedDomain(failing), "csrc/Broken"))
+        warmer.pending.single().run()
+
+        assertEquals(CodeSourceClassFile.State.NOT_WARMED, reader.stateOf("jar:nested"))
+    }
+
+    @Test
+    fun `a transform of a class in a nested location opens no code source on its own thread`() {
+        val bytes = generate("csrc/InNested", 1)
+        val handler = RecordingHandler(bytes)
+        val warmer = ManualWarmer()
+        val reader = CodeSourceClassFile(warmer)
+        val captured = mutableListOf<ClassFileTransformer>()
+        OtherlodeInstrumentation(
+            AgentConfig.parse("includePackages=csrc"),
+            ProbeRegistry(),
+            captureClassBytes = false,
+            codeSourceClassFile = reader,
+        ).install(HotPathWeaver.capturing(ByteBuddyAgent.install(), captured))
+        val loader = CountingLoader()
+        val domain = nestedDomain(handler)
+        val parsedBefore = handler.parsedOn.size
+
+        val woven = captured.single().transform(loader, "csrc/InNested", null, domain, bytes)
+
+        assertNotNull(woven)
+        assertTrue(handler.openedOn.isEmpty(), "the transforming thread opened the nested location")
+        assertEquals(parsedBefore, handler.parsedOn.size, "the transforming thread built a URL through the nested handler")
+        assertEquals(1, warmer.pending.size)
     }
 }

@@ -156,6 +156,8 @@ class OtherlodeInstrumentation(
      * serves both tiers of the agent; see [ClassFileByteCache] for the two reads that bypass it.
      */
     private val classFileCache: ClassFileByteCache = ClassFileByteCache(),
+    /** Reads a woven class's own file from its code source; see [CodeSourceClassFile] for the warm-up. */
+    private val codeSourceClassFile: CodeSourceClassFile = CodeSourceClassFile(),
 ) {
     private val log = System.getLogger(OtherlodeInstrumentation::class.java.name)
 
@@ -224,7 +226,8 @@ class OtherlodeInstrumentation(
      * are dropped. A loader is active when it asked for its table cache or touched the byte cache,
      * from either tier, in that span; the marks are cleared by each call, so a loader is released
      * one or two calls after its last use. A later transform refills what was released, which costs
-     * time and nothing else.
+     * time and nothing else. The JVM-wide `java.` type pool is emptied when no loader at all was
+     * active in that span, bootstrap included, and refilled by the next transform.
      *
      * Meant for the flush thread. The two locks, `tableCaches` and the byte cache's, are taken one
      * after the other and never nested, so no order of them can deadlock. A transform in flight
@@ -232,7 +235,9 @@ class OtherlodeInstrumentation(
      */
     fun releaseQuietCaches() {
         val byteActive = classFileCache.takeActiveLoaders()
+        var anyTableActive: Boolean
         synchronized(tableCaches) {
+            anyTableActive = tableActive.isNotEmpty()
             val iterator = tableCaches.keys.iterator()
             while (iterator.hasNext()) {
                 val loader = iterator.next()
@@ -241,6 +246,7 @@ class OtherlodeInstrumentation(
             tableActive.clear()
         }
         val bootstrapActive = bootstrapTableActive || null in byteActive
+        if (!anyTableActive && !bootstrapActive && byteActive.isEmpty()) jdkTypes.clear()
         bootstrapTableActive = false
         if (!bootstrapActive) bootstrapTableCache.clear()
         val keep = Collections.newSetFromMap(IdentityHashMap<ClassLoader?, Boolean>())
@@ -249,6 +255,9 @@ class OtherlodeInstrumentation(
         synchronized(tableCaches) { keep.addAll(tableCaches.keys) }
         classFileCache.dropLoadersNotIn(keep)
     }
+
+    /** How many `java.` type descriptions the shared pool holds; for tests. */
+    internal fun cachedJdkTypeCount(): Int = jdkTypes.cachedTypes()
 
     /** How many parsed tables the cache for [classLoader] holds; for tests. */
     internal fun cachedTableCount(classLoader: ClassLoader?): Int =
@@ -1660,7 +1669,7 @@ class OtherlodeInstrumentation(
         classLoader: ClassLoader?,
         protectionDomain: ProtectionDomain?,
     ): ByteArray? {
-        CodeSourceClassFile.read(protectionDomain, typeDescription.internalName)?.let { bytes ->
+        codeSourceClassFile.read(protectionDomain, typeDescription.internalName)?.let { bytes ->
             try {
                 return SubroutineInliner.inline(bytes)
             } catch (_: Exception) {
