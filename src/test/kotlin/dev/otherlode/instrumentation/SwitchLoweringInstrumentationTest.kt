@@ -1,5 +1,6 @@
 package dev.otherlode.instrumentation
 
+import dev.otherlode.ClassFileSupport
 import dev.otherlode.config.AgentConfig
 import dev.otherlode.export.BranchRole
 import dev.otherlode.export.BranchSite
@@ -84,6 +85,7 @@ class SwitchLoweringInstrumentationTest {
 
     @Test
     fun `a throwing default is not listed and gets no probe, and the woven code still runs every case`() {
+        ClassFileSupport.assumeCanDefine("com.example.target.SwitchJavaTarget")
         val registry = installed()
         val loader = fixtureLoader()
         val javaTarget = Class.forName("com.example.target.SwitchJavaTarget", true, loader)
@@ -125,6 +127,7 @@ class SwitchLoweringInstrumentationTest {
 
     @Test
     fun `a rebuilt string switch is one site with its literals, and its lowering is not probed`() {
+        ClassFileSupport.assumeCanDefine("com.example.target.SwitchJavaTarget")
         val registry = installed()
         val loader = fixtureLoader()
         val targetClass = Class.forName("com.example.target.SwitchJavaTarget", true, loader)

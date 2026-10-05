@@ -1,5 +1,6 @@
 package dev.otherlode.benchmark
 
+import dev.otherlode.ClassFileSupport
 import dev.otherlode.export.ProbeKind
 import dev.otherlode.export.ProbeLocation
 import dev.otherlode.export.ResourceAttributes
@@ -566,7 +567,7 @@ class WovenClassVerificationTest {
     @Test
     fun `generated classes at every class-file version define, initialise, run and count woven as they do unwoven`() {
         val started = System.nanoTime()
-        val supported = Runtime.version().feature() + CLASS_VERSION_OFFSET
+        val supported = ClassFileSupport.newestDefinableVersion
         val skipped = VersionedFixtures.VERSIONS.filter { it > supported }
         val failures = mutableListOf<String>()
         var covered = 0
@@ -647,7 +648,6 @@ class WovenClassVerificationTest {
             )
         const val MESSAGE_WIDTH = 160
         const val NANOS_PER_MILLI = 1_000_000
-        const val CLASS_VERSION_OFFSET = 44
         const val CLASSPATH_PROPERTY = "otherlode.codesize.classpath."
         val CORPORA = listOf("demo", "demo-spring", "scala", "spring-webmvc", "ktor-server-core")
     }

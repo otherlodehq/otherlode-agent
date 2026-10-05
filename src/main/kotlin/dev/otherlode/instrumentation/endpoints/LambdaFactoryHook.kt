@@ -24,7 +24,7 @@ import java.lang.reflect.Field
  * on [factoryClass] that returns the spun `Class`, and two fields it declares or inherits. The
  * advice in `SpinInnerClassAdvice` reads the fields [JDK] names.
  *
- * These are JDK internals. [JDK] was checked against JDK 21, 22, 25, 26 and 27. A test swaps one
+ * These are JDK internals. [JDK] was checked against JDK 17, 21, 22, 25, 26 and 27. A test swaps one
  * name to simulate a JDK where a member is gone.
  */
 data class LambdaFactoryShape(

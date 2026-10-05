@@ -58,11 +58,6 @@ kotlin {
     jvmToolchain(21)
 }
 
-java {
-    sourceCompatibility = JavaVersion.VERSION_21
-    targetCompatibility = JavaVersion.VERSION_21
-}
-
 // Ktor3TestAgent is installed as a real -javaagent on the test JVM's own command line, not through
 // ByteBuddyAgent's self-attach: see Ktor3TestAgent's Javadoc for why self-attach from inside the
 // test method is too late for this module specifically. The jar packages the whole compiled test

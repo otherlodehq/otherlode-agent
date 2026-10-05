@@ -1,5 +1,6 @@
 package dev.otherlode.instrumentation
 
+import dev.otherlode.ClassFileSupport
 import dev.otherlode.config.AgentConfig
 import dev.otherlode.export.BodyKind
 import dev.otherlode.export.GeneratedBy
@@ -256,6 +257,7 @@ class EarlierTransformerInstrumentationTest {
 
     @Test
     fun `the manifest of Kotlin and Java classes is the same with JaCoCo ahead`() {
+        // The release-21 Java fixtures cannot be defined on an older test JVM; the rest still compare.
         val classNames =
             listOf(
                 "GeneratedPoint",
@@ -265,7 +267,7 @@ class EarlierTransformerInstrumentationTest {
                 "GuardTarget",
                 "ConditionJavaTarget",
                 "RoutineJavaTarget",
-            ).map { "$TARGET.$it" }
+            ).map { "$TARGET.$it" }.filter(ClassFileSupport::canDefine)
 
         val without = run(false, TARGET, classNames, ::targetLoader)
         val with = run(true, TARGET, classNames, ::targetLoader)
@@ -290,6 +292,7 @@ class EarlierTransformerInstrumentationTest {
                     it.kind == ProbeKind.METHOD
             }
         assertEquals(6, stringWhen.branchSites.sumOf { it.outcomes.size }, "kotlinc's string when recognised")
+        if ("$TARGET.SwitchJavaTarget" !in classNames) return
         val stringStatement =
             probes.single {
                 it.className == "$TARGET.SwitchJavaTarget" && it.methodName == "stringStatement" && it.kind == ProbeKind.METHOD

@@ -1,5 +1,6 @@
 package dev.otherlode.instrumentation.staticscan
 
+import dev.otherlode.ClassFileSupport
 import dev.otherlode.config.AgentConfig
 import dev.otherlode.export.BodyKind
 import dev.otherlode.export.CallEdge
@@ -1037,6 +1038,7 @@ class StaticBaselineScannerTest {
 
     @Test
     fun `declares each site's condition exactly as the manifest carries it for the loaded class`() {
+        ClassFileSupport.assumeCanDefine("com.example.target.ConditionJavaTarget")
         val kotlinClasses = listOf("ConditionTarget", "ConditionTargetKt")
         val javaClasses = listOf("ConditionJavaTarget")
         val root =
@@ -1089,6 +1091,7 @@ class StaticBaselineScannerTest {
 
     @Test
     fun `declares each switch read back to its source cases exactly as the manifest carries it for the loaded class`() {
+        ClassFileSupport.assumeCanDefine("com.example.target.SwitchJavaTarget")
         val kotlinClasses = listOf("SwitchTarget", "SwitchTarget\$WhenMappings", "Tint")
         val javaClasses =
             listOf(

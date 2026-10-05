@@ -1,5 +1,6 @@
 package dev.otherlode.instrumentation
 
+import dev.otherlode.ClassFileSupport
 import dev.otherlode.benchmark.HotPathWeaver
 import dev.otherlode.config.AgentConfig
 import dev.otherlode.export.ProbeKind
@@ -265,7 +266,7 @@ class DecoratedWeavingTest {
 
     @Test
     fun `a class from version 55 gets no field and no accessor, and its type initializer is counted by its entry probe`() {
-        for (version in listOf(55, 65)) {
+        for (version in listOf(55, 61, 65).filter(ClassFileSupport::canDefine)) {
             val fixture = VersionedFixtures.plain(version)
             val woven = weave(fixture)
 

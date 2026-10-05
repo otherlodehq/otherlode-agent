@@ -24,4 +24,4 @@ The one ordering rule is about bindings, not versions: before an agent release t
 - The collector's redaction WARNING, its README and its ADR 0005 say "upgrade to the latest collector" rather than "to the agent's version".
 - A schema change is not finished until the server and the collector carry its bindings; the release script refuses an agent release that would get ahead of either, with an override for a change no consumer reads.
 - `agent_version` stays opaque and compared only for equality (ADR 0054, amended). Nothing orders versions, so nothing constrains how either line is numbered.
-- The JDK floor is 17 if the JDK 17 CI leg passes (item 6's first chunk).
+- The JDK floor is 17: the agent jar and the testkit are class-file version 61 and compile against the JDK 17 API, and CI runs the suite on JDK 17, 21 and 25. The JDK 17 leg passed with no change to the agent; the lambda factory's members ADR 0035 reads have the same names on 17.

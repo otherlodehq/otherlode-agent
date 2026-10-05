@@ -1,5 +1,9 @@
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import java.nio.ByteBuffer
 import java.util.zip.ZipFile
+import java.util.zip.ZipInputStream
+import javax.inject.Inject
 
 plugins {
     kotlin("jvm") version "2.2.21"
@@ -18,6 +22,44 @@ repositories {
 // internal the agent reads, such as the lambda factory's `interfaceClass` and `implInfo` fields,
 // fails a test.
 val testJdk = providers.gradleProperty("otherlode.testJdk")
+
+// The shipped modules and the modules whose tests run on the test JVM compile against the JDK 17
+// API and emit class-file version 61, so the agent and the testkit load on a JDK 17 and an API
+// added later is a compile error here, not a NoSuchMethodError in an adopter's JVM. The toolchain
+// is JDK 21. The compiler-matrix and probe-window fixtures are left out: their point is a
+// specific compiler or class-file version.
+val jdk17Projects =
+    setOf(
+        ":",
+        ":bootstrap",
+        ":asm-subroutines",
+        ":wire",
+        ":endpoints-api",
+        ":endpoints-jaxrs",
+        ":endpoints-jdk-httpserver",
+        ":endpoints-ktor-2",
+        ":endpoints-ktor-3",
+        ":endpoints-otel-bridge",
+        ":endpoints-spring-webmvc",
+        ":testkit",
+        ":demo",
+        ":demo-spring",
+        ":fixtures-scala3",
+        ":fixtures-scala2",
+        ":fixtures-kotlin-jvm-default-disable",
+        ":fixtures-kotlin-class-sam",
+    )
+allprojects {
+    if (path in jdk17Projects) {
+        tasks.withType<JavaCompile>().matching { it.name != "compileTestJava21" }.configureEach { options.release.set(17) }
+        tasks.withType<KotlinCompile>().configureEach {
+            compilerOptions {
+                jvmTarget.set(JvmTarget.JVM_17)
+                freeCompilerArgs.add("-Xjdk-release=17")
+            }
+        }
+    }
+}
 
 // One JaCoCo version for its core library and its agent jar: CoverageAgentOrderTest reads the
 // agent's execution data with the core's reader and compares ids with the core's CRC64.
@@ -119,9 +161,51 @@ kotlin {
     jvmToolchain(21)
 }
 
-java {
-    sourceCompatibility = JavaVersion.VERSION_21
-    targetCompatibility = JavaVersion.VERSION_21
+// Java test fixtures that use pattern matching for switch, a JDK 21 language feature, compile at
+// release 21 beside the rest of the Java fixtures, which compile at 17. compileTestJava takes their
+// class files as an input and copies them into its own output directory, where the tests read and
+// load fixtures from, so every consumer of the test classes sees them and no two tasks share an
+// output. A changed input forces compileTestJava into a full recompile, which clears the directory
+// first, so a deleted fixture leaves no stale class behind. A test JVM older than 21 cannot define
+// these classes; the tests that do define them skip for that reason (see ClassFileSupport).
+val java21FixtureFiles =
+    listOf(
+        "com/example/target/SwitchJavaTarget.java",
+        "com/example/target/ConditionJavaTarget.java",
+        "com/example/target/keypairs/SwitchLabelsJavaV1.java",
+        "com/example/target/keypairs/SwitchLabelsJavaV2.java",
+    )
+sourceSets.test {
+    java.exclude(java21FixtureFiles)
+}
+val compileTestJava21 by tasks.registering(JavaCompile::class) {
+    source = fileTree("src/test/java") { include(java21FixtureFiles) }
+    classpath = sourceSets.test.get().compileClasspath
+    // Other Java fixtures these name (SwitchColor) resolve from source but are not compiled here:
+    // compileTestJava owns their class files.
+    options.sourcepath = files("src/test/java")
+    options.compilerArgs.add("-implicit:none")
+    destinationDirectory.set(layout.buildDirectory.dir("classes/java/test21"))
+    options.release.set(21)
+    javaCompiler.set(javaToolchains.compilerFor { languageVersion.set(JavaLanguageVersion.of(21)) })
+}
+
+/** Gives a task action file operations without capturing the project. */
+interface InjectedFileSystem {
+    @get:Inject
+    val fs: FileSystemOperations
+}
+
+tasks.compileTestJava {
+    val java21Classes = compileTestJava21.flatMap { it.destinationDirectory }
+    inputs.dir(java21Classes).withPathSensitivity(PathSensitivity.RELATIVE).withPropertyName("java21Fixtures")
+    val injected = objects.newInstance<InjectedFileSystem>()
+    val into = destinationDirectory
+    doLast { injected.fs.copy { from(java21Classes).into(into) } }
+}
+tasks.withType<Test>().configureEach {
+    // The release-21 fixtures are not tests, and Gradle's class scan fails on a JVM that cannot define them.
+    exclude(java21FixtureFiles.map { it.removeSuffix(".java") + "*" })
 }
 
 // The bootstrap module's jar rides inside this one as a plain resource. premain writes it to a
@@ -186,6 +270,32 @@ val verifyAgentJar by tasks.registering {
             // tracked jump at version 50 or above fails to weave.
             val analyser = "dev/otherlode/shaded/bytebuddy/jar/asm/commons/AnalyzerAdapter.class"
             check(analyser in names) { "agent jar is missing ASM's frame analyser at $analyser" }
+            // The agent runs on a JDK 17. A dependency or a compiler setting that raises a class's version
+            // would fail there with an UnsupportedClassVersionError. An entry under META-INF/versions/N/ is
+            // held to Java N's version: the manifest carries no Multi-Release attribute, so no JVM reads
+            // them, but one added later would make every N up to 17 load on a JDK 17.
+            val tooNew =
+                names
+                    .filter { it.endsWith(".class") }
+                    .filter {
+                        val allowed =
+                            Regex("^META-INF/versions/(\\d+)/").find(it)?.let { match ->
+                                match.groupValues[1].toInt() + 44
+                            } ?: jdk17ClassVersion
+                        classFileMajorVersion(zip.getInputStream(zip.getEntry(it)).use { stream -> stream.readNBytes(8) }) > allowed
+                    }
+            check(tooNew.isEmpty()) {
+                "agent jar has classes above their allowed class-file version " +
+                    "($jdk17ClassVersion, or 44+N under META-INF/versions/N/): ${tooNew.take(10)}"
+            }
+            val embedded = ZipInputStream(zip.getInputStream(zip.getEntry(bootstrapResourcePath)))
+            embedded.use { holder ->
+                generateSequence { holder.nextEntry }.filter { it.name.endsWith(".class") }.forEach { entry ->
+                    check(classFileMajorVersion(holder.readNBytes(8)) <= jdk17ClassVersion) {
+                        "the embedded bootstrap holder's ${entry.name} is above class-file version $jdk17ClassVersion"
+                    }
+                }
+            }
             val loose = names.filter { it.startsWith("dev/otherlode/bootstrap/") && it.endsWith(".class") }
             check(loose.isEmpty()) {
                 "agent jar must not carry the bootstrap holder as loose classes, found: $loose"
@@ -240,6 +350,12 @@ val verifyAgentJar by tasks.registering {
         }
     }
 }
+
+/** The newest class-file major version a JDK 17 defines. */
+val jdk17ClassVersion = 61
+
+/** The major version in a class file's first eight bytes. */
+fun classFileMajorVersion(header: ByteArray): Int = ByteBuffer.wrap(header).getShort(6).toInt() and 0xFFFF
 
 /** The parts of a class file the advice check reads; see [parseClassShape]. */
 class ClassShape(
@@ -380,8 +496,8 @@ val jvmDefaultDisableFixtureRuntimeClasspath =
     project(":fixtures-kotlin-jvm-default-disable").configurations.named("runtimeClasspath")
 val classSamFixtureClassesDir = project(":fixtures-kotlin-class-sam").layout.buildDirectory.dir("classes/kotlin/main")
 
-// The probe-window fixtures (ADR 0060), compiled once at class-file version 52 and once at the
-// toolchain's own: each form's Java and Kotlin class directories, and the Kotlin stdlib the Kotlin
+// The probe-window fixtures (ADR 0060), compiled once at class-file version 52 and once at 61
+// (Java 17): each form's Java and Kotlin class directories, and the Kotlin stdlib the Kotlin
 // ones link against.
 val probeWindowProject = project(":fixtures-probe-window")
 val probeWindowForms = listOf("legacy", "modern")

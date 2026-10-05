@@ -419,7 +419,10 @@ class AgentTest {
                     declared.referencedClasses + declared.methods.flatMap { it.referencedClasses }
                 }
             assertTrue(references.any { it.startsWith("kotlin.") }, "no reference into kotlin-stdlib was kept: $references")
-            assertTrue(references.none { it.startsWith("java.") }, "a JDK name was sent: $references")
+            // A name the running JDK lacks (java.lang.MatchException below JDK 21) is an absent reference, not a JDK name.
+            val platform = ClassLoader.getPlatformClassLoader()
+            val jdkNames = references.filter { it.startsWith("java.") && platform.getResource(it.replace('.', '/') + ".class") != null }
+            assertTrue(jdkNames.isEmpty(), "a JDK name was sent: $jdkNames")
             assertEquals(0, running.dependencyRegistry.classIndexSize, "the class index is released once the baseline is filtered")
         } finally {
             running?.stop()

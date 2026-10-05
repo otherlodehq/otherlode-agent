@@ -1,7 +1,7 @@
 // Fixture classes whose initialisation order lets a supertype's <clinit> run the class's own code
 // before the class's <clinit> has run (ADR 0060), each compiled twice: at class-file version 52 (Java 8 / jvm-target 1.8),
-// where a woven class keeps its probe field and reaches it through an accessor, and at the
-// toolchain's own version, where probes load the array as a dynamic constant. The root build
+// where a woven class keeps its probe field and reaches it through an accessor, and at version 61
+// (Java 17, the oldest JVM the agent supports), where probes load the array as a dynamic constant. The root build
 // launches a JVM per fixture program from the class directories named by system properties.
 // Never on the test classpath directly: see the comment in fixtures-scala3/build.gradle.kts for why.
 plugins {
@@ -30,7 +30,7 @@ dependencies {
 }
 
 // A form name, its Java release and its Kotlin jvm-target.
-val forms = listOf(Triple("legacy", 8, "1.8"), Triple("modern", 21, "21"))
+val forms = listOf(Triple("legacy", 8, "1.8"), Triple("modern", 17, "17"))
 
 val compileTasks =
     forms.flatMap { (form, release, jvmTarget) ->

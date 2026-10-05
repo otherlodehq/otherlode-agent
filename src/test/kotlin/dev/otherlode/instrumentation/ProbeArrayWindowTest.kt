@@ -12,7 +12,7 @@ import kotlin.test.fail
 
 /**
  * Runs each fixture program of `:fixtures-probe-window` in a JVM launched with the shaded agent jar,
- * compiled at class-file version 52 and at the toolchain's own, and checks it runs to completion
+ * compiled at class-file version 52 and at 61, and checks it runs to completion
  * and that the hits taken while a supertype was still initialising were counted (ADR 0060).
  *
  * Each program lets a supertype's `<clinit>` run the class's own code before the class's `<clinit>`

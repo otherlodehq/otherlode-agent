@@ -223,6 +223,20 @@ adopter's collector forwards to one multi-tenant backend.
      `release.sh` with the bindings check, `CHANGELOG.md`; (4) the
      collector's release pieces and rewording; then Luke's steps and the
      rehearsal.
+   - Chunk 1 landed on 2026-10-05: the agent, bootstrap, wire, the endpoint
+     modules, the testkit, the demos and the general fixtures compile with
+     `release 17` and `-Xjdk-release=17` on the JDK 21 toolchain, and CI's
+     test matrix is 17, 21 and 25. The agent needed no change: the lambda
+     factory's `interfaceClass`, `implInfo` and `spinInnerClass` exist on 17.
+     `verifyAgentJar` and `verifyTestkitJar` fail on a class above 61 (an
+     entry under `META-INF/versions/N/` is held to Java N). The four Java
+     fixtures that use pattern matching for switch compile at release 21 in
+     their own task, copied into `compileTestJava`'s output as an input of
+     that task; tests that define them skip on 17, per case
+     (`ClassFileSupport`). Review moved the probe-window `modern` form from
+     release 21 to 17, since at 21 the dynamic-constant probe path had no
+     window test on a JDK 17, and narrowed the JaCoCo-ahead comparison to
+     drop only the two release-21 classes on 17.
    - Luke's steps, needed before the rehearsal: the `releases@otherlode.dev`
      mailbox (Google), the Portal account, the `dev.otherlode` namespace and
      its TXT record on the apex `otherlode.dev`, a Portal user token, the
@@ -409,7 +423,7 @@ Settled:
   entry. `-prof gc` on all four. The per-core run of the entry-only method is
   the contention measurement: every core writing one array element is true
   sharing, and JaCoCo's `arr[i] = true` precedent comes from test JVMs. JDK 25
-  is a second leg here only; JDK 17 joins if it becomes the floor.
+  is a second leg here only; JDK 17, the floor since 2026-10-05, is not yet a leg.
 - **CI.** Deterministic checks only, in `check`: zero allocation on the woven
   hot path, and no woven corpus method crossing 8000 bytes (the size guard's
   own test once it lands). The count of methods crossing 325 is reported,

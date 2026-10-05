@@ -54,11 +54,6 @@ kotlin {
     explicitApi()
 }
 
-java {
-    sourceCompatibility = JavaVersion.VERSION_21
-    targetCompatibility = JavaVersion.VERSION_21
-}
-
 // The plain jar keeps its own classifier so it cannot overwrite the shadow jar, which is the
 // testkit artifact. Both carry the version the agent's jar carries: the testkit reads it back from
 // its package to refuse an agent of another version.
@@ -138,6 +133,13 @@ val verifyTestkitJar by tasks.registering {
                     .map { it.name }
                     .toList()
             val classes = names.filter { it.endsWith(".class") }
+            // The testkit loads in an adopter's test JVM, which may be a JDK 17 (class-file version 61).
+            val tooNew =
+                classes.filter { name ->
+                    val header = zip.getInputStream(zip.getEntry(name)).use { it.readNBytes(8) }
+                    ((header[6].toInt() and 0xFF) shl 8 or (header[7].toInt() and 0xFF)) > 61
+                }
+            check(tooNew.isEmpty()) { "testkit jar has classes above class-file version 61: ${tooNew.take(10)}" }
             val foreign = classes.filterNot { it.startsWith("dev/otherlode/testkit/") }
             check(foreign.isEmpty()) { "testkit jar carries classes outside dev/otherlode/testkit/: ${foreign.take(10)}" }
             val unrelocated =

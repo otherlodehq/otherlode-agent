@@ -55,11 +55,6 @@ kotlin {
     jvmToolchain(21)
 }
 
-java {
-    sourceCompatibility = JavaVersion.VERSION_21
-    targetCompatibility = JavaVersion.VERSION_21
-}
-
 // JaxRsTestAgent is installed as a real -javaagent on the test JVM's own command line, not
 // through ByteBuddyAgent's self-attach: the fixture resource classes are referenced from the
 // test body, which Gradle's JUnit Platform integration loads while discovering @Test methods,

@@ -24,3 +24,9 @@ java {
         languageVersion.set(JavaLanguageVersion.of(21))
     }
 }
+
+// The Scala plugin targets the toolchain's own class-file version; the fixtures must load on the
+// oldest test JVM.
+tasks.withType<ScalaCompile>().configureEach {
+    scalaCompileOptions.additionalParameters = listOf("-release", "17")
+}

@@ -34,7 +34,7 @@ class ProbeAllocationTest {
         shape: HotPathShape,
         calls: Int,
     ): Long {
-        val id = Thread.currentThread().threadId()
+        val id = Thread.currentThread().id
         var sink = 0
         val before = threads.getThreadAllocatedBytes(id)
         for (i in 0 until calls) sink += shape.call(i)

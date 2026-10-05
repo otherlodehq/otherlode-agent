@@ -46,11 +46,6 @@ kotlin {
     jvmToolchain(21)
 }
 
-java {
-    sourceCompatibility = JavaVersion.VERSION_21
-    targetCompatibility = JavaVersion.VERSION_21
-}
-
 val demoServerMainClass = "com.example.demo.server.DemoServerMainKt"
 val demoClientMainClass = "com.example.demo.client.DemoClientMainKt"
 val stubCollectorMainClass = "com.example.demo.collector.StubCollectorMainKt"
@@ -437,7 +432,8 @@ tasks.register("runShapesStack") {
     }
 }
 
-fun stackServiceNamespaceEnv(): Map<String, String> = stackServiceNamespace?.let { mapOf("OTHERLODE_SERVICE_NAMESPACE" to it) } ?: emptyMap()
+fun stackServiceNamespaceEnv(): Map<String, String> =
+    stackServiceNamespace?.let { mapOf("OTHERLODE_SERVICE_NAMESPACE" to it) } ?: emptyMap()
 
 // A suffix that names the namespace for a printed line, or an empty string when there is none.
 fun stackNamespaceSuffix(): String = stackServiceNamespace?.let { " in namespace $it" } ?: ""
