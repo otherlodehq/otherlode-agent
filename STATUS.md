@@ -536,7 +536,31 @@ the steadiness rule, as it should: on the 4-vCPU runner `none`'s throughput
 climbed from 108 to 200 iterations a second over the first 45 s of the window
 after a 60 s warmup, a 30% drift. The default warmup went to 150 s.
 
-**Found by the sweep, to fix later:**
+Chunk 4 landed on 2026-10-05. Two harness changes first. Pinning: each
+container gets its own cpuset from Docker's CPU count (PetClinic n/4 cores,
+at most 2, Postgres and the collector n/4, k6 the rest, four k6 users per
+PetClinic core), and a run whose PetClinic averaged under 90% of its pinned
+cores is invalid; on the runner PetClinic averaged 0.97 of its one core.
+Warmup: on one core the compiler threads share the application's core, and
+150 s left the window rising 16% and 31% (run 37256025629), so the warmup
+runs in 30 s slices until the last two each match the one before within 3%,
+90 s to 600 s, and the job's timeout rose to 360 minutes; warmups ended
+steady after 240 to 330 s. Run 37256902161 on the fixed agent (`7f95d26`),
+every run valid and no class skipped in either config: headline 1,489
+probes, throughput -0.5% (noise), CPU per request +0.7%, RSS +84 MiB,
+startup 13.6 s to 23.9 s; ceiling 100,302 probes, throughput -4.9%, CPU per
+request +5.4%, p99 +5.2%, GC pause per 1000 requests +20%, RSS +306 MiB,
+startup 15.2 s to 64.0 s. The README carries the table. The headline budget
+(throughput and p95 within noise) holds. Startup is the cost that stands out,
+amplified on one core, and is the investigation below, still to grill.
+
+The nightly schedule (a cron trigger and a job committing results to a
+`benchmark-results` branch) is built only as far as the brief: auto mode's
+classifier refused the workflow edit that adds a scheduled job pushing
+commits, so it waits for Luke's go-ahead.
+
+**Found by the sweep, closed by ADRs 0058 and 0059 (no class skipped in the
+2026-10-05 runs):**
 
 - A class that names an absent optional type is skipped even when the JVM
   loads it. ByteBuddy resolves field and signature types while validating the

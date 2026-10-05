@@ -187,6 +187,29 @@ Under `benchmark-overhead/build/results/<config>/`:
 - `runs/<variant>-r<N>/`: the raw k6 JSON and log, the JFR file, PetClinic's log, and the
   collector's log lines from the run.
 
+## Latest numbers
+
+Workflow run 37256902161 on 2026-10-05, agent at `7f95d26`, GitHub's `ubuntu-latest` (4 vCPU), so
+PetClinic on one pinned core with four k6 users. Six repeats per variant, every run valid and
+steady, no class skipped in either config. Medians, agent against `none`; a change marked "noise"
+lies inside `none`'s own spread.
+
+| | headline (`org.springframework.samples.petclinic`) | ceiling (`org.springframework`) |
+|---|---|---|
+| probes | 1,489 | 100,302 |
+| throughput | -0.5% (noise) | -4.9% |
+| CPU per request | +0.7% | +5.4% |
+| p95 / p99 latency | -1.3% / -2.9% | +4.2% / +5.2% |
+| GC pause per 1000 requests | +6.0% | +20.1% |
+| RSS | +84 MiB (+8.1%) | +306 MiB (+29.7%) |
+| minimum heap used | +8 MiB | +147 MiB |
+| metaspace | +19 MiB | +24 MiB |
+| startup | 13.6 s to 23.9 s | 15.2 s to 64.0 s |
+
+Startup on one core is the outlier, and the investigation in `docs/investigations/` covers it.
+`agent.repo.dirty` reads true in CI because the workflow checks the collector out inside the
+agent's working tree; the jar is built from the commit.
+
 ## Attribution
 
 The harness is modelled on OpenTelemetry Java instrumentation's
