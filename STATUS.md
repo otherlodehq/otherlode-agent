@@ -383,7 +383,8 @@ Settled:
   the README, the micro suite, the CI checks, and (moved before release on
   2026-10-04, Luke's rule being before release whenever there is a choice)
   one flush and the registry's heap timed on their own, a nightly schedule
-  with results committed to the repo, and the size guard below.
+  with results committed to the repo (changed 2026-10-05: results stay in the
+  run), and the size guard below.
 
 **Code size, measured.** Nothing in the weaver checks HotSpot's limits. Over
 8000 bytes (`HugeMethodLimit`) a method is never JIT-compiled; over 325
@@ -566,10 +567,11 @@ JVM's own 4,900 classes, takes 0.5 ms. The first flush scales with the manifest:
 the ceiling's 100,302 probes would take about 100 ms and 180 MB once, which
 belongs to the heap investigation.
 
-The nightly schedule (a cron trigger and a job committing results to a
-`benchmark-results` branch) is built only as far as the brief: auto mode's
-classifier refused the workflow edit that adds a scheduled job pushing
-commits, so it waits for Luke's go-ahead.
+The workflow runs nightly on `master` (03:17 UTC, default inputs) as well as
+by hand. Changed from the grill on 2026-10-05 with Luke: results live in the
+run (job summary, and artifacts kept 90 days) and are not committed to the
+repository. Committing them to a results branch is deferred until a trend view
+across months is wanted, and adds nothing that is hard to add later.
 
 **Found by the sweep, closed by ADRs 0058 and 0059 (no class skipped in the
 2026-10-05 runs):**

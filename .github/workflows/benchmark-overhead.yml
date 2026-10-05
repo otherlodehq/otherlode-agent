@@ -1,6 +1,9 @@
 name: benchmark-overhead
 
 on:
+  # Nightly on master. Results live in the run (job summary and artifacts), not in the repository.
+  schedule:
+    - cron: "17 3 * * *"
   workflow_dispatch:
     inputs:
       collector_ref:
@@ -12,6 +15,11 @@ on:
 
 permissions:
   contents: read
+
+# A run can take hours; a new one waits rather than competing for the same runner time.
+concurrency:
+  group: benchmark-overhead
+  cancel-in-progress: false
 
 jobs:
   benchmark:
@@ -35,10 +43,10 @@ jobs:
       - uses: actions/checkout@v4
         with:
           repository: otherlodehq/otherlode-collector
-          ref: ${{ inputs.collector_ref }}
+          ref: ${{ inputs.collector_ref || 'master' }}
           path: otherlode-collector
       - env:
-          REPEATS: ${{ inputs.repeats }}
+          REPEATS: ${{ inputs.repeats || '6' }}
           CONFIG: ${{ matrix.config }}
         run: >-
           ./gradlew -p benchmark-overhead test --no-daemon
@@ -51,6 +59,7 @@ jobs:
         with:
           name: overhead-${{ matrix.config }}
           path: benchmark-overhead/build/results
+          retention-days: 90
       - name: Add the summary to the job page
         if: always()
         run: cat benchmark-overhead/build/results/${{ matrix.config }}/summary.md >> "$GITHUB_STEP_SUMMARY" || echo "No summary was written." >> "$GITHUB_STEP_SUMMARY"

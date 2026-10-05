@@ -141,10 +141,13 @@ Docker's layer cache. The build pins PetClinic to commit `afc8fc1d3b8ec8de694144
 
 ## Run it in CI
 
-The `benchmark-overhead` workflow is manual (`workflow_dispatch`). It takes `collector_ref`
-(default `master`) and `repeats` (default 6), runs both configs in parallel on `ubuntu-latest`, and
-uploads `benchmark-overhead/build/results` as an artifact even when a run fails. Each config's
-`summary.md` is added to the job summary.
+The `benchmark-overhead` workflow runs nightly on `master` at 03:17 UTC with the defaults, and by
+hand (`workflow_dispatch`), which takes `collector_ref` (default `master`) and `repeats` (default 6).
+It runs both configs in parallel on `ubuntu-latest` and uploads `benchmark-overhead/build/results`
+as an artifact, kept 90 days, even when a run fails. Each config's `summary.md` is added to the job
+summary. Results live only in the run: nothing is committed. A run waits for one still in progress
+rather than overlapping it. GitHub disables a public repository's schedule after 60 days without
+activity, and the Actions tab re-enables it.
 
 ## What makes a run invalid
 
