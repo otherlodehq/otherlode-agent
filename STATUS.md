@@ -281,8 +281,17 @@ adopter's collector forwards to one multi-tenant backend.
      VALIDATED within seconds, and the API drop removed it (the status query
      afterwards found nothing). Not yet known: whether a dropped deployment
      frees its version; a `rehearsal/1-again` tag answers it.
-   - Left in item 6: chunk 4 (the collector's release pieces), then cutting
-     collector `v0.1.0` and agent `0.1.0`. Cutting them is a deliberate action
+   - Chunk 4 landed on 2026-10-06 in the collector (`304718d`): a `v*.*.*`
+     tag runs a guard, its CI, a multi-arch image (`linux/amd64`,
+     `linux/arm64`, cross-compiled) pushed to
+     `ghcr.io/otherlodehq/otherlode-collector` as `X.Y.Z`, `X.Y` and `latest`
+     with an SBOM, provenance and a build-provenance attestation, then a
+     published GitHub release naming the digest; `scripts/release.sh` builds
+     before each commit; the redaction WARNING and README say "the latest
+     collector". One Opus review; its findings are in the commit. The
+     collector's `Release tags` ruleset and release immutability are on.
+   - Left in item 6: cutting collector `v0.1.0` and agent `0.1.0`, then
+     making the GHCR package public. Cutting them is a deliberate action
      for a future session, Luke's call (2026-10-06): the agent's needs its
      `## [0.1.0]` changelog section written, and the collector's must exist
      first, since `release.sh` refuses an agent release until it does.
