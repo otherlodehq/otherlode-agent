@@ -259,14 +259,30 @@ adopter's collector forwards to one multi-tenant backend.
      prints the deployment id only in its log ("Nmcp: deployment bundle '<id>'
      uploaded."), and retries the upload POST up to three times, so a lost
      response can leave a duplicate deployment.
+   - Chunk 3 landed on 2026-10-06: `release.yml` (tag `v*.*.*`: guard, the
+     whole suite through a callable `gradle.yml`, the upload, then a separate
+     GitHub-release job), `rehearsal.yml` (tag `rehearsal/<n>`: upload
+     `0.0.0-rehearsal.<n>`, wait for validation, drop through the Portal API),
+     `scripts/release.sh`, `scripts/changelog-section.sh` and `CHANGELOG.md`.
+     Three Opus review rounds; what they changed is ADR 0063's 2026-10-06
+     amendment. The one that would have stopped every release: CI's test job
+     ran `verifyPublication` unsigned at the release version, which demanded a
+     signature, so signing is now required only when the upload task is in
+     the build. Luke's GitHub setup is done and was checked through the API on
+     2026-10-06: the `release` environment admits tags `v*` and `rehearsal/*`
+     and holds the four secrets, no `CENTRAL_PUBLISHING_TYPE` is set, the
+     "Release tags" ruleset covers both patterns with only the admin role able
+     to bypass, and immutable releases are on. Workflows outside the
+     secret-holding jobs still use v4 of every action, several majors behind;
+     bumping them is a follow-up.
    - Luke's steps, needed before the rehearsal. Done on 2026-10-05: the
      `releases@otherlode.dev` group (Google Workspace, external posting on),
      the signing key (fingerprints and expiry under "Reminders for expiring
      keys and credentials") on keys.openpgp.org and keyserver.ubuntu.com, the
      Portal account (`luke@otherlode.dev`), the `dev.otherlode` namespace,
      verified by its TXT record on the apex `otherlode.dev`, and a Portal user
-     token. Left, once chunk 3 names them: the secrets in the `release`
-     environment and the `v*` tag ruleset.
+     token. Done on 2026-10-06: the `release` environment and its secrets, the
+     tag ruleset, immutable releases.
    - A flaky test now blocks a release: `CodeSourceClassFileTest`'s warm-up
      tests failed on CI on 2026-10-05 (runs 37353518574 and 37360423743, a
      different test each time) and passed on rerun. To fix before `0.1.0`.

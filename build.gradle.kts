@@ -3,6 +3,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import org.w3c.dom.Element
 import java.nio.ByteBuffer
+import java.time.Duration
 import java.util.zip.CRC32
 import java.util.zip.ZipFile
 import java.util.zip.ZipInputStream
@@ -889,8 +890,16 @@ nmcpAggregation {
     centralPortal {
         username.set(providers.environmentVariable("MAVEN_CENTRAL_USERNAME"))
         password.set(providers.environmentVariable("MAVEN_CENTRAL_PASSWORD"))
-        publishingType.set(providers.gradleProperty("otherlode.centralPublishingType").orElse("USER_MANAGED"))
+        val publishing = providers.gradleProperty("otherlode.centralPublishingType").getOrElse("USER_MANAGED")
+        publishingType.set(publishing)
         publicationName.set("otherlode $version")
+        // nmcp's ten-minute default can end the upload task while the Portal is still validating,
+        // failing the release job over a deployment that goes on to validate (or, under AUTOMATIC,
+        // to publish). Under AUTOMATIC the task also waits for PUBLISHED, so the GitHub release
+        // follows files Central already serves. The gate matters: under USER_MANAGED nmcp rejects a
+        // publishing timeout, and only after it has uploaded and validated.
+        validationTimeout.set(Duration.ofMinutes(60))
+        if (publishing == "AUTOMATIC") publishingTimeout.set(Duration.ofMinutes(60))
     }
     // Off sends .md5, .sha1 and .sha512 beside every artifact and no checksum beside a signature,
     // which is what the Portal asks for: .md5 and .sha1 required, .asc files needing none
@@ -1103,6 +1112,7 @@ val verifyPublication by tasks.registering {
 // release could not be taken back. A SNAPSHOT is refused as soon as the task graph is known.
 tasks.named("nmcpPublishAggregationToCentralPortal") { dependsOn(verifyPublication) }
 gradle.taskGraph.whenReady {
+    // gradle/publishing.gradle.kts requires signing on the same task path.
     if (hasTask(":nmcpPublishAggregationToCentralPortal")) {
         check(!version.toString().endsWith("-SNAPSHOT")) { "refusing to upload $version: the Portal takes no SNAPSHOT" }
     }

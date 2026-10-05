@@ -6,6 +6,7 @@ import org.gradle.api.publish.PublishingExtension
 import org.gradle.api.publish.maven.MavenPublication
 import org.gradle.api.tasks.bundling.Jar
 import org.gradle.plugins.signing.SigningExtension
+import java.util.concurrent.Callable
 
 val artifactIdValue = project.extra["otherlode.artifactId"] as String
 val pomNameValue = project.extra["otherlode.pomName"] as String
@@ -73,13 +74,21 @@ configure<PublishingExtension> {
 // id is reduced to those digits here and checked before the build starts. It defaults to the
 // release subkey (fingerprint 62EB A55C 989D 53C1 7D6B C63F 8CD7 0F20 BC8D 3F42), which is public.
 // An empty variable counts as unset, which is what a workflow passes for a missing secret.
-// Without `SIGNING_KEY` this script sets no key, so a SNAPSHOT build needs none, and a release build
-// with none fails at its sign task.
+// Signing is required only when the build uploads to the Portal: a release-version build that only
+// checks the deployment, as CI's test job does on a release tag, signs when a key is present and
+// otherwise builds an unsigned zip, which verifyPublication accepts as unsigned. An upload with no
+// key fails at its sign task.
 val releaseSubkeyId = "BC8D3F42"
 
 configure<SigningExtension> {
     val key = providers.environmentVariable("SIGNING_KEY").filter { it.isNotBlank() }
-    isRequired = !project.version.toString().endsWith("-SNAPSHOT")
+    setRequired(
+        Callable {
+            !project.version.toString().endsWith("-SNAPSHOT") &&
+                // The upload task; build.gradle.kts guards the same path against a SNAPSHOT.
+                gradle.taskGraph.hasTask(":nmcpPublishAggregationToCentralPortal")
+        },
+    )
     if (key.isPresent) {
         val given = providers.environmentVariable("SIGNING_KEY_ID").filter { it.isNotBlank() }.getOrElse(releaseSubkeyId)
         val hex = given.filterNot { it.isWhitespace() }.removePrefix("0x").removePrefix("0X")

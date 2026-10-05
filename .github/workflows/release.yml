@@ -1,0 +1,223 @@
+name: release
+
+# Started by a v*.*.* tag that scripts/release.sh pushed (ADR 0063). Refuses a tag that does not
+# match the declared version, runs the whole suite, uploads one Central Portal deployment, then
+# creates the GitHub release. The jobs that hold the signing key or can write to the repository use
+# actions pinned to a commit and no Gradle cache, so nothing another run wrote reaches a signed build.
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    name: guard
+    runs-on: ubuntu-latest
+    env:
+      CENTRAL_PUBLISHING_TYPE: ${{ vars.CENTRAL_PUBLISHING_TYPE }}
+    outputs:
+      type: ${{ steps.check.outputs.type }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Check the tag, the version, the branch, the changelog and the publishing type
+        id: check
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version=$(sed -n 's/^version=//p' gradle.properties)
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::tag $TAG does not equal v$version from gradle.properties"; exit 1
+          fi
+          case "$version" in
+            *-SNAPSHOT) echo "::error::version $version is a SNAPSHOT"; exit 1 ;;
+          esac
+          git fetch --no-tags origin master:refs/remotes/origin/master
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/master; then
+            echo "::error::the tagged commit $GITHUB_SHA is not on origin/master"; exit 1
+          fi
+          section=$(scripts/changelog-section.sh "$version")
+          if ! [[ "$section" =~ [^[:space:]] ]]; then
+            echo "::error::CHANGELOG.md has no non-empty '## [$version]' section"; exit 1
+          fi
+          type=${CENTRAL_PUBLISHING_TYPE:-USER_MANAGED}
+          case "$type" in
+            USER_MANAGED | AUTOMATIC) ;;
+            *) echo "::error::CENTRAL_PUBLISHING_TYPE is '$type', not USER_MANAGED or AUTOMATIC"; exit 1 ;;
+          esac
+          # Until a release has been published by hand on the Portal, none is published automatically
+          # (ADR 0063). Central's metadata for the agent exists only once one has.
+          if [ "$type" = AUTOMATIC ]; then
+            code=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 30 \
+              https://repo1.maven.org/maven2/dev/otherlode/otherlode-agent/maven-metadata.xml || echo 000)
+            case "$code" in
+              200) ;;
+              404) echo "::error::no otherlode-agent release is on Central yet, and the first is published by hand: unset CENTRAL_PUBLISHING_TYPE"; exit 1 ;;
+              *) echo "::error::could not read Central's metadata for otherlode-agent (HTTP $code): re-run the guard"; exit 1 ;;
+            esac
+          fi
+          echo "type=$type" >> "$GITHUB_OUTPUT"
+
+  test:
+    name: test
+    needs: guard
+    uses: ./.github/workflows/gradle.yml
+
+  publish:
+    name: publish
+    needs: [guard, test]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      deployment: ${{ steps.deployment.outputs.id }}
+    steps:
+      # "Re-run all jobs", or a rerun after this job failed, would upload a second deployment of the
+      # same version from a jar that differs byte for byte from the first. It matches the upload
+      # step by its name below, so renaming that step needs this filter changed with it.
+      - name: Refuse a second upload
+        if: fromJSON(github.run_attempt) > 1
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -euo pipefail
+          for ((a = 1; a < ATTEMPT; a++)); do
+            started=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$a/jobs" --paginate \
+              --jq '[.jobs[] | select(.name == "publish") | .steps[]
+                     | select(.name == "Upload to the Central Portal" and .conclusion != "skipped" and .status != "queued")]
+                    | length' | awk '{ n += $1 } END { print n + 0 }')
+            if [ "$started" -gt 0 ]; then
+              echo "::error::attempt $a already started an upload, so this attempt will not upload again."
+              echo "Re-run failed jobs helps only on the attempt that uploaded, and only while no later attempt exists."
+              echo "Now that this attempt exists, finish by hand: publish (or drop) attempt $a's deployment on"
+              echo "central.sonatype.com, download attempt $a's release-assets artifact (the jar, its .asc and SHA256SUMS),"
+              echo "and run: gh release create $GITHUB_REF_NAME --verify-tag --title \"otherlode-agent ${GITHUB_REF_NAME#v}\" <those files>"
+              exit 1
+            fi
+          done
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          # 17 and 25 are the javac fixture toolchains; 21 is last, so it runs Gradle.
+          java-version: |
+            17
+            25
+            21
+      # verifyPublication runs first, as a dependency of the upload. nmcp waits for the Portal to
+      # validate the deployment in both modes and fails on FAILED; under AUTOMATIC it also waits for
+      # PUBLISHED, so the GitHub release follows files Central already serves.
+      # The rerun guard above finds this step by its name.
+      - name: Upload to the Central Portal
+        id: upload
+        env:
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+          TYPE: ${{ needs.guard.outputs.type }}
+        run: |
+          set -euo pipefail
+          ./gradlew publishAggregationToCentralPortal --no-daemon \
+            -Potherlode.centralPublishingType="$TYPE" \
+            -Porg.gradle.java.installations.fromEnv=JAVA_HOME_17_X64,JAVA_HOME_21_X64,JAVA_HOME_25_X64 \
+            2>&1 | tee upload.log
+      - name: Record the deployment id
+        id: deployment
+        if: always()
+        run: |
+          id=$(sed -n "s/.*Nmcp: deployment bundle '\([^']*\)' uploaded\..*/\1/p" upload.log 2>/dev/null | head -n 1 || true)
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+          echo "Central Portal deployment: ${id:-none in the log}" >> "$GITHUB_STEP_SUMMARY"
+      # Collected whenever a deployment exists, even if the upload task then failed (a timeout while
+      # the Portal goes on to validate or publish), so the matching copies survive for a manual release.
+      - name: Collect the release assets
+        if: always() && steps.deployment.outputs.id != ''
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version=${TAG#v}
+          jar="build/libs/otherlode-agent-$version.jar"
+          asc="$jar.asc"
+          zip=build/nmcp/zip/aggregation.zip
+          for f in "$jar" "$asc" "$zip"; do
+            [ -f "$f" ] || { echo "::error::missing $f"; exit 1; }
+          done
+
+          # The GitHub copies have to be the Central copies.
+          entry="dev/otherlode/otherlode-agent/$version/otherlode-agent-$version.jar"
+          unzip -p "$zip" "$entry" | cmp - "$jar"
+          unzip -p "$zip" "$entry.asc" | cmp - "$asc"
+
+          mkdir release-assets
+          cp "$jar" "$asc" release-assets/
+          (cd release-assets && sha256sum "otherlode-agent-$version.jar" "otherlode-agent-$version.jar.asc" > SHA256SUMS)
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always() && steps.deployment.outputs.id != ''
+        with:
+          name: release-assets
+          path: release-assets/
+          if-no-files-found: error
+
+  # Its own job, with write access and no signing secrets. Rerunning it alone after a failure never
+  # uploads to the Portal again; a draft it left behind is replaced, a published release is left.
+  github-release:
+    name: github release
+    needs: [guard, publish]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-assets
+          path: release-assets
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+          TYPE: ${{ needs.guard.outputs.type }}
+          DEPLOYMENT: ${{ needs.publish.outputs.deployment }}
+        run: |
+          set -euo pipefail
+          version=${TAG#v}
+          {
+            if [ "$TYPE" = USER_MANAGED ]; then
+              echo "> Draft. Publish Central Portal deployment \`${DEPLOYMENT:-unknown}\` and drop any other deployment of $version, then delete this note and publish this release."
+              echo
+            fi
+            scripts/changelog-section.sh "$version"
+          } > release-notes.md
+
+          existing=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            --jq ".[] | select(.tag_name == \"$TAG\") | \"\(.id) \(.draft)\"")
+          while read -r id draft; do
+            [ -n "$id" ] || continue
+            if [ "$draft" = true ]; then
+              gh api -X DELETE "repos/$GITHUB_REPOSITORY/releases/$id"
+            else
+              echo "::error::a published release for $TAG already exists; nothing to do"; exit 1
+            fi
+          done <<< "$existing"
+
+          args=(--title "otherlode-agent $version" --notes-file release-notes.md --verify-tag)
+          if [ "$TYPE" = USER_MANAGED ]; then args+=(--draft); fi
+          gh release create "$TAG" "${args[@]}" release-assets/*

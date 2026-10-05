@@ -1,0 +1,138 @@
+name: rehearsal
+
+# Proves the Central Portal accepts the bundle without spending a real version (ADR 0063): builds
+# and signs at 0.0.0-rehearsal.<n>, uploads it USER_MANAGED, waits for validation, then drops it
+# through the Portal API. No release tag, no GitHub release. Started by pushing a tag
+# rehearsal/<n>, or rehearsal/<n>-<suffix> (letters, digits and dots) to run the same number again,
+# which shows whether a dropped deployment frees its version. A tag, not a branch, so the `release`
+# environment's secrets are reachable only from `v*` and `rehearsal/*` tags, which a tag ruleset
+# lets only Luke push.
+#
+# nmcp makes up to three attempts at the upload POST, so a lost response can leave a second
+# deployment whose id this workflow never sees. Drop any such stray by hand on central.sonatype.com.
+on:
+  push:
+    tags: ['rehearsal/*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rehearsal-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  rehearse:
+    name: rehearse
+    runs-on: ubuntu-latest
+    environment: release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check the tag and the branch
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$TAG" =~ ^rehearsal/(0|[1-9][0-9]*)(-[A-Za-z0-9.]+)?$ ]]; then
+            echo "::error::tag '$TAG' is not rehearsal/<n> or rehearsal/<n>-<suffix>"; exit 1
+          fi
+          git fetch --no-tags origin master:refs/remotes/origin/master
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/master; then
+            echo "::error::the tagged commit $GITHUB_SHA is not on origin/master"; exit 1
+          fi
+          echo "V=0.0.0-rehearsal.${BASH_REMATCH[1]}" >> "$GITHUB_ENV"
+      - uses: gradle/actions/wrapper-validation@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          # 17 and 25 are the javac fixture toolchains; 21 is last, so it runs Gradle.
+          java-version: |
+            17
+            25
+            21
+      - name: Upload to the Central Portal
+        id: upload
+        continue-on-error: true
+        env:
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
+          SIGNING_PASSWORD: ${{ secrets.SIGNING_PASSWORD }}
+        run: |
+          set -euo pipefail
+          ./gradlew publishAggregationToCentralPortal --no-daemon \
+            -Pversion="$V" \
+            -Potherlode.centralPublishingType=USER_MANAGED \
+            -Porg.gradle.java.installations.fromEnv=JAVA_HOME_17_X64,JAVA_HOME_21_X64,JAVA_HOME_25_X64 \
+            2>&1 | tee upload.log
+      - name: Read the deployment id
+        id: deployment
+        if: always()
+        run: |
+          id=$(sed -n "s/.*Nmcp: deployment bundle '\([^']*\)' uploaded\..*/\1/p" upload.log 2>/dev/null | head -n 1 || true)
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+          if [ -z "$id" ]; then echo "no deployment id in the log"; fi
+      # The Portal drops only a VALIDATED or FAILED deployment, so the step waits up to 30 minutes for
+      # one of those first. Errors are handled line by line (`set +e`): a failed status call must not
+      # skip the drop. The token is the base64 of username:password; it reaches curl on stdin, never
+      # on the command line, and is masked in case a later line echoes it.
+      - name: Wait for validation, then drop the deployment
+        id: drop
+        if: always() && steps.deployment.outputs.id != ''
+        env:
+          ID: ${{ steps.deployment.outputs.id }}
+          MAVEN_CENTRAL_USERNAME: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          MAVEN_CENTRAL_PASSWORD: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+        run: |
+          set +e
+          set -uo pipefail
+          api=https://central.sonatype.com/api/v1/publisher
+          token=$(printf '%s:%s' "$MAVEN_CENTRAL_USERNAME" "$MAVEN_CENTRAL_PASSWORD" | base64 | tr -d '\n')
+          echo "::add-mask::$token"
+          auth() { printf 'Authorization: Bearer %s\n' "$token"; }
+          state() {
+            auth | curl --silent --show-error --max-time 60 -X POST -H @- "$api/status?id=$ID" |
+              jq -r '.deploymentState // "UNKNOWN"' 2>/dev/null
+          }
+
+          current=UNKNOWN
+          for _ in $(seq 1 90); do
+            current=$(state)
+            case "$current" in VALIDATED | FAILED) break ;; esac
+            sleep 20
+          done
+          echo "state before the drop: $current"
+          echo "validation=$current" >> "$GITHUB_OUTPUT"
+
+          if auth | curl --fail-with-body --silent --show-error --max-time 60 -X DELETE -H @- "$api/deployment/$ID"; then
+            echo "drop=dropped" >> "$GITHUB_OUTPUT"
+          else
+            echo "drop=FAILED" >> "$GITHUB_OUTPUT"
+          fi
+
+          after=$(state)
+          echo "state after the drop: ${after:-none}"
+          echo "after=${after:-none}" >> "$GITHUB_OUTPUT"
+      - name: Report
+        if: always()
+        env:
+          ID: ${{ steps.deployment.outputs.id }}
+          UPLOAD: ${{ steps.upload.outcome }}
+          DROP: ${{ steps.drop.outputs.drop }}
+          VALIDATION: ${{ steps.drop.outputs.validation }}
+          AFTER: ${{ steps.drop.outputs.after }}
+        run: |
+          {
+            echo "## Rehearsal of ${V:-an unchecked tag}"
+            echo
+            echo "- Upload: ${UPLOAD:-not run}"
+            echo "- Deployment id: ${ID:-none}"
+            echo "- State before the drop: ${VALIDATION:-not queried}"
+            echo "- Drop: ${DROP:-not attempted}"
+            echo "- State after the drop: ${AFTER:-not queried}"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$UPLOAD" != success ]; then echo "::error::the upload failed"; exit 1; fi
+          if [ "$DROP" != dropped ]; then echo "::error::the deployment was not dropped"; exit 1; fi
