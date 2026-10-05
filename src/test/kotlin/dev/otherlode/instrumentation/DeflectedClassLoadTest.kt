@@ -6,7 +6,6 @@ import dev.otherlode.registry.ProbeRegistry
 import net.bytebuddy.agent.ByteBuddyAgent
 import net.bytebuddy.agent.builder.ResettableClassFileTransformer
 import java.io.File
-import java.io.InputStream
 import java.lang.instrument.ClassFileTransformer
 import java.lang.instrument.Instrumentation
 import java.net.URL
@@ -44,11 +43,12 @@ class DeflectedClassLoadTest {
     private var otherlode: OtherlodeInstrumentation? = null
     private var installedTransformer: ResettableClassFileTransformer? = null
     private var watcher: ClassFileTransformer? = null
+    private var nestedLoadTrigger: ClassFileTransformer? = null
 
     /**
-     * Loads [NESTED] the first time it is asked for a resource, which ByteBuddy does from inside
-     * the transform of the class in hand. Fixture classes are defined here rather than by the
-     * parent, so this test gets its own copies.
+     * Loads [NESTED] when [loadNestedFromTransform] is called, which a transformer registered ahead
+     * of this agent does from inside the transform of [OUTER]. Fixture classes are defined here
+     * rather than by the parent, so this test gets its own copies.
      */
     private class ReentrantLoader(
         urls: Array<URL>,
@@ -74,18 +74,38 @@ class DeflectedClassLoadTest {
             }
         }
 
-        override fun getResourceAsStream(name: String): InputStream? {
+        fun loadNestedFromTransform() {
             if (triggered.compareAndSet(false, true)) {
                 nested = Class.forName(NESTED, false, this)
             }
-            return super.getResourceAsStream(name)
         }
+    }
+
+    /** Registers a transformer that loads [NESTED] while the thread is inside the transform of [OUTER]. */
+    private fun installNestedLoadTrigger() {
+        val trigger =
+            object : ClassFileTransformer {
+                override fun transform(
+                    loader: ClassLoader?,
+                    className: String?,
+                    classBeingRedefined: Class<*>?,
+                    protectionDomain: ProtectionDomain?,
+                    classfileBuffer: ByteArray,
+                ): ByteArray? {
+                    if (className == OUTER.replace('.', '/') && loader is ReentrantLoader) loader.loadNestedFromTransform()
+                    return null
+                }
+            }
+        instrumentation.addTransformer(trigger, false)
+        trigger.also { nestedLoadTrigger = it }
     }
 
     @AfterTest
     fun tearDown() {
         installedTransformer?.let { otherlode?.uninstall(instrumentation, it) }
         watcher?.let { instrumentation.removeTransformer(it) }
+        nestedLoadTrigger?.let { instrumentation.removeTransformer(it) }
+        nestedLoadTrigger = null
         installedTransformer = null
         watcher = null
         otherlode = null
@@ -111,6 +131,7 @@ class DeflectedClassLoadTest {
             }
         instrumentation.addTransformer(spy, false)
         watcher = spy
+        installNestedLoadTrigger()
 
         val registry = ProbeRegistry()
         val instrumented = OtherlodeInstrumentation(AgentConfig.parse("includePackages=com.example.target"), registry)
@@ -132,6 +153,7 @@ class DeflectedClassLoadTest {
 
     @Test
     fun `the sweep reports the deflected class, and does not report one with nothing to probe`() {
+        installNestedLoadTrigger()
         val registry = ProbeRegistry()
         val config = AgentConfig.parse("includePackages=com.example.target")
         val instrumented = OtherlodeInstrumentation(config, registry)

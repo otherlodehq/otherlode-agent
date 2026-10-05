@@ -76,6 +76,7 @@ import net.bytebuddy.pool.TypePool
 import net.bytebuddy.utility.JavaModule
 import java.lang.System.Logger.Level
 import java.lang.instrument.Instrumentation
+import java.security.ProtectionDomain
 import java.util.Collections
 import java.util.IdentityHashMap
 import java.util.WeakHashMap
@@ -158,7 +159,8 @@ class OtherlodeInstrumentation(
 ) {
     private val log = System.getLogger(OtherlodeInstrumentation::class.java.name)
 
-    private val placeholderPools = PlaceholderPoolStrategy()
+    private val jdkTypes = JdkTypePool()
+    private val placeholderPools = PlaceholderPoolStrategy(jdkTypes)
 
     /**
      * An advice class described once, with its class file held in memory, so `Advice` does not
@@ -346,7 +348,9 @@ class OtherlodeInstrumentation(
             .with(if (describeMissingTypes) placeholderPools else AgentBuilder.PoolStrategy.Default.FAST)
             .with(TransformResultListener())
             .type(typeMatcher())
-            .transform { builder, typeDescription, classLoader, _, _ -> instrument(builder, typeDescription, classLoader) }
+            .transform { builder, typeDescription, classLoader, _, protectionDomain ->
+                instrument(builder, typeDescription, classLoader, protectionDomain)
+            }
             // AgentBuilder.Default.makeRaw returns a ResettableClassFileTransformer; the interface
             // this chain ends on declares only the supertype.
             .makeRaw() as ResettableClassFileTransformer
@@ -588,12 +592,13 @@ class OtherlodeInstrumentation(
         builder: DynamicType.Builder<*>,
         typeDescription: TypeDescription,
         classLoader: ClassLoader?,
+        protectionDomain: ProtectionDomain?,
     ): DynamicType.Builder<*> {
-        if (alreadyLoaded.get() == true) return reweave(builder, typeDescription, classLoader)
+        if (alreadyLoaded.get() == true) return reweave(builder, typeDescription, classLoader, protectionDomain)
         // The JVM cannot define a class whose own supertype is absent, so weaving it would publish
         // probes for a class that never loads. Failing here records it as skipped.
         placeholderPools.missingSupertype(typeDescription)?.let { throw PlaceholderRefusal.undefinable(it) }
-        val source = readClassBytes(typeDescription, classLoader)
+        val source = readClassBytes(typeDescription, classLoader, protectionDomain)
         val analysedBytes = source.analysed
         val restored = restoreHeader(builder, source.received ?: analysedBytes)
         val (analysedMethods, receivedMethods, analysis, pairing) = analyse(typeDescription, classLoader, source)
@@ -944,13 +949,14 @@ class OtherlodeInstrumentation(
         builder: DynamicType.Builder<*>,
         typeDescription: TypeDescription,
         classLoader: ClassLoader?,
+        protectionDomain: ProtectionDomain?,
     ): DynamicType.Builder<*> {
         val name = typeDescription.name
         val plan = wovenClasses.find(classLoader, name) ?: throw ReweaveRefused(name, "no plan was stored for $name")
         // take is destructive, so it must not be called a second time for the same class.
         val received = classBytesCapture?.take(typeDescription.internalName)?.let(SubroutineInliner::inline)
         if (plan.hasClassFileHash) {
-            val classFile = locateClassBytes(typeDescription, classLoader)
+            val classFile = locateClassBytes(typeDescription, classLoader, protectionDomain)
             if (classFile != null && WovenClasses.hashOf(classFile) != plan.classFileHash) {
                 return refuse(
                     builder,
@@ -998,7 +1004,7 @@ class OtherlodeInstrumentation(
             )
         }
         return weave(
-            restoreHeader(builder, received ?: locateClassBytes(typeDescription, classLoader)),
+            restoreHeader(builder, received ?: locateClassBytes(typeDescription, classLoader, protectionDomain)),
             typeDescription,
             plan,
             view,
@@ -1441,10 +1447,11 @@ class OtherlodeInstrumentation(
     private fun readClassBytes(
         typeDescription: TypeDescription,
         classLoader: ClassLoader?,
+        protectionDomain: ProtectionDomain?,
     ): ClassBytesSource {
         // take is destructive, so it must not be called a second time for the same class.
         val received = classBytesCapture?.take(typeDescription.internalName)?.let(SubroutineInliner::inline)
-        val classFile = locateClassBytes(typeDescription, classLoader)
+        val classFile = locateClassBytes(typeDescription, classLoader, protectionDomain)
         if (classFile == null && received != null) {
             log.log(Level.DEBUG, "otherlode: no class file found for ${typeDescription.name}; its shape is read from the received bytes")
             unreadShapeCounts.recordReceivedBytesClass(typeDescription.name)
@@ -1473,7 +1480,7 @@ class OtherlodeInstrumentation(
                 classFileCache.locatorFor(classLoader),
             )
         return TypePool.Default
-            .WithLazyResolution(TypePool.CacheProvider.Simple(), locator, TypePool.Default.ReaderMode.FAST)
+            .WithLazyResolution(TypePool.CacheProvider.Simple(), locator, TypePool.Default.ReaderMode.FAST, jdkTypes)
             .describe(typeDescription.name)
             .resolve()
     }
@@ -1639,15 +1646,27 @@ class OtherlodeInstrumentation(
     }
 
     /**
-     * The class file of the class being woven, read from its loader on every call and never through
+     * The class file of the class being woven, read on every call and never through
      * [classFileCache]: it is read once per class for the first analysis anyway, and a re-weave
      * compares it against the class file the class was woven from, where a cached copy of a
      * HotSwapped class would match the old plan.
+     *
+     * It is read from the code source of [protectionDomain] when that names a location
+     * [CodeSourceClassFile] reads, which is the copy the JVM defined the class from and costs one
+     * open, and otherwise, or when that read finds nothing, from [classLoader].
      */
     private fun locateClassBytes(
         typeDescription: TypeDescription,
         classLoader: ClassLoader?,
+        protectionDomain: ProtectionDomain?,
     ): ByteArray? {
+        CodeSourceClassFile.read(protectionDomain, typeDescription.internalName)?.let { bytes ->
+            try {
+                return SubroutineInliner.inline(bytes)
+            } catch (_: Exception) {
+                // Bytes the inliner cannot read are read again through the loader.
+            }
+        }
         val locator = ClassFileByteCache.uncachedLocatorFor(classLoader)
         // Any failure reads as no class file: the transform then analyses the received bytes
         // rather than failing the class over a resource it could do without.

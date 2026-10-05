@@ -69,11 +69,16 @@ class PlaceholderCounts {
  * frame (ADR 0061), so every frame in a woven method is the class file's own and the verifier loads
  * exactly the types it loads for the unwoven class.
  *
+ * Each transform's pool has [parent] ask first, the JVM-wide [JdkTypePool] in the agent, so a `java.`
+ * type is parsed once and is never a placeholder.
+ *
  * A pool is made per transform and kept in a thread-local for the length of it, so [missingSupertype]
  * and [substituted] answer for the class being woven. The agent's own class-file reads, the static
  * scanner and reference resolution do not use it: for them, resolved still means present.
  */
-internal class PlaceholderPoolStrategy : AgentBuilder.PoolStrategy {
+internal class PlaceholderPoolStrategy(
+    private val parent: TypePool = TypePool.Empty.INSTANCE,
+) : AgentBuilder.PoolStrategy {
     private val current = ThreadLocal<LazyPlaceholderPool?>()
 
     override fun typePool(
@@ -88,7 +93,7 @@ internal class PlaceholderPoolStrategy : AgentBuilder.PoolStrategy {
     ): TypePool = typePool(classFileLocator)
 
     private fun typePool(classFileLocator: ClassFileLocator): TypePool {
-        val pool = LazyPlaceholderPool(classFileLocator)
+        val pool = LazyPlaceholderPool(classFileLocator, parent)
         current.set(pool)
         return TypePool.LazyFacade(pool)
     }
@@ -162,6 +167,7 @@ internal class PlaceholderPoolStrategy : AgentBuilder.PoolStrategy {
  */
 internal class LazyPlaceholderPool(
     private val classFileLocator: ClassFileLocator,
+    private val parent: TypePool = TypePool.Empty.INSTANCE,
 ) : TypePool {
     @Volatile
     private var pool: PlaceholderPool? = null
@@ -180,7 +186,7 @@ internal class LazyPlaceholderPool(
 
     private fun pool(): PlaceholderPool =
         pool ?: synchronized(this) {
-            pool ?: PlaceholderPool(classFileLocator).also {
+            pool ?: PlaceholderPool(classFileLocator, parent).also {
                 it.classBytes = pendingClassBytes
                 pool = it
             }
@@ -208,8 +214,12 @@ internal class LazyPlaceholderPool(
 internal class PlaceholderPool private constructor(
     private val cache: SubstitutingCache,
     classFileLocator: ClassFileLocator,
-) : TypePool.Default.WithLazyResolution(cache, classFileLocator, ReaderMode.FAST) {
-    constructor(classFileLocator: ClassFileLocator) : this(SubstitutingCache(), classFileLocator)
+    parent: TypePool,
+) : TypePool.Default.WithLazyResolution(cache, classFileLocator, ReaderMode.FAST, parent) {
+    constructor(
+        classFileLocator: ClassFileLocator,
+        parent: TypePool = TypePool.Empty.INSTANCE,
+    ) : this(SubstitutingCache(), classFileLocator, parent)
 
     /** The bytes of the class being woven; see [PlaceholderPoolStrategy.noteAnnotationTypes]. */
     @Volatile

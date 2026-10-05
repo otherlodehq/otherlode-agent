@@ -1065,6 +1065,19 @@ builds each module's matcher once per loader; the placeholder pool is made on fi
 bytes and manifests identical over the five corpora. Ceiling startup allocation 7,968 MB to 7,373 MB
 (agent stacks 6,566 to 5,990), young GCs 90 to 81, startup within noise (one run each).
 
+Chunk 7b landed: `JdkTypePool`, one per agent, answers only `java.*` names (and primitives),
+through the platform loader with an LRU of 1024 types, as the parent of each transform's
+placeholder pool and of `describeClassFile`'s pool; a description made there resolves what it names
+through the platform loader too, which a first cut missed (249 of 302 JDK types failed a walk on
+primitives and `javax.` interfaces) and a test now pins. PetClinic's startup caches 302 types, at
+most about 6.7 MB. `CodeSourceClassFile` reads a woven class's own class file from its code source
+(ADR 0052 amended), verified live against Spring Boot 4.1.1's `jar:nested:` locations (590 reads,
+no failure, on PetClinic). `DeflectedClassLoadTest` relied on the agent's own-file read hitting the
+loader from inside a transform; it now triggers the nested load from a transformer ahead of the
+agent, with the same expectations. Ceiling, medians of three: total allocation 7.4 GB to 6.1 GB,
+agent stacks 6.0 to 4.7 GB, type parsing 1.42 GB to 0.54 GB, unprofiled young GCs 77 to 62,
+"Started" 8.0 s to 7.4 s.
+
 The 2026-10-04 measurements, method and scripts are in
 `docs/investigations/2026-10-04-agent-startup.md`,
 `docs/investigations/2026-10-04-agent-heap.md` and the `startup/` and `heap/`

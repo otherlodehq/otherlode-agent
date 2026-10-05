@@ -43,3 +43,9 @@ Amended 2026-10-05, settled in the runtime-overhead grill and built before relea
 - **Re-weave (0053).** The bytes that arrive are checked against 65535 using the stored plan's sites. A method that no longer fits is left out of the branch rewrite: its planned slots stay registered and are never incremented, so its branch counts freeze, nothing renumbers, and one WARNING is logged per class.
 
 The bound is never below the woven length over the benchmark corpora, which `CodeSizeLimitsTest` checks.
+
+## Amendment, 2026-10-05: where the class file is read from
+
+The class file of the class being woven is read from its `ProtectionDomain`'s code source first: the location plus the class's path, for a directory, a plain jar, or a `jar:` location over `file:` or `nested:` ending in `!/`, which covers Spring Boot 2's and 3.2+'s nested jars. That names the copy the JVM defined the class from, and through Boot's nested-jar loader it costs one open where the loader probes up to every nested jar (about 490 MB of garbage and 4,800 reads at PetClinic's ceiling config). Any other location, a missing entry or a failure falls back to the loader read. The same read serves the first analysis, the re-weave comparison of ADR 0053 and the header restore, so a HotSwap, which writes the class file the code source names, is still refused. Reads of other classes still go through the loader and the byte cache. Package hints for those were rejected: with a split package a hint reads another jar's copy than the loader would.
+
+A plain-jar location is read through the JDK's `jar:` handler, which keeps one open `JarFile` per jar it has read from, beside the loader's own; with include rules covering the adopter's code that is a handful of jars.
