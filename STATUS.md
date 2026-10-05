@@ -314,10 +314,11 @@ hosted stack, each with its owner and renewal steps.
 Known so far:
 
 - **Release signing key**, `Otherlode Releases <releases@otherlode.dev>`,
-  created 2026-10-05 with a two-year expiry: the primary and the signing
-  subkey expire on or about 2028-10-04 (`gpg --list-keys
-  releases@otherlode.dev` shows the exact date). Remind a month ahead, by
-  2028-09-04. Extending it needs the primary secret key and passphrase from
+  created 2026-10-05: primary (certify only) `6ADE E1CA E6B2 E45E 563B
+  B72A 7ECB 167D B0FA 59B3`, signing subkey `62EB A55C 989D 53C1 7D6B C63F
+  8CD7 0F20 BC8D 3F42`, both RSA 4096 and expiring on 2028-10-04. Published
+  to keys.openpgp.org (identity verified) and keyserver.ubuntu.com, checked
+  2026-10-05. Remind a month ahead, by 2028-09-04. Extending it needs the primary secret key and passphrase from
   the password manager; after `gpg --quick-set-expire`, re-send the public
   key to keys.openpgp.org and keyserver.ubuntu.com and replace the
   `SIGNING_KEY` secret (ADR 0063).
