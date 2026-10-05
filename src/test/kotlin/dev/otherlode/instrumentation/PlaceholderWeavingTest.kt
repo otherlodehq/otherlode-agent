@@ -78,16 +78,13 @@ class PlaceholderWeavingTest {
     }
 
     @Test
-    fun `the same class fails to weave with ByteBuddy's own pool, so the test above is not vacuous`() {
+    fun `the same class weaves with ByteBuddy's own pool too, since a decoration describes nothing the class names`() {
         val name = internal("Holder")
         val original = AbsentTypeFixtures.holder(name)
         val loader = loaderOf(name to original)
         val plain = HotPathWeaver.offlineTransformer(listOf(AbsentTypeFixtures.PACKAGE), ProbeRegistry(), describeMissingTypes = false)
 
-        val failure = assertFailsWith<Throwable> { plain.transform(loader, name, null, null, original) }
-
-        val causes = generateSequence(failure) { it.cause }.joinToString(" <- ") { it.message.orEmpty() }
-        assertTrue("Cannot resolve type description" in causes, causes)
+        assertNotNull(plain.transform(loader, name, null, null, original))
     }
 
     @Test
@@ -390,7 +387,7 @@ class PlaceholderWeavingTest {
     }
 
     @Test
-    fun `a class woven over a placeholder is counted, and one that is not is not`() {
+    fun `a class naming absent types is not counted as woven over a placeholder, since none is described`() {
         val counts = PlaceholderCounts()
         val captured = mutableListOf<ClassFileTransformer>()
         OtherlodeInstrumentation(
@@ -409,8 +406,8 @@ class PlaceholderWeavingTest {
         assertEquals(0, counts.classes())
         assertNotNull(counted.transform(loaderOf(holderName to holder), holderName, null, null, holder))
 
-        assertEquals(1, counts.classes())
-        assertEquals(2, counts.types())
+        assertEquals(0, counts.classes())
+        assertEquals(0, counts.types())
     }
 
     @Test

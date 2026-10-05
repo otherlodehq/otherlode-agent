@@ -61,9 +61,11 @@ class PlaceholderCounts {
  * The [AgentBuilder.PoolStrategy] of the method tier: a pool that describes a type it cannot locate
  * as a [Placeholder] instead of failing.
  *
- * ByteBuddy resolves the types a class names in a field or method signature while it builds the
- * instrumented type, where the JVM resolves them only on use. A class that names an optional
- * dependency absent from its classpath loads without it, and without this pool fails to weave.
+ * A rebase resolves the types a class names in a field or method signature while it builds the
+ * instrumented type, where the JVM resolves them only on use, so a class naming an optional
+ * dependency absent from its classpath failed to rebase without this pool. The method tier decorates,
+ * which builds no instrumented type, so such a class weaves with or without it; what it still answers
+ * is [missingSupertype].
  *
  * A placeholder describes a type and never stands in for one in a frame: the agent never computes a
  * frame (ADR 0061), so every frame in a woven method is the class file's own and the verifier loads

@@ -21,8 +21,9 @@ import net.bytebuddy.pool.TypePool
  * Writes a woven class's header from the bytes the weave started from, so the class says about
  * itself what the unwoven class says.
  *
- * ByteBuddy writes the class header from its description of the type, and a description is not
- * the class file. Where a type it names is a placeholder, or the loader serves no class files, or
+ * A rebase writes the class header from ByteBuddy's description of the type, and a description is
+ * not the class file. The method tier decorates, which writes the header as it came, so on its output
+ * this wrapper changes nothing. Where a type it names is a placeholder, or the loader serves no class files, or
  * the description simply drops what the class file records, the header differs: an interface bound
  * becomes a class bound in the generic signature, a member class's `InnerClasses` entry loses its
  * outer class and simple name (so reflection on it throws), and a local class's simple name changes.

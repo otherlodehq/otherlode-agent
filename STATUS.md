@@ -1176,6 +1176,21 @@ supertype guard re-homed. ADRs amended with each chunk: 0058 (only the class-vis
 validation can run), 0059 (superseded except the supertype rule), 0060 (the mechanism becomes ASM),
 0061 (the `Advice` and rebase frame exceptions go); 0052 and 0053 unchanged in substance.
 
+Chunk 1 landed: `DecoratingTypeStrategy`, a `DecoratingDynamicTypeBuilder` subclass with no type
+attribute appender and the tier's configuration (validation off, `ForDeclaredMethods`, no method
+ignored, `FrameRefusingClassWriter`, a disabled implementation context), replaces the rebase; the
+`ByteBuddy` an `AgentBuilder` carries is no longer read. `ProbeArrayMembers` writes the below-55
+field, prelude, accessor, slow path and the refusal marker in ASM. Against `6daeda4`'s output over
+1,350 corpus and version-matrix classes: 632 byte-identical, 716 equal once the rebase's `<clinit>`
+scaffold, member order below 55 and the below-50 accessor frame are normalised, manifests identical;
+two Kotlin `$$inlined$groupingBy$1` classes gain an entry probe on `keyOf`, whose generic signature
+disagrees with its descriptor, so the rebase's description never matched it and `Advice` never wove
+it (a false never-hit, pinned by a test). A generic `@JvmInline value class` weaves (pinned). Weave
+time per class fell 20 to 40% and allocation 25 to 40% over the corpora. Review added a test of a
+pre-55 initializer that loops to its first instruction and catches, a check that the interface
+accessor's slow-path call carries `itf`, and the strategy's fallback version. ADRs 0058 to 0061
+amended.
+
 What follows is the entry as raised.
 
 

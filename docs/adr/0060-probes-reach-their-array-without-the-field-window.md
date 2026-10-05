@@ -28,3 +28,14 @@ Below version 55, the class keeps the field and the prelude, and every probe sit
 - A version 55 class has no field whose absence would make the JVM reject unwoven bytes, so a re-weave refused because the class file changed hands back the received bytes plus a synthetic `$otherlodeRefused` field, which the JVM rejects as a schema change, keeping 0053's outcome.
 - A forked-JVM test reproduces every crashing shape above at versions 52 and 65 and checks the counts taken during the supertype's initialisation.
 - The documentation that called a null field impossible (`OtherlodeProbeArrays`' Javadoc, `ProbeArrayInitializer`'s KDoc) is corrected with the change.
+
+## Amendment, 2026-10-05: the members below 55 are written in ASM
+
+The mechanism changed, the substance did not. A decoration refuses `defineField`, `defineMethod`
+and `initializer`, so the below-55 field, the `<clinit>` prelude (prepended to an existing
+initializer, or a new `static <clinit>` holding only the prelude), the accessor and its slow path,
+and ADR 0053's refusal marker are written by `ProbeArrayMembers` as ASM events with the same names,
+flags and instructions ByteBuddy wrote. The class literal is `ldc` from version 49 and
+`Class.forName` below it; the accessor's stack map frame is written from version 50 only, since
+HotSpot reads none below it. The rebase's appended `<clinit>` scaffold (a jump to an appended tail
+with two frames) is gone, so the prelude adds no frame at all.

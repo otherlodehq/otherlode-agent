@@ -47,7 +47,6 @@ import net.bytebuddy.description.modifier.Visibility
 import net.bytebuddy.description.type.TypeDescription
 import net.bytebuddy.dynamic.ClassFileLocator
 import net.bytebuddy.dynamic.DynamicType
-import net.bytebuddy.dynamic.VisibilityBridgeStrategy
 import net.bytebuddy.dynamic.scaffold.MethodGraph
 import net.bytebuddy.dynamic.scaffold.TypeValidation
 import net.bytebuddy.implementation.Implementation
@@ -300,41 +299,12 @@ class OtherlodeInstrumentation(
 
     private fun buildTransformer(): ResettableClassFileTransformer =
         AgentBuilder
-            // ByteBuddy's own default ignores every synthetic method, copying it through
-            // unrewritten no matter what a later .visit()/.method() matcher asks for: a Kotlin
-            // $default method is exactly such a method, and the omission tier's whole job is to
-            // weave advice onto it. Every other tier already gates what it touches through its
-            // own explicit matchers (methodMatcher, typeMatcher), so lifting ByteBuddy's blanket
-            // exclusion here does not widen what actually gets instrumented.
-            //
-            // Validation is off. It checks the described type against rules the JVM does not
-            // enforce on a class it has already accepted, and every check it made on this agent's
-            // classes fired on the adopter's own bytes: an annotation whose @Target does not list
-            // the declaration it sits on, a receiver type it cannot resolve. It also rejects bytecode
-            // the class-file version does not allow, which the verifier test in the build covers
-            // for what this agent writes.
-            //
-            // The class writer is one that throws when ASM would compute a frame; see FrameRefusingClassWriter.
-            //
-            // No visibility bridges. By default ByteBuddy adds a public synthetic bridge to a public
-            // class that inherits a public method from a package-private one, which the adopter's
-            // class does not have, and a bridge whose signature names a placeholder makes
-            // getDeclaredMethods throw where the unwoven class returns.
-            //
-            // The method graph holds the class's own methods only. The tier weaves declared methods,
-            // builds no bridge and reads no Implementation.Target, so the default graph's walk over
-            // every supertype buys nothing: it resolves each inherited method's types, which is most
-            // of the transform's class-file reads, merges methods that differ only in return type
-            // into one node that Advice then wraps once, and lets an abstract inherited method stand
-            // in for the concrete one that implements it, which Advice skips.
-            .Default(
-                ByteBuddy()
-                    .with(TypeValidation.DISABLED)
-                    .with(VisibilityBridgeStrategy.Default.NEVER)
-                    .with(MethodGraph.Compiler.ForDeclaredMethods.INSTANCE)
-                    .with(FrameRefusingClassWriter)
-                    .ignore(none()),
-            ).ignore(any<TypeDescription>(), isBootstrapClassLoader<ClassLoader>().or(isExtensionClassLoader()))
+            // The method tier decorates, and DecoratingTypeStrategy builds every class's builder
+            // with its own configuration, so the ByteBuddy instance an AgentBuilder carries is never
+            // read here.
+            .Default()
+            .with(DecoratingTypeStrategy)
+            .ignore(any<TypeDescription>(), isBootstrapClassLoader<ClassLoader>().or(isExtensionClassLoader()))
             .or(ignoredNames())
             // A class already loaded is left alone unless this agent wove it; see isWoven.
             .or(
@@ -349,9 +319,8 @@ class OtherlodeInstrumentation(
             // default describes a loaded class from its Class object, which carries the probe field
             // a re-weave is about to define. On a first load every strategy reads the pool.
             .with(AgentBuilder.DescriptionStrategy.Default.POOL_ONLY)
-            // The locator behind the pool, the supertype guard and the rebase reads other classes'
-            // bytes through the cache. ByteBuddy puts the received bytes of the class being
-            // transformed ahead of it.
+            // The locator behind the pool and the supertype guard reads other classes' bytes through
+            // the cache. ByteBuddy puts the received bytes of the class being transformed ahead of it.
             .with(classFileCache.locationStrategy())
             // The pool ByteBuddy builds the type with; see PlaceholderPoolStrategy.
             // The analyser's own reads, the static scanner and reference resolution keep strict pools.
@@ -1112,15 +1081,7 @@ class OtherlodeInstrumentation(
         plan: WeavePlan,
     ): DynamicType.Builder<*> {
         if (plan.firstLog(WeavePlan.LOGGED_REFUSAL)) logRefusal(reason)
-        // Public static final, the one shape a field may take on an interface as well as a class.
-        return builder.defineField(
-            MethodEntryAdvice.REFUSAL_MARKER_FIELD,
-            Int::class.javaPrimitiveType!!,
-            Visibility.PUBLIC,
-            Ownership.STATIC,
-            FieldManifestation.FINAL,
-            SyntheticState.SYNTHETIC,
-        )
+        return builder.visit(ProbeArrayMembers.refusalMarkerWrapper())
     }
 
     /**
@@ -1156,35 +1117,9 @@ class OtherlodeInstrumentation(
         var instrumented: DynamicType.Builder<*> = builder
         if (form.hasField) {
             instrumented =
-                instrumented
-                    .defineField(
-                        MethodEntryAdvice.PROBE_ARRAY_FIELD,
-                        LongArray::class.java,
-                        Visibility.PUBLIC,
-                        Ownership.STATIC,
-                        FieldManifestation.FINAL,
-                        SyntheticState.SYNTHETIC,
-                    ).initializer(
-                        ProbeArrayInitializer(typeDescription.name, plan.layoutHash, plan.probeCount, plan.typeInitializerProbeIndex),
-                    )
-        }
-        if (form is ProbeArrayForm.Accessor) {
-            instrumented =
-                instrumented
-                    .defineMethod(
-                        MethodEntryAdvice.PROBE_ARRAY_ACCESSOR,
-                        LongArray::class.java,
-                        Visibility.PRIVATE,
-                        Ownership.STATIC,
-                        SyntheticState.SYNTHETIC,
-                    ).intercept(Implementation.Simple(form.accessorBody()))
-                    .defineMethod(
-                        MethodEntryAdvice.PROBE_ARRAY_SLOW_PATH,
-                        LongArray::class.java,
-                        Visibility.PRIVATE,
-                        Ownership.STATIC,
-                        SyntheticState.SYNTHETIC,
-                    ).intercept(Implementation.Simple(form.slowPathBody()))
+                instrumented.visit(
+                    ProbeArrayMembers.wrapper(form, typeDescription.name, plan.layoutHash, plan.probeCount, plan.typeInitializerProbeIndex),
+                )
         }
 
         // One Advice visitor for the whole class, with each method's slot resolved from its
@@ -1709,98 +1644,6 @@ class OtherlodeInstrumentation(
 
     private fun methodMatcher(isScalaClass: Boolean): ElementMatcher.Junction<MethodDescription> =
         TypeMatchPolicy.methodMatcher(isScalaClass)
-
-    /**
-     * The `<clinit>` prelude that fills the counts field. It compiles to:
-     *
-     * ```
-     * ldc        "<class name>"
-     * ldc2_w     <layout hash>
-     * ldc        <probe count>
-     * ldc        <this class>
-     * invokevirtual java/lang/Class.getClassLoader()
-     * invokestatic  OtherlodeProbeArrays.resolve(String, long, int, ClassLoader) long[]
-     * putstatic  <this class>.$otherlodeProbeCounts
-     * ```
-     *
-     * When [typeInitializerProbeIndex] is not null, one more sequence follows, incrementing that
-     * slot directly:
-     *
-     * ```
-     * getstatic  <this class>.$otherlodeProbeCounts
-     * <index as int const>
-     * dup2
-     * laload
-     * lconst_1
-     * ladd
-     * lastore
-     * ```
-     *
-     * Every argument is a constant known at transform time. ByteBuddy runs this ahead of the
-     * class's own original static initializer, so a static method probed in this class can be
-     * called from that initializer and find the field already set, and the type initializer's own
-     * probe is counted whether or not the original body that follows this prelude later throws.
-     *
-     * The field is still null until this runs, which a supertype's initializer can precede: the
-     * class's code runs inside it, before the class's own `<clinit>`. That is why probes in a class
-     * that has the field read it through [ProbeArrayForm.Accessor] and not directly.
-     */
-    private class ProbeArrayInitializer(
-        private val className: String,
-        private val layoutHash: Long,
-        private val probeCount: Int,
-        private val typeInitializerProbeIndex: Int? = null,
-    ) : ByteCodeAppender {
-        override fun apply(
-            methodVisitor: MethodVisitor,
-            implementationContext: Implementation.Context,
-            instrumentedMethod: MethodDescription,
-        ): ByteCodeAppender.Size {
-            val instrumentedType = implementationContext.instrumentedType
-            val field = instrumentedType.declaredFields.filter(named<FieldDescription>(MethodEntryAdvice.PROBE_ARRAY_FIELD)).only
-            val fillArray =
-                listOf(
-                    TextConstant(className),
-                    LongConstant.forValue(layoutHash),
-                    IntegerConstant.forValue(probeCount),
-                    ClassConstant.of(instrumentedType),
-                    MethodInvocation.invoke(GET_CLASS_LOADER),
-                    MethodInvocation.invoke(RESOLVE),
-                    FieldAccess.forField(field).write(),
-                )
-            val incrementTypeInitializerSlot =
-                if (typeInitializerProbeIndex == null) {
-                    emptyList()
-                } else {
-                    listOf(
-                        FieldAccess.forField(field).read(),
-                        IntegerConstant.forValue(typeInitializerProbeIndex),
-                        Duplication.DOUBLE,
-                        ArrayAccess.LONG.load(),
-                        LongConstant.forValue(1L),
-                        Addition.LONG,
-                        ArrayAccess.LONG.store(),
-                    )
-                }
-            val size = StackManipulation.Compound(fillArray + incrementTypeInitializerSlot).apply(methodVisitor, implementationContext)
-            return ByteCodeAppender.Size(size.maximalSize, instrumentedMethod.stackSize)
-        }
-
-        private companion object {
-            val GET_CLASS_LOADER: MethodDescription.InDefinedShape =
-                TypeDescription.ForLoadedType
-                    .of(Class::class.java)
-                    .declaredMethods
-                    .filter(named<MethodDescription>("getClassLoader").and(takesArguments(0)))
-                    .only
-            val RESOLVE: MethodDescription.InDefinedShape =
-                TypeDescription.ForLoadedType
-                    .of(OtherlodeProbeArrays::class.java)
-                    .declaredMethods
-                    .filter(named<MethodDescription>("resolve"))
-                    .only
-        }
-    }
 }
 
 /**

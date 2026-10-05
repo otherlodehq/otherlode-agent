@@ -23,3 +23,10 @@ The agent never computes a frame: the class writer's `getCommonSuperClass` throw
 - With 0059's placeholder pool, two spring-context classes that recomputing frames could not weave (`AbstractRetryInterceptor$ReactorDelegate`, `MethodValidationInterceptor$ReactorValidationHelper`, a merge needing Reactor's `Flux`) weave and behave as their twins, as did spring-core's `PropagationContextElement$ReactorDelegate` in the research; without the pool they name a missing type and are skipped.
 - With frames never computed, 0059's frame guards are redundant: the placeholder pool lands with its supertype guard, its signature restore and its counting, and without a frame-merge hook, a frame-type guard or a per-class check of the loader.
 - Weave time is unchanged within noise; the writer's type-pool lookups go, a few percent of the class-file reads the startup investigation counted, not a startup win to advertise.
+
+## Amendment, 2026-10-05: the rebase's frames are gone
+
+Under the decoration of ADR 0058's amendment no frame comes from ByteBuddy's rebase: the appended
+`<clinit>` scaffold, with its two full frames, is not written, and the below-55 accessor's single
+frame is the agent's own, from version 50. `Advice` still writes the frames of its entry and
+omission probes until those move into the agent's ASM in the next chunk of the round.

@@ -10,10 +10,9 @@ import kotlin.test.assertTrue
 
 /**
  * Weaves every class of the five benchmark corpora twice, once with the placeholder pool and once
- * with ByteBuddy's own, and compares. The placeholder pool hooks ByteBuddy's type pool internals, so
- * an upgrade that breaks the hook would change what the agent writes without any compile error; this
- * is where that shows. Every class that weaves without placeholders must weave to the same bytes
- * with them, and the classes that failed on an absent type weave.
+ * with ByteBuddy's own, and compares. Under the method tier's decoration the pool changes nothing a
+ * class weaves to: every class weaves to the same bytes with it as without, and none fails on an
+ * absent type without it, since a decoration describes nothing the class names.
  */
 class PlaceholderCorpusTest {
     private class Sweep(
@@ -101,7 +100,7 @@ class PlaceholderCorpusTest {
     }
 
     @Test
-    fun `placeholders leave every other class's bytes identical and recover the classes that named an absent type`() {
+    fun `the placeholder pool leaves every class's bytes identical, and no class needs it to weave`() {
         val results = CORPORA.map { weaveAll(it) }
         println(
             "placeholder corpus sweep: " +
@@ -120,13 +119,10 @@ class PlaceholderCorpusTest {
         }
         val webmvc = results.single { it.corpus == "spring-webmvc" }
         assertTrue(
-            webmvc.recovered.size >= MIN_RECOVERED_WEBMVC,
-            "spring-webmvc: only ${webmvc.recovered.size} classes that named an absent type were recovered: ${webmvc.recovered}",
+            webmvc.recovered.isEmpty(),
+            "spring-webmvc: classes that named an absent type failed without placeholders: ${webmvc.recovered}",
         )
-        assertTrue(
-            "jar:org/springframework/web/servlet/view/freemarker/FreeMarkerConfig" in webmvc.recovered,
-            "FreeMarkerConfig names freemarker.template.Configuration, absent from the classpath, and failed to weave without placeholders",
-        )
+        assertEquals(webmvc.woven, webmvc.plainWoven, "spring-webmvc: ByteBuddy's own pool weaves what the placeholder pool does")
     }
 
     private fun classpathLoader(
@@ -230,7 +226,6 @@ class PlaceholderCorpusTest {
 
     private companion object {
         const val CLASSPATH_PROPERTY = "otherlode.codesize.classpath."
-        const val MIN_RECOVERED_WEBMVC = 24
         const val NANOS_PER_MILLI = 1_000_000
         val CORPORA = listOf("demo", "demo-spring", "scala", "spring-webmvc", "ktor-server-core")
     }

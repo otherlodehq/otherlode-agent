@@ -24,10 +24,9 @@ import java.util.concurrent.ConcurrentHashMap
  * Wires every discovered [EndpointModule]'s registration and dispatch advice into the JVM.
  *
  * This is a separate `AgentBuilder`/transformer pipeline from
- * [dev.otherlode.instrumentation.OtherlodeInstrumentation]: the method tier can add a field and
- * methods (below class-file version 55) and rewrites branches, which needs `REBASE`/`REDEFINE`,
- * while an endpoint module only ever adds advice to an existing method body, which `DECORATE`
- * supports (see [install]).
+ * [dev.otherlode.instrumentation.OtherlodeInstrumentation]: the method tier has its own type
+ * strategy and writes its members and branch probes in ASM, while an endpoint module only ever adds
+ * advice to an existing method body, which stock `DECORATE` supports (see [install]).
  *
  * When any module names a handler interface, [install] also installs a [LambdaFactoryHook], so a
  * handler written as a lambda or a method reference can be named. [lambdaFactoryShape]

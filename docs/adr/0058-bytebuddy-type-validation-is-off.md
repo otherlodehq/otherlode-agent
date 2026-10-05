@@ -26,3 +26,12 @@ What replaces the guard is a test in `check`: every class in the benchmark corpo
 - 51 classes in the ceiling run still fail while ByteBuddy describes a field or method whose type is an absent optional dependency (`InstrumentedType.java:465`, `:467`). ADR 0059 describes such a type as a placeholder while weaving.
 
 Amended 2026-10-05 by 0061: subroutine code failed to weave because the branch tier made ASM compute frames, which it no longer does; the subroutine inliner runs below class-file version 51 (where the JVM still allows `jsr`), so the analysis and the rewrite read the same instructions.
+
+## Amendment, 2026-10-05: the method tier decorates
+
+The method tier switched from `REBASE` to a decoration (a `DecoratingDynamicTypeBuilder` subclass,
+`DecoratingTypeStrategy`), which builds no instrumented type, so the half of validation that checked
+the described type (`InstrumentedType.validated()`) can no longer run. What remains reachable is the
+class-visitor half (`ValidatingClassVisitor`), which checks written bytes against the class-file
+version; it stays off, since its checks fired on adopters' old bytes, and the verifier test is the
+guard for everything the agent writes, all of which is now the agent's own ASM.
