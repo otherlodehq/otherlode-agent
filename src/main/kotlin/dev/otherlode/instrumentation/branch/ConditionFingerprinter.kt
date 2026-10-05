@@ -76,6 +76,9 @@ object ConditionFingerprinter {
      * answers false when it cannot tell. [enumMappings] reads the enum map arrays another class
      * declares, for [MethodResult.loweredSwitches]. [reader] reads [classBytes], for a caller that
      * already holds one.
+     *
+     * This walks the class on its own. [BranchSiteAnalyzer] feeds a [FingerprintCollection] from its own walk
+     * instead, so the class is decoded once.
      */
     fun analyze(
         classBytes: ByteArray,
@@ -84,11 +87,9 @@ object ConditionFingerprinter {
         enumMappings: EnumSwitchMappings = EnumSwitchMappings { null },
         reader: ClassReader = ClassReader(classBytes),
     ): Map<Pair<String, String>, MethodResult> {
-        val results = mutableMapOf<Pair<String, String>, MethodResult>()
+        lateinit var collection: FingerprintCollection
         val classVisitor =
             object : ClassVisitor(Opcodes.ASM9) {
-                private var ownerInternalName = ""
-
                 override fun visit(
                     version: Int,
                     access: Int,
@@ -97,7 +98,7 @@ object ConditionFingerprinter {
                     superName: String?,
                     interfaces: Array<out String>?,
                 ) {
-                    ownerInternalName = name
+                    collection = FingerprintCollection(name, language, isEnum, enumMappings)
                 }
 
                 override fun visitMethod(
@@ -106,13 +107,209 @@ object ConditionFingerprinter {
                     descriptor: String,
                     signature: String?,
                     exceptions: Array<out String>?,
-                ): MethodVisitor =
-                    ConditionFingerprintMethodVisitor(language, ownerInternalName, isEnum, enumMappings) { result ->
-                        results[name to descriptor] = result
-                    }
+                ): MethodVisitor = collection.methodVisitor(name, descriptor, null)
             }
         reader.accept(classVisitor, ClassReader.SKIP_FRAMES)
-        return results
+        return collection.results() ?: throw collection.failure!!
+    }
+
+    /**
+     * The fingerprints of one class's methods, collected from a walk someone else drives.
+     * [methodVisitor] wraps each method's own visitor so it sees the same events that visitor does.
+     *
+     * An exception from the fingerprinting side is caught there: it switches this collection off for
+     * the rest of the class, [results] answers null, and the wrapped visitor never sees it. A failure
+     * costs fingerprints, never the walk. [newVisitor] builds a method's fingerprinting visitor
+     * around the callback that receives its result, and exists so a test can substitute one that fails.
+     */
+    internal class FingerprintCollection(
+        private val ownerInternalName: String,
+        private val language: SourceLanguage,
+        private val isEnum: (internalName: String) -> Boolean,
+        private val enumMappings: EnumSwitchMappings,
+        private val newVisitor: ((onResult: (MethodResult) -> Unit) -> MethodVisitor)? = null,
+    ) {
+        private val results = HashMap<Pair<String, String>, MethodResult>()
+
+        /** The exception that switched this collection off, or null while it is on. */
+        var failure: Exception? = null
+            private set
+
+        /** Every method's result keyed by name and descriptor, or null once fingerprinting has failed. */
+        fun results(): Map<Pair<String, String>, MethodResult>? = if (failure == null) results else null
+
+        /** [delegate] with a fingerprinting visitor for the method beside it. [delegate] may be null. */
+        fun methodVisitor(
+            name: String,
+            descriptor: String,
+            delegate: MethodVisitor?,
+        ): MethodVisitor {
+            if (failure != null) return delegate ?: object : MethodVisitor(Opcodes.ASM9) {}
+            val onResult = { result: MethodResult -> results[name to descriptor] = result }
+            val inner =
+                try {
+                    newVisitor?.invoke(onResult)
+                        ?: ConditionFingerprintMethodVisitor(language, ownerInternalName, isEnum, enumMappings, onResult)
+                } catch (e: Exception) {
+                    failure = e
+                    return delegate ?: object : MethodVisitor(Opcodes.ASM9) {}
+                }
+            return Tee(delegate, inner)
+        }
+
+        private inline fun feed(action: () -> Unit) {
+            if (failure != null) return
+            try {
+                action()
+            } catch (e: Exception) {
+                failure = e
+            }
+        }
+
+        private inner class Tee(
+            delegate: MethodVisitor?,
+            private val inner: MethodVisitor,
+        ) : MethodVisitor(Opcodes.ASM9, delegate) {
+            override fun visitInsn(opcode: Int) {
+                feed { inner.visitInsn(opcode) }
+                super.visitInsn(opcode)
+            }
+
+            override fun visitIntInsn(
+                opcode: Int,
+                operand: Int,
+            ) {
+                feed { inner.visitIntInsn(opcode, operand) }
+                super.visitIntInsn(opcode, operand)
+            }
+
+            override fun visitVarInsn(
+                opcode: Int,
+                varIndex: Int,
+            ) {
+                feed { inner.visitVarInsn(opcode, varIndex) }
+                super.visitVarInsn(opcode, varIndex)
+            }
+
+            override fun visitTypeInsn(
+                opcode: Int,
+                type: String,
+            ) {
+                feed { inner.visitTypeInsn(opcode, type) }
+                super.visitTypeInsn(opcode, type)
+            }
+
+            override fun visitFieldInsn(
+                opcode: Int,
+                owner: String,
+                name: String,
+                descriptor: String,
+            ) {
+                feed { inner.visitFieldInsn(opcode, owner, name, descriptor) }
+                super.visitFieldInsn(opcode, owner, name, descriptor)
+            }
+
+            override fun visitMethodInsn(
+                opcode: Int,
+                owner: String,
+                name: String,
+                descriptor: String,
+                isInterface: Boolean,
+            ) {
+                feed { inner.visitMethodInsn(opcode, owner, name, descriptor, isInterface) }
+                super.visitMethodInsn(opcode, owner, name, descriptor, isInterface)
+            }
+
+            override fun visitInvokeDynamicInsn(
+                name: String,
+                descriptor: String,
+                bootstrapMethodHandle: Handle,
+                vararg bootstrapMethodArguments: Any,
+            ) {
+                feed { inner.visitInvokeDynamicInsn(name, descriptor, bootstrapMethodHandle, *bootstrapMethodArguments) }
+                super.visitInvokeDynamicInsn(name, descriptor, bootstrapMethodHandle, *bootstrapMethodArguments)
+            }
+
+            override fun visitJumpInsn(
+                opcode: Int,
+                label: Label,
+            ) {
+                feed { inner.visitJumpInsn(opcode, label) }
+                super.visitJumpInsn(opcode, label)
+            }
+
+            override fun visitLdcInsn(value: Any?) {
+                feed { inner.visitLdcInsn(value) }
+                super.visitLdcInsn(value)
+            }
+
+            override fun visitIincInsn(
+                varIndex: Int,
+                increment: Int,
+            ) {
+                feed { inner.visitIincInsn(varIndex, increment) }
+                super.visitIincInsn(varIndex, increment)
+            }
+
+            override fun visitTableSwitchInsn(
+                min: Int,
+                max: Int,
+                dflt: Label,
+                vararg labels: Label,
+            ) {
+                feed { inner.visitTableSwitchInsn(min, max, dflt, *labels) }
+                super.visitTableSwitchInsn(min, max, dflt, *labels)
+            }
+
+            override fun visitLookupSwitchInsn(
+                dflt: Label,
+                keys: IntArray,
+                labels: Array<out Label>,
+            ) {
+                feed { inner.visitLookupSwitchInsn(dflt, keys, labels) }
+                super.visitLookupSwitchInsn(dflt, keys, labels)
+            }
+
+            override fun visitMultiANewArrayInsn(
+                descriptor: String,
+                numDimensions: Int,
+            ) {
+                feed { inner.visitMultiANewArrayInsn(descriptor, numDimensions) }
+                super.visitMultiANewArrayInsn(descriptor, numDimensions)
+            }
+
+            override fun visitLabel(label: Label) {
+                feed { inner.visitLabel(label) }
+                super.visitLabel(label)
+            }
+
+            override fun visitTryCatchBlock(
+                start: Label,
+                end: Label,
+                handler: Label,
+                type: String?,
+            ) {
+                feed { inner.visitTryCatchBlock(start, end, handler, type) }
+                super.visitTryCatchBlock(start, end, handler, type)
+            }
+
+            override fun visitLocalVariable(
+                name: String,
+                descriptor: String,
+                signature: String?,
+                start: Label,
+                end: Label,
+                index: Int,
+            ) {
+                feed { inner.visitLocalVariable(name, descriptor, signature, start, end, index) }
+                super.visitLocalVariable(name, descriptor, signature, start, end, index)
+            }
+
+            override fun visitEnd() {
+                feed { inner.visitEnd() }
+                super.visitEnd()
+            }
+        }
     }
 
     /**
@@ -222,10 +419,12 @@ object ConditionFingerprinter {
         private val enumMappings: EnumSwitchMappings,
         private val onResult: (MethodResult) -> Unit,
     ) : MethodVisitor(Opcodes.ASM9) {
+        private val windowBuilder = StringBuilder()
         private val insns = mutableListOf<Insn>()
         private val labelMarks = mutableListOf<LabelMark>()
         private val handlerLabels = mutableSetOf<Label>()
         private val localVars = mutableListOf<LocalVarEntry>()
+        private var trackedSites = 0
 
         override fun visitInsn(opcode: Int) {
             insns += Insn.Plain(opcode)
@@ -284,6 +483,7 @@ object ConditionFingerprinter {
             opcode: Int,
             label: Label,
         ) {
+            if (ConditionalJump.isTracked(opcode)) trackedSites++
             insns += Insn.Jump(opcode, label)
         }
 
@@ -304,6 +504,7 @@ object ConditionFingerprinter {
             dflt: Label,
             vararg labels: Label,
         ) {
+            trackedSites++
             insns += Insn.TableSwitch(min, max, dflt, labels)
         }
 
@@ -312,6 +513,7 @@ object ConditionFingerprinter {
             keys: IntArray,
             labels: Array<out Label>,
         ) {
+            trackedSites++
             insns += Insn.LookupSwitch(dflt, keys, labels)
         }
 
@@ -347,12 +549,16 @@ object ConditionFingerprinter {
         }
 
         override fun visitEnd() {
-            val instructionIndexOfLabel = mutableMapOf<Label, Int>()
+            if (trackedSites == 0) {
+                onResult(MethodResult(emptyList(), emptyList()))
+                return
+            }
+            val instructionIndexOfLabel = HashMap<Label, Int>(labelMarks.size * 2)
             for (mark in labelMarks) instructionIndexOfLabel.putIfAbsent(mark.label, mark.instructionIndex)
             val labelsAt = labelMarks.groupBy { it.instructionIndex }
 
-            val fingerprints = mutableListOf<String?>()
-            val caseKeys = mutableListOf<List<Int>?>()
+            val fingerprints = ArrayList<String?>(trackedSites)
+            val caseKeys = ArrayList<List<Int>?>(trackedSites)
 
             // A forward jump or switch records the depth its target enters with, before that
             // label is reached. A backward target is never looked up here, since this method has
@@ -378,8 +584,8 @@ object ConditionFingerprinter {
                 instructionIndex: Int,
             ): String? = localAt(varIndex, instructionIndex)?.name
 
-            val siteInstructionIndexes = mutableListOf<Int>()
-            val windowStarts = mutableListOf<Int?>()
+            val siteInstructionIndexes = ArrayList<Int>(trackedSites)
+            val windowStarts = ArrayList<Int?>(trackedSites)
             val zeroPointAt = IntArray(insns.size)
             val depthAt = IntArray(insns.size)
             var hasSwitch = false
@@ -583,7 +789,12 @@ object ConditionFingerprinter {
             localNameAt: (varIndex: Int, instructionIndex: Int) -> String?,
         ): String? {
             if (zeroPoint == null) return null
-            return (zeroPoint..siteIndex).joinToString(";") { i -> tokenFor(insns[i], i, localNameAt) }
+            windowBuilder.setLength(0)
+            for (i in zeroPoint..siteIndex) {
+                if (i > zeroPoint) windowBuilder.append(';')
+                appendToken(windowBuilder, insns[i], i, localNameAt)
+            }
+            return windowBuilder.toString()
         }
 
         /** The jump or switch targets, forward or backward, an instruction hands the stack depth on to. */
@@ -799,62 +1010,99 @@ object ConditionFingerprinter {
         insn: Insn,
         instructionIndex: Int,
         localNameAt: (varIndex: Int, instructionIndex: Int) -> String?,
-    ): String =
+    ): String = StringBuilder().also { appendToken(it, insn, instructionIndex, localNameAt) }.toString()
+
+    /** Appends [tokenFor]'s text for [insn] to [out]. */
+    private fun appendToken(
+        out: StringBuilder,
+        insn: Insn,
+        instructionIndex: Int,
+        localNameAt: (varIndex: Int, instructionIndex: Int) -> String?,
+    ) {
         when (insn) {
             is Insn.Plain -> {
-                opcodeName(insn.opcode)
+                out.append(opcodeName(insn.opcode))
             }
 
             is Insn.IntOperand -> {
-                "${opcodeName(insn.opcode)} ${insn.operand}"
+                out.append(opcodeName(insn.opcode)).append(' ').append(insn.operand)
             }
 
             is Insn.Var -> {
+                out.append(opcodeName(insn.opcode))
                 val varName = localNameAt(insn.varIndex, instructionIndex)
-                if (varName == null) opcodeName(insn.opcode) else "${opcodeName(insn.opcode)} $varName"
+                if (varName != null) out.append(' ').append(varName)
             }
 
             is Insn.TypeOp -> {
-                "${opcodeName(insn.opcode)} ${insn.type}"
+                out.append(opcodeName(insn.opcode)).append(' ').append(insn.type)
             }
 
             is Insn.Field -> {
-                "${opcodeName(insn.opcode)} ${insn.owner}.${insn.name}:${insn.descriptor}"
+                out
+                    .append(opcodeName(insn.opcode))
+                    .append(' ')
+                    .append(insn.owner)
+                    .append('.')
+                    .append(insn.name)
+                    .append(':')
+                    .append(insn.descriptor)
             }
 
             is Insn.MethodCall -> {
-                "${opcodeName(insn.opcode)} ${insn.owner}.${insn.name} ${insn.descriptor}"
+                out
+                    .append(opcodeName(insn.opcode))
+                    .append(' ')
+                    .append(insn.owner)
+                    .append('.')
+                    .append(insn.name)
+                    .append(' ')
+                    .append(insn.descriptor)
             }
 
             is Insn.InvokeDynamic -> {
-                invokeDynamicToken(insn)
+                out.append(invokeDynamicToken(insn))
             }
 
             is Insn.Jump -> {
-                opcodeName(insn.opcode)
+                out.append(opcodeName(insn.opcode))
             }
 
             is Insn.Ldc -> {
-                "LDC ${ldcToken(insn.value)}"
+                out.append("LDC ").append(ldcToken(insn.value))
             }
 
             is Insn.Iinc -> {
                 val varName = localNameAt(insn.varIndex, instructionIndex)
-                if (varName == null) "IINC" else "IINC $varName ${insn.increment}"
+                if (varName == null) {
+                    out.append("IINC")
+                } else {
+                    out
+                        .append("IINC ")
+                        .append(varName)
+                        .append(' ')
+                        .append(insn.increment)
+                }
             }
 
             is Insn.TableSwitch -> {
-                opcodeName(Opcodes.TABLESWITCH)
+                out.append(opcodeName(Opcodes.TABLESWITCH))
             }
 
             is Insn.LookupSwitch -> {
-                opcodeName(Opcodes.LOOKUPSWITCH)
+                out.append(opcodeName(Opcodes.LOOKUPSWITCH))
             }
 
             is Insn.MultiANewArray -> {
-                "${opcodeName(Opcodes.MULTIANEWARRAY)} ${insn.descriptor} ${insn.numDimensions}"
+                out
+                    .append(opcodeName(Opcodes.MULTIANEWARRAY))
+                    .append(' ')
+                    .append(insn.descriptor)
+                    .append(' ')
+                    .append(insn.numDimensions)
             }
         }
+    }
 
     /**
      * `INVOKEDYNAMIC`'s call site name and descriptor, the bootstrap handle's owner and name, and

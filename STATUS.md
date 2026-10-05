@@ -847,7 +847,7 @@ edit deleted would read as never hit unless a collector learns the old entry
 is superseded, which may need a wire field), and whether that is worth it for a
 development convenience.
 
-### The agent's startup and heap: landed, two follow-ups building
+### The agent's startup and heap: landed
 
 Measured 2026-10-04 on PetClinic REST, re-measured at `c4f91d7` on 2026-10-05
 (Corretto 21.0.5 with CDS, a 12-core Mac, medians of five runs, async-profiler
@@ -1118,6 +1118,15 @@ target; throughput, CPU per request and p95 within noise; RSS +66 MiB. Ceiling: 
 carries the table. The ceiling's one-core startup improved far less on the runner than pinned
 locally in Docker (21.5 s over 6.8 s on one CPU), which nobody has looked into; the `DECORATE`
 round attacks the per-class transform cost that dominates it.
+
+Chunk 7e landed: the condition fingerprinter rides the main analysis pass through a tee wrapped
+around every method's visitor chain (`ConditionFingerprinter.FingerprintCollection`), so the class
+is walked once; a fingerprinter exception is caught at the tee and costs that class its
+fingerprints, never its analysis, as the separate pass's catch did. A method with no tracked site
+returns its empty result before building label maps, and window fingerprints share one builder.
+Fingerprints, keys, conditions, woven bytes and manifests identical over the five corpora and every
+test fixture class; ceiling startup allocation down about 87 MB. The fingerprinter's remaining 160 MB
+is its own per-instruction records, left since shrinking them would restructure the algorithm.
 
 The 2026-10-04 write-ups were removed when this work landed (git history keeps them, at
 `2e0dbe4` and `5a47ad0`); their scripts are the manual profiling kit in

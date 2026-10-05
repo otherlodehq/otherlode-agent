@@ -701,6 +701,7 @@ object BranchSiteAnalyzer {
             handlerInterfaces,
             resourceLookup,
             receivedBytes,
+            null,
             methodFilter,
         )
 
@@ -719,9 +720,11 @@ object BranchSiteAnalyzer {
         handlerInterfaces: Set<String>,
         resourceLookup: (path: String) -> ByteArray?,
         receivedBytes: ByteArray?,
+        fingerprintVisitor: ((onResult: (ConditionFingerprinter.MethodResult) -> Unit) -> MethodVisitor)? = null,
         methodFilter: (name: String, descriptor: String) -> Boolean,
     ): Analysis {
         val readClass = readOnce(lookup)
+        var fingerprints: ConditionFingerprinter.FingerprintCollection? = null
         val sites = mutableListOf<BranchSite>()
         val firstLines = mutableMapOf<Pair<String, String>, Int>()
         val inlineMethods = mutableSetOf<Pair<String, String>>()
@@ -846,10 +849,29 @@ object BranchSiteAnalyzer {
                     exceptions: Array<out String>?,
                 ): MethodVisitor {
                     val visitor = methodVisitor(access, name, descriptor, signature, exceptions)
-                    if (name == "<clinit>") return visitor
-                    return ParameterNameReader(access, descriptor, visitor) { names ->
-                        sourceSignatures[name to descriptor] = SourceSignature.of(names, signature)
-                    }
+                    val main =
+                        if (name == "<clinit>") {
+                            visitor
+                        } else {
+                            ParameterNameReader(access, descriptor, visitor) { names ->
+                                sourceSignatures[name to descriptor] = SourceSignature.of(names, signature)
+                            }
+                        }
+                    // Language is settled by now: class annotations and attributes precede every method.
+                    val collection =
+                        fingerprints ?: ConditionFingerprinter
+                            .FingerprintCollection(
+                                internalClassName,
+                                when {
+                                    isKotlinClass -> SourceLanguage.KOTLIN
+                                    isScalaClass -> SourceLanguage.SCALA
+                                    else -> SourceLanguage.JAVA
+                                },
+                                enumTest(internalClassName, classAccess, readClass),
+                                EnumSwitchMappings(readClass),
+                                fingerprintVisitor,
+                            ).also { fingerprints = it }
+                    return collection.methodVisitor(name, descriptor, main)
                 }
 
                 private fun methodVisitor(
@@ -946,21 +968,11 @@ object BranchSiteAnalyzer {
 
         classReader.accept(classVisitor, ClassReader.SKIP_FRAMES)
 
-        val language =
-            when {
-                isKotlinClass -> SourceLanguage.KOTLIN
-                isScalaClass -> SourceLanguage.SCALA
-                else -> SourceLanguage.JAVA
-            }
         val throwingDefaultOrdinalsByMethod = mutableMapOf<Pair<String, String>, MutableSet<Int>>()
         val unprobedOutcomesByMethod = mutableMapOf<Pair<String, String>, MutableMap<Int, Int>>()
         attachConditionFingerprints(
             sites,
-            classBytes,
-            classReader,
-            language,
-            enumTest(internalClassName, classAccess, readClass),
-            EnumSwitchMappings(readClass),
+            fingerprints?.results() ?: if (fingerprints == null) emptyMap() else null,
             droppedOrdinalsByMethod,
             throwingDefaultOrdinalsByMethod,
             unprobedOutcomesByMethod,
@@ -1237,16 +1249,17 @@ object BranchSiteAnalyzer {
     }
 
     /**
-     * Attaches each site's condition fingerprint and, for a switch, its case keys, from a second,
-     * independent [ConditionFingerprinter] pass over the same bytes. Fingerprint `i` of a method
+     * Attaches each site's condition fingerprint and, for a switch, its case keys, from
+     * [fingerprintsByMethod], which a [ConditionFingerprinter.FingerprintCollection] filled during the
+     * main walk, or null when it failed. Fingerprint `i` of a method
      * goes to that method's `i`-th entry in [sites], in encounter order, dropped sites counted:
      * [ConditionFingerprinter] visits every method and every tracked site regardless of scope, the
      * same way [DefaultSiteAwareMethodVisitor.recordSite] numbers a method's sites regardless of
      * whether they get dropped. A method whose fingerprint count does not match its site count is
-     * left with no fingerprints at all, and a class this pass cannot read leaves every site as it
-     * was. This never throws: a fingerprinting failure costs fingerprints, not the analysis.
+     * left with no fingerprints at all, and a class whose fingerprinting failed leaves every site as it
+     * was. A fingerprinting failure costs fingerprints, not the analysis.
      *
-     * Each kept site also gets its condition, written in [language] from the same window as its
+     * Each kept site also gets its condition, written in the class's source language from the same window as its
      * fingerprint. A dropped site gets none, since nothing about it reaches the wire. A condition
      * the writer fails on is left empty. [isEnum] is what the writer asks when it reads an
      * `if_acmp` in Kotlin.
@@ -1264,21 +1277,12 @@ object BranchSiteAnalyzer {
      */
     private fun attachConditionFingerprints(
         sites: MutableList<BranchSite>,
-        classBytes: ByteArray,
-        classReader: ClassReader,
-        language: SourceLanguage,
-        isEnum: (internalName: String) -> Boolean,
-        enumMappings: EnumSwitchMappings,
+        fingerprintsByMethod: Map<Pair<String, String>, ConditionFingerprinter.MethodResult>?,
         droppedOrdinalsByMethod: MutableMap<Pair<String, String>, MutableSet<Int>>,
         throwingDefaultOrdinalsByMethod: MutableMap<Pair<String, String>, MutableSet<Int>>,
         unprobedOutcomesByMethod: MutableMap<Pair<String, String>, MutableMap<Int, Int>>,
     ) {
-        val fingerprintsByMethod =
-            try {
-                ConditionFingerprinter.analyze(classBytes, language, isEnum, enumMappings, classReader)
-            } catch (_: Exception) {
-                return
-            }
+        if (fingerprintsByMethod == null) return
         val siteIndicesByMethod = mutableMapOf<Pair<String, String>, MutableList<Int>>()
         sites.forEachIndexed { index, site ->
             siteIndicesByMethod.getOrPut(site.methodName to site.methodDescriptor) { mutableListOf() } += index
