@@ -240,8 +240,9 @@ adopter's collector forwards to one multi-tenant backend.
    `NullPointerException` where the original ran (ADR 0060), and 312 of the
    ceiling run's 4462 matched classes were skipped, most of them needlessly
    (ADRs 0058, 0059).
-9. **Startup and heap.** Grilled on 2026-10-05; the entry "The agent's
-   startup and heap: grilled, to build" below. The JAX-RS matcher costs
+9. **Startup and heap.** Grilled and landed on 2026-10-05; the entry "The
+   agent's startup and heap: landed" below. On the runner the headline's
+   startup overhead went from +76% to +22.4%, inside the 25% target. The JAX-RS matcher costs
    about 1.5 s on every app without JAX-RS, repeat class-file reads are half
    the ceiling's transform time, and delivered probe metadata and
    transform-time caches hold about 94 MB at the ceiling.
@@ -558,7 +559,7 @@ startup 13.6 s to 23.9 s; ceiling 100,302 probes, throughput -4.9%, CPU per
 request +5.4%, p99 +5.2%, GC pause per 1000 requests +20%, RSS +306 MiB,
 startup 15.2 s to 64.0 s. The README carries the table. The headline budget
 (throughput and p95 within noise) holds. Startup is the cost that stands out,
-amplified on one core, and is the entry "The agent's startup and heap: grilled, to build" below.
+amplified on one core, and is the entry "The agent's startup and heap: landed" below.
 
 One flush timed on its own (2026-10-05): `FlushBenchmark` runs the real
 `ExportScheduler.flush()` over a registry filled from the real transformer's
@@ -846,7 +847,7 @@ edit deleted would read as never hit unless a collector learns the old entry
 is superseded, which may need a wire field), and whether that is worth it for a
 development convenience.
 
-### The agent's startup and heap: grilled, to build
+### The agent's startup and heap: landed, two follow-ups building
 
 Measured 2026-10-04 on PetClinic REST, re-measured at `c4f91d7` on 2026-10-05
 (Corretto 21.0.5 with CDS, a 12-core Mac, medians of five runs, async-profiler
@@ -1109,6 +1110,14 @@ header restore, so the constant pool is decoded once. Woven bytes and manifests 
 five corpora; ceiling startup allocation 6.13 to 6.02 GB. The stored plans' apparent growth (1.12 to
 1.30 KB a class) was attribution: since chunk 6a the registry no longer shares the interned names,
 so MAT counts them against the plans; reachable plan bytes are identical at `c4f91d7` and after.
+
+The runner (workflow run 37330002272, agent at `8139271`, one pinned core, six repeats, every run
+valid, no class skipped): headline startup 16.9 s to 20.7 s, **+22.4%** (from +76%), inside Q25's 25%
+target; throughput, CPU per request and p95 within noise; RSS +66 MiB. Ceiling: startup 18.2 s to
+58.2 s (from 15.2 s to 64.0 s), throughput -3.5%, CPU per request +3.6%, RSS +266 MiB. The README
+carries the table. The ceiling's one-core startup improved far less on the runner than pinned
+locally in Docker (21.5 s over 6.8 s on one CPU), which nobody has looked into; the `DECORATE`
+round attacks the per-class transform cost that dominates it.
 
 The 2026-10-04 write-ups were removed when this work landed (git history keeps them, at
 `2e0dbe4` and `5a47ad0`); their scripts are the manual profiling kit in

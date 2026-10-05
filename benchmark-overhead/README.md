@@ -192,24 +192,27 @@ Under `benchmark-overhead/build/results/<config>/`:
 
 ## Latest numbers
 
-Workflow run 37256902161 on 2026-10-05, agent at `7f95d26`, GitHub's `ubuntu-latest` (4 vCPU), so
+Workflow run 37330002272 on 2026-10-05, agent at `8139271`, GitHub's `ubuntu-latest` (4 vCPU), so
 PetClinic on one pinned core with four k6 users. Six repeats per variant, every run valid and
 steady, no class skipped in either config. Medians, agent against `none`; a change marked "noise"
 lies inside `none`'s own spread.
 
 | | headline (`org.springframework.samples.petclinic`) | ceiling (`org.springframework`) |
 |---|---|---|
-| probes | 1,489 | 100,302 |
-| throughput | -0.5% (noise) | -4.9% |
-| CPU per request | +0.7% | +5.4% |
-| p95 / p99 latency | -1.3% / -2.9% | +4.2% / +5.2% |
-| GC pause per 1000 requests | +6.0% | +20.1% |
-| RSS | +84 MiB (+8.1%) | +306 MiB (+29.7%) |
-| minimum heap used | +8 MiB | +147 MiB |
+| probes | 1,489 | 99,085 |
+| throughput | +1.0% | -3.5% |
+| CPU per request | -0.9% | +3.6% |
+| p95 / p99 latency | -1.4% / -1.2% (noise) | +2.8% / +3.5% |
+| GC pause per 1000 requests | +3.7% (noise) | +24.3% |
+| RSS | +66 MiB (+6.4%) | +266 MiB (+25.7%) |
+| minimum heap used | +9 MiB | +93 MiB |
 | metaspace | +19 MiB | +24 MiB |
-| startup | 13.6 s to 23.9 s | 15.2 s to 64.0 s |
+| startup | 16.9 s to 20.7 s (+22.4%) | 18.2 s to 58.2 s |
 
-Startup on one core is the outlier, and the investigation in `docs/investigations/` covers it.
+The startup target is the headline's time to first 200 within 25% of `none` on this runner; it is a
+target to watch, not a gate. The ceiling has none. Startup on one core is where the agent's
+transform work shows most, since class loading, the JIT and the agent share the core; the scripts in
+`profiling/` measure where it goes.
 `agent.repo.dirty` reads true in CI because the workflow checks the collector out inside the
 agent's working tree; the jar is built from the commit.
 
