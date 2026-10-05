@@ -141,6 +141,8 @@ object BranchSiteAnalyzer {
         val unreadRelease: String? = null,
         /** Why this class's [unreadShape] methods are unread; null when it has none. */
         val unreadCause: UnreadCause? = null,
+        /** What [SizeGuard] bounded and dropped. */
+        val sizeGuard: SizeGuardResult = SizeGuardResult.NONE,
     ) {
         /**
          * Each kept site of [sites], in site index order, with its outcomes numbered, given roles
@@ -647,6 +649,9 @@ object BranchSiteAnalyzer {
      * the same loader [lookup] reads classes through. It finds the `.tasty` file that names the
      * Scala 3 release which compiled a class (see [ScalaReleases]); one that returns null, or throws,
      * leaves the class version-blind.
+     *
+     * [receivedBytes] are the bytes the rewrite will walk when an earlier transformer changed them;
+     * [SizeGuard] tests the class file's 65535 limit against them as well as against [classBytes].
      */
     fun analyze(
         classBytes: ByteArray,
@@ -656,6 +661,7 @@ object BranchSiteAnalyzer {
         tableCache: CrossClassTableCache? = null,
         handlerInterfaces: Set<String> = emptySet(),
         resourceLookup: (path: String) -> ByteArray? = { null },
+        receivedBytes: ByteArray? = null,
         methodFilter: (name: String, descriptor: String) -> Boolean,
     ): Analysis {
         val readClass = readOnce(lookup)
@@ -897,6 +903,10 @@ object BranchSiteAnalyzer {
             throwingDefaultOrdinalsByMethod,
             unprobedOutcomesByMethod,
         )
+        val sizeGuard =
+            SizeGuard.apply(sites, classBytes, receivedBytes, methodFilter, droppedOrdinalsByMethod) { key ->
+                instructionsByMethod[key]?.invoke()?.opcodes
+            }
         val guardsByMethod =
             analyzeGuards(
                 sites,
@@ -1013,6 +1023,7 @@ object BranchSiteAnalyzer {
             generatedMarks.unread,
             generatedMarks.unreadRelease,
             generatedMarks.cause,
+            sizeGuard,
         )
     }
 

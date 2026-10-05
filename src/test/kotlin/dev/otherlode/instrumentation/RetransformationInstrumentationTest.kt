@@ -6,6 +6,7 @@ import dev.otherlode.export.KotlinKind
 import dev.otherlode.export.ProbeKind
 import dev.otherlode.export.ProbeLocation
 import dev.otherlode.export.ResourceAttributes
+import dev.otherlode.instrumentation.branch.SizeGuard
 import dev.otherlode.registry.ProbeMeta
 import dev.otherlode.registry.ProbeRegistry
 import net.bytebuddy.agent.ByteBuddyAgent
@@ -528,8 +529,9 @@ class RetransformationInstrumentationTest {
     }
 
     /**
-     * A class that failed to weave, here one whose method weaving would push past the class file's
-     * 64 KB limit, runs unwoven and is reported skipped; a later retransformation leaves it alone.
+     * A class that failed to weave, here one whose method is so near the class file's 64 KB limit
+     * that its entry probe alone pushes it past, runs unwoven and is reported skipped; a later
+     * retransformation leaves it alone.
      */
     @Test
     fun `a retransformation of a class that failed to weave succeeds and changes nothing`() {
@@ -557,8 +559,9 @@ class RetransformationInstrumentationTest {
     }
 
     /**
-     * A class whose `static int big(int)` is 2000 blocks of `if (x == k) y++`, small enough to load
-     * and too large to write once every block carries branch probes.
+     * A class whose `static int big(int)` is 6553 blocks of `if (x == k) y++`, 65534 bytes of code:
+     * small enough to load and too large to write with even the entry probe, which the size guard
+     * cannot drop.
      */
     private fun tooLargeToWeave(internalName: String): ByteArray {
         val cw = ClassWriter(ClassWriter.COMPUTE_FRAMES)
@@ -573,7 +576,7 @@ class RetransformationInstrumentationTest {
             visitLineNumber(1, start)
             visitInsn(Opcodes.ICONST_0)
             visitVarInsn(Opcodes.ISTORE, 1)
-            repeat(2000) { i ->
+            repeat(6553) { i ->
                 val skip =
                     net.bytebuddy.jar.asm
                         .Label()
@@ -637,6 +640,49 @@ class RetransformationInstrumentationTest {
             "one line for two retransformations: ${records.map { it.message }}",
         )
         assertEquals(1, registry.registrations[BRANCH_TARGET]?.get())
+    }
+
+    /**
+     * An earlier capable agent that grows `classify` to 65510 bytes on retransformation. The first
+     * weave kept its two branch probes, which fit; against the bytes that arrive now they would not
+     * fit a class file, so the re-weave emits its sites unchanged. The entry probe still counts, the
+     * branch counts stay where they were, and the retransformation succeeds.
+     */
+    @Test
+    fun `an earlier agent that grows a method past the class file limit on retransformation freezes its branch counts`() {
+        val registry = CountingRegistry()
+        val earlier =
+            object : ClassFileTransformer {
+                override fun transform(
+                    loader: ClassLoader?,
+                    className: String?,
+                    classBeingRedefined: Class<*>?,
+                    protectionDomain: ProtectionDomain?,
+                    classfileBuffer: ByteArray,
+                ): ByteArray? =
+                    if (classBeingRedefined != null && className == "com/example/target/BranchTarget") {
+                        padMethod(classfileBuffer, "classify", 65510)
+                    } else {
+                        null
+                    }
+            }
+        laterAgents += earlier
+        instrumentation.addTransformer(earlier, true)
+        install(AgentConfig.parse("includePackages=$TARGET"), registry)
+        val (branchTarget, target) = loadAndDrive(fixtureLoader())
+        val classify = branchTarget.getMethod("classify", Int::class.java)
+
+        val records = captureLogRecords(OtherlodeInstrumentation::class.java.name) { instrumentation.retransformClasses(branchTarget) }
+        repeat(3) { classify.invoke(target, 5) }
+
+        assertEquals(
+            6L to listOf(1L, 2L),
+            countsOf(registry, "classify"),
+            "the entry probe counts; the branches stay: ${records.map { it.message + it.thrown }}",
+        )
+        val warnings = records.filter { it.level == JulLevel.WARNING && "classify(I)Ljava/lang/String;" in it.message }
+        assertEquals(1, warnings.size, "${records.map { it.message }}")
+        assertTrue("would not fit a class file" in warnings.single().message, warnings.single().message)
     }
 
     /**
@@ -1132,6 +1178,44 @@ internal fun withEmptyTypeInitializer(bytes: ByteArray): ByteArray {
             }
         },
         ClassReader.SKIP_FRAMES,
+    )
+    return writer.toByteArray()
+}
+
+/** [bytes] with `nop`s at the start of [methodName] until its code is [length] bytes. */
+internal fun padMethod(
+    bytes: ByteArray,
+    methodName: String,
+    length: Int,
+): ByteArray {
+    val current =
+        SizeGuard
+            .codeLengths(bytes)
+            .entries
+            .single { it.key.first == methodName }
+            .value
+    val reader = ClassReader(bytes)
+    val writer = ClassWriter(reader, 0)
+    reader.accept(
+        object : ClassVisitor(Opcodes.ASM9, writer) {
+            override fun visitMethod(
+                access: Int,
+                name: String,
+                descriptor: String,
+                signature: String?,
+                exceptions: Array<out String>?,
+            ): MethodVisitor {
+                val delegate = super.visitMethod(access, name, descriptor, signature, exceptions)
+                if (name != methodName) return delegate
+                return object : MethodVisitor(Opcodes.ASM9, delegate) {
+                    override fun visitCode() {
+                        super.visitCode()
+                        repeat(length - current) { super.visitInsn(Opcodes.NOP) }
+                    }
+                }
+            }
+        },
+        0,
     )
     return writer.toByteArray()
 }

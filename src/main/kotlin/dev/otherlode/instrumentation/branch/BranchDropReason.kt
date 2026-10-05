@@ -26,4 +26,11 @@ enum class BranchDropReason {
      * instead.
      */
     SWITCH_LOWERING,
+
+    /**
+     * The site is in a method whose woven length, bounded by [SizeGuard], would cross HotSpot's
+     * limit for compiling it or the class file's limit on code. The method keeps its entry probe
+     * and loses every branch probe.
+     */
+    SIZE_GUARD,
 }

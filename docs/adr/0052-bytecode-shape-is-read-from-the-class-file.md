@@ -1,5 +1,5 @@
 ---
-status: accepted, amended by 0061
+status: accepted, amended by 0061 and on 2026-10-05
 ---
 
 # Bytecode shape is read from the class file, and probes are woven into the received bytes
@@ -35,3 +35,11 @@ Read in JaCoCo 0.8.13's source: its instrumentation replays a method's original 
 The open question this record left about a class with no class file is settled in ADR 0054. Such a class is still analysed from its received bytes, and a body there that an earlier transformer changed can read as the adopter's code. A per-class flag was rejected as abstaining on every class defined from memory for a case that needs three rare things together. The agent logs an INFO count of classes analysed from received bytes on the first flush, and the case is revisited when an adopter shows it, the trigger the wrong-loader-path entry in `STATUS.md` also uses.
 
 Amended 2026-10-05 by 0061: the received bytes' frames are kept as they are, so a transformer ahead of this one keeps the frames it wrote too, and this agent writes frames only at the labels it inserts.
+
+Amended 2026-10-05, settled in the runtime-overhead grill and built before release: a method keeps its entry probe and gets no branch probes for a second reason, its size. The analysis bounds each method's woven code length from its code length and its sites (each inserted construct at its largest encoding, plus five bytes for every jump that could widen once the method passes 32 KB) and drops the method's branch probes through 0025's drop mechanism in two cases, with one WARNING naming the method, logged once the class commits. As for a method that does not pair, a missing branch finding is a missed finding, not a false one, and no wire field says why.
+
+- **Past 8000**, where HotSpot never compiles a method and it would run interpreted for the life of the process: a method of at most 8000 bytes whose bound crosses 8000 loses its branch probes only if its entry probe alone (and the padding its switches may gain) keeps it at or under 8000. Otherwise dropping them saves nothing, so they are kept and the WARNING says the entry probe alone can carry the method past the limit; a method with no sites in that position gets the same WARNING. This decision reads the class file alone, so manifests and layout hashes are the same with and without an earlier transformer, as the rest of this record requires.
+- **Past 65535**, where the class file cannot hold the method and the whole class would be skipped: the bound is taken over the larger of the class-file and received code lengths, since the rewrite walks the received bytes, with the widening allowance counting the received method's own jumps. This is the one place an earlier transformer can change a layout hash, and only for a method whose bound over the received bytes crosses 65535; because the allowance counts every jump as widened, that can include a method that would in fact have fit. The class is skipped only when the entry probe alone overflows 65535.
+- **Re-weave (0053).** The bytes that arrive are checked against 65535 using the stored plan's sites. A method that no longer fits is left out of the branch rewrite: its planned slots stay registered and are never incremented, so its branch counts freeze, nothing renumbers, and one WARNING is logged per class.
+
+The bound is never below the woven length over the benchmark corpora, which `CodeSizeLimitsTest` checks.

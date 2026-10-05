@@ -91,6 +91,20 @@ class SitePairing private constructor(
         ): Map<Pair<String, String>, IntArray> = trackedInstructions(classFile, methods.toSet()).mapValues { (_, list) -> encode(list) }
 
         /**
+         * For each tracked instruction of an [encodedSequences] stream, in order: 0 for a conditional
+         * jump, else an upper bound on the switch's outcomes, its entries not bound for the default
+         * plus the default.
+         */
+        internal fun outcomeBounds(encoded: IntArray): List<Int> =
+            decode(encoded).map {
+                when (it) {
+                    is TrackedInstruction.Jump -> 0
+                    is TrackedInstruction.TableSwitch -> it.toDefault.count { toDefault -> !toDefault } + 1
+                    is TrackedInstruction.LookupSwitch -> it.toDefault.count { toDefault -> !toDefault } + 1
+                }
+            }
+
+        /**
          * Pairs [receivedBytes] with class-file tracked instructions [encodedSequences] produced,
          * method by method. With no [receivedBytes] there is nothing to pair against, and every
          * method in [stored] is unpaired.

@@ -23,6 +23,7 @@ import dev.otherlode.instrumentation.branch.HandlerForwarder
 import dev.otherlode.instrumentation.branch.KeptBranchSite
 import dev.otherlode.instrumentation.branch.ScalaReleases
 import dev.otherlode.instrumentation.branch.SitePairing
+import dev.otherlode.instrumentation.branch.SizeGuard
 import dev.otherlode.instrumentation.branch.UnreadCause
 import dev.otherlode.instrumentation.branch.UnreadShapeCounts
 import dev.otherlode.instrumentation.endpoints.HandlerForwarders
@@ -339,6 +340,8 @@ class OtherlodeInstrumentation(
         val kotlinKind: KotlinKind,
         /** How the class was woven, kept once the class is committed so a later call can weave it again. */
         val plan: WeavePlan,
+        /** The size guard's WARNINGs, logged once the class is committed so a class that fails to weave names none. */
+        val sizeWarnings: List<String>,
     )
 
     /**
@@ -422,6 +425,7 @@ class OtherlodeInstrumentation(
             for ((className, location) in pending.externalClasses) externalClassRegistry.record(className, location)
             pending.handlerForwarders.forEach(handlerForwarders::record)
             wovenClasses.record(pending.classLoader, pending.className, pending.plan)
+            pending.sizeWarnings.forEach { log.log(Level.WARNING, it) }
         }
 
         override fun onError(
@@ -659,6 +663,7 @@ class OtherlodeInstrumentation(
             }
         recordUnreadOutcomes(typeDescription.name, keptSites)
         recordBranchDrops(typeDescription.name, branchSites)
+        val sizeWarnings = sizeGuardWarnings(typeDescription.name, analysis, pairing, methods)
         // Slots are packed per default site, one per optional parameter, appended after the
         // method and branch slots: bit i's slot is siteBase + bitCount(optionalBits & ((1 << i) - 1)),
         // never one slot per value parameter, so a required parameter's bit (never set) never
@@ -765,7 +770,7 @@ class OtherlodeInstrumentation(
             plan.defaultSite(site.defaultName, site.defaultDescriptor, DefaultSiteBinding(base, site.optionalBits, site.maskParameterIndex))
         }
         val built = plan.build()
-        stage(typeDescription, classLoader, probes, analysis, references, built)
+        stage(typeDescription, classLoader, probes, analysis, references, built, sizeWarnings)
         return weave(
             restored,
             typeDescription,
@@ -814,7 +819,7 @@ class OtherlodeInstrumentation(
             }
         val receivedMethods =
             if (source.receivedDiffers) typeDescription.declaredMethods.mapTo(HashSet()) { it.internalName to it.descriptor } else null
-        val analysis = analyzeBytecode(analysedBytes, classLoader, analysedMethods)
+        val analysis = analyzeBytecode(analysedBytes, classLoader, analysedMethods, source.received.takeIf { source.receivedDiffers })
         val pairing =
             if (source.receivedDiffers) {
                 SitePairing.of(analysedBytes!!, source.received!!, analysedMethods.map { it.internalName to it.descriptor })
@@ -887,6 +892,15 @@ class OtherlodeInstrumentation(
                     "methods keep their entry probe, and their branch counts stay where they were",
             )
         }
+        val tooLarge = sizeGuardedAgain(received, view, pairing)
+        if (tooLarge.isNotEmpty() && plan.firstLog(WeavePlan.LOGGED_SIZE_GUARD)) {
+            log.log(
+                Level.WARNING,
+                "otherlode: ${typeDescription.name} was transformed again with bytes whose branch probes would not fit " +
+                    "a class file in ${tooLarge.joinToString { (name, descriptor) -> name + descriptor }}; those " +
+                    "methods keep their entry probe, and their branch counts stay where they were",
+            )
+        }
         return weave(
             restoreHeader(builder, received ?: locateClassBytes(typeDescription, classLoader)),
             typeDescription,
@@ -895,6 +909,30 @@ class OtherlodeInstrumentation(
             pairing,
             reweaving = true,
             receivedBytes = received,
+            sizeGuarded = tooLarge,
+        )
+    }
+
+    /**
+     * The paired methods of a stored plan whose branch probes would no longer fit a class file in
+     * [received]. [weave] leaves them out of the branch rewrite, so the plan's slots stay as they
+     * are and those methods' branch counts stay where they were.
+     */
+    private fun sizeGuardedAgain(
+        received: ByteArray?,
+        view: WeavePlan.View,
+        pairing: SitePairing,
+    ): Set<Pair<String, String>> {
+        if (received == null) return emptySet()
+        val methods =
+            view.branchEligible.filter { key ->
+                pairing.isPaired(key.first, key.second) && (view.branchRuns[key]?.count ?: 0) > 0
+            }
+        return SizeGuard.reweaveGuarded(
+            received,
+            methods,
+            { key -> view.sequences[key] },
+            { key -> view.droppedOrdinalsOf(key.first, key.second) },
         )
     }
 
@@ -975,7 +1013,8 @@ class OtherlodeInstrumentation(
      * and the swapped ordinals say which conditionals arrive inverted. Each method's slot count is
      * checked against its run. When [reweaving], the class-wide total is not, since a method may
      * have dropped out. [receivedBytes] are the bytes being rewritten, which say whether a class at
-     * version 50 carries frames.
+     * version 50 carries frames. [sizeGuarded] names methods left out of the branch rewrite on top of
+     * the ones [pairing] does not pair.
      *
      * [builder] already carries the header restorer, see [restoreHeader].
      */
@@ -987,6 +1026,7 @@ class OtherlodeInstrumentation(
         pairing: SitePairing,
         reweaving: Boolean,
         receivedBytes: ByteArray?,
+        sizeGuarded: Set<Pair<String, String>> = emptySet(),
     ): DynamicType.Builder<*> {
         val form = ProbeArrayForm.of(plan.majorVersion, typeDescription, plan.layoutHash, plan.probeCount)
         var instrumented: DynamicType.Builder<*> = builder
@@ -1048,7 +1088,8 @@ class OtherlodeInstrumentation(
             )
 
         if (plan.branchWrapper) {
-            val eligible = view.branchEligible.filterTo(HashSet()) { (name, descriptor) -> pairing.isPaired(name, descriptor) }
+            val eligible =
+                view.branchEligible.filterTo(HashSet()) { key -> pairing.isPaired(key.first, key.second) && key !in sizeGuarded }
             instrumented =
                 instrumented.visit(
                     BranchProbeAsmVisitorWrapper(
@@ -1130,6 +1171,7 @@ class OtherlodeInstrumentation(
         analysis: BranchSiteAnalyzer.Analysis,
         references: ReferencesKept,
         plan: WeavePlan,
+        sizeWarnings: List<String>,
     ) {
         pendingRegistration.set(
             PendingRegistration(
@@ -1147,6 +1189,7 @@ class OtherlodeInstrumentation(
                 analysis.handlerForwarders,
                 analysis.kotlinKind,
                 plan,
+                sizeWarnings,
             ),
         )
         if (staticBaselineMismatchDetector.shouldWarnAbout(typeDescription.name)) {
@@ -1242,12 +1285,31 @@ class OtherlodeInstrumentation(
         val inlinedOutOfScope = dropsByReason[BranchDropReason.INLINED_OUT_OF_SCOPE] ?: 0
         val coroutineMachinery = dropsByReason[BranchDropReason.COROUTINE_MACHINERY] ?: 0
         val switchLowering = dropsByReason[BranchDropReason.SWITCH_LOWERING] ?: 0
+        val sizeGuard = dropsByReason[BranchDropReason.SIZE_GUARD] ?: 0
         log.log(
             Level.DEBUG,
             "otherlode: $typeName left $total branch sites without a probe: " +
                 "$inlinedOutOfScope inlined from out-of-scope code, $coroutineMachinery coroutine machinery, " +
-                "$switchLowering switch lowering",
+                "$switchLowering switch lowering, $sizeGuard in methods whose branch probes would cross a code-size limit",
         )
+    }
+
+    /**
+     * One WARNING for each method of [typeName] that [SizeGuard] named: a method whose branch probes
+     * it left out, unless [pairing] does not pair it (it would have had none anyway), and a method
+     * in [methods], the ones that get an entry probe, that the entry probe alone carries past the
+     * compile limit. [TransformResultListener] logs them once the class is committed.
+     */
+    private fun sizeGuardWarnings(
+        typeName: String,
+        analysis: BranchSiteAnalyzer.Analysis,
+        pairing: SitePairing,
+        methods: List<MethodDescription>,
+    ): List<String> {
+        val probed = methods.mapTo(HashSet()) { it.internalName to it.descriptor }
+        val guarded = analysis.sizeGuard.guarded.filter { (key, _) -> pairing.isPaired(key.first, key.second) }
+        val entryOnly = analysis.sizeGuard.entryPastLimit.filter { (key, _) -> key in probed }
+        return (guarded + entryOnly).map { (key, verdict) -> verdict.message(typeName, key.first, key.second) }
     }
 
     /**
@@ -1332,6 +1394,7 @@ class OtherlodeInstrumentation(
         classBytes: ByteArray?,
         classLoader: ClassLoader?,
         methods: MethodList<*>,
+        receivedBytes: ByteArray?,
     ): BranchSiteAnalyzer.Analysis {
         val eligible = methods.map { it.internalName to it.descriptor }.toSet()
         val bytes = classBytes ?: return BranchSiteAnalyzer.Analysis.EMPTY
@@ -1344,6 +1407,7 @@ class OtherlodeInstrumentation(
             tableCacheFor(classLoader),
             handlerForwarders.handlerInterfaces,
             resourceLookup(classLoader),
+            receivedBytes,
         ) { name, descriptor -> (name to descriptor) in eligible }
     }
 

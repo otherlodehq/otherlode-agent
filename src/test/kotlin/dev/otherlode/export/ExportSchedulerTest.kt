@@ -1139,6 +1139,20 @@ class ExportSchedulerTest {
     }
 
     @Test
+    fun `the first-flush INFO summary counts the branch probes the size guard left out`() {
+        val branchDropCounts = BranchDropCounts()
+        branchDropCounts.record(mapOf(BranchDropReason.SIZE_GUARD to 4, BranchDropReason.SWITCH_LOWERING to 2))
+        val scheduler =
+            ExportScheduler(config, resource, ProbeRegistry(), EndpointRegistry(), RecordingExporter(), branchDropCounts = branchDropCounts)
+
+        val records = captureLogRecords(ExportScheduler::class.java.name) { scheduler.flush() }
+
+        val summary = records.single { it.message.contains("branch sites") }
+        assertTrue(summary.message.contains("4 in methods whose branch probes would cross a code-size limit"), summary.message)
+        assertTrue(summary.message.contains("2 switch lowering"), summary.message)
+    }
+
+    @Test
     fun `the branch drop summary is logged only once, not on a second flush`() {
         val branchDropCounts = BranchDropCounts()
         branchDropCounts.record(mapOf(BranchDropReason.INLINED_OUT_OF_SCOPE to 1))

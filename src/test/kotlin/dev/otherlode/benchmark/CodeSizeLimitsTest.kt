@@ -1,16 +1,31 @@
 package dev.otherlode.benchmark
 
+import dev.otherlode.config.AgentConfig
+import dev.otherlode.export.ProbeKind
 import dev.otherlode.export.ResourceAttributes
+import dev.otherlode.instrumentation.OtherlodeInstrumentation
+import dev.otherlode.instrumentation.branch.BranchSiteAnalyzer
+import dev.otherlode.instrumentation.branch.SizeGuard
 import dev.otherlode.registry.ProbeRegistry
+import net.bytebuddy.agent.ByteBuddyAgent
+import net.bytebuddy.jar.asm.ClassReader
+import net.bytebuddy.jar.asm.ClassVisitor
 import net.bytebuddy.jar.asm.ClassWriter
 import net.bytebuddy.jar.asm.Label
+import net.bytebuddy.jar.asm.MethodVisitor
 import net.bytebuddy.jar.asm.Opcodes
 import java.io.ByteArrayInputStream
 import java.io.DataInputStream
 import java.io.File
 import java.io.InputStream
+import java.lang.instrument.ClassFileTransformer
 import java.net.URLClassLoader
+import java.util.logging.Handler
+import java.util.logging.Level
+import java.util.logging.LogRecord
+import java.util.logging.Logger
 import kotlin.test.Test
+import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
@@ -19,6 +34,10 @@ import kotlin.test.assertTrue
  * that crosses it because of probes runs interpreted for the life of the process. The class file
  * format caps a method at 65535 bytes, and weaving a method past it fails the class with
  * `MethodTooLargeException`.
+ *
+ * [SizeGuard] keeps weaving under both limits by bounding each method's woven length and leaving a
+ * method that would cross one with its entry probe only. The sweep still checks, as a net, that no
+ * corpus method crosses 8000, and that the bound is never below the woven length.
  *
  * The sweep weaves every class of every benchmark corpus through the real transformer. It also
  * reports, without asserting, how many methods weaving pushes past `FreqInlineSize` (325 bytes),
@@ -43,6 +62,8 @@ class CodeSizeLimitsTest {
         val method: String,
         val original: Int,
         val woven: Int,
+        val bound: Int = woven,
+        val probed: Boolean = false,
     ) {
         val crossesHugeLimit get() = original <= HUGE_METHOD_LIMIT && woven > HUGE_METHOD_LIMIT
         val crossesInlineLimit get() = original <= FREQ_INLINE_SIZE && woven > FREQ_INLINE_SIZE
@@ -64,6 +85,9 @@ class CodeSizeLimitsTest {
         val pastInlineLimit get() = sizes.count { it.crossesInlineLimit }
         val tooLarge get() = failures.filterValues(::isTooLarge)
         val largest get() = sizes.maxByOrNull { it.woven }
+        val belowActual get() = sizes.filter { it.probed && it.bound < it.woven }
+        val roomestBound get() = sizes.filter { it.probed }.maxByOrNull { it.bound - it.woven }
+        val tightestBound get() = sizes.filter { it.probed }.minByOrNull { it.bound - it.woven }
     }
 
     private fun sweep(corpusName: String): SweepResult {
@@ -100,6 +124,21 @@ class CodeSizeLimitsTest {
                         accepted++
                         val before = codeLengths(bytes)
                         val after = codeLengths(result)
+                        // A method with probes always grows, so the methods that grew are the ones the agent probes.
+                        val grown = before.filter { (method, length) -> (after[method] ?: length) > length }.keys
+                        val analysis =
+                            BranchSiteAnalyzer.analyze(
+                                bytes,
+                                { name -> loader.getResourceAsStream("$name.class")?.use { it.readBytes() } },
+                                corpus.includePackages,
+                            ) { name, descriptor -> (name + descriptor) in grown }
+                        // A `$default` method and a type initializer grow by other advice, which the branch guard does not bound.
+                        val probed =
+                            grown.filterTo(mutableSetOf()) { method ->
+                                method != "<clinit>()V" &&
+                                    analysis.defaultSites.none { it.defaultName + it.defaultDescriptor == method }
+                            }
+                        val bounds = analysis.sizeGuard.bounds
                         for ((method, length) in before) {
                             val wovenLength = after[method]
                             if (wovenLength ==
@@ -107,7 +146,13 @@ class CodeSizeLimitsTest {
                             ) {
                                 missing += "$internalName.$method"
                             } else {
-                                sizes += MethodSize(internalName, method, length, wovenLength)
+                                val found = bounds[method.substringBefore('(') to "(" + method.substringAfter('(')]
+                                if (found != null && found.original != length) {
+                                    missing += "$internalName.$method: SizeGuard read $length bytes as ${found.original}"
+                                }
+                                val bound =
+                                    if (method in probed) found?.bound ?: (length + SizeGuard.ENTRY_PROBE) else wovenLength
+                                sizes += MethodSize(internalName, method, length, wovenLength, bound, method in probed)
                             }
                         }
                     }
@@ -140,6 +185,8 @@ class CodeSizeLimitsTest {
                 "absentSupertype=${r.unresolvable.size} tooLarge=${r.tooLarge.size} largestWoven=${largest?.let {
                     "${it.className}.${it.method} ${it.woven} bytes (${it.original} before)"
                 }}"
+            r.roomestBound?.let { lines += "    bound minus woven: most ${it.bound - it.woven} (${it.className}.${it.method})" }
+            r.tightestBound?.let { lines += "    bound minus woven: least ${it.bound - it.woven} (${it.className}.${it.method})" }
             val reasons =
                 r.failures.values
                     .groupingBy { it.substringAfter("cannot be defined: ").take(REASON_WIDTH) }
@@ -161,6 +208,7 @@ class CodeSizeLimitsTest {
         for (r in results) {
             assertTrue(r.pastHugeLimit.isEmpty(), "${r.corpus}: weaving pushed methods past $HUGE_METHOD_LIMIT bytes: ${r.pastHugeLimit}")
             assertTrue(r.tooLarge.isEmpty(), "${r.corpus}: classes skipped as too large: ${r.tooLarge}")
+            assertTrue(r.belowActual.isEmpty(), "${r.corpus}: the size bound is below the woven length for ${r.belowActual}")
             assertTrue(r.missing.isEmpty(), "${r.corpus}: methods absent from the woven class: ${r.missing}")
             assertTrue(
                 r.unresolvable.size <= r.accepted * MAX_EXCUSED_SHARE,
@@ -211,28 +259,242 @@ class CodeSizeLimitsTest {
             }
         }
 
-    @Test
-    fun `the check reports a class that weaving pushes past the class file limit`() {
-        val name = "com/example/huge/TooLarge"
-        val original = hugeClass(name, TOO_LARGE_BLOCKS)
+    /** One synthetic class woven through the real transformer, with what the weave logged. */
+    private class Woven(
+        val name: String,
+        val original: ByteArray,
+        val woven: ByteArray,
+        val registry: ProbeRegistry,
+        val warnings: List<String>,
+        /** The loader the transformer was given, which the registry keys the class's array by. */
+        val loader: ClassLoader,
+    ) {
+        val originalLength get() = checkNotNull(codeLengths(original)["big(I)I"])
+        val wovenLength get() = checkNotNull(codeLengths(woven)["big(I)I"])
+        val sites get() =
+            registry.manifest(ResourceAttributes("test", null, "instance-1", null, "run-1")).probes.count {
+                it.kind ==
+                    ProbeKind.BRANCH
+            }
+    }
+
+    private fun ProbeRegistry.manifestProbes() = manifest(ResourceAttributes("test", null, "instance-1", null, "run-1")).probes
+
+    private fun weave(
+        name: String,
+        blocks: Int,
+    ): Woven = weave(name, hugeClass(name, blocks))
+
+    /**
+     * Weaves [original] through the real transformer. [receivedOf] gives the bytes the transformer
+     * is handed when an earlier transformer has changed them: the agent's byte capture sees those,
+     * and the class file stays what the loader serves.
+     */
+    private fun weave(
+        name: String,
+        original: ByteArray,
+        receivedOf: ((ByteArray) -> ByteArray)? = null,
+    ): Woven {
         val registry = ProbeRegistry()
-        val transformer = HotPathWeaver.offlineTransformer(listOf("com.example.huge"), registry)
-        val woven = runCatching { transformer.transform(InMemoryLoader(mapOf(name to original)), name, null, null, original) }
-        assertTrue(woven.getOrNull() == null, "a class too large to write was woven anyway")
-        val reasons = registry.manifest(resource).skippedClasses.map { it.reason }
-        assertTrue(reasons.any(::isTooLarge), "no skip reason reads as too large: $reasons")
+        val transformers = mutableListOf<ClassFileTransformer>()
+        val config = AgentConfig.parse("includePackages=com.example.huge")
+        OtherlodeInstrumentation(config, registry).install(HotPathWeaver.capturing(ByteBuddyAgent.install(), transformers))
+        val classes = mutableMapOf(name to original)
+        val loader = InMemoryLoader(classes)
+        val received = receivedOf?.invoke(original) ?: original
+        val warnings = mutableListOf<String>()
+        val woven =
+            captureWarnings {
+                transformers.fold(received) { bytes, transformer ->
+                    transformer.transform(loader, name, null, null, bytes) ?: bytes
+                }
+            }.let { (bytes, logged) ->
+                warnings += logged
+                checkNotNull(bytes) { "the class was not woven: ${registry.manifest(resource).skippedClasses}" }
+            }
+        check(!woven.contentEquals(received)) { "the transformer left $name unchanged: ${registry.manifest(resource).skippedClasses}" }
+        // The registry keys the class's array by this loader, so it must be the one that defines the woven class.
+        classes[name] = woven
+        return Woven(name, original, woven, registry, warnings, loader)
+    }
+
+    private fun captureWarnings(block: () -> ByteArray?): Pair<ByteArray?, List<String>> {
+        val warnings = mutableListOf<String>()
+        val handler =
+            object : Handler() {
+                override fun publish(record: LogRecord) {
+                    if (record.level == Level.WARNING) warnings += record.message
+                }
+
+                override fun flush() {}
+
+                override fun close() {}
+            }
+        val logger = Logger.getLogger("dev.otherlode.instrumentation.OtherlodeInstrumentation")
+        val level = logger.level
+        logger.addHandler(handler)
+        logger.level = Level.ALL
+        try {
+            return block() to warnings
+        } finally {
+            logger.removeHandler(handler)
+            logger.level = level
+        }
+    }
+
+    /** Runs `big` of the woven class in the loader the transformer saw, for each argument. */
+    private fun runWoven(
+        w: Woven,
+        arguments: IntRange,
+    ): List<Int> = call(w.loader.loadClass(w.name.replace('/', '.')), arguments)
+
+    /** Runs `big` of the unwoven class in a loader of its own, for each argument. */
+    private fun runOriginal(
+        w: Woven,
+        arguments: IntRange,
+    ): List<Int> = call(InMemoryLoader(mapOf(w.name to w.original)).loadClass(w.name.replace('/', '.')), arguments)
+
+    private fun call(
+        type: Class<*>,
+        arguments: IntRange,
+    ): List<Int> {
+        val method = type.getMethod("big", Int::class.javaPrimitiveType)
+        return arguments.map { method.invoke(null, it) as Int }
+    }
+
+    private fun entryHits(w: Woven): Long {
+        val entry = w.registry.manifestProbes().single { it.kind == ProbeKind.METHOD && it.methodName == "big" }
+        return w.registry
+            .computeDeltaBatch(resource)
+            .batch.deltas
+            .filter { it.probeIndex == entry.probeIndex }
+            .sumOf { it.hitsTotal }
     }
 
     @Test
-    fun `the check reports a method that weaving pushes past the limit`() {
-        val name = "com/example/huge/Big"
-        val original = hugeClass(name, HUGE_BLOCKS)
-        val registry = ProbeRegistry()
-        val transformer = HotPathWeaver.offlineTransformer(listOf("com.example.huge"), registry)
-        val woven = checkNotNull(transformer.transform(InMemoryLoader(mapOf(name to original)), name, null, null, original))
-        val size = MethodSize(name, "big(I)I", checkNotNull(codeLengths(original)["big(I)I"]), checkNotNull(codeLengths(woven)["big(I)I"]))
-        assertTrue(size.original <= HUGE_METHOD_LIMIT, "the synthetic method starts at ${size.original} bytes")
-        assertTrue(size.crossesHugeLimit, "the synthetic method weaves to ${size.woven} bytes")
+    fun `a method whose probes would cross the compile limit is woven with its entry probe only`() {
+        val w = weave("com/example/huge/Big", HUGE_BLOCKS)
+        assertTrue(w.originalLength <= HUGE_METHOD_LIMIT, "the synthetic method starts at ${w.originalLength} bytes")
+        assertTrue(
+            w.originalLength + HUGE_BLOCKS * SizeGuard.TWO_WAY_SITE > HUGE_METHOD_LIMIT,
+            "with its branch probes the synthetic method would stay under the limit",
+        )
+        assertTrue(w.wovenLength <= HUGE_METHOD_LIMIT, "the synthetic method weaves to ${w.wovenLength} bytes")
+        assertTrue(w.wovenLength <= w.originalLength + SizeGuard.ENTRY_PROBE, "more than the entry probe was added: ${w.wovenLength}")
+        val warning = w.warnings.single { "Big#big(I)I" in it }
+        assertTrue("would not be JIT-compiled" in warning, warning)
+        val results = runWoven(w, 195..215)
+        assertEquals(runOriginal(w, 195..215), results, "the woven method computes something else")
+        assertEquals(results.size.toLong(), entryHits(w), "the entry probe miscounts")
+        assertEquals(0, w.sites, "branch probes were woven")
+    }
+
+    @Test
+    fun `a branch-dense method that would cross the class file limit is woven with its entry probe only`() {
+        val w = weave("com/example/huge/TooLarge", TOO_LARGE_BLOCKS)
+        assertTrue(w.originalLength > HUGE_METHOD_LIMIT, "the synthetic method starts at ${w.originalLength} bytes")
+        assertTrue(w.originalLength + TOO_LARGE_BLOCKS * SizeGuard.TWO_WAY_SITE > MAX_CODE_LENGTH, "the bound would not cross the limit")
+        assertTrue(
+            w.registry
+                .manifest(resource)
+                .skippedClasses
+                .isEmpty(),
+            "the class was skipped: ${w.registry.manifest(resource).skippedClasses}",
+        )
+        assertTrue(w.wovenLength <= w.originalLength + SizeGuard.ENTRY_PROBE, "more than the entry probe was added: ${w.wovenLength}")
+        val warning = w.warnings.single { "TooLarge#big(I)I" in it }
+        assertTrue("would not fit a class file" in warning, warning)
+        val arguments = 195..215
+        val results = runWoven(w, arguments)
+        assertEquals(runOriginal(w, arguments), results, "the woven method computes something else")
+        assertEquals(results.size.toLong(), entryHits(w), "the entry probe miscounts")
+        assertEquals(0, w.sites, "branch probes were woven")
+    }
+
+    @Test
+    fun `a method under both limits keeps its branch probes and logs nothing`() {
+        val w = weave("com/example/huge/Small", SMALL_BLOCKS)
+        assertEquals(runOriginal(w, 195..215), runWoven(w, 195..215))
+        assertEquals(SMALL_BLOCKS * 2, w.sites)
+        assertTrue(w.warnings.none { "Small#big" in it }, "${w.warnings}")
+        assertTrue(w.wovenLength <= w.originalLength + SizeGuard.ENTRY_PROBE + SMALL_BLOCKS * SizeGuard.TWO_WAY_SITE)
+    }
+
+    @Test
+    fun `a method above the compile limit whose bound fits a class file keeps its branch probes and logs nothing`() {
+        val w = weave("com/example/huge/Large", LARGE_BLOCKS)
+        assertTrue(w.originalLength > HUGE_METHOD_LIMIT, "the synthetic method starts at ${w.originalLength} bytes")
+        assertTrue(w.originalLength + SizeGuard.ENTRY_PROBE + LARGE_BLOCKS * SizeGuard.TWO_WAY_SITE <= MAX_CODE_LENGTH)
+        assertEquals(LARGE_BLOCKS * 2, w.sites)
+        assertTrue(w.warnings.none { "Large#big" in it }, "${w.warnings}")
+        assertEquals(runOriginal(w, 195..215), runWoven(w, 195..215))
+    }
+
+    @Test
+    fun `a method its entry probe alone carries past the compile limit keeps its branch probes and logs that`() {
+        val w = weave("com/example/huge/Edge", EDGE_BLOCKS)
+        assertTrue(w.originalLength <= HUGE_METHOD_LIMIT, "the synthetic method starts at ${w.originalLength} bytes")
+        assertTrue(w.originalLength + SizeGuard.ENTRY_PROBE > HUGE_METHOD_LIMIT)
+        assertEquals(EDGE_BLOCKS * 2, w.sites, "dropping would not have brought the method under the limit")
+        val warning = w.warnings.single { "Edge#big(I)I" in it }
+        assertTrue("its entry probe can take it to" in warning && "may not compile it" in warning, warning)
+        assertEquals(runOriginal(w, 195..215), runWoven(w, 195..215))
+    }
+
+    @Test
+    fun `a method with no branch site that its entry probe takes past the compile limit logs that`() {
+        val name = "com/example/huge/Quiet"
+        val original = nopBigClass(name, QUIET_LENGTH)
+        val w = weave(name, original)
+        assertEquals(QUIET_LENGTH, w.originalLength)
+        assertTrue(w.originalLength + SizeGuard.ENTRY_PROBE > HUGE_METHOD_LIMIT)
+        val warning = w.warnings.single { "Quiet#big(I)I" in it }
+        assertTrue("its entry probe can take it to" in warning, warning)
+        assertEquals(runOriginal(w, 1..3), runWoven(w, 1..3))
+        val small = weave("com/example/huge/Short", nopBigClass("com/example/huge/Short", QUIET_LENGTH - SizeGuard.ENTRY_PROBE))
+        assertTrue(small.warnings.none { "Short#big" in it }, "${small.warnings}")
+    }
+
+    @Test
+    fun `a guarded method whose branches do not pair with the received bytes is not warned about`() {
+        val name = "com/example/huge/Unpaired"
+        val w = weave(name, hugeClass(name, HUGE_BLOCKS)) { withLeadingBranch(it) }
+        assertEquals(0, w.sites)
+        assertTrue(w.warnings.none { "Unpaired#big" in it }, "${w.warnings}")
+    }
+
+    @Test
+    fun `a method that an earlier transformer grows past the class file limit is woven with its entry probe only`() {
+        val name = "com/example/huge/Grown"
+        val w = weave(name, hugeClass(name, SMALL_BLOCKS)) { padded(it, GROWN_PADDING) }
+        val receivedLength = checkNotNull(codeLengths(padded(w.original, GROWN_PADDING))["big(I)I"])
+        assertTrue(w.originalLength + SizeGuard.ENTRY_PROBE + SMALL_BLOCKS * SizeGuard.TWO_WAY_SITE <= HUGE_METHOD_LIMIT)
+        assertTrue(receivedLength + SizeGuard.ENTRY_PROBE <= MAX_CODE_LENGTH, "the entry probe alone must fit")
+        assertTrue(
+            receivedLength + SizeGuard.ENTRY_PROBE + SMALL_BLOCKS * SizeGuard.TWO_WAY_SITE > MAX_CODE_LENGTH,
+            "the received bytes cross the class file limit with their branch probes",
+        )
+        assertEquals(0, w.sites, "branch probes were woven into bytes the class file limit rules out")
+        assertTrue(
+            w.registry
+                .manifest(resource)
+                .skippedClasses
+                .isEmpty(),
+            "${w.registry.manifest(resource).skippedClasses}",
+        )
+        assertTrue(w.wovenLength <= receivedLength + SizeGuard.ENTRY_PROBE, "more than the entry probe was added: ${w.wovenLength}")
+        val warning = w.warnings.single { "Grown#big(I)I" in it }
+        assertTrue("would not fit a class file" in warning, warning)
+        assertEquals(runOriginal(w, 195..215), runWoven(w, 195..215))
+        assertEquals(21L, entryHits(w))
+    }
+
+    @Test
+    fun `an earlier transformer's growth past the compile limit leaves the branch probes in`() {
+        val name = "com/example/huge/Padded"
+        val w = weave(name, hugeClass(name, SMALL_BLOCKS)) { padded(it, COMPILE_PADDING) }
+        assertEquals(SMALL_BLOCKS * 2, w.sites)
+        assertTrue(w.warnings.none { "Padded#big" in it }, "${w.warnings}")
     }
 
     private class InMemoryLoader(
@@ -265,6 +527,15 @@ class CodeSizeLimitsTest {
         const val FAILURES_SHOWN = 5
         const val NANOS_PER_MILLI = 1_000_000
         const val HUGE_BLOCKS = 500
+        const val SMALL_BLOCKS = 100
+        const val LARGE_BLOCKS = 850
+        const val EDGE_BLOCKS = 799
+        const val QUIET_LENGTH = 7990
+        const val GROWN_PADDING = 62000
+
+        /** Grows the received method to 7504 bytes: under 8000 itself, while its bound with probes crosses 8000. */
+        const val COMPILE_PADDING = 6500
+        const val MAX_CODE_LENGTH = 65535
         val CORPORA = listOf("demo", "demo-spring", "scala", "spring-webmvc", "ktor-server-core")
 
         /** A class with `static int big(int x)` holding [blocks] blocks of `if (x == k) y++`, ten bytes each. */
@@ -303,6 +574,71 @@ class CodeSizeLimitsTest {
             mv.visitEnd()
             cw.visitEnd()
             return cw.toByteArray()
+        }
+
+        /** A class whose `static int big(int)` is [length] bytes of code: `nop`s, `iload_0` and `ireturn`. */
+        fun nopBigClass(
+            internalName: String,
+            length: Int,
+        ): ByteArray {
+            val cw = ClassWriter(ClassWriter.COMPUTE_MAXS)
+            cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, internalName, null, "java/lang/Object", null)
+            cw.visitSource("Big.java", null)
+            val mv = cw.visitMethod(Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC, "big", "(I)I", null, null)
+            mv.visitCode()
+            repeat(length - 2) { mv.visitInsn(Opcodes.NOP) }
+            mv.visitVarInsn(Opcodes.ILOAD, 0)
+            mv.visitInsn(Opcodes.IRETURN)
+            mv.visitMaxs(0, 0)
+            mv.visitEnd()
+            cw.visitEnd()
+            return cw.toByteArray()
+        }
+
+        /** [bytes] with [nops] `nop`s at the start of `big`, as a transformer ahead of this agent might leave. */
+        fun padded(
+            bytes: ByteArray,
+            nops: Int,
+        ): ByteArray = rewriteBig(bytes) { repeat(nops) { visitInsn(Opcodes.NOP) } }
+
+        /** [bytes] with a conditional jump at the start of `big` that goes nowhere, so its branches no longer pair. */
+        fun withLeadingBranch(bytes: ByteArray): ByteArray =
+            rewriteBig(bytes) {
+                val next = Label()
+                visitVarInsn(Opcodes.ILOAD, 0)
+                visitJumpInsn(Opcodes.IFEQ, next)
+                visitLabel(next)
+                visitFrame(Opcodes.F_SAME, 0, null, 0, null)
+            }
+
+        private fun rewriteBig(
+            bytes: ByteArray,
+            atStart: MethodVisitor.() -> Unit,
+        ): ByteArray {
+            val reader = ClassReader(bytes)
+            val writer = ClassWriter(reader, 0)
+            reader.accept(
+                object : ClassVisitor(Opcodes.ASM9, writer) {
+                    override fun visitMethod(
+                        access: Int,
+                        name: String,
+                        descriptor: String,
+                        signature: String?,
+                        exceptions: Array<out String>?,
+                    ): MethodVisitor {
+                        val delegate = super.visitMethod(access, name, descriptor, signature, exceptions)
+                        if (name != "big") return delegate
+                        return object : MethodVisitor(Opcodes.ASM9, delegate) {
+                            override fun visitCode() {
+                                super.visitCode()
+                                atStart()
+                            }
+                        }
+                    }
+                },
+                0,
+            )
+            return writer.toByteArray()
         }
 
         /** The `Code` attribute length of each method, keyed `name + descriptor`, read straight from the class file. */

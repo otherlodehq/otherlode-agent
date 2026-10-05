@@ -240,6 +240,9 @@ internal class WeavePlan private constructor(
         /** A re-weave that failed for another reason, logged once per class. */
         const val LOGGED_FAILURE = 4
 
+        /** A re-weave left a method out of the branch rewrite for size, logged once per class. */
+        const val LOGGED_SIZE_GUARD = 8
+
         private const val ENTRY_SLOT = 0
         private const val RUN_BASE = 1
         private const val RUN_COUNT = 2

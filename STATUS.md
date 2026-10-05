@@ -417,6 +417,21 @@ finding is a missed finding, not a false one, the trade ADR 0052 made for a
 method whose sites do not pair. Recorded as an amendment to ADR 0052's
 consequences when built.
 
+The size guard landed on 2026-10-05, ADR 0052's amendment holding the rules.
+Two reviews shaped it. The first build dropped a method's branch probes at
+the 8000 edge even when its entry probe alone carried it past, losing
+findings for nothing: such a method keeps its branch probes and is named.
+The 65535 decision reads the received bytes as well as the class file, since
+JaCoCo ahead of the agent grows a method the class file does not show, and a
+re-weave re-checks it, leaving a method that no longer fits out of the branch
+rewrite with its counts frozen. The 8000 decision reads the class file alone,
+which a test proves by failing when received lengths leak into it. Over the
+five corpora the bound is never below the woven length (slack 0 to 88 bytes),
+and no method is guarded. Left as recorded: the widening allowance counts
+every jump, so a method over about 45 KB that an earlier transformer grew can
+lose branch probes it would have kept; the guard does not model `jsr`
+inlining below version 51, or `<clinit>` and `$default` growth.
+
 Landing order, one chunk and one commit each: (1) the micro suite; (2) the
 CI checks; (3) `benchmark-overhead/` and its manual workflow; (4) the first
 run, both numbers in the README, and the ceiling run's findings.
