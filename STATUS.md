@@ -322,8 +322,14 @@ Known so far:
   the password manager; after `gpg --quick-set-expire`, re-send the public
   key to keys.openpgp.org and keyserver.ubuntu.com and replace the
   `SIGNING_KEY` secret (ADR 0063).
-- To inventory: the Central Portal user token, the GitHub and Buf tokens CI
-  uses, the WorkOS and GCP credentials behind the hosted server, and the
+- **Central Portal user token**, "otherlode-agent GitHub release", created
+  2026-10-05 on Luke's Portal account, expiring 2027-10-05. It is the
+  `MAVEN_CENTRAL_USERNAME` and `MAVEN_CENTRAL_PASSWORD` pair in the agent
+  repo's `release` environment (ADR 0063). Remind a month ahead, by
+  2027-09-05: generate a new token, replace both secrets, revoke the old one.
+  An expired token fails the release workflow at its upload, before anything
+  is published.
+- To inventory: the GitHub and Buf tokens CI uses, the WorkOS and GCP credentials behind the hosted server, and the
   `otherlode.dev` domain registration.
 
 ### One-way doors settled before release: landed
