@@ -1,0 +1,58 @@
+package com.example.frames;
+
+/** Control-flow shapes whose frames a rewrite has to keep: every public static method is run woven and unwoven. */
+public class __CLASS__ {
+    public static int doBreak(int n, Object o) {
+        int i = 0;
+        do {
+            { String s = String.valueOf(o); if (s.length() == n) break; }
+            { Integer k = Integer.valueOf(i); i = k + 1; }
+        } while (i < n);
+        return i;
+    }
+    public static Object ternaryInNew(boolean c) { return new StringBuilder(c ? "a" : "b").append(c ? 1 : 2); }
+    public static long longs(long a, double d, int x) {
+        long r = a;
+        switch (x) { case 1: r += 2; break; case 5: r *= 3; break; case 9: case 10: r--; break; default: r = (long) d; }
+        switch (x) { case 1000: r += 7; break; case -40: r -= 1; break; }
+        for (int i = 0; i < x; i++) { if (i % 2 == 0) r ^= i; else r += (long) d; }
+        double q = d > 1.5 ? d * 2 : d / 2;
+        return r + (long) q;
+    }
+    public static int handler(String s) {
+        int r = 0;
+        try { if (s.isEmpty()) r = 1; else r = Integer.parseInt(s); } catch (NumberFormatException e) { r = s != null ? -1 : -2; }
+        finally { if (r > 100) r = 100; }
+        return r;
+    }
+    final int f;
+    public __CLASS__(int x) { this(x > 0 ? "pos" : "neg", x < -5 ? x : -x); }
+    public __CLASS__(String s, int x) { super(); f = x == 0 ? s.length() : x; }
+    public static int ctor(int x) { return new __CLASS__(x).f; }
+    public static Object stackAtJump(boolean a, int b) { return java.util.Arrays.asList(a ? 1 : 2, b > 3 ? "x" : "y", b != 0 && a, b > 1 ? (Object) "s" : (Object) Integer.valueOf(b)); }
+    public static String strSwitch(String s) {
+        switch (s) { case "a": return "A"; case "b": return "B"; case "Aa": case "BB": return "collide"; default: return "?"; }
+    }
+    public static int nested(int a, int b) {
+        int r = 0;
+        outer:
+        for (int i = 0; i < a; i++) {
+            for (int j = 0; j < b; j++) {
+                if (i * j > 6) break outer;
+                if ((i + j) % 3 == 0) continue outer;
+                r += i ^ j;
+            }
+        }
+        return r;
+    }
+    public static Object mergeTypes(int x) {
+        CharSequence c;
+        if (x > 0) c = "str"; else c = new StringBuilder("sb");
+        Object o = x > 5 ? (Object) c : (Object) Integer.valueOf(x);
+        return o;
+    }
+    public static int nullChecks(Object a, Object b) { return (a == null ? 1 : 0) + (a == b ? 2 : 0) + (b != null ? 4 : 0); }
+    // LAMBDA
+    public static int lambda(int x) { java.util.function.IntUnaryOperator f = v -> v > 3 ? v * 2 : v - 1; return f.applyAsInt(x); }
+    public static int sync(Object lock, int x) { synchronized (lock) { if (x > 0) return x; } return -x; }
+}

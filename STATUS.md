@@ -665,7 +665,29 @@ bucket 1, and its migration 0010 deletes those rows (all test data, Luke
 said) and adds a check constraint refusing the code, with `bucketString`
 reading an unknown code as unknown.
 
-### Keep each method's original frames instead of recomputing them: grilling, before release, ahead of ADR 0059
+### Keep each method's original frames instead of recomputing them: landed
+
+Grilled and built on 2026-10-05, ADR 0061 (amending 0006, 0052 and 0058),
+Luke taking the main session's recommendations after the research. The branch
+tier reads with expanded frames, keeps every frame the received bytes carry,
+and writes one at each label it inserts from an ASM `AnalyzerAdapter`'s state
+at the jump, its operands popped; where an inserted fall-through label lands on
+an instruction with its own frame, the class file's wins (the opposite gave
+`VerifyError`s in the research); max stack grows by six. The method tier's
+class writer (`FrameRefusingClassWriter`) throws from `getCommonSuperClass`,
+so nothing recomputes a frame; a frame the agent cannot derive skips the
+class. The research prototype and the chunk passed every suite, including
+real JaCoCo in both orders; `FramesShapesTest` compiles jumps, switches,
+loops, handlers, `synchronized`, wide values, uninitialised `NEW` and
+`UNINITIALIZED_THIS` at a jump, and a method pushed onto `GOTO_W`, at releases
+8 to 21 and version 50 with and without frames, and checks the woven version
+50 bytes relabelled 51, where the JVM cannot fall back to inference. The
+verifier test fails a woven class that runs where its twin fails. The review
+found no defect in the frame logic; it corrected comments and ADR wording
+(where a frame cannot be derived, which frames still appear below 50) and
+made the `asm-subroutines` jar track its exclude patterns. `ReactorDelegate`
+behaves as its twin only once 0059's pool lands; on this tree it names a
+missing type and is skipped, and its test will require a weave then.
 
 Brought forward on 2026-10-05, Luke's call, to unblock ADR 0059: the
 placeholder pool's frame guards had a hole (a merge walks supertypes the guard

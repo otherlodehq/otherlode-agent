@@ -17,10 +17,12 @@ import net.bytebuddy.pool.TypePool
 /**
  * Rewrites the `jsr` and `ret` subroutines of a class file below version 51 into straight-line
  * code, which is what every later reader of the class has to see. A subroutine is how javac 1.4.1
- * and older, and ecj, compile a `finally`; the JVM forbids them from version 51 (JVMS 4.9.1). The branch tier makes ASM compute frames, which
- * cannot be done over `jsr`/`ret`, so the class is inlined before the analysis counts its branch
- * sites and before the rewrite adds probes. Both read the same inlined instructions, so the sites
- * the analysis numbers are the sites the rewrite finds.
+ * and older, and ecj, compile a `finally`; the JVM forbids them from version 51 (JVMS 4.9.1). The
+ * class is inlined before the analysis counts its branch sites and before the rewrite adds probes,
+ * so both read the same instructions and the sites the analysis numbers are the sites the rewrite
+ * finds: inlining gives a site in a subroutine one copy per call. At version 50 with frames, ASM's
+ * `AnalyzerAdapter`, which the branch tier reads each frame from, also needs it, since it rejects
+ * `jsr`/`ret`.
  *
  * Two entry points cover the two readers. [inline] rewrites bytes, for the analysis and the pairing
  * of a class file with the bytes another transformer left. [wrapper] is the visitor for the rewrite

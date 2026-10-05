@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted, amended by 0061
 ---
 
 # Bytecode shape is read from the class file, and probes are woven into the received bytes
@@ -33,3 +33,5 @@ Read in JaCoCo 0.8.13's source: its instrumentation replays a method's original 
 ## Amended on 2026-10-03: the no-class-file case stays a recorded gap
 
 The open question this record left about a class with no class file is settled in ADR 0054. Such a class is still analysed from its received bytes, and a body there that an earlier transformer changed can read as the adopter's code. A per-class flag was rejected as abstaining on every class defined from memory for a case that needs three rare things together. The agent logs an INFO count of classes analysed from received bytes on the first flush, and the case is revisited when an adopter shows it, the trigger the wrong-loader-path entry in `STATUS.md` also uses.
+
+Amended 2026-10-05 by 0061: the received bytes' frames are kept as they are, so a transformer ahead of this one keeps the frames it wrote too, and this agent writes frames only at the labels it inserts.

@@ -3,8 +3,12 @@ package dev.otherlode.benchmark
 import dev.otherlode.export.ProbeKind
 import dev.otherlode.export.ProbeLocation
 import dev.otherlode.export.ResourceAttributes
+import dev.otherlode.instrumentation.FrameRefusingClassWriter
 import dev.otherlode.instrumentation.VersionedFixtures
 import dev.otherlode.registry.ProbeRegistry
+import net.bytebuddy.jar.asm.ClassWriter
+import net.bytebuddy.jar.asm.Label
+import net.bytebuddy.jar.asm.Opcodes
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.InputStream
@@ -133,7 +137,8 @@ class WovenClassVerificationTest {
                         }
 
                         else -> {
-                            bothRan++
+                            // Defines where its twin fails: the weave changed what the JVM checks (ADR 0061).
+                            violations += "${set.name}:$name woven runs where its unwoven twin fails: $unwovenOutcome"
                         }
                     }
                 }
@@ -153,7 +158,9 @@ class WovenClassVerificationTest {
     @Test
     fun `every woven class of the benchmark corpora defines and initialises wherever its unwoven twin does`() {
         val started = System.nanoTime()
+        val refusalsBefore = FrameRefusingClassWriter.refusals
         val results = CORPORA.map { sweep(it) }
+        assertEquals(refusalsBefore, FrameRefusingClassWriter.refusals, "no weave of any corpus class asked the writer to compute a frame")
         println(
             "woven-class verification, corpora: " +
                 results.joinToString("; ") {
@@ -171,6 +178,89 @@ class WovenClassVerificationTest {
             assertTrue(r.woven >= minWoven, "${r.corpus}: only ${r.woven} of ${r.classes} classes were woven, expected at least $minWoven")
             assertTrue(r.bothRan >= minRan, "${r.corpus}: only ${r.bothRan} of ${r.woven} woven classes ran, expected at least $minRan")
         }
+    }
+
+    @Test
+    fun `spring-core's ReactorDelegate without Reactor fails woven exactly as it does unwoven`() {
+        // PropagationContextElement$ReactorDelegate types a local Reactor's ContextView, and Reactor is not on the
+        // classpath. Unwoven, the JVM's check of its frame fails with NoClassDefFoundError. Woven, it must fail the
+        // same way, or stay unwoven because the weave was refused for the types its signatures name that the pool
+        // cannot see; a woven class that defined would hand a framework probing for Reactor a false positive.
+        val classpath = checkNotNull(System.getProperty("${CLASSPATH_PROPERTY}demo-spring.main")) { "no classpath for demo-spring" }
+        val entries = classpath.split(File.pathSeparator).filter { it.isNotEmpty() }
+        assertTrue(entries.none { File(it).name.startsWith("reactor-core") }, "Reactor must be absent for this check")
+        val internalName = "org/springframework/core/PropagationContextElement\$ReactorDelegate"
+        val jar = entries.first { File(it).name.startsWith("spring-core-") }
+        val original =
+            java.util.zip.ZipFile(jar).use { zip ->
+                zip
+                    .getInputStream(
+                        checkNotNull(zip.getEntry("$internalName.class")) { "$internalName is not in $jar" },
+                    ).use { it.readBytes() }
+            }
+        val name = internalName.replace('/', '.')
+        URLClassLoader(entries.map { File(it).toURI().toURL() }.toTypedArray(), ClassLoader.getPlatformClassLoader()).use { shared ->
+            val transformer = HotPathWeaver.offlineTransformer(listOf("org.springframework"), ProbeRegistry())
+            val wovenBytes =
+                try {
+                    transformer.transform(shared, internalName, null, null, original)
+                } catch (t: Throwable) {
+                    val why = generateSequence(t) { it.cause }.map { it.message.orEmpty() }.joinToString(" <- ")
+                    assertTrue(UNRESOLVED in why, "$name failed to weave for a reason other than a type the pool cannot see: $why")
+                    null
+                }
+            val unwoven = attempt { initialise(DefineOneLoader(shared, name, original), name) }
+            val woven = attempt { initialise(DefineOneLoader(shared, name, wovenBytes ?: original), name) }
+            assertTrue(!unwoven.ok, "unwoven, $name fails without Reactor, or the check proves nothing")
+            assertEquals(unwoven.rootType, woven.rootType, "woven: $woven; unwoven: $unwoven")
+        }
+    }
+
+    /** `static Object m(boolean b)` with a frame that types local 1 as a class no loader has, at a branch target a String reaches. */
+    private fun absentTypeInFrame(internalName: String): ByteArray {
+        val cw = ClassWriter(0)
+        cw.visit(Opcodes.V11, Opcodes.ACC_PUBLIC or Opcodes.ACC_SUPER, internalName, null, "java/lang/Object", null)
+        cw.visitSource("Absent.java", null)
+        val mv = cw.visitMethod(Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC, "m", "(Z)Ljava/lang/Object;", null, null)
+        mv.visitCode()
+        val start = Label()
+        mv.visitLabel(start)
+        mv.visitLineNumber(3, start)
+        mv.visitLdcInsn("a")
+        mv.visitVarInsn(Opcodes.ASTORE, 1)
+        mv.visitVarInsn(Opcodes.ILOAD, 0)
+        val target = Label()
+        mv.visitJumpInsn(Opcodes.IFEQ, target)
+        mv.visitVarInsn(Opcodes.ALOAD, 1)
+        mv.visitInsn(Opcodes.ARETURN)
+        mv.visitLabel(target)
+        mv.visitFrame(Opcodes.F_FULL, 2, arrayOf<Any>(Opcodes.INTEGER, "absent/Missing"), 0, emptyArray())
+        mv.visitVarInsn(Opcodes.ALOAD, 1)
+        mv.visitInsn(Opcodes.ARETURN)
+        mv.visitMaxs(1, 2)
+        mv.visitEnd()
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    @Test
+    fun `a frame that names a type no loader has is kept, so the woven class fails verification as its twin does`() {
+        val internalName = "com/example/absent/Absent"
+        val original = absentTypeInFrame(internalName)
+        val registry = ProbeRegistry()
+        val transformer = HotPathWeaver.offlineTransformer(listOf("com.example.absent"), registry)
+        val parent = WovenClassVerificationTest::class.java.classLoader
+        val twinLoader = MatrixLoader(parent, mapOf(internalName to original), mutableMapOf(internalName to original))
+        val wovenLoader = MatrixLoader(parent, mapOf(internalName to original), mutableMapOf())
+        wovenLoader.definitions[internalName] =
+            checkNotNull(transformer.transform(wovenLoader, internalName, null, null, original)) { "not woven" }
+        val name = internalName.replace('/', '.')
+
+        val twin = attempt { initialise(twinLoader, name) }
+        val woven = attempt { initialise(wovenLoader, name) }
+
+        assertTrue(twin.error.orEmpty().startsWith("NoClassDefFoundError: absent/Missing"), "unwoven: $twin")
+        assertEquals(twin.error, woven.error, "woven: $woven; unwoven: $twin")
     }
 
     /**

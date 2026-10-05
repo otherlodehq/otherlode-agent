@@ -611,9 +611,9 @@ object ConditionFingerprinter {
 
     /**
      * The stack effect of one instruction, in JVM stack words (a `long` or `double` counts as
-     * two). ByteBuddy's shaded ASM carries the core library only, not asm-analysis's `Analyzer`
-     * and `Frame` or asm-commons' `AnalyzerAdapter`, so this is a hand-written table over each
-     * opcode family.
+     * two). ByteBuddy's shaded ASM carries no asm-analysis `Analyzer` or `Frame`, so this is a
+     * hand-written table over each opcode family; the agent's own `AnalyzerAdapter` tracks frames for
+     * the branch rewrite, not stack depth for a fingerprint.
      */
     internal fun stackEffect(insn: Insn): Int =
         when (insn) {

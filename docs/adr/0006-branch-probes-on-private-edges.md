@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted, amended by 0061
 ---
 
 # Place branch probes on private edges, never on jump targets
@@ -14,3 +14,5 @@ Every two-outcome conditional jump (`IFEQ` through `IF_ACMPNE`, `IFNULL`, `IFNON
 - The analyser and the rewriter must see the same bytes. `ClassBytesCapture` stashes exactly what ByteBuddy is about to rewrite, and the rewriter refuses to allocate past its slot capacity, so a site past the end of the array is emitted unchanged rather than incrementing past it; the count mismatch that implies then fails the transform, as the next point says.
 - A class whose site count at rewrite time differs from the count its analysed bytes gave is not left with shifted probes: the rewriter fails the transform, and the class is skipped and reported through the same path as any other transform failure (0007). Losing the class's method probes is preferred to a manifest whose branch rows describe the wrong outcomes.
 - Sites the adopter did not write get no probe at all, and a dropped site still takes its place in the site numbering (0025).
+
+Amended 2026-10-05 by 0061: the branch probes are written without ASM recomputing the method's frames. Every frame the received bytes carry stays, and the branch tier writes a frame at each label it inserts from the state at the jump it sits on.

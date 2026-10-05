@@ -1,10 +1,10 @@
-// ASM's JSRInlinerAdapter and the tree classes it is built on, in Byte Buddy's own relocated ASM
-// package. Byte Buddy bundles ASM core as net.bytebuddy.jar.asm but leaves out the tree API and
-// the subroutine inliner, and the agent's visitors extend Byte Buddy's copy of ClassVisitor and
-// MethodVisitor, which the stock asm-commons classes cannot be mixed with. Relocating them into
-// the same package lets one class file, JSRInlinerAdapter, plug into the agent's visitor chain
-// without a second ASM on the target's classpath. The core classes stay out: Byte Buddy provides
-// them.
+// ASM's JSRInlinerAdapter and AnalyzerAdapter and the tree classes the inliner is built on, in Byte
+// Buddy's own relocated ASM package. Byte Buddy bundles ASM core as net.bytebuddy.jar.asm but leaves
+// out the tree API, the subroutine inliner and the frame analyser, and the agent's visitors extend
+// Byte Buddy's copy of ClassVisitor and MethodVisitor, which the stock asm-commons classes cannot be
+// mixed with. Relocating them into the same package lets the inliner and the analyser plug into the
+// agent's visitor chain without a second ASM on the target's classpath. The core classes stay out:
+// Byte Buddy provides them.
 plugins {
     java
     id("com.gradleup.shadow")
@@ -36,18 +36,14 @@ tasks.jar {
     enabled = false
 }
 
-tasks.shadowJar {
-    archiveBaseName.set("otherlode-asm-subroutines")
-    archiveClassifier.set("")
-    // Byte Buddy provides the core classes. Of asm-commons only the inliner is wanted, and of
-    // asm-tree only the node classes it is built on, so every other entry is left out by name.
-    dependencies {
-        exclude(dependency("org.ow2.asm:asm"))
-    }
-    exclude("org/objectweb/asm/tree/analysis/**", "module-info.class", "META-INF/**")
-    exclude(
+// Byte Buddy provides the core classes. Of asm-commons only the inliner and the analyser are wanted, and of
+// asm-tree only the node classes the inliner is built on, so every other entry is left out by name.
+val excludedEntries =
+    listOf(
+        "org/objectweb/asm/tree/analysis/**",
+        "module-info.class",
+        "META-INF/**",
         "org/objectweb/asm/commons/AdviceAdapter*",
-        "org/objectweb/asm/commons/AnalyzerAdapter*",
         "org/objectweb/asm/commons/*Remapper*",
         "org/objectweb/asm/commons/CodeSizeEvaluator*",
         "org/objectweb/asm/commons/GeneratorAdapter*",
@@ -61,6 +57,16 @@ tasks.shadowJar {
         "org/objectweb/asm/commons/TableSwitchGenerator*",
         "org/objectweb/asm/commons/TryCatchBlockSorter*",
     )
+
+tasks.shadowJar {
+    archiveBaseName.set("otherlode-asm-subroutines")
+    archiveClassifier.set("")
+    dependencies {
+        exclude(dependency("org.ow2.asm:asm"))
+    }
+    // The shadow task does not track exclude patterns as inputs, so editing them would leave a stale jar.
+    inputs.property("excludedEntries", excludedEntries)
+    exclude(excludedEntries)
     relocate("org.objectweb.asm", "net.bytebuddy.jar.asm")
 }
 

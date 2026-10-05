@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted, amended by 0061
 ---
 
 # ByteBuddy's type validation is off, and a verifier test guards the woven bytes
@@ -23,4 +23,6 @@ What replaces the guard is a test in `check`: every class in the benchmark corpo
 - A mistake in the agent's own woven code for an old class-file version now fails the adopter's class at definition rather than leaving it uninstrumented. The verifier test exists to find that mistake before an adopter does.
 - Every remaining skip comes from `TransformResultListener` and logs one WARNING per class, so an adopter's log names every skipped class.
 - Pre-Java-6 subroutine code (`jsr`/`ret`) failed whatever the setting, because the branch tier makes ASM compute frames. ASM's `JSRInlinerAdapter` runs first on class files below version 50.
-- 51 classes in the ceiling run still fail while ByteBuddy describes a field or method whose type is an absent optional dependency (`InstrumentedType.java:465`, `:467`). Describing a missing type as a placeholder is being tried; `STATUS.md` holds the outcome.
+- 51 classes in the ceiling run still fail while ByteBuddy describes a field or method whose type is an absent optional dependency (`InstrumentedType.java:465`, `:467`). ADR 0059 describes such a type as a placeholder while weaving.
+
+Amended 2026-10-05 by 0061: subroutine code failed to weave because the branch tier made ASM compute frames, which it no longer does; the subroutine inliner runs below class-file version 51 (where the JVM still allows `jsr`), so the analysis and the rewrite read the same instructions.

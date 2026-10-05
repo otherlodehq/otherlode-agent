@@ -221,7 +221,9 @@ class OtherlodeInstrumentation(
             // the declaration it sits on, a receiver type it cannot resolve. It also rejects bytecode
             // the class-file version does not allow, which the verifier test in the build covers
             // for what this agent writes.
-            .Default(ByteBuddy().with(TypeValidation.DISABLED).ignore(none()))
+            //
+            // The class writer is one that throws when ASM would compute a frame; see FrameRefusingClassWriter.
+            .Default(ByteBuddy().with(TypeValidation.DISABLED).with(FrameRefusingClassWriter).ignore(none()))
             .ignore(any<TypeDescription>(), isBootstrapClassLoader<ClassLoader>().or(isExtensionClassLoader()))
             .or(ignoredNames())
             // A class already loaded is left alone unless this agent wove it; see isWoven.
@@ -729,7 +731,16 @@ class OtherlodeInstrumentation(
         }
         val built = plan.build()
         stage(typeDescription, classLoader, probes, analysis, references, built)
-        return weave(builder, typeDescription, built, built.view(), pairing, reweaving = false)
+        return weave(
+            builder,
+            typeDescription,
+            built,
+            built.view(),
+            pairing,
+            reweaving = false,
+            receivedBytes =
+                source.received ?: analysedBytes,
+        )
     }
 
     /** What [analyse] reads from a class's bytes for a first weave. */
@@ -842,7 +853,7 @@ class OtherlodeInstrumentation(
                     "methods keep their entry probe, and their branch counts stay where they were",
             )
         }
-        return weave(builder, typeDescription, plan, view, pairing, reweaving = true)
+        return weave(builder, typeDescription, plan, view, pairing, reweaving = true, receivedBytes = received)
     }
 
     /** Logs that a woven class cannot be woven again, for [reason], so the redefinition is refused. */
@@ -905,7 +916,8 @@ class OtherlodeInstrumentation(
      * instructions match the received bytes' one for one, so they name the same instructions there,
      * and the swapped ordinals say which conditionals arrive inverted. Each method's slot count is
      * checked against its run. When [reweaving], the class-wide total is not, since a method may
-     * have dropped out.
+     * have dropped out. [receivedBytes] are the bytes being rewritten, which say whether a class at
+     * version 50 carries frames.
      */
     private fun weave(
         builder: DynamicType.Builder<*>,
@@ -914,6 +926,7 @@ class OtherlodeInstrumentation(
         view: WeavePlan.View,
         pairing: SitePairing,
         reweaving: Boolean,
+        receivedBytes: ByteArray?,
     ): DynamicType.Builder<*> {
         val form = ProbeArrayForm.of(plan.majorVersion, typeDescription, plan.layoutHash, plan.probeCount)
         var instrumented: DynamicType.Builder<*> = builder
@@ -988,6 +1001,7 @@ class OtherlodeInstrumentation(
                         unprobedOutcomesByMethod = view::unprobedOutcomesOf,
                         swappedOrdinalsByMethod = pairing::swappedOrdinalsOf,
                         slotsByMethod = { name, descriptor -> view.branchRuns[name to descriptor] },
+                        classHasFrames = BranchProbeAsmVisitorWrapper.carriesFrames(receivedBytes),
                     ),
                 )
         }

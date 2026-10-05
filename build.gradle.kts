@@ -60,9 +60,9 @@ dependencies {
     // in a second, independently-versioned ASM dependency.
     implementation("net.bytebuddy:byte-buddy:1.18.12")
 
-    // ASM's JSRInlinerAdapter, relocated into Byte Buddy's ASM package, which bundles the core
-    // classes but not this one. The branch tier computes frames, which cannot handle the
-    // jsr/ret of a class file below version 50, so such a class is inlined first.
+    // ASM's JSRInlinerAdapter and AnalyzerAdapter, relocated into Byte Buddy's ASM package, which
+    // bundles the core classes but not these: the inliner removes the jsr/ret of a class file below
+    // version 51, and the analyser gives the branch tier the frame at each jump it rewrites.
     implementation(files(asmSubroutinesJar))
 
     // EndpointModule, AdviceBinder, and the ByteBuddy-facing types a per-framework endpoint
@@ -182,6 +182,10 @@ val verifyAgentJar by tasks.registering {
             // class below version 51 with a subroutine fails to weave.
             val inliner = "dev/otherlode/shaded/bytebuddy/jar/asm/commons/JSRInlinerAdapter.class"
             check(inliner in names) { "agent jar is missing ASM's subroutine inliner at $inliner" }
+            // The branch tier reads the frame at each jump from ASM's analyser; without it every class with a
+            // tracked jump at version 50 or above fails to weave.
+            val analyser = "dev/otherlode/shaded/bytebuddy/jar/asm/commons/AnalyzerAdapter.class"
+            check(analyser in names) { "agent jar is missing ASM's frame analyser at $analyser" }
             val loose = names.filter { it.startsWith("dev/otherlode/bootstrap/") && it.endsWith(".class") }
             check(loose.isEmpty()) {
                 "agent jar must not carry the bootstrap holder as loose classes, found: $loose"

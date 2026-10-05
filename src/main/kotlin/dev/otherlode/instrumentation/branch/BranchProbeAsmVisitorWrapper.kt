@@ -7,10 +7,11 @@ import net.bytebuddy.description.field.FieldList
 import net.bytebuddy.description.method.MethodList
 import net.bytebuddy.description.type.TypeDescription
 import net.bytebuddy.implementation.Implementation
+import net.bytebuddy.jar.asm.ClassReader
 import net.bytebuddy.jar.asm.ClassVisitor
-import net.bytebuddy.jar.asm.ClassWriter
 import net.bytebuddy.jar.asm.MethodVisitor
 import net.bytebuddy.jar.asm.Opcodes
+import net.bytebuddy.jar.asm.commons.AnalyzerAdapter
 import net.bytebuddy.pool.TypePool
 
 /**
@@ -18,8 +19,17 @@ import net.bytebuddy.pool.TypePool
  * pipeline. This weaves branch probes in the same pass as the method-entry
  * [net.bytebuddy.asm.Advice] tier, instead of using a second, competing transformer.
  *
- * Rewriting a conditional jump into two edges introduces new basic blocks. The class file's stack
- * map frames then need recomputing, so [mergeWriter] asks ByteBuddy's writer to do that.
+ * Rewriting a conditional jump into two edges introduces new basic blocks, each needing a stack map
+ * frame. No frame is ever computed. [mergeReader] asks for expanded frames, every frame the received
+ * bytes carry is passed through as it is, and [BranchProbeMethodVisitor] writes a frame at each label
+ * it inserts from the state of an ASM `AnalyzerAdapter` placed in front of it. The branch tier
+ * writes no frame in a class below version 50, nor in one at version 50 without a StackMapTable
+ * ([classHasFrames]): the analyser has no state after an unconditional jump in a class without
+ * frames, and the JVM verifies such a class by type inference. ByteBuddy's Advice writes frames of
+ * its own at 50, and the probe-array accessor writes one at every version below 55, which ASM
+ * writes as a `StackMap` attribute below 50 that HotSpot ignores.
+ * The writer is not asked to compute maximums either: [BranchProbeMethodVisitor.visitMaxs] adds the
+ * probes' peak of six operand stack slots to a method it put a probe in.
  *
  * [probeArray] emits the load of the class's counts array at every probe.
  *
@@ -64,6 +74,7 @@ class BranchProbeAsmVisitorWrapper(
     private val unprobedOutcomesByMethod: (name: String, descriptor: String) -> Map<Int, Int> = { _, _ -> emptyMap() },
     private val swappedOrdinalsByMethod: (name: String, descriptor: String) -> Set<Int> = { _, _ -> emptySet() },
     private val slotsByMethod: ((name: String, descriptor: String) -> MethodSlots?)? = null,
+    private val classHasFrames: Boolean = true,
 ) : AsmVisitorWrapper {
     /** One method's run of branch slots: the first at [base], relative to the branch slots' start, and [count] in all. */
     data class MethodSlots(
@@ -71,9 +82,55 @@ class BranchProbeAsmVisitorWrapper(
         val count: Int,
     )
 
-    override fun mergeWriter(flags: Int): Int = flags or ClassWriter.COMPUTE_FRAMES
+    companion object {
+        private const val MAJOR_VERSION_MASK = 0xffff
+        private const val CLASS_VERSION_OFFSET = 6
 
-    override fun mergeReader(flags: Int): Int = flags
+        /**
+         * Whether the frames of [classFile] are to be kept and extended: false only for a class at
+         * version 50 with no stack map frame in any method, which the JVM verifies by type
+         * inference. Every other class, unreadable bytes and null included, answers true; below 50
+         * there is no frame to write whatever this says.
+         */
+        fun carriesFrames(classFile: ByteArray?): Boolean {
+            if (classFile == null || classFile.size < CLASS_VERSION_OFFSET + 2) return true
+            val major = ((classFile[CLASS_VERSION_OFFSET].toInt() and 0xff) shl 8) or (classFile[CLASS_VERSION_OFFSET + 1].toInt() and 0xff)
+            if (major != Opcodes.V1_6) return true
+            var found = false
+            try {
+                ClassReader(classFile).accept(
+                    object : ClassVisitor(Opcodes.ASM9) {
+                        override fun visitMethod(
+                            access: Int,
+                            name: String,
+                            descriptor: String,
+                            signature: String?,
+                            exceptions: Array<out String>?,
+                        ): MethodVisitor =
+                            object : MethodVisitor(Opcodes.ASM9) {
+                                override fun visitFrame(
+                                    type: Int,
+                                    numLocal: Int,
+                                    local: Array<out Any>?,
+                                    numStack: Int,
+                                    stack: Array<out Any>?,
+                                ) {
+                                    found = true
+                                }
+                            }
+                    },
+                    0,
+                )
+            } catch (_: RuntimeException) {
+                return true
+            }
+            return found
+        }
+    }
+
+    override fun mergeWriter(flags: Int): Int = flags
+
+    override fun mergeReader(flags: Int): Int = flags or ClassReader.EXPAND_FRAMES
 
     override fun wrap(
         instrumentedType: TypeDescription,
@@ -90,6 +147,23 @@ class BranchProbeAsmVisitorWrapper(
         val wantedByMethod = LinkedHashMap<Pair<String, String>, Int>()
 
         return object : ClassVisitor(Opcodes.ASM9, classVisitor) {
+            private var owner: String = instrumentedType.internalName
+            private var withFrames = classHasFrames
+
+            override fun visit(
+                version: Int,
+                access: Int,
+                name: String,
+                signature: String?,
+                superName: String?,
+                interfaces: Array<out String>?,
+            ) {
+                owner = name
+                val major = version and MAJOR_VERSION_MASK
+                withFrames = major >= Opcodes.V1_7 || (major == Opcodes.V1_6 && classHasFrames)
+                super.visit(version, access, name, signature, superName, interfaces)
+            }
+
             override fun visitMethod(
                 access: Int,
                 name: String,
@@ -116,16 +190,22 @@ class BranchProbeAsmVisitorWrapper(
                         start
                     }
                 }
-                return BranchProbeMethodVisitor(
-                    delegate,
-                    probeArray,
-                    probeIndexBase,
-                    droppedOrdinalsByMethod(name, descriptor),
-                    throwingDefaultOrdinalsByMethod(name, descriptor),
-                    unprobedOutcomesByMethod(name, descriptor),
-                    swappedOrdinalsByMethod(name, descriptor),
-                    allocate,
-                )
+                val probes =
+                    BranchProbeMethodVisitor(
+                        delegate,
+                        probeArray,
+                        probeIndexBase,
+                        droppedOrdinalsByMethod(name, descriptor),
+                        throwingDefaultOrdinalsByMethod(name, descriptor),
+                        unprobedOutcomesByMethod(name, descriptor),
+                        swappedOrdinalsByMethod(name, descriptor),
+                        location = "${instrumentedType.name}#$name$descriptor",
+                        allocateSlots = allocate,
+                    )
+                if (!withFrames) return probes
+                val analyzer = AnalyzerAdapter(owner, access, name, descriptor, probes)
+                probes.frameTracker = analyzer
+                return analyzer
             }
 
             override fun visitEnd() {
