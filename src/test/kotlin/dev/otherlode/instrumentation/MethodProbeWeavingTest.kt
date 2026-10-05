@@ -26,8 +26,8 @@ class MethodProbeWeavingTest {
     private val resource = ResourceAttributes("test", null, "instance-1", null, "run-1")
 
     private companion object {
-        /** Parameters 0 to 30: the analysis reads a mask test's constant as a positive power of two, which leaves bit 31 out. */
-        const val COUNTED = 31
+        /** Parameters 0 to 31, every bit of the first mask `int`, bit 31 included. */
+        const val COUNTED = 32
 
         /** The load, the slot, `dup2`, `laload`, `lconst_1`, `ladd` and `lastore`. */
         const val PROBE_INSTRUCTIONS = 7
@@ -209,7 +209,7 @@ class MethodProbeWeavingTest {
     fun `an omission probe counts a parameter left out and not one supplied, in both array forms`() {
         for (version in listOf(Opcodes.V1_8, Opcodes.V11, Opcodes.V17)) {
             for (shape in Shape.entries) {
-                for (optional in listOf(1, 2, 31, 33)) {
+                for (optional in listOf(1, 2, 31, 32, 33)) {
                     val label = "v$version $shape $optional"
                     val (name, bytes) = defaultsFixture(version, shape, optional)
                     val woven = weave(name, bytes)

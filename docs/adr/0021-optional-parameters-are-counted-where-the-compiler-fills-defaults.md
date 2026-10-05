@@ -30,6 +30,7 @@ Two findings follow at the collector. An optional parameter is never supplied wh
 The omission probes are written by the agent's ASM (`MethodProbes`), not an `Advice` loop: for each
 optional parameter bit `i`, the slot `base + rank(i)` gets `(mask >>> i) & 1` added, so a supplied
 parameter adds zero. Same slots, same counts; no label, local or frame. A supplied parameter's +0 is
-a read-modify-write like every other probe's, inside ADR 0003's accepted race. Mask bit 31 is never
-read as an optional parameter (the analyser's power-of-two test needs a positive value), so a
-`$default` counts its first 31 optional parameters; recorded in STATUS.
+a read-modify-write like every other probe's, inside ADR 0003's accepted race. Mask bit 31
+(`Int.MIN_VALUE`, the 32nd parameter) was never read as an optional parameter, since the analyser's
+test for a mask constant wanted a positive power of two; it takes any single set bit, so all 32
+parameters of the first mask `int` are counted, as this ADR says.

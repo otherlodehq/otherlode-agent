@@ -2832,7 +2832,7 @@ object BranchSiteAnalyzer {
         ) {
             pushInsn(RecentInsn.Other)
             if (!defaultShaped) return
-            if (phase == 1 && (opcode == Opcodes.BIPUSH || opcode == Opcodes.SIPUSH) && isPowerOfTwo(operand)) {
+            if (phase == 1 && (opcode == Opcodes.BIPUSH || opcode == Opcodes.SIPUSH) && isSingleBit(operand)) {
                 pendingConstant = operand
                 phase = 2
             } else {
@@ -2844,7 +2844,7 @@ object BranchSiteAnalyzer {
             super.visitLdcInsn(value)
             pushInsn(RecentInsn.Ldc(value))
             if (!defaultShaped) return
-            if (phase == 1 && value is Int && isPowerOfTwo(value)) {
+            if (phase == 1 && value is Int && isSingleBit(value)) {
                 pendingConstant = value
                 phase = 2
             } else {
@@ -2864,7 +2864,7 @@ object BranchSiteAnalyzer {
             when {
                 phase == 1 && opcode in Opcodes.ICONST_0..Opcodes.ICONST_5 -> {
                     val value = opcode - Opcodes.ICONST_0
-                    if (isPowerOfTwo(value)) {
+                    if (isSingleBit(value)) {
                         pendingConstant = value
                         phase = 2
                     } else {
@@ -2970,7 +2970,11 @@ object BranchSiteAnalyzer {
         }
     }
 
-    private fun isPowerOfTwo(value: Int): Boolean = value > 0 && (value and (value - 1)) == 0
+    /**
+     * Whether [value] has exactly one bit set, the shape of a `$default` mask test's constant. Bit 31
+     * is `Int.MIN_VALUE`, negative, which kotlinc writes for the 32nd parameter of a mask.
+     */
+    private fun isSingleBit(value: Int): Boolean = value != 0 && (value and (value - 1)) == 0
 
     /**
      * Splits a method descriptor's parameter section into its individual type descriptors, in

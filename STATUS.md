@@ -1132,7 +1132,13 @@ The 2026-10-04 write-ups were removed when this work landed (git history keeps t
 `2e0dbe4` and `5a47ad0`); their scripts are the manual profiling kit in
 `benchmark-overhead/profiling/`.
 
-### A `$default` method's 32nd optional parameter is never counted
+### A `$default` method's 32nd optional parameter is never counted: fixed
+
+Fixed 2026-10-05: the analyser's test for a mask constant takes any single set bit, `Int.MIN_VALUE`
+included, so all 32 parameters of the first mask `int` get an omission probe;
+`MethodProbeWeavingTest` covers 31, 32 and 33 optional parameters. A `$default` with 32 or more
+optional parameters gains a slot and a new layout hash. What follows is the entry as found.
+
 
 Found 2026-10-05 by `DECORATE` chunk 2's tests. The analyser picks the optional parameters of a
 `$default` method from its mask tests with a power-of-two check that needs a positive value, so bit
