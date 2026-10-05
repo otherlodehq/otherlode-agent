@@ -33,9 +33,11 @@ import java.util.concurrent.atomic.AtomicReference
  * `URLStreamHandlerFactory`) or by the handler the location URL itself carries, and building or
  * opening that URL the first time loads the handler's classes. The JVM offers a class
  * loaded from inside a transform to no transformer (ADR 0027), so such classes would go unwoven. Each
- * jar shape is therefore warmed up first, keyed by [warmKey]: the first read answers null, so the
- * caller uses its loader, and hands the same read to [warmer], which builds the URL and opens it on
- * another thread, outside any transform. Reads while that runs also answer null. Once a warm-up read
+ * jar shape is therefore warmed up first, keyed by [warmKey]: the first read hands the same read to
+ * [warmer], which builds the URL and opens it on another thread, outside any transform, and answers
+ * null, so the caller uses its loader, unless that warm-up has already finished, in which case the
+ * handler's classes are loaded and the read is answered from the code source. Reads while the
+ * warm-up runs answer null. Once a warm-up read
  * succeeds the key is read from the code source; a warm-up read that finds nothing may only mean that
  * one class (a generated one defined under the application's domain, say) is missing at its location,
  * so the key goes back to unwarmed and a later class tries again, until [MAX_WARM_UP_ATTEMPTS] misses

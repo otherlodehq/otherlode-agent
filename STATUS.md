@@ -303,9 +303,15 @@ adopter's collector forwards to one multi-tenant backend.
      verified by its TXT record on the apex `otherlode.dev`, and a Portal user
      token. Done on 2026-10-06: the `release` environment and its secrets, the
      tag ruleset, immutable releases.
-   - A flaky test now blocks a release: `CodeSourceClassFileTest`'s warm-up
-     tests failed on CI on 2026-10-05 (runs 37353518574 and 37360423743, a
-     different test each time) and passed on rerun. To fix before `0.1.0`.
+   - The flaky `CodeSourceClassFileTest` is fixed (2026-10-06). A race in the
+     test, not the agent: with the real daemon warmer, the warm-up thread can
+     finish before `isWarmed` re-checks the state, so the first read
+     legitimately answers bytes, and the two tests asserted null. Production
+     is unaffected, since the key is marked warm only after the warm-up
+     thread opened the location outside any transform. The tests hold the
+     warm-up's open until the first read has answered; reproduced on demand
+     with an injected delay, then 0 failures in 80 stressed runs over JDK 17,
+     21 and 25. The class KDoc now says the first read can answer bytes.
    - Agent CI moved to `bufbuild/buf-action` on 2026-09-27, which also
      checks formatting. It runs every check but not the push, which is a
      `buf push --label master` step after it: the action's own push labels

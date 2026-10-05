@@ -264,8 +264,15 @@ class CodeSourceClassFileTest {
         assertEquals(false, opened)
     }
 
+    /**
+     * Records the threads that parse and open URLs through it. With a [gate], an open waits for the
+     * gate before answering, which holds a warm-up on its own thread until the read that started it
+     * has answered: a warm-up that finishes first marks the key warm, and that read then opens the
+     * location itself.
+     */
     private class RecordingHandler(
         private val bytes: ByteArray?,
+        private val gate: CountDownLatch? = null,
     ) : URLStreamHandler() {
         val openedOn = java.util.Collections.synchronizedList(mutableListOf<Thread>())
         val parsedOn = java.util.Collections.synchronizedList(mutableListOf<Thread>())
@@ -282,6 +289,7 @@ class CodeSourceClassFileTest {
 
         override fun openConnection(url: URL): URLConnection {
             openedOn.add(Thread.currentThread())
+            gate?.await(10, TimeUnit.SECONDS)
             val content = bytes ?: throw java.io.IOException("no entry")
             return object : URLConnection(url) {
                 override fun connect() = Unit
@@ -364,6 +372,7 @@ class CodeSourceClassFileTest {
     fun `the warm-up opens the code source on a thread other than the caller's`() {
         val bytes = generate("csrc/Threaded", 1)
         val opened = CountDownLatch(1)
+        val firstReadAnswered = CountDownLatch(1)
         val handler =
             object : URLStreamHandler() {
                 @Volatile var thread: Thread? = null
@@ -371,6 +380,7 @@ class CodeSourceClassFileTest {
                 override fun openConnection(url: URL): URLConnection {
                     thread = Thread.currentThread()
                     opened.countDown()
+                    firstReadAnswered.await(10, TimeUnit.SECONDS)
                     return object : URLConnection(url) {
                         override fun connect() = Unit
 
@@ -382,6 +392,7 @@ class CodeSourceClassFileTest {
         val domain = nestedDomain(handler)
 
         assertNull(reader.read(domain, "csrc/Threaded"))
+        firstReadAnswered.countDown()
         assertTrue(opened.await(10, TimeUnit.SECONDS))
 
         val warmThread = assertNotNull(handler.thread)
@@ -406,9 +417,11 @@ class CodeSourceClassFileTest {
         try {
             val bytes = generate("csrc/Inherited", 1)
             val reader = CodeSourceClassFile()
-            val domain = nestedDomain(RecordingHandler(bytes))
+            val firstReadAnswered = CountDownLatch(1)
+            val domain = nestedDomain(RecordingHandler(bytes, firstReadAnswered))
 
             assertNull(reader.read(domain, "csrc/Inherited"))
+            firstReadAnswered.countDown()
             val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
             while (reader.stateOf("jar:nested") != CodeSourceClassFile.State.WARMED && System.nanoTime() < deadline) Thread.sleep(5)
 
