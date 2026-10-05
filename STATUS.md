@@ -1367,7 +1367,19 @@ reads neither, so those cases keep numeric keys (readability only, ADR 0038's
 amendment). `$default`'s super-marker null check is not checked by the mask
 rule; nothing has shown a body where that matters.
 
-### A class file read through the wrong loader path: to grill
+### A class file read through the wrong loader path: closed by ADR 0052's amendment
+
+Closed 2026-10-05 by chunks 7b and 7c of the startup round, which took this entry's second option
+for a different reason (Boot's nested-jar loader made every own-class read probe up to 107 jars): a
+woven class's own class file is read from its `ProtectionDomain` code source, the copy the JVM
+defined, for a directory, a jar file and `jar:file:`/`jar:nested:` locations, so a loader that
+defines child-first but serves resources parent-first no longer hands the agent its parent's copy.
+Two narrow cases still read through the loader, and so keep the gap described below: a class with
+no code source or one of another shape, and a class transformed while its jar shape is warming up
+(the first few classes of each shape, ADR 0052's amendment). Detecting a mismatch in those two
+cases (the third option) stays unbuilt until a loader of the bad shape turns up. What follows is
+the entry as recorded.
+
 
 Raised 2026-10-03 at the review of chunk 1 of the JaCoCo work (ADR 0052, which
 records it as a consequence); not yet grilled. The analysis reads a class's
