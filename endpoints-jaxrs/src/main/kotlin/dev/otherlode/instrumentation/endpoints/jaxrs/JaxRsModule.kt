@@ -14,11 +14,16 @@ import net.bytebuddy.matcher.ElementMatchers.isStatic
 import net.bytebuddy.matcher.ElementMatchers.isSynthetic
 import net.bytebuddy.matcher.ElementMatchers.not
 import java.lang.System.Logger.Level
+import java.util.Collections
+import java.util.WeakHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
 private const val MODULE = "jaxrs"
 private const val ADVICE_PACKAGE = "dev.otherlode.endpoints.jaxrs"
 private const val WILDCARD_VERB = "*"
+private const val SUPERTYPE_CACHE_SIZE = 8192
+private val API_MARKER_RESOURCES = listOf("jakarta/ws/rs/Path.class", "javax/ws/rs/Path.class")
+private val PLATFORM_LOADER: ClassLoader = ClassLoader.getPlatformClassLoader()
 private const val JERSEY_MARKER_RESOURCE = "org/glassfish/jersey/server/model/Resource.class"
 
 private val NAMESPACES = listOf("javax.ws.rs", "jakarta.ws.rs")
@@ -78,6 +83,8 @@ class JaxRsModule
         private val log = System.getLogger(JaxRsModule::class.java.name)
         private val classPathIgnoredWarned = AtomicBoolean(false)
         private val interfaceConflictWarned = AtomicBoolean(false)
+        private val supertypeCaches = SupertypeCaches()
+        private val loaderGate = JaxRsLoaderGate()
 
         /**
          * A concrete class is in scope if it, or any supertype in its superclass chain or
@@ -97,10 +104,28 @@ class JaxRsModule
          * module's tests hits, since every custom-verb method here sits under a class already
          * matched by its own `@Path`.
          */
-        override fun typeMatcher(): ElementMatcher<in TypeDescription> =
-            not(isInterface<TypeDescription>())
+        override fun typeMatcher(): ElementMatcher<in TypeDescription> = typeMatcher(null)
+
+        /**
+         * [typeMatcher] with the supertype walk's answers cached per [classLoader], so a loader
+         * that carries JAX-RS does not re-read the same supertype's class file for every class
+         * that extends it. A `null` loader, which the no-argument form passes, caches nothing,
+         * since a matcher that is not told the loader cannot keep two loaders' names apart.
+         */
+        override fun typeMatcher(classLoader: ClassLoader?): ElementMatcher<in TypeDescription> {
+            val cache = supertypeCaches.cacheFor(classLoader)
+            return not(isInterface<TypeDescription>())
                 .and(not(isAbstract()))
-                .and(ElementMatcher<TypeDescription> { type -> declaresOwnPathOrVerb(type) || hasInheritedPathOrVerb(type) })
+                .and(ElementMatcher<TypeDescription> { type -> declaresOwnPathOrVerb(type) || hasInheritedPathOrVerb(type, cache) })
+        }
+
+        /**
+         * Accepts only a loader that can see a JAX-RS API's `Path` class as a resource, so a loader
+         * with no JAX-RS has no class parsed for this module. The answer is a resource lookup, never
+         * a class load, cached per loader. The bootstrap and platform loaders never carry a JAX-RS
+         * API and are rejected without a lookup.
+         */
+        override fun classLoaderMatcher(): ElementMatcher<in ClassLoader> = loaderGate
 
         /**
          * Reads every eligible declared method for a verb and a route template, binds
@@ -337,23 +362,84 @@ private fun verbAnnotated(source: AnnotationSource): Boolean = source.declaredAn
 /**
  * Whether any supertype of [type], superclass chain or interface graph, carries `@Path` or
  * declares a method carrying `@Path` or a standard verb. See [SKIPPED_SUPERTYPE_PREFIXES] for the
- * walk's bound, and the walk never revisits a supertype name it has already seen, which also
- * guards against a cyclical or diamond interface graph.
+ * walk's bound. A supertype name being walked is not entered again, which guards against a
+ * cyclical or diamond interface graph, and an answer that depended on that guard is not cached.
  */
-private fun hasInheritedPathOrVerb(type: TypeDescription): Boolean {
-    val visited = mutableSetOf<String>()
+private fun hasInheritedPathOrVerb(
+    type: TypeDescription,
+    cache: SupertypeCache,
+): Boolean {
+    val inProgress = mutableSetOf<String>()
+    var guardHits = 0
 
     fun walk(candidate: TypeDescription): Boolean {
-        if (!visited.add(candidate.name)) return false
-        if (declaresOwnPathOrVerb(candidate)) return true
-        val parent = superErasure(candidate)
-        if (parent != null && walk(parent)) return true
-        return interfaceErasures(candidate).any { walk(it) }
+        val name = candidate.name
+        cache[name]?.let { return it }
+        if (!inProgress.add(name)) {
+            guardHits++
+            return false
+        }
+        val hitsBefore = guardHits
+        val found =
+            declaresOwnPathOrVerb(candidate) ||
+                superErasure(candidate)?.let { walk(it) } == true ||
+                interfaceErasures(candidate).any { walk(it) }
+        inProgress.remove(name)
+        if (found || guardHits == hitsBefore) cache[name] = found
+        return found
     }
 
     val parent = superErasure(type)
     if (parent != null && walk(parent)) return true
     return interfaceErasures(type).any { walk(it) }
+}
+
+/** An access-ordered LRU of supertype name to whether that supertype or anything above it carries a JAX-RS route annotation. */
+private class SupertypeCache {
+    private val entries =
+        object : LinkedHashMap<String, Boolean>(16, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>): Boolean = size > SUPERTYPE_CACHE_SIZE
+        }
+
+    operator fun get(name: String): Boolean? = synchronized(entries) { entries[name] }
+
+    operator fun set(
+        name: String,
+        value: Boolean,
+    ) {
+        synchronized(entries) { entries[name] = value }
+    }
+}
+
+/**
+ * One [SupertypeCache] per class loader, held weakly so a retired loader stays collectible. A
+ * `null` loader gets a fresh cache on every call, which is the same as no cache: the gate rejects
+ * the bootstrap loader, so only a caller that does not know the loader passes `null`.
+ */
+private class SupertypeCaches {
+    private val byLoader = Collections.synchronizedMap(WeakHashMap<ClassLoader, SupertypeCache>())
+
+    fun cacheFor(loader: ClassLoader?): SupertypeCache =
+        if (loader ==
+            null
+        ) {
+            SupertypeCache()
+        } else {
+            byLoader.getOrPut(loader) { SupertypeCache() }
+        }
+}
+
+/** Whether a loader can see a JAX-RS API, looked up once per loader and held weakly. */
+private class JaxRsLoaderGate : ElementMatcher<ClassLoader?> {
+    private val answers = Collections.synchronizedMap(WeakHashMap<ClassLoader, Boolean>())
+
+    override fun matches(target: ClassLoader?): Boolean {
+        if (target == null || target === PLATFORM_LOADER) return false
+        answers[target]?.let { return it }
+        val seen = API_MARKER_RESOURCES.any { target.getResource(it) != null }
+        answers[target] = seen
+        return seen
+    }
 }
 
 private fun isSkippedSupertype(name: String): Boolean = SKIPPED_SUPERTYPE_PREFIXES.any { name.startsWith(it) }

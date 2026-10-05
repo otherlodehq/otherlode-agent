@@ -965,6 +965,14 @@ metadata, chunks one at a time, interning; (7) the allocation pass; (8)
 re-measure locally and on the runner, Luke sets the startup target, the
 scripts move, the docs go, this entry and the design updated.
 
+Chunk 1 landed: `EndpointModule` gained `classLoaderMatcher()` and a loader-aware
+`typeMatcher(classLoader)`, both defaulting to the old behaviour, and the pipeline asks the
+loader first through one `RawMatcher`. JAX-RS gates on its `Path` resource per loader and caches
+its supertype walk per loader (LRU of 8192 names; an answer that depended on the cycle guard is
+not cached). Review made the form that is not told the loader cache nothing, since the first cut
+shared one cache across every caller of it and could have mixed two loaders' names. ADR 0017
+amended.
+
 The 2026-10-04 measurements, method and scripts are in
 `docs/investigations/2026-10-04-agent-startup.md`,
 `docs/investigations/2026-10-04-agent-heap.md` and the `startup/` and `heap/`

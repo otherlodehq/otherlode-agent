@@ -3,6 +3,7 @@ package dev.otherlode.instrumentation.endpoints.api
 import net.bytebuddy.description.type.TypeDescription
 import net.bytebuddy.dynamic.DynamicType
 import net.bytebuddy.matcher.ElementMatcher
+import net.bytebuddy.matcher.ElementMatchers.any
 
 /**
  * One framework's registration and dispatch hooks, discovered with [java.util.ServiceLoader].
@@ -39,6 +40,25 @@ interface EndpointModule {
     val handlerInterfaces: Set<String> get() = emptySet()
 
     fun typeMatcher(): ElementMatcher<in TypeDescription>
+
+    /**
+     * Which class loaders this module can match a class on. The pipeline asks this before it asks
+     * [typeMatcher], and a loader this rejects never has a class parsed for this module. A `null`
+     * argument is the bootstrap loader, as in ByteBuddy's own matcher contract.
+     *
+     * A module whose framework lives only on some loaders overrides this with a check that costs
+     * nothing per class, cached per loader, so that a loader without the framework costs no class
+     * file read. The default accepts every loader.
+     */
+    fun classLoaderMatcher(): ElementMatcher<in ClassLoader> = any()
+
+    /**
+     * The form of [typeMatcher] the pipeline calls, given [classLoader], the loader defining the
+     * class being matched (`null` for the bootstrap loader). A module that caches an answer per
+     * loader overrides this, so the cache is keyed by the loader the class came from. The default
+     * ignores the loader and returns [typeMatcher].
+     */
+    fun typeMatcher(classLoader: ClassLoader?): ElementMatcher<in TypeDescription> = typeMatcher()
 
     /**
      * Applies this module's advice to [builder] for [typeDescription].

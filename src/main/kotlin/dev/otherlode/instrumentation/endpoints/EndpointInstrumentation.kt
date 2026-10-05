@@ -131,7 +131,7 @@ class EndpointInstrumentation(
 
         for (module in modules) {
             builder =
-                builder.type(module.typeMatcher()).transform { typeBuilder, typeDescription, classLoader, _, _ ->
+                builder.type(rawMatcher(module)).transform { typeBuilder, typeDescription, classLoader, _, _ ->
                     // Anything the module declares from here is held until the rewrite produces
                     // bytes; see PendingDeclarations. The mark is where this module's own
                     // declarations start, since another module matching the same class may have
@@ -236,6 +236,20 @@ class EndpointInstrumentation(
                 continue
             }
             instrumentation.redefineModule(bootModule, setOf(seamModule), emptyMap(), emptyMap(), emptySet(), emptyMap())
+        }
+    }
+
+    companion object {
+        /**
+         * The matcher [install] registers for [module]: its [EndpointModule.classLoaderMatcher] first,
+         * so a loader the module rejects never has a class parsed for it, then
+         * [EndpointModule.typeMatcher] for the defining loader.
+         */
+        fun rawMatcher(module: EndpointModule): AgentBuilder.RawMatcher {
+            val loaderMatcher = module.classLoaderMatcher()
+            return AgentBuilder.RawMatcher { typeDescription, classLoader, _, _, _ ->
+                loaderMatcher.matches(classLoader) && module.typeMatcher(classLoader).matches(typeDescription)
+            }
         }
     }
 
