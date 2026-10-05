@@ -74,7 +74,7 @@ class PlaceholderCounts {
  * scanner and reference resolution do not use it: for them, resolved still means present.
  */
 internal class PlaceholderPoolStrategy : AgentBuilder.PoolStrategy {
-    private val current = ThreadLocal<PlaceholderPool?>()
+    private val current = ThreadLocal<LazyPlaceholderPool?>()
 
     override fun typePool(
         classFileLocator: ClassFileLocator,
@@ -88,13 +88,18 @@ internal class PlaceholderPoolStrategy : AgentBuilder.PoolStrategy {
     ): TypePool = typePool(classFileLocator)
 
     private fun typePool(classFileLocator: ClassFileLocator): TypePool {
-        val pool = PlaceholderPool(classFileLocator)
+        val pool = LazyPlaceholderPool(classFileLocator)
         current.set(pool)
         return TypePool.LazyFacade(pool)
     }
 
     /** The names the transform running on this thread described as placeholders so far. */
-    fun substituted(): Set<String> = current.get()?.substituted().orEmpty()
+    fun substituted(): Set<String> =
+        current
+            .get()
+            ?.created()
+            ?.substituted()
+            .orEmpty()
 
     /**
      * Notes the bytes of the class being woven for this transform's thread. [substantive] reads the
@@ -102,7 +107,7 @@ internal class PlaceholderPoolStrategy : AgentBuilder.PoolStrategy {
      * nothing missing is not parsed for this.
      */
     fun noteAnnotationTypes(classBytes: ByteArray) {
-        current.get()?.classBytes = classBytes
+        current.get()?.noteClassBytes(classBytes)
     }
 
     /**
@@ -112,7 +117,7 @@ internal class PlaceholderPoolStrategy : AgentBuilder.PoolStrategy {
      * writes.
      */
     fun substantive(): Set<String> {
-        val pool = current.get() ?: return emptySet()
+        val pool = current.get()?.created() ?: return emptySet()
         val substituted = pool.substituted()
         if (substituted.isEmpty()) return emptySet()
         val bytes = pool.classBytes ?: return substituted.toSet()
@@ -148,6 +153,44 @@ internal class PlaceholderPoolStrategy : AgentBuilder.PoolStrategy {
 
     /** Drops the pool of the transform that just finished, so a thread does not hold its descriptions. */
     fun release() = current.remove()
+}
+
+/**
+ * Stands in for a [PlaceholderPool] until something asks it to describe a type, since ByteBuddy asks
+ * for a pool for every class it looks at and most of them are never described. The pool is built on
+ * the first [describe]; [created] is null before that.
+ */
+internal class LazyPlaceholderPool(
+    private val classFileLocator: ClassFileLocator,
+) : TypePool {
+    @Volatile
+    private var pool: PlaceholderPool? = null
+
+    @Volatile
+    private var pendingClassBytes: ByteArray? = null
+
+    /** The pool, or null when nothing has been described through this one. */
+    fun created(): PlaceholderPool? = pool
+
+    /** Notes the bytes of the class being woven, for the pool whether it exists yet or not. */
+    fun noteClassBytes(classBytes: ByteArray) {
+        pendingClassBytes = classBytes
+        pool?.classBytes = classBytes
+    }
+
+    private fun pool(): PlaceholderPool =
+        pool ?: synchronized(this) {
+            pool ?: PlaceholderPool(classFileLocator).also {
+                it.classBytes = pendingClassBytes
+                pool = it
+            }
+        }
+
+    override fun describe(name: String): TypePool.Resolution = pool().describe(name)
+
+    override fun clear() {
+        pool?.clear()
+    }
 }
 
 /**

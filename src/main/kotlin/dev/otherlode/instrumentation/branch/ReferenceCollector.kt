@@ -16,6 +16,7 @@ import net.bytebuddy.jar.asm.signature.SignatureVisitor
  */
 internal class ReferenceCollector(
     private val names: MutableSet<String>,
+    private val remembersDescriptors: Boolean = false,
 ) {
     /** An internal name as an instruction's owner or type operand spells it, which is an array descriptor for an array type. */
     fun internalName(name: String?) {
@@ -23,10 +24,33 @@ internal class ReferenceCollector(
         if (name.startsWith("[")) descriptor(name) else names += name
     }
 
-    /** A field or method descriptor. */
+    private var recent: Array<String?>? = null
+    private var recentNext = 0
+
+    /**
+     * A field or method descriptor. The class names are cut out of the descriptor's text without
+     * building [Type] objects. With [remembersDescriptors], one of the last few descriptors read is
+     * skipped on sight, by identity: an instruction stream repeats the constant-pool string of a
+     * call it makes often, and what that string names is already in [names].
+     */
     fun descriptor(descriptor: String?) {
         if (descriptor == null) return
-        type(Type.getType(descriptor))
+        if (remembersDescriptors) {
+            val seen = recent ?: arrayOfNulls<String>(RECENT_DESCRIPTORS).also { recent = it }
+            if (seen.any { it === descriptor }) return
+            seen[recentNext] = descriptor
+            recentNext = (recentNext + 1) % RECENT_DESCRIPTORS
+        }
+        var index = 0
+        while (index < descriptor.length) {
+            if (descriptor[index] == 'L') {
+                val end = descriptor.indexOf(';', index)
+                if (end < 0) return
+                names += descriptor.substring(index + 1, end)
+                index = end
+            }
+            index++
+        }
     }
 
     fun type(type: Type) {
@@ -156,5 +180,9 @@ internal class ReferenceCollector(
         override fun visitEnd() {
             open.removeLastOrNull()
         }
+    }
+
+    private companion object {
+        const val RECENT_DESCRIPTORS = 8
     }
 }

@@ -25,6 +25,7 @@ import net.bytebuddy.matcher.ElementMatchers.not
 object TypeMatchPolicy {
     /** The agent's own classes are never instrumented, whatever `includePackages` says. */
     const val AGENT_PACKAGE_PREFIX = "dev.otherlode."
+    private const val AGENT_PACKAGE_INTERNAL_PREFIX = "dev/otherlode/"
 
     /**
      * Whether a fully qualified [className] is in scope: matched by [includePackages]
@@ -49,6 +50,35 @@ object TypeMatchPolicy {
     }
 
     /**
+     * [isIncluded] for an internal name (`com/acme/Foo`), answering as it does for the same name
+     * dotted, without building the dotted string. The prefixes stay dotted.
+     */
+    fun isIncludedInternal(
+        internalName: String,
+        includePackages: List<String>,
+        excludePackages: List<String>,
+    ): Boolean {
+        if (internalName.startsWith(AGENT_PACKAGE_INTERNAL_PREFIX)) return false
+        if (includePackages.none { isUnderInternalPrefix(internalName, it) }) return false
+        return excludePackages.none { isUnderInternalPrefix(internalName, it) }
+    }
+
+    /** [isUnderPrefix] for an internal name against a dotted [prefix]. */
+    fun isUnderInternalPrefix(
+        internalName: String,
+        prefix: String,
+    ): Boolean {
+        if (internalName.length < prefix.length) return false
+        for (index in prefix.indices) {
+            val character = internalName[index]
+            if (prefix[index] != (if (character == '/') '.' else character)) return false
+        }
+        if (internalName.length == prefix.length) return true
+        val boundary = internalName[prefix.length]
+        return boundary == '/' || boundary == '.' || boundary == '$'
+    }
+
+    /**
      * A prefix matches on a package or class boundary only: `com.acme` matches `com.acme.Foo` and
      * the class `com.acme` itself with its nested classes, but not `com.acmeinternal.Foo`. A plain
      * `startsWith` would match the latter, silently widening the instrumented or excluded set.
@@ -57,7 +87,12 @@ object TypeMatchPolicy {
     fun isUnderPrefix(
         className: String,
         prefix: String,
-    ): Boolean = className == prefix || className.startsWith("$prefix.") || className.startsWith("$prefix$")
+    ): Boolean {
+        if (!className.startsWith(prefix)) return false
+        if (className.length == prefix.length) return true
+        val boundary = className[prefix.length]
+        return boundary == '.' || boundary == '$'
+    }
 
     /**
      * The types this agent instruments: in scope by [isIncluded], and not turned away by

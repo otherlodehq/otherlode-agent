@@ -39,7 +39,6 @@ import net.bytebuddy.asm.Advice
 import net.bytebuddy.description.annotation.AnnotationDescription
 import net.bytebuddy.description.field.FieldDescription
 import net.bytebuddy.description.method.MethodDescription
-import net.bytebuddy.description.method.MethodList
 import net.bytebuddy.description.method.ParameterDescription
 import net.bytebuddy.description.modifier.FieldManifestation
 import net.bytebuddy.description.modifier.Ownership
@@ -599,7 +598,7 @@ class OtherlodeInstrumentation(
         val restored = restoreHeader(builder, source.received ?: analysedBytes)
         val (analysedMethods, receivedMethods, analysis, pairing) = analyse(typeDescription, classLoader, source)
         val methods =
-            receivedMethods?.let { received -> analysedMethods.filter { (it.internalName to it.descriptor) in received } }
+            receivedMethods?.let { received -> analysedMethods.filter { it.key in received } }
                 ?: analysedMethods
         if (pairing.unpairedMethods.isNotEmpty()) {
             val (absent, misaligned) = pairing.unpairedMethods.partition { receivedMethods != null && it !in receivedMethods }
@@ -677,7 +676,7 @@ class OtherlodeInstrumentation(
         val scalaGetterSitesByKey = analysis.scalaGetterSites.associateBy { it.getterName to it.getterDescriptor }
         val methodProbes =
             methods.map {
-                val getterSite = scalaGetterSitesByKey[it.internalName to it.descriptor]
+                val getterSite = scalaGetterSitesByKey[it.key]
                 if (getterSite != null) {
                     ProbeMeta(
                         ProbeKind.OPTIONAL_ARGUMENT,
@@ -693,25 +692,25 @@ class OtherlodeInstrumentation(
                         unreadShape = analysis.unreadShape(getterSite.targetName, getterSite.targetDescriptor),
                     )
                 } else {
-                    val sourceSignature = analysis.sourceSignatureOf(it.internalName, it.descriptor)
-                    val paired = pairing.isPaired(it.internalName, it.descriptor)
+                    val sourceSignature = analysis.sourceSignatureOf(it.name, it.descriptor)
+                    val paired = pairing.isPaired(it.name, it.descriptor)
                     ProbeMeta(
                         ProbeKind.METHOD,
-                        it.internalName.interned(),
+                        it.name.interned(),
                         it.descriptor.interned(),
-                        line = analysis.firstLineOf(it.internalName, it.descriptor),
-                        inline = analysis.isInline(it.internalName, it.descriptor),
+                        line = analysis.firstLineOf(it.name, it.descriptor),
+                        inline = analysis.isInline(it.name, it.descriptor),
                         // An unpaired method's sites are not reported, so no edge may name one as its guard.
                         calls =
                             analysis
-                                .callsOf(it.internalName, it.descriptor)
+                                .callsOf(it.name, it.descriptor)
                                 .map { edge -> if (paired) edge else edge.copy(guard = null) }
                                 .rightSized(),
-                        generatedBy = analysis.generatedBy(it.internalName, it.descriptor),
-                        unreadShape = analysis.unreadShape(it.internalName, it.descriptor),
-                        referencedClasses = references.keep(analysis.referencesOf(it.internalName, it.descriptor)),
-                        lambdaBody = analysis.isLambdaBody(it.internalName, it.descriptor),
-                        branchSites = if (paired) analysis.branchSitesOf(it.internalName, it.descriptor) else emptyList(),
+                        generatedBy = analysis.generatedBy(it.name, it.descriptor),
+                        unreadShape = analysis.unreadShape(it.name, it.descriptor),
+                        referencedClasses = references.keep(analysis.referencesOf(it.name, it.descriptor)),
+                        lambdaBody = analysis.isLambdaBody(it.name, it.descriptor),
+                        branchSites = if (paired) analysis.branchSitesOf(it.name, it.descriptor) else emptyList(),
                         static = it.isStatic,
                         parameterNames = sourceSignature.parameterNames.internedAll(),
                         genericSignature = sourceSignature.genericSignature.interned(),
@@ -801,7 +800,7 @@ class OtherlodeInstrumentation(
 
         val layoutHash =
             ProbeLayoutHash.of(
-                methods.map { it.internalName + it.descriptor } +
+                methods.map { it.name + it.descriptor } +
                     branchSites
                         .filter { it.dropReason == null }
                         .map { "${it.methodName}${it.methodDescriptor}#branch${it.siteIndex}x${it.probedOutcomeCount}" } +
@@ -819,7 +818,7 @@ class OtherlodeInstrumentation(
                 branchBase = methodProbes.size,
                 branchSlotCapacity = branchProbes.size,
             )
-        methods.forEachIndexed { slot, method -> plan.entrySlot(method.internalName, method.descriptor, slot) }
+        methods.forEachIndexed { slot, method -> plan.entrySlot(method.name, method.descriptor, slot) }
         var nextSlot = 0
         val runs = LinkedHashMap<Pair<String, String>, BranchProbeAsmVisitorWrapper.MethodSlots>()
         for (kept in keptSites) {
@@ -831,7 +830,7 @@ class OtherlodeInstrumentation(
         for ((key, run) in runs) plan.branchRun(key.first, key.second, run)
         if (branchSites.isNotEmpty()) {
             val eligible =
-                methods.map { it.internalName to it.descriptor }.filter { (name, descriptor) ->
+                methods.map { it.key }.filter { (name, descriptor) ->
                     pairing.isPaired(name, descriptor)
                 }
             // The class file's tracked instructions of each eligible method, so a later weave pairs
@@ -865,10 +864,22 @@ class OtherlodeInstrumentation(
         )
     }
 
+    /**
+     * What a transform needs of one method the method tier probes, read once. ByteBuddy builds a
+     * method's descriptor string on every request, and the transform asks for it at a dozen sites.
+     */
+    private class ProbedMethod(
+        val name: String,
+        val descriptor: String,
+        val isStatic: Boolean,
+    ) {
+        val key: Pair<String, String> = name to descriptor
+    }
+
     /** What [analyse] reads from a class's bytes for a first weave. */
     private data class ClassFileView(
         /** The methods the class file declares that the method tier probes. */
-        val analysedMethods: MethodList<*>,
+        val analysedMethods: List<ProbedMethod>,
         /** The methods the received bytes declare, or null when they are the class file. */
         val receivedMethods: Set<Pair<String, String>>?,
         val analysis: BranchSiteAnalyzer.Analysis,
@@ -895,17 +906,19 @@ class OtherlodeInstrumentation(
         val isScalaClass = analysedBytes?.let(ScalaClassDetector::isScalaClass) ?: false
         val methodMatcher = methodMatcher(isScalaClass)
         val analysedMethods =
-            if (source.receivedDiffers) {
-                describeClassFile(typeDescription, analysedBytes!!, classLoader).declaredMethods.filter(methodMatcher)
-            } else {
-                typeDescription.declaredMethods.filter(methodMatcher)
-            }
+            (
+                if (source.receivedDiffers) {
+                    describeClassFile(typeDescription, analysedBytes!!, classLoader).declaredMethods.filter(methodMatcher)
+                } else {
+                    typeDescription.declaredMethods.filter(methodMatcher)
+                }
+            ).map { ProbedMethod(it.internalName, it.descriptor, it.isStatic) }
         val receivedMethods =
             if (source.receivedDiffers) typeDescription.declaredMethods.mapTo(HashSet()) { it.internalName to it.descriptor } else null
         val analysis = analyzeBytecode(analysedBytes, classLoader, analysedMethods, source.received.takeIf { source.receivedDiffers })
         val pairing =
             if (source.receivedDiffers) {
-                SitePairing.of(analysedBytes!!, source.received!!, analysedMethods.map { it.internalName to it.descriptor })
+                SitePairing.of(analysedBytes!!, source.received!!, analysedMethods.map { it.key })
             } else {
                 SitePairing.IDENTICAL
             }
@@ -1388,9 +1401,9 @@ class OtherlodeInstrumentation(
         typeName: String,
         analysis: BranchSiteAnalyzer.Analysis,
         pairing: SitePairing,
-        methods: List<MethodDescription>,
+        methods: List<ProbedMethod>,
     ): List<String> {
-        val probed = methods.mapTo(HashSet()) { it.internalName to it.descriptor }
+        val probed = methods.mapTo(HashSet()) { it.key }
         val guarded = analysis.sizeGuard.guarded.filter { (key, _) -> pairing.isPaired(key.first, key.second) }
         val entryOnly = analysis.sizeGuard.entryPastLimit.filter { (key, _) -> key in probed }
         return (guarded + entryOnly).map { (key, verdict) -> verdict.message(typeName, key.first, key.second) }
@@ -1477,10 +1490,10 @@ class OtherlodeInstrumentation(
     private fun analyzeBytecode(
         classBytes: ByteArray?,
         classLoader: ClassLoader?,
-        methods: MethodList<*>,
+        methods: List<ProbedMethod>,
         receivedBytes: ByteArray?,
     ): BranchSiteAnalyzer.Analysis {
-        val eligible = methods.map { it.internalName to it.descriptor }.toSet()
+        val eligible = methods.mapTo(HashSet()) { it.key }
         val bytes = classBytes ?: return BranchSiteAnalyzer.Analysis.EMPTY
         val lookup = crossClassLookup(classLoader)
         return BranchSiteAnalyzer.analyze(

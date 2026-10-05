@@ -56,11 +56,12 @@ object BranchKeys {
         className: String,
     ): Map<Pair<Int, Int>, String> {
         val keys = mutableMapOf<Pair<Int, Int>, String>()
+        val classBytes = utf8(className)
         for (nameable in nameableSites(sites)) {
+            val input = DigestInput(classBytes, nameable.site, nameable.fingerprint)
             nameable.outcomeTokens.forEachIndexed { offset, outcomeToken ->
                 if (outcomeToken == null) return@forEachIndexed
-                keys[nameable.site.siteIndex to offset] =
-                    digest(DERIVATION_TAG, className, nameable.site, nameable.fingerprint, outcomeToken)
+                keys[nameable.site.siteIndex to offset] = digest(DERIVATION_TAG_BYTES, input, outcomeToken)
             }
         }
         return keys
@@ -74,10 +75,13 @@ object BranchKeys {
     fun computeSiteKeys(
         sites: List<BranchSite>,
         className: String,
-    ): Map<Int, String> =
-        nameableSites(sites).associate { nameable ->
-            nameable.site.siteIndex to digest(SITE_DERIVATION_TAG, className, nameable.site, nameable.fingerprint, null)
+    ): Map<Int, String> {
+        val classBytes = utf8(className)
+        return nameableSites(sites).associate { nameable ->
+            nameable.site.siteIndex to
+                digest(SITE_DERIVATION_TAG_BYTES, DigestInput(classBytes, nameable.site, nameable.fingerprint), null)
         }
+    }
 
     private class NameableSite(
         val site: BranchSite,
@@ -140,32 +144,60 @@ object BranchKeys {
         return caseKeys.map { "case:$it" } + "default"
     }
 
-    /**
-     * Hex of the first 16 bytes of the SHA-256 digest of [className], [site]'s method name,
-     * method descriptor, origin class, [fingerprint] and [outcomeToken], joined with a
-     * `\u0000` separator, which no name and no token the agent builds contains; only a string
-     * constant inside [fingerprint] could. [tag] leads the text, so a later change to a
-     * derivation changes the digest input, not only its output. A site key passes a null
-     * [outcomeToken] and adds nothing after [fingerprint].
-     */
-    private fun digest(
-        tag: String,
-        className: String,
+    private fun utf8(text: String): ByteArray = text.toByteArray(Charsets.UTF_8)
+
+    private val DERIVATION_TAG_BYTES = utf8(DERIVATION_TAG)
+    private val SITE_DERIVATION_TAG_BYTES = utf8(SITE_DERIVATION_TAG)
+    private val SEPARATOR_BYTES = utf8(SEPARATOR)
+
+    private val sha256: ThreadLocal<MessageDigest> = ThreadLocal.withInitial { MessageDigest.getInstance("SHA-256") }
+
+    /** The parts of one site's digest input that every one of its outcomes shares, encoded once. */
+    private class DigestInput(
+        val className: ByteArray,
         site: BranchSite,
         fingerprint: String,
+    ) {
+        val methodName = utf8(site.methodName)
+        val methodDescriptor = utf8(site.methodDescriptor)
+        val origin = utf8(site.inlinedFromClassName ?: "")
+        val fingerprint = utf8(fingerprint)
+    }
+
+    /**
+     * Hex of the first 16 bytes of the SHA-256 digest of the tag, the class name, the site's method
+     * name, method descriptor, origin class, fingerprint and [outcomeToken], joined with a
+     * `\u0000` separator, which no name and no token the agent builds contains; only a string
+     * constant inside the fingerprint could. The tag leads the text, so a later change to a
+     * derivation changes the digest input, not only its output. A site key passes a null
+     * [outcomeToken] and adds nothing after the fingerprint.
+     *
+     * The parts go to the digest one `update` at a time, which hashes the bytes of the joined
+     * text: encoding each part alone gives the same bytes, since no character pair straddles a
+     * separator.
+     */
+    private fun digest(
+        tag: ByteArray,
+        input: DigestInput,
         outcomeToken: String?,
     ): String {
-        val text =
-            listOfNotNull(
-                tag,
-                className,
-                site.methodName,
-                site.methodDescriptor,
-                site.inlinedFromClassName ?: "",
-                fingerprint,
-                outcomeToken,
-            ).joinToString(SEPARATOR)
-        val hash = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
+        val digest = sha256.get()
+        digest.update(tag)
+        digest.update(SEPARATOR_BYTES)
+        digest.update(input.className)
+        digest.update(SEPARATOR_BYTES)
+        digest.update(input.methodName)
+        digest.update(SEPARATOR_BYTES)
+        digest.update(input.methodDescriptor)
+        digest.update(SEPARATOR_BYTES)
+        digest.update(input.origin)
+        digest.update(SEPARATOR_BYTES)
+        digest.update(input.fingerprint)
+        if (outcomeToken != null) {
+            digest.update(SEPARATOR_BYTES)
+            digest.update(utf8(outcomeToken))
+        }
+        val hash = digest.digest()
         val hex = CharArray(HEX_CHARS)
         for (i in 0 until HEX_CHARS / 2) {
             val byte = hash[i].toInt()

@@ -1055,6 +1055,16 @@ are about 1.7 GB. Local fixes, about 600 MB, are chunk 7a. Grilled the same day 
 Landing order amended: (7a) local allocation fixes; (7b) the JDK-type pool and code-source reads;
 then (8) as above.
 
+Chunk 7a landed: one per-transform list of probed methods replaces repeated `MethodDescription`
+descriptor building; `BranchKeys` feeds a thread-local digest the same bytes part by part (pinned);
+`ReferenceCollector` cuts names out of descriptors without `Type` objects and skips one of its last
+eight descriptors by identity; method tables detect Scala in their own visitor and are built
+compact directly; `ScalaClassDetector` walks the class file without allocating, falling back to
+ASM; `isUnderPrefix` and an internal-name form need no concatenation; the endpoint raw matcher
+builds each module's matcher once per loader; the placeholder pool is made on first use. Woven
+bytes and manifests identical over the five corpora. Ceiling startup allocation 7,968 MB to 7,373 MB
+(agent stacks 6,566 to 5,990), young GCs 90 to 81, startup within noise (one run each).
+
 The 2026-10-04 measurements, method and scripts are in
 `docs/investigations/2026-10-04-agent-startup.md`,
 `docs/investigations/2026-10-04-agent-heap.md` and the `startup/` and `heap/`

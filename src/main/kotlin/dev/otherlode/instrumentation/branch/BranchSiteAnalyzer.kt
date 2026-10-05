@@ -411,7 +411,7 @@ object BranchSiteAnalyzer {
         referencesForMethod: MutableSet<String>,
         private val instructionOrdinal: () -> Int = { -1 },
     ) : MethodVisitor(Opcodes.ASM9) {
-        private val references = ReferenceCollector(referencesForMethod)
+        private val references = ReferenceCollector(referencesForMethod, remembersDescriptors = true)
 
         /** Each `new` not yet completed by its `<init>` call, as its type and ordinal, latest last. */
         private val pendingNews = ArrayList<Pair<String, Int>>()
@@ -1391,14 +1391,15 @@ object BranchSiteAnalyzer {
         includePackages: List<String>,
         excludePackages: List<String>,
     ): PlacedReferences {
-        fun outOfScope(rawNames: Collection<String>): List<String> =
-            rawNames
-                .asSequence()
-                .filter { it != internalClassName }
-                .map { it.replace('/', '.') }
-                .filterNot { TypeMatchPolicy.isIncluded(it, includePackages, excludePackages) }
-                .distinct()
-                .toList()
+        fun outOfScope(rawNames: Collection<String>): List<String> {
+            if (rawNames.isEmpty()) return emptyList()
+            val names = LinkedHashSet<String>()
+            for (raw in rawNames) {
+                if (raw == internalClassName || TypeMatchPolicy.isIncludedInternal(raw, includePackages, excludePackages)) continue
+                names += raw.replace('/', '.')
+            }
+            return names.toList()
+        }
 
         // A method with no body never gets a METHOD probe, whatever the method filter said, so its
         // references go to the class rather than to a probe that does not exist.
@@ -4524,12 +4525,13 @@ object BranchSiteAnalyzer {
         var interfaceInternalNames: List<String> = emptyList()
         var hasEnclosingMethod = false
         var isKotlinClass = false
+        var isScalaClass = false
         var kotlinKind = KotlinKind.NONE
-        val methodAccess = mutableMapOf<Pair<String, String>, Int>()
-        val localNames = mutableMapOf<Pair<String, String>, MutableMap<Int, String>>()
-        val firstLines = mutableMapOf<Pair<String, String>, Int>()
-        val rawCandidatesByMethod = mutableMapOf<Pair<String, String>, MutableList<RawCandidate>>()
-        val rawReferencesByMethod = mutableMapOf<Pair<String, String>, MutableSet<String>>()
+        val methodAccess = LinkedHashMap<Pair<String, String>, Int>()
+        val localNames = LinkedHashMap<Pair<String, String>, Map<Int, String>>()
+        val firstLines = LinkedHashMap<Pair<String, String>, Int>()
+        val rawCandidatesByMethod = LinkedHashMap<Pair<String, String>, List<RawCandidate>>()
+        val rawReferencesByMethod = LinkedHashMap<Pair<String, String>, Set<String>>()
 
         val classVisitor =
             object : ClassVisitor(Opcodes.ASM9) {
@@ -4555,6 +4557,10 @@ object BranchSiteAnalyzer {
                     hasEnclosingMethod = true
                 }
 
+                override fun visitAttribute(attribute: Attribute) {
+                    if (ScalaClassDetector.isScalaAttribute(attribute)) isScalaClass = true
+                }
+
                 override fun visitAnnotation(
                     descriptor: String,
                     visible: Boolean,
@@ -4572,17 +4578,18 @@ object BranchSiteAnalyzer {
                     signature: String?,
                     exceptions: Array<out String>?,
                 ): MethodVisitor {
-                    methodAccess[name to descriptor] = access
-                    val localNamesForMethod = localNames.getOrPut(name to descriptor) { mutableMapOf() }
-                    val candidatesForMethod = rawCandidatesByMethod.getOrPut(name to descriptor) { mutableListOf() }
-                    val referencesForMethod = rawReferencesByMethod.getOrPut(name to descriptor) { LinkedHashSet() }
+                    val key = name.interned() to descriptor.interned()
+                    methodAccess[key] = access
+                    var localNamesForMethod: MutableMap<Int, String>? = null
+                    val candidatesForMethod = mutableListOf<RawCandidate>()
+                    val referencesForMethod = LinkedHashSet<String>()
                     recordSignatureReferences(referencesForMethod, descriptor, signature, exceptions)
                     return object : CallCandidateMethodVisitor(internalName, candidatesForMethod, referencesForMethod) {
                         override fun visitLineNumber(
                             line: Int,
                             start: Label,
                         ) {
-                            firstLines.putIfAbsent(name to descriptor, line)
+                            firstLines.putIfAbsent(key, line)
                         }
 
                         override fun visitLocalVariable(
@@ -4593,14 +4600,34 @@ object BranchSiteAnalyzer {
                             end: Label,
                             index: Int,
                         ) {
-                            localNamesForMethod.putIfAbsent(index, localName)
+                            val names = localNamesForMethod ?: mutableMapOf<Int, String>().also { localNamesForMethod = it }
+                            names.putIfAbsent(index, localName.interned())
+                        }
+
+                        override fun visitEnd() {
+                            localNames[key] = localNamesForMethod ?: emptyMap()
+                            rawCandidatesByMethod[key] =
+                                candidatesForMethod
+                                    .map {
+                                        it.copy(
+                                            owner = it.owner.interned(),
+                                            name = it.name.interned(),
+                                            descriptor = it.descriptor.interned(),
+                                            functionalInterface = it.functionalInterface.internedOrNull(),
+                                        )
+                                    }.rightSized()
+                            rawReferencesByMethod[key] =
+                                when (referencesForMethod.size) {
+                                    0 -> emptySet()
+                                    1 -> setOf(referencesForMethod.first().interned())
+                                    else -> referencesForMethod.mapTo(LinkedHashSet(referencesForMethod.size * 2)) { it.interned() }
+                                }
                         }
                     }
                 }
             }
 
         ClassReader(classBytes).accept(classVisitor, ClassReader.SKIP_FRAMES)
-        val isScalaClass = ScalaClassDetector.isScalaClass(classBytes)
         // A method with any line number carries a line-number table, which is all the data-class
         // rule in computeGeneratedBy asks of methodsWithLineNumbers. Only the forwarders are kept,
         // and no forwarder rule reads another class, so nothing is looked up.
@@ -4620,44 +4647,20 @@ object BranchSiteAnalyzer {
             ).generated
                 .filterValues { it in PASS_THROUGH_FORWARDERS }
                 .keys
-        val keys = HashMap<Pair<String, String>, Pair<String, String>>()
-
-        fun canonical(key: Pair<String, String>) = keys.getOrPut(key) { key.first.interned() to key.second.interned() }
         return MethodTable(
             classAccess,
-            methodAccess.entries.associate { canonical(it.key) to it.value },
-            localNames.entries.associate { (key, names) ->
-                canonical(key) to
-                    if (names.isEmpty()) emptyMap() else names.mapValues { it.value.interned() }
-            },
-            firstLines.entries.associate { canonical(it.key) to it.value },
-            rawCandidatesByMethod.entries.associate { (key, candidates) ->
-                canonical(key) to
-                    candidates
-                        .map {
-                            it.copy(
-                                owner = it.owner.interned(),
-                                name = it.name.interned(),
-                                descriptor = it.descriptor.interned(),
-                                functionalInterface = it.functionalInterface.internedOrNull(),
-                            )
-                        }.rightSized()
-            },
+            methodAccess,
+            localNames,
+            firstLines,
+            rawCandidatesByMethod,
             isScalaClass,
             hasEnclosingMethod,
-            rawReferencesByMethod.entries.associate { (key, names) ->
-                canonical(key) to
-                    when (names.size) {
-                        0 -> emptySet()
-                        1 -> setOf(names.first().interned())
-                        else -> names.mapTo(LinkedHashSet(names.size * 2)) { it.interned() }
-                    }
-            },
+            rawReferencesByMethod,
             internalName.interned(),
             superInternalName.internedOrNull(),
             interfaceInternalNames.internedAll(),
             kotlinKind,
-            forwarderKeys.mapTo(LinkedHashSet()) { canonical(it) },
+            forwarderKeys.mapTo(LinkedHashSet()) { it.first.interned() to it.second.interned() },
         )
     }
 }

@@ -16,6 +16,7 @@ import net.bytebuddy.matcher.ElementMatchers.nameStartsWith
 import net.bytebuddy.utility.JavaModule
 import java.lang.System.Logger.Level
 import java.lang.instrument.Instrumentation
+import java.util.Collections
 import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
 
@@ -248,11 +249,24 @@ class EndpointInstrumentation(
          * The matcher [install] registers for [module]: its [EndpointModule.classLoaderMatcher] first,
          * so a loader the module rejects never has a class parsed for it, then
          * [EndpointModule.typeMatcher] for the defining loader.
+         *
+         * The type matcher is built once for each loader and kept weakly by it, since the default
+         * form builds a new `namedOneOf` for every call and this runs for every class the JVM
+         * loads. A module's matcher must therefore not hold the loader it was built for.
          */
         fun rawMatcher(module: EndpointModule): AgentBuilder.RawMatcher {
             val loaderMatcher = module.classLoaderMatcher()
+            val byLoader = Collections.synchronizedMap(WeakHashMap<ClassLoader, ElementMatcher<in TypeDescription>>())
+            val bootstrapMatcher = lazy(LazyThreadSafetyMode.PUBLICATION) { module.typeMatcher(null) }
             return AgentBuilder.RawMatcher { typeDescription, classLoader, _, _, _ ->
-                loaderMatcher.matches(classLoader) && module.typeMatcher(classLoader).matches(typeDescription)
+                if (!loaderMatcher.matches(classLoader)) return@RawMatcher false
+                val typeMatcher: ElementMatcher<in TypeDescription> =
+                    if (classLoader == null) {
+                        bootstrapMatcher.value
+                    } else {
+                        byLoader.computeIfAbsent(classLoader) { module.typeMatcher(it) }
+                    }
+                typeMatcher.matches(typeDescription)
             }
         }
     }

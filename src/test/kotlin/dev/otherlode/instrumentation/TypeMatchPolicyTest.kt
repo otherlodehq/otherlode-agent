@@ -32,6 +32,49 @@ class TypeMatchPolicyTest {
     }
 
     @Test
+    fun `isUnderPrefix answers on the boundary and nowhere else`() {
+        assertTrue(TypeMatchPolicy.isUnderPrefix("com.acme", "com.acme"))
+        assertTrue(TypeMatchPolicy.isUnderPrefix("com.acme.Foo", "com.acme"))
+        assertTrue(TypeMatchPolicy.isUnderPrefix("com.acme.deep.Foo", "com.acme"))
+        assertTrue(TypeMatchPolicy.isUnderPrefix("com.acme\$Inner", "com.acme"))
+        assertFalse(TypeMatchPolicy.isUnderPrefix("com.acmex", "com.acme"))
+        assertFalse(TypeMatchPolicy.isUnderPrefix("com.acmex.Foo", "com.acme"))
+        assertFalse(TypeMatchPolicy.isUnderPrefix("com.acm", "com.acme"))
+        assertFalse(TypeMatchPolicy.isUnderPrefix("org.acme.Foo", "com.acme"))
+        assertFalse(TypeMatchPolicy.isUnderPrefix("com", "com.acme"))
+    }
+
+    @Test
+    fun `an internal name is in scope exactly when its dotted name is`() {
+        val names =
+            listOf(
+                "com/acme/Foo",
+                "com/acme/Foo\$Inner",
+                "com/acme",
+                "com/acmex/Foo",
+                "com/acm",
+                "com/acme/internal/Bar",
+                "org/other/Baz",
+                "dev/otherlode/Agent",
+                "dev/otherlodex/Thing",
+                "Plain",
+            )
+        val includes = listOf(listOf("com.acme"), listOf("com", "dev"), listOf("com.acme.Foo"), listOf("Plain"), emptyList())
+        val excludes = listOf(emptyList(), listOf("com.acme.internal"), listOf("com.acme.Foo"))
+        for (name in names) {
+            for (include in includes) {
+                for (exclude in excludes) {
+                    assertEquals(
+                        TypeMatchPolicy.isIncluded(name.replace('/', '.'), include, exclude),
+                        TypeMatchPolicy.isIncludedInternal(name, include, exclude),
+                        "$name include=$include exclude=$exclude",
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
     fun `a prefix naming a class matches that class and its nested classes`() {
         val prefixes = listOf("com.acme.Foo")
 
