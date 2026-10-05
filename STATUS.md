@@ -149,11 +149,11 @@ adopter's collector forwards to one multi-tenant backend.
      refuses a query string or fragment; no option begins with `testkit` or
      `collector`; OTel's `service.version` is read, its
      `service.instance.id` never (ADR 0045, amended); every other name stands.
-   - Versioning (ADR 0057): `otherlode-agent` and `otherlode-testkit` go to
-     Maven Central under `dev.otherlode`; agent, testkit and collector
-     release in lockstep from `0.1.0`; the version lives in the tree and a
-     release is a matching `vX.Y.Z` tag. Publishing, signing, the release
-     workflow and a JDK 17 floor (if a JDK 17 CI leg passes) are item 6.
+   - Versioning (ADR 0057, superseded by ADR 0062 on 2026-10-05):
+     `otherlode-agent` and `otherlode-testkit` go to Maven Central under
+     `dev.otherlode` and share a version from `0.1.0`; the collector, at
+     first in lockstep, has its own version (item 6). The version lives in
+     the tree and a release is a matching `vX.Y.Z` tag.
 5. **Security basics, sized to how the server is hosted.** Settled on
    2026-09-27 in a grilling session: server ADRs 0040 to 0043 and
    collector ADR 0003. The plan, its ten chunks and what is deferred are
@@ -165,11 +165,12 @@ adopter's collector forwards to one multi-tenant backend.
    `ingest` or `read` with an ingest limit per tenant; audit events that
    show operator actions to the tenant; hosting on GCP Cloud Run and
    Cloud SQL; nothing costs money before a paying customer needs it.
-   On 2026-09-28 chunks 1 to 9 had landed in all three repos and a
-   review of the whole session was running; chunk 10, the GCP deploy,
-   waits on a GCP account (sign-up blocked on phone verification). The
-   server STATUS's section has the commits, the open review and what
-   chunk 10 needs.
+   All ten chunks have landed: production went live on 2026-09-28, moved
+   to `otherlode-production` on 2026-09-30, and has had browser login
+   since 2026-10-02. What stays before the first customer (the company,
+   the privacy policy, the domain, the front door) is the server STATUS's
+   "Go-live checklist"; none of it blocks publishing the agent, but no
+   collector can be given an ingest URL until the front door exists.
    - Server: the full Content-Security-Policy landed on 2026-09-27
      (server `788716b`). Its regression guard is chunk 2 of the server
      plan: a CI check on the built `dist/` and a jsdom Select test.
@@ -189,29 +190,47 @@ adopter's collector forwards to one multi-tenant backend.
      outermost protocol, and `ReferencedClassLocator` matches its prefixes
      ignoring case too, since a custom handler's `toExternalForm` can print
      any case.
-6. **Release mechanics.**
-   - Collector: publish the image to GHCR with tags. The HEALTHCHECK landed
-     on 2026-09-27 (collector `e5d3e2f`): a `healthcheck` subcommand GETs
-     `/healthz` with no proxy, loopback for an empty or unspecified host, a
-     2s deadline, and exit 2 for any other argument. The server's probe had
-     the same proxy and address gaps, fixed the same way on 2026-09-27
-     (server `19f08fa`) with a 2.5s deadline, past `/readyz`'s 2s database
-     ping, and exit 2 for arguments after `healthcheck`. The build
-     image moved back to `golang:1.26-alpine`
-     on 2026-09-27 (collector `65989bc`): `go 1.26.0` in `go.mod` is the
-     floor for anyone importing `ingest` or `metrics`, kept for
-     compatibility, and a Dependabot bump had moved the image to 1.27;
-     Dependabot now ignores golang minor and major bumps.
-   - Agent: publish `otherlode-agent` and `otherlode-testkit` to Maven
-     Central (ADR 0057): verify the `dev.otherlode` namespace with a TXT
-     record on `otherlode.dev`, poms with licence, developer and SCM
-     metadata, sources and javadoc jars, signing, and a workflow on a
-     `vX.Y.Z` tag that refuses a tag differing from the declared version,
-     attaches the agent jar to a GitHub release and pushes the collector
-     image under the same number.
-   - JDK floor: add a JDK 17 CI leg; if it passes, target 17 for the agent
-     jar and the testkit (settled 2026-10-04). ADR 0035's lambda-factory
-     hook reads JDK internals and is the part most likely to differ.
+6. **Release mechanics.** Grilled on 2026-10-05 with Luke after two research
+   passes (what couples the three repos; how to publish to the Central
+   Portal), ADRs 0062 and 0063, collector ADR 0006, collector ADR 0005
+   amended; ADR 0057 superseded.
+   - Versioning (ADR 0062): the agent and the testkit share a version; the
+     collector has its own, `v0.1.0` first, cut just before the agent's
+     `0.1.0`, and adopters run the latest. Nothing reads the collector's
+     version, and the newest collector serves every agent. The one ordering
+     rule: before an agent release that changed the schema, the server's
+     `master` and the latest collector release carry bindings at least as
+     new as it.
+   - Cutting (ADR 0063): `scripts/release.sh X.Y.Z` locally (changelog
+     section required, the bindings check through `gh api` with an override,
+     the release commit, the tag, the next SNAPSHOT); the tag workflow
+     refuses a mismatched or SNAPSHOT tag, runs every JDK leg, and uploads
+     one Portal deployment through nmcp, both artifacts from the shadow
+     component, signed by a dedicated `releases@otherlode.dev` key held in a
+     `release` environment only `v*` tags reach. `USER_MANAGED` for `0.1.0`
+     (GitHub release a draft until Luke publishes on the Portal), `AUTOMATIC`
+     after. The GitHub release carries the agent jar, its `.asc` and
+     `SHA256SUMS`, with the changelog section. A manual rehearsal uploads
+     `0.0.0-rehearsal.<run>` and drops it.
+   - Collector (collector ADR 0006): its own `release.sh`, changelog and tag
+     workflow; a `linux/amd64` and `linux/arm64` image on GHCR tagged
+     `X.Y.Z`, `X.Y` and `latest` with build provenance; no binaries; the
+     redaction WARNING and README say "the latest collector".
+   - Landing order, one chunk and one commit each: (1) JDK 17 floor and CI
+     leg; (2) the agent's publishing build (nmcp, signing, POMs, sources and
+     javadoc jars, the testkit's stdlib on its shadow variant), proved with
+     the local bundle; (3) the agent's release and rehearsal workflows,
+     `release.sh` with the bindings check, `CHANGELOG.md`; (4) the
+     collector's release pieces and rewording; then Luke's steps and the
+     rehearsal.
+   - Luke's steps, needed before the rehearsal: the `releases@otherlode.dev`
+     mailbox (Google), the Portal account, the `dev.otherlode` namespace and
+     its TXT record on the apex `otherlode.dev`, a Portal user token, the
+     signing key and its upload to both keyservers, the four secrets in the
+     `release` environment, and the `v*` tag ruleset.
+   - A flaky test now blocks a release: `CodeSourceClassFileTest`'s warm-up
+     tests failed on CI on 2026-10-05 (runs 37353518574 and 37360423743, a
+     different test each time) and passed on rerun. To fix before `0.1.0`.
    - Agent CI moved to `bufbuild/buf-action` on 2026-09-27, which also
      checks formatting. It runs every check but not the push, which is a
      `buf push --label master` step after it: the action's own push labels
@@ -225,9 +244,13 @@ adopter's collector forwards to one multi-tenant backend.
      not say so; unconfirmed. Runs queue per ref, since two publishes in
      flight could move the label back, and a manual run checks a change to
      the workflow alone without publishing.
-   - Server: it is not published. Settled on 2026-09-27: GitHub
-     Actions builds it and deploys it to GCP Cloud Run by digest,
-     through Workload Identity Federation (chunk 10 of the server plan).
+   - The collector's HEALTHCHECK landed on 2026-09-27 (collector `e5d3e2f`),
+     and the server's probe got the same proxy and address fixes (server
+     `19f08fa`). The collector's build image is `golang:1.26-alpine`
+     (collector `65989bc`), with Dependabot ignoring golang minor and major
+     bumps, since `go 1.26.0` in `go.mod` is the floor for importers.
+   - Server: it is not published; GitHub Actions deploys it to Cloud Run by
+     digest through Workload Identity Federation.
 7. **Measure the overhead.** Grilled on 2026-10-04; the entry "Runtime
    overhead: grilled, to build" below. Before release: the PetClinic macro
    harness with its headline and ceiling numbers in the README, the hot-path
@@ -249,6 +272,12 @@ adopter's collector forwards to one multi-tenant backend.
    that run and has not been measured on the runner yet: the next nightly run
    of the overhead benchmark on `master` is the first, and the ceiling's
    one-core startup (58.2 s at `8139271`) is the number to read.
+
+10. **Docs for the agent and the collector.** Added 2026-10-05; parked for
+    its own grill in a future session: where docs live (the READMEs, a
+    `docs/` folder, or the `otherlode.dev` site), who they are for
+    (quickstart, configuration reference, testkit guide, collector
+    deployment, reading findings), and how much of it blocks `0.1.0`.
 
 After release: naming polish (`this$0`, facade names, the demo printer),
 the server's performance-only deferrals, gzip, a collector config file, agent-level redaction
@@ -2084,8 +2113,9 @@ published, to the Buf Schema Registry, and CI does that on every push that
 touches the proto.
 
 What gets published, under which version, and the testkit's frozen surface
-were settled on 2026-10-04 (ADRs 0056 and 0057). The publishing itself is
-checklist item 6.
+were settled on 2026-10-04 (ADRs 0056 and 0057, the versioning superseded by
+0062), and how a release is cut and published on 2026-10-05 (ADR 0063). The
+publishing itself is checklist item 6.
 
 ### Naming hidden code: landed in all three repos
 

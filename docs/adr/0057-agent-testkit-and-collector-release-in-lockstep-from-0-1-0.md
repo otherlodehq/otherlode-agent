@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: superseded by ADR 0062
 ---
 
 # The agent, the testkit and the collector release in lockstep, from 0.1.0
@@ -19,3 +19,7 @@ Two artifacts go to Maven Central under the `dev.otherlode` namespace, verified 
 - A collector release with no changes of its own is normal.
 - `agent_version` stays an opaque string compared only for equality (ADR 0054, amended). Nothing orders versions, so nothing constrains how they are numbered.
 - Publishing, signing and the image push are release mechanics, `STATUS.md`'s checklist item 6, and so is the JDK floor: 17 if a JDK 17 CI leg passes.
+
+## Superseded on 2026-10-05
+
+Research for checklist item 6 found nothing in any repository that reads the collector's version, and that the newest collector serves every agent, so no pairing table is needed. ADR 0062 keeps the agent and the testkit on one version and gives the collector its own; everything else here stands there.
