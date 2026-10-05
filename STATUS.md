@@ -1123,7 +1123,52 @@ The 2026-10-04 write-ups were removed when this work landed (git history keeps t
 `2e0dbe4` and `5a47ad0`); their scripts are the manual profiling kit in
 `benchmark-overhead/profiling/`.
 
-### `DECORATE` instead of `REBASE`, and the entry probe in ASM: to grill
+### `DECORATE` instead of `REBASE`, and the entry probe in ASM: grilled, to build
+
+Grilled on 2026-10-05 with Luke, from an Opus research pass with a standalone harness over 3,184
+corpus classes (byte-buddy 1.18.12; scratch in the session's `decorate/` directory). Findings:
+`DECORATE` (`ByteBuddy.decorate`, `DecoratingDynamicTypeBuilder`) skips `MethodRegistry.prepare`,
+`InstrumentedType` representation and the supertype parses entirely, writes the class header
+verbatim (3,184 of 3,184 identical to the received bytes, where the rebase changed 384 without the
+restorer) and refuses `defineField`, `defineMethod` and `initializer`. Per class, ByteBuddy's weave
+took about a third of the time and 40% of the allocation, and an ASM entry probe halved what was
+left; every woven class in every mode defined and initialised exactly as its unwoven twin. Under a
+strict pool the rebase failed 42 to 68 classes per corpus on absent types (what ADR 0059 patched)
+and `DECORATE` none. The agent at `8139271` skips `kotlin.Result`
+(`Cannot resolve T from private static final ? kotlin.Result.getOrNull-impl(?)`, from
+`MethodRegistry.prepare`), so every generic `@JvmInline value class` is skipped today; `DECORATE`
+weaves it.
+
+Settled:
+
+- **Adopt both before 0.1.0 (Q26):** `DECORATE` for the method tier, and the entry and omission
+  probes written in the agent's own ASM instead of `Advice`.
+- **A custom type strategy (Q28):** a `DecoratingDynamicTypeBuilder` subclass with
+  `TypeAttributeAppender.NoOp`, since stock `DECORATE` with annotation retention resolves each
+  class-level annotation type (about 1.7 parses per Kotlin class, identical bytes);
+  `Implementation.Context.Disabled` is set on the `ByteBuddy` instance by hand, since
+  `disableClassFormatChanges()` keeps only the stock strategy. `ForDeclaredMethods` stays.
+- **The missing-supertype guard stays (Q29):** a class whose supertype is absent is refused and
+  reported as skipped, the walk reading supertype names through the agent's cached class-file reads
+  instead of the placeholder pool.
+- **Branchless omission probes (Q30):** per optional bit, add `(mask >>> i) & 1` to its slot; no
+  frames, no locals; a supplied parameter writes +0 (ADR 0003's accepted race).
+- **No accessor frame below version 50 (Q31),** accepted in the normalised comparison.
+- **`SizeGuard.ADVICE_TAIL` goes to 0 (Q32).**
+- **`AgentBuilder` stays (Q33);** raw ASM would save about 13 µs a class and cost its listener,
+  circularity handling, pool and description.
+
+Landing order (Q27), one chunk and one commit each: (1) `DECORATE` with ASM writing the below-55
+field, `<clinit>` prelude and accessor and the refusal marker, keeping `Advice`, proved by byte
+equality with today apart from the rebase's `<clinit>` scaffolding and member order below 55; (2) ASM
+entry and omission probes, proved by equality apart from `Advice`'s goto, nop, entry frame and first
+line label; (3) the placeholder pool, `PlaceholderCounts` and the header restorer deleted, the
+supertype guard re-homed. ADRs amended with each chunk: 0058 (only the class-visitor half of
+validation can run), 0059 (superseded except the supertype rule), 0060 (the mechanism becomes ASM),
+0061 (the `Advice` and rebase frame exceptions go); 0052 and 0053 unchanged in substance.
+
+What follows is the entry as raised.
+
 
 Raised 2026-10-05 by the startup allocation pass. The method tier rebases every woven class, and
 ByteBuddy's rebase (`MethodRegistry.prepare`, `InstrumentedType.Factory.represent`,
