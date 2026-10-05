@@ -17,6 +17,7 @@ import dev.otherlode.export.forNewRun
 import dev.otherlode.instrumentation.BootstrapInstallException
 import dev.otherlode.instrumentation.LoadedClassSweep
 import dev.otherlode.instrumentation.OtherlodeInstrumentation
+import dev.otherlode.instrumentation.PlaceholderCounts
 import dev.otherlode.instrumentation.branch.BranchDropCounts
 import dev.otherlode.instrumentation.branch.UnreadShapeCounts
 import dev.otherlode.instrumentation.endpoints.EndpointInstrumentation
@@ -148,6 +149,7 @@ object Agent {
         val staticBaselineMismatchDetector = StaticBaselineMismatchDetector()
         val branchDropCounts = BranchDropCounts()
         val unreadShapeCounts = UnreadShapeCounts()
+        val placeholderCounts = PlaceholderCounts()
 
         // Found before the method tier installs: its analysis writes the forwarder table, and only
         // for the handler interfaces these modules name (ADR 0035).
@@ -163,6 +165,7 @@ object Agent {
                 unreadShapeCounts = unreadShapeCounts,
                 externalClassRegistry = externalClassRegistry,
                 handlerForwarders = handlerForwarders,
+                placeholderCounts = placeholderCounts,
             )
         val transformer =
             try {
@@ -219,6 +222,7 @@ object Agent {
                     exporter,
                     branchDropCounts = branchDropCounts,
                     unreadShapeCounts = unreadShapeCounts,
+                    placeholderCounts = placeholderCounts,
                     loadedClassSweep =
                         LoadedClassSweep(
                             instrumentation,

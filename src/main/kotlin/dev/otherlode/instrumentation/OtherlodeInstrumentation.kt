@@ -47,6 +47,7 @@ import net.bytebuddy.description.modifier.Visibility
 import net.bytebuddy.description.type.TypeDescription
 import net.bytebuddy.dynamic.ClassFileLocator
 import net.bytebuddy.dynamic.DynamicType
+import net.bytebuddy.dynamic.VisibilityBridgeStrategy
 import net.bytebuddy.dynamic.scaffold.TypeValidation
 import net.bytebuddy.implementation.Implementation
 import net.bytebuddy.implementation.bytecode.Addition
@@ -139,8 +140,17 @@ class OtherlodeInstrumentation(
      * written when its probes are, in [TransformResultListener].
      */
     private val handlerForwarders: HandlerForwarders = HandlerForwarders(),
+    /** Where classes woven over a placeholder are tallied; see [PlaceholderCounts]. */
+    private val placeholderCounts: PlaceholderCounts = PlaceholderCounts(),
+    /**
+     * Whether the weaving pool describes a type the classpath lacks as a placeholder. Always true for
+     * the agent; a test switches it off to weave with ByteBuddy's own pool and compare the bytes.
+     */
+    private val describeMissingTypes: Boolean = true,
 ) {
     private val log = System.getLogger(OtherlodeInstrumentation::class.java.name)
+
+    private val placeholderPools = PlaceholderPoolStrategy()
 
     private val referencedClassLocator = ReferencedClassLocator()
     private val classBytesCapture: ClassBytesCapture? = if (captureClassBytes) ClassBytesCapture(::isCandidateInternalName) else null
@@ -223,8 +233,18 @@ class OtherlodeInstrumentation(
             // for what this agent writes.
             //
             // The class writer is one that throws when ASM would compute a frame; see FrameRefusingClassWriter.
-            .Default(ByteBuddy().with(TypeValidation.DISABLED).with(FrameRefusingClassWriter).ignore(none()))
-            .ignore(any<TypeDescription>(), isBootstrapClassLoader<ClassLoader>().or(isExtensionClassLoader()))
+            //
+            // No visibility bridges. By default ByteBuddy adds a public synthetic bridge to a public
+            // class that inherits a public method from a package-private one, which the adopter's
+            // class does not have, and a bridge whose signature names a placeholder makes
+            // getDeclaredMethods throw where the unwoven class returns.
+            .Default(
+                ByteBuddy()
+                    .with(TypeValidation.DISABLED)
+                    .with(VisibilityBridgeStrategy.Default.NEVER)
+                    .with(FrameRefusingClassWriter)
+                    .ignore(none()),
+            ).ignore(any<TypeDescription>(), isBootstrapClassLoader<ClassLoader>().or(isExtensionClassLoader()))
             .or(ignoredNames())
             // A class already loaded is left alone unless this agent wove it; see isWoven.
             .or(
@@ -239,6 +259,9 @@ class OtherlodeInstrumentation(
             // default describes a loaded class from its Class object, which carries the probe field
             // a re-weave is about to define. On a first load every strategy reads the pool.
             .with(AgentBuilder.DescriptionStrategy.Default.POOL_ONLY)
+            // The pool ByteBuddy builds the type with; see PlaceholderPoolStrategy.
+            // The analyser's own reads, the static scanner and reference resolution keep strict pools.
+            .with(if (describeMissingTypes) placeholderPools else AgentBuilder.PoolStrategy.Default.FAST)
             .with(TransformResultListener())
             .type(typeMatcher())
             .transform { builder, typeDescription, classLoader, _, _ -> instrument(builder, typeDescription, classLoader) }
@@ -380,6 +403,7 @@ class OtherlodeInstrumentation(
             loaded: Boolean,
             dynamicType: DynamicType,
         ) {
+            if (alreadyLoaded.get() != true) placeholderCounts.record(placeholderPools.substantive())
             val pending = pendingRegistration.get() ?: return
             pendingRegistration.remove()
             registry.register(
@@ -425,8 +449,14 @@ class OtherlodeInstrumentation(
                 }
 
                 else -> {
-                    log.log(Level.WARNING, "otherlode: instrumentation failed for $typeName, class will run uninstrumented", throwable)
-                    registry.recordSkipped(typeName, throwable.message ?: throwable.toString())
+                    val refusal = generateSequence(throwable) { it.cause }.filterIsInstance<PlaceholderRefusal>().firstOrNull()
+                    if (refusal != null) {
+                        log.log(Level.WARNING, "otherlode: $typeName ${refusal.message}")
+                        registry.recordSkipped(typeName, refusal.message.orEmpty())
+                    } else {
+                        log.log(Level.WARNING, "otherlode: instrumentation failed for $typeName, class will run uninstrumented", throwable)
+                        registry.recordSkipped(typeName, throwable.message ?: throwable.toString())
+                    }
                 }
             }
         }
@@ -458,6 +488,7 @@ class OtherlodeInstrumentation(
         ) {
             pendingRegistration.remove()
             alreadyLoaded.remove()
+            placeholderPools.release()
         }
     }
 
@@ -474,8 +505,12 @@ class OtherlodeInstrumentation(
         classLoader: ClassLoader?,
     ): DynamicType.Builder<*> {
         if (alreadyLoaded.get() == true) return reweave(builder, typeDescription, classLoader)
+        // The JVM cannot define a class whose own supertype is absent, so weaving it would publish
+        // probes for a class that never loads. Failing here records it as skipped.
+        placeholderPools.missingSupertype(typeDescription)?.let { throw PlaceholderRefusal.undefinable(it) }
         val source = readClassBytes(typeDescription, classLoader)
         val analysedBytes = source.analysed
+        val restored = restoreHeader(builder, source.received ?: analysedBytes)
         val (analysedMethods, receivedMethods, analysis, pairing) = analyse(typeDescription, classLoader, source)
         val methods =
             receivedMethods?.let { received -> analysedMethods.filter { (it.internalName to it.descriptor) in received } }
@@ -534,7 +569,7 @@ class OtherlodeInstrumentation(
             // that as nothing to probe would tell the sweep the class is accounted for and hide
             // the one case the warning above exists to report.
             if (analysedBytes != null) registry.recordNothingToProbe(typeDescription.name)
-            return builder
+            return restored
         }
         if (analysis.isKotlinClass && !analysis.hasLineNumbers) {
             log.log(
@@ -732,14 +767,13 @@ class OtherlodeInstrumentation(
         val built = plan.build()
         stage(typeDescription, classLoader, probes, analysis, references, built)
         return weave(
-            builder,
+            restored,
             typeDescription,
             built,
             built.view(),
             pairing,
             reweaving = false,
-            receivedBytes =
-                source.received ?: analysedBytes,
+            receivedBytes = source.received ?: analysedBytes,
         )
     }
 
@@ -853,7 +887,31 @@ class OtherlodeInstrumentation(
                     "methods keep their entry probe, and their branch counts stay where they were",
             )
         }
-        return weave(builder, typeDescription, plan, view, pairing, reweaving = true, receivedBytes = received)
+        return weave(
+            restoreHeader(builder, received ?: locateClassBytes(typeDescription, classLoader)),
+            typeDescription,
+            plan,
+            view,
+            pairing,
+            reweaving = true,
+            receivedBytes = received,
+        )
+    }
+
+    /**
+     * Makes the class [builder] writes carry the header of [headerSource], which is the bytes the
+     * weave starts from: the received bytes, or the class file when none were received. Applied to
+     * every class the method tier writes, including one with nothing to probe, since ByteBuddy
+     * rewrites that one too. With no bytes at all there is nothing to restore from and [builder]
+     * comes back unchanged. See [ClassHeaderRestorer].
+     */
+    private fun restoreHeader(
+        builder: DynamicType.Builder<*>,
+        headerSource: ByteArray?,
+    ): DynamicType.Builder<*> {
+        if (headerSource == null) return builder
+        placeholderPools.noteAnnotationTypes(headerSource)
+        return builder.visit(ClassHeaderRestorer.wrapper(headerSource))
     }
 
     /** Logs that a woven class cannot be woven again, for [reason], so the redefinition is refused. */
@@ -918,6 +976,8 @@ class OtherlodeInstrumentation(
      * checked against its run. When [reweaving], the class-wide total is not, since a method may
      * have dropped out. [receivedBytes] are the bytes being rewritten, which say whether a class at
      * version 50 carries frames.
+     *
+     * [builder] already carries the header restorer, see [restoreHeader].
      */
     private fun weave(
         builder: DynamicType.Builder<*>,

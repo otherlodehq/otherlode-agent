@@ -10,6 +10,7 @@ import dev.otherlode.export.GeneratedBy
 import dev.otherlode.export.KotlinKind
 import dev.otherlode.export.ProbeKind
 import dev.otherlode.export.ResourceAttributes
+import dev.otherlode.instrumentation.AbsentTypeFixtures
 import dev.otherlode.instrumentation.FixtureClassLoader
 import dev.otherlode.instrumentation.ImplementedInterfaceFixtures
 import dev.otherlode.instrumentation.JvmDefaultDisableFixtures
@@ -333,6 +334,28 @@ class StaticBaselineScannerTest {
 
         assertTrue(result.declaredClasses.any { it.className == "com.example.target.WeirdName" })
         assertTrue(result.unreadableClasses.isEmpty())
+    }
+
+    @Test
+    fun `a class naming absent types is scanned with a strict pool, so a placeholder never stands in for one`() {
+        val holder = AbsentTypeFixtures.holder("com/example/target/Holder")
+        val orphan = AbsentTypeFixtures.subtype("com/example/target/Orphan", AbsentTypeFixtures.ABSENT_PREFIX + "Parent")
+        val root =
+            directoryRoot(
+                "com/example/target/Holder.class" to holder,
+                "com/example/target/Orphan.class" to orphan,
+            )
+        val scanner = StaticBaselineScanner(listOf("com.example.target"))
+
+        val result = scanner.scan(listOf(root))
+
+        val declared = result.declaredClasses.single { it.className == "com.example.target.Holder" }
+        assertTrue(declared.methods.any { it.methodName == "applyAsInt" })
+        // A placeholder would give Orphan a superclass of Object and let it through as an ordinary class.
+        assertEquals(
+            result.declaredClasses.single { it.className == "com.example.target.Orphan" }.superClassName,
+            "com.example.absent.Parent",
+        )
     }
 
     @Test

@@ -665,6 +665,35 @@ bucket 1, and its migration 0010 deletes those rows (all test data, Luke
 said) and adds a check constraint refusing the code, with `bucketString`
 reading an unknown code as unknown.
 
+Chunk 4 landed on 2026-10-05, after ADR 0061 so placeholders never enter a
+frame: the method tier's `AgentBuilder` pool describes a type it cannot locate
+as a placeholder (a public class extending `Object` with the type-variable
+count its references use, through a wrapped cache provider, a ThreadLocal pool
+per transform). A class any of whose supertypes is missing or unreadable is
+refused with one WARNING. A first build put frame guards around ASM's frame
+computation; review found a hole in them (a merge walks supertypes the guard
+never saw) and a class-file read per class load, and they went with 0061.
+Review of the landed pool then found ByteBuddy writing the class header from
+its description, which predates this chunk too: a local class's simple name
+changed (`Outer$Local$1` read "Local$1"; Scala and Ktor corpus classes), a
+member class described as a placeholder lost its outer class (reflection threw
+`IncompatibleClassChangeError`), the final bit dropped on some local classes,
+and a public class inheriting from a package-private one gained a public
+synthetic bridge. `ClassHeaderRestorer` writes every woven class's header
+(flags, signature, InnerClasses in order, EnclosingMethod, nest and permitted
+attributes) from the received bytes, in ASM's event order, on the weave,
+re-weave and nothing-to-probe paths, and the method tier builds no visibility
+bridge. About 152 corpus classes' bytes change from the committed agent's, all
+header. `WovenClassVerificationTest` compares every woven corpus class with its
+class file apart from code and the agent's own members, and fails with each of
+those fixes reverted except the bridge, which no corpus class exercises and a
+fixture pins. spring-webmvc weaves 26 more classes (472), 46 are refused for
+a missing supertype, and spring-core's `PropagationContextElement$ReactorDelegate`,
+`TagWriter$SafeWriter` and a class merging two types a loader defines from memory
+weave and behave as their twins. A review harness under the agent jar showed
+reflection on nested, local, anonymous, sealed, record and enum classes
+identical with and without the agent, and after retransformation.
+
 ### Keep each method's original frames instead of recomputing them: landed
 
 Grilled and built on 2026-10-05, ADR 0061 (amending 0006, 0052 and 0058),
@@ -692,12 +721,9 @@ missing type and is skipped, and its test will require a weave then.
 Brought forward on 2026-10-05, Luke's call, to unblock ADR 0059: the
 placeholder pool's frame guards had a hole (a merge walks supertypes the guard
 never sees) and cost a class-file read per class load, and every guard was a
-symptom of recomputed frames. The built placeholder chunk, its frame guards and
-the review's fixes are parked in `git stash` ("chunk 4: placeholder type pool
-(ADR 0059) with frame guards, held until original frames land"), with ADR
-0059's first amendment; it lands after this, keeping the supertype guard,
-the signature restore (preferring the received bytes) and the counting, and
-dropping the frame guards and the per-class loader check.
+symptom of recomputed frames. The placeholder chunk was parked in a stash meanwhile and
+landed after this without its frame guards (chunk 4, in the entry "Probe
+arrays, validation and placeholders").
 
 Raised 2026-10-05 while landing ADR 0059's amendment, as the wider fix for a
 class of problem that amendment only guards against. The branch tier makes ASM

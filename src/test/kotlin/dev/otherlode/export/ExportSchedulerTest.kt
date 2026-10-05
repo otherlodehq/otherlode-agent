@@ -6,6 +6,7 @@ import dev.otherlode.dependencies.LoadedDependencyCounter
 import dev.otherlode.dependencies.StartupClasspathLister
 import dev.otherlode.dependencies.TestJars
 import dev.otherlode.instrumentation.LoadedClassSweep
+import dev.otherlode.instrumentation.PlaceholderCounts
 import dev.otherlode.instrumentation.branch.BranchDropCounts
 import dev.otherlode.instrumentation.branch.BranchDropReason
 import dev.otherlode.instrumentation.branch.UnreadCause
@@ -1151,6 +1152,63 @@ class ExportSchedulerTest {
             }
 
         assertEquals(1, records.count { it.message.contains("branch sites") })
+    }
+
+    @Test
+    fun `the first flush that finds classes woven over a placeholder logs one INFO line, and a second flush logs none`() {
+        val placeholderCounts = PlaceholderCounts()
+        placeholderCounts.record(setOf("com.acme.absent.Missing", "com.acme.absent.Other"))
+        placeholderCounts.record(setOf("com.acme.absent.Missing"))
+        val scheduler =
+            ExportScheduler(
+                config,
+                resource,
+                ProbeRegistry(),
+                EndpointRegistry(),
+                RecordingExporter(),
+                placeholderCounts = placeholderCounts,
+            )
+
+        val records =
+            captureLogRecords(ExportScheduler::class.java.name) {
+                scheduler.flush()
+                scheduler.flush()
+            }
+
+        val summary = records.single { it.message.contains("placeholder") }
+        assertEquals(JulLevel.INFO, summary.level)
+        assertTrue(summary.message.contains("2 classes that name 2 types"), summary.message)
+    }
+
+    @Test
+    fun `the placeholder line reads in the singular for one class and one type`() {
+        val placeholderCounts = PlaceholderCounts()
+        placeholderCounts.record(setOf("com.acme.absent.Missing"))
+        val scheduler =
+            ExportScheduler(
+                config,
+                resource,
+                ProbeRegistry(),
+                EndpointRegistry(),
+                RecordingExporter(),
+                placeholderCounts = placeholderCounts,
+            )
+
+        val records = captureLogRecords(ExportScheduler::class.java.name) { scheduler.flush() }
+
+        val summary = records.single { it.message.contains("placeholder") }
+        assertTrue(summary.message.contains("1 class that names 1 type missing"), summary.message)
+        assertTrue("load as they do" !in summary.message, summary.message)
+        assertTrue("merge" !in summary.message, summary.message)
+    }
+
+    @Test
+    fun `a flush that finds no class woven over a placeholder logs nothing about them`() {
+        val scheduler = ExportScheduler(config, resource, ProbeRegistry(), EndpointRegistry(), RecordingExporter())
+
+        val records = captureLogRecords(ExportScheduler::class.java.name) { scheduler.flush() }
+
+        assertTrue(records.none { it.message.contains("placeholder") })
     }
 
     @Test

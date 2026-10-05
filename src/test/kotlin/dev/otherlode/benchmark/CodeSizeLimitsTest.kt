@@ -27,9 +27,11 @@ import kotlin.test.assertTrue
  *
  * So the sweep cannot pass by weaving nothing, at least [MIN_WOVEN_OF_CORPUS] of each corpus's
  * classes must weave, and at least [MIN_WOVEN_SHARE] of the classes the transformer woven or failed
- * on. A class that fails because it names a type its class set's classpath does not provide, such
- * as spring-webmvc's JSP and POI support, is left out of that share when it also fails to load in a
- * fresh loader for want of a class, since no JVM with that classpath could run it. At most
+ * on. A class the agent refuses because its own superclass or interface is not on its class set's
+ * classpath, such as spring-webmvc's JSP tags, is left out of that share when it also fails to load
+ * in a fresh loader for want of a class, since no JVM with that classpath could define it. A type
+ * absent from a field or method signature does not excuse a class: the agent describes it as a
+ * placeholder and weaves the class. At most
  * [MAX_EXCUSED_SHARE] of a corpus may be left out, so a wrong classpath cannot excuse everything.
  */
 class CodeSizeLimitsTest {
@@ -135,17 +137,17 @@ class CodeSizeLimitsTest {
             val largest = r.largest
             lines += "${r.corpus}: classes=${r.classes} matched=${r.accepted} woven=${r.woven} failed=${r.failures.size} " +
                 "methods=${r.sizes.size} pastHugeLimit=${r.pastHugeLimit.size} pastFreqInlineSize=${r.pastInlineLimit} " +
-                "unresolvableDependency=${r.unresolvable.size} tooLarge=${r.tooLarge.size} largestWoven=${largest?.let {
+                "absentSupertype=${r.unresolvable.size} tooLarge=${r.tooLarge.size} largestWoven=${largest?.let {
                     "${it.className}.${it.method} ${it.woven} bytes (${it.original} before)"
                 }}"
             val reasons =
                 r.failures.values
-                    .groupingBy { it.take(REASON_WIDTH) }
+                    .groupingBy { it.substringAfter("cannot be defined: ").take(REASON_WIDTH) }
                     .eachCount()
                     .entries
                     .sortedByDescending { it.value }
             for ((reason, count) in reasons) lines += "    failed x$count: $reason"
-            for (name in r.loadable) lines += "    loads, but did not weave over an absent type: $name"
+            for (name in r.loadable) lines += "    loads, but was refused for an absent supertype: $name"
         }
         val report = lines.joinToString("\n", postfix = "\n")
         System.getProperty(REPORT_PROPERTY)?.let { path ->
@@ -162,7 +164,7 @@ class CodeSizeLimitsTest {
             assertTrue(r.missing.isEmpty(), "${r.corpus}: methods absent from the woven class: ${r.missing}")
             assertTrue(
                 r.unresolvable.size <= r.accepted * MAX_EXCUSED_SHARE,
-                "${r.corpus}: ${r.unresolvable.size} of ${r.accepted} classes excused as missing a dependency; is the classpath wrong?",
+                "${r.corpus}: ${r.unresolvable.size} of ${r.accepted} classes excused as missing a supertype; is the classpath wrong?",
             )
             assertTrue(
                 r.woven >= r.classes * MIN_WOVEN_OF_CORPUS,
@@ -177,10 +179,10 @@ class CodeSizeLimitsTest {
     }
 
     /**
-     * Whether [reason] is ByteBuddy failing to resolve a type that [loader] cannot see either: an
-     * optional dependency the class set does not carry, so the class could not load in any JVM
-     * with this classpath. A type the loader does provide is not excused, since failing to resolve
-     * it would be the agent's own fault.
+     * Whether [reason] is the agent refusing a class for a supertype that [loader] cannot see either:
+     * an optional dependency the class set does not carry, so the class could not be defined in any
+     * JVM with this classpath. A supertype the loader does provide is not excused, since refusing
+     * the class for it would be the agent's own fault.
      */
     private fun namesAbsentType(
         reason: String,
@@ -191,9 +193,8 @@ class CodeSizeLimitsTest {
     }
 
     /**
-     * Whether [className] fails to load and initialise in a fresh loader over [urls]. ByteBuddy
-     * resolves every field's type when it validates a rebased class, so it can fail on a class the
-     * JVM loads without the missing type; such a class is the agent's loss, not an excused one.
+     * Whether [className] fails to load and initialise in a fresh loader over [urls]. A class the JVM
+     * defines and runs without the agent is the agent's loss, not an excused one.
      */
     private fun failsToLoad(
         className: String,
@@ -253,7 +254,7 @@ class CodeSizeLimitsTest {
         const val MIN_WOVEN_OF_CORPUS = 0.75
         const val MAX_EXCUSED_SHARE = 0.2
         const val TOO_LARGE_BLOCKS = 2000
-        val UNRESOLVED_TYPE = Regex("Cannot resolve type description for (\\S+)")
+        val UNRESOLVED_TYPE = Regex("cannot be defined: its supertype (\\S+) could not be read from its loader")
 
         /** Whether [reason] is ASM's message for a method or class the class file format cannot hold, as the skip records it. */
         fun isTooLarge(reason: String): Boolean = "Method too large: " in reason || "Class too large: " in reason

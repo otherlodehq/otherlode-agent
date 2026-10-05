@@ -9,6 +9,9 @@ import dev.otherlode.registry.ProbeRegistry
 import net.bytebuddy.jar.asm.ClassWriter
 import net.bytebuddy.jar.asm.Label
 import net.bytebuddy.jar.asm.Opcodes
+import org.objectweb.asm.ClassReader
+import org.objectweb.asm.tree.AnnotationNode
+import org.objectweb.asm.tree.ClassNode
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.InputStream
@@ -18,10 +21,12 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * Guards the bytes the agent writes, since ByteBuddy's type validation is off. A woven class may
- * fail to define or initialise only where the same class, unwoven, fails too. A class that defines
- * unwoven and not woven is the agent's fault, and the JVM's verifier and class-file parser say so
- * where validation would have guessed.
+ * Guards the bytes the agent writes, since ByteBuddy's type validation is off. A woven class must
+ * run where its unwoven twin runs, and fail where the twin fails with the same root exception and,
+ * for a missing class, the same class name. Anything else is the agent's fault: the JVM's verifier
+ * and class-file parser say so where validation would have guessed. Every woven class must also keep
+ * the structure of its class file: header, inner classes, and the flags, signatures and annotations
+ * of every field and method.
  *
  * Two inputs. Every class of the five benchmark corpora is woven through the real transformer, then
  * defined and initialised woven and unwoven, each in a loader of its own over the corpus's
@@ -38,11 +43,9 @@ class WovenClassVerificationTest {
         val result: List<String>,
         val error: String?,
         val rootType: Class<*>? = null,
+        val rootMessage: String? = null,
     ) {
         val ok get() = error == null
-
-        /** A failure the agent's bytes would cause, rather than one the class brings with it. */
-        val isMalformed get() = rootType == VerifyError::class.java || rootType == ClassFormatError::class.java
 
         override fun toString(): String = error ?: result.toString()
     }
@@ -56,16 +59,92 @@ class WovenClassVerificationTest {
                 emptyList(),
                 "${t.javaClass.simpleName}: ${t.message?.take(MESSAGE_WIDTH)} (root ${root.javaClass.simpleName})",
                 root.javaClass,
+                root.message,
             )
         }
 
-    /** What weaving and running one corpus found: how many classes wove, ran in both forms or failed in both, and the violations. */
+    /**
+     * Whether [woven] fails as [twin] does: the same root exception and, for a missing class, the
+     * same class name, which `NoClassDefFoundError` spells with slashes and `ClassNotFoundException` with dots.
+     */
+    private fun failsLike(
+        woven: Outcome,
+        twin: Outcome,
+    ): Boolean {
+        if (woven.rootType != twin.rootType) return false
+        val missingClass = woven.rootType == NoClassDefFoundError::class.java || woven.rootType == ClassNotFoundException::class.java
+        return !missingClass || woven.rootMessage?.replace('/', '.') == twin.rootMessage?.replace('/', '.')
+    }
+
+    /**
+     * Everything [bytes] says about the class apart from its code, keyed by what it describes: the
+     * header (version, flags, name, signature, super and interfaces), `EnclosingMethod`, the nest and
+     * permitted-subclass attributes, every `InnerClasses` entry in order, the source attributes, the
+     * class annotations, the record components, and each field and method with its flags,
+     * descriptor, signature, exceptions and annotations. The agent's own members are left out: the
+     * probe field, its accessor methods, the refusal marker, and a `<clinit>` the class did not have.
+     * Nest members and inner classes are compared in order, not as sets, because the header restorer
+     * replays them in the order the class file has and a reordering would still be a rewrite.
+     */
+    private fun structureOf(bytes: ByteArray): Map<String, String> {
+        val node = ClassNode().also { ClassReader(bytes).accept(it, ClassReader.SKIP_CODE) }
+        val structure = LinkedHashMap<String, String>()
+
+        fun descriptors(annotations: List<AnnotationNode>?) = annotations.orEmpty().map { it.desc }
+
+        structure["header"] =
+            "version=${node.version} access=${node.access} name=${node.name} signature=${node.signature} " +
+            "super=${node.superName} interfaces=${node.interfaces}"
+        structure["enclosing method"] = "${node.outerClass} ${node.outerMethod} ${node.outerMethodDesc}"
+        structure["nest"] = "host=${node.nestHostClass} members=${node.nestMembers} permitted=${node.permittedSubclasses}"
+        structure["inner classes"] = node.innerClasses.joinToString { "(${it.name},${it.outerName},${it.innerName},${it.access})" }
+        structure["source"] = "${node.sourceFile} ${node.sourceDebug}"
+        structure["annotations"] =
+            "${descriptors(node.visibleAnnotations)} ${descriptors(node.invisibleAnnotations)} " +
+            "${node.visibleTypeAnnotations.orEmpty().map { it.desc + it.typeRef }} " +
+            "${node.invisibleTypeAnnotations.orEmpty().map { it.desc + it.typeRef }}"
+        structure["record components"] = "${node.recordComponents?.map { it.name + it.descriptor + it.signature }}"
+        for (field in node.fields) {
+            if (field.name.startsWith(AGENT_MEMBER_PREFIX)) continue
+            structure["field ${field.name} ${field.desc}"] =
+                "access=${field.access} signature=${field.signature} value=${field.value} " +
+                "${descriptors(field.visibleAnnotations)} ${descriptors(field.invisibleAnnotations)}"
+        }
+        for (method in node.methods) {
+            if (method.name.startsWith(AGENT_MEMBER_PREFIX)) continue
+            structure["method ${method.name}${method.desc}"] =
+                "access=${method.access} signature=${method.signature} exceptions=${method.exceptions} " +
+                "${descriptors(method.visibleAnnotations)} ${descriptors(method.invisibleAnnotations)} " +
+                "parameter annotations=${method.visibleParameterAnnotations?.map { list -> descriptors(list) }} " +
+                "parameters=${method.parameters?.map { it.name + it.access }} default=${render(method.annotationDefault)}"
+        }
+        return structure
+    }
+
+    /**
+     * An annotation default as text, by content: ASM holds an enum default as a `String[]` and a nested
+     * annotation as an [AnnotationNode], neither of which prints its content.
+     */
+    private fun render(value: Any?): String =
+        when (value) {
+            null -> "null"
+            is Array<*> -> value.joinToString(prefix = "[", postfix = "]") { render(it) }
+            is List<*> -> value.joinToString(prefix = "[", postfix = "]") { render(it) }
+            is AnnotationNode -> "@${value.desc}${render(value.values)}"
+            else -> value.toString()
+        }
+
+    /**
+     * What weaving and running one corpus found: how many classes wove, ran in both forms or failed in both,
+     * how many the agent refused for an absent supertype, and the violations.
+     */
     private class CorpusResult(
         val corpus: String,
         val classes: Int,
         val woven: Int,
         val bothRan: Int,
         val bothFailed: Int,
+        val refused: Int,
         val violations: List<String>,
     )
 
@@ -91,6 +170,7 @@ class WovenClassVerificationTest {
         var woven = 0
         var bothRan = 0
         var bothFailed = 0
+        var refusedForSupertype = 0
         val violations = mutableListOf<String>()
         for (set in corpus.classSets) {
             val classpath =
@@ -109,42 +189,71 @@ class WovenClassVerificationTest {
                         try {
                             transformer.transform(shared, internalName, null, null, original)
                         } catch (t: Throwable) {
-                            // The one reason a class may fail to weave: a type its classpath lacks (ADR 0059 is to
-                            // describe those). Anything else is a weave the agent got wrong.
-                            val root = generateSequence(t) { it.cause }.map { it.message.orEmpty() }.joinToString(" <- ")
-                            if (UNRESOLVED !in root) violations += "${set.name}:$internalName failed to weave: $root"
+                            // One reason lets a class stay unwoven: its own supertype is absent from the classpath,
+                            // so the JVM could not define it unwoven either (ADR 0059). Anything else is a weave the
+                            // agent got wrong.
+                            val reason = generateSequence(t) { it.cause }.map { it.message.orEmpty() }.joinToString(" <- ")
+                            val name = internalName.replace('/', '.')
+                            when {
+                                SUPERTYPE_REFUSAL.containsMatchIn(reason) -> {
+                                    val twin = attempt { initialise(DefineOneLoader(shared, name, original), name) }
+                                    if (twin.error?.startsWith("NoClassDefFoundError") == true) {
+                                        refusedForSupertype++
+                                    } else {
+                                        violations +=
+                                            "${set.name}:$name was refused for an absent supertype but its unwoven twin gives: $twin"
+                                    }
+                                }
+
+                                else -> {
+                                    violations += "${set.name}:$internalName failed to weave: $reason"
+                                }
+                            }
                             null
                         } ?: continue
                     woven++
                     val name = internalName.replace('/', '.')
                     val unwovenOutcome = attempt { initialise(DefineOneLoader(shared, name, original), name) }
                     val wovenOutcome = attempt { initialise(DefineOneLoader(shared, name, wovenBytes), name) }
+                    structureDifferences(original, wovenBytes).forEach { violations += "${set.name}:$name $it" }
                     when {
-                        wovenOutcome.isMalformed && !unwovenOutcome.isMalformed -> {
-                            violations += "${set.name}:$name woven bytes are malformed: $wovenOutcome; unwoven: $unwovenOutcome"
-                        }
-
                         wovenOutcome.ok && unwovenOutcome.ok -> {
                             bothRan++
                         }
 
-                        !wovenOutcome.ok && !unwovenOutcome.ok && wovenOutcome.rootType == unwovenOutcome.rootType -> {
+                        !wovenOutcome.ok && !unwovenOutcome.ok && failsLike(wovenOutcome, unwovenOutcome) -> {
                             bothFailed++
                         }
 
-                        !wovenOutcome.ok -> {
-                            violations += "${set.name}:$name woven: $wovenOutcome; unwoven: $unwovenOutcome"
-                        }
-
                         else -> {
-                            // Defines where its twin fails: the weave changed what the JVM checks (ADR 0061).
-                            violations += "${set.name}:$name woven runs where its unwoven twin fails: $unwovenOutcome"
+                            // Fails where its twin runs, or runs where its twin fails: the weave changed what the JVM checks (ADR 0061).
+                            violations += "${set.name}:$name woven: $wovenOutcome; unwoven: $unwovenOutcome"
                         }
                     }
                 }
             }
         }
-        return CorpusResult(corpusName, corpus.classCount, woven, bothRan, bothFailed, violations)
+        return CorpusResult(corpusName, corpus.classCount, woven, bothRan, bothFailed, refusedForSupertype, violations)
+    }
+
+    /**
+     * What differs between [original] and [woven], code aside: see [structureOf]. A woven class below
+     * class-file version 55 that gains a `<clinit>` is the agent's own addition (the probe array's
+     * prelude, ADR 0060) and is not a difference; from 55 the agent adds none, so one is.
+     */
+    private fun structureDifferences(
+        original: ByteArray,
+        woven: ByteArray,
+    ): List<String> {
+        val before = structureOf(original)
+        val addsPrelude = ((original[6].toInt() and 0xff) shl 8 or (original[7].toInt() and 0xff)) < DYNAMIC_CONSTANT_VERSION
+        val after = structureOf(woven).filterKeys { it != TYPE_INITIALIZER || it in before || !addsPrelude }
+        val differences = mutableListOf<String>()
+        for ((key, value) in after) {
+            if (before[key] != value) differences += "$key is ${before[key]} in the class file and $value woven"
+        }
+        for (key in before.keys - after.keys) differences += "$key is missing from the woven class"
+        return differences
     }
 
     private fun initialise(
@@ -164,7 +273,7 @@ class WovenClassVerificationTest {
         println(
             "woven-class verification, corpora: " +
                 results.joinToString("; ") {
-                    "${it.corpus} classes=${it.classes} woven=${it.woven} bothRan=${it.bothRan} bothFailed=${it.bothFailed}"
+                    "${it.corpus} classes=${it.classes} woven=${it.woven} bothRan=${it.bothRan} bothFailed=${it.bothFailed} refused=${it.refused}"
                 } + " (${(System.nanoTime() - started) / NANOS_PER_MILLI} ms)",
         )
         for (r in results) {
@@ -172,7 +281,7 @@ class WovenClassVerificationTest {
                 r.violations.isEmpty(),
                 "${r.corpus}: woven classes that fail where the unwoven class does not:\n  ${r.violations.joinToString("\n  ")}",
             )
-            // Floors a little under what each corpus gave on 2026-10-04, so a weave or a run that quietly stops
+            // Floors a little under what each corpus gives, so a weave or a run that quietly stops
             // happening fails here rather than shrinking what the check covers.
             val (minWoven, minRan) = FLOORS.getValue(r.corpus)
             assertTrue(r.woven >= minWoven, "${r.corpus}: only ${r.woven} of ${r.classes} classes were woven, expected at least $minWoven")
@@ -183,9 +292,9 @@ class WovenClassVerificationTest {
     @Test
     fun `spring-core's ReactorDelegate without Reactor fails woven exactly as it does unwoven`() {
         // PropagationContextElement$ReactorDelegate types a local Reactor's ContextView, and Reactor is not on the
-        // classpath. Unwoven, the JVM's check of its frame fails with NoClassDefFoundError. Woven, it must fail the
-        // same way, or stay unwoven because the weave was refused for the types its signatures name that the pool
-        // cannot see; a woven class that defined would hand a framework probing for Reactor a false positive.
+        // classpath. Unwoven, the JVM's check of its frame fails with NoClassDefFoundError. Woven, it must weave and
+        // fail the same way, since the woven method keeps the class file's frame (ADR 0061); a woven class that
+        // defined would hand a framework probing for Reactor a false positive.
         val classpath = checkNotNull(System.getProperty("${CLASSPATH_PROPERTY}demo-spring.main")) { "no classpath for demo-spring" }
         val entries = classpath.split(File.pathSeparator).filter { it.isNotEmpty() }
         assertTrue(entries.none { File(it).name.startsWith("reactor-core") }, "Reactor must be absent for this check")
@@ -201,18 +310,12 @@ class WovenClassVerificationTest {
         val name = internalName.replace('/', '.')
         URLClassLoader(entries.map { File(it).toURI().toURL() }.toTypedArray(), ClassLoader.getPlatformClassLoader()).use { shared ->
             val transformer = HotPathWeaver.offlineTransformer(listOf("org.springframework"), ProbeRegistry())
-            val wovenBytes =
-                try {
-                    transformer.transform(shared, internalName, null, null, original)
-                } catch (t: Throwable) {
-                    val why = generateSequence(t) { it.cause }.map { it.message.orEmpty() }.joinToString(" <- ")
-                    assertTrue(UNRESOLVED in why, "$name failed to weave for a reason other than a type the pool cannot see: $why")
-                    null
-                }
+            val wovenBytes = checkNotNull(transformer.transform(shared, internalName, null, null, original)) { "$name was not woven" }
             val unwoven = attempt { initialise(DefineOneLoader(shared, name, original), name) }
-            val woven = attempt { initialise(DefineOneLoader(shared, name, wovenBytes ?: original), name) }
+            val woven = attempt { initialise(DefineOneLoader(shared, name, wovenBytes), name) }
             assertTrue(!unwoven.ok, "unwoven, $name fails without Reactor, or the check proves nothing")
-            assertEquals(unwoven.rootType, woven.rootType, "woven: $woven; unwoven: $unwoven")
+            assertTrue(failsLike(woven, unwoven), "woven: $woven; unwoven: $unwoven")
+            assertEquals(unwoven.error, woven.error, "woven: $woven; unwoven: $unwoven")
         }
     }
 
@@ -528,16 +631,19 @@ class WovenClassVerificationTest {
     }
 
     private companion object {
-        const val UNRESOLVED = "Cannot resolve type description"
+        const val AGENT_MEMBER_PREFIX = "\$otherlode"
+        const val TYPE_INITIALIZER = "method <clinit>()V"
+        const val DYNAMIC_CONSTANT_VERSION = 55
+        val SUPERTYPE_REFUSAL = Regex("cannot be defined: its supertype \\S+ could not be read from its loader")
 
         /** Per corpus, the fewest classes that must weave and the fewest that must run in both forms. */
         val FLOORS =
             mapOf(
                 "demo" to (78 to 77),
                 "demo-spring" to (9 to 9),
-                "scala" to (300 to 300),
-                "spring-webmvc" to (430 to 390),
-                "ktor-server-core" to (405 to 395),
+                "scala" to (303 to 303),
+                "spring-webmvc" to (468 to 414),
+                "ktor-server-core" to (412 to 401),
             )
         const val MESSAGE_WIDTH = 160
         const val NANOS_PER_MILLI = 1_000_000
