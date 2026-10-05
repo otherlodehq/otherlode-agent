@@ -816,7 +816,7 @@ ByteBuddy's `Advice` already handles frames without recomputing them, and a
 class below version 50 has none to keep (the subroutine inliner covers those).
 It would also drop frame computation from transform time, one of the things
 that reads supertypes' class files through Spring Boot's nested-jar loader
-(`docs/investigations/2026-10-04-agent-startup.md` counted about 111k reads in
+(the 2026-10-04 startup investigation, since removed, counted about 111k reads in
 the ceiling run). The cost is the branch rewriter emitting a correct frame at
 every inserted label, for both jump polarities and switches, beside Advice's own
 frame handling in the same method; `WovenClassVerificationTest` (ADR 0058) is
@@ -1102,10 +1102,9 @@ ceiling rerun's unreported set is back to `MetaInfVersionsInfo` alone. `releaseQ
 the `java.*` pool when no loader was active since the previous call. ADR 0052 amended for the
 warm-up and its window.
 
-The 2026-10-04 measurements, method and scripts are in
-`docs/investigations/2026-10-04-agent-startup.md`,
-`docs/investigations/2026-10-04-agent-heap.md` and the `startup/` and `heap/`
-directories beside them, until chunk 8.
+The 2026-10-04 write-ups were removed when this work landed (git history keeps them, at
+`2e0dbe4` and `5a47ad0`); their scripts are the manual profiling kit in
+`benchmark-overhead/profiling/`.
 
 ### `DECORATE` instead of `REBASE`, and the entry probe in ASM: to grill
 

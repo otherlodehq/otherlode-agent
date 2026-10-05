@@ -213,6 +213,23 @@ Startup on one core is the outlier, and the investigation in `docs/investigation
 `agent.repo.dirty` reads true in CI because the workflow checks the collector out inside the
 agent's working tree; the jar is built from the commit.
 
+## Profiling startup and heap by hand
+
+When a number moves, `profiling/` holds the scripts that found where the agent's startup and heap
+went, run on the host against the same PetClinic fat jar and a Postgres container rather than
+through the harness:
+
+- `profiling/startup/time-startup.sh <label> [JVM options...]` starts PetClinic once and prints
+  Spring's "Started ... in" and "process running for" seconds; repeat each configuration five to
+  seven times, interleaved, and take medians. `profile-buckets.py` and `profile-under.py` bucket a
+  collapsed async-profiler wall or allocation profile by agent frame.
+- `profiling/heap/measure.sh <label> <includePackages|none> <port>` measures live heap, a class
+  histogram and NMT before and after the first delivery to a live `otherlode-collector`;
+  `histogram-diff.py` and `nmt-diff.py` compare two runs. `DUMP=1` adds a heap dump for MAT.
+
+Each script's header lists the environment it needs. Use a JDK with a CDS archive
+(`java -Xshare:on -version` must work) so the no-agent baseline is the one adopters see.
+
 ## Attribution
 
 The harness is modelled on OpenTelemetry Java instrumentation's
