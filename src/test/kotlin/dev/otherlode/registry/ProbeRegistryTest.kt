@@ -1193,6 +1193,65 @@ class ProbeRegistryTest {
     }
 
     @Test
+    fun `a class withheld for good is named in the next manifest's failedClasses once`() {
+        val registry = ProbeRegistry(confirmsDefinitions = true)
+        val resource = ResourceAttributes("checkout", null, "instance-1", null, "run-1")
+        registry.register("com.example.Foo", layoutHash = 1L, probes = methodProbes(1))
+
+        registry.confirmFrom(emptySet())
+        assertTrue(registry.manifest(resource).failedClasses.isEmpty(), "one miss is not a failure")
+        registry.confirmFrom(emptySet())
+        registry.confirmFrom(emptySet())
+
+        assertEquals(listOf("com.example.Foo"), registry.manifest(resource).failedClasses.map { it.className })
+        val delta = registry.computeManifestDelta(resource)
+        assertEquals(listOf("com.example.Foo"), delta.manifest.failedClasses.map { it.className })
+        registry.advanceManifestBaseline(delta)
+        registry.confirmFrom(emptySet())
+        assertTrue(
+            registry
+                .computeManifestDelta(resource)
+                .manifest.failedClasses
+                .isEmpty(),
+            "a third call adds nothing",
+        )
+    }
+
+    @Test
+    fun `a class confirmed after one miss is never failed`() {
+        val registry = ProbeRegistry(confirmsDefinitions = true)
+        registry.register("com.example.Foo", layoutHash = 1L, probes = methodProbes(1))
+
+        registry.confirmFrom(emptySet())
+        registry.confirmFrom(setOf("com.example.Foo"))
+        registry.confirmFrom(emptySet())
+
+        assertTrue(registry.manifest(ResourceAttributes("checkout", null, "instance-1", null, "run-1")).failedClasses.isEmpty())
+    }
+
+    @Test
+    fun `a class whose classloader was collected is never failed`() {
+        val registry = ClearedLoaderProbeRegistry(confirmsDefinitions = true)
+        registry.register("com.example.Foo", layoutHash = 1L, probes = methodProbes(1), classLoader = URLClassLoader(emptyArray()))
+
+        registry.confirmFrom(emptySet())
+        registry.confirmFrom(emptySet())
+
+        assertTrue(registry.manifest(ResourceAttributes("checkout", null, "instance-1", null, "run-1")).failedClasses.isEmpty())
+    }
+
+    @Test
+    fun `a registry that does not withhold records no failed class`() {
+        val registry = ProbeRegistry(confirmsDefinitions = false)
+        registry.register("com.example.Foo", layoutHash = 1L, probes = methodProbes(1))
+
+        registry.confirmFrom(emptySet())
+        registry.confirmFrom(emptySet())
+
+        assertTrue(registry.manifest(ResourceAttributes("checkout", null, "instance-1", null, "run-1")).failedClasses.isEmpty())
+    }
+
+    @Test
     fun `a class registered with a null classloader is never confirmed by the cleared-reference rule`() {
         val registry = ClearedLoaderProbeRegistry(confirmsDefinitions = true)
         registry.register("com.example.Foo", layoutHash = 1L, probes = methodProbes(1), classLoader = null)

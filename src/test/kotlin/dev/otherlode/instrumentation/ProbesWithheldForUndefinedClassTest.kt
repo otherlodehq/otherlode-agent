@@ -232,6 +232,11 @@ class ProbesWithheldForUndefinedClassTest {
         assertTrue(manifest.probes.none { it.className == VANISHING_SUB }, "withheld for good means never published")
         assertTrue(manifest.skippedClasses.none { it.className == VANISHING_SUB }, "it was registered, not skipped")
         assertTrue(manifest.unreportedClasses.none { it.className == VANISHING_SUB }, "it was registered, not unreported")
+        assertEquals(
+            listOf(VANISHING_SUB),
+            manifest.failedClasses.map { it.className },
+            "a class withheld for good is named as failed to load, with none of its probes",
+        )
     }
 
     @Test

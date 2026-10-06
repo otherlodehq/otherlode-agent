@@ -466,6 +466,12 @@ cached, if a parameter annotation wins over the method's, or if
 annotations' binary names, since no framework jar is on the root test
 classpath.
 
+Chunk 4 landed on 2026-10-06: `ProbeRegistry.confirmFrom` records a class
+as failed in the step that withholds it for good, so the WARNING and the
+manifest's `failed_classes` come from one decision. A class confirmed by a
+count, by the loaded set or by a collected loader is never failed, and the
+offline registry fails nothing, so the visibility baseline holds.
+
 Follow-ups with triggers: an agent option for an adopter's own callback
 annotations (an adopter asks, or uncalled roots carry in-house
 annotations); a server-side visibility gate over fixture payloads.

@@ -351,7 +351,7 @@ open class ProbeRegistry(
 
     /**
      * Records a class the agent withheld for good because the JVM never defined it, keeping the
-     * time it was withheld.
+     * time it was withheld. [confirmFrom] calls this when it withholds a class.
      *
      * Idempotent per class name, so a class named twice is sent once. Returns true the first time.
      */
@@ -416,12 +416,14 @@ open class ProbeRegistry(
      *
      * A class found in neither has one more miss recorded against it. Two misses withhold it for
      * good: its name is returned, once, the first time that happens, and never returned again on
-     * a later call. Nothing ever un-confirms a class, so a confirmed one leaves this loop at the
-     * guard above and its miss count is never read again.
+     * a later call. In the same step the class is recorded as failed ([recordFailed]), so the next
+     * manifest names it in `failedClasses`. Nothing ever un-confirms a class, so a confirmed one
+     * leaves this loop at the guard above and its miss count is never read again.
      *
      * A class already confirmed, or already withheld for good, is left alone. A registry that
      * does not withhold tracks nothing and returns nothing: the names this returns are logged as
-     * having had their probes withheld, which would not be true.
+     * having had their probes withheld, which would not be true, and no class is recorded as
+     * failed.
      */
     open fun confirmFrom(loadedClassNames: Set<String>): List<String> {
         if (!confirmsDefinitions) return emptyList()
@@ -436,6 +438,7 @@ open class ProbeRegistry(
             entry.missedConfirmations++
             if (entry.missedConfirmations >= 2) {
                 entry.withheldForGood = true
+                recordFailed(entry.className)
                 newlyWithheld += entry.className
             }
         }
