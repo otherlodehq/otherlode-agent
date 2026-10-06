@@ -28,6 +28,7 @@ import kotlin.concurrent.read
 import kotlin.concurrent.withLock
 import kotlin.concurrent.write
 import dev.otherlode.export.GeneratedBy as WireGeneratedBy
+import dev.otherlode.export.OutsideCaller as WireOutsideCaller
 import dev.otherlode.export.ProbeKind as WireProbeKind
 import dev.otherlode.export.RoutineKind as WireRoutineKind
 import dev.otherlode.export.UnreadShape as WireUnreadShape
@@ -120,6 +121,7 @@ public class OtherlodeTestCollector internal constructor(
         val genericSignature: String = "",
         val extensionReceiver: Boolean = false,
         val unreadShape: WireUnreadShape = WireUnreadShape.NONE,
+        val outsideCaller: WireOutsideCaller? = null,
     ) {
         /** Whether the method is generated or an unread shape: no node, but looked through. */
         fun isLookedThrough(): Boolean = generatedBy != WireGeneratedBy.NONE || unreadShape != WireUnreadShape.NONE
@@ -180,6 +182,7 @@ public class OtherlodeTestCollector internal constructor(
         val neverLoaded: Boolean,
         val hits: Long,
         val edges: Set<GuardedEdge>,
+        val outsideCaller: WireOutsideCaller? = null,
     )
 
     /**
@@ -347,8 +350,8 @@ public class OtherlodeTestCollector internal constructor(
      * its copies. [hits] sums every copy. [inline], [static] and [lambdaBody] hold when any copy says
      * so, [generatedBy] and [inlinedFromClassName] are the greatest any copy gives, and [overridable]
      * holds when any copy says so. [routine] and [unreadShape] are the first non-default value in
-     * newest-first order. [newest] is the copy of the newest instance, which supplies [line] and
-     * [parameterName]. [branchIndex] is the lowest any copy gives.
+     * newest-first order. [newest] is the copy of the newest instance, which supplies [line],
+     * [parameterName] and [outsideCaller]. [branchIndex] is the lowest any copy gives.
      */
     private class MergedLocation(
         val key: LocationKey,
@@ -366,6 +369,7 @@ public class OtherlodeTestCollector internal constructor(
         val unreadShape: WireUnreadShape,
         val targetClassName: String?,
         val parameterName: String?,
+        val outsideCaller: WireOutsideCaller?,
     ) {
         val newest: Map.Entry<ProbeKey, StoredProbe> get() = members.first()
 
@@ -452,6 +456,9 @@ public class OtherlodeTestCollector internal constructor(
 
     /** Classes a sweep found loaded where no transformer saw them, by name, from any manifest. */
     private val unreportedByClassName = ConcurrentHashMap<String, UnreportedClass>()
+
+    /** Every class name any manifest listed in `failedClasses`. See [failedToLoad]. */
+    private val failedClassNames: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     /** Declared classes from every complete static baseline scan, by name. See [handleStaticBaseline]. */
     private val consultedDeclaredClasses = ConcurrentHashMap<String, DeclaredClassInfo>()
@@ -1014,6 +1021,7 @@ public class OtherlodeTestCollector internal constructor(
                             .firstOrNull { it != WireUnreadShape.NONE } ?: WireUnreadShape.NONE,
                     targetClassName = members.mapNotNull { it.value.targetClassName }.maxOrNull(),
                     parameterName = members.first().value.parameterName,
+                    outsideCaller = members.first().value.outsideCaller,
                 )
             }
     }
@@ -1322,6 +1330,7 @@ public class OtherlodeTestCollector internal constructor(
             branchKey = location.key.outcome?.branchKey,
             routine = location.routine.toTestkit(),
             unreadShape = location.unreadShape.toTestkit(),
+            outsideCaller = location.outsideCaller.toTestkit(),
         )
 
     /**
@@ -1356,6 +1365,13 @@ public class OtherlodeTestCollector internal constructor(
     internal fun unreportedClasses(): List<String> = checked { unreportedByClassName.keys.sorted() }
 
     /**
+     * Class names some manifest named as failed to load that no instance loaded, sorted. A class
+     * that failed to load is a deployment to fix, never dead code, so [neverLoaded] leaves it out.
+     * A class that one instance failed to load and another loaded is in neither list.
+     */
+    public fun failedToLoad(): List<String> = checked { failedClassNames.filter { it !in dynamicallyKnownClassNames }.sorted() }
+
+    /**
      * What kind of class kotlinc says [className] is, from its manifest record or, for a class
      * that never loaded, a complete static baseline's declaration. [KotlinKind.NONE] for a class
      * with no `kotlin.Metadata`, such as a Java class. Null when no payload has named the class. A
@@ -1377,12 +1393,15 @@ public class OtherlodeTestCollector internal constructor(
      * and the compiler will emit a generated method again regardless of what the adopter does, so
      * such a class never loading at all is not evidence it is dead. A class whose every declared
      * method is inline, generated or an unread shape is excluded the same way, since an unread shape
-     * is compiler output the agent could not read.
+     * is compiler output the agent could not read. A class a manifest lists as failed to load is
+     * excluded too; [failedToLoad] lists it.
      */
     public fun neverLoaded(): List<String> {
         return checked {
             check(completedScans.isNotEmpty()) { "no complete static baseline scan has been received yet" }
-            return consultedDeclaredNames.filter { it !in dynamicallyKnownClassNames && it !in consultedAllInlineOrGeneratedNames }.sorted()
+            return consultedDeclaredNames
+                .filter { it !in dynamicallyKnownClassNames && it !in consultedAllInlineOrGeneratedNames && it !in failedClassNames }
+                .sorted()
         }
     }
 
@@ -1442,7 +1461,8 @@ public class OtherlodeTestCollector internal constructor(
      *
      * A root is a never-hit node with no caller or with a caller that is a method with hits, a
      * generated method with hits included, since code outside scope may call it. A method
-     * root with no caller is [RootKind.UNCALLED], and one with a caller that has hits is
+     * root with no caller is [RootKind.UNCALLED], or [RootKind.CALLED_FROM_OUTSIDE_SCOPE] when it
+     * has an outside caller, and one with a caller that has hits is
      * [RootKind.REACHED_FROM_HIT]. An outcome root is [RootKind.UNTAKEN_OUTCOME], and a class root is
      * [RootKind.CLASS_FINDING]. A `<clinit>` is never a root, and neither is an unjudged constructor:
      * a never-hit `<init>` of a loaded class no instance constructed that no class finding covers,
@@ -1495,6 +1515,7 @@ public class OtherlodeTestCollector internal constructor(
                         when {
                             node.isClass -> RootKind.CLASS_FINDING
                             node.outcome != null -> RootKind.UNTAKEN_OUTCOME
+                            callers.isEmpty() && graph.nodes[node.method]?.outsideCaller != null -> RootKind.CALLED_FROM_OUTSIDE_SCOPE
                             callers.isEmpty() -> RootKind.UNCALLED
                             else -> RootKind.REACHED_FROM_HIT
                         }
@@ -1894,7 +1915,14 @@ public class OtherlodeTestCollector internal constructor(
                         }
                     }
             }
-            nodes[nodeKey] = NodeInfo(line = location.line, neverLoaded = false, hits = location.hits, edges = edges)
+            nodes[nodeKey] =
+                NodeInfo(
+                    line = location.line,
+                    neverLoaded = false,
+                    hits = location.hits,
+                    edges = edges,
+                    outsideCaller = location.outsideCaller,
+                )
         }
         for ((className, declared) in consultedDeclaredClasses) {
             if (className in dynamicallyKnownClassNames) continue
@@ -2039,6 +2067,7 @@ public class OtherlodeTestCollector internal constructor(
             kind = ProbeKind.METHOD,
             branchIndex = null,
             neverLoaded = info.neverLoaded,
+            outsideCaller = info.outsideCaller.toTestkit(),
         )
 
     /**
@@ -2501,6 +2530,7 @@ public class OtherlodeTestCollector internal constructor(
                             location.genericSignature,
                             location.extensionReceiver,
                             location.unreadShape,
+                            location.outsideCaller,
                         )
                     nameIndex.computeIfAbsent(location.className) { ConcurrentHashMap.newKeySet() }.add(key)
                     if (location.kind == WireProbeKind.OPTIONAL_ARGUMENT) {
@@ -2521,6 +2551,7 @@ public class OtherlodeTestCollector internal constructor(
                     unreportedByClassName.putIfAbsent(unreported.className, unreported)
                     dynamicallyKnownClassNames += unreported.className
                 }
+                for (failed in manifest.failedClasses) failedClassNames += failed.className
                 for (classLocation in manifest.classLocations) {
                     val className = classNamesByClassId[classLocation.classId] ?: continue
                     supertypesByClassName[className] = SupertypesInfo(classLocation.superClassName, classLocation.interfaceNames)
@@ -2881,6 +2912,8 @@ public class OtherlodeTestCollector internal constructor(
  * agent has not read, for a [ProbeKind.BRANCH] probe in such a method, for an
  * [ProbeKind.OPTIONAL_ARGUMENT] probe whose target is one, and for a [ProbeKind.BRANCH] probe whose
  * own outcome the agent marked unread. It is exclusive with [routine].
+ * [outsideCaller] is set only for a [ProbeKind.METHOD] ref whose method has an outside caller. When
+ * instances disagree, it comes from the newest instance's copy.
  */
 @ConsistentCopyVisibility
 public data class ProbeRef internal constructor(
@@ -2901,10 +2934,22 @@ public data class ProbeRef internal constructor(
     val branchKey: String? = null,
     val routine: RoutineKind? = null,
     val unreadShape: UnreadShape? = null,
+    val outsideCaller: OutsideCaller? = null,
 )
 
 /**
- * Which of the four root shapes an [UnreachedCluster] has. They call for different fixes, so they
+ * Why code outside scope may call a method: [kind], and [typeName], dotted. For
+ * [OutsideCallerKind.OVERRIDES_METHOD] it is the out-of-scope type that declares the overridden
+ * method. For [OutsideCallerKind.CALLBACK_ANNOTATION] it is the annotation as written on the method.
+ */
+@ConsistentCopyVisibility
+public data class OutsideCaller internal constructor(
+    val kind: OutsideCallerKind,
+    val typeName: String,
+)
+
+/**
+ * Which of the five root shapes an [UnreachedCluster] has. They call for different fixes, so they
  * are reported apart. Values may be added in a minor release, so a `when` over this enum needs an `else` branch.
  */
 public enum class RootKind {
@@ -2918,6 +2963,13 @@ public enum class RootKind {
 
     /** The root is a method with no in-scope caller at all. Its caller may not exist yet, or may live outside scope. */
     UNCALLED,
+
+    /**
+     * The root is a method with no in-scope caller and an outside caller, named by
+     * [ProbeRef.outsideCaller] on [UnreachedCluster.root]. Code outside scope may call it, so it is
+     * weaker evidence for deletion than [UNCALLED].
+     */
+    CALLED_FROM_OUTSIDE_SCOPE,
 
     /**
      * The root is a branch outcome that was never hit, in a method with hits. Every method in the

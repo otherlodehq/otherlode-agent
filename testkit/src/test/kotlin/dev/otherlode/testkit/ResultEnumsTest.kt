@@ -5,6 +5,7 @@ import kotlin.test.assertEquals
 import dev.otherlode.export.DependencyDiscoverySource as WireDependencyDiscoverySource
 import dev.otherlode.export.EndpointDiscoverySource as WireEndpointDiscoverySource
 import dev.otherlode.export.GeneratedBy as WireGeneratedBy
+import dev.otherlode.export.OutsideCallerKind as WireOutsideCallerKind
 import dev.otherlode.export.ProbeKind as WireProbeKind
 import dev.otherlode.export.RoutineKind as WireRoutineKind
 import dev.otherlode.export.UnreadShape as WireUnreadShape
@@ -35,6 +36,12 @@ class ResultEnumsTest {
         assertEquals(WireUnreadShape.entries.map { it.name } - "NONE", UnreadShape.entries.map { it.name })
         for (wire in WireUnreadShape.entries - WireUnreadShape.NONE) assertEquals(wire, wire.toTestkit()?.toWire())
         assertEquals(null, WireUnreadShape.NONE.toTestkit())
+    }
+
+    @Test
+    fun `OutsideCallerKind mirrors every wire value in order and maps back`() {
+        assertEquals(WireOutsideCallerKind.entries.map { it.name }, OutsideCallerKind.entries.map { it.name })
+        for (wire in WireOutsideCallerKind.entries) assertEquals(wire, wire.toTestkit().toWire())
     }
 
     @Test

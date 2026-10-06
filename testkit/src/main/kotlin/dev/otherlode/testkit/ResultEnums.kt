@@ -3,6 +3,8 @@ package dev.otherlode.testkit
 import dev.otherlode.export.DependencyDiscoverySource as WireDependencyDiscoverySource
 import dev.otherlode.export.EndpointDiscoverySource as WireEndpointDiscoverySource
 import dev.otherlode.export.GeneratedBy as WireGeneratedBy
+import dev.otherlode.export.OutsideCaller as WireOutsideCaller
+import dev.otherlode.export.OutsideCallerKind as WireOutsideCallerKind
 import dev.otherlode.export.ProbeKind as WireProbeKind
 import dev.otherlode.export.RoutineKind as WireRoutineKind
 import dev.otherlode.export.UnreadShape as WireUnreadShape
@@ -93,6 +95,18 @@ public enum class UnreadShape {
 }
 
 /**
+ * Why code outside scope may call a method. Values may be added in a minor release, so a `when`
+ * over this enum needs an `else` branch.
+ */
+public enum class OutsideCallerKind {
+    /** The method overrides or implements a method that an out-of-scope type declares. */
+    OVERRIDES_METHOD,
+
+    /** The method, or one of its parameters, carries an annotation a framework calls through. */
+    CALLBACK_ANNOTATION,
+}
+
+/**
  * How the agent learned of an endpoint: the framework declared it at registration, or a request
  * matched it at dispatch before any registration had. Values may be added in a minor release, so a
  * `when` over this enum needs an `else` branch.
@@ -137,6 +151,20 @@ internal fun ProbeKind.toWire(): WireProbeKind =
         ProbeKind.METHOD -> WireProbeKind.METHOD
         ProbeKind.BRANCH -> WireProbeKind.BRANCH
         ProbeKind.OPTIONAL_ARGUMENT -> WireProbeKind.OPTIONAL_ARGUMENT
+    }
+
+internal fun WireOutsideCallerKind.toTestkit(): OutsideCallerKind =
+    when (this) {
+        WireOutsideCallerKind.OVERRIDES_METHOD -> OutsideCallerKind.OVERRIDES_METHOD
+        WireOutsideCallerKind.CALLBACK_ANNOTATION -> OutsideCallerKind.CALLBACK_ANNOTATION
+    }
+
+internal fun WireOutsideCaller?.toTestkit(): OutsideCaller? = this?.let { OutsideCaller(it.kind.toTestkit(), it.typeName) }
+
+internal fun OutsideCallerKind.toWire(): WireOutsideCallerKind =
+    when (this) {
+        OutsideCallerKind.OVERRIDES_METHOD -> WireOutsideCallerKind.OVERRIDES_METHOD
+        OutsideCallerKind.CALLBACK_ANNOTATION -> WireOutsideCallerKind.CALLBACK_ANNOTATION
     }
 
 internal fun WireGeneratedBy.toTestkit(): GeneratedBy? =

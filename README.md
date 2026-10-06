@@ -237,12 +237,14 @@ once as a whole class with its finding. A call into a class counts as a
 call into its static initialiser, which is why the whole class follows the
 handler into the cluster; the initialiser itself is never listed or
 counted. The handler is a named class, so the endpoint record names its
-`handle` method and the route is printed beside the root; nothing in the
-demo's own code calls `handle`, only the server does, which is why the root
-is uncalled rather than reached from hit:
+`handle` method and the route is printed beside the root. Nothing in the
+demo's own code calls `handle`, only the server. The method overrides
+`HttpHandler.handle`, and `HttpHandler` is outside scope, so the root reads
+as called from outside scope, not uncalled. Code outside scope may call it,
+which makes it weaker evidence for deletion:
 
 ```
-UNREACHED CLUSTER: root com.example.demo.server.PromoHandler#handle (uncalled), 4 methods, 1 never-loaded classes routes=[* /promo]
+UNREACHED CLUSTER: root com.example.demo.server.PromoHandler#handle (called from outside scope: overrides HttpHandler), 4 methods, 1 never-loaded classes routes=[* /promo]
   com.example.demo.server.PromoRepository (whole class, never loaded, 2 methods)
   applyPromoCode (DemoServerMain.kt)
   com.example.demo.server.PromoHandler#handle
@@ -359,6 +361,7 @@ branch outcomes (`neverHitRoutineOutcomes`), classes
 (`wasCalled`, `callCount`, `neverCalled`, `endpoints`,
 `disabledEndpointModules`), optional parameters (`omissionCount`,
 `neverSupplied`, `alwaysSupplied`), the call graph (`unreachedClusters`),
+classes that failed to load (`failedToLoad`),
 dependencies (`dependency`, `unloadedDependencies`,
 `unreferencedDependencies`, `unreachedDependencies`, `absentReferences`) and,
 when the agent runs with `staticBaselineEnabled=true`, `neverLoaded`. Waits cover the next
@@ -372,6 +375,17 @@ loaded, instrumented but without that method, or never mentioned at all.
 That keeps "genuinely dead" and "no idea" from ever looking the same. A
 payload the collector cannot accept is listed by `rejectedPayloads`, and
 every other query throws while there is one.
+
+An unreached cluster's root is one of five kinds (`RootKind`). A method with
+no in-scope caller is `UNCALLED`. It is `CALLED_FROM_OUTSIDE_SCOPE` when the
+agent found a reason code outside your scope may call it, which
+`ProbeRef.outsideCaller` names: it overrides a method an outside type
+declares, or it carries a callback annotation. That label is weaker evidence
+for deletion, and nothing else about the cluster changes.
+
+kotlin-stdlib always reads as used on a Kotlin service, since every Kotlin
+class carries `kotlin.Metadata`, and a Kotlin service cannot drop it. A Java
+service that pulls it in is judged on its own use.
 
 With JUnit 5, `@ExtendWith(OtherlodeExtension::class)` starts one collector
 for the test JVM on port 4319 (`otherlode.testkit.port` overrides it) and
@@ -407,7 +421,7 @@ The testkit and the agent are one version. The collector rejects a payload
 from an agent of another version, and the failure names both versions: use the
 testkit of the agent's version. Result types and enums only grow in a minor
 release, so a `when` over `ProbeKind`, `GeneratedBy`, `RoutineKind`,
-`UnreadShape`, `RootKind`, `ClassFinding`, `EndpointDiscoverySource`,
+`UnreadShape`, `OutsideCallerKind`, `RootKind`, `ClassFinding`, `EndpointDiscoverySource`,
 `DependencyDiscoverySource` or `DependencyUsage` needs an `else` branch.
 `GeneratedBy`, `RoutineKind` and `UnreadShape` have no "none" value: the field
 on `ProbeRef` is null when the probe has no mark.

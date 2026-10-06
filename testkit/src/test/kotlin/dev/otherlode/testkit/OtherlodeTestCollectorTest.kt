@@ -15,10 +15,13 @@ import dev.otherlode.export.DisabledEndpointModule
 import dev.otherlode.export.EndpointDelta
 import dev.otherlode.export.EndpointDiscoverySource
 import dev.otherlode.export.EndpointLocation
+import dev.otherlode.export.FailedClass
 import dev.otherlode.export.GeneratedBy
 import dev.otherlode.export.HttpOtlpStyleExporter
 import dev.otherlode.export.KotlinKind
 import dev.otherlode.export.LineRange
+import dev.otherlode.export.OutsideCaller
+import dev.otherlode.export.OutsideCallerKind
 import dev.otherlode.export.ProbeDelta
 import dev.otherlode.export.ProbeKind
 import dev.otherlode.export.ProbeLocation
@@ -45,6 +48,8 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import dev.otherlode.testkit.OutsideCaller as RefOutsideCaller
+import dev.otherlode.testkit.OutsideCallerKind as RefOutsideCallerKind
 import dev.otherlode.testkit.ProbeKind as RefProbeKind
 import dev.otherlode.testkit.RoutineKind as RefRoutineKind
 import dev.otherlode.testkit.UnreadShape as RefUnreadShape
@@ -77,6 +82,7 @@ class OtherlodeTestCollectorTest {
         static: Boolean = false,
         generatedBy: GeneratedBy = GeneratedBy.NONE,
         lambdaBody: Boolean = false,
+        outsideCaller: OutsideCaller? = null,
     ) = ProbeLocation(
         classId,
         probeIndex,
@@ -91,6 +97,7 @@ class OtherlodeTestCollectorTest {
         static = static,
         generatedBy = generatedBy,
         lambdaBody = lambdaBody,
+        outsideCaller = outsideCaller,
     )
 
     private fun branchProbe(
@@ -3356,5 +3363,187 @@ class OtherlodeTestCollectorTest {
         )
 
         assertEquals(listOf("App#job", "App#orphan", "App#ran", "App#shared"), target.neverHit().map { it.id() })
+    }
+
+    private val overridesRunnable = OutsideCaller(OutsideCallerKind.OVERRIDES_METHOD, "java.lang.Runnable")
+
+    @Test
+    fun `a never-hit method with no in-scope caller and an outside caller roots a called-from-outside-scope cluster`() {
+        val target = startCollector()
+        collect(
+            target,
+            listOf(
+                methodProbe(1, 0, "com.acme.Task", "run", "()V", 4, outsideCaller = overridesRunnable),
+                methodProbe(2, 0, "com.acme.Plain", "job", "()V", 4),
+            ),
+        )
+
+        val clusters = target.unreachedClusters().associateBy { it.root.className }
+        val outside = clusters.getValue("com.acme.Task")
+        assertEquals(RootKind.CALLED_FROM_OUTSIDE_SCOPE, outside.rootKind)
+        assertEquals(RefOutsideCaller(RefOutsideCallerKind.OVERRIDES_METHOD, "java.lang.Runnable"), outside.root.outsideCaller)
+        assertEquals(RootKind.UNCALLED, clusters.getValue("com.acme.Plain").rootKind)
+        assertEquals(null, clusters.getValue("com.acme.Plain").root.outsideCaller)
+    }
+
+    @Test
+    fun `a method with an outside caller and a hit caller stays reached from hit`() {
+        val target = startCollector()
+        collect(
+            target,
+            listOf(
+                methodProbe(
+                    1,
+                    0,
+                    "com.acme.App",
+                    "main",
+                    "()V",
+                    1,
+                    calls = listOf(CallEdge("com.acme.Task", "run", "()V", virtual = false)),
+                ),
+                methodProbe(2, 0, "com.acme.Task", "run", "()V", 4, outsideCaller = overridesRunnable),
+            ),
+            1 to 0,
+        )
+
+        val cluster = target.unreachedClusters().single()
+        assertEquals(RootKind.REACHED_FROM_HIT, cluster.rootKind)
+        assertEquals("com.acme.Task", cluster.root.className)
+    }
+
+    @Test
+    fun `a marked method called only by a never-hit root is a member of that root's cluster`() {
+        val target = startCollector()
+        collect(
+            target,
+            listOf(
+                methodProbe(
+                    1,
+                    0,
+                    "com.acme.Dead",
+                    "start",
+                    "()V",
+                    1,
+                    calls = listOf(CallEdge("com.acme.Task", "run", "()V", virtual = false)),
+                ),
+                methodProbe(1, 1, "com.acme.Dead", "other", "()V", 2),
+                methodProbe(2, 0, "com.acme.Task", "run", "()V", 4, outsideCaller = overridesRunnable),
+            ),
+        )
+
+        val clusters = target.unreachedClusters()
+        val byRoot = clusters.associateBy { it.root.className + "#" + it.root.methodName }
+        assertEquals(setOf("com.acme.Dead#start", "com.acme.Dead#other"), byRoot.keys)
+        assertEquals(RootKind.UNCALLED, byRoot.getValue("com.acme.Dead#start").rootKind)
+        assertTrue("com.acme.Task" in byRoot.getValue("com.acme.Dead#start").methods.map { it.className })
+    }
+
+    @Test
+    fun `ProbeRef outsideCaller is set on neverHit method rows and is null for branch rows`() {
+        val target = startCollector()
+        collect(
+            target,
+            listOf(
+                methodProbe(
+                    1,
+                    0,
+                    "com.acme.Task",
+                    "run",
+                    "()V",
+                    4,
+                    outsideCaller = OutsideCaller(OutsideCallerKind.CALLBACK_ANNOTATION, "com.acme.OnEvent"),
+                ),
+                methodProbe(1, 1, "com.acme.Task", "plain", "()V", 6),
+                methodProbe(1, 2, "com.acme.Task", "<init>", "()V", 1),
+                methodProbe(2, 0, "com.acme.Step", "go", "()V", 2, outsideCaller = overridesRunnable),
+                branchProbe(2, 1, "com.acme.Step", "go", "()V", 3, branchIndex = 0, siteIndex = 0),
+            ),
+            1 to 2,
+            2 to 0,
+        )
+
+        val rows = target.neverHit().associateBy { it.id() }
+        assertEquals(
+            RefOutsideCaller(RefOutsideCallerKind.CALLBACK_ANNOTATION, "com.acme.OnEvent"),
+            rows.getValue("Task#run").outsideCaller,
+        )
+        assertEquals(null, rows.getValue("Task#plain").outsideCaller)
+        assertEquals(null, rows.getValue("Step#go/0").outsideCaller)
+    }
+
+    @Test
+    fun `an outside caller comes from the newest instance when instances disagree`() {
+        val target = startCollector()
+        val exporter = exporterFor(target)
+        exporter.exportManifest(
+            ProbeManifest(
+                ResourceAttributes("svc", null, "i-1", null, "run-1"),
+                listOf(methodProbe(1, 0, "com.acme.Task", "run", "()V", 4, outsideCaller = overridesRunnable)),
+            ),
+        )
+        exporter.exportManifest(
+            ProbeManifest(
+                ResourceAttributes("svc", null, "i-2", null, "run-2"),
+                listOf(methodProbe(1, 0, "com.acme.Task", "run", "()V", 4)),
+            ),
+        )
+
+        assertEquals(null, target.neverHit().single().outsideCaller)
+    }
+
+    @Test
+    fun `failedToLoad lists a class a manifest named and no instance loaded, and neverLoaded leaves it out`() {
+        val target = startCollector()
+        val exporter = exporterFor(target)
+        exporter.exportStaticBaseline(
+            StaticBaseline(
+                resource = ResourceAttributes("svc", null, "i-1", null, "run-1"),
+                declaredClasses =
+                    listOf(
+                        DeclaredClass("com.acme.Broken", listOf(DeclaredMethod("m", "()V"))),
+                        DeclaredClass("com.acme.Dead", listOf(DeclaredMethod("m", "()V"))),
+                    ),
+                scannedAt = 1000L,
+            ),
+        )
+        exporter.exportManifest(
+            ProbeManifest(
+                ResourceAttributes("svc", null, "i-1", null, "run-1"),
+                emptyList(),
+                failedClasses = listOf(FailedClass("com.acme.Zed", 5L), FailedClass("com.acme.Broken", 5L)),
+            ),
+        )
+
+        assertEquals(listOf("com.acme.Broken", "com.acme.Zed"), target.failedToLoad())
+        assertEquals(listOf("com.acme.Dead"), target.neverLoaded())
+    }
+
+    @Test
+    fun `a class one instance failed to load and another loaded is in neither list`() {
+        val target = startCollector()
+        val exporter = exporterFor(target)
+        exporter.exportStaticBaseline(
+            StaticBaseline(
+                resource = ResourceAttributes("svc", null, "i-1", null, "run-1"),
+                declaredClasses = listOf(DeclaredClass("com.acme.Mixed", listOf(DeclaredMethod("m", "()V")))),
+                scannedAt = 1000L,
+            ),
+        )
+        exporter.exportManifest(
+            ProbeManifest(
+                ResourceAttributes("svc", null, "i-1", null, "run-1"),
+                emptyList(),
+                failedClasses = listOf(FailedClass("com.acme.Mixed", 5L)),
+            ),
+        )
+        exporter.exportManifest(
+            ProbeManifest(
+                ResourceAttributes("svc", null, "i-2", null, "run-2"),
+                listOf(methodProbe(1, 0, "com.acme.Mixed", "m", "()V", 3)),
+            ),
+        )
+
+        assertEquals(emptyList(), target.failedToLoad())
+        assertEquals(emptyList(), target.neverLoaded())
     }
 }

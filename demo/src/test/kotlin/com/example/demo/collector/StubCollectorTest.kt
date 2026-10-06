@@ -8,7 +8,10 @@ import dev.otherlode.proto.ClassLocation
 import dev.otherlode.proto.DeclaredClass
 import dev.otherlode.proto.DeclaredMethod
 import dev.otherlode.proto.DeltaBatch
+import dev.otherlode.proto.FailedClass
 import dev.otherlode.proto.KotlinKind
+import dev.otherlode.proto.OutsideCaller
+import dev.otherlode.proto.OutsideCallerKind
 import dev.otherlode.proto.ProbeDelta
 import dev.otherlode.proto.ProbeKind
 import dev.otherlode.proto.ProbeLocation
@@ -219,6 +222,100 @@ class StubCollectorTest {
 
         val neverLoaded = report(::printNeverLoadedReport)
         assertTrue(neverLoaded.none { it.contains("LoadedInsideATransform") }, neverLoaded.joinToString("\n"))
+    }
+
+    @Test
+    fun `a never-hit method with an outside caller roots a called-from-outside-scope cluster that names its reason`() {
+        val run = resource("run-outside")
+
+        fun method(
+            probeIndex: Int,
+            className: String,
+            outsideCaller: OutsideCaller?,
+        ) = ProbeLocation
+            .newBuilder()
+            .setClassId(1)
+            .setProbeIndex(probeIndex)
+            .setKind(ProbeKind.METHOD)
+            .setClassName(className)
+            .setMethodName("go")
+            .setMethodDescriptor("()V")
+            .setLine(3)
+            .apply { outsideCaller?.let { setOutsideCaller(it) } }
+            .build()
+
+        fun caller(
+            kind: OutsideCallerKind,
+            typeName: String,
+        ) = OutsideCaller
+            .newBuilder()
+            .setKind(kind)
+            .setTypeName(typeName)
+            .build()
+        assertEquals(
+            200,
+            post(
+                "manifest",
+                ProbeManifest
+                    .newBuilder()
+                    .setResource(run)
+                    .addProbes(method(0, "com.acme.outside.Task", caller(OutsideCallerKind.OVERRIDES_METHOD, "java.util.Map\$Entry")))
+                    .addProbes(
+                        method(1, "com.acme.outside.Listener", caller(OutsideCallerKind.CALLBACK_ANNOTATION, "com.acme.Events\$OnEvent")),
+                    ).addProbes(method(2, "com.acme.outside.Plain", null))
+                    .build(),
+            ),
+        )
+
+        val clusters = report(::printUnreachedClusterReport).filter { it.startsWith("UNREACHED CLUSTER") }
+        assertTrue(
+            clusters.any { it.contains("root com.acme.outside.Task#go (called from outside scope: overrides Map\$Entry),") },
+            clusters.joinToString("\n"),
+        )
+        assertTrue(
+            clusters.any { it.contains("root com.acme.outside.Listener#go (called from outside scope: @Events\$OnEvent),") },
+            clusters.joinToString("\n"),
+        )
+        assertTrue(clusters.any { it.contains("root com.acme.outside.Plain#go (uncalled),") }, clusters.joinToString("\n"))
+    }
+
+    @Test
+    fun `a class that failed to load is listed apart from never loaded and is left out of it`() {
+        val declared =
+            DeclaredClass
+                .newBuilder()
+                .setClassName("com.acme.failed.Broken")
+                .addMethods(DeclaredMethod.newBuilder().setMethodName("run").setMethodDescriptor("()V"))
+        val run = resource("run-failed")
+        assertEquals(
+            200,
+            post(
+                "static-baseline",
+                StaticBaseline
+                    .newBuilder()
+                    .setResource(run)
+                    .setChunkCount(1)
+                    .setScannedAt(1L)
+                    .addDeclaredClasses(declared)
+                    .build(),
+            ),
+        )
+        assertEquals(
+            200,
+            post(
+                "manifest",
+                ProbeManifest
+                    .newBuilder()
+                    .setResource(run)
+                    .addFailedClasses(FailedClass.newBuilder().setClassName("com.acme.failed.Broken").setWithheldAt(5L))
+                    .build(),
+            ),
+        )
+
+        val neverLoaded = report(::printNeverLoadedReport)
+        assertTrue(neverLoaded.none { it.contains("Broken") }, neverLoaded.joinToString("\n"))
+        val failed = report(::printFailedToLoadReport)
+        assertTrue(failed.any { it == "  FAILED TO LOAD: com.acme.failed.Broken" }, failed.joinToString("\n"))
     }
 
     @Test

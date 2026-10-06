@@ -186,6 +186,7 @@ public final class dev/otherlode/testkit/OtherlodeTestCollector : java/lang/Auto
 	public final fun dependency (Ljava/lang/String;Ljava/lang/String;)Ldev/otherlode/testkit/DependencyStatus;
 	public final fun disabledEndpointModules ()Ljava/util/List;
 	public final fun endpoints ()Ljava/util/List;
+	public final fun failedToLoad ()Ljava/util/List;
 	public final fun getExportUrl ()Ljava/lang/String;
 	public final fun hitCount (Ljava/lang/String;Ljava/lang/String;)J
 	public final fun hitCount (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)J
@@ -224,6 +225,24 @@ public final class dev/otherlode/testkit/OtherlodeTestCollector$Companion {
 	public static synthetic fun start$default (Ldev/otherlode/testkit/OtherlodeTestCollector$Companion;IILjava/lang/Object;)Ldev/otherlode/testkit/OtherlodeTestCollector;
 }
 
+public final class dev/otherlode/testkit/OutsideCaller {
+	public final fun component1 ()Ldev/otherlode/testkit/OutsideCallerKind;
+	public final fun component2 ()Ljava/lang/String;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getKind ()Ldev/otherlode/testkit/OutsideCallerKind;
+	public final fun getTypeName ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/otherlode/testkit/OutsideCallerKind : java/lang/Enum {
+	public static final field CALLBACK_ANNOTATION Ldev/otherlode/testkit/OutsideCallerKind;
+	public static final field OVERRIDES_METHOD Ldev/otherlode/testkit/OutsideCallerKind;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Ldev/otherlode/testkit/OutsideCallerKind;
+	public static fun values ()[Ldev/otherlode/testkit/OutsideCallerKind;
+}
+
 public final class dev/otherlode/testkit/ProbeKind : java/lang/Enum {
 	public static final field BRANCH Ldev/otherlode/testkit/ProbeKind;
 	public static final field METHOD Ldev/otherlode/testkit/ProbeKind;
@@ -243,6 +262,7 @@ public final class dev/otherlode/testkit/ProbeRef {
 	public final fun component15 ()Ljava/lang/String;
 	public final fun component16 ()Ldev/otherlode/testkit/RoutineKind;
 	public final fun component17 ()Ldev/otherlode/testkit/UnreadShape;
+	public final fun component18 ()Ldev/otherlode/testkit/OutsideCaller;
 	public final fun component2 ()Ljava/lang/String;
 	public final fun component3 ()Ljava/lang/String;
 	public final fun component4 ()I
@@ -263,6 +283,7 @@ public final class dev/otherlode/testkit/ProbeRef {
 	public final fun getMethodDescriptor ()Ljava/lang/String;
 	public final fun getMethodName ()Ljava/lang/String;
 	public final fun getNeverLoaded ()Z
+	public final fun getOutsideCaller ()Ldev/otherlode/testkit/OutsideCaller;
 	public final fun getOverridable ()Z
 	public final fun getParameterIndex ()Ljava/lang/Integer;
 	public final fun getParameterName ()Ljava/lang/String;
@@ -274,6 +295,7 @@ public final class dev/otherlode/testkit/ProbeRef {
 }
 
 public final class dev/otherlode/testkit/RootKind : java/lang/Enum {
+	public static final field CALLED_FROM_OUTSIDE_SCOPE Ldev/otherlode/testkit/RootKind;
 	public static final field CLASS_FINDING Ldev/otherlode/testkit/RootKind;
 	public static final field REACHED_FROM_HIT Ldev/otherlode/testkit/RootKind;
 	public static final field UNCALLED Ldev/otherlode/testkit/RootKind;

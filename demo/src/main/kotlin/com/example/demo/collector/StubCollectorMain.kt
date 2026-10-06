@@ -14,6 +14,8 @@ import dev.otherlode.proto.EndpointDiscoverySource
 import dev.otherlode.proto.GeneratedBy
 import dev.otherlode.proto.KotlinKind
 import dev.otherlode.proto.LineRange
+import dev.otherlode.proto.OutsideCaller
+import dev.otherlode.proto.OutsideCallerKind
 import dev.otherlode.proto.ProbeKind
 import dev.otherlode.proto.ProbeManifest
 import dev.otherlode.proto.ResourceAttributes
@@ -100,6 +102,7 @@ private data class ProbeInfo(
     val genericSignature: String = "",
     val extensionReceiver: Boolean = false,
     val unreadShape: UnreadShape = UnreadShape.UNREAD_SHAPE_UNSPECIFIED,
+    val outsideCaller: OutsideCaller? = null,
 )
 
 /** One method of one run: where a METHOD probe's branch sites are kept, for its BRANCH probes to find. */
@@ -236,6 +239,9 @@ private val latestEndpointHitsTotal = ConcurrentHashMap<InstanceEndpointKey, Lon
 // baseline's declared-classes set is for.
 private val dynamicallyKnownClassNames = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
 
+/** Every class name any manifest listed as failed to load. */
+private val failedToLoadClassNames = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
+
 /** Every run any delta batch has ever arrived from, heartbeat included. */
 private val allRuns = Collections.newSetFromMap(ConcurrentHashMap<Run, Boolean>())
 
@@ -303,6 +309,7 @@ private data class NodeInfo(
     val neverLoaded: Boolean,
     val hits: Long,
     val edges: Set<CallEdgeInfo>,
+    val outsideCaller: OutsideCaller? = null,
 )
 
 /** One resolved call out of a method: the callee node and the guard the raw [CallEdgeInfo] carried. */
@@ -396,8 +403,8 @@ private class ClusterGraph(
     val calleesOf: Map<ClusterNode, Set<ClusterNode>>,
 )
 
-/** Which of the four root shapes an [UnreachedClusterInfo] has. */
-private enum class ClusterRootKind { REACHED_FROM_HIT, UNCALLED, UNTAKEN_OUTCOME, CLASS_FINDING }
+/** Which of the five root shapes an [UnreachedClusterInfo] has. */
+private enum class ClusterRootKind { REACHED_FROM_HIT, UNCALLED, CALLED_FROM_OUTSIDE_SCOPE, UNTAKEN_OUTCOME, CLASS_FINDING }
 
 /** One member of an unreached cluster, printed by [printUnreachedClusterReport]. */
 private data class ClusterMember(
@@ -405,6 +412,7 @@ private data class ClusterMember(
     val methodName: String,
     val methodDescriptor: String,
     val neverLoaded: Boolean,
+    val outsideCaller: OutsideCaller? = null,
 )
 
 /**
@@ -477,6 +485,7 @@ fun main(args: Array<String>) {
             printOmissionReport()
             printEndpointReport()
             printNeverLoadedReport()
+            printFailedToLoadReport()
             printClassFindingReport()
             printUnreachedClusterReport()
             printDependencyReport()
@@ -573,6 +582,7 @@ private fun handleManifest(exchange: HttpExchange) {
                 genericSignature = location.genericSignature,
                 extensionReceiver = location.extensionReceiver,
                 unreadShape = location.unreadShape,
+                outsideCaller = if (location.hasOutsideCaller()) location.outsideCaller else null,
             )
         if (location.branchSitesList.isNotEmpty()) {
             manifestBranchSites[InstanceMethodKey(run, location.classId, location.methodName, location.methodDescriptor)] =
@@ -617,6 +627,7 @@ private fun handleManifest(exchange: HttpExchange) {
     for (unreported in manifest.unreportedClassesList) {
         dynamicallyKnownClassNames += unreported.className
     }
+    for (failed in manifest.failedClassesList) failedToLoadClassNames += failed.className
     // A class's location record is committed with its probes, so this manifest names its class.
     val classNamesById = manifest.probesList.associate { it.classId to it.className }
     for (classLocation in manifest.classLocationsList) {
@@ -1466,7 +1477,7 @@ internal fun printNeverLoadedReport() {
         println("===========================================================")
         return
     }
-    val neverLoadedAll = staticallyDeclaredClasses.filterKeys { it !in dynamicallyKnownClassNames }
+    val neverLoadedAll = staticallyDeclaredClasses.filterKeys { it !in dynamicallyKnownClassNames && it !in failedToLoadClassNames }
     val (allInlineOrGenerated, neverLoaded) =
         neverLoadedAll.entries.partition { (_, methods) ->
             methods.isNotEmpty() && methods.all { it.inline || it.isLookedThrough() }
@@ -1504,6 +1515,19 @@ internal fun printNeverLoadedReport() {
     println("===========================================================")
 }
 
+/**
+ * Lists every class a manifest named as failed to load that no instance loaded. Such a class is a
+ * deployment to fix, so it is never in [printNeverLoadedReport].
+ */
+internal fun printFailedToLoadReport() {
+    println()
+    println("=== otherlode demo: failed to load ===")
+    val failed = failedToLoadClassNames.filter { it !in dynamicallyKnownClassNames }.sorted()
+    println("failed to load: ${failed.size}")
+    failed.forEach { println("  FAILED TO LOAD: ${classText(it)}") }
+    println("======================================")
+}
+
 /** Orders a [ClusterMember] the way [printNeverHitReport] orders a probe: by class, then method, then descriptor. */
 private val clusterMemberComparator: Comparator<ClusterMember> = compareBy({ it.className }, { it.methodName }, { it.methodDescriptor })
 
@@ -1517,7 +1541,7 @@ private val clusterMemberComparator: Comparator<ClusterMember> = compareBy({ it.
  * one calls. A class the cluster holds whole prints once, with its finding and method count, in
  * place of its methods.
  */
-private fun printUnreachedClusterReport() {
+internal fun printUnreachedClusterReport() {
     println()
     println("=== otherlode demo: unreached clusters ===")
     val clusters = computeUnreachedClusters()
@@ -1545,6 +1569,10 @@ private fun printUnreachedClusterReport() {
                     "$method (uncalled)"
                 }
 
+                ClusterRootKind.CALLED_FROM_OUTSIDE_SCOPE -> {
+                    "$method (called from outside scope: ${outsideCallerReason(cluster.root.outsideCaller)})"
+                }
+
                 ClusterRootKind.CLASS_FINDING -> {
                     val calledFrom = if (callers.isEmpty()) "" else ", called from $callers"
                     "${classText(cluster.root.className)} (class finding: ${cluster.rootFinding?.text}$calledFrom)"
@@ -1565,6 +1593,16 @@ private fun printUnreachedClusterReport() {
         }
     }
     println("=======================================")
+}
+
+/** What an [OutsideCaller] reads as in a root's label: `overrides Type` or `@Annotation`, with the package dropped. */
+private fun outsideCallerReason(outsideCaller: OutsideCaller?): String {
+    val simpleName = outsideCaller?.typeName.orEmpty().substringAfterLast('.')
+    return when (outsideCaller?.kind) {
+        OutsideCallerKind.OVERRIDES_METHOD -> "overrides $simpleName"
+        OutsideCallerKind.CALLBACK_ANNOTATION -> "@$simpleName"
+        else -> simpleName
+    }
 }
 
 /**
@@ -1597,7 +1635,8 @@ private fun routesByHandler(): Map<NodeKey, List<String>> =
  * directly.
  *
  * A root is a never-hit node with no caller or with a caller that is a method with hits. A method
- * root is [ClusterRootKind.UNCALLED] or [ClusterRootKind.REACHED_FROM_HIT], an outcome root
+ * root is [ClusterRootKind.UNCALLED], [ClusterRootKind.CALLED_FROM_OUTSIDE_SCOPE] when it has an
+ * outside caller, or [ClusterRootKind.REACHED_FROM_HIT], an outcome root
  * [ClusterRootKind.UNTAKEN_OUTCOME], and a class root [ClusterRootKind.CLASS_FINDING]. A `<clinit>`
  * is never a root, and neither is an unjudged constructor: a never-hit `<init>` of a loaded class
  * nothing constructed that no class finding covers, such as a utility class's private constructor. Like
@@ -1641,6 +1680,7 @@ private fun computeUnreachedClusters(): List<UnreachedClusterInfo> {
                 when {
                     node.isClass -> ClusterRootKind.CLASS_FINDING
                     node.branchIndex != null -> ClusterRootKind.UNTAKEN_OUTCOME
+                    callers.isEmpty() && graph.nodes[node.method]?.outsideCaller != null -> ClusterRootKind.CALLED_FROM_OUTSIDE_SCOPE
                     callers.isEmpty() -> ClusterRootKind.UNCALLED
                     else -> ClusterRootKind.REACHED_FROM_HIT
                 }
@@ -1783,7 +1823,7 @@ private fun buildUnreachedCluster(
 private fun toClusterMember(
     info: NodeInfo,
     key: NodeKey,
-): ClusterMember = ClusterMember(key.className, key.methodName, key.methodDescriptor, info.neverLoaded)
+): ClusterMember = ClusterMember(key.className, key.methodName, key.methodDescriptor, info.neverLoaded, info.outsideCaller)
 
 /**
  * Every outcome node, keyed by its [ClusterNode]: a BRANCH probe that is none of inline, generated
@@ -1968,7 +2008,14 @@ private fun buildClusterNodes(declaredClasses: Map<String, List<DeclaredMethodIn
             ?.filter { it.methodName == nodeKey.methodName && it.methodDescriptor == nodeKey.methodDescriptor }
             ?.forEach { edges += it.calls }
         val representative = entries.first().value
-        nodes[nodeKey] = NodeInfo(line = representative.line, neverLoaded = false, hits = hits, edges = edges)
+        nodes[nodeKey] =
+            NodeInfo(
+                line = representative.line,
+                neverLoaded = false,
+                hits = hits,
+                edges = edges,
+                outsideCaller = representative.outsideCaller,
+            )
     }
     for ((className, methods) in declaredClasses) {
         if (className in dynamicallyKnownClassNames) continue

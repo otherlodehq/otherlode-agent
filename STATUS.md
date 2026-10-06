@@ -472,6 +472,17 @@ manifest's `failed_classes` come from one decision. A class confirmed by a
 count, by the loaded set or by a collected loader is never failed, and the
 offline registry fails nothing, so the visibility baseline holds.
 
+Chunk 5 landed on 2026-10-06: the testkit gains
+`RootKind.CALLED_FROM_OUTSIDE_SCOPE`, `ProbeRef.outsideCaller` (its own
+`OutsideCaller` and `OutsideCallerKind`, from the newest instance's copy)
+and `failedToLoad()`, which `neverLoaded()` leaves out; the ABI dump adds
+only those. The demo's stub collector applies the same rules and lists
+failed classes apart. The demo shows it: `PromoHandler#handle`, which
+nothing in the demo calls, reads `called from outside scope: overrides
+HttpHandler` where it read `uncalled`. The README gains the root kind, the
+query and the kotlin-stdlib note. Agent chunks 0 to 5 are done; step 6 is
+Luke's.
+
 Follow-ups with triggers: an agent option for an adopter's own callback
 annotations (an adopter asks, or uncalled roots carry in-house
 annotations); a server-side visibility gate over fixture payloads.

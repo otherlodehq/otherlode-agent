@@ -107,9 +107,9 @@ private fun formatTotal(
 /**
  * The `/promo` handler as a named class. The endpoint record names this class and `handle`, so
  * the never-called endpoint and the never-hit method are the same finding seen from two sides.
- * Nothing in the demo's own packages calls `handle`, only the server, so it is an uncalled root:
- * the known gap for a named class implementing a framework interface, except that here the
- * endpoint join carries the route to it.
+ * Nothing in the demo's own packages calls `handle`, only the server. The method overrides
+ * `HttpHandler.handle`, so the root reads as called from outside scope. The endpoint join carries
+ * the route to it.
  */
 private class PromoHandler : HttpHandler {
     override fun handle(exchange: HttpExchange) {
