@@ -487,7 +487,7 @@ Follow-ups with triggers: an agent option for an adopter's own callback
 annotations (an adopter asks, or uncalled roots carry in-house
 annotations); a server-side visibility gate over fixture payloads.
 
-### Classes that failed to load, made certain, and the dependencies only they use: settled, to build
+### Classes that failed to load, made certain, and the dependencies only they use: landed
 
 Grilled on 2026-10-06 with Luke, after the first round landed (agent ADRs
 0064 and 0065, server ADRs 0055 and 0056). Luke wanted a finding for a
@@ -541,6 +541,11 @@ baseline says. `failedToLoadDependencies()` throws as its siblings do,
 since a failed site comes only from a baseline, and
 `DependencyReferenceSite.failedToLoad` marks the site. The ABI dump adds
 only those.
+Review of the server's chunk made a failed site count only from a
+complete baseline in all three (`0f0aec8`), since the server reads only
+complete scans. Chunks 3 and 4 landed in `otherlode-server` the same day
+(`0bed17d`, the UI after it): service-wide failure dates and the
+`failed-to-load` status, shown with its failing-since dates.
 
 ### Reminders for expiring keys and credentials: to decide
 
