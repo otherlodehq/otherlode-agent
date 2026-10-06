@@ -93,7 +93,7 @@ A class the agent wove whose definition it has not yet seen evidence of. Its pro
 _Avoid_: withheld class, undefined class, failed class (a skipped class is the one that failed)
 
 **Class that failed to load**:
-An unconfirmed class that never confirmed: the agent wove it and the JVM never defined it, such as when a supertype is missing at load or the verifier rejects it. It is a deployment to fix, never dead code, and a class some in-scope run loaded is loaded whatever another run says.
+An unconfirmed class that never confirmed: the agent wove it and the JVM never defined it, such as when a supertype is missing at load. The agent names it only once the JVM's attempt to define it has ended. It is a deployment to fix, never dead code, and a class some in-scope run loaded is loaded whatever another run says.
 _Avoid_: failed class (a skipped class is the one that failed), never loaded (a status for code nothing used, and this class may have been used)
 
 **Class file**:

@@ -487,6 +487,33 @@ Follow-ups with triggers: an agent option for an adopter's own callback
 annotations (an adopter asks, or uncalled roots carry in-house
 annotations); a server-side visibility gate over fixture payloads.
 
+### Classes that failed to load, made certain, and the dependencies only they use: settled, to build
+
+Grilled on 2026-10-06 with Luke, after the first round landed (agent ADRs
+0064 and 0065, server ADRs 0055 and 0056). Luke wanted a finding for a
+dependency whose references sit in classes that failed to load, "this has
+not loaded for five years, do we need it?", but only if the agent can be
+certain a reported class never loaded. Research found it could not: a
+stalled definition, a retry that succeeds and a namesake that loads later
+could each leave a defined class named. ADR 0066 makes a miss count only
+once the JVM's attempt to define the class has ended, read from the
+defining thread's stack, and clears a failure on a retry or a later
+confirmation. ADR 0030 is amended with the `failed_to_load` dependency
+status, and server ADR 0057 has the service-wide `first_failed_at` and
+`last_failed_at` dates and the display.
+
+Landing order, one chunk and one commit each:
+
+1. Agent: ADR 0066 (the attempt-ended check, the first-miss fix, retries
+   and namesakes).
+2. Agent: the `failed_to_load` dependency status in the testkit
+   (`DependencyUsage`, `DependencyRules`) and the demo collector
+   (`DependencyReport`), with the ABI dump.
+3. Server: "loaded wins" pinned within a run, the service-wide failure
+   dates (migration 0012), the dependency status, the report counts and
+   the API.
+4. Server: the web UI and the README.
+
 ### Reminders for expiring keys and credentials: to decide
 
 Raised 2026-10-05 by Luke while creating the release signing key. Nothing
@@ -1093,6 +1120,18 @@ stay. To settle in the grill: whether to adopt it before release (Luke's rule
 says yes unless something blocks), how to treat class-file version 50 (frames
 optional, type-inference fallback), and what happens to a method whose frames
 an earlier agent already rewrote.
+
+### A class the verifier rejects reads as never-hit code: to decide
+
+Found on 2026-10-06 while making failed classes certain (ADR 0066). The
+JVM verifies a class after it defines it, so a class the verifier rejects
+is defined and in `getAllLoadedClasses()`. It is confirmed by name, never
+named failed, and its methods can never run, so they read as never hit.
+That is a dead-code claim about code whose deployment is broken. Raised
+with Luke and recorded as a follow-up. A fix needs a signal that a class
+failed to link or initialise without loading anything, such as a probe in
+`<clinit>` that never fires beside a `NoClassDefFoundError` the agent
+cannot see, so it wants its own grill.
 
 ### HotSwap of a woven class with changed code: to grill
 

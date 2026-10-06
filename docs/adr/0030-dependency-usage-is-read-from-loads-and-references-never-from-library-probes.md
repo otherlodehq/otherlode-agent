@@ -170,3 +170,7 @@ referenced class that no loader can find is an *absent reference* and is reporte
   collector's rules within one JVM.
 - A dependency every listing counted no class in is resources only (native libraries, web assets, message bundles): loading cannot say whether it is used, so it is never unloaded and nothing else is claimed. The testkit and the stub apply it; the server's rule is recorded in `STATUS.md`. Added 2026-10-03 in a review.
 - `dependency(group, artifact)` in the testkit answers for the dependency whose only identity that is when a shaded jar also carries it, and throws when no single one is left.
+
+## Amended on 2026-10-06: a reference from a class that failed to load
+
+A class that failed to load (ADR 0065) is never dead code, so its references cannot support a claim that a dependency is unused. A loaded dependency with no live reference that some judging run references from a class that reads failed to load in scope gets the status `failed_to_load` in place of `unreferenced`, `unreached` or `no-live-reference`. It asks for review and claims no removal: the class may fail because of the very classpath the dependency is on, and a dependency only a long-failing class uses may not be needed. The server, the testkit and the demo collector apply the same rule. Decided with Luke; server ADR 0057 has the dates and the display.

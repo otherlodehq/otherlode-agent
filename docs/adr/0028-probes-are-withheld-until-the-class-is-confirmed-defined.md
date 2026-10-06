@@ -35,3 +35,7 @@ The scope is the two failures that leave the class undefined. A later transforme
 ## Amended on 2026-10-06: the bucket is built
 
 The deferred bucket on `ProbeManifest` is built, as `failed_classes` (ADR 0065). Collector ADR 0005 made a field added after release cost a stripped run, so it went in before `0.1.0`. Everything else here stands.
+
+## Amended on 2026-10-06: a miss counts only once the definition attempt has ended
+
+ADR 0066 replaces "absent on two consecutive sweeps" with "absent on two sweeps after the attempt to define the class ended", and clears a failure on a retry or a later confirmation. It also corrects this ADR: a class the verifier rejects is defined, since the JVM verifies after it defines, so it is confirmed and never withheld.
