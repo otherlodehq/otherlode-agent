@@ -23,9 +23,12 @@ import dev.otherlode.proto.EndpointDelta as ProtoEndpointDelta
 import dev.otherlode.proto.EndpointDiscoverySource as ProtoEndpointDiscoverySource
 import dev.otherlode.proto.EndpointLocation as ProtoEndpointLocation
 import dev.otherlode.proto.ExternalClass as ProtoExternalClass
+import dev.otherlode.proto.FailedClass as ProtoFailedClass
 import dev.otherlode.proto.GeneratedBy as ProtoGeneratedBy
 import dev.otherlode.proto.KotlinKind as ProtoKotlinKind
 import dev.otherlode.proto.LineRange as ProtoLineRange
+import dev.otherlode.proto.OutsideCaller as ProtoOutsideCaller
+import dev.otherlode.proto.OutsideCallerKind as ProtoOutsideCallerKind
 import dev.otherlode.proto.ProbeDelta as ProtoProbeDelta
 import dev.otherlode.proto.ProbeKind as ProtoProbeKind
 import dev.otherlode.proto.ProbeLocation as ProtoProbeLocation
@@ -139,6 +142,7 @@ object ProtoPayloadCodec {
             .addAllExternalClasses(manifest.externalClasses.map { toProto(it) })
             .setReferencesRecorded(manifest.referencesRecorded)
             .setDependenciesListed(manifest.dependenciesListed)
+            .addAllFailedClasses(manifest.failedClasses.map { toProto(it) })
             .build()
 
     private fun fromProto(manifest: ProtoProbeManifest): ProbeManifest =
@@ -155,6 +159,7 @@ object ProtoPayloadCodec {
             externalClasses = manifest.externalClassesList.map { fromProto(it) },
             referencesRecorded = manifest.referencesRecorded,
             dependenciesListed = manifest.dependenciesListed,
+            failedClasses = manifest.failedClassesList.map { fromProto(it) },
         )
 
     private fun toProto(unreportedClass: UnreportedClass): ProtoUnreportedClass =
@@ -168,6 +173,19 @@ object ProtoPayloadCodec {
         UnreportedClass(
             className = unreportedClass.className,
             firstSeenUnreportedAt = unreportedClass.firstSeenUnreportedAt,
+        )
+
+    private fun toProto(failedClass: FailedClass): ProtoFailedClass =
+        ProtoFailedClass
+            .newBuilder()
+            .setClassName(failedClass.className)
+            .setWithheldAt(failedClass.withheldAt)
+            .build()
+
+    private fun fromProto(failedClass: ProtoFailedClass): FailedClass =
+        FailedClass(
+            className = failedClass.className,
+            withheldAt = failedClass.withheldAt,
         )
 
     private fun toProto(skippedClass: SkippedClass): ProtoSkippedClass =
@@ -214,6 +232,7 @@ object ProtoPayloadCodec {
         location.parameterIndex?.let { builder.parameterIndex = it }
         location.branchKey?.let { builder.branchKey = it }
         location.siteIndex?.let { builder.siteIndex = it }
+        location.outsideCaller?.let { builder.outsideCaller = toProto(it) }
         return builder.build()
     }
 
@@ -248,8 +267,35 @@ object ProtoPayloadCodec {
             parameterNames = location.parameterNamesList,
             genericSignature = location.genericSignature,
             extensionReceiver = location.extensionReceiver,
+            outsideCaller = if (location.hasOutsideCaller()) fromProto(location.outsideCaller) else null,
         )
     }
+
+    private fun toProto(outsideCaller: OutsideCaller): ProtoOutsideCaller =
+        ProtoOutsideCaller
+            .newBuilder()
+            .setKind(toProto(outsideCaller.kind))
+            .setTypeName(outsideCaller.typeName)
+            .build()
+
+    private fun fromProto(outsideCaller: ProtoOutsideCaller): OutsideCaller? {
+        val kind = fromProto(outsideCaller.kind) ?: return null
+        return OutsideCaller(kind, outsideCaller.typeName)
+    }
+
+    private fun toProto(kind: OutsideCallerKind): ProtoOutsideCallerKind =
+        when (kind) {
+            OutsideCallerKind.OVERRIDES_METHOD -> ProtoOutsideCallerKind.OVERRIDES_METHOD
+            OutsideCallerKind.CALLBACK_ANNOTATION -> ProtoOutsideCallerKind.CALLBACK_ANNOTATION
+        }
+
+    private fun fromProto(kind: ProtoOutsideCallerKind): OutsideCallerKind? =
+        when (kind) {
+            ProtoOutsideCallerKind.OUTSIDE_CALLER_KIND_UNSPECIFIED -> null
+            ProtoOutsideCallerKind.OVERRIDES_METHOD -> OutsideCallerKind.OVERRIDES_METHOD
+            ProtoOutsideCallerKind.CALLBACK_ANNOTATION -> OutsideCallerKind.CALLBACK_ANNOTATION
+            ProtoOutsideCallerKind.UNRECOGNIZED -> throw IllegalArgumentException("unrecognized outside caller kind on the wire: $kind")
+        }
 
     private fun toProto(site: BranchSite): ProtoBranchSite {
         val builder =

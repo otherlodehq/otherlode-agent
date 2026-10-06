@@ -4,6 +4,7 @@ import dev.otherlode.export.BodyKind
 import dev.otherlode.export.ClassLocation
 import dev.otherlode.export.ClassReferences
 import dev.otherlode.export.DeltaBatch
+import dev.otherlode.export.FailedClass
 import dev.otherlode.export.KotlinKind
 import dev.otherlode.export.ProbeDelta
 import dev.otherlode.export.ProbeKind
@@ -175,6 +176,12 @@ open class ProbeRegistry(
         var manifestIncluded: Boolean = false
     }
 
+    private class FailedEntry(
+        val withheldAt: Long,
+    ) {
+        var manifestIncluded: Boolean = false
+    }
+
     /**
      * One computed delta batch, together with the exact per-class snapshots it was built from.
      *
@@ -197,11 +204,13 @@ open class ProbeRegistry(
         internal val stagedEntries: List<Any>,
         internal val stagedSkipped: List<Any>,
         internal val stagedUnreported: List<Any>,
+        internal val stagedFailed: List<Any> = emptyList(),
     )
 
     private val entriesByKey = ConcurrentHashMap<RegistryKey, ClassEntry>()
     private val skippedByClassName = ConcurrentHashMap<String, SkippedEntry>()
     private val unreportedByClassName = ConcurrentHashMap<String, UnreportedEntry>()
+    private val failedByClassName = ConcurrentHashMap<String, FailedEntry>()
     private val nothingToProbeClassNames = ConcurrentHashMap.newKeySet<String>()
     private val nextClassId = AtomicInteger(0)
     private val nextSnapshotSequence = AtomicLong(0)
@@ -336,6 +345,21 @@ open class ProbeRegistry(
         unreportedByClassName.computeIfAbsent(className) {
             added = true
             UnreportedEntry(System.currentTimeMillis())
+        }
+        return added
+    }
+
+    /**
+     * Records a class the agent withheld for good because the JVM never defined it, keeping the
+     * time it was withheld.
+     *
+     * Idempotent per class name, so a class named twice is sent once. Returns true the first time.
+     */
+    fun recordFailed(className: String): Boolean {
+        var added = false
+        failedByClassName.computeIfAbsent(className) {
+            added = true
+            FailedEntry(System.currentTimeMillis())
         }
         return added
     }
@@ -625,6 +649,10 @@ open class ProbeRegistry(
             unreportedByClassName.map { (className, entry) ->
                 UnreportedClass(className, entry.firstSeenUnreportedAt)
             }
+        val failed =
+            failedByClassName.map { (className, entry) ->
+                FailedClass(className, entry.withheldAt)
+            }
         return ProbeManifest(
             resource,
             locations,
@@ -632,6 +660,7 @@ open class ProbeRegistry(
             classLocations = classLocations,
             unreportedClasses = unreported,
             classReferences = classReferences,
+            failedClasses = failed,
         )
     }
 
@@ -667,6 +696,7 @@ open class ProbeRegistry(
                 parameterNames = meta.parameterNames,
                 genericSignature = meta.genericSignature,
                 extensionReceiver = meta.extensionReceiver,
+                outsideCaller = meta.outsideCaller,
             )
         }
 
@@ -713,7 +743,7 @@ open class ProbeRegistry(
 
     /**
      * Like [computeManifestDelta], but splits the not-yet-sent classes into chunks of at most
-     * [maxEntriesPerChunk] entries each. A skipped or unreported class counts as one entry. A
+     * [maxEntriesPerChunk] entries each. A skipped, unreported or failed class counts as one entry. A
      * registered class counts as its probe locations, plus its probes' call edges, referenced
      * classes and branch-site weight, plus one for its own [ClassLocation] record, plus the names in
      * its [ClassReferences] record, since all of it is staged and committed together. The first
@@ -741,6 +771,8 @@ open class ProbeRegistry(
             var stagedSkipped = mutableListOf<Any>()
             var unreported = mutableListOf<UnreportedClass>()
             var stagedUnreported = mutableListOf<Any>()
+            var failed = mutableListOf<FailedClass>()
+            var stagedFailed = mutableListOf<Any>()
 
             // The running chunk weight is tracked explicitly rather than derived from the staged
             // lists' sizes: a class's call edges add to its weight but never become list entries of
@@ -759,10 +791,12 @@ open class ProbeRegistry(
                             classLocations = classLocations,
                             unreportedClasses = unreported,
                             classReferences = classReferences,
+                            failedClasses = failed,
                         ),
                         stagedEntries,
                         stagedSkipped,
                         stagedUnreported,
+                        stagedFailed,
                     )
                 locations = mutableListOf()
                 skipped = mutableListOf()
@@ -772,6 +806,8 @@ open class ProbeRegistry(
                 stagedSkipped = mutableListOf()
                 unreported = mutableListOf()
                 stagedUnreported = mutableListOf()
+                failed = mutableListOf()
+                stagedFailed = mutableListOf()
                 chunkWeight = 0
                 return chunk
             }
@@ -817,6 +853,16 @@ open class ProbeRegistry(
                 unreported += UnreportedClass(className, entry.firstSeenUnreportedAt)
                 chunkWeight += 1
             }
+            for ((className, entry) in failedByClassName) {
+                if (entry.manifestIncluded) continue
+                if (chunkWeight > 0 && chunkWeight + 1 > maxEntriesPerChunk) {
+                    yield(takeChunk())
+                    if (entry.manifestIncluded) continue
+                }
+                stagedFailed += entry
+                failed += FailedClass(className, entry.withheldAt)
+                chunkWeight += 1
+            }
             if (chunkWeight > 0) yield(takeChunk())
         }
 
@@ -839,6 +885,7 @@ open class ProbeRegistry(
         }
         for (entry in snapshot.stagedSkipped) (entry as SkippedEntry).manifestIncluded = true
         for (entry in snapshot.stagedUnreported) (entry as UnreportedEntry).manifestIncluded = true
+        for (entry in snapshot.stagedFailed) (entry as FailedEntry).manifestIncluded = true
     }
 
     /** How many registered classes still hold their manifest metadata; for tests. */

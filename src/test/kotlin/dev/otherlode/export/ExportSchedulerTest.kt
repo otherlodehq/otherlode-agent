@@ -281,6 +281,22 @@ class ExportSchedulerTest {
     }
 
     @Test
+    fun `a failed class with no probes at all still triggers a manifest send, once`() {
+        val registry = ProbeRegistry()
+        registry.recordFailed("com.example.Broken")
+        val exporter = RecordingExporter()
+        val scheduler = ExportScheduler(config, resource, registry, EndpointRegistry(), exporter)
+
+        scheduler.flush()
+        scheduler.flush()
+
+        assertEquals(
+            listOf("com.example.Broken"),
+            exporter.manifests.flatMap { it.failedClasses.map { failed -> failed.className } },
+        )
+    }
+
+    @Test
     fun `an exception thrown while computing the delta batch does not stop future flushes`() {
         val registry =
             object : ProbeRegistry() {
@@ -925,7 +941,7 @@ class ExportSchedulerTest {
         for (manifest in exporter.manifests) {
             val weight =
                 manifest.probes.size + manifest.probes.sumOf { it.calls.size } + manifest.classLocations.size +
-                    manifest.skippedClasses.size + manifest.unreportedClasses.size + manifest.endpoints.size +
+                    manifest.skippedClasses.size + manifest.unreportedClasses.size + manifest.failedClasses.size + manifest.endpoints.size +
                     manifest.disabledEndpointModules.size + manifest.dependencies.size
             assertTrue(weight <= 6, "a sent manifest must not exceed the cap it was chunked under, got $weight")
         }
@@ -1602,7 +1618,7 @@ class ExportSchedulerTest {
         for (manifest in exporter.manifests) {
             val weight =
                 manifest.probes.size + manifest.probes.sumOf { it.calls.size } + manifest.classLocations.size +
-                    manifest.skippedClasses.size + manifest.unreportedClasses.size + manifest.endpoints.size +
+                    manifest.skippedClasses.size + manifest.unreportedClasses.size + manifest.failedClasses.size + manifest.endpoints.size +
                     manifest.disabledEndpointModules.size
             assertTrue(weight <= 5, "a sent manifest must not exceed the cap it was chunked under, got $weight")
         }

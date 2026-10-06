@@ -26,6 +26,8 @@ import dev.otherlode.proto.EndpointLocation as ProtoEndpointLocation
 import dev.otherlode.proto.ExternalClass as ProtoExternalClass
 import dev.otherlode.proto.GeneratedBy as ProtoGeneratedBy
 import dev.otherlode.proto.KotlinKind as ProtoKotlinKind
+import dev.otherlode.proto.OutsideCaller as ProtoOutsideCaller
+import dev.otherlode.proto.OutsideCallerKind as ProtoOutsideCallerKind
 import dev.otherlode.proto.ProbeDelta as ProtoProbeDelta
 import dev.otherlode.proto.ProbeKind as ProtoProbeKind
 import dev.otherlode.proto.ProbeLocation as ProtoProbeLocation
@@ -2254,6 +2256,93 @@ class ProtoPayloadCodecTest {
         val unreported = decoded.unreportedClasses.single()
         assertEquals("com.example.Deflected", unreported.className)
         assertEquals(1_700_000_000_000L, unreported.firstSeenUnreportedAt)
+    }
+
+    @Test
+    fun `a method probe's outside caller round-trips for each kind`() {
+        val callers =
+            listOf(
+                OutsideCaller(OutsideCallerKind.OVERRIDES_METHOD, "java.lang.Runnable"),
+                OutsideCaller(OutsideCallerKind.CALLBACK_ANNOTATION, "org.springframework.context.event.EventListener"),
+            )
+        val manifest =
+            ProbeManifest(
+                resource = ResourceAttributes("checkout", null, "", null, "run-1"),
+                probes = callers.mapIndexed { i, caller -> methodProbe().copy(probeIndex = i, outsideCaller = caller) },
+            )
+
+        val bytes = ProtoPayloadCodec.encode(manifest)
+        val decoded = ProtoPayloadCodec.decodeProbeManifest(bytes)
+
+        assertEquals(manifest, decoded)
+        assertEquals(callers, decoded.probes.map { it.outsideCaller })
+        val wire = ProtoProbeManifest.parseFrom(bytes)
+        assertEquals(ProtoOutsideCallerKind.OVERRIDES_METHOD, wire.getProbes(0).outsideCaller.kind)
+        assertEquals("java.lang.Runnable", wire.getProbes(0).outsideCaller.typeName)
+        assertEquals(ProtoOutsideCallerKind.CALLBACK_ANNOTATION, wire.getProbes(1).outsideCaller.kind)
+    }
+
+    @Test
+    fun `a method probe with no outside caller sends no field and decodes to null`() {
+        val manifest =
+            ProbeManifest(
+                resource = ResourceAttributes("checkout", null, "", null, "run-1"),
+                probes = listOf(methodProbe()),
+            )
+
+        val bytes = ProtoPayloadCodec.encode(manifest)
+
+        assertFalse(ProtoProbeManifest.parseFrom(bytes).getProbes(0).hasOutsideCaller())
+        assertEquals(
+            null,
+            ProtoPayloadCodec
+                .decodeProbeManifest(bytes)
+                .probes
+                .single()
+                .outsideCaller,
+        )
+    }
+
+    @Test
+    fun `an outside caller with the zero kind decodes to null, and an unknown kind number is an error`() {
+        fun manifestWith(caller: ProtoOutsideCaller.Builder): ByteArray =
+            ProtoProbeManifest
+                .newBuilder()
+                .addProbes(ProtoProbeLocation.newBuilder().setKind(ProtoProbeKind.METHOD).setOutsideCaller(caller))
+                .build()
+                .toByteArray()
+
+        val unspecified =
+            ProtoPayloadCodec.decodeProbeManifest(
+                manifestWith(
+                    ProtoOutsideCaller.newBuilder().setKind(ProtoOutsideCallerKind.OUTSIDE_CALLER_KIND_UNSPECIFIED).setTypeName("x.Y"),
+                ),
+            )
+        assertEquals(null, unspecified.probes.single().outsideCaller)
+
+        assertFailsWith<IllegalArgumentException> {
+            ProtoPayloadCodec.decodeProbeManifest(manifestWith(ProtoOutsideCaller.newBuilder().setKindValue(99).setTypeName("x.Y")))
+        }
+    }
+
+    @Test
+    fun `a manifest's failed classes survive a round trip`() {
+        val manifest =
+            ProbeManifest(
+                resource = ResourceAttributes("checkout", null, "instance-1", null, "run-1"),
+                probes = emptyList(),
+                failedClasses =
+                    listOf(
+                        FailedClass("com.example.Broken", 1_700_000_000_000L),
+                        FailedClass("com.example.AlsoBroken", 1_700_000_000_500L),
+                    ),
+            )
+
+        val decoded = ProtoPayloadCodec.decodeProbeManifest(ProtoPayloadCodec.encode(manifest))
+
+        assertEquals(manifest, decoded)
+        assertEquals("com.example.Broken", decoded.failedClasses.first().className)
+        assertEquals(1_700_000_000_000L, decoded.failedClasses.first().withheldAt)
     }
 
     @Test

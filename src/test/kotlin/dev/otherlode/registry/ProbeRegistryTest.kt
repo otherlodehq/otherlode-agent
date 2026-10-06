@@ -8,6 +8,8 @@ import dev.otherlode.export.CallEdge
 import dev.otherlode.export.ConditionPart
 import dev.otherlode.export.ConditionPartKind
 import dev.otherlode.export.LineRange
+import dev.otherlode.export.OutsideCaller
+import dev.otherlode.export.OutsideCallerKind
 import dev.otherlode.export.ProbeKind
 import dev.otherlode.export.ResourceAttributes
 import java.lang.ref.WeakReference
@@ -945,6 +947,100 @@ class ProbeRegistryTest {
         assertEquals(1, registry.purgeAccountedFor(), "the name is accounted for now")
         assertEquals(0, registry.unreportedClassCount())
         assertTrue(registry.manifest(ResourceAttributes("checkout", null, "instance-1", null, "run-1")).unreportedClasses.isEmpty())
+    }
+
+    @Test
+    fun `a failed class goes out once and is not resent after a confirmed delivery`() {
+        val registry = ProbeRegistry()
+        assertTrue(registry.recordFailed("com.example.Broken"), "the first record is new")
+        assertFalse(registry.recordFailed("com.example.Broken"), "naming the same class twice sends it once")
+        val resource = ResourceAttributes("checkout", null, "instance-1", null, "run-1")
+
+        val first = registry.computeManifestDelta(resource)
+        val sent = first.manifest.failedClasses.single()
+        assertEquals("com.example.Broken", sent.className)
+        assertTrue(sent.withheldAt > 0)
+        assertEquals(1, registry.manifest(resource).failedClasses.size)
+        registry.advanceManifestBaseline(first)
+
+        assertTrue(
+            registry
+                .computeManifestDelta(resource)
+                .manifest.failedClasses
+                .isEmpty(),
+            "a delivered class is not sent again",
+        )
+    }
+
+    @Test
+    fun `a failed class that failed to send is staged again on the next manifest`() {
+        val registry = ProbeRegistry()
+        registry.recordFailed("com.example.Broken")
+        val resource = ResourceAttributes("checkout", null, "instance-1", null, "run-1")
+
+        registry.computeManifestDelta(resource)
+
+        assertEquals(
+            "com.example.Broken",
+            registry
+                .computeManifestDelta(resource)
+                .manifest.failedClasses
+                .single()
+                .className,
+        )
+    }
+
+    @Test
+    fun `computeManifestDeltas produces a chunk that holds only failed classes, one weight each`() {
+        val registry = ProbeRegistry()
+        for (i in 1..5) registry.recordFailed("com.example.Broken$i")
+
+        val chunks =
+            registry
+                .computeManifestDeltas(ResourceAttributes("checkout", null, "instance-1", null, "run-1"), maxEntriesPerChunk = 2)
+                .toList()
+
+        assertEquals(listOf(2, 2, 1), chunks.map { it.manifest.failedClasses.size })
+        assertTrue(chunks.all { it.manifest.probes.isEmpty() && it.manifest.unreportedClasses.isEmpty() })
+        assertEquals(
+            (1..5).map { "com.example.Broken$it" }.toSet(),
+            chunks.flatMap { it.manifest.failedClasses.map { f -> f.className } }.toSet(),
+        )
+    }
+
+    @Test
+    fun `failed and unreported classes share one chunk cap`() {
+        val registry = ProbeRegistry()
+        registry.recordUnreported("com.example.Deflected")
+        registry.recordFailed("com.example.Broken")
+        registry.recordFailed("com.example.AlsoBroken")
+
+        val chunks =
+            registry
+                .computeManifestDeltas(ResourceAttributes("checkout", null, "instance-1", null, "run-1"), maxEntriesPerChunk = 2)
+                .toList()
+
+        assertEquals(listOf(2, 1), chunks.map { it.manifest.unreportedClasses.size + it.manifest.failedClasses.size })
+    }
+
+    @Test
+    fun `a probe's outside caller reaches its probe location in the manifest and in a delta`() {
+        val registry = ProbeRegistry()
+        val caller = OutsideCaller(OutsideCallerKind.OVERRIDES_METHOD, "java.lang.Runnable")
+        registry.register(
+            "com.example.Foo",
+            layoutHash = 1L,
+            probes =
+                listOf(
+                    ProbeMeta(ProbeKind.METHOD, "run", "()V", line = 1, outsideCaller = caller),
+                    ProbeMeta(ProbeKind.METHOD, "other", "()V", line = 2),
+                ),
+        )
+        val resource = ResourceAttributes("checkout", "1.0.0", "instance-1", null, "run-1")
+
+        for (sent in listOf(registry.manifest(resource), registry.computeManifestDelta(resource).manifest)) {
+            assertEquals(listOf(caller, null), sent.probes.sortedBy { it.probeIndex }.map { it.outsideCaller })
+        }
     }
 
     @Test

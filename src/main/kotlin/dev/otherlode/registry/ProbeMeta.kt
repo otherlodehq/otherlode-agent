@@ -3,6 +3,7 @@ package dev.otherlode.registry
 import dev.otherlode.export.BranchSite
 import dev.otherlode.export.CallEdge
 import dev.otherlode.export.GeneratedBy
+import dev.otherlode.export.OutsideCaller
 import dev.otherlode.export.ProbeKind
 import dev.otherlode.export.UnreadShape
 
@@ -59,6 +60,9 @@ import dev.otherlode.export.UnreadShape
  * [parameterNames], [genericSignature] and [extensionReceiver] are set only for a
  * [ProbeKind.METHOD] probe, and are empty or false for the type initializer's probe. See
  * [dev.otherlode.export.ProbeLocation.parameterNames].
+ *
+ * [outsideCaller] is set only for a [ProbeKind.METHOD] probe whose method has an outside caller.
+ * See [dev.otherlode.export.OutsideCaller].
  */
 data class ProbeMeta(
     val kind: ProbeKind,
@@ -84,4 +88,5 @@ data class ProbeMeta(
     val parameterNames: List<String> = emptyList(),
     val genericSignature: String = "",
     val extensionReceiver: Boolean = false,
+    val outsideCaller: OutsideCaller? = null,
 )

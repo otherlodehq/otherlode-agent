@@ -256,6 +256,9 @@ data class DeltaBatch(
  * [unreadShape] says the probe's code has the outline of compiler output whose body the agent has
  * not read; see [UnreadShape]. It is exclusive with [generatedBy], which the wire cannot carry
  * together with it, so building a location with both set fails.
+ *
+ * [outsideCaller] is set only for a [ProbeKind.METHOD] probe, and is null when the method has no
+ * outside caller. See [OutsideCaller].
  */
 data class ProbeLocation(
     val classId: Int,
@@ -284,12 +287,45 @@ data class ProbeLocation(
     val genericSignature: String = "",
     val extensionReceiver: Boolean = false,
     val unreadShape: UnreadShape = UnreadShape.NONE,
+    val outsideCaller: OutsideCaller? = null,
 ) {
     init {
         require(generatedBy == GeneratedBy.NONE || unreadShape == UnreadShape.NONE) {
             "a probe is generated or an unread shape, not both: $generatedBy and $unreadShape"
         }
     }
+}
+
+/**
+ * Why code outside scope may call a method that no in-scope code calls. A method has at most one:
+ * an annotation wins over an override, and the first annotation in class-file order wins. A
+ * collector labels a never-hit root that has no in-scope caller and an outside caller "called from
+ * outside scope". It changes no count and no cluster.
+ *
+ * [typeName] is dotted, and what it names depends on [kind].
+ */
+data class OutsideCaller(
+    val kind: OutsideCallerKind,
+    val typeName: String,
+)
+
+/** The reason an [OutsideCaller] gives. The wire's zero value reads as no outside caller. */
+enum class OutsideCallerKind {
+    /**
+     * The method overrides or implements a method that an out-of-scope type declares. The type
+     * name is that declaring type, such as `java.lang.Runnable` or `java.lang.Object`. It is the
+     * first one found in this order: the superclass and its supertypes, then each interface in
+     * declaration order with its supertypes.
+     */
+    OVERRIDES_METHOD,
+
+    /**
+     * The method, or one of its parameters, carries an annotation from the agent's list of
+     * callback annotations, directly or through meta-annotations. The type name is the annotation
+     * as written on the method or parameter, so a composed annotation is named, not the one it
+     * carries.
+     */
+    CALLBACK_ANNOTATION,
 }
 
 /** What one outcome of a [BranchSite] is within its site. */
@@ -459,6 +495,19 @@ data class UnreportedClass(
     val firstSeenUnreportedAt: Long,
 )
 
+/**
+ * A class the agent wove and withheld for good because the JVM never defined it. The agent cannot
+ * see why the JVM refused it, since the `LinkageError` or `VerifyError` is thrown after its
+ * transformer returns. A collector reads it as failed to load, never as never loaded. A class any
+ * in-scope run loaded is loaded, whatever another run says.
+ *
+ * [withheldAt] is when the agent withheld it, in milliseconds since the epoch.
+ */
+data class FailedClass(
+    val className: String,
+    val withheldAt: Long,
+)
+
 /** A class the agent matched but could not instrument. It never gets a classId or any probes. */
 data class SkippedClass(
     val className: String,
@@ -599,7 +648,8 @@ enum class BodyKind {
  * the resource's instance and run, the same way it keys a delta batch's.
  *
  * [dependencies], [classReferences] and [externalClasses] are delivered incrementally like the
- * rest of this payload, each entry sent once per instance.
+ * rest of this payload, each entry sent once per instance. So is [failedClasses], which names
+ * each class the agent withheld for good because the JVM never defined it.
  *
  * [referencesRecorded] is true when the instance records references at all, which it does only
  * when its include rules are set. The agent sets it on every manifest it sends, so a collector can
@@ -623,6 +673,7 @@ data class ProbeManifest(
     val externalClasses: List<ExternalClass> = emptyList(),
     val referencesRecorded: Boolean = false,
     val dependenciesListed: Boolean = false,
+    val failedClasses: List<FailedClass> = emptyList(),
 )
 
 /**

@@ -55,6 +55,13 @@ class VisibilityFloorTest {
     }
 
     @Test
+    fun `failed classes are a ceiling and outside callers are a floor`() {
+        assertEquals(Direction.CEILING, VisibilityFloor.directionOf("classes.failed_to_load"))
+        assertEquals(Direction.FLOOR, VisibilityFloor.directionOf("methods.outside_caller.OVERRIDES_METHOD"))
+        assertEquals(Direction.FLOOR, VisibilityFloor.directionOf("methods.outside_caller.CALLBACK_ANNOTATION"))
+    }
+
+    @Test
     fun `a floor that rises passes with a note`() {
         val result = VisibilityFloor.compare(mapOf("demo.edges.CALL" to 10), mapOf("demo.edges.CALL" to 12))
         assertTrue(result.failures.isEmpty())

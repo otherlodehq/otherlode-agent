@@ -160,6 +160,31 @@ message DeltaBatch {
   repeated DependencyDelta dependency_deltas = 5;
 }
 
+// Why code outside scope may call a method that no in-scope code calls. Set only on a METHOD
+// probe, which has at most one reason. An annotation wins over an override, and the first
+// annotation in class-file order wins. A collector labels a never-hit root that has no in-scope
+// caller and an outside caller "called from outside scope". The field changes no count and no
+// cluster.
+message OutsideCaller {
+  OutsideCallerKind kind = 1;
+  // The type that gives the reason, dotted. What it names depends on kind.
+  string type_name = 2;
+}
+
+enum OutsideCallerKind {
+  // Never sent. A consumer reads this value as no outside caller.
+  OUTSIDE_CALLER_KIND_UNSPECIFIED = 0;
+  // The method overrides or implements a method that an out-of-scope type declares. type_name is
+  // that declaring type, such as java.lang.Runnable or java.lang.Object. It is the first one found
+  // in this order: the superclass and its supertypes, then each interface in declaration order
+  // with its supertypes.
+  OVERRIDES_METHOD = 1;
+  // The method, or one of its parameters, carries an annotation from the agent's list of callback
+  // annotations, directly or through meta-annotations. type_name is the annotation as written on
+  // the method or parameter, so a composed annotation is named, not the one it carries.
+  CALLBACK_ANNOTATION = 2;
+}
+
 message ProbeLocation {
   int32 class_id = 1;
   int32 probe_index = 2;
@@ -267,6 +292,11 @@ message ProbeLocation {
   // extension receiver, that is, its name in parameter_names starts with $this$ or is $receiver,
   // the name older kotlinc gave it. False when parameter_names is empty.
   bool extension_receiver = 25;
+  // Set only for a METHOD probe, and unset when the method has no outside caller. See
+  // OutsideCaller. DeclaredMethod carries none: the static scan cannot read the supertypes or
+  // annotations of a library inside a fat jar, and a never-loaded class's methods fold into its
+  // class finding.
+  OutsideCaller outside_caller = 27;
 }
 
 // What one outcome of a branch site is within its site.
@@ -551,6 +581,18 @@ message UnreportedClass {
   int64 first_seen_unreported_at = 2;
 }
 
+// A class the agent wove and withheld for good because the JVM never defined it. The agent cannot
+// see why the JVM refused it: the LinkageError or VerifyError is thrown after the transformer
+// returns. A collector reads it as failed to load, never as never loaded. A class any in-scope run
+// loaded is loaded, whatever another run says. Sent once, and delivered incrementally like
+// unreported_classes.
+//
+// withheld_at is when the agent withheld it, in milliseconds since the epoch.
+message FailedClass {
+  string class_name = 1;
+  int64 withheld_at = 2;
+}
+
 // A class the agent matched but could not instrument (e.g. bytecode
 // ByteBuddy refuses to redefine), so it never gets a class_id or any probes.
 // Reported by name rather than class_id for exactly that reason: it never
@@ -609,6 +651,9 @@ message ProbeManifest {
   // A listing that failed never sets it. Before it is true, an empty list of dependencies or
   // absent references means "not listed yet", not "none".
   bool dependencies_listed = 15;
+  // Classes withheld for good because the JVM never defined them. Each is sent once and delivered
+  // incrementally like unreported_classes. See FailedClass.
+  repeated FailedClass failed_classes = 16;
 }
 
 // No line field, unlike ProbeLocation: the static scan records no line for a

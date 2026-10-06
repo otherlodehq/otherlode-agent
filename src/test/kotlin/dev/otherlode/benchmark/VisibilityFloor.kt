@@ -3,6 +3,7 @@ package dev.otherlode.benchmark
 import dev.otherlode.export.BranchRole
 import dev.otherlode.export.CallEdgeKind
 import dev.otherlode.export.GeneratedBy
+import dev.otherlode.export.OutsideCallerKind
 import dev.otherlode.export.ProbeKind
 import dev.otherlode.export.ProbeLocation
 import dev.otherlode.export.ProbeManifest
@@ -50,11 +51,11 @@ internal object VisibilityFloor {
             "# Regenerate with: $REGENERATE_COMMAND",
         )
 
-    private val CEILING_METRICS = setOf("classes.skipped", "classes.thrown")
+    private val CEILING_METRICS = setOf("classes.skipped", "classes.thrown", "classes.failed_to_load")
 
     /**
      * The direction of [metric], named without its corpus. A ceiling counts a loss: a class the
-     * agent refused or an unread shape. Every other metric is a floor. This is the only place that
+     * agent refused, a class that failed to load or an unread shape. Every other metric is a floor. This is the only place that
      * decides.
      */
     fun directionOf(metric: String): Direction =
@@ -112,6 +113,7 @@ internal object VisibilityFloor {
         put("classes.woven", woven)
         put("classes.skipped", manifests.sumOf { it.skippedClasses.size }.toLong())
         put("classes.thrown", thrown)
+        put("classes.failed_to_load", manifests.sumOf { it.failedClasses.size }.toLong())
         for (kind in ProbeKind.entries) put("probes.$kind", probes.count { it.kind == kind }.toLong())
         put("branch.sites", sites.size.toLong())
         for (role in BranchRole.entries) {
@@ -133,6 +135,9 @@ internal object VisibilityFloor {
         }
         for (shape in UnreadShape.entries.filter { it != UnreadShape.NONE }) {
             put("methods.unread_shape.$shape", methods.count { it.unreadShape == shape }.toLong())
+        }
+        for (kind in OutsideCallerKind.entries) {
+            put("methods.outside_caller.$kind", methods.count { it.outsideCaller?.kind == kind }.toLong())
         }
         put("methods.inline", methods.count { it.inline }.toLong())
         put("methods.lambda_body", methods.count { it.lambdaBody }.toLong())

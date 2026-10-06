@@ -425,6 +425,15 @@ edges by hand failed it on 11 metrics; it passes on JDK 17, 21 and 25.
 Regenerate with `./gradlew :test --tests
 dev.otherlode.benchmark.VisibilityFloorTest -PupdateVisibilityBaseline`.
 
+Chunk 1 landed on 2026-10-06: `OutsideCaller` (`OVERRIDES_METHOD`,
+`CALLBACK_ANNOTATION`) as `ProbeLocation.outside_caller` 27 and
+`FailedClass` as `ProbeManifest.failed_classes` 16, through the model, the
+codec, `ProbeMeta` and the registry's staged, chunked delivery at one entry
+each; nothing produces either yet. The codec throws on an unknown kind
+number, as it does for every other enum, and reads the zero kind as none.
+Review made the order behind "first declaring type" exact (the superclass
+and its supertypes, then each interface with its supertypes).
+
 Follow-ups with triggers: an agent option for an adopter's own callback
 annotations (an adopter asks, or uncalled roots carry in-house
 annotations); a server-side visibility gate over fixture payloads.
