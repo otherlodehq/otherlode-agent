@@ -403,7 +403,7 @@ Landing order, one chunk and one commit each, through `/chunked-build`:
    parameter annotations).
 4. Agent: classes that failed to load on the wire.
 5. Agent: testkit and the demo's stub collector (root kind,
-   `failedToLoadClasses()`, the ABI dump), the kotlin-stdlib note.
+   `failedToLoad()`, the ABI dump), the kotlin-stdlib note.
 6. Luke: the agent's proto reaches `master`, so CI pushes it to the BSR.
 7. Collector: bindings bump and relay round-trip tests.
 8. Server: migration, store, the graph's root kind and its precedence,

@@ -13,4 +13,4 @@ ADR 0028 judged the bucket out of proportion because nobody had shown the popula
 ## Consequences
 
 - The rest of ADR 0028 stands: the class's probes stay out of the manifest, a collected loader still publishes rather than withholds, and confirmation still matches on the name alone. The endpoint tier's exposure stays deferred.
-- `otherlode-testkit` gains `failedToLoadClasses()`, and `otherlode-server` gains the class state and the report's `classes.failed_to_load` count.
+- `otherlode-testkit` gains `failedToLoad()`, beside `neverLoaded()`, and `otherlode-server` gains the class state and the report's `classes.failed_to_load` count.
