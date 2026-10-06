@@ -99,13 +99,7 @@ class CodeSizeLimitsTest {
         var accepted = 0
         var woven = 0
         for (set in corpus.classSets) {
-            val classpath = System.getProperty("$CLASSPATH_PROPERTY$corpusName.${set.name}")
-            check(!classpath.isNullOrBlank()) { "no classpath for $corpusName.${set.name}" }
-            val corpusPath = checkNotNull(System.getProperty("${BenchmarkCorpus.PROPERTY_PREFIX}$corpusName.${set.name}"))
-            val urls =
-                (corpusPath.split(File.pathSeparator) + classpath.split(File.pathSeparator))
-                    .filter { it.isNotEmpty() }
-                    .map { File(it).toURI().toURL() }
+            val urls = CorpusWeaving.classSetUrls(corpusName, set)
             URLClassLoader(urls.toTypedArray(), ClassLoader.getPlatformClassLoader()).use { loader ->
                 val registry = ProbeRegistry()
                 val transformer = HotPathWeaver.offlineTransformer(corpus.includePackages, registry)
@@ -175,7 +169,7 @@ class CodeSizeLimitsTest {
     @Test
     fun `weaving the benchmark corpora never pushes a method past the compile limit`() {
         val started = System.nanoTime()
-        val results = CORPORA.map { sweep(it) }
+        val results = CorpusWeaving.CORPORA.map { sweep(it) }
         val lines = mutableListOf<String>()
         for (r in results) {
             val largest = r.largest
@@ -520,7 +514,6 @@ class CodeSizeLimitsTest {
         /** Whether [reason] is ASM's message for a method or class the class file format cannot hold, as the skip records it. */
         fun isTooLarge(reason: String): Boolean = "Method too large: " in reason || "Class too large: " in reason
 
-        const val CLASSPATH_PROPERTY = "otherlode.codesize.classpath."
         const val REPORT_PROPERTY = "otherlode.codesize.report"
         const val REASON_WIDTH = 120
         const val FAILURES_SHOWN = 5
@@ -535,7 +528,6 @@ class CodeSizeLimitsTest {
         /** Grows the received method to 7504 bytes: under 8000 itself, while its bound with probes crosses 8000. */
         const val COMPILE_PADDING = 6500
         const val MAX_CODE_LENGTH = 65535
-        val CORPORA = listOf("demo", "demo-spring", "scala", "spring-webmvc", "ktor-server-core")
 
         /** A class with `static int big(int x)` holding [blocks] blocks of `if (x == k) y++`, ten bytes each. */
         fun hugeClass(

@@ -712,6 +712,14 @@ tasks.test {
     }
 }
 
+// `-PupdateVisibilityBaseline` has VisibilityFloorTest rewrite its committed baseline instead of
+// comparing against it. Without the property the test never writes.
+tasks.test {
+    if (project.hasProperty("updateVisibilityBaseline")) {
+        systemProperty("otherlode.visibility.baselineSource", file("src/test/resources/visibility-baseline.txt").absolutePath)
+    }
+}
+
 // ProbeAllocationTest runs in its own JVM with escape analysis off: C2 would otherwise remove a
 // boxed value or a varargs array that stays inside the call, so a probe that made one would read as
 // allocating nothing, though it allocates in a larger method or before C2 compiles it. Run it with

@@ -410,6 +410,21 @@ Landing order, one chunk and one commit each, through `/chunked-build`:
    `failed_to_load` in class states and the report, the web UI, the
    `docs/site` pages.
 
+Chunk 0 landed on 2026-10-06: `VisibilityFloorTest` weaves the five
+benchmark corpora offline and compares 229 counts with
+`src/test/resources/visibility-baseline.txt` (classes, probes per kind,
+branch sites and outcome roles, routine outcomes, edges per kind,
+`generated_by` and unread-shape marks, inline, lambda-body and static
+methods, parameter names, generic signatures, class locations per body and
+Kotlin kind, references). Skipped classes, classes the transformer threw on
+and unread shapes are ceilings; the rest are floors. Review made a ceiling
+the baseline lacks count as zero, so a new unread shape fails until the
+baseline names it, and moved the corpus list and class-set classpath into
+`CorpusWeaving`, shared by all three corpus tests. Dropping lambda CREATES
+edges by hand failed it on 11 metrics; it passes on JDK 17, 21 and 25.
+Regenerate with `./gradlew :test --tests
+dev.otherlode.benchmark.VisibilityFloorTest -PupdateVisibilityBaseline`.
+
 Follow-ups with triggers: an agent option for an adopter's own callback
 annotations (an adopter asks, or uncalled roots carry in-house
 annotations); a server-side visibility gate over fixture payloads.

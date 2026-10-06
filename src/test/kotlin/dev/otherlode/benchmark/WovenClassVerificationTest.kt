@@ -174,15 +174,7 @@ class WovenClassVerificationTest {
         var refusedForSupertype = 0
         val violations = mutableListOf<String>()
         for (set in corpus.classSets) {
-            val classpath =
-                checkNotNull(
-                    System.getProperty("$CLASSPATH_PROPERTY$corpusName.${set.name}"),
-                ) { "no classpath for $corpusName.${set.name}" }
-            val corpusPath = checkNotNull(System.getProperty("${BenchmarkCorpus.PROPERTY_PREFIX}$corpusName.${set.name}"))
-            val urls =
-                (corpusPath.split(File.pathSeparator) + classpath.split(File.pathSeparator))
-                    .filter { it.isNotEmpty() }
-                    .map { File(it).toURI().toURL() }
+            val urls = CorpusWeaving.classSetUrls(corpusName, set)
             URLClassLoader(urls.toTypedArray(), ClassLoader.getPlatformClassLoader()).use { shared ->
                 val transformer = HotPathWeaver.offlineTransformer(corpus.includePackages, ProbeRegistry())
                 for ((internalName, original) in set.classes) {
@@ -269,7 +261,7 @@ class WovenClassVerificationTest {
     fun `every woven class of the benchmark corpora defines and initialises wherever its unwoven twin does`() {
         val started = System.nanoTime()
         val refusalsBefore = FrameRefusingClassWriter.refusals
-        val results = CORPORA.map { sweep(it) }
+        val results = CorpusWeaving.CORPORA.map { sweep(it) }
         assertEquals(refusalsBefore, FrameRefusingClassWriter.refusals, "no weave of any corpus class asked the writer to compute a frame")
         println(
             "woven-class verification, corpora: " +
@@ -296,7 +288,8 @@ class WovenClassVerificationTest {
         // classpath. Unwoven, the JVM's check of its frame fails with NoClassDefFoundError. Woven, it must weave and
         // fail the same way, since the woven method keeps the class file's frame (ADR 0061); a woven class that
         // defined would hand a framework probing for Reactor a false positive.
-        val classpath = checkNotNull(System.getProperty("${CLASSPATH_PROPERTY}demo-spring.main")) { "no classpath for demo-spring" }
+        val classpath =
+            checkNotNull(System.getProperty("${CorpusWeaving.CLASSPATH_PROPERTY}demo-spring.main")) { "no classpath for demo-spring" }
         val entries = classpath.split(File.pathSeparator).filter { it.isNotEmpty() }
         assertTrue(entries.none { File(it).name.startsWith("reactor-core") }, "Reactor must be absent for this check")
         val internalName = "org/springframework/core/PropagationContextElement\$ReactorDelegate"
@@ -648,7 +641,5 @@ class WovenClassVerificationTest {
             )
         const val MESSAGE_WIDTH = 160
         const val NANOS_PER_MILLI = 1_000_000
-        const val CLASSPATH_PROPERTY = "otherlode.codesize.classpath."
-        val CORPORA = listOf("demo", "demo-spring", "scala", "spring-webmvc", "ktor-server-core")
     }
 }
