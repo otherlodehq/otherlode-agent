@@ -181,8 +181,10 @@ class LoadedClassSweepTest {
     fun `the dependency count runs and marks a generation even when the confirmation pass throws`() {
         val registry =
             object : ProbeRegistry(confirmsDefinitions = true) {
-                override fun confirmFrom(loadedClassNames: Set<String>): List<String> =
-                    throw IllegalStateException("simulated confirm failure")
+                override fun confirmFrom(
+                    loadedClassNames: Set<String>,
+                    registeredUpTo: Long,
+                ): List<String> = throw IllegalStateException("simulated confirm failure")
             }
         registry.register("com.example.Unconfirmed", layoutHash = 1L, probes = oneMethodProbe())
         val dependencies = DependencyRegistry().apply { markListingComplete() }

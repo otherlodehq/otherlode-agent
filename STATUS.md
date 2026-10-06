@@ -514,6 +514,24 @@ Landing order, one chunk and one commit each:
    the API.
 4. Server: the web UI and the README.
 
+Chunk 1 landed on 2026-10-06. `DefinitionAttempt` records the frames
+from the definition frame (the one below `InstrumentationImpl.transform`)
+down to the bottom; a sweep counts a miss only once a read of the
+defining thread's stack no longer holds them in order from its bottom up.
+Three Opus review rounds changed it. Depth from the bottom misread every
+lambda-started thread on JDK 17, whose `getStackTrace` shows hidden frames
+`StackWalker` drops, so the match became a bottom-anchored subsequence. A
+read of 1024 frames or more (the cut on 21 and later, learned lower when a
+deep capture sees a shorter one) counts as ongoing, since a recursing
+bottom method fooled the bottom-frame check. Each retry adds an attempt
+rather than replacing one; a transform inside the agent's own transformer
+call whose attempt cannot be read never takes a miss; a failure a
+manifest chunk carried is never dropped; a class is reported once. The
+reviewers checked plain, executor, method-handle, reflection, proxy,
+common-pool, parallel-stream and virtual threads, with and without
+`-XX:+ShowHiddenFrames`, on 17, 21 and 25. Cost is one `StackWalker` walk
+per registration, about 9 to 30 microseconds by depth.
+
 ### Reminders for expiring keys and credentials: to decide
 
 Raised 2026-10-05 by Luke while creating the release signing key. Nothing

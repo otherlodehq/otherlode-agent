@@ -10,6 +10,8 @@ import net.bytebuddy.jar.asm.Opcodes
 import java.io.InputStream
 import java.lang.instrument.Instrumentation
 import java.lang.ref.Reference
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -50,6 +52,8 @@ class ProbesWithheldForUndefinedClassTest {
         const val VANISHING_SUB = "com.example.target.VanishingSub"
         const val STEADY_BASE = "com.example.target.SteadyBase"
         const val STEADY_SUB = "com.example.target.SteadySub"
+        const val SLOW_BASE = "com.example.target.SlowBase"
+        const val SLOW_SUB = "com.example.target.SlowSub"
 
         private fun internalName(dotted: String) = dotted.replace('.', '/')
 
@@ -87,6 +91,8 @@ class ProbesWithheldForUndefinedClassTest {
                 VANISHING_SUB to classWithProbeableMethod(VANISHING_SUB, VANISHING_BASE, "ping"),
                 STEADY_BASE to classWithSupertypeOnly(STEADY_BASE, "java.lang.Object"),
                 STEADY_SUB to classWithProbeableMethod(STEADY_SUB, STEADY_BASE, "ping"),
+                SLOW_BASE to classWithSupertypeOnly(SLOW_BASE, "java.lang.Object"),
+                SLOW_SUB to classWithProbeableMethod(SLOW_SUB, SLOW_BASE, "ping"),
             )
     }
 
@@ -113,6 +119,38 @@ class ProbesWithheldForUndefinedClassTest {
             synchronized(getClassLoadingLock(name)) {
                 val existing = findLoadedClass(name)
                 val loaded = existing ?: defineClass(name, bytes, 0, bytes.size)
+                if (resolve) resolveClass(loaded)
+                return loaded
+            }
+        }
+
+        override fun getResourceAsStream(name: String): InputStream? {
+            val dotted = name.removeSuffix(".class").replace('/', '.')
+            return CLASS_BYTES[dotted]?.inputStream() ?: super.getResourceAsStream(name)
+        }
+    }
+
+    /**
+     * Like [InMemoryDeniedSuperclassLoader], except [SLOW_BASE] is supplied only after [release]
+     * opens. [stalled] opens when the JVM first asks for it, which happens while the JVM defines
+     * [SLOW_SUB], after the transformer has run.
+     */
+    private class StallingSuperclassLoader(
+        parent: ClassLoader,
+        private val stalled: CountDownLatch,
+        private val release: CountDownLatch,
+    ) : ClassLoader(parent) {
+        override fun loadClass(
+            name: String,
+            resolve: Boolean,
+        ): Class<*> {
+            if (name == SLOW_BASE) {
+                stalled.countDown()
+                release.await()
+            }
+            val bytes = CLASS_BYTES[name] ?: return super.loadClass(name, resolve)
+            synchronized(getClassLoadingLock(name)) {
+                val loaded = findLoadedClass(name) ?: defineClass(name, bytes, 0, bytes.size)
                 if (resolve) resolveClass(loaded)
                 return loaded
             }
@@ -267,5 +305,49 @@ class ProbesWithheldForUndefinedClassTest {
             manifest.probes.any { it.className == STEADY_SUB },
             "without this control, withholding the other class would prove nothing: this harness must publish something",
         )
+    }
+
+    @Test
+    fun `a class whose loader stalls on its supertype is never named failed and is confirmed once it defines`() {
+        val registry = ProbeRegistry(confirmsDefinitions = true)
+        val config = AgentConfig.parse("includePackages=com.example.target")
+        install(registry, config)
+        val sweep = LoadedClassSweep(instrumentation, registry, config)
+        val stalled = CountDownLatch(1)
+        val release = CountDownLatch(1)
+        val loader = StallingSuperclassLoader(javaClass.classLoader, stalled, release)
+        val defining = Thread({ Class.forName(SLOW_SUB, true, loader) }, "slow-definer")
+        defining.start()
+        try {
+            assertTrue(stalled.await(30, TimeUnit.SECONDS), "the JVM must reach the supertype lookup")
+            assertTrue(SLOW_SUB in registry.registeredClassNames(), "the transform runs before the supertype lookup")
+
+            val records =
+                captureLogRecords(LoadedClassSweep::class.java.name) {
+                    repeat(6) { sweep.run(runForwardPass = false) }
+                }
+
+            assertTrue(records.none { it.message.contains(SLOW_SUB) }, "a class still being defined is never named")
+            assertEquals(0, registry.withheldForGoodClassCount())
+            assertEquals(1, registry.unconfirmedClassCount(), "it stays pending while its definition runs")
+            assertTrue(
+                registry
+                    .manifest(ResourceAttributes("test", null, "instance-1", null, "run-1"))
+                    .failedClasses
+                    .isEmpty(),
+            )
+        } finally {
+            release.countDown()
+            defining.join(30_000)
+        }
+
+        sweep.run(runForwardPass = false)
+        Reference.reachabilityFence(loader)
+
+        assertEquals(0, registry.unconfirmedClassCount(), "the sweep confirms the class once the JVM has defined it")
+        assertEquals(0, registry.withheldForGoodClassCount())
+        val manifest = registry.manifest(ResourceAttributes("test", null, "instance-1", null, "run-1"))
+        assertTrue(manifest.probes.any { it.className == SLOW_SUB })
+        assertTrue(manifest.failedClasses.isEmpty())
     }
 }

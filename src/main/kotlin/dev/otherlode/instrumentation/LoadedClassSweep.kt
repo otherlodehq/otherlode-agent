@@ -59,9 +59,11 @@ open class LoadedClassSweep(
         runForwardPass: Boolean,
         final: Boolean = false,
     ) {
+        // Read before the snapshot, so a class registered after the snapshot is not judged by it.
+        val registeredUpTo = registry.registrationSequence()
         val loaded = instrumentation.allLoadedClasses
         try {
-            confirm(loaded)
+            confirm(loaded, registeredUpTo)
             if (runForwardPass) reportUnreported(loaded)
         } finally {
             dependencyCounter?.count(loaded)
@@ -73,12 +75,16 @@ open class LoadedClassSweep(
      * Reconciles every registry entry not yet confirmed defined against [loaded]'s names, taken
      * unfiltered. Logs one `WARNING` per class name [ProbeRegistry.confirmFrom] returns.
      * `confirmFrom` returns a name once and never again, so this cannot repeat for the same class.
+     * [registeredUpTo] is the registry's sequence from before [loaded] was taken.
      */
-    private fun confirm(loaded: Array<Class<*>>) {
+    private fun confirm(
+        loaded: Array<Class<*>>,
+        registeredUpTo: Long,
+    ) {
         // The walk runs on every flush once dependencies are counted; skip building the name set when nothing awaits it.
         if (registry.unconfirmedClassCount() == 0) return
         val loadedNames = loaded.mapTo(mutableSetOf()) { it.name }
-        for (name in registry.confirmFrom(loadedNames)) {
+        for (name in registry.confirmFrom(loadedNames, registeredUpTo)) {
             log.log(
                 Level.WARNING,
                 "otherlode: $name was woven and registered but the JVM never defined it; its probes are withheld for good",

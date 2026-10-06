@@ -16,6 +16,7 @@ import dev.otherlode.export.UnreportedClass
 import java.lang.System.Logger.Level
 import java.lang.ref.WeakReference
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
@@ -129,6 +130,9 @@ open class ProbeRegistry(
         val counts: LongArray,
         val classLoaderRef: WeakReference<ClassLoader>?,
         manifestData: ManifestData,
+        attempt: DefinitionAttempt?,
+        unwatchable: Boolean,
+        sequence: Long,
     ) {
         /**
          * Volatile because [advanceManifestBaseline] clears it on the flush thread while
@@ -155,8 +159,32 @@ open class ProbeRegistry(
         @Volatile
         var confirmed: Boolean = false
 
-        /** [confirmFrom] calls in which this class was neither confirmed nor collected. */
+        /**
+         * [confirmFrom] calls in which this class was neither confirmed nor collected, and whose
+         * definition attempt had ended. Guarded by the entry's monitor.
+         */
         var missedConfirmations: Int = 0
+
+        /**
+         * The definition attempts of this class's transforms that may still run. A miss counts
+         * only when every one has ended. Empty when none was recorded, and then every miss counts.
+         * Guarded by the entry's monitor.
+         */
+        val attempts: MutableList<DefinitionAttempt> = if (attempt == null) mutableListOf() else mutableListOf(attempt)
+
+        /**
+         * True when a transform ran inside the JVM's transformer call but its attempt could not be
+         * read. Such a class never takes a miss, so it is never named failed. Guarded by the
+         * entry's monitor.
+         */
+        var unwatchable: Boolean = unwatchable
+
+        /** True once [confirmFrom] has returned this class's name, so it is returned only once. */
+        var reported: Boolean = false
+
+        /** The [ProbeRegistry.registrationSequence] value given to the latest transform of this class. */
+        @Volatile
+        var sequence: Long = sequence
 
         /** Set once [missedConfirmations] reaches the terminal count; never confirmed after this. */
         @Volatile
@@ -180,6 +208,13 @@ open class ProbeRegistry(
         val withheldAt: Long,
     ) {
         var manifestIncluded: Boolean = false
+
+        /**
+         * True once a manifest chunk has carried this failure, sent or not. A staged failure may
+         * already be on its way, so it stays in the failed set.
+         */
+        @Volatile
+        var staged: Boolean = false
     }
 
     /**
@@ -214,6 +249,7 @@ open class ProbeRegistry(
     private val nothingToProbeClassNames = ConcurrentHashMap.newKeySet<String>()
     private val nextClassId = AtomicInteger(0)
     private val nextSnapshotSequence = AtomicLong(0)
+    private val lastRegistrationSequence = AtomicLong(0)
 
     /**
      * Called once per class transform. Returns the backing array every probe
@@ -237,6 +273,15 @@ open class ProbeRegistry(
      * dotted. They travel as one [ClassReferences] record, staged, withheld and committed with the
      * class exactly as its supertypes are, and like them play no part in the key or the hash.
      *
+     * When this runs inside the JVM's transformer call, the registry records the definition
+     * attempt, which is the thread and the frames that started the definition. [confirmFrom]
+     * counts no miss against the class while any of its attempts runs. A repeat call for a class
+     * that is not confirmed is another attempt. It joins the recorded ones, clears the class's
+     * misses, and lifts a withhold. A call made inside [inTransform] comes from the agent's
+     * transformer. There an attempt that cannot be read makes the class unwatchable, so it never
+     * takes a miss and is never named failed. A name that registers again leaves the failed set
+     * unless a manifest chunk has carried its failure.
+     *
      * `open` only so a test can observe what gets committed, which is how the
      * transform-failure path is pinned.
      */
@@ -254,8 +299,13 @@ open class ProbeRegistry(
         kotlinKind: KotlinKind = KotlinKind.NONE,
     ): LongArray {
         val key = RegistryKey(className, layoutHash, System.identityHashCode(classLoader))
+        var created = false
+        val attempt = if (confirmsDefinitions) captureAttempt() else null
+        val unwatchable = confirmsDefinitions && inTransform.get() && attempt == null
+        if (unwatchable) warnUnwatchableOnce()
         val entry =
             entriesByKey.computeIfAbsent(key) {
+                created = true
                 ClassEntry(
                     classId = nextClassId.getAndIncrement(),
                     className = className,
@@ -273,10 +323,94 @@ open class ProbeRegistry(
                             sourceName = sourceName,
                             kotlinKind = kotlinKind,
                         ),
+                    attempt = attempt,
+                    unwatchable = unwatchable,
+                    sequence = lastRegistrationSequence.incrementAndGet(),
                 )
             }
+        if (confirmsDefinitions) {
+            if (!created) startNewAttempt(entry, attempt, unwatchable)
+            forgetUnsentFailure(className)
+        }
         return entry.counts
     }
+
+    /**
+     * Records [entry]'s new transform as a new definition attempt, unless the class is already
+     * confirmed. The old attempt, its misses and a withhold belonged to the earlier transform.
+     */
+    private fun startNewAttempt(
+        entry: ClassEntry,
+        attempt: DefinitionAttempt?,
+        unwatchable: Boolean,
+    ) {
+        if (isConfirmed(entry)) return
+        synchronized(entry) {
+            if (entry.confirmed) return
+            if (attempt != null) entry.attempts += attempt
+            if (unwatchable) entry.unwatchable = true
+            entry.missedConfirmations = 0
+            entry.withheldForGood = false
+            entry.sequence = lastRegistrationSequence.incrementAndGet()
+        }
+    }
+
+    private val unwatchableWarned = AtomicBoolean(false)
+
+    private val inTransform = ThreadLocal.withInitial { false }
+
+    /**
+     * Runs [block] marked as the agent's own transformer call, so a [register] inside it that
+     * cannot read its definition attempt makes the class unwatchable rather than counting misses.
+     */
+    fun <T> inTransform(block: () -> T): T {
+        val outer = inTransform.get()
+        inTransform.set(true)
+        try {
+            return block()
+        } finally {
+            if (outer) inTransform.set(true) else inTransform.remove()
+        }
+    }
+
+    /**
+     * Logs once that a transform ran where no definition attempt could be read. The agent then
+     * never names such a class failed, so a class that never defines stays withheld unnamed.
+     */
+    private fun warnUnwatchableOnce() {
+        if (!unwatchableWarned.compareAndSet(false, true)) return
+        log.log(
+            System.Logger.Level.WARNING,
+            "otherlode: the definition attempt of a woven class could not be read from its thread's stack; " +
+                "such classes are never reported as failed to load",
+        )
+    }
+
+    /**
+     * Drops [className] from the failed set unless a manifest chunk has carried its failure. A
+     * carried failure may be on the wire, which has no way to take it back, and the server lets
+     * any evidence of loading win.
+     */
+    private fun forgetUnsentFailure(className: String) {
+        if (failedByClassName.isEmpty()) return
+        failedByClassName.computeIfPresent(className) { _, failed -> if (failed.manifestIncluded || failed.staged) failed else null }
+    }
+
+    /**
+     * Records the definition attempt of the current thread, or null when it is not inside the
+     * JVM's transformer call. Overridable so a test can set the attempt without a second thread.
+     */
+    internal open fun captureAttempt(): DefinitionAttempt? = DefinitionAttempt.capture()
+
+    /** Whether [attempt] is over. Overridable so a test can set the answer without a second thread. */
+    internal open fun attemptEnded(attempt: DefinitionAttempt): Boolean = attempt.hasEnded()
+
+    /**
+     * The sequence number of the newest registration. A sweep reads it before it takes its
+     * loaded-class snapshot and passes it to [confirmFrom], which then leaves alone every class
+     * registered after that point.
+     */
+    internal fun registrationSequence(): Long = lastRegistrationSequence.get()
 
     /**
      * Wraps [classLoader] for the entry to hold, so a collected loader can later be told apart
@@ -414,35 +548,99 @@ open class ProbeRegistry(
      * null classloader (the bootstrap loader) has no reference to collect and so is never
      * confirmed by that rule.
      *
-     * A class found in neither has one more miss recorded against it. Two misses withhold it for
-     * good: its name is returned, once, the first time that happens, and never returned again on
-     * a later call. In the same step the class is recorded as failed ([recordFailed]), so the next
-     * manifest names it in `failedClasses`. Nothing ever un-confirms a class, so a confirmed one
-     * leaves this loop at the guard above and its miss count is never read again.
+     * A class found in neither takes a miss only when every definition attempt it has recorded
+     * has ended. While one runs, the JVM can still define the class, so the class stays pending
+     * and its miss count does not change. An unwatchable class never takes a miss. A class that
+     * [register] gave no attempt takes a miss every time. Two misses withhold a class for good.
+     * Its name is returned the first time that happens to it and never again, even when a retry
+     * lifts the withhold and the class is withheld once more. In the same step the class is recorded as
+     * failed ([recordFailed]), so the next manifest names it in `failedClasses`. Nothing ever
+     * un-confirms a class, so a confirmed one leaves this loop at the guard above and its miss
+     * count is never read again.
+     *
+     * [registeredUpTo] is the [registrationSequence] value read before [loadedClassNames] was
+     * taken. A class registered after it is left alone, since the set cannot speak for it.
+     *
+     * At the end, a name whose failure has not been staged for a manifest leaves the failed set
+     * when any entry of that name is confirmed or pending. Only a name with no live copy may stay
+     * failed.
      *
      * A class already confirmed, or already withheld for good, is left alone. A registry that
      * does not withhold tracks nothing and returns nothing: the names this returns are logged as
      * having had their probes withheld, which would not be true, and no class is recorded as
      * failed.
      */
-    open fun confirmFrom(loadedClassNames: Set<String>): List<String> {
+    open fun confirmFrom(
+        loadedClassNames: Set<String>,
+        registeredUpTo: Long = Long.MAX_VALUE,
+    ): List<String> {
         if (!confirmsDefinitions) return emptyList()
         val newlyWithheld = mutableListOf<String>()
         for (entry in entriesByKey.values) {
+            if (entry.sequence > registeredUpTo) continue
             if (entry.withheldForGood || isConfirmed(entry)) continue
             val loaderCollected = entry.classLoaderRef != null && entry.classLoaderRef.get() == null
             if (entry.className in loadedClassNames || loaderCollected) {
-                entry.confirmed = true
+                synchronized(entry) {
+                    entry.confirmed = true
+                    entry.attempts.clear()
+                }
                 continue
             }
-            entry.missedConfirmations++
-            if (entry.missedConfirmations >= 2) {
-                entry.withheldForGood = true
-                recordFailed(entry.className)
-                newlyWithheld += entry.className
+            val watched = synchronized(entry) { if (entry.unwatchable) null else entry.attempts.toList() } ?: continue
+            if (watched.any { !attemptEnded(it) }) continue
+            when (recordMiss(entry, watched, registeredUpTo)) {
+                Withhold.NONE -> {}
+                Withhold.QUIET -> recordFailed(entry.className)
+                Withhold.REPORTED -> {
+                    recordFailed(entry.className)
+                    newlyWithheld += entry.className
+                }
             }
         }
+        dropSupersededFailures()
         return newlyWithheld
+    }
+
+    /**
+     * Counts one miss against [entry] and says whether that withholds it for good. Between the
+     * caller's read of [watched] and this lock, a retry can add an attempt or move the entry past
+     * [registeredUpTo], and a confirmation can clear the attempts. Then the miss belongs to a state
+     * that no longer exists, so it is dropped. A counted miss drops the ended attempts, since every
+     * one of them has ended.
+     */
+    private fun recordMiss(
+        entry: ClassEntry,
+        watched: List<DefinitionAttempt>,
+        registeredUpTo: Long,
+    ): Withhold =
+        synchronized(entry) {
+            if (entry.attempts != watched || entry.unwatchable || entry.sequence > registeredUpTo ||
+                entry.withheldForGood || entry.confirmed
+            ) {
+                return Withhold.NONE
+            }
+            entry.missedConfirmations++
+            entry.attempts.clear()
+            if (entry.missedConfirmations < 2) return Withhold.NONE
+            entry.withheldForGood = true
+            if (entry.reported) return Withhold.QUIET
+            entry.reported = true
+            Withhold.REPORTED
+        }
+
+    /** What one miss did to a class: nothing, a withhold already reported once, or a first withhold. */
+    private enum class Withhold { NONE, QUIET, REPORTED }
+
+    /**
+     * Removes each unsent failure whose name still has an entry that is not withheld for good,
+     * since that entry is either defined or still being defined.
+     */
+    private fun dropSupersededFailures() {
+        if (failedByClassName.values.none { !it.manifestIncluded }) return
+        for (entry in entriesByKey.values) {
+            if (!entry.withheldForGood) forgetUnsentFailure(entry.className)
+        }
     }
 
     /**
@@ -862,6 +1060,8 @@ open class ProbeRegistry(
                     yield(takeChunk())
                     if (entry.manifestIncluded) continue
                 }
+                val stillFailed = failedByClassName.computeIfPresent(className) { _, current -> current.also { it.staged = true } }
+                if (stillFailed !== entry) continue
                 stagedFailed += entry
                 failed += FailedClass(className, entry.withheldAt)
                 chunkWeight += 1

@@ -420,19 +420,21 @@ class OtherlodeInstrumentation(
         ) {
             val pending = pendingRegistration.get() ?: return
             pendingRegistration.remove()
-            registry.register(
-                pending.className,
-                pending.layoutHash,
-                pending.probes,
-                pending.classLoader,
-                superClassName = pending.superClassName,
-                interfaceNames = pending.interfaceNames,
-                classReferences = pending.classReferences,
-                sourceFile = pending.sourceFile,
-                bodyKind = pending.bodyKind,
-                sourceName = pending.sourceName,
-                kotlinKind = pending.kotlinKind,
-            )
+            registry.inTransform {
+                registry.register(
+                    pending.className,
+                    pending.layoutHash,
+                    pending.probes,
+                    pending.classLoader,
+                    superClassName = pending.superClassName,
+                    interfaceNames = pending.interfaceNames,
+                    classReferences = pending.classReferences,
+                    sourceFile = pending.sourceFile,
+                    bodyKind = pending.bodyKind,
+                    sourceName = pending.sourceName,
+                    kotlinKind = pending.kotlinKind,
+                )
+            }
             for ((className, location) in pending.externalClasses) externalClassRegistry.record(className, location)
             pending.handlerForwarders.forEach(handlerForwarders::record)
             wovenClasses.record(pending.classLoader, pending.className, pending.plan)
