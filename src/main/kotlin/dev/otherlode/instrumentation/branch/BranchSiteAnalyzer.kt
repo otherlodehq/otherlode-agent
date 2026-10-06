@@ -153,7 +153,19 @@ object BranchSiteAnalyzer {
          */
         private val trackedSequencesByMethod: Map<Pair<String, String>, IntArray> = emptyMap(),
         private val overriddenOutsideTypes: Map<Pair<String, String>, String> = emptyMap(),
+        private val callbackAnnotations: Map<Pair<String, String>, String> = emptyMap(),
     ) {
+        /**
+         * The callback annotation [name]/[descriptor] carries, dotted and as written on the method
+         * or on one of its parameters, or null. A method that is a constructor or `<clinit>`, one
+         * that gets no probe, and every method when [analyze] was not asked for outside callers,
+         * has none.
+         */
+        fun callbackAnnotationOf(
+            name: String,
+            descriptor: String,
+        ): String? = callbackAnnotations[name to descriptor]
+
         /**
          * The out-of-scope type whose method [name]/[descriptor] overrides or implements, dotted, or
          * null. It is the type [OverrideWalk] finds for the method's own name and descriptor, or,
@@ -325,7 +337,9 @@ object BranchSiteAnalyzer {
      * miss is not retried on every analysis either.
      *
      * It also holds the [TypeHeader] of each type the override walk reads, under the same bound but
-     * apart from the tables. A header is a few names and method keys, far lighter than a table.
+     * apart from the tables. A header is a few names and method keys, far lighter than a table. And
+     * it holds, for each annotation type and place, whether the type carries a callback annotation
+     * ([CallbackAnnotationFinder]), under the same bound: one flag per entry.
      */
     class CrossClassTableCache(
         private val maxEntries: Int,
@@ -348,10 +362,25 @@ object BranchSiteAnalyzer {
         val headerCount: Int
             get() = synchronized(headers) { headers.size }
 
-        /** Forgets every table, header and release held; the next lookup reads again. */
+        private val annotationAnswers =
+            object : LinkedHashMap<String, Boolean>(16, 0.75f, true) {
+                override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?): Boolean = size > maxEntries
+            }
+
+        internal fun recallAnnotationAnswer(key: String): Boolean? = synchronized(annotationAnswers) { annotationAnswers[key] }
+
+        internal fun rememberAnnotationAnswer(
+            key: String,
+            answer: Boolean,
+        ) {
+            synchronized(annotationAnswers) { annotationAnswers[key] = answer }
+        }
+
+        /** Forgets every table, header, annotation answer and release held; the next lookup reads again. */
         fun clear() {
             synchronized(tables) { tables.clear() }
             synchronized(headers) { headers.clear() }
+            synchronized(annotationAnswers) { annotationAnswers.clear() }
             synchronized(releases) { releases.clear() }
         }
 
@@ -796,6 +825,7 @@ object BranchSiteAnalyzer {
         val rawClassReferences = LinkedHashSet<String>()
         val classReferenceCollector = ReferenceCollector(rawClassReferences)
         val sourceSignatures = mutableMapOf<Pair<String, String>, SourceSignature>()
+        val annotationsByMethod = mutableMapOf<Pair<String, String>, MethodAnnotations>()
 
         val classVisitor =
             object : ClassVisitor(Opcodes.ASM9) {
@@ -889,13 +919,19 @@ object BranchSiteAnalyzer {
                     exceptions: Array<out String>?,
                 ): MethodVisitor {
                     val visitor = methodVisitor(access, name, descriptor, signature, exceptions)
-                    val main =
+                    val named =
                         if (name == "<clinit>") {
                             visitor
                         } else {
                             ParameterNameReader(access, descriptor, visitor) { names ->
                                 sourceSignatures[name to descriptor] = SourceSignature.of(names, signature)
                             }
+                        }
+                    val main =
+                        if (outsideCallers && (name to descriptor) in eligibleMethodKeys && name != "<init>" && name != "<clinit>") {
+                            AnnotationRecorder(named) { annotationsByMethod[name to descriptor] = it }
+                        } else {
+                            named
                         }
                     // Language is settled by now: class annotations and attributes precede every method.
                     val collection =
@@ -1126,6 +1162,18 @@ object BranchSiteAnalyzer {
                 emptyMap()
             }
 
+        val callbackAnnotations =
+            if (annotationsByMethod.isEmpty()) {
+                emptyMap()
+            } else {
+                val finder =
+                    CallbackAnnotationFinder(classBytesReader(lookup, outOfScopeLookup, includePackages, excludePackages), tableCache)
+                annotationsByMethod
+                    .mapNotNull { (key, annotations) ->
+                        finder.first(annotations)?.let { key to it.replace('/', '.') }
+                    }.toMap()
+            }
+
         return Analysis(
             sites,
             firstLines,
@@ -1163,6 +1211,7 @@ object BranchSiteAnalyzer {
             sizeGuard,
             trackedSequencesByMethod,
             overriddenOutsideTypes,
+            callbackAnnotations,
         )
     }
 
@@ -1180,7 +1229,26 @@ object BranchSiteAnalyzer {
         excludePackages: List<String>,
         tableCache: CrossClassTableCache?,
     ): (String) -> TypeHeader? {
-        val read = { internalName: String ->
+        val bytesOf = classBytesReader(lookup, outOfScopeLookup, includePackages, excludePackages)
+        val read = { internalName: String -> bytesOf(internalName)?.let(TypeHeader::parse) }
+        if (tableCache != null) return { internalName -> tableCache.getOrReadHeader(internalName) { read(internalName) } }
+        val own = HashMap<String, TypeHeader?>()
+        return { internalName -> if (internalName in own) own[internalName] else read(internalName).also { own[internalName] = it } }
+    }
+
+    /**
+     * Reads a class's bytes for the outside-caller passes. An in-scope type is read through
+     * [lookup], which other passes share. An out-of-scope type is read through [outOfScopeLookup]
+     * when there is one, so its bytes, which these passes parse once and drop, do not take space in
+     * a shared byte cache. A failure reads as no bytes.
+     */
+    private fun classBytesReader(
+        lookup: (internalName: String) -> ByteArray?,
+        outOfScopeLookup: ((internalName: String) -> ByteArray?)?,
+        includePackages: List<String>,
+        excludePackages: List<String>,
+    ): (String) -> ByteArray? =
+        { internalName ->
             try {
                 val reader =
                     if (outOfScopeLookup != null && !TypeMatchPolicy.isIncludedInternal(internalName, includePackages, excludePackages)) {
@@ -1188,15 +1256,11 @@ object BranchSiteAnalyzer {
                     } else {
                         lookup
                     }
-                reader(internalName)?.let(TypeHeader::parse)
+                reader(internalName)
             } catch (_: Exception) {
                 null
             }
         }
-        if (tableCache != null) return { internalName -> tableCache.getOrReadHeader(internalName) { read(internalName) } }
-        val own = HashMap<String, TypeHeader?>()
-        return { internalName -> if (internalName in own) own[internalName] else read(internalName).also { own[internalName] = it } }
-    }
 
     /**
      * [lookup], asked at most once per internal name. Several passes of one [analyze] call read the

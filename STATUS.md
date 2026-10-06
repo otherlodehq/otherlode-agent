@@ -450,6 +450,22 @@ their headers are kept; headers parse through `OpenedClassReader`. A
 default body for a generic or renamed method under `-jvm-default=disable`
 stays unmarked, a gap ADR 0064 records.
 
+Chunk 3 landed on 2026-10-06: `CallbackAnnotations` holds the 98 method
+and 4 parameter annotation names, and `CallbackAnnotationFinder` marks a
+METHOD probe `CALLBACK_ANNOTATION` from the method's runtime-visible
+annotations, directly or through meta-annotations at any depth, then from
+its parameters' by name alone; it wins over an override. The annotations
+are recorded in the analyser's own pass, and annotation types are read
+like out-of-scope headers and answered from the same per-loader cache.
+demo-spring gains 8 marks and spring-webmvc 26. The Opus review made a
+parameter match by name only (`@Observes` cannot sit on an annotation
+type, so a walk could never find one, and every `@RequestParam` was read
+for nothing) and added tests that fail if a cycle's cut-short answer is
+cached, if a parameter annotation wins over the method's, or if
+`java.lang.annotation` types are read. Test stand-ins carry the framework
+annotations' binary names, since no framework jar is on the root test
+classpath.
+
 Follow-ups with triggers: an agent option for an adopter's own callback
 annotations (an adopter asks, or uncalled roots carry in-house
 annotations); a server-side visibility gate over fixture payloads.

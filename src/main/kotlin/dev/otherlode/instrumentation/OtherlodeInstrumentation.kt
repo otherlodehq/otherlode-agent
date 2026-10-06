@@ -644,7 +644,11 @@ class OtherlodeInstrumentation(
                         parameterNames = sourceSignature.parameterNames.internedAll(),
                         genericSignature = sourceSignature.genericSignature.interned(),
                         extensionReceiver = sourceSignature.extensionReceiver,
-                        outsideCaller = OutsideCallers.of(overriddenType = analysis.overriddenOutsideTypeOf(it.name, it.descriptor)),
+                        outsideCaller =
+                            OutsideCallers.of(
+                                overriddenType = analysis.overriddenOutsideTypeOf(it.name, it.descriptor),
+                                annotationType = analysis.callbackAnnotationOf(it.name, it.descriptor),
+                            ),
                     )
                 }
             }
