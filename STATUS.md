@@ -104,10 +104,11 @@ adopter's collector forwards to one multi-tenant backend.
      of its class, `this(params...)` with only the marker dropped), is no
      default site and not logged, and passes through to the private
      constructor.
-   - Not seen in these runs, settled on 2026-10-06 and building: a named
-     class implementing a framework interface read as an uncalled root, and
-     a class that failed to load read as never loaded. See the TODO entry
-     "Outside callers and classes that failed to load". kotlin-stdlib
+   - Not seen in these runs, landed on 2026-10-06 in all three repos: a
+     named class implementing a framework interface read as an uncalled
+     root, and a class that failed to load read as never loaded. See the
+     TODO entries "Outside callers and classes that failed to load" and
+     "Classes that failed to load, made certain". kotlin-stdlib
      always reading as used, through `kotlin.Metadata`, is closed as true:
      a Kotlin service cannot drop it, and a Java service that pulls it in
      is judged on its real use, since Java classes carry no
@@ -371,7 +372,7 @@ routine and OpenTelemetry edge cases in the entries below.
 
 ## TODO
 
-### Outside callers and classes that failed to load: settled, to build
+### Outside callers and classes that failed to load: landed in all three repos
 
 Grilled on 2026-10-06 with Luke; ADRs 0064 and 0065, ADRs 0024 and 0028
 amended, `CONTEXT.md` gains "Outside caller" and "Class that failed to
