@@ -19,6 +19,13 @@ public enum class DependencyUsage {
      */
     NO_LIVE_REFERENCE,
 
+    /**
+     * Loaded, with no live reference, and referenced from a class that failed to load. A prompt to
+     * review, not a claim that it can go. The class may fail because of the classpath this
+     * dependency is on, and a dependency only a long-failing class uses may not be needed.
+     */
+    FAILED_TO_LOAD,
+
     /** Referenced from a method with hits, or at class level by a class that loaded. */
     USED,
 
@@ -46,17 +53,23 @@ public data class DependencyIdentityRef internal constructor(
 /**
  * One place in the adopter's code that references a dependency: `Class#method`, or the class
  * itself for a class-level reference ([methodName] null). [neverLoaded] is true for a site the
- * static baseline declared in a class no manifest from that instance ever named.
+ * static baseline declared in a class no manifest from that instance ever named. [failedToLoad] is
+ * true for a baseline site in a class that some instance failed to load and none loaded.
  */
 @ConsistentCopyVisibility
 public data class DependencyReferenceSite internal constructor(
     val className: String,
     val methodName: String?,
     val neverLoaded: Boolean,
+    val failedToLoad: Boolean = false,
 ) {
     override fun toString(): String {
         val where = methodName?.let { "$className#$it" } ?: "$className (class level)"
-        return if (neverLoaded) "$where (never loaded)" else where
+        return when {
+            failedToLoad -> "$where (failed to load)"
+            neverLoaded -> "$where (never loaded)"
+            else -> where
+        }
     }
 }
 

@@ -532,6 +532,16 @@ common-pool, parallel-stream and virtual threads, with and without
 `-XX:+ShowHiddenFrames`, on 17, 21 and 25. Cost is one `StackWalker` walk
 per registration, about 9 to 30 microseconds by depth.
 
+Chunk 2 landed on 2026-10-06: `DependencyUsage.FAILED_TO_LOAD`, after
+`NO_LIVE_REFERENCE` and before `USED`, in the testkit and the demo
+collector alike. A baseline reference held by a class that failed to load
+(and no instance loaded) is a failed site, never live and never "never
+loaded"; past `USED`, any failed site gives `FAILED_TO_LOAD` whatever the
+baseline says. `failedToLoadDependencies()` throws as its siblings do,
+since a failed site comes only from a baseline, and
+`DependencyReferenceSite.failedToLoad` marks the site. The ABI dump adds
+only those.
+
 ### Reminders for expiring keys and credentials: to decide
 
 Raised 2026-10-05 by Luke while creating the release signing key. Nothing

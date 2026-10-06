@@ -314,7 +314,7 @@ class DependencyReportTest {
         )
         val lines = formatDependencyReport(report)
         assertTrue(
-            lines.any { it == "unloaded: 1, unreferenced: 1, unreached: 1, no live reference: 0, used: 1" },
+            lines.any { it == "unloaded: 1, unreferenced: 1, unreached: 1, no live reference: 0, failed to load: 0, used: 1" },
             lines.joinToString("\n"),
         )
         assertTrue(lines.any { it.contains("UNREACHED: org.example:gamma") }, lines.joinToString("\n"))
@@ -381,5 +381,129 @@ class DependencyReportTest {
             )
 
         assertEquals(DependencyStatus.USED, status)
+    }
+
+    private fun statusOf(
+        instances: List<InstanceDependencyView>,
+        failedClassNames: Set<String>,
+    ): DependencyStatus = computeDependencyReport(instances, failedClassNames).findings.single().status
+
+    private val failedLegacy = setOf("demo.Legacy")
+
+    private fun baselineSite(
+        className: String,
+        methodName: String? = null,
+    ) = HeldReferences(className, methodName, methodName?.let { "()V" }, ReferenceOrigin.BASELINE, jsonMapper)
+
+    @Test
+    fun `a dependency referenced only from a baseline site in a failed class is failed to load, and the site is marked`() {
+        val report =
+            computeDependencyReport(
+                listOf(instance(references = listOf(baselineSite("demo.Legacy", "apply")))),
+                failedClassNames = failedLegacy,
+            )
+
+        val finding = report.findings.single()
+        assertEquals(DependencyStatus.FAILED_TO_LOAD, finding.status)
+        assertEquals(listOf(ReferenceSite("demo.Legacy", "apply", neverLoaded = false, failedToLoad = true)), finding.sites)
+        assertEquals("demo.Legacy#apply (failed to load)", finding.sites.single().toString())
+    }
+
+    @Test
+    fun `a failed class's class-level baseline reference also makes a dependency failed to load`() {
+        val status = statusOf(listOf(instance(references = listOf(baselineSite("demo.Legacy")))), failedLegacy)
+
+        assertEquals(DependencyStatus.FAILED_TO_LOAD, status)
+    }
+
+    @Test
+    fun `a failed site gives failed to load with a complete baseline and with an incomplete one, never no live reference`() {
+        val references = listOf(baselineSite("demo.Legacy", "apply"))
+
+        assertEquals(
+            DependencyStatus.FAILED_TO_LOAD,
+            statusOf(listOf(instance(references = references, baselineComplete = true)), failedLegacy),
+        )
+        assertEquals(
+            DependencyStatus.FAILED_TO_LOAD,
+            statusOf(listOf(instance(references = references, baselineComplete = false)), failedLegacy),
+        )
+    }
+
+    @Test
+    fun `a dependency with a failed site and a never-hit method site is failed to load, not unreached`() {
+        val references = listOf(baselineSite("demo.Legacy", "apply"), method("demo.OrderController", "legacy", hits = 0))
+        val report =
+            computeDependencyReport(
+                listOf(instance(references = references, loadedClassNames = setOf("demo.OrderController"))),
+                failedClassNames = failedLegacy,
+            )
+
+        val finding = report.findings.single()
+        assertEquals(DependencyStatus.FAILED_TO_LOAD, finding.status)
+        assertEquals(2, finding.sites.size)
+    }
+
+    @Test
+    fun `a live reference elsewhere still gives used beside a failed site`() {
+        val references = listOf(baselineSite("demo.Legacy", "apply"), method("demo.OrderController", "get", hits = 3))
+
+        assertEquals(DependencyStatus.USED, statusOf(listOf(instance(references = references)), failedLegacy))
+    }
+
+    @Test
+    fun `a class one instance names as failed and another loaded is not failed, so its site reads as before`() {
+        val references = listOf(baselineSite("demo.Legacy", "apply"))
+        val report =
+            computeDependencyReport(
+                listOf(
+                    instance(references = references),
+                    instance(instanceId = "instance-2", loadedClassNames = setOf("demo.Legacy")),
+                ),
+                failedClassNames = failedLegacy,
+            )
+
+        val finding = report.findings.single()
+        assertEquals(DependencyStatus.UNREACHED, finding.status)
+        assertEquals(listOf(ReferenceSite("demo.Legacy", "apply", neverLoaded = true)), finding.sites)
+    }
+
+    @Test
+    fun `an unloaded dependency stays unloaded and a resources-only one stays resources only beside a failed site`() {
+        val references = listOf(baselineSite("demo.Legacy", "apply"))
+        val natives = jackson.copy(classCount = 0)
+
+        assertEquals(DependencyStatus.UNLOADED, statusOf(listOf(instance(references = references, loaded = 0)), failedLegacy))
+        assertEquals(
+            DependencyStatus.RESOURCES_ONLY,
+            statusOf(listOf(instance(references = references, loaded = 0, dependency = natives)), failedLegacy),
+        )
+    }
+
+    @Test
+    fun `with no instance recording references a failed class changes nothing`() {
+        val status =
+            statusOf(listOf(instance(references = listOf(baselineSite("demo.Legacy", "apply")), referencesRecorded = false)), failedLegacy)
+
+        assertEquals(DependencyStatus.LOADED, status)
+    }
+
+    @Test
+    fun `a failed to load dependency prints in its own section with the failed label on its site`() {
+        val report =
+            computeDependencyReport(
+                listOf(instance(references = listOf(baselineSite("demo.Legacy", "apply")))),
+                failedClassNames = failedLegacy,
+            )
+        val lines = formatDependencyReport(report)
+
+        assertTrue(
+            lines.any {
+                it.startsWith("unloaded: 0, unreferenced: 0, unreached: 0, no live reference: 0, failed to load: 1")
+            },
+            lines.joinToString("\n"),
+        )
+        assertTrue(lines.any { it.startsWith("  FAILED TO LOAD: tools.jackson.core:jackson-databind") }, lines.joinToString("\n"))
+        assertTrue(lines.any { it == "    referenced from demo.Legacy#apply (failed to load)" }, lines.joinToString("\n"))
     }
 }

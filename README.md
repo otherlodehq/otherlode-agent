@@ -363,11 +363,15 @@ branch outcomes (`neverHitRoutineOutcomes`), classes
 `neverSupplied`, `alwaysSupplied`), the call graph (`unreachedClusters`),
 classes that failed to load (`failedToLoad`),
 dependencies (`dependency`, `unloadedDependencies`,
-`unreferencedDependencies`, `unreachedDependencies`, `absentReferences`) and,
+`unreferencedDependencies`, `unreachedDependencies`, `failedToLoadDependencies`,
+`absentReferences`) and,
 when the agent runs with `staticBaselineEnabled=true`, `neverLoaded`. Waits cover the next
 flush, a settled state, a probe, an endpoint and a dependency
 (`awaitNextFlush`, `awaitSettled`, `awaitProbe`, `awaitEndpoint`,
-`awaitDependency`, `awaitDependenciesListed`). Asking about a probe the
+`awaitDependency`, `awaitDependenciesListed`). A dependency with no live
+reference that a class which failed to load references has the status
+`FAILED_TO_LOAD`, and `failedToLoadDependencies` lists it. It asks for a
+review and does not say the dependency can go. Asking about a probe the
 collector has never seen throws `UnknownProbeException` rather than
 answering `false`; the message says whether the class was skipped, loaded
 where no transformer saw it, declared by the static baseline but never

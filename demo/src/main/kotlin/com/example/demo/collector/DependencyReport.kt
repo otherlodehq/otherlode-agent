@@ -89,6 +89,9 @@ internal enum class DependencyStatus(
     UNREFERENCED("UNREFERENCED"),
     UNREACHED("UNREACHED"),
     NO_LIVE_REFERENCE("NO LIVE REFERENCE"),
+
+    /** Loaded, with no live reference, and referenced from a class that failed to load. */
+    FAILED_TO_LOAD("FAILED TO LOAD"),
     USED("USED"),
 
     /** Loaded, and no instance that lists it records references, so nothing further can be said. */
@@ -98,15 +101,20 @@ internal enum class DependencyStatus(
     RESOURCES_ONLY("RESOURCES ONLY"),
 }
 
-/** One referencing site, as printed: `Class#method` or `Class (class level)`, with whether its class ever loaded. */
+/** One referencing site, as printed: `Class#method` or `Class (class level)`, with whether its class never loaded or failed to load. */
 internal data class ReferenceSite(
     val className: String,
     val methodName: String?,
     val neverLoaded: Boolean,
+    val failedToLoad: Boolean = false,
 ) {
     override fun toString(): String {
         val where = methodName?.let { "$className#$it" } ?: "$className (class level)"
-        return if (neverLoaded) "$where (never loaded)" else where
+        return when {
+            failedToLoad -> "$where (failed to load)"
+            neverLoaded -> "$where (never loaded)"
+            else -> where
+        }
     }
 }
 
@@ -145,11 +153,18 @@ internal data class DependencyReport(
  * instances that list it and record references are consulted, and with none it reads as loaded: a
  * reference is a referenced class whose `ExternalClass` mapping on that instance names the
  * dependency, and it is live when held by a non-inline method with hits on any instance or by a
- * class that loaded. Baseline references are never live. With a complete baseline from every one
- * of those instances, no reference is unreferenced and no live one is unreached; otherwise the two
- * merge into no live reference, which is true either way.
+ * class that loaded. Baseline references are never live. A baseline reference held by a class in
+ * [failedClassNames] is a failed site. A dependency with a failed site and no live reference is
+ * failed to load, whatever the baseline says. A class that any instance loaded is never failed,
+ * even when it is in [failedClassNames]. With a complete baseline from every one of those
+ * instances, no reference is unreferenced and no live one is unreached; otherwise the two merge
+ * into no live reference, which is true either way.
  */
-internal fun computeDependencyReport(instances: List<InstanceDependencyView>): DependencyReport {
+internal fun computeDependencyReport(
+    instances: List<InstanceDependencyView>,
+    failedClassNames: Set<String> = emptySet(),
+): DependencyReport {
+    val failed = failedClassNames - instances.flatMapTo(mutableSetOf()) { it.loadedClassNames }
     val recording = instances.filter { it.referencesRecorded }
     val methodHits =
         instances
@@ -179,11 +194,13 @@ internal fun computeDependencyReport(instances: List<InstanceDependencyView>): D
                         false
                     }
                 }
+            val failedSite = held.origin == ReferenceOrigin.BASELINE && held.className in failed
             val site =
                 ReferenceSite(
                     held.className,
                     held.methodName,
-                    neverLoaded = held.origin == ReferenceOrigin.BASELINE && held.className !in instance.loadedClassNames,
+                    neverLoaded = held.origin == ReferenceOrigin.BASELINE && !failedSite && held.className !in instance.loadedClassNames,
+                    failedToLoad = failedSite,
                 )
             for (referenced in held.referencedClasses) {
                 val mapping = instance.externalClasses[referenced] ?: continue
@@ -228,6 +245,10 @@ internal fun computeDependencyReport(instances: List<InstanceDependencyView>): D
 
                         references.any { (_, live) -> live } -> {
                             DependencyStatus.USED
+                        }
+
+                        references.any { (site, _) -> site.failedToLoad } -> {
+                            DependencyStatus.FAILED_TO_LOAD
                         }
 
                         !judging.all { it.baselineComplete } -> {
@@ -275,9 +296,9 @@ internal fun computeDependencyReport(instances: List<InstanceDependencyView>): D
 
 /**
  * The report as the lines [printDependencyReport] prints, headers included: counts per status
- * first, then one line per dependency, then the absent references. An unreached dependency, or one
- * with no live reference, lists the sites holding its references, so the reader sees where the dead
- * reference sits.
+ * first, then one line per dependency, then the absent references. An unreached dependency, one
+ * with no live reference and one that failed to load list the sites holding its references, so the
+ * reader sees where the dead reference sits.
  */
 internal fun formatDependencyReport(report: DependencyReport): List<String> {
     val lines = mutableListOf<String>()
@@ -316,7 +337,7 @@ internal fun formatDependencyReport(report: DependencyReport): List<String> {
         val sources = finding.discoverySources.joinToString(", ") { it.name.lowercase().replace('_', ' ') }
         lines +=
             "  ${finding.status.label}: ${finding.identityKey} [$versionLabel] loaded ${finding.loadedClassesTotal} of $classCount classes ($sources)"
-        if (finding.status == DependencyStatus.UNREACHED || finding.status == DependencyStatus.NO_LIVE_REFERENCE) {
+        if (finding.status in setOf(DependencyStatus.UNREACHED, DependencyStatus.NO_LIVE_REFERENCE, DependencyStatus.FAILED_TO_LOAD)) {
             finding.sites.forEach { lines += "    referenced from $it" }
         }
     }

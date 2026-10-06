@@ -55,8 +55,10 @@ public final class dev/otherlode/testkit/DependencyReferenceSite {
 	public final fun component1 ()Ljava/lang/String;
 	public final fun component2 ()Ljava/lang/String;
 	public final fun component3 ()Z
+	public final fun component4 ()Z
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getClassName ()Ljava/lang/String;
+	public final fun getFailedToLoad ()Z
 	public final fun getMethodName ()Ljava/lang/String;
 	public final fun getNeverLoaded ()Z
 	public fun hashCode ()I
@@ -84,6 +86,7 @@ public final class dev/otherlode/testkit/DependencyStatus {
 }
 
 public final class dev/otherlode/testkit/DependencyUsage : java/lang/Enum {
+	public static final field FAILED_TO_LOAD Ldev/otherlode/testkit/DependencyUsage;
 	public static final field LOADED Ldev/otherlode/testkit/DependencyUsage;
 	public static final field NO_LIVE_REFERENCE Ldev/otherlode/testkit/DependencyUsage;
 	public static final field RESOURCES_ONLY Ldev/otherlode/testkit/DependencyUsage;
@@ -187,6 +190,7 @@ public final class dev/otherlode/testkit/OtherlodeTestCollector : java/lang/Auto
 	public final fun disabledEndpointModules ()Ljava/util/List;
 	public final fun endpoints ()Ljava/util/List;
 	public final fun failedToLoad ()Ljava/util/List;
+	public final fun failedToLoadDependencies ()Ljava/util/List;
 	public final fun getExportUrl ()Ljava/lang/String;
 	public final fun hitCount (Ljava/lang/String;Ljava/lang/String;)J
 	public final fun hitCount (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)J

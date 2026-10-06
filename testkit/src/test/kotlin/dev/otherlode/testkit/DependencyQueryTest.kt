@@ -10,6 +10,7 @@ import dev.otherlode.export.DependencyIdentity
 import dev.otherlode.export.DependencyIdentitySource
 import dev.otherlode.export.DependencyLocation
 import dev.otherlode.export.ExternalClass
+import dev.otherlode.export.FailedClass
 import dev.otherlode.export.HttpOtlpStyleExporter
 import dev.otherlode.export.ProbeDelta
 import dev.otherlode.export.ProbeKind
@@ -78,6 +79,7 @@ class DependencyQueryTest {
         classReferences: List<ClassReferences> = emptyList(),
         unreportedClasses: List<UnreportedClass> = emptyList(),
         skippedClasses: List<SkippedClass> = emptyList(),
+        failedClasses: List<FailedClass> = emptyList(),
         referencesRecorded: Boolean = true,
         dependenciesListed: Boolean = true,
         instanceId: String = "i-1",
@@ -91,6 +93,7 @@ class DependencyQueryTest {
                 externalClasses = externalClasses,
                 unreportedClasses = unreportedClasses,
                 skippedClasses = skippedClasses,
+                failedClasses = failedClasses,
                 referencesRecorded = referencesRecorded,
                 dependenciesListed = dependenciesListed,
             ),
@@ -487,5 +490,74 @@ class DependencyQueryTest {
             listOf(AbsentReference("org.example.Missing", listOf(DependencyReferenceSite("demo.Optional", "probe", neverLoaded = false)))),
             collector.absentReferences(),
         )
+    }
+
+    @Test
+    fun `failedToLoadDependencies lists a dependency only a failed class references, with its failed site`() {
+        manifest(
+            dependencies = listOf(dependency(0, "org.example", "only-failed"), dependency(1, "org.example", "also-hit")),
+            probes = listOf(methodProbe(1, 0, "demo.Controller", "get", listOf("org.example.Hit"))),
+            externalClasses = listOf(ExternalClass("org.example.Hit", 1)),
+            failedClasses = listOf(FailedClass("demo.Legacy", 1L)),
+        )
+        deltas(
+            dependencyDeltas = listOf(DependencyDelta(0, 1L, 1L), DependencyDelta(1, 1L, 1L)),
+            probeDeltas = listOf(ProbeDelta(1, 0, ProbeKind.METHOD, 1L, 4L)),
+        )
+        baseline(
+            declaredClasses =
+                listOf(
+                    DeclaredClass(
+                        "demo.Legacy",
+                        listOf(DeclaredMethod("apply", "()V", referencedClasses = listOf("org.example.Old", "org.example.Hit"))),
+                    ),
+                ),
+            externalClasses = listOf(ExternalClass("org.example.Old", 0), ExternalClass("org.example.Hit", 1)),
+        )
+
+        val failed = collector.failedToLoadDependencies()
+
+        assertEquals(listOf("org.example:only-failed"), failed.map { it.identityKey })
+        assertEquals(DependencyUsage.FAILED_TO_LOAD, failed.single().status)
+        assertEquals(
+            listOf(DependencyReferenceSite("demo.Legacy", "apply", neverLoaded = false, failedToLoad = true)),
+            failed.single().sites,
+        )
+        assertEquals(DependencyUsage.USED, collector.dependency("org.example", "also-hit").status)
+        assertEquals(emptyList(), collector.unreachedDependencies())
+    }
+
+    @Test
+    fun `failedToLoadDependencies throws as its siblings do without references_recorded or before dependencies_listed`() {
+        manifest(dependencies = listOf(dependency(0, "com.acme", "lib")), referencesRecorded = false, dependenciesListed = false)
+
+        val unlisted = assertFailsWith<IllegalStateException> { collector.failedToLoadDependencies() }
+        assertTrue(unlisted.message!!.contains("dependencies_listed"), unlisted.message)
+
+        manifest(dependencies = listOf(dependency(0, "com.acme", "lib")), referencesRecorded = false)
+        val noReferences = assertFailsWith<IllegalStateException> { collector.failedToLoadDependencies() }
+        assertTrue(noReferences.message!!.contains("includePackages"), noReferences.message)
+    }
+
+    @Test
+    fun `a class one instance names as failed and another loaded does not make a dependency failed to load`() {
+        manifest(
+            dependencies = listOf(dependency(0, "org.example", "lib")),
+            externalClasses = listOf(ExternalClass("org.example.Old", 0)),
+            failedClasses = listOf(FailedClass("demo.Legacy", 1L)),
+        )
+        manifest(
+            probes = listOf(methodProbe(1, 0, "demo.Legacy", "apply")),
+            instanceId = "i-2",
+        )
+        deltas(listOf(DependencyDelta(0, 1L, 1L)))
+        baseline(
+            declaredClasses =
+                listOf(DeclaredClass("demo.Legacy", listOf(DeclaredMethod("apply", "()V", referencedClasses = listOf("org.example.Old"))))),
+            externalClasses = listOf(ExternalClass("org.example.Old", 0)),
+        )
+
+        assertEquals(emptyList(), collector.failedToLoadDependencies())
+        assertEquals(DependencyUsage.UNREACHED, collector.dependency("org.example", "lib").status)
     }
 }

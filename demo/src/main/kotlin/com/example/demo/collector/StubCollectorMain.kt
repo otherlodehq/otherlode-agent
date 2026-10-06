@@ -2101,13 +2101,14 @@ private fun widenToSubtypes(
 }
 
 /**
- * Reports each dependency as unloaded, unreferenced, unreached, with no live reference, or used,
- * merged across instances by identity, plus every referenced class no loader could find. The
- * rules live in [computeDependencyReport]; this only gathers what each instance sent into the
- * shape that function reads.
+ * Reports each dependency as unloaded, unreferenced, unreached, with no live reference, failed to
+ * load, or used, merged across instances by identity, plus every referenced class no loader could
+ * find. The rules live in [computeDependencyReport]; this only gathers what each instance sent
+ * into the shape that function reads.
  */
 private fun printDependencyReport() {
-    formatDependencyReport(computeDependencyReport(dependencyViews())).forEach(::println)
+    val failed = failedToLoadClassNames.filter { it !in dynamicallyKnownClassNames }.toSet()
+    formatDependencyReport(computeDependencyReport(dependencyViews(), failed)).forEach(::println)
 }
 
 /**

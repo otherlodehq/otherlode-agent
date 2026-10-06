@@ -116,12 +116,18 @@ internal data class DependencyReport(
  * instances that list it and record references are consulted, and with none it reads as loaded: a
  * reference is a referenced class whose `ExternalClass` mapping on that instance names the
  * dependency, and it is live when held by a non-inline method with hits on any instance or by a
- * class that loaded. Baseline references are never live. With a complete baseline from every one
- * of those instances, a dependency with no reference is unreferenced and one with references but
- * no live one is unreached; otherwise the two merge into no live reference, which is true either
- * way.
+ * class that loaded. Baseline references are never live. A baseline reference held by a class in
+ * [failedClassNames] is a failed site. A dependency with a failed site and no live reference is
+ * failed to load, whatever the baseline says. A class that any instance loaded is never failed,
+ * even when it is in [failedClassNames]. With a complete baseline from every one of those
+ * instances, a dependency with no reference is unreferenced and one with references but no live
+ * one is unreached; otherwise the two merge into no live reference, which is true either way.
  */
-internal fun computeDependencyReport(instances: List<InstanceDependencyView>): DependencyReport {
+internal fun computeDependencyReport(
+    instances: List<InstanceDependencyView>,
+    failedClassNames: Set<String> = emptySet(),
+): DependencyReport {
+    val failed = failedClassNames - instances.flatMapTo(mutableSetOf()) { it.loadedClassNames }
     val recording = instances.filter { it.referencesRecorded }
     val methodHits =
         instances
@@ -150,11 +156,13 @@ internal fun computeDependencyReport(instances: List<InstanceDependencyView>): D
                         false
                     }
                 }
+            val failedSite = held.origin == ReferenceOrigin.BASELINE && held.className in failed
             val site =
                 DependencyReferenceSite(
                     held.className,
                     held.methodName,
-                    neverLoaded = held.origin == ReferenceOrigin.BASELINE && held.className !in instance.loadedClassNames,
+                    neverLoaded = held.origin == ReferenceOrigin.BASELINE && !failedSite && held.className !in instance.loadedClassNames,
+                    failedToLoad = failedSite,
                 )
             for (referenced in held.referencedClasses) {
                 val mapping = instance.externalClasses[referenced] ?: continue
@@ -199,6 +207,10 @@ internal fun computeDependencyReport(instances: List<InstanceDependencyView>): D
 
                         references.any { (_, live) -> live } -> {
                             DependencyUsage.USED
+                        }
+
+                        references.any { (site, _) -> site.failedToLoad } -> {
+                            DependencyUsage.FAILED_TO_LOAD
                         }
 
                         !judging.all { it.baselineComplete } -> {

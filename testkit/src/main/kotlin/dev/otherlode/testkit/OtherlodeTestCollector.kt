@@ -63,12 +63,12 @@ import dev.otherlode.export.UnreadShape as WireUnreadShape
  * branch index only when it has none. A finding therefore names no instance.
  *
  * Dependency queries ([dependency], [unloadedDependencies], [unreferencedDependencies],
- * [unreachedDependencies], [absentReferences]) apply the collector's dependency rules within this
+ * [unreachedDependencies], [failedToLoadDependencies], [absentReferences]) apply the collector's dependency rules within this
  * one test JVM and follow the same rule again: a dependency no manifest has listed throws
  * [UnknownDependencyException], and a question the data cannot answer yet, or at all without a
  * complete static baseline, throws [IllegalStateException] instead of returning an empty list.
  * The agent sends a dependency's entry only after its loaded-class counts have been delivered, so
- * [dependency] answers once the entry arrives. The four list queries answer only once every
+ * [dependency] answers once the entry arrives. The five list queries answer only once every
  * instance heard from has sent `dependencies_listed`; [awaitDependenciesListed] waits for that.
  *
  * Every probe, endpoint and dependency is keyed on its instance id alone, not on the run id every
@@ -2196,7 +2196,7 @@ public class OtherlodeTestCollector internal constructor(
     ): DependencyStatus {
         return checked {
             val wanted = groupId.orEmpty() to artifactId
-            val candidates = computeDependencyReport(dependencyViews()).findings.filter { wanted in it.identities }
+            val candidates = computeDependencyReport(dependencyViews(), failedToLoad().toSet()).findings.filter { wanted in it.identities }
             if (candidates.isEmpty()) throw unknownDependency(wanted)
             val finding =
                 candidates.singleOrNull()
@@ -2231,8 +2231,8 @@ public class OtherlodeTestCollector internal constructor(
      * Blocks until at least one instance has been heard from and every instance heard from has
      * sent `dependencies_listed`. The agent sets that flag once its startup listing, and every
      * reference mapping recorded before the listing ended, has reached this collector.
-     * [unloadedDependencies], [unreferencedDependencies], [unreachedDependencies] and
-     * [absentReferences] answer only after this point. Throws [TimeoutException] if [timeout]
+     * [unloadedDependencies], [unreferencedDependencies], [unreachedDependencies],
+     * [failedToLoadDependencies] and [absentReferences] answer only after this point. Throws [TimeoutException] if [timeout]
      * elapses first, naming the instances still waiting. An agent whose listing failed never sends
      * the flag, so this times out for it.
      */
@@ -2289,6 +2289,18 @@ public class OtherlodeTestCollector internal constructor(
         }
 
     /**
+     * Every loaded dependency with no live reference that is referenced from a class that failed to
+     * load ([failedToLoad]), sorted by [DependencyStatus.identityKey], each with its sites in
+     * [DependencyStatus.sites]. A failed site reads `Class#method (failed to load)`. This asks for
+     * review and claims no removal. Throws [IllegalStateException] under the same conditions as
+     * [unreachedDependencies].
+     */
+    public fun failedToLoadDependencies(): List<DependencyStatus> =
+        checked {
+            dependenciesWithStatus(DependencyUsage.FAILED_TO_LOAD, needsSplit = true)
+        }
+
+    /**
      * Every referenced class no loader could find, sorted by class name, with the sites that
      * reference it: code guarded by a check for an optional library, for example.
      *
@@ -2301,7 +2313,7 @@ public class OtherlodeTestCollector internal constructor(
     public fun absentReferences(): List<AbsentReference> {
         return checked {
             checkDependenciesListed()
-            val report = computeDependencyReport(dependencyViews())
+            val report = computeDependencyReport(dependencyViews(), failedToLoad().toSet())
             check(!report.referencesUnavailable) {
                 "no instance sent references_recorded, so absent references are unknown: run the agent with includePackages set"
             }
@@ -2314,7 +2326,7 @@ public class OtherlodeTestCollector internal constructor(
         needsSplit: Boolean,
     ): List<DependencyStatus> {
         checkDependenciesListed()
-        val report = computeDependencyReport(dependencyViews())
+        val report = computeDependencyReport(dependencyViews(), failedToLoad().toSet())
         if (needsSplit) {
             val unsplit = report.findings.filter { it.status == DependencyUsage.NO_LIVE_REFERENCE || it.status == DependencyUsage.LOADED }
             check(!report.referencesUnavailable && unsplit.isEmpty()) {
