@@ -27,3 +27,23 @@ interface DisabledDefaultInterface {
 }
 
 class DisabledDefaultInterfaceImpl : DisabledDefaultInterface
+
+/**
+ * Extends a JDK interface and gives its method a default body. Under `-jvm-default=disable` that
+ * body is `run(LDisabledRunnableInterface;)V` in the interface's `$DefaultImpls`. [plain] overrides
+ * nothing.
+ */
+interface DisabledRunnableInterface : Runnable {
+    override fun run() {}
+
+    fun plain(): Int = 1
+}
+
+/**
+ * Gives a generic method of a Kotlin function type a default body. Under `-jvm-default=disable`
+ * the body is `invoke(LDisabledFunctionInterface;Ljava/lang/String;)V` in the `$DefaultImpls`
+ * class, and the interface holds no bridge for `Function1.invoke(Ljava/lang/Object;)Ljava/lang/Object;`.
+ */
+interface DisabledFunctionInterface : (String) -> Unit {
+    override fun invoke(p1: String) {}
+}

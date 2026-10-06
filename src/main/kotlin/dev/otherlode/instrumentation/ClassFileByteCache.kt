@@ -23,10 +23,11 @@ import java.util.WeakHashMap
  * entry first; a negative entry weighs [NEGATIVE_WEIGHT] so that a flood of misses is bounded as
  * well. A lock guards the map, which costs little beside a class-file read.
  *
- * Two reads must not go through it, and keep using [uncachedLocatorFor]: a class's own class file
- * when it is first analysed, which is read once anyway, and the comparison a re-weave makes between
- * the class file and the one the class was woven from (ADR 0053), where a cached copy of a class
- * that was HotSwapped would let edited code through on the old plan.
+ * Three reads do not go through it, and use [uncachedLocatorFor]: a class's own class file when it
+ * is first analysed, which is read once anyway; the comparison a re-weave makes between the class
+ * file and the one the class was woven from (ADR 0053), where a cached copy of a class that was
+ * HotSwapped would let edited code through on the old plan; and an out-of-scope supertype the
+ * override walk reads, whose header it keeps in a cache of its own (ADR 0064).
  *
  * Each lookup or store marks its loader active. [takeActiveLoaders] reports the marked loaders and
  * clears the marks, and [dropLoadersNotIn] drops the entries of every loader that is neither in the

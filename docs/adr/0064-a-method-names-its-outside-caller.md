@@ -30,6 +30,7 @@ The callback annotations are agent data, a list of type names checked against cu
 ## Consequences
 
 - The static baseline's `DeclaredMethod` carries no outside caller. A never-loaded class's methods fold into its class finding, and the scan cannot read Spring or Jakarta supertypes inside a Boot fat jar, since it never opens `BOOT-INF/lib`.
-- `java.*` supertypes are read too, through the bootstrap and platform loaders, which `SupertypeGuard` skips. Each type is read and parsed once per loader.
+- A Kotlin default body for a generic method under `-jvm-default=disable`, such as `interface Handler : (Event) -> Unit` with a body for `invoke`, gets no mark. The `$DefaultImpls` method takes `Event` where `Function1.invoke` takes `Object`, and the interface holds no bridge to match, since each implementing class holds its own. Matching it would need the interface's generic signature substituted into the declaration. Under `enable`, the default from kotlinc 2.2, the interface carries the bridge and the body is marked.
+- `java.*` supertypes are read too, through the bootstrap and platform loaders, which `SupertypeGuard` skips. Each type is read and parsed once per loader, and an out-of-scope type's bytes go around the shared byte cache, since only its header is kept.
 - A never-hit web handler is both a never-called endpoint and a root called from outside scope, so the two views agree.
 - `otherlode-testkit` gains `RootKind.CALLED_FROM_OUTSIDE_SCOPE` and the outside caller on its method records, and the demo's stub collector applies the same rule. `otherlode-server` stores the field and adds the root kind.

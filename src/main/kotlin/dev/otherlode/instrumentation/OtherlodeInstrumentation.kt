@@ -644,6 +644,7 @@ class OtherlodeInstrumentation(
                         parameterNames = sourceSignature.parameterNames.internedAll(),
                         genericSignature = sourceSignature.genericSignature.interned(),
                         extensionReceiver = sourceSignature.extensionReceiver,
+                        outsideCaller = OutsideCallers.of(overriddenType = analysis.overriddenOutsideTypeOf(it.name, it.descriptor)),
                     )
                 }
             }
@@ -1384,8 +1385,29 @@ class OtherlodeInstrumentation(
             handlerForwarders.handlerInterfaces,
             resourceLookup(classLoader),
             receivedBytes,
+            outsideCallers = true,
+            outOfScopeLookup = uncachedLookup(classLoader),
         ) { name, descriptor -> (name to descriptor) in eligible }
     }
+
+    /**
+     * Reads another class's bytes as [crossClassLookup] does, but not through [classFileCache]. The
+     * override walk reads out-of-scope supertypes this way. It keeps only their headers, in its own
+     * cache, so their bytes would only push other entries out of the byte cache.
+     */
+    private fun uncachedLookup(classLoader: ClassLoader?): (String) -> ByteArray? =
+        lookupThrough(ClassFileByteCache.uncachedLocatorFor(classLoader))
+
+    /** Reads a class's bytes by internal name through [locator]. Any failure reads as no bytes. */
+    private fun lookupThrough(locator: ClassFileLocator): (String) -> ByteArray? =
+        { internalName ->
+            try {
+                val resolution = locator.locate(internalName.replace('/', '.'))
+                if (resolution.isResolved) resolution.resolve() else null
+            } catch (_: Exception) {
+                null
+            }
+        }
 
     /**
      * Reads another class's bytes as a resource on [classLoader], for every cross-class read
@@ -1396,17 +1418,7 @@ class OtherlodeInstrumentation(
      * the locator cannot find, is read as a class with no bytes rather than as an
      * instrumentation failure.
      */
-    private fun crossClassLookup(classLoader: ClassLoader?): (String) -> ByteArray? {
-        val locator = classFileCache.locatorFor(classLoader)
-        return { internalName ->
-            try {
-                val resolution = locator.locate(internalName.replace('/', '.'))
-                if (resolution.isResolved) resolution.resolve() else null
-            } catch (_: Exception) {
-                null
-            }
-        }
-    }
+    private fun crossClassLookup(classLoader: ClassLoader?): (String) -> ByteArray? = lookupThrough(classFileCache.locatorFor(classLoader))
 
     /**
      * Reads the leading bytes of a resource that is not a class, such as a Scala 3 class's `.tasty`

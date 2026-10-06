@@ -48,7 +48,7 @@ class ShadedBodyKindRuleTest {
     private fun shadedBodyKind(path: String): Pair<String, String?> {
         val analyzerClass = loader.loadClass("dev.otherlode.instrumentation.branch.BranchSiteAnalyzer")
         val analyzer = analyzerClass.getField("INSTANCE").get(null)
-        val analyze = analyzerClass.methods.single { it.name == "analyze" && it.parameterCount == 9 }
+        val analyze = analyzerClass.methods.single { it.name == "analyze" && it.parameterCount == 10 }
         val analysis =
             analyze.invoke(
                 analyzer,
@@ -60,6 +60,7 @@ class ShadedBodyKindRuleTest {
                 emptySet<String>(),
                 shadedFunction(1, null),
                 null,
+                false,
                 shadedFunction(2, true),
             )
         val kind = analysis.javaClass.getMethod("getBodyKind").invoke(analysis) as Enum<*>

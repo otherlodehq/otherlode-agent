@@ -152,7 +152,20 @@ object BranchSiteAnalyzer {
          * [SitePairing.encodedSequences]' encoding. A method with none is absent.
          */
         private val trackedSequencesByMethod: Map<Pair<String, String>, IntArray> = emptyMap(),
+        private val overriddenOutsideTypes: Map<Pair<String, String>, String> = emptyMap(),
     ) {
+        /**
+         * The out-of-scope type whose method [name]/[descriptor] overrides or implements, dotted, or
+         * null. It is the type [OverrideWalk] finds for the method's own name and descriptor, or,
+         * when there is none, the type its bridge's match gives. Always null for a method that gets
+         * no probe, for a bridge, and for every method when [analyze] was not asked for outside
+         * callers.
+         */
+        fun overriddenOutsideTypeOf(
+            name: String,
+            descriptor: String,
+        ): String? = overriddenOutsideTypes[name to descriptor]
+
         /**
          * The class file's tracked instructions of [name]/[descriptor] as [SitePairing.encodedSequences]
          * encodes them, or an empty array for a method with none. Only a method [analyze]'s
@@ -310,6 +323,9 @@ object BranchSiteAnalyzer {
      * would otherwise stay live for the life of the holder. Safe to share between threads; every
      * access is synchronised. A class whose bytes cannot be read is remembered as unreadable, so a
      * miss is not retried on every analysis either.
+     *
+     * It also holds the [TypeHeader] of each type the override walk reads, under the same bound but
+     * apart from the tables. A header is a few names and method keys, far lighter than a table.
      */
     class CrossClassTableCache(
         private val maxEntries: Int,
@@ -323,9 +339,19 @@ object BranchSiteAnalyzer {
         val size: Int
             get() = synchronized(tables) { tables.size }
 
-        /** Forgets every table and release held; the next lookup reads again. */
+        private val headers =
+            object : LinkedHashMap<String, Any>(16, 0.75f, true) {
+                override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Any>?): Boolean = size > maxEntries
+            }
+
+        /** The number of type headers held, unreadable ones included. */
+        val headerCount: Int
+            get() = synchronized(headers) { headers.size }
+
+        /** Forgets every table, header and release held; the next lookup reads again. */
         fun clear() {
             synchronized(tables) { tables.clear() }
+            synchronized(headers) { headers.clear() }
             synchronized(releases) { releases.clear() }
         }
 
@@ -337,6 +363,16 @@ object BranchSiteAnalyzer {
             val table = read()
             synchronized(tables) { tables[internalName] = table ?: UNREADABLE }
             return table
+        }
+
+        internal fun getOrReadHeader(
+            internalName: String,
+            read: () -> TypeHeader?,
+        ): TypeHeader? {
+            synchronized(headers) { headers[internalName] }?.let { return it as? TypeHeader }
+            val header = read()
+            synchronized(headers) { headers[internalName] = header ?: UNREADABLE }
+            return header
         }
 
         private val releases =
@@ -689,6 +725,7 @@ object BranchSiteAnalyzer {
         handlerInterfaces: Set<String> = emptySet(),
         resourceLookup: (path: String) -> ByteArray? = { null },
         receivedBytes: ByteArray? = null,
+        outsideCallers: Boolean = false,
         methodFilter: (name: String, descriptor: String) -> Boolean,
     ): Analysis =
         analyzeThrough(
@@ -702,7 +739,8 @@ object BranchSiteAnalyzer {
             resourceLookup,
             receivedBytes,
             null,
-            methodFilter,
+            outsideCallers,
+            methodFilter = methodFilter,
         )
 
     /**
@@ -721,6 +759,8 @@ object BranchSiteAnalyzer {
         resourceLookup: (path: String) -> ByteArray?,
         receivedBytes: ByteArray?,
         fingerprintVisitor: ((onResult: (ConditionFingerprinter.MethodResult) -> Unit) -> MethodVisitor)? = null,
+        outsideCallers: Boolean = false,
+        outOfScopeLookup: ((internalName: String) -> ByteArray?)? = null,
         methodFilter: (name: String, descriptor: String) -> Boolean,
     ): Analysis {
         val readClass = readOnce(lookup)
@@ -1062,6 +1102,29 @@ object BranchSiteAnalyzer {
 
         val lambdaBodies = findLambdaBodies(internalClassName, methodAccess, rawCandidatesByMethod, eligibleMethodKeys, isScalaClass)
         val bodyClass = BodyKindRule.classify(hasEnclosingMethod, superInternalName, ownInnerClassEntry, isKotlinClass)
+        val overriddenOutsideTypes =
+            if (outsideCallers && eligibleMethodKeys.isNotEmpty()) {
+                OverrideWalk(
+                    includePackages,
+                    excludePackages,
+                    headerReader(lookup, outOfScopeLookup, includePackages, excludePackages, tableCache),
+                ).overriddenTypes(
+                    internalClassName,
+                    superInternalName,
+                    interfaceInternalNames,
+                    methodAccess,
+                    eligibleMethodKeys,
+                ) { bridge ->
+                    rawCandidatesByMethod[bridge]
+                        .orEmpty()
+                        .filter {
+                            it.kind == CallEdgeKind.CALL && it.owner == internalClassName && (it.name to it.descriptor) != bridge &&
+                                it.name != BOX_IMPL && it.name != UNBOX_IMPL
+                        }.mapTo(mutableSetOf()) { it.name to it.descriptor }
+                }
+            } else {
+                emptyMap()
+            }
 
         return Analysis(
             sites,
@@ -1099,7 +1162,40 @@ object BranchSiteAnalyzer {
             generatedMarks.cause,
             sizeGuard,
             trackedSequencesByMethod,
+            overriddenOutsideTypes,
         )
+    }
+
+    /**
+     * Reads a type's [TypeHeader], once per name: through [tableCache] when there is one, and for
+     * this one analysis otherwise. A type that cannot be read is remembered too. An in-scope type
+     * is read through [lookup], which other passes share. An out-of-scope type is read through
+     * [outOfScopeLookup] when there is one, so its bytes, which only the header needs, do not take
+     * space in a shared byte cache.
+     */
+    private fun headerReader(
+        lookup: (internalName: String) -> ByteArray?,
+        outOfScopeLookup: ((internalName: String) -> ByteArray?)?,
+        includePackages: List<String>,
+        excludePackages: List<String>,
+        tableCache: CrossClassTableCache?,
+    ): (String) -> TypeHeader? {
+        val read = { internalName: String ->
+            try {
+                val reader =
+                    if (outOfScopeLookup != null && !TypeMatchPolicy.isIncludedInternal(internalName, includePackages, excludePackages)) {
+                        outOfScopeLookup
+                    } else {
+                        lookup
+                    }
+                reader(internalName)?.let(TypeHeader::parse)
+            } catch (_: Exception) {
+                null
+            }
+        }
+        if (tableCache != null) return { internalName -> tableCache.getOrReadHeader(internalName) { read(internalName) } }
+        val own = HashMap<String, TypeHeader?>()
+        return { internalName -> if (internalName in own) own[internalName] else read(internalName).also { own[internalName] = it } }
     }
 
     /**
@@ -3160,6 +3256,13 @@ object BranchSiteAnalyzer {
      * `kotlin/` prefix so that `shadowJar` does not rewrite it in this agent's relocated copy.
      */
     private const val INTRINSICS_SUFFIX = "/jvm/internal/Intrinsics"
+
+    /**
+     * The boxing methods kotlinc gives a value class. A value class's bridge calls one of them on
+     * its own class beside the method it bridges to, so the override walk looks past them.
+     */
+    private const val BOX_IMPL = "box-impl"
+    private const val UNBOX_IMPL = "unbox-impl"
     private const val OBJECT_METHODS_INTERNAL_NAME = "java/lang/runtime/ObjectMethods"
     private const val THROWABLE_INTERNAL_NAME = "java/lang/Throwable"
     private const val OBJECT_INTERNAL_NAME = "java/lang/Object"

@@ -434,6 +434,22 @@ number, as it does for every other enum, and reads the zero kind as none.
 Review made the order behind "first declaring type" exact (the superclass
 and its supertypes, then each interface with its supertypes).
 
+Chunk 2 landed on 2026-10-06: `OverrideWalk` marks a METHOD probe
+`OVERRIDES_METHOD` with the first out-of-scope supertype declaring a method
+of its name and descriptor, from headers parsed without bodies and cached
+per loader beside the cross-class tables (2048 each, about 1 KB a header;
+spring-webmvc holds about 281). The corpora gain 134 (demo), 3
+(demo-spring), 322 (ktor), 1000 (scala) and 469 (spring-webmvc) marks; the
+code-size sweep took about 6% longer. Two Opus review rounds changed: a
+bridge passes its type to any single same-class callee, since kotlinc's
+`size()I` calls `getSize()I`, looking past a value class's `box-impl` and
+`unbox-impl`; a `$DefaultImpls` default body needs an interface as its
+outer type, and every other method there takes the ordinary walk;
+out-of-scope supertypes are read around the shared byte cache, since only
+their headers are kept; headers parse through `OpenedClassReader`. A
+default body for a generic or renamed method under `-jvm-default=disable`
+stays unmarked, a gap ADR 0064 records.
+
 Follow-ups with triggers: an agent option for an adopter's own callback
 annotations (an adopter asks, or uncalled roots carry in-house
 annotations); a server-side visibility gate over fixture payloads.
