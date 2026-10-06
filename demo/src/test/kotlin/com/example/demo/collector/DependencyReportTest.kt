@@ -417,7 +417,7 @@ class DependencyReportTest {
     }
 
     @Test
-    fun `a failed site gives failed to load with a complete baseline and with an incomplete one, never no live reference`() {
+    fun `a failed site counts only from a complete baseline, the scan the server reads`() {
         val references = listOf(baselineSite("demo.Legacy", "apply"))
 
         assertEquals(
@@ -425,7 +425,7 @@ class DependencyReportTest {
             statusOf(listOf(instance(references = references, baselineComplete = true)), failedLegacy),
         )
         assertEquals(
-            DependencyStatus.FAILED_TO_LOAD,
+            DependencyStatus.NO_LIVE_REFERENCE,
             statusOf(listOf(instance(references = references, baselineComplete = false)), failedLegacy),
         )
     }

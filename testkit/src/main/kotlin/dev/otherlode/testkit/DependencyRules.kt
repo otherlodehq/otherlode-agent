@@ -117,7 +117,7 @@ internal data class DependencyReport(
  * reference is a referenced class whose `ExternalClass` mapping on that instance names the
  * dependency, and it is live when held by a non-inline method with hits on any instance or by a
  * class that loaded. Baseline references are never live. A baseline reference held by a class in
- * [failedClassNames] is a failed site. A dependency with a failed site and no live reference is
+ * [failedClassNames] is a failed site when its instance's baseline is complete, the scan the server reads too. A dependency with a failed site and no live reference is
  * failed to load, whatever the baseline says. A class that any instance loaded is never failed,
  * even when it is in [failedClassNames]. With a complete baseline from every one of those
  * instances, a dependency with no reference is unreferenced and one with references but no live
@@ -156,7 +156,7 @@ internal fun computeDependencyReport(
                         false
                     }
                 }
-            val failedSite = held.origin == ReferenceOrigin.BASELINE && held.className in failed
+            val failedSite = held.origin == ReferenceOrigin.BASELINE && instance.baselineComplete && held.className in failed
             val site =
                 DependencyReferenceSite(
                     held.className,
