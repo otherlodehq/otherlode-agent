@@ -104,10 +104,14 @@ adopter's collector forwards to one multi-tenant backend.
      of its class, `this(params...)` with only the marker dropped), is no
      default site and not logged, and passes through to the private
      constructor.
-   - Not seen in these runs, still open: a named class implementing a
-     framework interface reads as an uncalled root (the ADR 0024 gap);
-     kotlin-stdlib always reads as used, through `kotlin.Metadata`; a class
-     that failed to load reads as unreferenced.
+   - Not seen in these runs, settled on 2026-10-06 and building: a named
+     class implementing a framework interface read as an uncalled root, and
+     a class that failed to load read as never loaded. See the TODO entry
+     "Outside callers and classes that failed to load". kotlin-stdlib
+     always reading as used, through `kotlin.Metadata`, is closed as true:
+     a Kotlin service cannot drop it, and a Java service that pulls it in
+     is judged on its real use, since Java classes carry no
+     `kotlin.Metadata`.
    - An unread body reads as the adopter's code, found after item 3 landed:
      current Scala patch releases make every case class's `hashCode` dead code,
      and kotlinc 2.1 and earlier a never-hit stub per interface default method.
@@ -366,6 +370,49 @@ the server's performance-only deferrals, gzip, a collector config file, agent-le
 routine and OpenTelemetry edge cases in the entries below.
 
 ## TODO
+
+### Outside callers and classes that failed to load: settled, to build
+
+Grilled on 2026-10-06 with Luke; ADRs 0064 and 0065, ADRs 0024 and 0028
+amended, `CONTEXT.md` gains "Outside caller" and "Class that failed to
+load". In short: a METHOD probe carries an `OutsideCaller` (an out-of-scope
+supertype method it overrides, or a callback annotation from the agent's
+list, meta-annotations and parameter annotations included), and a
+never-hit root with no in-scope caller and an outside caller is *called
+from outside scope*, ahead of *called only by tests*. Labels only:
+clusters and counts are unchanged. A class withheld for good is named in
+`ProbeManifest.failed_classes` and reads as failed to load, never as never
+loaded. kotlin-stdlib reading as used is closed as true (checklist item 2).
+
+Raised in the same session: a visibility gate. `CodeSizeLimitsTest` and
+`WovenClassVerificationTest` check that corpus classes weave, not how much
+the agent sees in them, so a change that dropped branch sites, edges or
+marks while weaving everything would pass. A test counts what the agent
+identifies per corpus against a committed baseline: a drop fails, a rise
+prints a note, and `-PupdateVisibilityBaseline` rewrites the file so an
+intended change is a reviewed diff.
+
+Landing order, one chunk and one commit each, through `/chunked-build`:
+
+0. Agent: the visibility gate, its baseline measured on the code before
+   this work.
+1. Agent: wire. `OutsideCaller` on `ProbeLocation`,
+   `ProbeManifest.failed_classes`, codec and chunk weights.
+2. Agent: the override mark (supertype walk, bridges, `$DefaultImpls`).
+3. Agent: the annotation mark (the list, the meta-annotation walk,
+   parameter annotations).
+4. Agent: classes that failed to load on the wire.
+5. Agent: testkit and the demo's stub collector (root kind,
+   `failedToLoadClasses()`, the ABI dump), the kotlin-stdlib note.
+6. Luke: the agent's proto reaches `master`, so CI pushes it to the BSR.
+7. Collector: bindings bump and relay round-trip tests.
+8. Server: migration, store, the graph's root kind and its precedence,
+   `failed_to_load` in class states and the report, the web UI, the
+   `docs/site` pages.
+
+Follow-ups with triggers: an agent option for an adopter's own callback
+annotations (an adopter asks, or uncalled roots carry in-house
+annotations); a server-side visibility gate over fixture payloads.
 
 ### Reminders for expiring keys and credentials: to decide
 

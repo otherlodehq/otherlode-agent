@@ -92,6 +92,10 @@ _Avoid_: failed class, excluded class (excluded means outside `includePackages`)
 A class the agent wove whose definition it has not yet seen evidence of. Its probes are held out of the manifest until a count goes above zero or the JVM reports it loaded. One that never confirms is withheld for good and named in a log, so a class that failed to define is never reported as dead code.
 _Avoid_: withheld class, undefined class, failed class (a skipped class is the one that failed)
 
+**Class that failed to load**:
+An unconfirmed class that never confirmed: the agent wove it and the JVM never defined it, such as when a supertype is missing at load or the verifier rejects it. It is a deployment to fix, never dead code, and a class some in-scope run loaded is loaded whatever another run says.
+_Avoid_: failed class (a skipped class is the one that failed), never loaded (a status for code nothing used, and this class may have been used)
+
 **Class file**:
 A class's bytes as the compiler wrote them, read through the class's own loader. Everything the agent reads from a body's shape comes from it, so an instance with another agent ahead of this one reports the same marks, conditions and keys as one without.
 _Avoid_: on-disk bytes (it may be a jar entry), original bytes, captured bytes
@@ -268,8 +272,12 @@ _Avoid_: lambda class for every body class (it names only the Kotlin lambda kind
 A root plus every never-hit method reachable from it through call edges whose every in-scope caller is itself in the cluster. A call edge behind a never-hit outcome in a method that ran counts as a call from that outcome. Deleting the root removes the whole cluster.
 _Avoid_: dead cluster, dead code (a collector's verdict, not an observation)
 
+**Outside caller**:
+A reason code outside scope may call a method that no in-scope code calls. The method overrides or implements a method that an out-of-scope type declares, such as `Runnable.run` or `Object.toString`, or it carries an annotation a framework calls methods by, such as `@EventListener` or `@GetMapping`. The agent names the type or annotation. It labels a root and changes no count and no cluster.
+_Avoid_: entry point (a root may be deep inside the code), framework method (`Object.toString` is no framework's)
+
 **Root**:
-The never-hit code that starts an unreached cluster. A method root is *reached from hit* when one of its callers has hits, and names those callers; it is *uncalled* when nothing in scope calls it, and *called only by tests* when nothing in scope calls it, a test caller does, and a complete static baseline of production rules out a caller in a class that never loaded. An *untaken outcome* root is a never-hit outcome in a method that ran, with at least one method behind it. See ADR 0039. A *class finding* root is a class that holds a class finding, with no caller or a caller that has hits. Its cluster is listed only when it holds a method or class besides the methods the finding folds. A `<clinit>` is never a root, and neither is a never-run constructor of a class nothing constructed that holds no class finding, such as a utility class's private constructor; the cluster reaches through it but never lists it. See otherlode-server ADR 0034.
+The never-hit code that starts an unreached cluster. A method root is *reached from hit* when one of its callers has hits, and names those callers; it is *uncalled* when nothing in scope calls it and it has no outside caller, *called from outside scope* when nothing in scope calls it and it has an outside caller, and *called only by tests* when nothing in scope calls it, a test caller does, and a complete static baseline of production rules out a caller in a class that never loaded. An *untaken outcome* root is a never-hit outcome in a method that ran, with at least one method behind it. See ADR 0039. A *class finding* root is a class that holds a class finding, with no caller or a caller that has hits. Its cluster is listed only when it holds a method or class besides the methods the finding folds. A `<clinit>` is never a root, and neither is a never-run constructor of a class nothing constructed that holds no class finding, such as a utility class's private constructor; the cluster reaches through it but never lists it. See otherlode-server ADR 0034.
 _Avoid_: entry point (a root may be deep inside the code), node
 
 ### Dependencies

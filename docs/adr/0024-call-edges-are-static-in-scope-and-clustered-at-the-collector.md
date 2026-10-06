@@ -37,3 +37,7 @@ A generated method (ADR 0026) is no node, and its edges were dropped with it. Th
 
 So resolution looks through a generated method: when the up-walk or the widening lands on one, the lookup continues along that method's own edges, resolved the same way, with a visited set against cycles, and the `<clinit>` rule applies to each class reached. A generated method with hits is also a caller in its own right: code outside scope calls it (a `HashMap` calls a data class's `hashCode`), and what it reaches, such as an override of a property's `hashCode`, has a caller that ran, so it joins no never-hit caller's cluster. It is never a root or a member. Inline methods are still neither nodes nor looked through. The testkit and the demo's stub collector apply these rules, and `otherlode-server` will, in step 9 of the unread-shape work in `STATUS.md`. A bridge has no probe and so no record to look through; ADR 0041's amendment covers the calls that pass through one.
 
+
+## Amended on 2026-10-06: an outside caller labels a root
+
+A method a framework calls is no longer left as an uncalled root. ADR 0064 has the agent name each method's outside caller, an out-of-scope supertype method it overrides or a callback annotation it carries, and a never-hit root with no in-scope caller and an outside caller is *called from outside scope*. Edges and clusters are unchanged.
