@@ -414,15 +414,43 @@ a decision or a session of its own:
    collector facts only it held moved to `test-runs.md`, and `configuration.md`'s `testRun` row
    names the `staticBaselineEnabled` condition.
 
-Items 1 and 3 are in a grill (2026-10-07). Settled so far: item 1 is detected at transform time
-per hook (a hook matching no declared non-abstract method disables the whole module), reported in
-`disabled_endpoint_modules` with a new additive `kind` enum beside the reason text, recorded as an
-amendment to ADR 0017, and backed by a scheduled CI canary running each endpoint module's tests
-against its framework's newest release. Research corrected the item: a missing dispatch hook
-leaves every declared endpoint at zero hits, a false "never called", not only an absent list.
-Item 3 keeps resending deltas and manifests on 400 and 413 (ADR 0009 amendment; the KDoc and ADR
-lines calling them permanent are wrong), and the static baseline keeps its chunks on 413. The
-server counts a manifest whose deltas were refused as zero hits; how to close that is open.
+Items 1 and 3 were grilled on 2026-10-07 with Luke: ADR 0017, 0009 and 0014 amended, ADR 0068
+added, `CONTEXT.md` gains "Pending counts". Research corrected item 1: a missing dispatch hook
+leaves every declared endpoint at zero hits, a false "never called", not only an absent list. The
+server counts a run whose manifest arrived and whose deltas were refused as zero hits, which ADR
+0068 closes with the server's help. Six reviews of the records added, on the main session's
+call: the Ktor 2 module matches its names only as classes (Ktor 3 reuses them for interfaces), a
+weave failure ByteBuddy reports disables a module as `TRANSFORM_FAILED` (JAX-RS excepted), a
+heartbeat leads a flush with pending counts and another closes the flush that clears them, a
+disabled module leads the manifest, and `payload_sequence` orders a run's payloads. Landing
+order, one commit each:
+
+1. Wire: `DisabledEndpointModuleKind` with its `UNSPECIFIED` zero and `DisabledEndpointModule.kind
+   = 4`; `payload_sequence` and `counts_pending_since` on `DeltaBatch` and `ProbeManifest`. Buf CI
+   publishes it.
+2. `otherlode-collector`: bump the bindings to that BSR commit.
+3. Agent, item 1: an `AdviceBinder` method that records each hook's matcher in a per-call view
+   of the cached binder (an `endpoints-api` change), the pipeline checks every hook after
+   `transform`, `moduleFailed` takes a kind through the bootstrap seam and its replay buffer,
+   `onError` disables every non-JAX-RS module whose matcher accepted the class (recorded per
+   thread, never on a re-weave), the Ktor 2 matcher takes classes only, the testkit's `kind`,
+   `endpoints.md`, `troubleshooting.md`, `data-sent.md`'s manifest table and `testkit-api.md`.
+4. Agent, item 3: the payload sequence and `counts_pending_since`, stamped together under one
+   lock just before each payload is sent; the pending state's two moves (set at the first
+   unconfirmed hit batch, cleared only by a flush that sent and confirmed every hit batch it
+   built); the leading and closing heartbeats; every delta batch sent past a refusal (a 4xx the
+   exporter does not retry, reported by a new flag on `ExportFailedException`; anything else still
+   ends the flush's delta sends); an undelivered disabled module sent first on a manifest of its
+   own (`EndpointRegistry` splits modules from the endpoint snapshot); the static baseline keeping
+   its chunks on 413; the KDocs that describe the old rules (`HttpExporter`, `Exporter`,
+   `ExportScheduler`'s "A failure stops the loop", `StaticBaselineSender`); and `data-sent.md`,
+   `troubleshooting.md` and `classes.md` (which says a 413 drops the scan).
+5. CI: a scheduled framework canary running each endpoint module's tests against its framework's
+   newest release.
+6. `otherlode-server`, Luke's to schedule (he is working there; nothing is changed from here):
+   store and show `kind`; treat a run's zero hits as evidence only once a delta batch from it
+   arrived and while its highest-sequence payload carries `counts_pending_since` 0, and say in
+   the UI when a run's counts are behind.
 
 ### Outside callers and classes that failed to load: landed in all three repos
 

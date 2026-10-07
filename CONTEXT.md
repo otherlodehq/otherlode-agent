@@ -117,6 +117,10 @@ One scheduled export tick, sending a delta batch and any manifest entries not ye
 The payload listing every probe whose hit total changed since the last confirmed delivery. An empty one is the liveness heartbeat.
 _Avoid_: metrics, snapshot
 
+**Pending counts**:
+Hits a run has sent in a delta batch that no collector confirmed. While a run has pending counts, its zero hits are not evidence that code never ran.
+_Avoid_: lost hits, dropped deltas
+
 **Hit total**:
 A probe's cumulative count since process start, merged at the collector with max().
 _Avoid_: delta, hits since last flush, increment
@@ -190,7 +194,7 @@ _Avoid_: alias table, handler map
 How the agent learned of an endpoint: registration (the framework declared it) or dispatch (a request matched an endpoint no registration had declared).
 
 **Endpoint module**:
-The per-framework unit that hooks one framework's registration and dispatch. A module that hits a linkage failure disables itself once and is reported as disabled.
+The per-framework unit that hooks one framework's registration and dispatch. A module that cannot vouch for what it counts (a linkage failure, a throw in its advice or its transform, a framework class it hooks that failed to weave, a failed route walk, or a hook that matched no method) disables itself once, whole, and is reported as disabled with what kind of failure it was.
 
 **Never called**:
 An endpoint that at least one instance registered and whose hit total has stayed at zero across every instance in scope. The framework would serve it; no request ever matched it.
