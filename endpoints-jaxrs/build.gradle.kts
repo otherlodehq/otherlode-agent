@@ -14,6 +14,7 @@ repositories {
 // The Jersey release each test suite runs against, one property per line. The weekly framework
 // canary sets them to the newest release of the line. The JAX-RS API artifacts stay on their pins.
 val jersey3Version = providers.gradleProperty("otherlode.framework.jersey3").getOrElse("3.1.12")
+val jersey4Version = providers.gradleProperty("otherlode.framework.jersey4").getOrElse("4.0.3")
 val jersey2Version = providers.gradleProperty("otherlode.framework.jersey2").getOrElse("2.48")
 
 dependencies {
@@ -98,6 +99,11 @@ tasks.test {
 // directory (src/javaxTest/kotlin) rather than reusing src/test/kotlin the way Ktor3Module's and
 // SpringWebMvcModule's version suites reuse one shared file: those differ only by dependency
 // version, never by import statement.
+//
+// A third suite, jersey4Test, runs the default suite's own sources (src/test/kotlin) against
+// Jersey 4 and Jakarta REST 4.0 (Jakarta EE 11). Jersey 4 keeps the jakarta.ws.rs namespace, so
+// the same fixtures and tests apply and only the dependency versions differ. It exists because
+// the module must keep working across a Jakarta REST major bump, which the 3.1 suite cannot show.
 testing {
     suites {
         register<JvmTestSuite>("javaxTest") {
@@ -117,6 +123,23 @@ testing {
                 implementation("org.glassfish.jersey.containers:jersey-container-jdk-http:$jersey2Version")
                 implementation("org.glassfish.jersey.inject:jersey-hk2:$jersey2Version")
                 implementation("javax.ws.rs:javax.ws.rs-api:2.1.1")
+            }
+        }
+
+        register<JvmTestSuite>("jersey4Test") {
+            useJUnitJupiter()
+            sources {
+                kotlin.srcDir("src/test/kotlin")
+            }
+            dependencies {
+                implementation(project())
+                implementation(project(":"))
+                implementation(project(":endpoints-api"))
+                implementation("org.jetbrains.kotlin:kotlin-test-junit5:2.2.21")
+                implementation("net.bytebuddy:byte-buddy:1.18.12")
+                implementation("org.glassfish.jersey.containers:jersey-container-jdk-http:$jersey4Version")
+                implementation("org.glassfish.jersey.inject:jersey-hk2:$jersey4Version")
+                implementation("jakarta.ws.rs:jakarta.ws.rs-api:4.0.0")
             }
         }
     }
@@ -152,6 +175,34 @@ testing.suites.named<JvmTestSuite>("javaxTest") {
     }
 }
 
+// The same -javaagent wiring again, built from jersey4Test's own compiled output.
+val jersey4TestAgentJar =
+    tasks.register<Jar>("jersey4TestAgentJar") {
+        archiveBaseName.set("jaxrs-jersey4-test-agent")
+        destinationDirectory.set(layout.buildDirectory.dir("test-agent"))
+        from(testing.suites.named<JvmTestSuite>("jersey4Test").map { it.sources.output })
+        manifest {
+            attributes["Premain-Class"] = "dev.otherlode.instrumentation.endpoints.jaxrs.JaxRsTestAgent"
+            attributes["Can-Retransform-Classes"] = "true"
+        }
+    }
+
+testing.suites.named<JvmTestSuite>("jersey4Test") {
+    targets {
+        all {
+            testTask.configure {
+                dependsOn(jersey4TestAgentJar)
+                jvmArgumentProviders.add(
+                    CommandLineArgumentProvider {
+                        listOf("-javaagent:${jersey4TestAgentJar.get().archiveFile.get().asFile.absolutePath}")
+                    },
+                )
+            }
+        }
+    }
+}
+
 tasks.check {
     dependsOn(testing.suites.named("javaxTest"))
+    dependsOn(testing.suites.named("jersey4Test"))
 }

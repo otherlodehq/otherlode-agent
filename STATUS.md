@@ -457,8 +457,10 @@ order, one commit each:
    newest release. Landed 2026-10-07: `framework-canary.yml` (Mondays 03:43, and by hand) with
    `newest-frameworks.sh`, which moves each `otherlode.framework.*` test pin to the newest stable
    release of its line and warns, without failing, on a newer major no line covers. Its first run in
-   CI (by hand, 2026-10-07) passed on Ktor 3.6.0, instrumentation-api 2.32.0 and SDK 1.66.0, and warns that Jersey 4.0.3
-   (Jakarta EE 11) is out: whether the JAX-RS module supports it is a decision for Luke.
+   CI (by hand, 2026-10-07) passed on Ktor 3.6.0, instrumentation-api 2.32.0 and SDK 1.66.0, and warned that Jersey 4.0.3
+   (Jakarta EE 11) was out. Luke decided the same day to test against it before release: the
+   JAX-RS module's `jersey4Test` suite runs its tests on Jersey 4.0.3 with `jakarta.ws.rs-api`
+   4.0.0, and the canary moves that pin too.
 6. `otherlode-server`, Luke's to schedule (he is working there; nothing is changed from here):
    store and show `kind`; treat a run's zero hits as evidence only once a delta batch from it
    arrived and while its highest-sequence payload carries `counts_pending_since` 0, and say in
