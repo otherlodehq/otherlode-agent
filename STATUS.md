@@ -1,9 +1,9 @@
 # Status
 
 Working notes on what is in flight and what is parked. Not a changelog; git
-history covers that. `CLAUDE.md` holds the design in long form, `docs/adr/`
-one record per decision, and `CONTEXT.md` the glossary. Where this file and
-`CLAUDE.md` disagree about the state of the code, this one is right.
+history covers that. `docs/adr/` holds one record per decision, `CONTEXT.md`
+the glossary, `docs/site/` the customer docs, and `CLAUDE.md` the rules a
+change follows.
 
 ## Pre-release checklist
 
@@ -380,7 +380,12 @@ Written on 2026-10-07 while the agent's `docs/site/` pages were researched
 against the code. The small bugs it found are fixed (an underscore host in
 `exportUrl` now gets a warning that names it; the exporter is pinned to
 HTTP/1.1, where it sent `Upgrade: h2c`; three stale messages and comments).
-What is left needs a decision or a session of its own:
+Fixed later the same day: the testkit's fork rejection and bind failure now
+advise `maxParallelForks = 1` (Gradle gives every fork the same `-javaagent`
+arguments, so the per-fork port it suggested could not be set up), two KDocs,
+two tests of option names no release had, and `HttpOtlpStyleExporter` is
+`HttpExporter`. `CLAUDE.md` is now a tracked page of rules. What is left needs
+a decision or a session of its own:
 
 1. **An endpoint module can go silent without saying so.** If a framework
    release lacks the method a module's advice hooks, the advice attaches to
@@ -402,8 +407,7 @@ What is left needs a decision or a session of its own:
 4. **`SizeGuard` has no ADR.** The 8000- and 65535-byte rules, and the
    choice that a method already over 8000 keeps its branch probes, are only
    in code and `methods-and-branches.md`.
-5. **ADR and README drift.** Found by the docs agents; fix as part of the
-   `CLAUDE.md` trim:
+5. **ADR and README drift.** Found by the docs agents, still open:
    - ADRs 0001, 0003 and 0004 open with the REBASE and probe-field design
      their amendments replaced; ADR 0005's consequences open with the method
      tier not being retransformation-capable.
@@ -3285,5 +3289,4 @@ static scan not opening `BOOT-INF/lib` nested dependency jars, the
 classpath blind spot for app-server, OSGi and plugin-loaded deployments, and
 include rules being required, with no `includePackages=*` to ask for every
 class (ADR 0033).
-Each has its own section in `CLAUDE.md` with the reasoning and what it would
-take to change.
+Each ADR named has the reasoning and what it would take to change.
