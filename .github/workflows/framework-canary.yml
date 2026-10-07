@@ -11,8 +11,8 @@ jobs:
     name: a newest framework release (a red build means a release breaks an endpoint module)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           # The same JDKs the build job installs. The last version listed becomes JAVA_HOME and
@@ -21,7 +21,7 @@ jobs:
             17
             25
             21
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
       # Newest stable release of each framework line the modules' tests run against. The
       # compile-against floors in the build files do not move.
       - id: newest
@@ -49,7 +49,7 @@ jobs:
             echo "and see ADR 0017."
           } | tee -a "$GITHUB_STEP_SUMMARY"
           echo "::error title=Framework release broke a module::an endpoint module's tests failed with the newest framework releases"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: canary-test-reports

@@ -33,14 +33,14 @@ jobs:
       matrix:
         config: [headline, ceiling]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           java-version: 21
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
       - run: ./gradlew shadowJar --no-daemon
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           repository: otherlodehq/otherlode-collector
           ref: ${{ inputs.collector_ref || 'master' }}
@@ -54,7 +54,7 @@ jobs:
           -PcollectorDir="$GITHUB_WORKSPACE/otherlode-collector"
           -Pconfig="$CONFIG"
           -Prepeats="$REPEATS"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: overhead-${{ matrix.config }}

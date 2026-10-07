@@ -18,8 +18,8 @@ jobs:
         # ADR 0035), and a rename in either has to fail a test.
         test-jdk: [17, 21, 25]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           # The last version listed becomes JAVA_HOME and runs Gradle. Each version is also
@@ -31,7 +31,7 @@ jobs:
             25
             ${{ matrix.test-jdk }}
             21
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
       # `build` runs every module's tests, shadowJar, and verifyAgentJar. otherlode.testJdk picks the
       # JVM the tests run on; compilation stays on the JDK 21 toolchain.
       - run: >-
@@ -44,7 +44,7 @@ jobs:
         run: >-
           ./gradlew verifyPublication --no-daemon
           -Porg.gradle.java.installations.fromEnv=JAVA_HOME_17_X64,JAVA_HOME_21_X64,JAVA_HOME_25_X64
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: test-reports-jdk${{ matrix.test-jdk }}
@@ -58,8 +58,8 @@ jobs:
     name: check with JaCoCo on every test JVM
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
           # 17 and 25 are the javac fixture toolchains; 21 is last, so it runs Gradle.
@@ -67,7 +67,7 @@ jobs:
             17
             25
             21
-      - uses: gradle/actions/setup-gradle@v4
+      - uses: gradle/actions/setup-gradle@v6
       # The init script applies the `jacoco` plugin to every Java project, so every test JVM runs
       # with JaCoCo's agent beside Otherlode's, the way an adopter's test task does. `check` rather
       # than `test`, so every test suite runs that way.
@@ -75,7 +75,7 @@ jobs:
           ./gradlew --init-script gradle/jacoco-check.init.gradle.kts check --no-daemon
           -Potherlode.testJdk=21
           -Porg.gradle.java.installations.fromEnv=JAVA_HOME_17_X64,JAVA_HOME_21_X64,JAVA_HOME_25_X64
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: test-reports-jacoco-check

@@ -28,7 +28,7 @@ jobs:
   buf:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # Build, lint and format run on every event, and breaking does too unless a pull request
       # carries the "buf skip breaking" label. A pull request is checked against its base commit.
       # A push to master publishes, so it and a manual run are checked against what the registry
