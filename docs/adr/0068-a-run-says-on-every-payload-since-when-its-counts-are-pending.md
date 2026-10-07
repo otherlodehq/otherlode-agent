@@ -44,3 +44,5 @@ ADR 0036 rejected a flush sequence number as the way to know a dependency's coun
 - A flush that starts with or clears pending counts sends one more request, and a flush with a refused hit batch sends every batch it has.
 - The fields are additive (`buf breaking`). The collector's bindings are bumped with them, since redaction strips a field it does not know.
 - The testkit's collector confirms every payload it can apply, so it reads the fields but exposes neither.
+
+Amended 2026-10-07 while building it: a heartbeat whose send fails without a refusal ends the flush's delta sends like any other failure, the closing one included, and the flush then counts as unconfirmed, so it sends neither `dependencies_listed` nor a static baseline retry into what looks like an outage. By then the closing heartbeat's flush has already recorded its counts as delivered (ADR 0036) and cleared the state; the next flush's payloads carry the 0 the heartbeat would have. A refused heartbeat still counts against nothing.

@@ -74,7 +74,7 @@ The agent runs one scheduled thread named `otherlode-export` and two send thread
 On each flush (every 60 seconds by default, with a random offset for the first one so a fleet does not flush at the same instant), the thread:
 
 - copies each changed class's count array,
-- encodes a delta batch, and sends it,
+- encodes a delta batch, and sends it (a flush with unconfirmed counts sends an empty batch first, and one that catches up ends with another),
 - sends any manifest chunks the collector has not confirmed yet,
 - walks the loaded classes to count each dependency's loaded classes, and checks for classes no transformer saw. The check for classes that never reached a transformer runs on every tenth flush, about every ten minutes at the default interval.
 

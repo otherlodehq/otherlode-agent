@@ -77,6 +77,8 @@ class ExportScheduler(
      * sends, the shutdown flush excepted. The default releases nothing.
      */
     private val releaseQuietCaches: () -> Unit = {},
+    /** Milliseconds since the epoch; read once per flush. Injectable so a test controls it. */
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
     private val log = System.getLogger(ExportScheduler::class.java.name)
     private var executor: ScheduledExecutorService? = null
@@ -88,6 +90,7 @@ class ExportScheduler(
     /** Set once a manifest carrying `dependenciesListed = true` was confirmed; see [sendDependenciesListedIfDue]. */
     private val dependenciesListedSent = AtomicBoolean(false)
     private var flushesSinceSweep = SWEEP_EVERY_N_FLUSHES
+    private val delivery = DeliveryState()
 
     /** Runs the two sends of each flush side by side; see [flush]. Two threads, created once, not two per tick. */
     private val sendPool: ExecutorService =
@@ -192,12 +195,16 @@ class ExportScheduler(
      * included. The outer catch here covers what the sends cannot, such as
      * a rejected submission after [stop].
      *
+     * A flush that starts with pending counts sends an empty delta batch first, on its own, and a
+     * flush that clears them ends with another; see [DeliveryState] and [sendDeltaBatch].
+     *
      * [final] is true only for the flush [flushOnShutdown] runs. It is carried onto every delta
      * batch this flush sends, the empty heartbeat and a standalone batch of endpoint or dependency
      * deltas included, so a collector can tell an instance that ended cleanly from one that went
      * silent. The manifest send is unaffected.
      */
     fun flush(final: Boolean = false) {
+        val flushStart = clock()
         try {
             dependencyListing.runOnce()
             maybeLogBranchDrops()
@@ -208,7 +215,7 @@ class ExportScheduler(
             val generation = dependencyRegistry.countGeneration
             val deliveredBefore = dependencyRegistry.deliveredGeneration
             val manifestSend = sendPool.submit<Boolean>(::sendManifestDelta)
-            val deltaSend = sendPool.submit<Boolean> { sendDeltaBatch(final, generation) }
+            val deltaSend = sendPool.submit<Boolean> { sendDeltaBatch(final, generation, flushStart) }
             val manifestConfirmed = manifestSend.get()
             val deltaConfirmed = deltaSend.get()
             var allConfirmed = manifestConfirmed && deltaConfirmed
@@ -398,6 +405,48 @@ class ExportScheduler(
         }
 
     /**
+     * The run's delivery state, stamped onto every delta batch and manifest just before it is sent
+     * (ADR 0068). [pendingSince] is 0 when every hit the run has sent was confirmed, otherwise the
+     * start of the flush in which the unconfirmed ones began. [nextSequence] numbers the payloads
+     * from 1.
+     *
+     * One lock guards both fields. A flush's manifest and delta sends run on two threads, and a
+     * payload's number and the state it carries must be drawn together: any payload numbered after
+     * a change of the state then read the state after it.
+     */
+    private class DeliveryState {
+        private val lock = Any()
+        private var pendingSince = 0L
+        private var nextSequence = 1L
+
+        fun isPending(): Boolean = synchronized(lock) { pendingSince != 0L }
+
+        /** Called when a hit batch was sent and not confirmed. Keeps the earlier start if already pending. */
+        fun markPending(flushStart: Long) {
+            synchronized(lock) { if (pendingSince == 0L) pendingSince = flushStart }
+        }
+
+        fun clear() {
+            synchronized(lock) { pendingSince = 0L }
+        }
+
+        fun stamp(batch: DeltaBatch): DeltaBatch =
+            synchronized(lock) { batch.copy(payloadSequence = nextSequence++, countsPendingSince = pendingSince) }
+
+        fun stamp(manifest: ProbeManifest): ProbeManifest =
+            synchronized(lock) { manifest.copy(payloadSequence = nextSequence++, countsPendingSince = pendingSince) }
+    }
+
+    /** The one place a delta batch reaches the exporter, so none skips [DeliveryState.stamp]. */
+    private fun sendStamped(batch: DeltaBatch) = exporter.exportDeltaBatch(delivery.stamp(batch))
+
+    /** The one place a manifest reaches the exporter, so none skips [DeliveryState.stamp]. */
+    private fun sendStamped(manifest: ProbeManifest) = exporter.exportManifest(delivery.stamp(manifest))
+
+    private fun hasHits(batch: DeltaBatch): Boolean =
+        batch.deltas.isNotEmpty() || batch.endpointDeltas.isNotEmpty() || batch.dependencyDeltas.isNotEmpty()
+
+    /**
      * One outgoing [DeltaBatch], together with the probe snapshot and the endpoint and dependency
      * snapshots it carries. A confirmed send advances exactly these, and nothing else.
      */
@@ -425,39 +474,72 @@ class ExportScheduler(
      * is sent. Any other failure stops the loop. The sends already confirmed stay advanced, the
      * rest are recomputed and resent on the next flush.
      *
-     * When every send in the loop is confirmed, the heartbeat alone included, the counts of
-     * counting generation [generation] have reached the collector, and this records it
-     * ([DependencyRegistry.markCountsDelivered]). A refused or failed send records nothing.
+     * Pending counts (ADR 0068) move at two points. A hit batch, one carrying at least one probe,
+     * endpoint or dependency delta, that is sent and not confirmed makes the run pending since
+     * [flushStart] when it was not already. A flush that sent and confirmed every hit batch it
+     * built then clears it and ends with an empty batch stamped after the change. A flush that
+     * starts pending leads with an empty batch on its own, so the field reaches the collector even
+     * when the hit batch is refused for its size. An empty batch carries no counts: its outcome
+     * never moves the state, and a refusal of it counts against nothing. Any other failure of it
+     * ends the loop like one of a hit batch.
      *
-     * Returns whether every send in the loop was confirmed.
+     * When every hit batch in the loop is confirmed, the counts of counting generation
+     * [generation] have reached the collector, and this records it
+     * ([DependencyRegistry.markCountsDelivered]).
+     *
+     * Returns whether the loop ran to its end with every hit batch confirmed.
      */
     private fun sendDeltaBatch(
         final: Boolean,
         generation: Long,
+        flushStart: Long,
     ): Boolean {
         try {
             val probeBatches = registry.computeDeltaBatches(resource, maxDeltasPerBatch)
             val riders =
                 endpointRegistry.computeDeltas(maxDeltasPerBatch).map(::endpointDeltaRider) +
                     dependencyRegistry.computeDeltas(maxDeltasPerBatch).map(::dependencyDeltaRider)
+            if (delivery.isPending()) sendHeartbeat(final)
             var allConfirmed = true
             for (send in composeDeltaSends(probeBatches, riders, final)) {
+                val hits = hasHits(send.batch)
                 try {
-                    exporter.exportDeltaBatch(send.batch)
+                    sendStamped(send.batch)
                 } catch (e: ExportFailedException) {
+                    if (hits) {
+                        delivery.markPending(flushStart)
+                        allConfirmed = false
+                    }
                     if (!e.refused) throw e
-                    allConfirmed = false
                     log.log(Level.WARNING, "otherlode: delta export failed, will retry next flush", e)
                     continue
+                } catch (t: Throwable) {
+                    if (hits) delivery.markPending(flushStart)
+                    throw t
                 }
                 send.probeSnapshot?.let(registry::advanceBaseline)
                 send.riders.forEach { it.advance() }
             }
-            if (allConfirmed) dependencyRegistry.markCountsDelivered(generation)
-            return allConfirmed
+            if (!allConfirmed) return false
+            dependencyRegistry.markCountsDelivered(generation)
+            if (delivery.isPending()) {
+                delivery.clear()
+                sendHeartbeat(final)
+            }
+            return true
         } catch (t: Throwable) {
             log.log(Level.WARNING, "otherlode: delta export failed, will retry next flush", t)
             return false
+        }
+    }
+
+    /** Sends an empty delta batch. A refusal is logged and the caller goes on; any other failure propagates. */
+    private fun sendHeartbeat(final: Boolean) {
+        try {
+            sendStamped(DeltaBatch(resource, emptyList(), finalFlush = final))
+        } catch (e: ExportFailedException) {
+            if (!e.refused) throw e
+            log.log(Level.WARNING, "otherlode: heartbeat export failed, will retry next flush", e)
         }
     }
 
@@ -540,6 +622,11 @@ class ExportScheduler(
      * same way. A dependency, and a mapping to it, goes out only once its
      * counts were delivered; see [DependencyRegistry.isSendable].
      *
+     * A disabled endpoint module not yet delivered goes first, alone on a manifest, before any
+     * class chunk is built. Its record is the only thing that tells a collector the endpoints
+     * earlier manifests declared are no longer counted, so it never waits behind a class chunk
+     * and never also rides an endpoint chunk.
+     *
      * Class chunks are built, sent and advanced one at a time, so the first flush holds one
      * chunk rather than the whole manifest, and the first failure stops the send before the next
      * chunk is built. Riders are small and computed up front.
@@ -552,6 +639,15 @@ class ExportScheduler(
      */
     private fun sendManifestDelta(): Boolean {
         try {
+            endpointRegistry.computeDisabledModules()?.let { snapshot ->
+                val listed = dependenciesListed
+                val rider = disabledModulesRider(snapshot)
+                for (send in manifestSends(emptySequence(), listOf(rider), listed)) {
+                    sendStamped(send.manifest)
+                    send.riders.forEach { it.advance() }
+                    if (listed) dependenciesListedSent.set(true)
+                }
+            }
             val classChunks =
                 registry.computeManifestDeltas(resource, maxManifestEntriesPerChunk)
             val riders =
@@ -560,7 +656,7 @@ class ExportScheduler(
                     externalClassRegistry.computeManifestEntries(maxManifestEntriesPerChunk).map(::externalClassManifestRider)
             val listed = dependenciesListed
             for (send in manifestSends(classChunks, riders, listed)) {
-                exporter.exportManifest(send.manifest)
+                sendStamped(send.manifest)
                 send.probeSnapshot?.let(registry::advanceManifestBaseline)
                 send.riders.forEach { it.advance() }
                 if (listed) dependenciesListedSent.set(true)
@@ -574,14 +670,16 @@ class ExportScheduler(
 
     private fun endpointManifestRider(chunk: EndpointRegistry.ManifestSnapshot): Rider<ProbeManifest> =
         Rider(
-            size = chunk.endpoints.size + chunk.disabledModules.size,
-            attach = {
-                it.copy(
-                    endpoints = it.endpoints + chunk.endpoints,
-                    disabledEndpointModules = it.disabledEndpointModules + chunk.disabledModules,
-                )
-            },
+            size = chunk.endpoints.size,
+            attach = { it.copy(endpoints = it.endpoints + chunk.endpoints) },
             advance = { endpointRegistry.advanceManifest(chunk) },
+        )
+
+    private fun disabledModulesRider(snapshot: EndpointRegistry.DisabledModulesSnapshot): Rider<ProbeManifest> =
+        Rider(
+            size = snapshot.modules.size,
+            attach = { it.copy(disabledEndpointModules = it.disabledEndpointModules + snapshot.modules) },
+            advance = { endpointRegistry.advanceDisabledModules(snapshot) },
         )
 
     private fun dependencyManifestRider(chunk: DependencyRegistry.ManifestSnapshot): Rider<ProbeManifest> =
@@ -682,7 +780,7 @@ class ExportScheduler(
     private fun sendDependenciesListedIfDue() {
         try {
             if (dependenciesListedSent.get() || !dependenciesListed) return
-            exporter.exportManifest(emptyManifest(dependenciesListed = true))
+            sendStamped(emptyManifest(dependenciesListed = true))
             dependenciesListedSent.set(true)
         } catch (t: Throwable) {
             log.log(Level.WARNING, "otherlode: sending dependenciesListed failed, will retry next flush", t)

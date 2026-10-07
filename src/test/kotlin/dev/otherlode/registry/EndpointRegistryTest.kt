@@ -410,18 +410,39 @@ class EndpointRegistryTest {
     }
 
     @Test
-    fun `computeManifestEntries includes disabled modules not yet delivered`() {
+    fun `computeDisabledModules names every disabled module not yet delivered`() {
         val registry = EndpointRegistry()
         registry.recordDisabledModule("spring-mvc-5", reason = "LinkageError", kind = DisabledEndpointModuleKind.LINKAGE_ERROR)
 
-        val chunk = registry.computeManifestEntries(maxPerChunk = 10).single()
+        val snapshot = registry.computeDisabledModules()
 
-        assertEquals("spring-mvc-5", chunk.disabledModules.single().module)
-        assertEquals(DisabledEndpointModuleKind.LINKAGE_ERROR, chunk.disabledModules.single().kind)
+        assertEquals("spring-mvc-5", snapshot?.modules?.single()?.module)
+        assertEquals(DisabledEndpointModuleKind.LINKAGE_ERROR, snapshot?.modules?.single()?.kind)
     }
 
     @Test
-    fun `computeManifestEntries chunking counts endpoints and disabled modules together and splits at the cap`() {
+    fun `computeDisabledModules is null when no module is undelivered, and after the snapshot is advanced`() {
+        val registry = EndpointRegistry()
+        assertEquals(null, registry.computeDisabledModules())
+        registry.recordDisabledModule("spring-mvc-5", reason = "LinkageError", kind = DisabledEndpointModuleKind.LINKAGE_ERROR)
+
+        val snapshot = registry.computeDisabledModules()!!
+        assertEquals(
+            "spring-mvc-5",
+            registry
+                .computeDisabledModules()
+                ?.modules
+                ?.single()
+                ?.module,
+            "computing marks nothing",
+        )
+        registry.advanceDisabledModules(snapshot)
+
+        assertEquals(null, registry.computeDisabledModules())
+    }
+
+    @Test
+    fun `computeManifestEntries carries endpoints only, never a disabled module`() {
         val registry = EndpointRegistry()
         registry.register(key = Any(), framework = "http-server", verb = "GET", verbatimTemplate = "/a")
         registry.register(key = Any(), framework = "http-server", verb = "GET", verbatimTemplate = "/b")
@@ -429,8 +450,18 @@ class EndpointRegistryTest {
 
         val chunks = registry.computeManifestEntries(maxPerChunk = 1)
 
-        assertEquals(3, chunks.size)
-        chunks.forEach { assertEquals(1, it.endpoints.size + it.disabledModules.size) }
+        assertEquals(2, chunks.size)
+        chunks.forEach { assertEquals(1, it.endpoints.size) }
+        chunks.forEach(registry::advanceManifest)
+        assertEquals(
+            "spring-mvc-5",
+            registry
+                .computeDisabledModules()
+                ?.modules
+                ?.single()
+                ?.module,
+            "advancing endpoint chunks does not deliver the module",
+        )
     }
 
     @Test

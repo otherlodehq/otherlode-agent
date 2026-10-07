@@ -171,6 +171,33 @@ class ProtoPayloadCodecTest {
     }
 
     @Test
+    fun `a delta batch and a manifest round-trip their payload sequence and pending-since time`() {
+        val resource = ResourceAttributes("checkout", "1.0.0", "", null, "run-1")
+        val batch = DeltaBatch(resource, emptyList(), payloadSequence = 7L, countsPendingSince = 1_700_000_000_123L)
+        val manifest = ProbeManifest(resource, emptyList(), payloadSequence = 8L, countsPendingSince = 1_700_000_000_456L)
+
+        val protoBatch = ProtoDeltaBatch.parseFrom(ProtoPayloadCodec.encode(batch))
+        val protoManifest = ProtoProbeManifest.parseFrom(ProtoPayloadCodec.encode(manifest))
+
+        assertEquals(7L, protoBatch.payloadSequence)
+        assertEquals(1_700_000_000_123L, protoBatch.countsPendingSince)
+        assertEquals(8L, protoManifest.payloadSequence)
+        assertEquals(1_700_000_000_456L, protoManifest.countsPendingSince)
+        assertEquals(batch, ProtoPayloadCodec.decodeDeltaBatch(ProtoPayloadCodec.encode(batch)))
+        assertEquals(manifest, ProtoPayloadCodec.decodeProbeManifest(ProtoPayloadCodec.encode(manifest)))
+    }
+
+    @Test
+    fun `payload sequence and pending-since time default to zero`() {
+        val resource = ResourceAttributes("checkout", "1.0.0", "", null, "run-1")
+
+        assertEquals(0L, DeltaBatch(resource, emptyList()).payloadSequence)
+        assertEquals(0L, DeltaBatch(resource, emptyList()).countsPendingSince)
+        assertEquals(0L, ProbeManifest(resource, emptyList()).payloadSequence)
+        assertEquals(0L, ProbeManifest(resource, emptyList()).countsPendingSince)
+    }
+
+    @Test
     fun `omits optional manifest service version and probe branch index when null`() {
         val manifest =
             ProbeManifest(

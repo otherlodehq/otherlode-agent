@@ -148,15 +148,18 @@ class EndpointRegistry {
     )
 
     /**
-     * One computed manifest chunk, together with the entries and disabled modules it staged.
-     * [advanceManifest] marks exactly those as delivered, each endpoint at the version this
-     * snapshot staged, never at whatever version it may have reached since.
+     * One computed manifest chunk, together with the entries it staged. [advanceManifest] marks
+     * exactly those as delivered, each endpoint at the version this snapshot staged, never at
+     * whatever version it may have reached since.
      */
     class ManifestSnapshot internal constructor(
         val endpoints: List<EndpointLocation>,
-        val disabledModules: List<DisabledEndpointModule>,
         internal val stagedEndpoints: List<Pair<EndpointEntry, Long>>,
-        internal val stagedModules: List<String>,
+    )
+
+    /** The disabled modules not yet delivered; [advanceDisabledModules] marks exactly these as delivered. */
+    class DisabledModulesSnapshot internal constructor(
+        val modules: List<DisabledEndpointModule>,
     )
 
     private val entriesByIdentity = ConcurrentHashMap<Identity, EndpointEntry>()
@@ -513,10 +516,10 @@ class EndpointRegistry {
     }
 
     /**
-     * Returns chunks of at most [maxPerChunk] entries, counting each endpoint and each disabled
-     * module as one, covering every endpoint never delivered or changed since it was last
-     * delivered (a discovery-source upgrade, a newly attached handler), plus every disabled
-     * module not yet delivered. Returns an empty list when there is nothing to send.
+     * Returns chunks of at most [maxPerChunk] endpoints, covering every endpoint never delivered or
+     * changed since it was last delivered (a discovery-source upgrade, a newly attached handler).
+     * Returns an empty list when there is nothing to send. Disabled modules are not here; see
+     * [computeDisabledModules].
      *
      * Nothing is marked as delivered here. Each returned [ManifestSnapshot] names the version it
      * staged per endpoint, and [advanceManifest] must be called with it explicitly, only once
@@ -525,44 +528,28 @@ class EndpointRegistry {
     fun computeManifestEntries(maxPerChunk: Int): List<ManifestSnapshot> {
         val chunks = mutableListOf<ManifestSnapshot>()
         var endpoints = mutableListOf<EndpointLocation>()
-        var modules = mutableListOf<DisabledEndpointModule>()
-        var stagedEndpoints = mutableListOf<Pair<EndpointEntry, Long>>()
-        var stagedModules = mutableListOf<String>()
-
-        fun size() = endpoints.size + modules.size
-
-        fun seal() {
-            if (size() == 0) return
-            chunks += ManifestSnapshot(endpoints, modules, stagedEndpoints, stagedModules)
-            endpoints = mutableListOf()
-            modules = mutableListOf()
-            stagedEndpoints = mutableListOf()
-            stagedModules = mutableListOf()
-        }
+        var staged = mutableListOf<Pair<EndpointEntry, Long>>()
 
         for (entry in entriesByIdentity.values) {
             val version = entry.version
             if (version <= entry.deliveredVersion) continue
-            if (size() == maxPerChunk) seal()
+            if (endpoints.size == maxPerChunk) {
+                chunks += ManifestSnapshot(endpoints, staged)
+                endpoints = mutableListOf()
+                staged = mutableListOf()
+            }
             endpoints += entry.toLocation()
-            stagedEndpoints += entry to version
+            staged += entry to version
         }
-        for ((module, moduleEntry) in disabledModulesByName) {
-            if (moduleEntry.manifestIncluded) continue
-            if (size() == maxPerChunk) seal()
-            modules += DisabledEndpointModule(module, moduleEntry.reason, moduleEntry.disabledAt, moduleEntry.kind)
-            stagedModules += module
-        }
-        seal()
+        if (endpoints.isNotEmpty()) chunks += ManifestSnapshot(endpoints, staged)
         return chunks
     }
 
     /**
-     * Marks every endpoint and disabled module staged by [snapshot] as delivered. An endpoint is
-     * marked delivered at the version [snapshot] staged, using `max()` against whatever
-     * [EndpointEntry.deliveredVersion] already holds, so a change that lands while this snapshot's
-     * send was in flight is still picked up by the next compute rather than being marked as
-     * delivered by a send that never carried it.
+     * Marks every endpoint staged by [snapshot] as delivered, at the version [snapshot] staged,
+     * using `max()` against whatever [EndpointEntry.deliveredVersion] already holds, so a change
+     * that lands while this snapshot's send was in flight is still picked up by the next compute
+     * rather than being marked as delivered by a send that never carried it.
      *
      * Call this only after that chunk is confirmed delivered. A failed send must not call it, so
      * the next attempt's compute naturally includes the same entries again.
@@ -573,8 +560,27 @@ class EndpointRegistry {
                 if (version > entry.deliveredVersion) entry.deliveredVersion = version
             }
         }
-        for (module in snapshot.stagedModules) {
-            disabledModulesByName[module]?.manifestIncluded = true
+    }
+
+    /**
+     * Every disabled module not yet delivered, or null when there is none. A module is sent on a
+     * manifest of its own, ahead of any class chunk, because its record is the only thing that
+     * tells a collector the endpoints earlier manifests declared are no longer counted. It is
+     * never also part of an endpoint chunk. Nothing is marked as delivered here; call
+     * [advanceDisabledModules] with the result once that manifest is confirmed.
+     */
+    fun computeDisabledModules(): DisabledModulesSnapshot? {
+        val modules =
+            disabledModulesByName.entries
+                .filter { !it.value.manifestIncluded }
+                .map { (module, entry) -> DisabledEndpointModule(module, entry.reason, entry.disabledAt, entry.kind) }
+        return if (modules.isEmpty()) null else DisabledModulesSnapshot(modules)
+    }
+
+    /** Marks every module [snapshot] named as delivered. Call it only once that manifest is confirmed. */
+    fun advanceDisabledModules(snapshot: DisabledModulesSnapshot) {
+        for (module in snapshot.modules) {
+            disabledModulesByName[module.module]?.manifestIncluded = true
         }
     }
 

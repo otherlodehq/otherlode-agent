@@ -81,12 +81,22 @@ A delta batch carries the resource attributes plus these lists. Each entry is a 
 | `endpoint_deltas` | For each endpoint whose count changed: `endpoint_id`, `first_seen_at`, `hits_total` |
 | `dependency_deltas` | For each dependency: `dependency_id`, `first_loaded_at`, `loaded_classes_total` |
 | `final_flush` | True only on the shutdown flush |
+| `payload_sequence`, `counts_pending_since` | Where the run stands in delivering its counts; see [Pending counts](#pending-counts) |
 
 `hits_total` is the cumulative count since the process started, not the amount since the last flush. A collector merges it with `max()`, so a batch that arrives twice or out of order changes nothing. `first_seen_at` is the time of the flush that first saw a non-zero count, so it is accurate to one interval.
 
 The agent sends the batch even when no count changed. An empty batch is a heartbeat: it tells a collector the instance is alive and idle, not crashed or cut off.
 
 The ids refer to the manifest of the same run. They mean nothing without it.
+
+### Pending counts
+
+Every delta batch and manifest carries two numbers that tell a collector whether the run's counts are behind. Static baseline chunks carry neither.
+
+- `payload_sequence` numbers the run's delta batches and manifests from 1, one higher each time. The payload with the highest number is the run's latest word, whatever order the payloads arrived in. A gap in the numbers means nothing.
+- `counts_pending_since` is 0 when, as of the moment the payload was stamped, no count the run sent has been refused or gone unanswered. Otherwise it is the time, in milliseconds since the epoch, of the flush in which that first happened.
+
+While the latest payload of a run carries a value other than 0, some of its hits have not reached the collector, so its zero hit totals are not evidence that code never ran. Nor are they before any delta batch from the run has arrived. The manifest and the delta batches go out side by side, so a collector can accept one and refuse the other; the manifest then arrives at zero hits for code that did run. One gap remains: payloads stamped in the flush where refusals begin, before the first refusal, carry 0. If the collector accepts nothing after that, up to one flush interval of hits is missing while the run's newest payload says 0, and the run reads like one that stopped without a final flush.
 
 ### Probe manifest
 
@@ -107,6 +117,7 @@ The manifest says what each id in a delta batch names. It carries the resource a
 | `dependencies` | Per dependency: `dependency_id`, identities (`group_id`, `artifact_id`, `version`), how the identity was read, the location, how it was discovered, and class count |
 | `external_classes` | Name of a class outside scope that your code refers to, the `dependency_id` that provides it, and whether nothing provides it |
 | `references_recorded`, `dependencies_listed` | Flags a collector uses to know when references and the startup dependency listing are complete |
+| `payload_sequence`, `counts_pending_since` | Where the run stands in delivering its counts; see [Pending counts](#pending-counts) |
 
 #### Condition text and string literals
 
@@ -163,8 +174,8 @@ Every other status, including a `401`, `403`, `404` and a redirect, fails the se
 
 ### After a failed send
 
-- **Delta batch.** The counts are not marked as delivered. The next flush reports the live cumulative count again, which is how a lost acknowledgement or a late batch heals. A refused request, meaning a `4xx` status the agent does not retry, does not stop the flush: the later delta requests still go, and the refused one is built again on the next flush. Any other failure stops the flush's delta requests at that one; the manifest, sent alongside, is not affected. The requests it did confirm stay confirmed either way.
-- **Manifest.** A chunk the collector did not confirm stays pending and is built again on the next flush. The agent builds, sends and confirms one chunk at a time and stops at the first failure.
+- **Delta batch.** The counts are not marked as delivered. The next flush reports the live cumulative count again, which is how a lost acknowledgement or a late batch heals. A refused request, meaning a `4xx` status the agent does not retry, does not stop the flush: the later delta requests still go, and the refused one is built again on the next flush. Any other failure stops the flush's delta requests at that one; the manifest, sent alongside, is not affected. The requests it did confirm stay confirmed either way. Counts a collector has not confirmed are pending: the next flush leads with an empty delta batch that says so, sent on its own so the news arrives even when the batch with the counts is refused for its size. A flush that then confirms every batch with counts ends with another empty batch saying nothing is pending.
+- **Manifest.** A chunk the collector did not confirm stays pending and is built again on the next flush. The agent builds, sends and confirms one chunk at a time and stops at the first failure. A disabled endpoint module goes first, on a manifest of its own, before any class chunk, since its record is what tells a collector the endpoints sent earlier are no longer counted.
 - **Static baseline.** Chunks go out in order and the first failure stops the send. The chunks left are sent again, one per flush, after a flush whose own sends the collector confirmed. A `400` or `422` answer means the collector refused the content, and the agent drops every chunk left and logs a warning. Any other failure keeps the chunks, such as a `401` while a token rotates or a `413`, since a proxy's size limit can be raised while the process runs. The scan is never repeated in a process.
 - **Resending a delivered payload.** If the collector processed a request but the agent never saw the answer, the agent sends the same payload again. Cumulative counts and chunk indexes make the repeat harmless.
 

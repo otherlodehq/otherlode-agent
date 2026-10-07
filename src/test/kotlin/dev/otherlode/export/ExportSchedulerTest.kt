@@ -692,8 +692,446 @@ class ExportSchedulerTest {
         }
 
         assertEquals(listOf(3L, 3L, 4L), offered, "each flush offers the probe again, with the hits recorded since")
-        assertEquals(3, exporter.attempts)
+        assertEquals(6, exporter.attempts, "the two flushes after the first lead with a heartbeat, and the accepted one closes with one")
         assertEquals(listOf(4L), exporter.confirmed.flatMap { b -> b.deltas.map { it.hitsTotal } }, "nothing lost once accepted")
+    }
+
+    /**
+     * Records every delta batch and manifest as the scheduler stamped it, in the order the sends were
+     * attempted, confirmed or not. [deltaOutcome] and [manifestOutcome] pick a failure by the payload
+     * being sent; [beforeManifest] runs after a manifest is stamped and before it is confirmed.
+     */
+    private class StampedExporter : Exporter {
+        val deltas: MutableList<DeltaBatch> = Collections.synchronizedList(mutableListOf())
+        val manifests: MutableList<ProbeManifest> = Collections.synchronizedList(mutableListOf())
+
+        @Volatile var deltaOutcome: (DeltaBatch) -> Exception? = { null }
+
+        @Volatile var manifestOutcome: (ProbeManifest) -> Exception? = { null }
+
+        @Volatile var beforeManifest: (ProbeManifest) -> Unit = {}
+
+        override fun exportDeltaBatch(batch: DeltaBatch) {
+            deltas += batch
+            deltaOutcome(batch)?.let { throw it }
+        }
+
+        override fun exportManifest(manifest: ProbeManifest) {
+            manifests += manifest
+            beforeManifest(manifest)
+            manifestOutcome(manifest)?.let { throw it }
+        }
+
+        override fun exportStaticBaseline(baseline: StaticBaseline) {}
+    }
+
+    private fun refusal(status: Int = 413) = ExportFailedException("refused", status, refused = true)
+
+    private fun hasHits(batch: DeltaBatch) =
+        batch.deltas.isNotEmpty() || batch.endpointDeltas.isNotEmpty() || batch.dependencyDeltas.isNotEmpty()
+
+    /** A scheduler over [probeCount] classes with one hit each, a controllable clock, and a [StampedExporter]. */
+    private inner class PendingScenario(
+        probeCount: Int = 1,
+        maxDeltasPerBatch: Int = ExportScheduler.DEFAULT_MAX_DELTAS_PER_BATCH,
+        maxManifestEntriesPerChunk: Int = ExportScheduler.DEFAULT_MAX_MANIFEST_ENTRIES_PER_CHUNK,
+        val dependencyRegistry: DependencyRegistry = DependencyRegistry(),
+    ) {
+        val registry = ProbeRegistry()
+        val exporter = StampedExporter()
+        val now =
+            java.util.concurrent.atomic
+                .AtomicLong(1_000)
+        val scheduler =
+            ExportScheduler(
+                config,
+                resource,
+                registry,
+                EndpointRegistry(),
+                exporter,
+                maxDeltasPerBatch = maxDeltasPerBatch,
+                maxManifestEntriesPerChunk = maxManifestEntriesPerChunk,
+                dependencyRegistry = dependencyRegistry,
+                clock = now::get,
+            )
+
+        /** Each class's counts, three hits on its one probe, so the first flush has a hit batch to send. */
+        val counters =
+            List(probeCount) { i ->
+                registry.register("com.example.C$i", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "m", "()V", 1))).also { it[0] = 3 }
+            }
+
+        /** Runs a flush at time [at] and returns the delta batches it attempted. */
+        fun flush(
+            at: Long,
+            final: Boolean = false,
+        ): List<DeltaBatch> {
+            val before = exporter.deltas.size
+            now.set(at)
+            scheduler.flush(final)
+            return exporter.deltas.drop(before)
+        }
+    }
+
+    @Test
+    fun `every delta batch and manifest carries a sequence one higher than the last, across flushes`() {
+        val scenario = ListingScenario("a")
+        scenario.probeRegistry.register("com.example.A", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "a", "()V", 1)))[0] = 2
+        val baselines = StaticBaselineSender(scenario.exporter)
+        baselines.offer(listOf(StaticBaseline(resource, emptyList(), scannedAt = 1L)))
+
+        scenario.flush()
+        scenario.probeRegistry.register("com.example.B", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "b", "()V", 1)))[0] = 1
+        scenario.flush()
+        scenario.flush()
+
+        val sequences =
+            (
+                scenario.exporter.deltaBatches.map {
+                    it.payloadSequence
+                } + scenario.exporter.manifests.map { it.payloadSequence }
+            ).sorted()
+        assertEquals((1L..sequences.size).toList(), sequences, "contiguous from 1 over deltas and manifests together")
+        assertTrue(
+            scenario.exporter.manifests.size >= 4,
+            "the first flush sends a class chunk, the released dependency and the listed flag",
+        )
+        assertEquals(0, scenario.exporter.staticBaselines.size)
+    }
+
+    @Test
+    fun `a static baseline chunk takes no sequence number`() {
+        val exporter = StampedExporter()
+        val baselineExporter = RecordingExporter()
+        val sender = StaticBaselineSender(baselineExporter)
+        sender.offer(listOf(StaticBaseline(resource, emptyList(), scannedAt = 1L)))
+        val scheduler =
+            ExportScheduler(config, resource, ProbeRegistry(), EndpointRegistry(), exporter, staticBaselineSender = sender)
+
+        scheduler.flush()
+        scheduler.flush()
+
+        assertEquals(1, baselineExporter.staticBaselines.size, "the baseline went out between the flushes")
+        assertEquals(listOf(1L, 2L), exporter.deltas.map { it.payloadSequence }.sorted(), "its send used no number")
+    }
+
+    @Test
+    fun `a refused hit batch sets the pending state, and a later batch of the same flush carries it`() {
+        val scenario = PendingScenario(probeCount = 2, maxDeltasPerBatch = 1)
+        var first = true
+        scenario.exporter.deltaOutcome = { if (first && hasHits(it)) refusal().also { first = false } else null }
+
+        val sent = scenario.flush(at = 5_000)
+
+        assertEquals(2, sent.size)
+        assertEquals(0L, sent[0].countsPendingSince, "stamped before its own refusal")
+        assertEquals(5_000L, sent[1].countsPendingSince, "stamped after the refusal, in the same flush")
+        assertTrue(sent[0].payloadSequence < sent[1].payloadSequence, "the manifest thread may draw a number between them")
+    }
+
+    @Test
+    fun `the flush after a refusal leads with an empty batch carrying the original start time`() {
+        val scenario = PendingScenario()
+        scenario.exporter.deltaOutcome = { if (hasHits(it)) refusal() else null }
+        scenario.flush(at = 5_000)
+
+        val sent = scenario.flush(at = 9_000, final = true)
+
+        val lead = sent.first()
+        assertTrue(!hasHits(lead), "the leading batch is a heartbeat")
+        assertEquals(5_000L, lead.countsPendingSince, "the start of the flush where the counts became pending, not this flush's")
+        assertTrue(lead.finalFlush, "it carries finalFlush like the flush's other batches")
+        assertEquals(5_000L, sent[1].countsPendingSince)
+    }
+
+    @Test
+    fun `a flush that confirms every hit batch after pending counts clears the state and closes with a heartbeat carrying 0`() {
+        val scenario = PendingScenario(probeCount = 2, maxDeltasPerBatch = 1)
+        scenario.exporter.deltaOutcome = { if (hasHits(it)) refusal() else null }
+        scenario.flush(at = 5_000)
+        scenario.exporter.deltaOutcome = { null }
+
+        val sent = scenario.flush(at = 9_000)
+
+        assertEquals(listOf(false, true, true, false), sent.map(::hasHits), "leading heartbeat, two hit batches, closing heartbeat")
+        assertEquals(listOf(5_000L, 5_000L, 5_000L, 0L), sent.map { it.countsPendingSince })
+        assertEquals(
+            sent
+                .map {
+                    it.payloadSequence
+                }.max(),
+            sent.last().payloadSequence,
+            "the closing heartbeat is the flush's highest delta-side number",
+        )
+        val next = scenario.flush(at = 13_000)
+        assertEquals(1, next.size, "nothing is pending, so the next flush sends only its ordinary batch")
+        assertEquals(0L, next.single().countsPendingSince)
+    }
+
+    @Test
+    fun `an idle flush with nothing pending sends no extra heartbeat`() {
+        val scenario = PendingScenario(probeCount = 0)
+
+        val sent = scenario.flush(at = 5_000)
+
+        assertEquals(1, sent.size)
+        assertEquals(0L, sent.single().countsPendingSince)
+    }
+
+    @Test
+    fun `a hit flush with nothing pending sends no closing heartbeat`() {
+        val scenario = PendingScenario()
+
+        val sent = scenario.flush(at = 5_000)
+
+        assertEquals(listOf(true), sent.map(::hasHits))
+    }
+
+    @Test
+    fun `a leading heartbeat that fails with a transport error sends no hit batch and clears nothing`() {
+        val scenario = PendingScenario()
+        scenario.exporter.deltaOutcome = { if (hasHits(it)) refusal() else null }
+        scenario.flush(at = 1_000)
+        scenario.exporter.deltaOutcome = { if (hasHits(it)) null else ExportFailedException("unavailable", 503, refused = false) }
+
+        val second = scenario.flush(at = 2_000)
+
+        assertEquals(1, second.size, "only the heartbeat was sent")
+        assertTrue(!hasHits(second.single()))
+        assertEquals(1_000L, second.single().countsPendingSince)
+
+        scenario.exporter.deltaOutcome = { if (hasHits(it)) refusal() else null }
+        val third = scenario.flush(at = 3_000)
+
+        assertEquals(1_000L, third.first().countsPendingSince, "still the first start time, not 2000 or 3000")
+        assertEquals(1_000L, third[1].countsPendingSince)
+
+        val fourth = scenario.flush(at = 4_000)
+
+        assertEquals(1_000L, fourth.first().countsPendingSince, "the refused hit batch of the third flush did not move the start")
+    }
+
+    @Test
+    fun `a closing heartbeat that fails without a refusal leaves the flush unconfirmed but the counts delivered and the state cleared`() {
+        val failures =
+            listOf<() -> Exception>({ ExportFailedException("unavailable", 503, refused = false) }, { java.io.IOException("reset") })
+        for (failure in failures) {
+            val dependencies =
+                DependencyRegistry().apply {
+                    registerStartup("a")
+                    markListingComplete()
+                    markCounted()
+                }
+            val baselineExporter = RecordingExporter()
+            val sender = StaticBaselineSender(baselineExporter)
+            sender.offer(listOf(StaticBaseline(resource, emptyList(), scannedAt = 1L)))
+            val registry = ProbeRegistry()
+            val counters = registry.register("com.example.C0", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "m", "()V", 1))).also { it[0] = 3 }
+            val exporter = StampedExporter()
+            val now =
+                java.util.concurrent.atomic
+                    .AtomicLong(1_000)
+            val scheduler =
+                ExportScheduler(
+                    config,
+                    resource,
+                    registry,
+                    EndpointRegistry(),
+                    exporter,
+                    dependencyRegistry = dependencies,
+                    staticBaselineSender = sender,
+                    clock = now::get,
+                )
+            exporter.deltaOutcome = { if (hasHits(it)) refusal() else null }
+            scheduler.flush()
+            val deliveredBefore = dependencies.deliveredGeneration
+            exporter.deltaOutcome = { if (hasHits(it) || it.countsPendingSince != 0L) null else failure() }
+            now.set(2_000)
+            val manifestsBefore = exporter.manifests.size
+
+            scheduler.flush()
+
+            assertTrue(dependencies.deliveredGeneration > deliveredBefore, "the hit batch was confirmed: $failure")
+            assertTrue(exporter.manifests.drop(manifestsBefore).none { it.dependenciesListed }, "no dependenciesListed this flush")
+            assertEquals(0, baselineExporter.staticBaselines.size, "no baseline retry this flush")
+            exporter.deltaOutcome = { null }
+            val next = exporter.deltas.size.let { scheduler.flush().let { _ -> exporter.deltas.drop(it) } }
+            assertEquals(listOf(0L), next.map { it.countsPendingSince }, "cleared: no leading heartbeat, carries 0")
+            assertEquals(3L, counters[0])
+        }
+    }
+
+    @Test
+    fun `a timeout, a transport failure or an exhausted retry on a hit batch sets the pending state like a refusal`() {
+        val failures =
+            listOf<() -> Exception>(
+                { ExportFailedException("timed out") },
+                { ExportFailedException("unavailable", 503, refused = false) },
+                { RuntimeException("connection reset") },
+            )
+        for (failure in failures) {
+            val scenario = PendingScenario()
+            scenario.exporter.deltaOutcome = { if (hasHits(it)) failure() else null }
+            scenario.flush(at = 5_000)
+            scenario.exporter.deltaOutcome = { null }
+
+            val sent = scenario.flush(at = 9_000)
+
+            assertEquals(5_000L, sent.first().countsPendingSince, "after ${failure()}")
+            assertTrue(!hasHits(sent.first()))
+        }
+    }
+
+    @Test
+    fun `a refused heartbeat neither sets nor clears the state`() {
+        val scenario = PendingScenario(probeCount = 0)
+        scenario.exporter.deltaOutcome = { refusal(400) }
+        val refused = scenario.flush(at = 1_000)
+        scenario.exporter.deltaOutcome = { null }
+
+        assertEquals(1, refused.size, "a refused heartbeat does not make the flush close with another")
+        val idle = scenario.flush(at = 2_000)
+
+        assertEquals(1, idle.size, "a refused ordinary heartbeat did not make the run pending")
+        assertEquals(0L, idle.single().countsPendingSince)
+
+        val pending = PendingScenario()
+        pending.exporter.deltaOutcome = { if (hasHits(it)) refusal() else null }
+        pending.flush(at = 1_000)
+        pending.exporter.deltaOutcome = { refusal(400) }
+
+        val stillPending = pending.flush(at = 2_000)
+
+        assertEquals(
+            listOf(false, true),
+            stillPending.map(::hasHits),
+            "a refused leading heartbeat lets the flush go on, and nothing clears",
+        )
+        val after = pending.flush(at = 3_000)
+        assertEquals(1_000L, after.first().countsPendingSince)
+    }
+
+    @Test
+    fun `a refused leading heartbeat does not stop the counts being marked delivered`() {
+        val dependencies =
+            DependencyRegistry().apply {
+                registerStartup("a")
+                markListingComplete()
+                markCounted()
+            }
+        val scenario = PendingScenario(dependencyRegistry = dependencies)
+        scenario.exporter.deltaOutcome = { if (hasHits(it)) refusal() else null }
+        scenario.flush(at = 1_000)
+        val deliveredBefore = dependencies.deliveredGeneration
+        scenario.exporter.deltaOutcome = { if (hasHits(it)) null else refusal(400) }
+
+        val sent = scenario.flush(at = 2_000)
+
+        assertTrue(!hasHits(sent.first()) && sent.first().countsPendingSince == 1_000L, "the heartbeat was refused")
+        assertTrue(dependencies.deliveredGeneration > deliveredBefore, "every hit batch was confirmed")
+    }
+
+    @Test
+    fun `a manifest stamped while a flush clears carries the old state below the closing heartbeat's sequence, or 0`() {
+        val scenario = PendingScenario(maxManifestEntriesPerChunk = 1)
+        scenario.exporter.deltaOutcome = { if (hasHits(it)) refusal() else null }
+        scenario.flush(at = 1_000)
+        scenario.exporter.deltaOutcome = { null }
+        scenario.registry.register("com.example.New0", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "m", "()V", 1)))
+        scenario.registry.register("com.example.New1", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "m", "()V", 1)))
+        val closingSent = CountDownLatch(1)
+        val firstChunkBlocked = AtomicInteger(0)
+        val closing = AtomicReference<DeltaBatch>()
+        val firstStamped = CountDownLatch(1)
+        scenario.exporter.deltaOutcome = {
+            // The hit batch waits for the first chunk's stamp, so the clear cannot come before it.
+            if (hasHits(it)) assertTrue(firstStamped.await(10, TimeUnit.SECONDS))
+            if (it.countsPendingSince == 0L && !hasHits(it) && it.payloadSequence > 0) {
+                closing.set(it)
+                closingSent.countDown()
+            }
+            null
+        }
+        val before = scenario.exporter.manifests.size
+        scenario.exporter.beforeManifest = {
+            // The first chunk is stamped, then held until the delta thread has cleared and stamped its closing heartbeat.
+            if (firstChunkBlocked.getAndIncrement() == 0) {
+                firstStamped.countDown()
+                assertTrue(closingSent.await(10, TimeUnit.SECONDS))
+            }
+        }
+
+        scenario.flush(at = 2_000)
+
+        val chunks =
+            scenario.exporter.manifests
+                .drop(before)
+                .filter { it.probes.isNotEmpty() }
+        assertEquals(2, chunks.size)
+        val closingBatch = closing.get()
+        assertNotNull(closingBatch)
+        assertEquals(1_000L, chunks[0].countsPendingSince, "stamped before the clear")
+        assertTrue(chunks[0].payloadSequence < closingBatch.payloadSequence)
+        assertEquals(0L, chunks[1].countsPendingSince, "stamped after the clear")
+        assertTrue(chunks[1].payloadSequence > closingBatch.payloadSequence)
+    }
+
+    private fun disabledModuleScenario(
+        exporter: StampedExporter,
+        endpoints: EndpointRegistry,
+        registry: ProbeRegistry,
+    ) = ExportScheduler(
+        AgentConfig.parse("serviceName=checkout,serviceInstanceId=instance-1,includePackages=com.example"),
+        resource,
+        registry,
+        endpoints,
+        exporter,
+        maxManifestEntriesPerChunk = 1,
+    )
+
+    @Test
+    fun `a disabled module goes out first on a manifest of its own and never rides an endpoint chunk`() {
+        val endpoints = EndpointRegistry()
+        endpoints.register(key = Any(), framework = "http-server", verb = "GET", verbatimTemplate = "/a")
+        endpoints.recordDisabledModule("spring-mvc", reason = "linkage", kind = DisabledEndpointModuleKind.LINKAGE_ERROR)
+        val registry = ProbeRegistry()
+        registry.register("com.example.Foo", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "m", "()V", 1)))
+        val exporter = StampedExporter()
+
+        disabledModuleScenario(exporter, endpoints, registry).flush()
+
+        val first = exporter.manifests.first()
+        assertEquals(listOf("spring-mvc"), first.disabledEndpointModules.map { it.module })
+        assertTrue(first.probes.isEmpty() && first.endpoints.isEmpty(), "nothing else rides it")
+        assertTrue(first.referencesRecorded, "flagged like every manifest")
+        assertEquals(1, exporter.manifests.count { it.disabledEndpointModules.isNotEmpty() })
+        assertTrue(exporter.manifests.drop(1).any { it.probes.isNotEmpty() })
+        assertTrue(exporter.manifests.drop(1).any { it.endpoints.isNotEmpty() })
+    }
+
+    @Test
+    fun `a refused disabled module manifest stops the manifest sends and is sent again next flush`() {
+        val endpoints = EndpointRegistry()
+        endpoints.recordDisabledModule("spring-mvc", reason = "linkage", kind = DisabledEndpointModuleKind.LINKAGE_ERROR)
+        val registry = ProbeRegistry()
+        registry.register("com.example.Foo", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "m", "()V", 1)))
+        val exporter = StampedExporter()
+        exporter.manifestOutcome = { if (it.disabledEndpointModules.isNotEmpty()) refusal() else null }
+        val scheduler = disabledModuleScenario(exporter, endpoints, registry)
+
+        scheduler.flush()
+
+        assertEquals(1, exporter.manifests.size, "no class chunk follows the failed module manifest")
+
+        exporter.manifestOutcome = { null }
+        scheduler.flush()
+
+        assertEquals(listOf("spring-mvc"), exporter.manifests[1].disabledEndpointModules.map { it.module })
+        assertTrue(exporter.manifests[2].probes.isNotEmpty(), "the class chunk the failed send held back")
+
+        scheduler.flush()
+
+        assertEquals(3, exporter.manifests.size, "confirmed once, not sent again")
     }
 
     /** Returns 0 from every `nextLong(bound)`, so the first scheduled flush runs immediately on start(). */

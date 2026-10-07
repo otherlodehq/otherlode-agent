@@ -69,6 +69,8 @@ object ProtoPayloadCodec {
             .addAllEndpointDeltas(batch.endpointDeltas.map { toProto(it) })
             .setFinalFlush(batch.finalFlush)
             .addAllDependencyDeltas(batch.dependencyDeltas.map { toProto(it) })
+            .setPayloadSequence(batch.payloadSequence)
+            .setCountsPendingSince(batch.countsPendingSince)
             .build()
 
     private fun fromProto(batch: ProtoDeltaBatch): DeltaBatch =
@@ -78,6 +80,8 @@ object ProtoPayloadCodec {
             endpointDeltas = batch.endpointDeltasList.map { fromProto(it) },
             finalFlush = batch.finalFlush,
             dependencyDeltas = batch.dependencyDeltasList.map { fromProto(it) },
+            payloadSequence = batch.payloadSequence,
+            countsPendingSince = batch.countsPendingSince,
         )
 
     private fun toProto(resource: ResourceAttributes): ProtoResourceAttributes {
@@ -144,6 +148,8 @@ object ProtoPayloadCodec {
             .setReferencesRecorded(manifest.referencesRecorded)
             .setDependenciesListed(manifest.dependenciesListed)
             .addAllFailedClasses(manifest.failedClasses.map { toProto(it) })
+            .setPayloadSequence(manifest.payloadSequence)
+            .setCountsPendingSince(manifest.countsPendingSince)
             .build()
 
     private fun fromProto(manifest: ProtoProbeManifest): ProbeManifest =
@@ -161,6 +167,8 @@ object ProtoPayloadCodec {
             referencesRecorded = manifest.referencesRecorded,
             dependenciesListed = manifest.dependenciesListed,
             failedClasses = manifest.failedClassesList.map { fromProto(it) },
+            payloadSequence = manifest.payloadSequence,
+            countsPendingSince = manifest.countsPendingSince,
         )
 
     private fun toProto(unreportedClass: UnreportedClass): ProtoUnreportedClass =

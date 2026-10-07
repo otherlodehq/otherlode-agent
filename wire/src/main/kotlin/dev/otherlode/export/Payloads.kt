@@ -176,6 +176,9 @@ data class ProbeDelta(
  *
  * [dependencyDeltas] carries one entry per dependency whose loaded-class total changed since the
  * last successfully delivered batch. See [DependencyDelta].
+ *
+ * [payloadSequence] and [countsPendingSince] are the run's delivery state when the agent stamped
+ * this batch, as [ProbeManifest] documents them. Both are 0 until stamped.
  */
 data class DeltaBatch(
     val resource: ResourceAttributes,
@@ -183,6 +186,8 @@ data class DeltaBatch(
     val endpointDeltas: List<EndpointDelta> = emptyList(),
     val finalFlush: Boolean = false,
     val dependencyDeltas: List<DependencyDelta> = emptyList(),
+    val payloadSequence: Long = 0,
+    val countsPendingSince: Long = 0,
 )
 
 /**
@@ -659,6 +664,16 @@ enum class BodyKind {
  * [dependenciesListed] is true once every dependency from the startup listing, and every reference
  * mapping recorded before the listing ended, has gone out on a confirmed manifest. Until then, an
  * empty dependency list or no absent references means "not listed yet", not "none".
+ *
+ * [payloadSequence] is a number the run gives each delta batch and manifest it sends, from 1, one
+ * higher each time. Of a run's payloads, the one with the highest number says the run's current
+ * delivery state, whatever order they arrive in. It only orders payloads and says nothing about
+ * completeness. 0 until the agent stamps the payload.
+ *
+ * [countsPendingSince], in milliseconds since the epoch, is 0 when every hit the run has sent in a
+ * delta batch was confirmed, otherwise the start of the flush in which its unconfirmed hits began.
+ * While the highest-sequence payload carries another value, the run's zero hit totals are not
+ * evidence that code never ran. It is drawn together with [payloadSequence].
  */
 data class ProbeManifest(
     val resource: ResourceAttributes,
@@ -674,6 +689,8 @@ data class ProbeManifest(
     val referencesRecorded: Boolean = false,
     val dependenciesListed: Boolean = false,
     val failedClasses: List<FailedClass> = emptyList(),
+    val payloadSequence: Long = 0,
+    val countsPendingSince: Long = 0,
 )
 
 /**
