@@ -158,6 +158,10 @@ message DeltaBatch {
   // One entry per dependency whose loaded_classes_total changed since the last successfully
   // delivered batch. See DependencyDelta.
   repeated DependencyDelta dependency_deltas = 5;
+  // See ProbeManifest.payload_sequence.
+  int64 payload_sequence = 6;
+  // See ProbeManifest.counts_pending_since.
+  int64 counts_pending_since = 7;
 }
 
 // Why code outside scope may call a method that no in-scope code calls. Set only on a METHOD
@@ -654,6 +658,20 @@ message ProbeManifest {
   // Classes withheld for good because the JVM never defined them. Each is sent once and delivered
   // incrementally like unreported_classes. See FailedClass.
   repeated FailedClass failed_classes = 16;
+  // A number the run gives each delta batch and manifest it sends, from 1, one higher each time,
+  // drawn together with counts_pending_since just before the payload is sent. Of a run's payloads,
+  // the one with the highest number says the run's current delivery state, whatever order they
+  // arrive in. It proves nothing about completeness: a gap means nothing. 0 from an agent that
+  // predates the field.
+  int64 payload_sequence = 17;
+  // The run's delivery state when the payload was stamped, in milliseconds since the epoch: 0 when
+  // every hit the run has sent in a delta batch was confirmed, otherwise the start of the flush in
+  // which its unconfirmed hits began. A flush clears it only by sending and confirming every delta
+  // batch with hits it built, and then sends an empty delta batch carrying 0. While the
+  // highest-sequence payload of a run carries a value other than 0, some of its hits have not
+  // reached the collector, so its zero hit totals are not evidence that code never ran. A run is
+  // judged that way only once a delta batch from it has arrived.
+  int64 counts_pending_since = 18;
 }
 
 // No line field, unlike ProbeLocation: the static scan records no line for a
@@ -820,14 +838,34 @@ message EndpointDelta {
   int64 hits_total = 3;
 }
 
-// An endpoint module that switched itself off, typically a linkage failure
-// against an unexpected framework version. Reported so a collector can
-// tell "no endpoints" from "endpoints not instrumented", the same reason
-// SkippedClass exists for classes.
+// An endpoint module that switched itself off, because it could no longer vouch for the
+// endpoints it declares and counts. Reported so a collector can tell "no endpoints" from
+// "endpoints not instrumented", the same reason SkippedClass exists for classes. A module is
+// switched off whole and once; its endpoints declared before that stop being counted.
 message DisabledEndpointModule {
   string module = 1;
+  // Free text for a person: the failure, or for HOOK_UNMATCHED the hooked method and its class.
   string reason = 2;
   int64 disabled_at = 3;
+  DisabledEndpointModuleKind kind = 4;
+}
+
+// What switched an endpoint module off.
+enum DisabledEndpointModuleKind {
+  // Sent by an agent that predates the field.
+  DISABLED_ENDPOINT_MODULE_KIND_UNSPECIFIED = 0;
+  // A LinkageError, wherever it was caught: the framework release differs from the one the
+  // module was built for.
+  LINKAGE_ERROR = 1;
+  // Any other throw from the module's advice.
+  ADVICE_FAILED = 2;
+  // The module's transform threw, or a framework class the module hooks failed to weave.
+  TRANSFORM_FAILED = 3;
+  // Walking a framework's route objects threw.
+  ROUTE_WALK_FAILED = 4;
+  // A hook matched no method on the framework class it hooks: the framework release renamed the
+  // method or changed its parameters.
+  HOOK_UNMATCHED = 5;
 }
 
 // How the agent learned of a dependency.
