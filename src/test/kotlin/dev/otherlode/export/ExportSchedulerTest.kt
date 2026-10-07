@@ -820,7 +820,11 @@ class ExportSchedulerTest {
     fun `disabled endpoint modules reach the wire`() {
         val registry = ProbeRegistry()
         val endpointRegistry = EndpointRegistry()
-        endpointRegistry.recordDisabledModule("spring-mvc", reason = "linkage error against an unexpected framework version")
+        endpointRegistry.recordDisabledModule(
+            "spring-mvc",
+            reason = "linkage error against an unexpected framework version",
+            kind = DisabledEndpointModuleKind.TRANSFORM_FAILED,
+        )
         val exporter = RecordingExporter()
         val scheduler = ExportScheduler(config, resource, registry, endpointRegistry, exporter)
 
@@ -833,6 +837,14 @@ class ExportSchedulerTest {
                 .disabledEndpointModules
                 .single()
                 .module,
+        )
+        assertEquals(
+            DisabledEndpointModuleKind.TRANSFORM_FAILED,
+            exporter.manifests
+                .single()
+                .disabledEndpointModules
+                .single()
+                .kind,
         )
     }
 

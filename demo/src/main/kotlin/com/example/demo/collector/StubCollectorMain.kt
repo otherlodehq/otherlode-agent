@@ -651,7 +651,7 @@ private fun handleManifest(exchange: HttpExchange) {
             )
     }
     for (disabled in manifest.disabledEndpointModulesList) {
-        disabledEndpointModules[InstanceModuleKey(run, disabled.module)] = disabled.reason
+        disabledEndpointModules[InstanceModuleKey(run, disabled.module)] = "${disabled.kind}: ${disabled.reason}"
     }
     val callEdgeCount = manifest.probesList.sumOf { it.callsList.size }
     println(

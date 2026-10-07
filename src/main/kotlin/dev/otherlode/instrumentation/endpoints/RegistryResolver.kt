@@ -1,6 +1,7 @@
 package dev.otherlode.instrumentation.endpoints
 
 import dev.otherlode.bootstrap.OtherlodeEndpoints
+import dev.otherlode.export.DisabledEndpointModuleKind
 import dev.otherlode.instrumentation.endpoints.api.EndpointModule
 import dev.otherlode.registry.EndpointRegistry
 import dev.otherlode.registry.HandlerRef
@@ -128,7 +129,7 @@ class RegistryResolver(
             if (declareFailureLogged.add(module)) {
                 log.log(Level.WARNING, "otherlode: endpoint module $module failed while declaring its routes", t)
             }
-            OtherlodeEndpoints.moduleFailed(module, t)
+            OtherlodeEndpoints.moduleFailed(module, OtherlodeEndpoints.KIND_ROUTE_WALK_FAILED, t)
         }
     }
 
@@ -148,8 +149,20 @@ class RegistryResolver(
 
     override fun disableModule(
         module: String,
+        kind: Int,
         reason: String,
     ) {
-        registry.recordDisabledModule(module, reason)
+        registry.recordDisabledModule(module, reason, disabledKindOf(kind))
     }
 }
+
+/** Maps a seam kind constant to the wire's; a value this build does not know reads as unspecified. */
+internal fun disabledKindOf(kind: Int): DisabledEndpointModuleKind =
+    when (kind) {
+        OtherlodeEndpoints.KIND_LINKAGE_ERROR -> DisabledEndpointModuleKind.LINKAGE_ERROR
+        OtherlodeEndpoints.KIND_ADVICE_FAILED -> DisabledEndpointModuleKind.ADVICE_FAILED
+        OtherlodeEndpoints.KIND_TRANSFORM_FAILED -> DisabledEndpointModuleKind.TRANSFORM_FAILED
+        OtherlodeEndpoints.KIND_ROUTE_WALK_FAILED -> DisabledEndpointModuleKind.ROUTE_WALK_FAILED
+        OtherlodeEndpoints.KIND_HOOK_UNMATCHED -> DisabledEndpointModuleKind.HOOK_UNMATCHED
+        else -> DisabledEndpointModuleKind.UNSPECIFIED
+    }

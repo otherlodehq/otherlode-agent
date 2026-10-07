@@ -1,5 +1,6 @@
 package dev.otherlode.registry
 
+import dev.otherlode.export.DisabledEndpointModuleKind
 import dev.otherlode.export.EndpointDiscoverySource
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -170,10 +171,11 @@ class EndpointRegistryTest {
     fun `recordDisabledModule is idempotent, keeping the first reason`() {
         val registry = EndpointRegistry()
 
-        registry.recordDisabledModule("spring-mvc-5", reason = "first reason")
-        registry.recordDisabledModule("spring-mvc-5", reason = "second reason")
+        registry.recordDisabledModule("spring-mvc-5", reason = "first reason", kind = DisabledEndpointModuleKind.ADVICE_FAILED)
+        registry.recordDisabledModule("spring-mvc-5", reason = "second reason", kind = DisabledEndpointModuleKind.LINKAGE_ERROR)
 
         assertEquals("first reason", registry.disabledModules().single().reason)
+        assertEquals(DisabledEndpointModuleKind.ADVICE_FAILED, registry.disabledModules().single().kind)
     }
 
     @Test
@@ -410,11 +412,12 @@ class EndpointRegistryTest {
     @Test
     fun `computeManifestEntries includes disabled modules not yet delivered`() {
         val registry = EndpointRegistry()
-        registry.recordDisabledModule("spring-mvc-5", reason = "LinkageError")
+        registry.recordDisabledModule("spring-mvc-5", reason = "LinkageError", kind = DisabledEndpointModuleKind.LINKAGE_ERROR)
 
         val chunk = registry.computeManifestEntries(maxPerChunk = 10).single()
 
         assertEquals("spring-mvc-5", chunk.disabledModules.single().module)
+        assertEquals(DisabledEndpointModuleKind.LINKAGE_ERROR, chunk.disabledModules.single().kind)
     }
 
     @Test
@@ -422,7 +425,7 @@ class EndpointRegistryTest {
         val registry = EndpointRegistry()
         registry.register(key = Any(), framework = "http-server", verb = "GET", verbatimTemplate = "/a")
         registry.register(key = Any(), framework = "http-server", verb = "GET", verbatimTemplate = "/b")
-        registry.recordDisabledModule("spring-mvc-5", reason = "LinkageError")
+        registry.recordDisabledModule("spring-mvc-5", reason = "LinkageError", kind = DisabledEndpointModuleKind.LINKAGE_ERROR)
 
         val chunks = registry.computeManifestEntries(maxPerChunk = 1)
 

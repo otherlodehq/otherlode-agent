@@ -2588,7 +2588,10 @@ public class OtherlodeTestCollector internal constructor(
                         )
                 }
                 for (module in manifest.disabledEndpointModules) {
-                    disabledEndpointModulesByName.putIfAbsent(module.module, DisabledEndpointModule(module.module, module.reason))
+                    disabledEndpointModulesByName.putIfAbsent(
+                        module.module,
+                        DisabledEndpointModule(module.module, module.reason, module.kind.toTestkit()),
+                    )
                 }
                 storeDependencyData(manifest)
             }

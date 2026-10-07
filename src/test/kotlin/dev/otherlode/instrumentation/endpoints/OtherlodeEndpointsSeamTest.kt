@@ -74,7 +74,15 @@ class OtherlodeEndpointsSeamTest {
             assertNull(OtherlodeEndpoints.register(registerModule, "key-$i", "GET", "/cap-test/register/$i", null, null, null, null))
         }
 
-        val firstDispatchReturn = OtherlodeEndpoints.recordDispatch(dispatchModule, "dispatch-key-0", "GET", "/cap-test/dispatch/0", null, null)
+        val firstDispatchReturn =
+            OtherlodeEndpoints.recordDispatch(
+                dispatchModule,
+                "dispatch-key-0",
+                "GET",
+                "/cap-test/dispatch/0",
+                null,
+                null,
+            )
         assertNull(firstDispatchReturn, "recordDispatch must return null before a resolver is installed")
         for (i in 1 until 5) {
             assertNull(OtherlodeEndpoints.recordDispatch(dispatchModule, "dispatch-key-$i", "GET", "/cap-test/dispatch/$i", null, null))
@@ -85,11 +93,13 @@ class OtherlodeEndpointsSeamTest {
         assertNull(firstDispatchIfUnownedReturn, "recordDispatchIfUnowned must return null before a resolver is installed")
 
         // 1 declare + 4088 register + 5 dispatch + 1 dispatchIfUnowned + 1 failure records exactly fill the 4096-record cap.
-        OtherlodeEndpoints.moduleFailed(failureModule, RuntimeException("linkage boom"))
+        OtherlodeEndpoints.moduleFailed(failureModule, OtherlodeEndpoints.KIND_TRANSFORM_FAILED, RuntimeException("linkage boom"))
 
         // Every one of these arrives after the buffer is already full, so all must be dropped.
         for (i in 4088 until 4108) {
-            assertNull(OtherlodeEndpoints.register(registerModule, "overflow-key-$i", "GET", "/cap-test/register/$i", null, null, null, null))
+            assertNull(
+                OtherlodeEndpoints.register(registerModule, "overflow-key-$i", "GET", "/cap-test/register/$i", null, null, null, null),
+            )
         }
         // Must not throw, and must not be replayed once installed below.
         OtherlodeEndpoints.declare(uniqueModule("cap-declare-overflow"), Any())
@@ -115,6 +125,11 @@ class OtherlodeEndpointsSeamTest {
         val disableCall = resolver.disableCalls.single()
         assertEquals(failureModule, disableCall.module)
         assertTrue("linkage boom" in disableCall.reason)
+        assertEquals(
+            OtherlodeEndpoints.KIND_TRANSFORM_FAILED,
+            disableCall.kind,
+            "a disable buffered before install keeps its kind through replay",
+        )
         assertTrue(OtherlodeEndpoints.isDisabled(failureModule))
     }
 
@@ -262,6 +277,78 @@ class OtherlodeEndpointsSeamTest {
         assertEquals(ownerModule, endpoint.framework)
     }
 
+    @Test
+    @Order(10)
+    fun `a throw from advice disables the module as ADVICE_FAILED`() {
+        val resolver = RecordingResolver()
+        OtherlodeEndpoints.install(resolver.asResolver() as OtherlodeEndpoints.Resolver)
+        val module = uniqueModule("advice-failed")
+
+        OtherlodeEndpoints.moduleFailed(module, IllegalStateException("advice threw"))
+
+        assertEquals(OtherlodeEndpoints.KIND_ADVICE_FAILED, resolver.disableCalls.single().kind)
+    }
+
+    @Test
+    @Order(11)
+    fun `a LinkageError disables the module as LINKAGE_ERROR whichever site caught it`() {
+        val resolver = RecordingResolver()
+        OtherlodeEndpoints.install(resolver.asResolver() as OtherlodeEndpoints.Resolver)
+        val fromAdvice = uniqueModule("linkage-advice")
+        val fromTransform = uniqueModule("linkage-transform")
+        val fromWalk = uniqueModule("linkage-walk")
+
+        OtherlodeEndpoints.moduleFailed(fromAdvice, NoSuchMethodError("framework renamed it"))
+        OtherlodeEndpoints.moduleFailed(fromTransform, OtherlodeEndpoints.KIND_TRANSFORM_FAILED, NoClassDefFoundError("gone"))
+        OtherlodeEndpoints.moduleFailed(fromWalk, OtherlodeEndpoints.KIND_ROUTE_WALK_FAILED, NoSuchFieldError("gone"))
+
+        assertEquals(
+            listOf(OtherlodeEndpoints.KIND_LINKAGE_ERROR, OtherlodeEndpoints.KIND_LINKAGE_ERROR, OtherlodeEndpoints.KIND_LINKAGE_ERROR),
+            resolver.disableCalls.map { it.kind },
+        )
+    }
+
+    @Test
+    @Order(12)
+    fun `a site names the kind of any other throw, and a disable with no throwable carries its own reason`() {
+        val resolver = RecordingResolver()
+        OtherlodeEndpoints.install(resolver.asResolver() as OtherlodeEndpoints.Resolver)
+        val transform = uniqueModule("site-transform")
+        val walk = uniqueModule("site-walk")
+        val unmatched = uniqueModule("site-unmatched")
+
+        OtherlodeEndpoints.moduleFailed(transform, OtherlodeEndpoints.KIND_TRANSFORM_FAILED, IllegalStateException("t"))
+        OtherlodeEndpoints.moduleFailed(walk, OtherlodeEndpoints.KIND_ROUTE_WALK_FAILED, IllegalStateException("w"))
+        OtherlodeEndpoints.moduleDisabled(unmatched, OtherlodeEndpoints.KIND_HOOK_UNMATCHED, "invoke(String) on com.example.Router")
+
+        assertEquals(
+            listOf(
+                OtherlodeEndpoints.KIND_TRANSFORM_FAILED,
+                OtherlodeEndpoints.KIND_ROUTE_WALK_FAILED,
+                OtherlodeEndpoints.KIND_HOOK_UNMATCHED,
+            ),
+            resolver.disableCalls.map { it.kind },
+        )
+        assertEquals("invoke(String) on com.example.Router", resolver.disableCalls.last().reason)
+        assertTrue(OtherlodeEndpoints.isDisabled(unmatched))
+    }
+
+    @Test
+    @Order(13)
+    fun `only the first disable of a module counts, kind included`() {
+        val resolver = RecordingResolver()
+        OtherlodeEndpoints.install(resolver.asResolver() as OtherlodeEndpoints.Resolver)
+        val module = uniqueModule("first-wins")
+
+        OtherlodeEndpoints.moduleFailed(module, OtherlodeEndpoints.KIND_ROUTE_WALK_FAILED, IllegalStateException("first"))
+        OtherlodeEndpoints.moduleFailed(module, NoSuchMethodError("second"))
+        OtherlodeEndpoints.moduleDisabled(module, OtherlodeEndpoints.KIND_HOOK_UNMATCHED, "third")
+
+        val call = resolver.disableCalls.single()
+        assertEquals(OtherlodeEndpoints.KIND_ROUTE_WALK_FAILED, call.kind)
+        assertTrue("first" in call.reason)
+    }
+
     private companion object {
         val MODULE_SEQUENCE = AtomicLong()
 
@@ -310,6 +397,7 @@ private class RecordingResolver {
 
     data class DisableCall(
         val module: String,
+        val kind: Int,
         val reason: String,
     )
 
@@ -362,7 +450,7 @@ private class RecordingResolver {
                 }
 
                 "disableModule" -> {
-                    disableCalls += DisableCall(args[0] as String, args[1] as String)
+                    disableCalls += DisableCall(args[0] as String, args[1] as Int, args[2] as String)
                     null
                 }
 
@@ -459,7 +547,7 @@ private fun endpointRegistryResolver(registry: EndpointRegistry): Any =
             }
 
             "disableModule" -> {
-                registry.recordDisabledModule(args[0] as String, args[1] as String)
+                registry.recordDisabledModule(args[0] as String, args[2] as String, disabledKindOf(args[1] as Int))
                 null
             }
 

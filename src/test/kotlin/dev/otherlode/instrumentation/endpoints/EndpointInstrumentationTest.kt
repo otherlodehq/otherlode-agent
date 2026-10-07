@@ -1,5 +1,6 @@
 package dev.otherlode.instrumentation.endpoints
 
+import dev.otherlode.export.DisabledEndpointModuleKind
 import dev.otherlode.export.EndpointDiscoverySource
 import dev.otherlode.instrumentation.BootstrapHolder
 import dev.otherlode.instrumentation.endpoints.api.AdviceBinder
@@ -150,6 +151,7 @@ class EndpointInstrumentationTest {
 
         val disabled = registry.disabledModules().single { it.module == "broken-router" }
         assertTrue("simulated framework mismatch" in disabled.reason)
+        assertEquals(DisabledEndpointModuleKind.LINKAGE_ERROR, disabled.kind, "the fixture advice throws a NoSuchMethodError")
 
         dispatch.invoke(broken, "GET", "/broken")
 
@@ -255,6 +257,28 @@ class EndpointInstrumentationTest {
         // dropped from the listener, which would leave the endpoint staged and never declared.
         assertEquals("/declared-in-transform", registry.endpoints().single().verbatimTemplate)
         assertEquals(0, installedEndpointInstrumentation!!.pendingDeclarationCount(), "nothing is left staged on this thread")
+    }
+
+    @Test
+    fun `a module whose transform throws is disabled as TRANSFORM_FAILED`() {
+        val registry = EndpointRegistry()
+        val declaring = DeclaringModule(throwAfterDeclaring = true)
+
+        install(registry, listOf(declaring), "com.example.framework.FakeRouter")
+
+        val disabled = registry.disabledModules().single { it.module == declaring.name }
+        assertEquals(DisabledEndpointModuleKind.TRANSFORM_FAILED, disabled.kind)
+        assertTrue("module gave up after declaring" in disabled.reason)
+    }
+
+    @Test
+    fun `a LinkageError thrown by a transform is disabled as LINKAGE_ERROR`() {
+        val registry = EndpointRegistry()
+        val declaring = DeclaringModule(throwAfterDeclaring = true, failure = NoSuchMethodError("framework renamed it"))
+
+        install(registry, listOf(declaring), "com.example.framework.FakeRouter")
+
+        assertEquals(DisabledEndpointModuleKind.LINKAGE_ERROR, registry.disabledModules().single { it.module == declaring.name }.kind)
     }
 
     @Test
@@ -463,6 +487,7 @@ private class DeclaringModule(
     // for every later test that used it and make their assertions pass for the wrong reason.
     private val moduleName: String = "declaring-${System.nanoTime()}",
     private val template: String = "/declared-in-transform",
+    private val failure: Throwable = IllegalStateException("module gave up after declaring"),
 ) : EndpointModule {
     override val name: String = moduleName
 
@@ -488,7 +513,7 @@ private class DeclaringModule(
             null,
             null,
         )
-        if (throwAfterDeclaring && (!throwOnlyAfterFirst || transform > 1)) throw IllegalStateException("module gave up after declaring")
+        if (throwAfterDeclaring && (!throwOnlyAfterFirst || transform > 1)) throw failure
         return if (failRewrite) builder.visit(ThrowingAsmVisitorWrapper()) else builder
     }
 

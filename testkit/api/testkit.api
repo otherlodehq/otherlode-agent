@@ -102,11 +102,24 @@ public final class dev/otherlode/testkit/DependencyUsage : java/lang/Enum {
 public final class dev/otherlode/testkit/DisabledEndpointModule {
 	public final fun component1 ()Ljava/lang/String;
 	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Ldev/otherlode/testkit/DisabledEndpointModuleKind;
 	public fun equals (Ljava/lang/Object;)Z
+	public final fun getKind ()Ldev/otherlode/testkit/DisabledEndpointModuleKind;
 	public final fun getModule ()Ljava/lang/String;
 	public final fun getReason ()Ljava/lang/String;
 	public fun hashCode ()I
 	public fun toString ()Ljava/lang/String;
+}
+
+public final class dev/otherlode/testkit/DisabledEndpointModuleKind : java/lang/Enum {
+	public static final field ADVICE_FAILED Ldev/otherlode/testkit/DisabledEndpointModuleKind;
+	public static final field HOOK_UNMATCHED Ldev/otherlode/testkit/DisabledEndpointModuleKind;
+	public static final field LINKAGE_ERROR Ldev/otherlode/testkit/DisabledEndpointModuleKind;
+	public static final field ROUTE_WALK_FAILED Ldev/otherlode/testkit/DisabledEndpointModuleKind;
+	public static final field TRANSFORM_FAILED Ldev/otherlode/testkit/DisabledEndpointModuleKind;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public static fun valueOf (Ljava/lang/String;)Ldev/otherlode/testkit/DisabledEndpointModuleKind;
+	public static fun values ()[Ldev/otherlode/testkit/DisabledEndpointModuleKind;
 }
 
 public final class dev/otherlode/testkit/EndpointDiscoverySource : java/lang/Enum {

@@ -1,6 +1,7 @@
 package dev.otherlode.instrumentation.endpoints.jaxrs
 
 import com.example.jaxrs.fixture.ApiOrdersResource
+import dev.otherlode.export.DisabledEndpointModuleKind
 import dev.otherlode.instrumentation.endpoints.api.AdviceBinder
 import dev.otherlode.registry.EndpointRegistry
 import dev.otherlode.registry.HandlerRef
@@ -346,7 +347,7 @@ private fun endpointRegistryResolver(registry: EndpointRegistry): Any =
             }
 
             "disableModule" -> {
-                registry.recordDisabledModule(args[0] as String, args[1] as String)
+                registry.recordDisabledModule(args[0] as String, args[2] as String, DisabledEndpointModuleKind.UNSPECIFIED)
                 null
             }
 

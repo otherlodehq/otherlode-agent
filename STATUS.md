@@ -428,8 +428,11 @@ order, one commit each:
 1. Wire: `DisabledEndpointModuleKind` with its `UNSPECIFIED` zero and `DisabledEndpointModule.kind
    = 4`; `payload_sequence` and `counts_pending_since` on `DeltaBatch` and `ProbeManifest`. Buf CI
    publishes it.
-2. `otherlode-collector`: bump the bindings to that BSR commit.
-3. Agent, item 1: an `AdviceBinder` method that records each hook's matcher in a per-call view
+2. `otherlode-collector`: bump the bindings to that BSR commit. Landed 2026-10-07 in the
+   collector (`69d48b2`, BSR commit `8650a749`); wire landed as `22eb06f`.
+3. Agent, item 1, in two commits. 3a, the kind carried from every disable path through the seam,
+   the registry, the manifest and the testkit (non-null there, since the testkit refuses any other
+   agent version), landed 2026-10-07. 3b: an `AdviceBinder` method that records each hook's matcher in a per-call view
    of the cached binder (an `endpoints-api` change), the pipeline checks every hook after
    `transform`, `moduleFailed` takes a kind through the bootstrap seam and its replay buffer,
    `onError` disables every non-JAX-RS module whose matcher accepted the class (recorded per

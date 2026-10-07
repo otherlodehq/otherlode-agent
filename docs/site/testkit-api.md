@@ -325,7 +325,7 @@ Returned by `neverSupplied` and `alwaysSupplied`. It names the function the para
 
 | Type | Fields |
 |---|---|
-| `DisabledEndpointModule` | `module: String`, `reason: String` |
+| `DisabledEndpointModule` | `module: String`, `reason: String`, `kind: DisabledEndpointModuleKind` |
 | `SkippedClass` | `className: String`, `reason: String` |
 
 ### DependencyStatus
@@ -455,6 +455,18 @@ A finding about a whole class. A class holds at most one, the first that applies
 | `STARTUP_CLASSPATH` | Listed from the startup classpath, which includes the jars under a fat jar's `BOOT-INF/lib`, `WEB-INF/lib` and `lib-provided`. |
 | `LOAD` | Seen only because a class from it loaded. Such a dependency never reads as unloaded. |
 
+### DisabledEndpointModuleKind
+
+What switched an endpoint module off.
+
+| Value | Meaning |
+|---|---|
+| `LINKAGE_ERROR` | A `LinkageError`, wherever it was caught: the framework release differs from the one the module was built for. |
+| `ADVICE_FAILED` | Any other throw from the module's advice. |
+| `TRANSFORM_FAILED` | The module's own transform threw. |
+| `ROUTE_WALK_FAILED` | Walking a framework's route objects threw. |
+| `HOOK_UNMATCHED` | Reserved for a hook that matched no method on the framework class. |
+
 ### DependencyUsage
 
 What the dependency rules say about one dependency.
@@ -480,7 +492,7 @@ Result types and enums only grow in a minor release:
 - An enum gains values.
 - A method that returns a list can return rows it did not return before, when the agent learns to report a new shape.
 
-A `when` over any enum in this API needs an `else` branch. The enums are `ProbeKind`, `GeneratedBy`, `RoutineKind`, `UnreadShape`, `OutsideCallerKind`, `RootKind`, `ClassFinding`, `EndpointDiscoverySource`, `DependencyDiscoverySource` and `DependencyUsage`. A new value breaks a `when` without `else` at compile time, when you upgrade the testkit.
+A `when` over any enum in this API needs an `else` branch. The enums are `ProbeKind`, `GeneratedBy`, `RoutineKind`, `UnreadShape`, `OutsideCallerKind`, `RootKind`, `ClassFinding`, `EndpointDiscoverySource`, `DisabledEndpointModuleKind`, `DependencyDiscoverySource` and `DependencyUsage`. A new value breaks a `when` without `else` at compile time, when you upgrade the testkit.
 
 Because `GeneratedBy`, `RoutineKind` and `UnreadShape` have no "none" value, the matching `ProbeRef` field is null when the probe has no mark.
 

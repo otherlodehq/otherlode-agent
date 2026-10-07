@@ -19,6 +19,7 @@ import dev.otherlode.proto.DependencyIdentity as ProtoDependencyIdentity
 import dev.otherlode.proto.DependencyIdentitySource as ProtoDependencyIdentitySource
 import dev.otherlode.proto.DependencyLocation as ProtoDependencyLocation
 import dev.otherlode.proto.DisabledEndpointModule as ProtoDisabledEndpointModule
+import dev.otherlode.proto.DisabledEndpointModuleKind as ProtoDisabledEndpointModuleKind
 import dev.otherlode.proto.EndpointDelta as ProtoEndpointDelta
 import dev.otherlode.proto.EndpointDiscoverySource as ProtoEndpointDiscoverySource
 import dev.otherlode.proto.EndpointLocation as ProtoEndpointLocation
@@ -823,6 +824,7 @@ object ProtoPayloadCodec {
             .setModule(module.module)
             .setReason(module.reason)
             .setDisabledAt(module.disabledAt)
+            .setKind(toProto(module.kind))
             .build()
 
     private fun fromProto(module: ProtoDisabledEndpointModule): DisabledEndpointModule =
@@ -830,7 +832,49 @@ object ProtoPayloadCodec {
             module = module.module,
             reason = module.reason,
             disabledAt = module.disabledAt,
+            kind = fromProto(module.kind),
         )
+
+    private fun toProto(kind: DisabledEndpointModuleKind): ProtoDisabledEndpointModuleKind =
+        when (kind) {
+            DisabledEndpointModuleKind.UNSPECIFIED -> ProtoDisabledEndpointModuleKind.DISABLED_ENDPOINT_MODULE_KIND_UNSPECIFIED
+            DisabledEndpointModuleKind.LINKAGE_ERROR -> ProtoDisabledEndpointModuleKind.LINKAGE_ERROR
+            DisabledEndpointModuleKind.ADVICE_FAILED -> ProtoDisabledEndpointModuleKind.ADVICE_FAILED
+            DisabledEndpointModuleKind.TRANSFORM_FAILED -> ProtoDisabledEndpointModuleKind.TRANSFORM_FAILED
+            DisabledEndpointModuleKind.ROUTE_WALK_FAILED -> ProtoDisabledEndpointModuleKind.ROUTE_WALK_FAILED
+            DisabledEndpointModuleKind.HOOK_UNMATCHED -> ProtoDisabledEndpointModuleKind.HOOK_UNMATCHED
+        }
+
+    private fun fromProto(kind: ProtoDisabledEndpointModuleKind): DisabledEndpointModuleKind =
+        when (kind) {
+            ProtoDisabledEndpointModuleKind.DISABLED_ENDPOINT_MODULE_KIND_UNSPECIFIED -> {
+                DisabledEndpointModuleKind.UNSPECIFIED
+            }
+
+            ProtoDisabledEndpointModuleKind.LINKAGE_ERROR -> {
+                DisabledEndpointModuleKind.LINKAGE_ERROR
+            }
+
+            ProtoDisabledEndpointModuleKind.ADVICE_FAILED -> {
+                DisabledEndpointModuleKind.ADVICE_FAILED
+            }
+
+            ProtoDisabledEndpointModuleKind.TRANSFORM_FAILED -> {
+                DisabledEndpointModuleKind.TRANSFORM_FAILED
+            }
+
+            ProtoDisabledEndpointModuleKind.ROUTE_WALK_FAILED -> {
+                DisabledEndpointModuleKind.ROUTE_WALK_FAILED
+            }
+
+            ProtoDisabledEndpointModuleKind.HOOK_UNMATCHED -> {
+                DisabledEndpointModuleKind.HOOK_UNMATCHED
+            }
+
+            ProtoDisabledEndpointModuleKind.UNRECOGNIZED -> {
+                throw IllegalArgumentException("unrecognized disabled endpoint module kind on the wire: $kind")
+            }
+        }
 
     private fun toProto(location: DependencyLocation): ProtoDependencyLocation {
         val builder =

@@ -295,7 +295,7 @@ This is the JVM's line, not the agent's, and it is harmless. See [the CDS warnin
 otherlode: endpoint module spring-webmvc disabled itself: java.lang.NoSuchMethodError: ...
 ```
 
-An endpoint module found a framework class that does not match the version it supports and switched itself off for the rest of the process. The module name is one of `jaxrs`, `jdk-httpserver`, `ktor-2`, `ktor-3`, `spring-webmvc`, or `otel`. The other modules and the method and branch tiers keep working. The instance reports the module as disabled, so a collector can tell "no endpoints" from "endpoints not instrumented". The testkit lists it with `collector.disabledEndpointModules()`.
+An endpoint module found a framework class that does not match the version it supports and switched itself off for the rest of the process. The module name is one of `jaxrs`, `jdk-httpserver`, `ktor-2`, `ktor-3`, `spring-webmvc`, or `otel`. The other modules and the method and branch tiers keep working. The instance reports the module as disabled, with a kind naming why (linkage error, advice failure, transform failure or route walk failure), so a collector can tell "no endpoints" from "endpoints not instrumented". The testkit lists it with `collector.disabledEndpointModules()`.
 
 Check your framework version against [the supported versions](endpoints). Upgrade or downgrade the framework, or set `endpointsEnabled=false` to turn the endpoint tier off. A module that disabled itself after declaring some routes leaves those routes in the report with no counting, so they read as never called. Treat that module's endpoints as unknown.
 

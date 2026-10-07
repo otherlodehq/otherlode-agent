@@ -2,7 +2,9 @@ package dev.otherlode.testkit
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import dev.otherlode.export.DependencyDiscoverySource as WireDependencyDiscoverySource
+import dev.otherlode.export.DisabledEndpointModuleKind as WireDisabledEndpointModuleKind
 import dev.otherlode.export.EndpointDiscoverySource as WireEndpointDiscoverySource
 import dev.otherlode.export.GeneratedBy as WireGeneratedBy
 import dev.otherlode.export.OutsideCallerKind as WireOutsideCallerKind
@@ -54,5 +56,17 @@ class ResultEnumsTest {
     fun `DependencyDiscoverySource mirrors every wire value in order and maps back`() {
         assertEquals(WireDependencyDiscoverySource.entries.map { it.name }, DependencyDiscoverySource.entries.map { it.name })
         for (wire in WireDependencyDiscoverySource.entries) assertEquals(wire, wire.toTestkit().toWire())
+    }
+
+    @Test
+    fun `DisabledEndpointModuleKind mirrors every wire value but UNSPECIFIED, in order, and maps back`() {
+        assertEquals(
+            WireDisabledEndpointModuleKind.entries.map { it.name } - "UNSPECIFIED",
+            DisabledEndpointModuleKind.entries.map { it.name },
+        )
+        for (wire in WireDisabledEndpointModuleKind.entries - WireDisabledEndpointModuleKind.UNSPECIFIED) {
+            assertEquals(wire, wire.toTestkit().toWire())
+        }
+        assertFailsWith<IllegalArgumentException> { WireDisabledEndpointModuleKind.UNSPECIFIED.toTestkit() }
     }
 }

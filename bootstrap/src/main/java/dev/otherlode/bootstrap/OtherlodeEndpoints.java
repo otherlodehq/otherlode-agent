@@ -29,8 +29,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>A framework can register or dispatch to an endpoint before the agent has installed its
  * resolver: a class can initialise during premain, or this seam can be reachable from the
  * bootstrap loader before {@code Agent.start} finishes wiring the registry. {@link #register},
- * {@link #recordDispatch}, {@link #recordDispatchIfUnowned}, {@link #declare} and {@link
- * #moduleFailed} buffer a small record for that window instead of dropping the call on the floor,
+ * {@link #recordDispatch}, {@link #recordDispatchIfUnowned}, {@link #declare}, {@link
+ * #moduleFailed} and {@link #moduleDisabled} buffer a small record for that window instead of dropping the call on the floor,
  * and {@link #install} replays the buffer in order once a resolver is in hand. The buffer is bounded, since an adopter who never installs an agent at all
  * (a dependency pulled in by mistake, a misconfigured attach) must not leak memory for the life of
  * the process.
@@ -69,7 +69,7 @@ public final class OtherlodeEndpoints {
 
         void attachHandler(Object entry, String handlerClass, String handlerMethod, String handlerDescriptor);
 
-        void disableModule(String module, String reason);
+        void disableModule(String module, int kind, String reason);
     }
 
     /**
@@ -109,6 +109,7 @@ public final class OtherlodeEndpoints {
         final String handlerMethod;
         final String handlerDescriptor;
         final String reason;
+        final int disableKind;
         final Object frameworkObject;
 
         private BufferedRecord(
@@ -122,6 +123,7 @@ public final class OtherlodeEndpoints {
                 String handlerMethod,
                 String handlerDescriptor,
                 String reason,
+                int disableKind,
                 Object frameworkObject) {
             this.kind = kind;
             this.module = module;
@@ -133,6 +135,7 @@ public final class OtherlodeEndpoints {
             this.handlerMethod = handlerMethod;
             this.handlerDescriptor = handlerDescriptor;
             this.reason = reason;
+            this.disableKind = disableKind;
             this.frameworkObject = frameworkObject;
         }
 
@@ -156,13 +159,14 @@ public final class OtherlodeEndpoints {
                     handlerMethod,
                     handlerDescriptor,
                     null,
+                    0,
                     null);
         }
 
         static BufferedRecord forDispatch(
                 String module, Object key, String verb, String verbatimTemplate, String contextPath, String handlerClass) {
             return new BufferedRecord(
-                    RecordKind.DISPATCH, module, key, verb, verbatimTemplate, contextPath, handlerClass, null, null, null, null);
+                    RecordKind.DISPATCH, module, key, verb, verbatimTemplate, contextPath, handlerClass, null, null, null, 0, null);
         }
 
         static BufferedRecord forDispatchIfUnowned(
@@ -178,15 +182,16 @@ public final class OtherlodeEndpoints {
                     null,
                     null,
                     null,
+                    0,
                     null);
         }
 
         static BufferedRecord forDeclare(String module, Object frameworkObject) {
-            return new BufferedRecord(RecordKind.DECLARE, module, null, null, null, null, null, null, null, null, frameworkObject);
+            return new BufferedRecord(RecordKind.DECLARE, module, null, null, null, null, null, null, null, null, 0, frameworkObject);
         }
 
-        static BufferedRecord forFailure(String module, String reason) {
-            return new BufferedRecord(RecordKind.FAILURE, module, null, null, null, null, null, null, null, reason, null);
+        static BufferedRecord forFailure(String module, int kind, String reason) {
+            return new BufferedRecord(RecordKind.FAILURE, module, null, null, null, null, null, null, null, reason, kind, null);
         }
     }
 
@@ -393,33 +398,75 @@ public final class OtherlodeEndpoints {
         }
     }
 
+    /** No kind: what a buffered record that disables nothing carries. */
+    public static final int KIND_UNSPECIFIED = 0;
+
+    /** A {@link LinkageError}, wherever it was caught: the framework release differs from the one the module was built for. */
+    public static final int KIND_LINKAGE_ERROR = 1;
+
+    /** Any other throw from the module's advice. */
+    public static final int KIND_ADVICE_FAILED = 2;
+
+    /** The module's own {@code transform} threw. */
+    public static final int KIND_TRANSFORM_FAILED = 3;
+
+    /** Walking a framework's route objects threw. */
+    public static final int KIND_ROUTE_WALK_FAILED = 4;
+
+    /** A hook matched no method on the framework class it hooks. */
+    public static final int KIND_HOOK_UNMATCHED = 5;
+
     /**
-     * Disables a module, typically after a helper catches a {@link LinkageError} from a framework
-     * version its advice does not match. Every other entry point that names a module
-     * short-circuits for a disabled one without reaching the resolver; {@link #hit} names none, and
-     * a disabled module's advice stops reaching it once {@link #lookup} returns null. Only the first failure for a given
-     * module logs or does anything further; a module already known to be broken does not need a
-     * second report.
+     * Disables a module after its advice threw: {@link #KIND_LINKAGE_ERROR} for a {@link
+     * LinkageError}, else {@link #KIND_ADVICE_FAILED}. This is the form every advice class calls.
      */
     public static void moduleFailed(String module, Throwable failure) {
+        moduleFailed(module, KIND_ADVICE_FAILED, failure);
+    }
+
+    /**
+     * Disables a module after {@code failure} was caught at the site {@code siteKind} names. A
+     * {@link LinkageError} is {@link #KIND_LINKAGE_ERROR} whichever site caught it; any other
+     * throwable keeps {@code siteKind}.
+     */
+    public static void moduleFailed(String module, int siteKind, Throwable failure) {
+        int kind = failure instanceof LinkageError ? KIND_LINKAGE_ERROR : siteKind;
+        disable(module, kind, String.valueOf(failure));
+    }
+
+    /**
+     * Disables a module for a reason that is no throwable, with {@code reason} as the text a person
+     * reads. Same effect as {@link #moduleFailed(String, int, Throwable)}.
+     */
+    public static void moduleDisabled(String module, int kind, String reason) {
+        disable(module, kind, reason);
+    }
+
+    /**
+     * Every entry point that names a module short-circuits for a disabled one without reaching the
+     * resolver; {@link #hit} names none, and a disabled module's advice stops reaching it once
+     * {@link #lookup} returns null. Only the first disable for a given module logs or does anything
+     * further, so the first kind stands; a module already known to be broken does not need a second
+     * report.
+     */
+    private static void disable(String module, int kind, String reason) {
         if (module == null) return;
         if (!FAILURE_LOGGED.add(module)) return;
         DISABLED_MODULES.add(module);
         anyDisabled = true;
-        String reason = String.valueOf(failure);
         LOG.log(Level.WARNING, "otherlode: endpoint module " + module + " disabled itself: " + reason);
         Resolver current = ready;
         if (current == null) {
             synchronized (BUFFER_LOCK) {
                 current = resolver;
                 if (current == null) {
-                    buffer(BufferedRecord.forFailure(module, reason));
+                    buffer(BufferedRecord.forFailure(module, kind, reason));
                     return;
                 }
             }
         }
         try {
-            current.disableModule(module, reason);
+            current.disableModule(module, kind, reason);
         } catch (Throwable t) {
             logDelegateFailure(module, "disableModule", t);
         }
@@ -478,7 +525,7 @@ public final class OtherlodeEndpoints {
         }
     }
 
-    /** Whether {@link #moduleFailed} has disabled this module. */
+    /** Whether {@link #moduleFailed} or {@link #moduleDisabled} has disabled this module. */
     public static boolean isDisabled(String module) {
         return isDisabledFast(module);
     }
@@ -536,7 +583,7 @@ public final class OtherlodeEndpoints {
                     target.declare(record.module, record.frameworkObject);
                     break;
                 case FAILURE:
-                    target.disableModule(record.module, record.reason);
+                    target.disableModule(record.module, record.disableKind, record.reason);
                     break;
             }
         } catch (Throwable t) {

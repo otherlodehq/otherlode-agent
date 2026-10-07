@@ -176,7 +176,7 @@ Each module is built against one version of its framework and does not check the
 otherlode: endpoint module ktor-3 disabled itself: <reason>
 ```
 
-The agent sends the module's name and the reason to the collector with the next manifest. A collector can then tell "this service has no endpoints" from "this service's endpoints were not instrumented". The testkit exposes it as `disabledEndpointModules()`, and its endpoint queries mention a disabled module in the error they throw for an unknown endpoint.
+The agent sends the module's name, the reason and a kind naming why to the collector with the next manifest. The kind separates a linkage error, any other advice failure, a transform failure and a route walk failure. A collector can then tell "this service has no endpoints" from "this service's endpoints were not instrumented". The testkit exposes it as `disabledEndpointModules()`, and its endpoint queries mention a disabled module in the error they throw for an unknown endpoint.
 
 A module that switches off stops counting but does not retract. The endpoints it already declared stay in the list, and their counts stop, so they read as never called. The disabled-modules list is the only signal for that. Treat any endpoint finding from a service with a disabled module as unreliable for that framework.
 

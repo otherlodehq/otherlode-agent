@@ -21,6 +21,7 @@ import dev.otherlode.proto.DependencyDiscoverySource as ProtoDependencyDiscovery
 import dev.otherlode.proto.DependencyIdentity as ProtoDependencyIdentity
 import dev.otherlode.proto.DependencyIdentitySource as ProtoDependencyIdentitySource
 import dev.otherlode.proto.DependencyLocation as ProtoDependencyLocation
+import dev.otherlode.proto.DisabledEndpointModuleKind as ProtoDisabledEndpointModuleKind
 import dev.otherlode.proto.EndpointDiscoverySource as ProtoEndpointDiscoverySource
 import dev.otherlode.proto.EndpointLocation as ProtoEndpointLocation
 import dev.otherlode.proto.ExternalClass as ProtoExternalClass
@@ -1566,6 +1567,7 @@ class ProtoPayloadCodecTest {
                             module = "spring-webmvc-6",
                             reason = "linkage failure against an unexpected framework version",
                             disabledAt = 2000L,
+                            kind = DisabledEndpointModuleKind.LINKAGE_ERROR,
                         ),
                     ),
             )
@@ -1579,6 +1581,23 @@ class ProtoPayloadCodecTest {
         assertEquals("spring-webmvc-6", disabled.module)
         assertEquals("linkage failure against an unexpected framework version", disabled.reason)
         assertEquals(2000L, disabled.disabledAt)
+        assertEquals(ProtoDisabledEndpointModuleKind.LINKAGE_ERROR, disabled.kind)
+    }
+
+    @Test
+    fun `every disabled endpoint module kind survives a round trip`() {
+        for (kind in DisabledEndpointModuleKind.entries) {
+            val manifest =
+                ProbeManifest(
+                    resource = ResourceAttributes("checkout", null, "", null, "run-1"),
+                    probes = emptyList(),
+                    disabledEndpointModules = listOf(DisabledEndpointModule("m", "r", 1L, kind)),
+                )
+
+            val decoded = ProtoPayloadCodec.decodeProbeManifest(ProtoPayloadCodec.encode(manifest))
+
+            assertEquals(kind, decoded.disabledEndpointModules.single().kind)
+        }
     }
 
     @Test

@@ -12,6 +12,7 @@ import dev.otherlode.export.DeclaredClass
 import dev.otherlode.export.DeclaredMethod
 import dev.otherlode.export.DeltaBatch
 import dev.otherlode.export.DisabledEndpointModule
+import dev.otherlode.export.DisabledEndpointModuleKind
 import dev.otherlode.export.EndpointDelta
 import dev.otherlode.export.EndpointDiscoverySource
 import dev.otherlode.export.EndpointLocation
@@ -1476,7 +1477,15 @@ class OtherlodeTestCollectorTest {
             ProbeManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 emptyList(),
-                disabledEndpointModules = listOf(DisabledEndpointModule("spring-mvc", "linkage error against Spring 7", 1L)),
+                disabledEndpointModules =
+                    listOf(
+                        DisabledEndpointModule(
+                            "spring-mvc",
+                            "linkage error against Spring 7",
+                            1L,
+                            DisabledEndpointModuleKind.LINKAGE_ERROR,
+                        ),
+                    ),
             ),
         )
 
@@ -1517,8 +1526,8 @@ class OtherlodeTestCollectorTest {
                 emptyList(),
                 disabledEndpointModules =
                     listOf(
-                        DisabledEndpointModule("ktor", "r1", 1L),
-                        DisabledEndpointModule("jax-rs", "r2", 2L),
+                        DisabledEndpointModule("ktor", "r1", 1L, DisabledEndpointModuleKind.ADVICE_FAILED),
+                        DisabledEndpointModule("jax-rs", "r2", 2L, DisabledEndpointModuleKind.HOOK_UNMATCHED),
                     ),
             ),
         )
@@ -1526,11 +1535,41 @@ class OtherlodeTestCollectorTest {
             ProbeManifest(
                 ResourceAttributes("svc", null, "i-2", null, "run-1"),
                 emptyList(),
-                disabledEndpointModules = listOf(DisabledEndpointModule("ktor", "r1-dup", 3L)),
+                disabledEndpointModules = listOf(DisabledEndpointModule("ktor", "r1-dup", 3L, DisabledEndpointModuleKind.TRANSFORM_FAILED)),
             ),
         )
 
         assertEquals(listOf("jax-rs", "ktor"), target.disabledEndpointModules().map { it.module })
+    }
+
+    @Test
+    fun `a disabled module surfaces with its kind`() {
+        val target = startCollector()
+        val exporter = exporterFor(target)
+        exporter.exportManifest(
+            ProbeManifest(
+                ResourceAttributes("svc", null, "i-1", null, "run-1"),
+                emptyList(),
+                disabledEndpointModules = listOf(DisabledEndpointModule("ktor", "r1", 1L, DisabledEndpointModuleKind.ROUTE_WALK_FAILED)),
+            ),
+        )
+
+        val module = target.disabledEndpointModules().single()
+        assertEquals(dev.otherlode.testkit.DisabledEndpointModuleKind.ROUTE_WALK_FAILED, module.kind)
+    }
+
+    @Test
+    fun `a disabled module with no kind is answered 400, since an agent of this testkit's version always sends one`() {
+        val target = startCollector()
+        val manifest =
+            ProbeManifest(
+                ResourceAttributes("svc", null, "i-1", null, "run-1"),
+                emptyList(),
+                disabledEndpointModules = listOf(DisabledEndpointModule("jax-rs", "r2", 2L, DisabledEndpointModuleKind.UNSPECIFIED)),
+            )
+
+        assertEquals(400, postStatus(target, "manifest", ProtoPayloadCodec.encode(manifest)))
+        assertTrue(target.rejectedPayloads().single().contains("could not be applied"), "${target.rejectedPayloads()}")
     }
 
     @Test

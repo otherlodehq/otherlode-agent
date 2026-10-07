@@ -848,7 +848,29 @@ data class DisabledEndpointModule(
     val module: String,
     val reason: String,
     val disabledAt: Long,
+    val kind: DisabledEndpointModuleKind,
 )
+
+/** What switched an endpoint module off. */
+enum class DisabledEndpointModuleKind {
+    /** Sent by an agent that predates the kind. */
+    UNSPECIFIED,
+
+    /** A `LinkageError`, wherever it was caught: the framework release differs from the one the module was built for. */
+    LINKAGE_ERROR,
+
+    /** Any other throw from the module's advice. */
+    ADVICE_FAILED,
+
+    /** The module's own `transform` threw. */
+    TRANSFORM_FAILED,
+
+    /** Walking a framework's route objects threw. */
+    ROUTE_WALK_FAILED,
+
+    /** A hook matched no method on the framework class it hooks. */
+    HOOK_UNMATCHED,
+}
 
 /** How the agent learned of a dependency. */
 enum class DependencyDiscoverySource {

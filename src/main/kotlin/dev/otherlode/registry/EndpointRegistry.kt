@@ -1,6 +1,7 @@
 package dev.otherlode.registry
 
 import dev.otherlode.export.DisabledEndpointModule
+import dev.otherlode.export.DisabledEndpointModuleKind
 import dev.otherlode.export.EndpointDelta
 import dev.otherlode.export.EndpointDiscoverySource
 import dev.otherlode.export.EndpointLocation
@@ -129,6 +130,7 @@ class EndpointRegistry {
 
     private class DisabledModuleEntry(
         val reason: String,
+        val kind: DisabledEndpointModuleKind,
         val disabledAt: Long,
     ) {
         var manifestIncluded: Boolean = false
@@ -418,14 +420,15 @@ class EndpointRegistry {
     /**
      * Records an endpoint module (one framework's registration/dispatch hooks) that switched
      * itself off, typically on a linkage failure against an unexpected framework version.
-     * Idempotent per module name: a repeat call keeps the first reason and timestamp, the same
-     * as [ProbeRegistry.recordSkipped].
+     * [kind] names what switched it off. Idempotent per module name: a repeat call keeps the first
+     * kind, reason and timestamp, the same as [ProbeRegistry.recordSkipped].
      */
     fun recordDisabledModule(
         module: String,
         reason: String,
+        kind: DisabledEndpointModuleKind,
     ) {
-        disabledModulesByName.computeIfAbsent(module) { DisabledModuleEntry(reason, System.currentTimeMillis()) }
+        disabledModulesByName.computeIfAbsent(module) { DisabledModuleEntry(reason, kind, System.currentTimeMillis()) }
     }
 
     /** A full snapshot of every tracked endpoint, in [EndpointEntry.endpointId] order. */
@@ -433,7 +436,7 @@ class EndpointRegistry {
 
     /** A full snapshot of every disabled endpoint module. */
     fun disabledModules(): List<DisabledEndpointModule> =
-        disabledModulesByName.map { (module, entry) -> DisabledEndpointModule(module, entry.reason, entry.disabledAt) }
+        disabledModulesByName.map { (module, entry) -> DisabledEndpointModule(module, entry.reason, entry.disabledAt, entry.kind) }
 
     /**
      * Compares each entry's live count against its last successfully sent value, and returns
@@ -547,7 +550,7 @@ class EndpointRegistry {
         for ((module, moduleEntry) in disabledModulesByName) {
             if (moduleEntry.manifestIncluded) continue
             if (size() == maxPerChunk) seal()
-            modules += DisabledEndpointModule(module, moduleEntry.reason, moduleEntry.disabledAt)
+            modules += DisabledEndpointModule(module, moduleEntry.reason, moduleEntry.disabledAt, moduleEntry.kind)
             stagedModules += module
         }
         seal()

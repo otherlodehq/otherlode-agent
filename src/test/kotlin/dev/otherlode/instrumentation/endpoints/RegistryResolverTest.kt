@@ -1,6 +1,7 @@
 package dev.otherlode.instrumentation.endpoints
 
 import dev.otherlode.bootstrap.OtherlodeEndpoints
+import dev.otherlode.export.DisabledEndpointModuleKind
 import dev.otherlode.instrumentation.BootstrapHolder
 import dev.otherlode.instrumentation.branch.HandlerForwarder
 import dev.otherlode.instrumentation.endpoints.api.AdviceBinder
@@ -152,6 +153,7 @@ class RegistryResolverTest {
         val disabled = registry.disabledModules().single()
         assertEquals(moduleName, disabled.module)
         assertTrue("simulated walk failure" in disabled.reason)
+        assertEquals(DisabledEndpointModuleKind.ROUTE_WALK_FAILED, disabled.kind)
         assertNull(
             OtherlodeEndpoints.recordDispatch(moduleName, "key", "GET", "/after-failure", null, null),
             "dispatch through the switched-off module must count nothing",
@@ -228,5 +230,25 @@ class RegistryResolverTest {
 
         assertTrue(ranAfterTheFailure)
         assertEquals(0, pending.pendingCount())
+    }
+
+    @Test
+    fun `each seam kind maps to its own wire kind, and an unknown one to unspecified`() {
+        val expected =
+            mapOf(
+                OtherlodeEndpoints.KIND_UNSPECIFIED to DisabledEndpointModuleKind.UNSPECIFIED,
+                OtherlodeEndpoints.KIND_LINKAGE_ERROR to DisabledEndpointModuleKind.LINKAGE_ERROR,
+                OtherlodeEndpoints.KIND_ADVICE_FAILED to DisabledEndpointModuleKind.ADVICE_FAILED,
+                OtherlodeEndpoints.KIND_TRANSFORM_FAILED to DisabledEndpointModuleKind.TRANSFORM_FAILED,
+                OtherlodeEndpoints.KIND_ROUTE_WALK_FAILED to DisabledEndpointModuleKind.ROUTE_WALK_FAILED,
+                OtherlodeEndpoints.KIND_HOOK_UNMATCHED to DisabledEndpointModuleKind.HOOK_UNMATCHED,
+                99 to DisabledEndpointModuleKind.UNSPECIFIED,
+            )
+        assertEquals(expected, expected.keys.associateWith { disabledKindOf(it) })
+        assertEquals(
+            DisabledEndpointModuleKind.entries.toSet(),
+            expected.values.toSet(),
+            "every wire kind has a seam constant",
+        )
     }
 }

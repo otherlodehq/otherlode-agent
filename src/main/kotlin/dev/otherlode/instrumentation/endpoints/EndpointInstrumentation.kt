@@ -158,7 +158,7 @@ class EndpointInstrumentation(
                         // signal for that; see STATUS.md.
                         pendingDeclarations.rollbackTo(mark)
                         log.log(Level.WARNING, "otherlode: endpoint module ${module.name} failed to transform ${typeDescription.name}", t)
-                        OtherlodeEndpoints.moduleFailed(module.name, t)
+                        OtherlodeEndpoints.moduleFailed(module.name, OtherlodeEndpoints.KIND_TRANSFORM_FAILED, t)
                         typeBuilder
                     }
                 }

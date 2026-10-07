@@ -1,6 +1,7 @@
 package dev.otherlode.testkit
 
 import dev.otherlode.export.DependencyDiscoverySource as WireDependencyDiscoverySource
+import dev.otherlode.export.DisabledEndpointModuleKind as WireDisabledEndpointModuleKind
 import dev.otherlode.export.EndpointDiscoverySource as WireEndpointDiscoverySource
 import dev.otherlode.export.GeneratedBy as WireGeneratedBy
 import dev.otherlode.export.OutsideCaller as WireOutsideCaller
@@ -132,12 +133,34 @@ public data class SkippedClass internal constructor(
     val reason: String,
 )
 
-/** An endpoint module that switched itself off, typically on a linkage failure against an unexpected framework version. */
+/** An endpoint module that switched itself off, and [kind], what switched it off. */
 @ConsistentCopyVisibility
 public data class DisabledEndpointModule internal constructor(
     val module: String,
     val reason: String,
+    val kind: DisabledEndpointModuleKind,
 )
+
+/**
+ * What switched an endpoint module off. Values may be added in a minor release, so a `when` over
+ * this enum needs an `else` branch.
+ */
+public enum class DisabledEndpointModuleKind {
+    /** A `LinkageError`, wherever it was caught: the framework release differs from the one the module was built for. */
+    LINKAGE_ERROR,
+
+    /** Any other throw from the module's advice. */
+    ADVICE_FAILED,
+
+    /** The module's own `transform` threw. */
+    TRANSFORM_FAILED,
+
+    /** Walking a framework's route objects threw. */
+    ROUTE_WALK_FAILED,
+
+    /** A hook matched no method on the framework class it hooks. */
+    HOOK_UNMATCHED,
+}
 
 internal fun WireProbeKind.toTestkit(): ProbeKind =
     when (this) {
@@ -254,4 +277,44 @@ internal fun DependencyDiscoverySource.toWire(): WireDependencyDiscoverySource =
     when (this) {
         DependencyDiscoverySource.STARTUP_CLASSPATH -> WireDependencyDiscoverySource.STARTUP_CLASSPATH
         DependencyDiscoverySource.LOAD -> WireDependencyDiscoverySource.LOAD
+    }
+
+/**
+ * Throws for [WireDisabledEndpointModuleKind.UNSPECIFIED]: an agent of this testkit's version always
+ * says what switched a module off, and the collector refuses a payload from any other version.
+ */
+internal fun WireDisabledEndpointModuleKind.toTestkit(): DisabledEndpointModuleKind =
+    when (this) {
+        WireDisabledEndpointModuleKind.UNSPECIFIED -> {
+            throw IllegalArgumentException("a disabled endpoint module carries no kind")
+        }
+
+        WireDisabledEndpointModuleKind.LINKAGE_ERROR -> {
+            DisabledEndpointModuleKind.LINKAGE_ERROR
+        }
+
+        WireDisabledEndpointModuleKind.ADVICE_FAILED -> {
+            DisabledEndpointModuleKind.ADVICE_FAILED
+        }
+
+        WireDisabledEndpointModuleKind.TRANSFORM_FAILED -> {
+            DisabledEndpointModuleKind.TRANSFORM_FAILED
+        }
+
+        WireDisabledEndpointModuleKind.ROUTE_WALK_FAILED -> {
+            DisabledEndpointModuleKind.ROUTE_WALK_FAILED
+        }
+
+        WireDisabledEndpointModuleKind.HOOK_UNMATCHED -> {
+            DisabledEndpointModuleKind.HOOK_UNMATCHED
+        }
+    }
+
+internal fun DisabledEndpointModuleKind.toWire(): WireDisabledEndpointModuleKind =
+    when (this) {
+        DisabledEndpointModuleKind.LINKAGE_ERROR -> WireDisabledEndpointModuleKind.LINKAGE_ERROR
+        DisabledEndpointModuleKind.ADVICE_FAILED -> WireDisabledEndpointModuleKind.ADVICE_FAILED
+        DisabledEndpointModuleKind.TRANSFORM_FAILED -> WireDisabledEndpointModuleKind.TRANSFORM_FAILED
+        DisabledEndpointModuleKind.ROUTE_WALK_FAILED -> WireDisabledEndpointModuleKind.ROUTE_WALK_FAILED
+        DisabledEndpointModuleKind.HOOK_UNMATCHED -> WireDisabledEndpointModuleKind.HOOK_UNMATCHED
     }
