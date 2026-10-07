@@ -396,7 +396,8 @@ for the test JVM on port 4319 (`otherlode.testkit.port` overrides it) and
 injects it into any test that asks for an `OtherlodeTestCollector`. Run the
 test task with `-javaagent` pointing at that port. The collector accepts one
 agent: with `maxParallelForks` above 1, every fork's agent would post to the
-same port, so give each fork its own port and endpoint or run one fork. A test
+same port, and every fork gets the same `-javaagent` arguments, so run the
+testkit tests with `maxParallelForks = 1`. A test
 that launches a child JVM with the agent needs a collector of its own, started
 with `OtherlodeTestCollector.start()`, for the same reason. Anything else that
 posts to the port is rejected, and fails every query for the rest of the run.

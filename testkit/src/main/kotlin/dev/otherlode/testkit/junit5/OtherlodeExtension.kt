@@ -143,7 +143,10 @@ public class OtherlodeExtension :
                 throw IllegalStateException(
                     "otherlode-testkit: could not bind the collector to port $port. Another process may already be " +
                         "using it, or a previous test run's collector is still listening. Override the port with " +
-                        "the '$PORT_PROPERTY' system property.",
+                        "the '$PORT_PROPERTY' system property, and point the agent's exportUrl at the same port. " +
+                        "If another fork of this test task holds it, run the tests that use the testkit with " +
+                        "maxParallelForks = 1: every fork gets the same -javaagent arguments, so forks cannot " +
+                        "each have a port.",
                     e,
                 )
             }

@@ -198,17 +198,27 @@ OtherlodeTestCollector.start().use { collector ->
 
 With `maxParallelForks` above 1, each fork is its own JVM, and every fork's agent posts to the same port. The extension's collector holds that port in one fork only, and it accepts one agent. Payloads from any other agent are rejected, and every query in the run then throws an exception that lists the reasons.
 
-Run one fork, or give each fork its own port and matching `exportUrl`. A simple way is to run the tests that use the testkit in their own task with `maxParallelForks = 1`:
+Gradle gives every fork of a test task the same `-javaagent` arguments, so the forks cannot each have their own port. Run the tests that use the testkit with `maxParallelForks = 1`. To keep the rest of your tests parallel, tag the testkit tests with `@Tag("otherlode")` and give them a task of their own:
 
 ```kotlin
-tasks.register<Test>("agentTest") {
-	useJUnitPlatform()
+tasks.test {
+	useJUnitPlatform { excludeTags("otherlode") }
+}
+
+val agentTest by tasks.registering(Test::class) {
+	testClassesDirs = sourceSets.test.get().output.classesDirs
+	classpath = sourceSets.test.get().runtimeClasspath
+	useJUnitPlatform { includeTags("otherlode") }
 	maxParallelForks = 1
 	jvmArgumentProviders.add(CommandLineArgumentProvider {
 		listOf("-javaagent:${otherlodeAgent.singleFile}=includePackages=com.acme,flushIntervalSeconds=1,exportUrl=http://localhost:4319")
 	})
 }
+
+tasks.check { dependsOn(agentTest) }
 ```
+
+The agent then runs only in `agentTest`, so move the `-javaagent` argument off `tasks.test`.
 
 Anything else that posts to the collector's port is rejected the same way.
 

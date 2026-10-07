@@ -2756,8 +2756,9 @@ public class OtherlodeTestCollector internal constructor(
             if (only != instanceId) {
                 return "$payload from instance $instanceId, but this collector serves one test JVM and already heard " +
                     "from instance $only. With Gradle's maxParallelForks above 1 every fork's agent posts to this one " +
-                    "port; give each fork its own otherlode.testkit.port and exportUrl, or run one fork. A child JVM a " +
-                    "test launches with the agent needs a collector of its own"
+                    "port, since every fork gets the same -javaagent arguments: run the tests that use the testkit " +
+                    "with maxParallelForks = 1, for example in a Test task of their own. A child JVM a test launches " +
+                    "with the agent needs a collector of its own, started with OtherlodeTestCollector.start()"
             }
         }
         val accepted = runIdByInstance.putIfAbsent(instanceId, resource.runId)

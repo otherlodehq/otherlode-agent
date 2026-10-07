@@ -1240,7 +1240,10 @@ class OtherlodeTestCollectorTest {
             ),
         )
 
-        assertTrue(target.rejectedPayloads().single().contains("maxParallelForks"), "${target.rejectedPayloads()}")
+        val reason = target.rejectedPayloads().single()
+        assertTrue(reason.contains("maxParallelForks = 1"), reason)
+        // Gradle gives every fork of a Test task the same -javaagent arguments, so a port per fork cannot be set up.
+        assertTrue(!reason.contains("each fork its own"), reason)
         assertFailsWith<IllegalStateException> { target.neverHit() }
     }
 

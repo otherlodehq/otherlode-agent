@@ -591,7 +591,11 @@ open class ProbeRegistry(
             if (watched.any { !attemptEnded(it) }) continue
             when (recordMiss(entry, watched, registeredUpTo)) {
                 Withhold.NONE -> {}
-                Withhold.QUIET -> recordFailed(entry.className)
+
+                Withhold.QUIET -> {
+                    recordFailed(entry.className)
+                }
+
                 Withhold.REPORTED -> {
                     recordFailed(entry.className)
                     newlyWithheld += entry.className
@@ -766,11 +770,10 @@ open class ProbeRegistry(
      * registering. Logging instead of silently sending the lower value means a bug that does
      * reach here is visible rather than hidden.
      *
-     * The lower value goes out as it is. A collector that reads a falling total as a restarted
-     * instance adds the whole post-drop total to what it already held, so one lost update
-     * overcounts that probe from then on rather than undercounting it. The total is wrong either
-     * way; what it cannot do is turn a hit probe into an unhit one, which is the only thing a
-     * dead-code claim rests on.
+     * The lower value goes out as it is. A collector merges totals within a run with `max()`
+     * (ADRs 0010 and 0032), so it keeps the higher value it already holds and the drop changes
+     * nothing there until the live count passes it again. What a drop cannot do is turn a hit
+     * probe into an unhit one, which is the only thing a dead-code claim rests on.
      */
     private fun warnOnceAboutDecrease(
         entry: ClassEntry,

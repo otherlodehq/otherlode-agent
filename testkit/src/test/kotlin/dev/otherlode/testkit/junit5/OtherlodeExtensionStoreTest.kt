@@ -90,6 +90,19 @@ class OtherlodeExtensionStoreTest {
     }
 
     @Test
+    fun `a port already in use fails naming the property and the one-fork rule`() {
+        java.net.ServerSocket(0, 1, java.net.InetAddress.getByName("localhost")).use { taken ->
+            System.setProperty("otherlode.testkit.port", taken.localPort.toString())
+
+            val failure = assertFailsWith<IllegalStateException> { OtherlodeExtension().beforeAll(fakeContext()) }
+
+            val message = failure.message.orEmpty()
+            assertTrue("otherlode.testkit.port" in message, message)
+            assertTrue("maxParallelForks = 1" in message, message)
+        }
+    }
+
+    @Test
     fun `a port property that is not a number fails naming the property`() {
         System.setProperty("otherlode.testkit.port", "not-a-port")
 

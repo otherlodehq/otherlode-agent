@@ -78,7 +78,7 @@ data class AgentConfig(
     val enabled: Boolean,
     /**
      * On by default. One switch for every endpoint module (Spring, Ktor, `jdk.httpserver`,
-     * JAX-RS), with no per-framework flags. A module matches only when its framework is present,
+     * JAX-RS) and the OpenTelemetry route bridge, with no per-framework flags. A module matches only when its framework is present,
      * and one whose advice or transform throws, a `LinkageError` against an unsupported version
      * included, switches itself off and is reported in `disabled_endpoint_modules`.
      */
