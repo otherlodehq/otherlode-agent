@@ -4,7 +4,7 @@ import dev.otherlode.config.AgentConfig
 import dev.otherlode.export.BranchRole
 import dev.otherlode.export.CallEdge
 import dev.otherlode.export.ExportScheduler
-import dev.otherlode.export.HttpOtlpStyleExporter
+import dev.otherlode.export.HttpExporter
 import dev.otherlode.export.KotlinKind
 import dev.otherlode.export.ProbeKind
 import dev.otherlode.instrumentation.OtherlodeInstrumentation
@@ -25,7 +25,7 @@ import dev.otherlode.testkit.ProbeKind as RefProbeKind
 /**
  * Proves [OtherlodeTestCollector] against a real agent, not just hand-built payloads: a fixture class
  * is instrumented in process by [OtherlodeInstrumentation], exercised through one method, and flushed
- * over the wire by a real [ExportScheduler]/[HttpOtlpStyleExporter] pair.
+ * over the wire by a real [ExportScheduler]/[HttpExporter] pair.
  */
 class OtherlodeTestCollectorEndToEndTest {
     private var installedTransformer: ResettableClassFileTransformer? = null
@@ -68,7 +68,7 @@ class OtherlodeTestCollectorEndToEndTest {
         val fixture = fixtureClass.getDeclaredConstructor().newInstance()
         fixtureClass.getMethod("exercised").invoke(fixture)
 
-        val exporter = HttpOtlpStyleExporter(target.exportUrl)
+        val exporter = HttpExporter(target.exportUrl)
         val exportScheduler = ExportScheduler(config, TestResources.forConfig(config), registry, EndpointRegistry(), exporter)
         scheduler = exportScheduler
         exportScheduler.start()
@@ -104,7 +104,7 @@ class OtherlodeTestCollectorEndToEndTest {
         val fixture = fixtureClass.getDeclaredConstructor().newInstance()
         fixtureClass.getMethod("exercised").invoke(fixture)
 
-        val exporter = HttpOtlpStyleExporter(target.exportUrl)
+        val exporter = HttpExporter(target.exportUrl)
         val exportScheduler = ExportScheduler(config, TestResources.forConfig(config), registry, EndpointRegistry(), exporter)
         scheduler = exportScheduler
         exportScheduler.start()
@@ -152,7 +152,7 @@ class OtherlodeTestCollectorEndToEndTest {
         Class.forName("com.example.testkittarget.LegacyCalculator", false, loader)
         Class.forName("com.example.testkittarget.LegacyFees", false, loader)
 
-        val exporter = HttpOtlpStyleExporter(target.exportUrl)
+        val exporter = HttpExporter(target.exportUrl)
         val exportScheduler = ExportScheduler(config, TestResources.forConfig(config), registry, EndpointRegistry(), exporter)
         scheduler = exportScheduler
         exportScheduler.start()
@@ -228,7 +228,7 @@ class OtherlodeTestCollectorEndToEndTest {
         val counters = load("Counters", initialise = true)
         counters.getMethod("size").invoke(counters.getField("INSTANCE").get(null))
 
-        val exporter = HttpOtlpStyleExporter(target.exportUrl)
+        val exporter = HttpExporter(target.exportUrl)
         val exportScheduler = ExportScheduler(config, TestResources.forConfig(config), registry, EndpointRegistry(), exporter)
         scheduler = exportScheduler
         exportScheduler.start()
@@ -338,7 +338,7 @@ class OtherlodeTestCollectorEndToEndTest {
         val callerClass = Class.forName("$FIXTURES.TextCaller", true, fixtureLoader())
         callerClass.getMethod("exercised").invoke(callerClass.getDeclaredConstructor().newInstance())
 
-        val exporter = HttpOtlpStyleExporter(target.exportUrl)
+        val exporter = HttpExporter(target.exportUrl)
         val exportScheduler = ExportScheduler(config, TestResources.forConfig(config), registry, EndpointRegistry(), exporter)
         scheduler = exportScheduler
         exportScheduler.start()
@@ -402,7 +402,7 @@ class OtherlodeTestCollectorEndToEndTest {
         foldsClass.getMethod("behindRoutine", Integer::class.java, flag).invoke(folds, 7, true)
         Class.forName(LONE_CONSTRUCTOR, true, foldsClass.classLoader)
 
-        val exporter = HttpOtlpStyleExporter(target.exportUrl)
+        val exporter = HttpExporter(target.exportUrl)
         val exportScheduler = ExportScheduler(config, TestResources.forConfig(config), registry, EndpointRegistry(), exporter)
         scheduler = exportScheduler
         exportScheduler.start()

@@ -1,7 +1,7 @@
 package dev.otherlode.testkit
 
 import dev.otherlode.export.DeltaBatch
-import dev.otherlode.export.HttpOtlpStyleExporter
+import dev.otherlode.export.HttpExporter
 import dev.otherlode.export.ProbeDelta
 import dev.otherlode.export.ProbeLocation
 import dev.otherlode.export.ProbeManifest
@@ -99,7 +99,7 @@ class CollectorVersionAndMarksTest {
     @Test
     fun `a probe with no generated mark, routine or unread shape reads null for each`() {
         val target = OtherlodeTestCollector.start().also { collector = it }
-        val exporter = HttpOtlpStyleExporter(target.exportUrl)
+        val exporter = HttpExporter(target.exportUrl)
         val unmarked = resource("")
         exporter.exportManifest(
             ProbeManifest(unmarked, listOf(ProbeLocation(1, 0, WireProbeKind.METHOD, "com.acme.A", "m", "()V", 1, null))),

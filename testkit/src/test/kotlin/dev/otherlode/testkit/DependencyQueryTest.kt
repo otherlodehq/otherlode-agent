@@ -11,7 +11,7 @@ import dev.otherlode.export.DependencyIdentitySource
 import dev.otherlode.export.DependencyLocation
 import dev.otherlode.export.ExternalClass
 import dev.otherlode.export.FailedClass
-import dev.otherlode.export.HttpOtlpStyleExporter
+import dev.otherlode.export.HttpExporter
 import dev.otherlode.export.ProbeDelta
 import dev.otherlode.export.ProbeKind
 import dev.otherlode.export.ProbeLocation
@@ -31,7 +31,7 @@ import dev.otherlode.testkit.DependencyDiscoverySource as RefDiscoverySource
 
 class DependencyQueryTest {
     private val collector = OtherlodeTestCollector.start()
-    private val exporter = HttpOtlpStyleExporter(collector.exportUrl)
+    private val exporter = HttpExporter(collector.exportUrl)
 
     @AfterTest
     fun tearDown() {

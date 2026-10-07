@@ -15,7 +15,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
-class HttpOtlpStyleExporterTest {
+class HttpExporterTest {
     private var server: HttpServer? = null
     private var rawSocket: ServerSocket? = null
     private val requestCount = AtomicInteger(0)
@@ -46,7 +46,7 @@ class HttpOtlpStyleExporterTest {
     }
 
     private fun exporterFor(endpoint: String) =
-        HttpOtlpStyleExporter(
+        HttpExporter(
             endpoint = endpoint,
             maxAttempts = 5,
             initialBackoff = Duration.ofMillis(1),
@@ -58,7 +58,7 @@ class HttpOtlpStyleExporterTest {
         val endpoint = startServer { 200 }
         val batch = DeltaBatch(ResourceAttributes("checkout", "1.0.0", "i-1", "test", "run-1"), emptyList())
 
-        HttpOtlpStyleExporter(endpoint = endpoint).exportDeltaBatch(batch)
+        HttpExporter(endpoint = endpoint).exportDeltaBatch(batch)
 
         assertEquals(listOf<String?>(null), requestedUpgradeHeaders)
     }
@@ -141,7 +141,7 @@ class HttpOtlpStyleExporterTest {
         }
         val endpoint = "http://localhost:${socket.localPort}"
         val exporter =
-            HttpOtlpStyleExporter(
+            HttpExporter(
                 endpoint = endpoint,
                 maxAttempts = 2,
                 initialBackoff = Duration.ofMillis(1),
@@ -207,7 +207,7 @@ class HttpOtlpStyleExporterTest {
     fun `a bearer token is sent on every export method when configured`() {
         val endpoint = startServer { 200 }
         val exporter =
-            HttpOtlpStyleExporter(
+            HttpExporter(
                 endpoint = endpoint,
                 authToken = "secret-token",
                 maxAttempts = 5,
@@ -257,7 +257,7 @@ class HttpOtlpStyleExporterTest {
         val endpoint = startServer { 200 }
         val built = AtomicInteger()
         val client = lazy { built.incrementAndGet().let { HttpClient.newHttpClient() } }
-        val exporter = HttpOtlpStyleExporter(endpoint = endpoint, httpClient = client)
+        val exporter = HttpExporter(endpoint = endpoint, httpClient = client)
         assertEquals(0, built.get())
 
         val batch = DeltaBatch(ResourceAttributes("checkout", "1.0.0", "i-1", "test", "run-1"), emptyList())
@@ -272,8 +272,8 @@ class HttpOtlpStyleExporterTest {
         val endpoint = startServer { 200 }
         val built = AtomicInteger()
         val client = lazy { built.incrementAndGet().let { HttpClient.newHttpClient() } }
-        val first = HttpOtlpStyleExporter(endpoint = endpoint, httpClient = client)
-        val second = HttpOtlpStyleExporter(endpoint = endpoint, httpClient = client, maxAttempts = 1)
+        val first = HttpExporter(endpoint = endpoint, httpClient = client)
+        val second = HttpExporter(endpoint = endpoint, httpClient = client, maxAttempts = 1)
         val batch = DeltaBatch(ResourceAttributes("checkout", "1.0.0", "i-1", "test", "run-1"), emptyList())
 
         first.exportDeltaBatch(batch)

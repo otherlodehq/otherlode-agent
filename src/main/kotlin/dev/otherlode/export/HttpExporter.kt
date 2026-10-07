@@ -35,7 +35,7 @@ import java.time.Duration
  * The collector may require a bearer token, passed as [authToken]. A 401 or 403 is a permanent
  * failure like any other 4xx: resending with the same token cannot change the answer.
  */
-class HttpOtlpStyleExporter(
+class HttpExporter(
     private val endpoint: String,
     private val authToken: String? = null,
     httpClient: Lazy<HttpClient> = lazyClient(),

@@ -17,7 +17,7 @@ import dev.otherlode.export.EndpointDiscoverySource
 import dev.otherlode.export.EndpointLocation
 import dev.otherlode.export.FailedClass
 import dev.otherlode.export.GeneratedBy
-import dev.otherlode.export.HttpOtlpStyleExporter
+import dev.otherlode.export.HttpExporter
 import dev.otherlode.export.KotlinKind
 import dev.otherlode.export.LineRange
 import dev.otherlode.export.OutsideCaller
@@ -68,7 +68,7 @@ class OtherlodeTestCollectorTest {
         return started
     }
 
-    private fun exporterFor(target: OtherlodeTestCollector) = HttpOtlpStyleExporter(target.exportUrl)
+    private fun exporterFor(target: OtherlodeTestCollector) = HttpExporter(target.exportUrl)
 
     private fun methodProbe(
         classId: Int,

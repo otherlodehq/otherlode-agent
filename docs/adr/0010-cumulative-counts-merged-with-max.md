@@ -4,7 +4,7 @@ status: accepted, amended by ADR 0032
 
 # Send cumulative totals merged with max(), with no separate send buffer
 
-`ProbeDelta.hits_total` is the probe's cumulative count since process start, not the amount it changed by since the last flush. A collector merges it with `max()`, which is commutative, associative and idempotent, so a batch delivered twice or out of order is a no-op. That hazard is real at the agent: `HttpOtlpStyleExporter` resends the identical payload when a response is lost after the collector has processed the request, and nothing on the receiving side deduplicates. The registry keeps a per-probe "last successfully sent" value and reports the live count for anything that differs, advancing that value only on a 2xx.
+`ProbeDelta.hits_total` is the probe's cumulative count since process start, not the amount it changed by since the last flush. A collector merges it with `max()`, which is commutative, associative and idempotent, so a batch delivered twice or out of order is a no-op. That hazard is real at the agent: `HttpExporter` resends the identical payload when a response is lost after the collector has processed the request, and nothing on the receiving side deduplicates. The registry keeps a per-probe "last successfully sent" value and reports the live count for anything that differs, advancing that value only on a 2xx.
 
 There is no bounded queue or drop policy. The data is not a stream. It is a set of arrays bounded by code size, not traffic, so it cannot grow no matter how long the collector is unreachable. A failed flush leaves the last-sent value where it was and the next flush reports the live count again.
 

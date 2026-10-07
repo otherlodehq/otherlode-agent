@@ -12,7 +12,7 @@ import dev.otherlode.dependencies.StartupClasspathLister
 import dev.otherlode.export.DependencyDiscoverySource
 import dev.otherlode.export.ExportScheduler
 import dev.otherlode.export.Exporter
-import dev.otherlode.export.HttpOtlpStyleExporter
+import dev.otherlode.export.HttpExporter
 import dev.otherlode.export.ResourceAttributes
 import dev.otherlode.export.forNewRun
 import dev.otherlode.instrumentation.BootstrapInstallException
@@ -209,15 +209,15 @@ object Agent {
             // Made once here and shared, so every payload this process sends names the same run.
             val resource = ResourceAttributes.forNewRun(config)
             // One client for every exporter, built by the first send rather than on this thread.
-            val httpClient = HttpOtlpStyleExporter.lazyClient()
-            val exporter = HttpOtlpStyleExporter(config.exportUrl, config.authToken, httpClient)
+            val httpClient = HttpExporter.lazyClient()
+            val exporter = HttpExporter(config.exportUrl, config.authToken, httpClient)
             // Shared by the scan, which sends first with the exporter's full retries, and the
             // scheduler, which resends what failed with one attempt per chunk.
             val staticBaselineSender =
                 if (config.staticBaselineEnabled) {
                     StaticBaselineSender(
                         exporter,
-                        retryExporter = HttpOtlpStyleExporter(config.exportUrl, config.authToken, httpClient, maxAttempts = 1),
+                        retryExporter = HttpExporter(config.exportUrl, config.authToken, httpClient, maxAttempts = 1),
                     )
                 } else {
                     null

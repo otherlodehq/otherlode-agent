@@ -5,7 +5,7 @@ import com.sun.net.httpserver.HttpHandler
 import com.sun.net.httpserver.HttpServer
 import dev.otherlode.config.AgentConfig
 import dev.otherlode.export.ExportScheduler
-import dev.otherlode.export.HttpOtlpStyleExporter
+import dev.otherlode.export.HttpExporter
 import dev.otherlode.instrumentation.endpoints.EndpointInstrumentation
 import dev.otherlode.instrumentation.endpoints.jdkhttpserver.JdkHttpServerModule
 import dev.otherlode.registry.EndpointRegistry
@@ -89,7 +89,7 @@ class EndpointEndToEndTest {
                     "serviceName=testkit-endpoint-e2e," +
                     "serviceInstanceId=e2e-endpoint-1",
             )
-        val exporter = HttpOtlpStyleExporter(target.exportUrl)
+        val exporter = HttpExporter(target.exportUrl)
         val exportScheduler = ExportScheduler(config, TestResources.forConfig(config), ProbeRegistry(), registry, exporter)
         scheduler = exportScheduler
         exportScheduler.start()

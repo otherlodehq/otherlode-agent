@@ -2,7 +2,7 @@ package dev.otherlode.testkit
 
 import dev.otherlode.config.AgentConfig
 import dev.otherlode.export.ExportScheduler
-import dev.otherlode.export.HttpOtlpStyleExporter
+import dev.otherlode.export.HttpExporter
 import dev.otherlode.instrumentation.OtherlodeInstrumentation
 import dev.otherlode.registry.EndpointRegistry
 import dev.otherlode.registry.ProbeRegistry
@@ -93,7 +93,7 @@ class ScalaNeverHitEndToEndTest {
         driver.getMethod("callSimpleAllOmitted").invoke(null)
 
         val exportScheduler =
-            ExportScheduler(config, TestResources.forConfig(config), registry, EndpointRegistry(), HttpOtlpStyleExporter(target.exportUrl))
+            ExportScheduler(config, TestResources.forConfig(config), registry, EndpointRegistry(), HttpExporter(target.exportUrl))
         scheduler = exportScheduler
         exportScheduler.start()
         target.awaitProbe("$PACKAGE.Driver\$", "callSimpleNoneOmitted", Duration.ofSeconds(10))

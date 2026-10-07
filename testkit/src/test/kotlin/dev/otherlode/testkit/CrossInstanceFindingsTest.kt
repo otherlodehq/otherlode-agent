@@ -10,7 +10,7 @@ import dev.otherlode.export.DeclaredClass
 import dev.otherlode.export.DeclaredMethod
 import dev.otherlode.export.DeltaBatch
 import dev.otherlode.export.GeneratedBy
-import dev.otherlode.export.HttpOtlpStyleExporter
+import dev.otherlode.export.HttpExporter
 import dev.otherlode.export.ProbeDelta
 import dev.otherlode.export.ProbeKind
 import dev.otherlode.export.ProbeLocation
@@ -48,7 +48,7 @@ class CrossInstanceFindingsTest {
         vararg hits: Pair<Int, Int>,
         hitCount: Long = 1L,
     ) {
-        val exporter = HttpOtlpStyleExporter(target.exportUrl)
+        val exporter = HttpExporter(target.exportUrl)
         val resource = ResourceAttributes("svc", null, instance, null, "run-$instance")
         exporter.exportManifest(ProbeManifest(resource, probes))
         val kinds = probes.associate { (it.classId to it.probeIndex) to it.kind }
@@ -103,7 +103,7 @@ class CrossInstanceFindingsTest {
         classes: List<DeclaredClass>,
     ) {
         val resource = ResourceAttributes("svc", null, instance, null, "run-$instance")
-        HttpOtlpStyleExporter(target.exportUrl).exportStaticBaseline(StaticBaseline(resource, classes, scannedAt = 1L))
+        HttpExporter(target.exportUrl).exportStaticBaseline(StaticBaseline(resource, classes, scannedAt = 1L))
     }
 
     private fun branch(

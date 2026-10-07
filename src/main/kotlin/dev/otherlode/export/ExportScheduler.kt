@@ -161,7 +161,7 @@ class ExportScheduler(
      *
      * Neither send has an explicit retry queue. A failure just leaves the
      * relevant state where it is, so the next tick retries it naturally.
-     * [dev.otherlode.export.HttpOtlpStyleExporter] still wraps
+     * [dev.otherlode.export.HttpExporter] still wraps
      * each individual send in its own capped exponential backoff, for a
      * transient failure within one attempt.
      *
