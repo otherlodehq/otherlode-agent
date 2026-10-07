@@ -387,7 +387,8 @@ two tests of option names no release had, and `HttpOtlpStyleExporter` is
 `HttpExporter`. `CLAUDE.md` is now a tracked page of rules. What is left needs
 a decision or a session of its own:
 
-1. **An endpoint module can go silent without saying so.** If a framework
+1. **An endpoint module can go silent without saying so.** Closed in this repo 2026-10-07
+   (`35b1321`, `e9ca693`, the canary `a64ac20`); the server's display of `kind` is step 6 below. If a framework
    release lacks the method a module's advice hooks, the advice attaches to
    nothing: the service reports no endpoints for that framework and no entry
    in `disabled_endpoint_modules`, the silent absence ADR 0017 rules out.
@@ -398,7 +399,9 @@ a decision or a session of its own:
    and `benchmark-overhead/README.md` carry the runner numbers from
    `8139271`, before the `DECORATE` round, so startup is likely overstated.
    Re-run on the commit to be tagged and update both before `v0.1.0`.
-3. **A refused delta or manifest is re-sent forever.** A 401 or 400 fails
+3. **A refused delta or manifest is re-sent forever.** Closed in this repo 2026-10-07
+   (`22c5b8e`, `372609c`): resending is kept and a run says when its counts are pending; the
+   server's evidence rule is step 6 below. A 401 or 400 fails
    the send at once, but the next flush sends it again, every flush, for the
    life of the process. Only the static baseline drops its chunks on 400, 413
    or 422. Probably right for 401 (a token can rotate), worth a decision for
@@ -453,8 +456,8 @@ order, one commit each:
 5. CI: a scheduled framework canary running each endpoint module's tests against its framework's
    newest release. Landed 2026-10-07: `framework-canary.yml` (Mondays 03:43, and by hand) with
    `newest-frameworks.sh`, which moves each `otherlode.framework.*` test pin to the newest stable
-   release of its line and warns, without failing, on a newer major no line covers. The first run
-   passed on Ktor 3.6.0, instrumentation-api 2.32.0 and SDK 1.66.0, and warns that Jersey 4.0.3
+   release of its line and warns, without failing, on a newer major no line covers. Its first run in
+   CI (by hand, 2026-10-07) passed on Ktor 3.6.0, instrumentation-api 2.32.0 and SDK 1.66.0, and warns that Jersey 4.0.3
    (Jakarta EE 11) is out: whether the JAX-RS module supports it is a decision for Luke.
 6. `otherlode-server`, Luke's to schedule (he is working there; nothing is changed from here):
    store and show `kind`; treat a run's zero hits as evidence only once a delta batch from it
