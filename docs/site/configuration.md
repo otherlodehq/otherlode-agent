@@ -98,7 +98,7 @@ A `-D` flag is as visible as the argument string, since anyone who can list proc
 | `endpointsEnabled` | The agent installs its framework endpoint modules. One switch covers all of them, and there are no per-framework flags. A module activates only when its framework is on the application's classpath. With the option off, the agent logs one INFO line and reports no endpoints, and `otelBridgeEnabled` has no effect. The endpoint modules ignore `includePackages` and `excludePackages`. See [endpoints](endpoints). |
 | `otelBridgeEnabled` | The agent also counts the route that OpenTelemetry's own HTTP server instrumentation resolved, for a framework no endpoint module covers. It needs `endpointsEnabled`. See [endpoints](endpoints). |
 | `staticBaselineEnabled` | The agent scans the classpath once, on a background thread, for classes under `includePackages` that never load. Off by default because the cost of the scan grows with the size of the classpath. See [classes](classes). |
-| `testRun` | The agent marks every payload of this run as a test run, and a run with no named environment reports to the environment `test`. At shutdown, after the final flush, a test run waits up to 15 seconds for the static baseline scan to finish. See [naming the tests that call your code](test-runs). |
+| `testRun` | The agent marks every payload of this run as a test run, and a run with no named environment reports to the environment `test`. At shutdown, after the final flush, a test run with `staticBaselineEnabled` on waits up to 15 seconds for the static baseline scan to finish. See [naming the tests that call your code](test-runs). |
 
 ## includePackages and excludePackages
 

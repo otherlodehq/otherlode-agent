@@ -7,13 +7,17 @@ that are never invoked, and conditionals that only ever take one branch.
 Attach it with `-javaagent`, run your app, and it reports which of those
 probes never fired.
 
+Customer docs live in [`docs/site/`](docs/site/), synced to otherlode.dev. This
+README covers building and developing the agent.
+
 ## How it works, briefly
 
-- Method-level probes (ByteBuddy `Advice`) catch unused methods and classes.
+- Method-level probes (ASM, woven through ByteBuddy's `AgentBuilder`) catch
+  unused methods and classes.
 - Endpoint modules for Spring MVC, Ktor, JAX-RS and the JDK's `HttpServer`
   count each endpoint where the framework matches a request to it, and list
   the endpoints it registered, so one never called shows up.
-- Branch-level probes (raw ASM, woven into the same transform pass) catch
+- Branch-level probes (ASM, woven in the same transform pass) catch
   conditionals and switches that only ever take one path.
 - The agent batches hit counts and pushes them to a collector on a fixed
   interval (OTLP-style: delta batches plus an incremental probe manifest)
@@ -50,89 +54,12 @@ count. Results go to `build/results/jmh/results.txt`.
 
 ## Attach it to an app
 
-```
--javaagent:/path/to/otherlode-agent-<version>.jar=serviceName=my-service,exportUrl=http://localhost:4319,includePackages=com.acme.myservice
-```
-
-Options (comma-separated `key=value`, `includePackages`/`excludePackages` use
-`;` to separate multiple prefixes; a value cannot itself contain a comma, so
-set one that needs to through the system property or environment variable
-described below):
-
-| Option | Default | Meaning |
-|---|---|---|
-| `serviceName` | detected, else `unknown_service:java` | Reported to the collector. Falls back to OpenTelemetry's settings and then to detection; see "Reading OpenTelemetry's settings" below. |
-| `serviceNamespace` | *(none)* | The group the service belongs to, as OpenTelemetry's `service.namespace`. A service is known by its namespace and its name together. Falls back to OpenTelemetry's settings. With none, the service is in the unspecified namespace. A name or namespace of `.` or `..` is ignored with a warning, since no URL can name it. |
-| `serviceVersion` | *(none)* | Reported to the collector. Falls back to OpenTelemetry's `service.version` resource attribute. |
-| `serviceInstanceId` | random UUID | Reported to the collector. Never read from OpenTelemetry's `service.instance.id`. |
-| `environment` | *(none)*, `test` for a test run | Reported to the collector. Falls back to OpenTelemetry's `deployment.environment.name`, then `deployment.environment`, then `test` when `testRun` is on. |
-| `exportUrl` | `http://localhost:4319` | Base URL of the collector. The exporter appends `/v1/otherlode/...` to it, so a path is kept but a query string or fragment is refused with a warning and the default is used. |
-| `authToken` | *(none)* | Bearer token sent to the collector as `Authorization: Bearer <token>`. Prefer setting it through `OTHERLODE_AUTH_TOKEN` rather than this option: agent arguments are visible to every user on the host via `ps`, and an environment variable is not. |
-| `flushIntervalSeconds` | `60` | How often deltas/manifest updates are sent, in whole seconds from 1 to 86400. Any other value falls back to the default with a warning. |
-| `includePackages` | *(required)* | Only instrument types whose name starts with one of these prefixes, `;`-separated, written as dotted packages (`com.acme`, not `com.acme.*` or `com/acme`, which match nothing and are dropped with a warning). Without a usable prefix the agent logs an ERROR and stays disabled for the life of the JVM: nothing is instrumented and nothing is exported. The ERROR suggests the main class's package when it can find one. |
-| `excludePackages` | *(none)* | Never instrument types whose name starts with one of these prefixes, `;`-separated, even if `includePackages` also matches them. Exclusion always wins. |
-| `staticBaselineEnabled` | `false` | Scan the classpath once at startup (async, off the critical path) for classes under `includePackages` that never load at all. Off by default: a full classpath walk has a cost that scales with the classpath's size. |
-| `enabled` | `true` | Set to `false` to turn the agent off entirely: nothing is instrumented and nothing is exported. Meant to be set from `OTHERLODE_ENABLED` so a deployment can disable the agent without rebuilding the image that bakes in `-javaagent`. |
-| `endpointsEnabled` | `true` | Set to `false` to switch off every framework endpoint module (Spring MVC, Ktor, JAX-RS, the JDK's `HttpServer`) at once. There are no per-framework flags. |
-| `otelBridgeEnabled` | `false` | Also count the route OpenTelemetry's own HTTP server instrumentation resolved, for a framework no endpoint module covers. Off by default because it hooks OpenTelemetry internals rather than a framework's public registration API. Needs `endpointsEnabled`, which switches it off too. |
-| `testRun` | `false` | Mark this run as a test run, for an agent in the JVM that runs your tests. A collector then leaves the run out of every finding about production and uses its call edges to name the tests that call production code. With no environment set, a test run reports to `test`. See "Name the tests that call your code" below. |
-
-## Where an option's value comes from
-
-Every option above can be set three ways, in this precedence order: the
-agent-args string wins, then a JVM system property, then an environment
-variable, then the option's own default. A blank value at any level counts
-as unset and falls through to the next one.
-
-The property and environment variable names are derived mechanically from
-the option name: split it on camelCase boundaries, then join with `.` and
-lowercase it for the property (prefixed `otherlode.`), or join with `_` and
-uppercase it for the environment variable (prefixed `OTHERLODE_`). For example:
-
-- `serviceName` → system property `otherlode.service.name`, environment variable `OTHERLODE_SERVICE_NAME`
-- `flushIntervalSeconds` → system property `otherlode.flush.interval.seconds`, environment variable `OTHERLODE_FLUSH_INTERVAL_SECONDS`
-
-## Reading OpenTelemetry's settings
-
-A service that already runs OpenTelemetry has named itself once in
-OpenTelemetry's settings. Otherlode reads those, so its findings carry the same
-name as the service's traces. The service name, the namespace, the version and the
-environment each come from the first of these sources that gives a value
-that is not blank, and each value is trimmed:
-
-1. Otherlode's own three sources above: the agent-args string, the
-   `otherlode.*` system property, then the `OTHERLODE_*` environment variable.
-2. OpenTelemetry's own settings, resolved as its Java agent resolves them:
-   each of `otel.service.name` and `otel.resource.attributes` from its
-   system property, else its environment variable (`OTEL_SERVICE_NAME`,
-   `OTEL_RESOURCE_ATTRIBUTES`); the name from `otel.service.name`, else
-   `service.name` in the attributes.
-3. For the name only, detection in the order OpenTelemetry's Java agent
-   uses: the Spring Boot application name (a `--spring.application.name`
-   argument, the `spring.application.name` system property,
-   `SPRING_APPLICATION_NAME`, then `application.properties`,
-   `application.yml` and `application.yaml` in the working directory and on
-   the class path, then `bootstrap.*` on the class path), then the main
-   jar's `Implementation-Title`, then the main jar's file name.
-4. For the name only, OpenTelemetry's default `unknown_service:java`.
-5. For the environment only, `test` when `testRun` is on.
-
-The resource-attribute keys are `service.name`, `service.namespace`, `service.version`, and
-`deployment.environment.name`, then the older `deployment.environment`.
-Each OpenTelemetry setting comes whole from one place, so a set
-`otel.resource.attributes` system property hides `OTEL_RESOURCE_ATTRIBUTES`
-entirely, and `OTEL_SERVICE_NAME` wins over a `service.name` inside that
-system property. A list is `key=value` pairs split by commas, with
-percent-encoded values. If any pair is not `key=value`, Otherlode ignores the
-whole list and logs a warning, as the OpenTelemetry specification says. Set
-an Otherlode option to name the service differently in Otherlode on purpose,
-since Otherlode's own sources win.
-
-In Kubernetes, the OpenTelemetry Operator sets `service.namespace` from the
-pod's `resource.opentelemetry.io/service.namespace` annotation, or else from
-the pod's Kubernetes namespace, and passes it in `OTEL_RESOURCE_ATTRIBUTES`.
-Otherlode reads it from there. Set `OTHERLODE_SERVICE_NAMESPACE` to override it.
-Otherlode never works out a namespace for itself.
+Attach the agent with `-javaagent`, passing `includePackages` at minimum. See
+[`docs/site/attach.md`](docs/site/attach.md) for the flag, Gradle, Spring Boot,
+Docker and Kubernetes. [`docs/site/configuration.md`](docs/site/configuration.md)
+lists every option, where a value comes from (argument string, then system
+property, then environment variable) and how the agent reads OpenTelemetry's
+settings.
 
 Otherlode needs somewhere to send data to. See the `demo` module below for a
 minimal stub, or point it at a real collector.
@@ -330,202 +257,26 @@ tasks pass it to the demo server, and the report names the namespace.
 
 ## Test your app against the agent
 
-The `testkit` module is an embeddable collector for your own tests. It
-speaks the agent's real wire protocol, so the agent under test runs exactly
-as it does in production: start the collector, point the agent's `exportUrl=`
-at it, exercise your app, then ask the collector what it saw.
-
-```kotlin
-OtherlodeTestCollector.start().use { collector ->
-    // Launch your app with
-    // -javaagent:otherlode-agent.jar=exportUrl=${collector.exportUrl},flushIntervalSeconds=1,includePackages=com.acme
-    // and exercise it, then:
-    collector.awaitProbe("com.acme.OrderService", "checkout", Duration.ofSeconds(10))
-    collector.awaitNextFlush(Duration.ofSeconds(10))
-
-    assertTrue(collector.wasHit("com.acme.OrderService", "checkout"))
-    assertFalse(collector.wasHit("com.acme.OrderService", "applyLegacyPromo"))
-    assertTrue(collector.neverHit().isEmpty())
-}
-```
-
-Class names are the dotted binary names the manifest carries
-(`com.acme.OrdersKt` for a Kotlin file's top-level functions,
-`com.acme.Outer$Inner` for a nested class). A function in a
-`@file:JvmMultifileClass` file lives in its part class, such as
-`com.acme.Orders__OrderTotalsKt`, not in the facade Kotlin callers name.
-
-Queries cover methods (`wasHit`, `hitCount`, `neverHit`, `skippedClasses`),
-branch outcomes (`neverHitRoutineOutcomes`), classes
-(`neverInitialized`, `neverInstantiated`), endpoints
-(`wasCalled`, `callCount`, `neverCalled`, `endpoints`,
-`disabledEndpointModules`), optional parameters (`omissionCount`,
-`neverSupplied`, `alwaysSupplied`), the call graph (`unreachedClusters`),
-classes that failed to load (`failedToLoad`),
-dependencies (`dependency`, `unloadedDependencies`,
-`unreferencedDependencies`, `unreachedDependencies`, `failedToLoadDependencies`,
-`absentReferences`) and,
-when the agent runs with `staticBaselineEnabled=true`, `neverLoaded`. Waits cover the next
-flush, a settled state, a probe, an endpoint and a dependency
-(`awaitNextFlush`, `awaitSettled`, `awaitProbe`, `awaitEndpoint`,
-`awaitDependency`, `awaitDependenciesListed`). A dependency with no live
-reference that a class which failed to load references has the status
-`FAILED_TO_LOAD`, and `failedToLoadDependencies` lists it. It asks for a
-review and does not say the dependency can go. Asking about a probe the
-collector has never seen throws `UnknownProbeException` rather than
-answering `false`; the message says whether the class was skipped, loaded
-where no transformer saw it, declared by the static baseline but never
-loaded, instrumented but without that method, or never mentioned at all.
-That keeps "genuinely dead" and "no idea" from ever looking the same. A
-payload the collector cannot accept is listed by `rejectedPayloads`, and
-every other query throws while there is one.
-
-An unreached cluster's root is one of five kinds (`RootKind`). A method with
-no in-scope caller is `UNCALLED`. It is `CALLED_FROM_OUTSIDE_SCOPE` when the
-agent found a reason code outside your scope may call it, which
-`ProbeRef.outsideCaller` names: it overrides a method an outside type
-declares, or it carries a callback annotation. That label is weaker evidence
-for deletion, and nothing else about the cluster changes.
-
-kotlin-stdlib always reads as used on a Kotlin service, since every Kotlin
-class carries `kotlin.Metadata`, and a Kotlin service cannot drop it. A Java
-service that pulls it in is judged on its own use.
-
-With JUnit 5, `@ExtendWith(OtherlodeExtension::class)` starts one collector
-for the test JVM on port 4319 (`otherlode.testkit.port` overrides it) and
-injects it into any test that asks for an `OtherlodeTestCollector`. Run the
-test task with `-javaagent` pointing at that port. The collector accepts one
-agent: with `maxParallelForks` above 1, every fork's agent would post to the
-same port, and every fork gets the same `-javaagent` arguments, so run the
-testkit tests with `maxParallelForks = 1`. A test
-that launches a child JVM with the agent needs a collector of its own, started
-with `OtherlodeTestCollector.start()`, for the same reason. Anything else that
-posts to the port is rejected, and fails every query for the rest of the run.
-
-JaCoCo's agent can sit before or after this one on the command line. Gradle's
-`jacoco` plugin puts its agent after a test task's `jvmArgs`, and that order is
-fine. This agent runs after every agent whose transformer is not
-retransformation-capable, JaCoCo's included, and reads each class's shape from
-its class file, so neither tool's results change. An agent that adds or
-reorders a method's conditional jumps ahead of this one, as AspectJ's weaver
-can, leaves that method with its entry probe but no branch probes.
-
-HotSwap does not work on a woven class whose code you changed. When you debug
-a test from your IDE with the agent on the test task and edit a method
-mid-session, the JVM refuses the redefinition, the IDE reports that HotSwap
-failed, and the old code keeps running until you restart. The agent refuses
-on purpose, so its report never describes code that is not the code running.
-Restart the test, or leave the agent off the task you debug with. Another
-tool's retransformation that leaves the class file alone, as an APM agent's
-does, is not affected.
-
-The first heartbeat has 15 seconds to arrive; set
-`otherlode.testkit.startup.timeout.seconds` to change that.
-
-The testkit and the agent are one version. The collector rejects a payload
-from an agent of another version, and the failure names both versions: use the
-testkit of the agent's version. Result types and enums only grow in a minor
-release, so a `when` over `ProbeKind`, `GeneratedBy`, `RoutineKind`,
-`UnreadShape`, `OutsideCallerKind`, `RootKind`, `ClassFinding`, `EndpointDiscoverySource`,
-`DependencyDiscoverySource` or `DependencyUsage` needs an `else` branch.
-`GeneratedBy`, `RoutineKind` and `UnreadShape` have no "none" value: the field
-on `ProbeRef` is null when the probe has no mark.
-
-The same collector works from Java:
-
-```java
-try (OtherlodeTestCollector collector = OtherlodeTestCollector.start()) {
-    // Launch your app with -javaagent:otherlode-agent.jar=exportUrl=<collector.getExportUrl()>,...
-    collector.awaitProbe("com.acme.OrderService", "checkout", Duration.ofSeconds(10));
-    assertTrue(collector.wasHit("com.acme.OrderService", "checkout"));
-    assertTrue(collector.neverHit().isEmpty());
-}
-```
+The `testkit` module is an embeddable collector for your own tests. See
+[`docs/site/testkit.md`](docs/site/testkit.md) for the setup and
+[`docs/site/testkit-api.md`](docs/site/testkit-api.md) for every query and wait.
 
 The module isn't published yet. Build the jar with
-`./gradlew :testkit:shadowJar` and put it on your test classpath. It bundles the wire classes and
-protobuf-java under `dev.otherlode.testkit.shaded`, so the only dependency it
-brings onto your test classpath is kotlin-stdlib, and never the agent itself,
-which runs from its `-javaagent` jar.
+`./gradlew :testkit:shadowJar` and put it on your test classpath. It bundles the
+wire classes and protobuf-java under `dev.otherlode.testkit.shaded`, so the only
+dependency it brings onto your test classpath is kotlin-stdlib, and never the
+agent itself, which runs from its `-javaagent` jar.
 
 ## Name the tests that call your code
 
-Production holds no test classes, so a method that only your tests call
-reads as uncalled, the same as a method that nothing calls. To have the
-collector name those tests, run the agent in your test JVM too, against the
-same collector, with `testRun=true` (ADR 0050):
-
-```kotlin
-// build.gradle.kts
-tasks.test {
-    jvmArgs(
-        "-javaagent:/path/to/otherlode-agent.jar=serviceName=my-service,testRun=true," +
-            "staticBaselineEnabled=true,serviceInstanceId=my-service-unit-tests," +
-            "includePackages=com.acme.myservice,exportUrl=http://localhost:4319",
-    )
-}
-```
-
-- `serviceName` and `serviceNamespace` must match production's, or the
-  test run belongs to another service.
-- `includePackages` must cover your test classes as well as the production
-  code. They usually share packages, so production's value works.
-- The `jacoco` plugin can stay applied: the order of the two agents changes
-  neither tool's results, as "Test your app against the agent" above explains.
-- `staticBaselineEnabled=true` sends call edges from every test class on
-  the classpath, not only from the tests that ran.
-- Pin `serviceInstanceId` once per test task. The collector reads each
-  test instance's newest complete scan and its newest run's manifest, so a
-  pinned id gives one current picture per task. A random id makes every
-  test JVM its own instance, and its edges stay until the run is pruned.
-  With `maxParallelForks` above 1, the forks of one task share the id, so
-  the newest fork's manifest hides the others'. The scan covers every test
-  class whichever fork sends it.
-- A test run waits up to 15 seconds at shutdown for its scan to end, after
-  its final flush. A test JVM often exits before the scan ends. So a test
-  task can take that much longer to finish, more when the collector is slow
-  or unreachable. A collector with an environment of its own counts each
-  test-run payload as an environment mismatch.
-- Leave the environment unset in the test JVM, including
-  `OTEL_RESOURCE_ATTRIBUTES` and `OTHERLODE_ENVIRONMENT` that CI may pass
-  down. The `test` default is what keeps a test run apart from production
-  if a collector drops the flag.
-- Set `staticBaselineEnabled=true` in production too. Without a complete
-  production scan, the collector cannot rule out a caller in a production
-  class that never loaded. It then names the tests but does not call the
-  method "called only by tests".
-
-A collector built before `test_run` existed drops the flag when its
-redaction is on. The run then reaches the backend as an ordinary run in the
-`test` environment, apart from production's. If that collector also stamps
-its environment with `upsert`, the test run lands in production's
-environment. So update the collector before you turn `testRun` on.
+Run the agent in your test JVM with `testRun=true` (ADR 0050). See
+[`docs/site/test-runs.md`](docs/site/test-runs.md) for the setup.
 
 ## Which compilers' output the agent reads
 
-The agent tells a compiler's generated code (a data class's `copy`, a case
-class's `productElement`, a suspend function's state machine) from yours by
-the exact body the compiler wrote. Those bodies change between compiler
-releases, so the marks are exact only for releases the agent was checked
-against, with each one's output run through the real analyser (ADR 0055):
-
-- kotlinc 1.9.25, 2.1.21, 2.2.21 and 2.4.20. They stand for 1.9 to 2.4;
-  2.1.21 stands for the releases that default to `-jvm-default=disable`.
-- javac 17, 21 and 25.
-- scalac 2.12 and 2.13, version-blind: a Scala 2 class does not name its
-  compiler, so the rules read every variant found from 2.12.18 to 2.12.21 and
-  from 2.13.14 to 2.13.18.
-- Scala 3 from 3.3.3 to 3.9.0, one release at a time. A Scala 3 class names
-  the release that wrote it, and the agent reads the releases listed in
-  `src/main/resources/dev/otherlode/scala3-read-releases.txt`.
-
-Code in the outline of compiler output whose body the agent has not read, from
-any other compiler or a release that changed a shape, is reported as an unread
-shape: it is probed and counted, but never called dead code and never part of
-an unreached cluster, and the collector lists it apart. The agent logs a summary of unread shapes on its
-first flush, naming the Scala 3 releases it has not read. A scheduled CI job
-compiles the fixtures with the newest release of each compiler, so a change
-in a shape fails a build before it reaches a report.
+See [`docs/site/compatibility.md`](docs/site/compatibility.md) for the compiler
+releases the agent was checked against (ADR 0055) and what it does with code from
+any other.
 
 ## Design notes
 
@@ -543,9 +294,10 @@ agent, the collector, and those records share.
 - Branch tracking covers two-outcome conditional jumps and
   `TABLESWITCH`/`LOOKUPSWITCH`; `GOTO`/`JSR` aren't tracked (no second
   outcome to observe).
-- A small number of classes can't be safely instrumented (for example,
-  Kotlin files using `@file:JvmName`). These are skipped and reported, not
-  silently dropped from coverage.
+- A class the agent cannot instrument is skipped and reported, not silently
+  dropped from coverage. Two causes: a supertype its loader cannot serve as a
+  class file, or a failure while rewriting it. See
+  [`docs/site/classes.md`](docs/site/classes.md).
 - Wire schema (`src/main/proto/otherlode/v1/otherlode.proto`) is published
   to the Buf Schema Registry as `buf.build/otherlode/otherlode` for external
   consumers (e.g. a separately-versioned collector).

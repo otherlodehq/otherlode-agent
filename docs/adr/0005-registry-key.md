@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted, amended by 0053
 ---
 
 # Key the probe registry by classloader, class name and layout hash

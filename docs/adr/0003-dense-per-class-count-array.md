@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted, amended by 0060
 ---
 
 # Record hits in a dense per-class count array
@@ -16,3 +16,5 @@ One array type serves both tiers. A count subsumes a boolean (zero means never h
 ## Consequences
 
 Recording needs no global probe ID space. A flat identifier exists only on the wire (0011). This is the JaCoCo approach.
+
+Amended 2026-10-04 by 0060: a woven class gets the `$otherlodeProbeCounts` field only below class-file version 55, where the probes read it through an accessor (an interface below version 52, which cannot have one, has no probe outside `<clinit>`). From version 55 the probes load the array as a dynamic constant and the class gets no field. The dense array, the non-atomic `probes[index]++` and the choice of counts over booleans stand.

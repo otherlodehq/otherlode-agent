@@ -19,3 +19,13 @@ For frameworks Otherlode has no endpoint module for, an opt-in bridge module cou
 - The bridge only ever produces endpoints discovered by dispatch. It has no declared list, so "never called" is not computable for them; that is what a framework module is for.
 - A servlet-only application gets the route OpenTelemetry reports for it, which may be a servlet mapping such as `/api/*`, exactly as `http.route` would show.
 - The module compiles against the public `opentelemetry-instrumentation-api` artifact at its oldest supported 2.x version; the relocated names are verified against a real agent jar, and any drift trips the module's own linkage-failure disable and lands in `disabled_endpoint_modules`.
+
+## Amendment, 2026-10-07: the cases the bridge skips
+
+The bridge skips a route, binding nothing and counting nothing, in three cases (`EndpointRegistry.recordDispatchIfUnowned`):
+
+- A different framework module already holds the same identity.
+- A different framework holds the same template with verb `*`.
+- The request is a `HEAD` and a different framework holds the `GET` endpoint of the same template, since frameworks answer `HEAD` from the `GET` handler.
+
+Without the skip, a request a framework module counted would count twice. If the owning module switches itself off after declaring its endpoints, those requests go uncounted. `endpointsEnabled=false`, the one setting that turns modules off, turns the bridge off with them. A servlet context path still slips past the check: OpenTelemetry's route includes it and a framework module's identity does not, so the bridge can record a second endpoint for such a route.

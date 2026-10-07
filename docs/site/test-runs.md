@@ -71,6 +71,12 @@ With `maxParallelForks` above 1, the forks of one task share the pinned ID. The 
 
 **An unset environment.** The `test` default keeps a test run's data in an environment of its own, apart from production's, as a second guard beside the flag.
 
+## Older and environment-stamping collectors
+
+A collector built before the test-run flag existed drops it when its redaction is on. The run then reaches the backend as an ordinary run in the `test` environment, apart from production's. If that collector also stamps its own environment with `upsert`, the test run lands in production's environment. Update the collector before you turn `testRun` on.
+
+A collector with an environment of its own and `insert` keeps the agent's `test`, and counts each of the run's payloads as an environment mismatch.
+
 ## Expect a longer shutdown
 
 The wait for the scan can add up to 15 seconds to a test task's exit, and more when the collector is slow or unreachable. A test JVM often exits before the scan ends, and the scan is the only source of edges from test classes that never loaded. The agent flushes first, so a runner that halts a slow JVM still delivers the final manifest.

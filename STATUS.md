@@ -404,28 +404,25 @@ a decision or a session of its own:
    or 422. Probably right for 401 (a token can rotate), worth a decision for
    400 and 413. The exporter's KDoc says "fails at once", which is true only
    within one send.
-4. **`SizeGuard` has no ADR.** The 8000- and 65535-byte rules, and the
-   choice that a method already over 8000 keeps its branch probes, are only
-   in code and `methods-and-branches.md`.
-5. **ADR and README drift.** Found by the docs agents, still open:
-   - ADRs 0001, 0003 and 0004 open with the REBASE and probe-field design
-     their amendments replaced; ADR 0005's consequences open with the method
-     tier not being retransformation-capable.
-   - ADR 0006 says a switch has one edge per distinct case target; its own
-     consequences, `CONTEXT.md` and the code say one per case.
-   - ADR 0020 says the JAX-RS supertype walk skips bootstrap-loader classes;
-     `JaxRsModule` skips by package prefix.
-   - ADR 0030 says the dependency listing starts in `premain` (it starts on
-     the first flush or the scan) and that a `Premain-Class` jar is never a
-     dependency (a nested one is).
-   - ADR 0019 does not list the `*`-verb and `HEAD` cases the bridge skips.
-   - The README's line on `@file:JvmName` classes being skipped is stale
-     (ADR 0058), and its customer-facing sections (attach, options,
-     OpenTelemetry settings, testkit) now duplicate `docs/site/`; cut them to
-     a link.
-   - ADR 0050 and the README say a test run waits for the scan; it waits
-     only with `staticBaselineEnabled` on.
+4. **`SizeGuard` has no ADR.** Closed 2026-10-07. The rules were in ADR 0052's 2026-10-05
+   amendment, not only in code; they moved to ADR 0067, which corrects that amendment's claim that
+   the 65535 rule is the one place an earlier transformer can change a layout hash.
+5. **ADR and README drift.** Closed 2026-10-07. ADRs 0001, 0003, 0005, 0019, 0030 and 0050 carry
+   amendments or status lines naming what replaced their design; ADR 0006's switch sentence is
+   corrected in place. ADR 0020 already matched `JaxRsModule`, and ADR 0004's amendment already
+   covered the field. The README's customer sections are links to `docs/site/`; the test-run
+   collector facts only it held moved to `test-runs.md`, and `configuration.md`'s `testRun` row
+   names the `staticBaselineEnabled` condition.
 
+Items 1 and 3 are in a grill (2026-10-07). Settled so far: item 1 is detected at transform time
+per hook (a hook matching no declared non-abstract method disables the whole module), reported in
+`disabled_endpoint_modules` with a new additive `kind` enum beside the reason text, recorded as an
+amendment to ADR 0017, and backed by a scheduled CI canary running each endpoint module's tests
+against its framework's newest release. Research corrected the item: a missing dispatch hook
+leaves every declared endpoint at zero hits, a false "never called", not only an absent list.
+Item 3 keeps resending deltas and manifests on 400 and 413 (ADR 0009 amendment; the KDoc and ADR
+lines calling them permanent are wrong), and the static baseline keeps its chunks on 413. The
+server counts a manifest whose deltas were refused as zero hits; how to close that is open.
 
 ### Outside callers and classes that failed to load: landed in all three repos
 

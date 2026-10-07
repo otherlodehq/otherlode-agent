@@ -4,7 +4,7 @@ status: accepted, amended by 0061
 
 # Place branch probes on private edges, never on jump targets
 
-Every two-outcome conditional jump (`IFEQ` through `IF_ACMPNE`, `IFNULL`, `IFNONNULL`) is rewritten into two private edges, one per outcome, each incrementing its own slot before jumping to the original target. `TABLESWITCH` and `LOOKUPSWITCH` get one edge per distinct case target plus one for the default. A probe is never planted at an original jump target: that point is usually also the if/else merge point, or shared by several switch cases, so a single probe there would fold several outcomes into one counter.
+Every two-outcome conditional jump (`IFEQ` through `IF_ACMPNE`, `IFNULL`, `IFNONNULL`) is rewritten into two private edges, one per outcome, each incrementing its own slot before jumping to the original target. `TABLESWITCH` and `LOOKUPSWITCH` get one edge per case entry whose target is not the default, plus one for the default. A probe is never planted at an original jump target: that point is usually also the if/else merge point, or shared by several switch cases, so a single probe there would fold several outcomes into one counter.
 
 ## Consequences
 
@@ -16,3 +16,5 @@ Every two-outcome conditional jump (`IFEQ` through `IF_ACMPNE`, `IFNULL`, `IFNON
 - Sites the adopter did not write get no probe at all, and a dropped site still takes its place in the site numbering (0025).
 
 Amended 2026-10-05 by 0061: the branch probes are written without ASM recomputing the method's frames. Every frame the received bytes carry stays, and the branch tier writes a frame at each label it inserts from the state at the jump it sits on.
+
+Corrected 2026-10-07: the opening said a switch gets one edge per distinct case target. It gets one per case entry whose target is not the default, plus the default, as the consequences above say and `BranchSiteAnalyzer` counts.

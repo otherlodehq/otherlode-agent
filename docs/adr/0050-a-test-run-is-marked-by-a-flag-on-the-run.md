@@ -27,3 +27,5 @@ A collector can name the tests that call production code only if it can tell a t
 - The old-collector protection holds only while the environment is the default. An environment set for the test JVM, by an option or by OpenTelemetry's settings that CI passes down, or a collector that stamps its environment with `upsert`, puts a stripped test run in that environment.
 - A collector with an environment of its own and `insert` keeps the agent's `test`, and counts each of the run's payloads in its environment-mismatch metric.
 - A scan that has not ended 15 seconds after the final flush may be lost. The collector then reads that run's manifest edges, and an earlier complete scan of the same pinned instance if there is one. That older scan may name test classes deleted since.
+
+Amended 2026-10-07: the 15-second wait at shutdown happens only when the run has a static baseline scan to wait on. With `staticBaselineEnabled` off there is no scan thread, and `Agent.shutdown` returns after the final flush. If the scan is still running when the wait ends, the agent logs a WARNING.

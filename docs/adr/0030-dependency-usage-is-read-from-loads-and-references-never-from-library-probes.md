@@ -174,3 +174,9 @@ referenced class that no loader can find is an *absent reference* and is reporte
 ## Amended on 2026-10-06: a reference from a class that failed to load
 
 A class that failed to load (ADR 0065) is never dead code, so its references cannot support a claim that a dependency is unused. A loaded dependency with no live reference that some judging run references from a class that reads failed to load in scope, in that run's complete baseline, gets the status `failed_to_load` in place of `unreferenced`, `unreached` or `no-live-reference`. It asks for review and claims no removal: the class may fail because of the very classpath the dependency is on, and a dependency only a long-failing class uses may not be needed. The server, the testkit and the demo collector apply the same rule. Decided with Luke; server ADR 0057 has the dates and the display.
+
+## Amended on 2026-10-07: where the listing runs, and which agent jars it skips
+
+The listing does not start from `premain`. It runs once per process, on the thread of whichever comes first: the first flush, which runs it before its sweep (`ExportScheduler`), or the static baseline scan, which runs it before waiting on it (`BaselineReferenceFilter`). The text above that says a background thread started from `premain`, or that the listing runs off `premain`, describes the aim of keeping it off boot, not the thread.
+
+The agent-jar rule applies to a jar on its own, meaning a classpath entry or a `Class-Path` target. Its `Class-Path` is still followed (`StartupClasspathLister`). A jar stored inside a fat jar is judged only by the adopter's-own rule and the rule that a jar holding a class in the agent's own package is never a dependency (`JarClassifier`), so `byte-buddy-agent` under `BOOT-INF/lib` stays a dependency: there it is a library the application calls, not a running agent.
