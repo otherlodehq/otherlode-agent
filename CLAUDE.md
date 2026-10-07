@@ -13,7 +13,14 @@ description of the design, so it cannot go stale about the code.
   record, so its opening can describe a design later replaced.
 - `STATUS.md`: what is in flight, parked or known to be wrong.
 - `CONTEXT.md`: the glossary. Use its terms with its meanings.
-- `docs/site/`: the customer docs, synced to otherlode.dev per release.
+- `docs/site/`: the customer docs, synced to otherlode.dev per release. A
+  page's file name is its URL, so never rename one. The pages:
+  - `attach`, `configuration`: getting the agent running, every option.
+  - `methods-and-branches`, `endpoints`, `classes`, `dependencies`,
+    `call-graph`: what the agent records and reports.
+  - `testkit`, `testkit-api`, `test-runs`: testing against the agent.
+  - `compatibility`, `overhead`, `data-sent`, `how-it-works`,
+    `troubleshooting`: running it in production.
 
 ## Invariants
 
