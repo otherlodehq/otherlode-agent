@@ -162,7 +162,7 @@ A collector calls a declared class never loaded only when it holds the complete 
 ```text
 otherlode: failed to send static baseline chunk 2 of 3; it and the chunks after it are sent again after a flush the collector confirms
 otherlode: the static baseline reached the collector after a retry
-otherlode: the collector refused static baseline chunk 1 of 3 with status 413, which resending the same bytes cannot change; the scan is not sent again
+otherlode: the collector refused static baseline chunk 1 of 3 with status 400, which resending the same bytes cannot change; the scan is not sent again
 ```
 
 In the testkit, `neverLoaded()` also leaves out a declared class whose methods are all inline, generated or unread shapes. Kotlin callers never call an inline method, and the compiler regenerates generated ones, so such a class never loading is no evidence it is dead.
@@ -211,5 +211,5 @@ Every line starts with `otherlode:`.
 | `WARNING` | `the definition attempt of a woven class could not be read from its thread's stack; ...` | Some classes cannot be reported as failed to load. |
 | `WARNING` | `<class> registered dynamically but was not in the static baseline computed at startup ...` | The static scan has a blind spot in this deployment. |
 | `WARNING` | `failed to send static baseline chunk <i> of <n>; ...` | A chunk will be sent again. |
-| `WARNING` | `the collector refused static baseline chunk <i> of <n> with status <code>, ...` | The collector refused a chunk. The agent does not resend the scan. |
+| `WARNING` | `the collector refused static baseline chunk <i> of <n> with status <code>, ...` | The collector refused a chunk with a `400` or `422`. The agent does not resend the scan. |
 | `INFO` | `the static baseline reached the collector after a retry` | A failed chunk got through. |

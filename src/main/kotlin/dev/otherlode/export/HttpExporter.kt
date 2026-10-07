@@ -16,10 +16,12 @@ import java.time.Duration
  * connection or timeout error, a 5xx, a 408, or a 429. Any other 4xx fails
  * at once. The collector has already read the bytes and rejected them, so
  * resending the same bytes a moment later cannot change its answer; it only
- * burns the flush budget. If every attempt fails, the exception propagates
- * to the caller. The caller is expected to be [ExportScheduler]. It treats
- * the exception as a signal to leave the registry baseline untouched, and
- * retries the whole delta on the next flush.
+ * burns the flush budget. Such a 4xx is a refusal, and the
+ * [ExportFailedException] it throws says so ([ExportFailedException.refused]).
+ * If every attempt fails, the last failure propagates to the caller; a retryable status that
+ * failed every attempt is not a refusal. The caller is expected to be [ExportScheduler]. It
+ * treats the exception as a signal to leave the registry baseline untouched, and retries the
+ * whole delta on the next flush.
  *
  * The client is built on the first send, on whichever thread sends, not when the exporter is
  * constructed: building a JDK [HttpClient] initialises the default `SSLContext` even for an `http`
@@ -32,8 +34,9 @@ import java.time.Duration
  * runs on, and the flush waiting for it, liveness heartbeat included,
  * instead of failing into the retry/backoff path above.
  *
- * The collector may require a bearer token, passed as [authToken]. A 401 or 403 is a permanent
- * failure like any other 4xx: resending with the same token cannot change the answer.
+ * The collector may require a bearer token, passed as [authToken]. A 401 or 403 fails that send at
+ * once, as a refusal. The scheduler offers the payload again on the next flush, so a rotated token
+ * heals without a restart.
  */
 class HttpExporter(
     private val endpoint: String,
@@ -82,9 +85,10 @@ class HttpExporter(
                 }
             if (status != null) {
                 if (status in 200..299) return
-                val failure = ExportFailedException("otherlode: unexpected status $status from $uri", status)
-                if (!isRetryable(status)) throw failure
-                lastError = failure
+                if (!isRetryable(status)) {
+                    throw ExportFailedException("otherlode: unexpected status $status from $uri", status, refused = status in 400..499)
+                }
+                lastError = ExportFailedException("otherlode: unexpected status $status from $uri", status)
             }
             if (attempt < maxAttempts) {
                 Thread.sleep(backoff.toMillis())
@@ -118,8 +122,14 @@ class HttpExporter(
     }
 }
 
-/** [statusCode] is null when the failure was not an HTTP response at all (for example, every attempt threw). */
+/**
+ * [statusCode] is null when the failure was not an HTTP response at all (for example, every attempt threw).
+ * [refused] is true when the collector answered with a 4xx the exporter does not retry, which is a
+ * refusal of that one request; it is false for every other failure, a retryable status that failed
+ * on every attempt included.
+ */
 class ExportFailedException(
     message: String,
     val statusCode: Int? = null,
+    val refused: Boolean = false,
 ) : RuntimeException(message)

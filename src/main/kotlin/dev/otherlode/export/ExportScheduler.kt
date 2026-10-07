@@ -420,12 +420,14 @@ class ExportScheduler(
 
     /**
      * Sends probe, endpoint and dependency deltas together, advancing each snapshot only once its
-     * send is confirmed. A failure stops the loop: the sends already confirmed stay advanced, the
+     * send is confirmed. A refused send (an [ExportFailedException] with [ExportFailedException.refused])
+     * does not stop the loop: it is logged, its snapshots stay where they were, and the next batch
+     * is sent. Any other failure stops the loop. The sends already confirmed stay advanced, the
      * rest are recomputed and resent on the next flush.
      *
      * When every send in the loop is confirmed, the heartbeat alone included, the counts of
      * counting generation [generation] have reached the collector, and this records it
-     * ([DependencyRegistry.markCountsDelivered]). A failure records nothing.
+     * ([DependencyRegistry.markCountsDelivered]). A refused or failed send records nothing.
      *
      * Returns whether every send in the loop was confirmed.
      */
@@ -438,13 +440,21 @@ class ExportScheduler(
             val riders =
                 endpointRegistry.computeDeltas(maxDeltasPerBatch).map(::endpointDeltaRider) +
                     dependencyRegistry.computeDeltas(maxDeltasPerBatch).map(::dependencyDeltaRider)
+            var allConfirmed = true
             for (send in composeDeltaSends(probeBatches, riders, final)) {
-                exporter.exportDeltaBatch(send.batch)
+                try {
+                    exporter.exportDeltaBatch(send.batch)
+                } catch (e: ExportFailedException) {
+                    if (!e.refused) throw e
+                    allConfirmed = false
+                    log.log(Level.WARNING, "otherlode: delta export failed, will retry next flush", e)
+                    continue
+                }
                 send.probeSnapshot?.let(registry::advanceBaseline)
                 send.riders.forEach { it.advance() }
             }
-            dependencyRegistry.markCountsDelivered(generation)
-            return true
+            if (allConfirmed) dependencyRegistry.markCountsDelivered(generation)
+            return allConfirmed
         } catch (t: Throwable) {
             log.log(Level.WARNING, "otherlode: delta export failed, will retry next flush", t)
             return false

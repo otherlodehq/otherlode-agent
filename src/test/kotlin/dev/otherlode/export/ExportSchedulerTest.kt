@@ -527,6 +527,175 @@ class ExportSchedulerTest {
         )
     }
 
+    /** Fails the delta sends [outcome] picks by attempt number, counting every send attempt from 1; records the confirmed ones. */
+    private class ScriptedDeltaExporter(
+        val outcome: (attempt: Int) -> Exception?,
+    ) : Exporter {
+        var attempts = 0
+        val confirmed = mutableListOf<DeltaBatch>()
+        val manifests = mutableListOf<ProbeManifest>()
+
+        override fun exportDeltaBatch(batch: DeltaBatch) {
+            outcome(++attempts)?.let { throw it }
+            confirmed += batch
+        }
+
+        override fun exportManifest(manifest: ProbeManifest) {
+            manifests += manifest
+        }
+
+        override fun exportStaticBaseline(baseline: StaticBaseline) {}
+    }
+
+    private class TwoBatchScenario(
+        val config: AgentConfig,
+        val resource: ResourceAttributes,
+        outcome: (attempt: Int) -> Exception?,
+    ) {
+        val registry = ProbeRegistry()
+        val foo = registry.register("com.example.Foo", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "m", "()V", 1))).also { it[0] = 3 }
+        val bar = registry.register("com.example.Bar", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "m", "()V", 1))).also { it[0] = 5 }
+        val dependencyRegistry =
+            DependencyRegistry().apply {
+                register(
+                    listOf(DependencyIdentity("g", "a", "1")),
+                    DependencyIdentitySource.POM_PROPERTIES,
+                    "/libs/a.jar",
+                    DependencyDiscoverySource.STARTUP_CLASSPATH,
+                    classCount = 1,
+                )
+                markListingComplete()
+                markCounted()
+            }
+        val exporter = ScriptedDeltaExporter(outcome)
+        val scheduler =
+            ExportScheduler(
+                config,
+                resource,
+                registry,
+                EndpointRegistry(),
+                exporter,
+                maxDeltasPerBatch = 1,
+                dependencyRegistry = dependencyRegistry,
+            )
+
+        /** The hit totals of every probe delta in [batches], in send order. */
+        fun totals(batches: List<DeltaBatch> = exporter.confirmed): List<Long> = batches.flatMap { b -> b.deltas.map { it.hitsTotal } }
+    }
+
+    @Test
+    fun `a refused delta batch does not stop the later batches, which stay delivered`() {
+        val scenario =
+            TwoBatchScenario(config, resource) { attempt ->
+                if (attempt ==
+                    1
+                ) {
+                    ExportFailedException("too large", 413, refused = true)
+                } else {
+                    null
+                }
+            }
+
+        scenario.scheduler.flush()
+
+        assertEquals(2, scenario.exporter.attempts, "the second batch is sent after the first is refused")
+        assertEquals(1, scenario.exporter.confirmed.size)
+        val delivered =
+            scenario.exporter.confirmed
+                .single()
+                .deltas
+                .single()
+                .hitsTotal
+        val refusedProbe = if (delivered == 3L) scenario.bar else scenario.foo
+        val refusedTotal = refusedProbe[0].toLong()
+
+        scenario.scheduler.flush()
+
+        val resent = scenario.totals(scenario.exporter.confirmed.drop(1))
+        assertEquals(listOf(refusedTotal), resent, "only the refused batch's probe goes again, with the full total")
+    }
+
+    @Test
+    fun `a flush with a refused delta batch does not mark counts delivered or send dependenciesListed`() {
+        val scenario =
+            TwoBatchScenario(config, resource) { attempt ->
+                if (attempt ==
+                    1
+                ) {
+                    ExportFailedException("refused", 400, refused = true)
+                } else {
+                    null
+                }
+            }
+        val deliveredBefore = scenario.dependencyRegistry.deliveredGeneration
+
+        scenario.scheduler.flush()
+
+        assertEquals(deliveredBefore, scenario.dependencyRegistry.deliveredGeneration)
+        assertTrue(scenario.exporter.manifests.none { it.dependenciesListed })
+
+        scenario.scheduler.flush()
+
+        assertTrue(scenario.dependencyRegistry.deliveredGeneration > deliveredBefore, "the next flush, fully accepted, marks them")
+    }
+
+    @Test
+    fun `a transport failure on a delta batch ends the loop`() {
+        val scenario = TwoBatchScenario(config, resource) { attempt -> if (attempt == 1) ExportFailedException("timed out") else null }
+
+        scenario.scheduler.flush()
+
+        assertEquals(1, scenario.exporter.attempts)
+    }
+
+    @Test
+    fun `a retryable status that ran out of attempts ends the loop`() {
+        val scenario =
+            TwoBatchScenario(config, resource) { attempt ->
+                if (attempt ==
+                    1
+                ) {
+                    ExportFailedException("unavailable", 503, refused = false)
+                } else {
+                    null
+                }
+            }
+
+        scenario.scheduler.flush()
+
+        assertEquals(1, scenario.exporter.attempts)
+    }
+
+    @Test
+    fun `a 400-refused delta batch is offered again on every flush, carrying hits recorded meanwhile`() {
+        val offered = mutableListOf<Long>()
+        var acceptFromFlush = 3
+        var flush = 0
+        val exporter =
+            ScriptedDeltaExporter { _ ->
+                if (flush < acceptFromFlush) ExportFailedException("refused", 400, refused = true) else null
+            }
+        val registry = ProbeRegistry()
+        val probes = registry.register("com.example.Foo", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "m", "()V", 1)))
+        probes[0] = 3
+        val scheduler = ExportScheduler(config, resource, registry, EndpointRegistry(), exporter, maxDeltasPerBatch = 1)
+
+        repeat(3) {
+            flush++
+            offered +=
+                registry
+                    .computeDeltaBatch(resource)
+                    .batch.deltas
+                    .map { it.hitsTotal }
+            scheduler.flush()
+            if (flush == 2) probes[0] += 1
+        }
+
+        assertEquals(listOf(3L, 3L, 4L), offered, "each flush offers the probe again, with the hits recorded since")
+        assertEquals(3, exporter.attempts)
+        assertEquals(listOf(4L), exporter.confirmed.flatMap { b -> b.deltas.map { it.hitsTotal } }, "nothing lost once accepted")
+    }
+
     /** Returns 0 from every `nextLong(bound)`, so the first scheduled flush runs immediately on start(). */
     private val noJitter =
         object : Random() {

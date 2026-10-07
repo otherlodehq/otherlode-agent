@@ -33,15 +33,32 @@ class StaticBaselineSenderTest {
     }
 
     @Test
-    fun `a chunk the collector refuses for good is dropped with the rest, and never sent again`() {
-        val exporter = CountingExporter { ExportFailedException("too large", 413) }
+    fun `a chunk the collector refuses for its content is dropped with the rest, and never sent again`() {
+        for (status in listOf(400, 422)) {
+            val exporter = CountingExporter { ExportFailedException("refused", status, refused = true) }
+            val sender = StaticBaselineSender(exporter)
+            sender.offer(chunks(2))
+
+            assertTrue(sender.sendPending(), "nothing is left to send once the collector refuses the scan, status $status")
+            repeat(4) { sender.sendPending() }
+
+            assertEquals(listOf(0), exporter.attempts, "status $status")
+        }
+    }
+
+    @Test
+    fun `a 413 keeps the chunks, since a proxy limit can be raised while the process runs`() {
+        var refusals = 1
+        val exporter =
+            CountingExporter { if (refusals-- > 0) ExportFailedException("too large", 413, refused = true) else null }
         val sender = StaticBaselineSender(exporter)
         sender.offer(chunks(2))
 
-        assertTrue(sender.sendPending(), "nothing is left to send once the collector refuses the scan")
-        repeat(4) { sender.sendPending() }
+        assertFalse(sender.sendPending())
+        assertFalse(sender.retryPending(), "chunk 0 is confirmed, chunk 1 is still pending")
+        assertTrue(sender.retryPending())
 
-        assertEquals(listOf(0), exporter.attempts)
+        assertEquals(listOf(0, 0, 1), exporter.attempts)
     }
 
     @Test

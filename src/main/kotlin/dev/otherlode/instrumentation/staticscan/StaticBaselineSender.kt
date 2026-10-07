@@ -19,9 +19,10 @@ import kotlin.concurrent.withLock
  * flush, which waits for it, keeps its budget.
  * A chunk that reached the collector with its answer lost is sent twice, which a collector reads
  * as one, since it keeps received chunks by index. A chunk the collector refuses for its content
- * (a 400, 413 or 422) drops every pending chunk, since resending the same bytes would only be
- * refused again. Any other refusal (a 401 while a token rotates, a 404 before a collector serves
- * the route) keeps them, to be sent after a later flush the collector confirms.
+ * (a 400 or 422) drops every pending chunk, since resending the same bytes would only be
+ * refused again. Any other refusal keeps them, to be sent after a later flush the collector
+ * confirms: a 401 while a token rotates, a 404 before a collector serves the route, a 413 since
+ * a proxy's limit can be raised while the process runs.
  *
  * Only one thread sends at a time. A call that finds another sending returns at once rather than
  * wait, so the flush thread never blocks behind the scan thread's exporter backoff.
@@ -118,6 +119,6 @@ class StaticBaselineSender(
 
     private companion object {
         /** Statuses that refuse a request's content, which the same bytes would meet again. */
-        val REFUSED_CONTENT = setOf(400, 413, 422)
+        val REFUSED_CONTENT = setOf(400, 422)
     }
 }

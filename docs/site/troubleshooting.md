@@ -147,16 +147,16 @@ The exception message is `otherlode: unexpected status <code> from <exportUrl>/v
 | `404` | The URL does not reach a collector. The agent appends `/v1/otherlode/deltas`, `/v1/otherlode/manifest` and `/v1/otherlode/static-baseline` to `exportUrl`, so a proxy must forward those paths. Drop any path from `exportUrl` that the collector does not expect. |
 | `301`, `302`, `307`, `308` | The agent does not follow redirects. A proxy that redirects `http` to `https` causes this. Put the final `https://` URL in `exportUrl`. |
 | `400`, `422` | The receiver rejected the content. With the testkit's collector, see [A test fails with a version mismatch](#a-test-fails-with-a-version-mismatch). With another receiver, see its log for the reason. |
-| `413` | The receiver refused the request body as too large. A reverse proxy or gateway in front of the collector usually has the limit. Raise it. The agent splits its payloads by entry count, not by size, so the fix is on the receiving side. [What the agent sends](data-sent#chunk-caps) lists the caps. |
+| `413` | The receiver refused the request body as too large. A reverse proxy or gateway in front of the collector usually has the limit. Raise it. The agent keeps the static baseline after a `413` and sends it once the limit is raised, with no restart. The agent splits its payloads by entry count, not by size, so the fix is on the receiving side. [What the agent sends](data-sent#chunk-caps) lists the caps. |
 | `408`, `429`, `5xx` | The agent retries these within the send. If they persist across flushes, the collector is overloaded or down. |
 
-The agent resends the same payload on the next flush for every status above, so a repeated warning means the answer has not changed. The static baseline is the exception. For `400`, `413` and `422` it logs a warning and stops sending the scan, since the same bytes meet the same answer:
+The agent resends the same payload on the next flush for every status above, so a repeated warning means the answer has not changed. The static baseline is the exception. For `400` and `422` it logs a warning and stops sending the scan, since the same bytes meet the same answer:
 
 ```text
-otherlode: the collector refused static baseline chunk 3 of 7 with status 413, which resending the same bytes cannot change; the scan is not sent again
+otherlode: the collector refused static baseline chunk 3 of 7 with status 400, which resending the same bytes cannot change; the scan is not sent again
 ```
 
-A static baseline refused this way is not sent again in this process. Fix the limit and restart the JVM.
+A static baseline refused this way is not sent again in this process. A `413` is not refused this way: the agent keeps the scan and sends it after a later flush the collector confirms.
 
 ### A static baseline send fails
 

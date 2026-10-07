@@ -438,7 +438,9 @@ order, one commit each:
    `onError` disables every non-JAX-RS module whose matcher accepted the class (recorded per
    thread, never on a re-weave), the Ktor 2 matcher takes classes only, the testkit's `kind`,
    `endpoints.md`, `troubleshooting.md`, `data-sent.md`'s manifest table and `testkit-api.md`.
-4. Agent, item 3: the payload sequence and `counts_pending_since`, stamped together under one
+4. Agent, item 3, in two commits. 4a, landed 2026-10-07: a refused delta batch (a 4xx the
+   exporter does not retry, flagged on `ExportFailedException`) no longer stops the flush's delta
+   sends, and the static baseline keeps its scan on 413. 4b: the payload sequence and `counts_pending_since`, stamped together under one
    lock just before each payload is sent; the pending state's two moves (set at the first
    unconfirmed hit batch, cleared only by a flush that sent and confirmed every hit batch it
    built); the leading and closing heartbeats; every delta batch sent past a refusal (a 4xx the

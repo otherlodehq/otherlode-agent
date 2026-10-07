@@ -13,6 +13,7 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class HttpExporterTest {
@@ -187,6 +188,63 @@ class HttpExporterTest {
             assertEquals(1, requestCount.get(), "status $status should fail fast")
             server?.stop(0)
         }
+    }
+
+    private val emptyBatch = DeltaBatch(ResourceAttributes("checkout", null, "i-1", null, "run-1"), emptyList())
+
+    @Test
+    fun `a 4xx the exporter does not retry is flagged as a refusal`() {
+        for (status in listOf(400, 401, 403, 404, 413, 422)) {
+            requestCount.set(0)
+            val endpoint = startServer { status }
+
+            val failure = assertFailsWith<ExportFailedException> { exporterFor(endpoint).exportDeltaBatch(emptyBatch) }
+
+            assertTrue(failure.refused, "status $status")
+            assertEquals(status, failure.statusCode)
+            server?.stop(0)
+        }
+    }
+
+    @Test
+    fun `a retryable status that failed on every attempt is not a refusal`() {
+        for (status in listOf(503, 429, 408)) {
+            requestCount.set(0)
+            val endpoint = startServer { status }
+
+            val failure = assertFailsWith<ExportFailedException> { exporterFor(endpoint).exportDeltaBatch(emptyBatch) }
+
+            assertEquals(5, requestCount.get(), "status $status")
+            assertEquals(status, failure.statusCode)
+            assertFalse(failure.refused, "status $status")
+            server?.stop(0)
+        }
+    }
+
+    @Test
+    fun `a redirect is not a refusal`() {
+        val endpoint = startServer { 302 }
+
+        val failure = assertFailsWith<ExportFailedException> { exporterFor(endpoint).exportDeltaBatch(emptyBatch) }
+
+        assertEquals(302, failure.statusCode)
+        assertFalse(failure.refused)
+    }
+
+    @Test
+    fun `a connection failure is not a refusal`() {
+        val closed = ServerSocket(0).use { it.localPort }
+        val exporter =
+            HttpExporter(
+                endpoint = "http://localhost:$closed",
+                maxAttempts = 2,
+                initialBackoff = Duration.ofMillis(1),
+                maxBackoff = Duration.ofMillis(1),
+            )
+
+        val thrown = assertFailsWith<Exception> { exporter.exportDeltaBatch(emptyBatch) }
+
+        assertFalse(thrown is ExportFailedException && thrown.refused)
     }
 
     @Test
