@@ -2125,6 +2125,8 @@ Recorded, not built:
 - **The other two repos read `RESOURCES_ONLY`.** The server needs the rule
   the testkit and the stub apply: a dependency every listing counted no class
   in is never unloaded. No wire change: `class_count` already carries it.
+  Landed in the server on 2026-10-07 (server ADR 0058, `1592ad9`). The
+  collector forwards and judges nothing, so it needs no change.
 - **Ktor regex routes merge with their parent.** `PathSegmentRegexRouteSelector`
   contributes nothing to the template. It is absent from Ktor 2.0.3, and its
   `getRegex()` returns a `kotlin.text.Regex` the shaded jar would rename, so a
