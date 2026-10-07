@@ -39,6 +39,17 @@ interface EndpointModule {
      */
     val handlerInterfaces: Set<String> get() = emptySet()
 
+    /**
+     * Whether a failed weave of a class this module matched leaves the module on. The default is
+     * false: the pipeline switches off every module whose matcher accepted a class that failed to
+     * weave, since the hooks the weave would have added are lost.
+     *
+     * A module overrides this to true only when a class whose weave fails takes the module's own
+     * staged declarations with it, so nothing partial is left. JAX-RS declares an adopter class's
+     * routes while transforming that class and hooks only that class, so a failed weave drops both.
+     */
+    val weaveFailureLeavesNothingPartial: Boolean get() = false
+
     fun typeMatcher(): ElementMatcher<in TypeDescription>
 
     /**

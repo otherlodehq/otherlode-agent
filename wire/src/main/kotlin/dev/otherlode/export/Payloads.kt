@@ -862,7 +862,7 @@ enum class DisabledEndpointModuleKind {
     /** Any other throw from the module's advice. */
     ADVICE_FAILED,
 
-    /** The module's own `transform` threw. */
+    /** The module's own `transform` threw, or a framework class it hooks failed to weave. */
     TRANSFORM_FAILED,
 
     /** Walking a framework's route objects threw. */

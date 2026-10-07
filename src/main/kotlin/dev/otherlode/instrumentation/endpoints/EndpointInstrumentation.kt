@@ -9,6 +9,7 @@ import dev.otherlode.instrumentation.endpoints.api.EndpointModule
 import dev.otherlode.registry.EndpointRegistry
 import net.bytebuddy.agent.builder.AgentBuilder
 import net.bytebuddy.agent.builder.ResettableClassFileTransformer
+import net.bytebuddy.description.method.MethodDescription
 import net.bytebuddy.description.type.TypeDescription
 import net.bytebuddy.dynamic.DynamicType
 import net.bytebuddy.matcher.ElementMatcher
@@ -59,6 +60,23 @@ class EndpointInstrumentation(
      * ByteBuddy makes before it matches or transforms anything, and cleared when it completes.
      */
     private val alreadyLoaded = ThreadLocal<Boolean?>()
+
+    /**
+     * Every module whose raw matcher accepted, or threw on, the class ByteBuddy is handling on this
+     * thread. The listener's error callback gets no module, so this is how it knows whose hooks a
+     * failed weave lost. One thread has one class in flight (see [PendingDeclarations]), so the
+     * record is per thread and is cleared when the class is done.
+     */
+    private val matchedModules = ThreadLocal<MutableSet<EndpointModule>?>()
+
+    private fun recordMatched(module: EndpointModule) {
+        var matched = matchedModules.get()
+        if (matched == null) {
+            matched = LinkedHashSet()
+            matchedModules.set(matched)
+        }
+        matched += module
+    }
 
     /** Modules whose advice failed to weave again on a retransformation, each logged once. */
     private val reweaveFailureLogged = ConcurrentHashMap.newKeySet<String>()
@@ -135,7 +153,7 @@ class EndpointInstrumentation(
 
         for (module in modules) {
             builder =
-                builder.type(rawMatcher(module)).transform { typeBuilder, typeDescription, classLoader, _, _ ->
+                builder.type(rawMatcher(module, ::recordMatched)).transform { typeBuilder, typeDescription, classLoader, _, _ ->
                     // Anything the module declares from here is held until the rewrite produces
                     // bytes; see PendingDeclarations. The mark is where this module's own
                     // declarations start, since another module matching the same class may have
@@ -143,7 +161,12 @@ class EndpointInstrumentation(
                     val mark = pendingDeclarations.begin()
                     if (alreadyLoaded.get() == true) return@transform reweave(module, typeBuilder, typeDescription, classLoader, mark)
                     try {
-                        module.transform(typeBuilder, typeDescription, adviceBinderFor(classLoader), classLoader)
+                        // A view of the cached binder that records this call's hooks alone; see
+                        // AdviceBinder.forCall.
+                        val binder = adviceBinderFor(classLoader).forCall()
+                        val woven = module.transform(typeBuilder, typeDescription, binder, classLoader)
+                        stageDisableForUnmatchedHook(module, binder, typeDescription, mark)
+                        woven
                     } catch (t: Throwable) {
                         // This catch is why a throwing module needs the rollback: it returns the
                         // builder unchanged, so the transform still succeeds as far as ByteBuddy
@@ -177,6 +200,37 @@ class EndpointInstrumentation(
     }
 
     /**
+     * Stages a switch-off of [module] when one of the hooks it attached while transforming
+     * [typeDescription] matches no method `Advice` can weave: ByteBuddy writes such a class
+     * unchanged and reports success, so the lost hook would otherwise go unseen. What the module
+     * declared for this class is dropped, and the hooks that did match stay woven but inert once the module is off. The switch-off
+     * is staged beside the declarations, so it is committed with the class's transformation and
+     * dropped if that fails.
+     */
+    private fun stageDisableForUnmatchedHook(
+        module: EndpointModule,
+        binder: AdviceBinder,
+        typeDescription: TypeDescription,
+        mark: Int,
+    ) {
+        for (hook in binder.recordedHooks()) {
+            val wovenMethods =
+                typeDescription.declaredMethods.count { method: MethodDescription ->
+                    hook.methodMatcher.matches(method) && !method.isAbstract && !method.isNative
+                }
+            if (wovenMethods > 0) continue
+            val reason =
+                "hook ${hook.adviceClassName.substringAfterLast('.')} (${hook.methodMatcher}) matches no method " +
+                    "ByteBuddy can weave on ${typeDescription.name}"
+            pendingDeclarations.rollbackTo(mark)
+            pendingDeclarations.stage {
+                OtherlodeEndpoints.moduleDisabled(module.name, OtherlodeEndpoints.KIND_HOOK_UNMATCHED, reason)
+            }
+            return
+        }
+    }
+
+    /**
      * Weaves [module]'s advice into the bytes passed in for an already-loaded class, by another
      * agent's retransformation or a redefinition, and drops whatever the module declared while doing
      * it, since the class's endpoints were declared when it first loaded. A module that throws here
@@ -191,7 +245,7 @@ class EndpointInstrumentation(
         mark: Int,
     ): DynamicType.Builder<*> =
         try {
-            module.transform(typeBuilder, typeDescription, adviceBinderFor(classLoader), classLoader)
+            module.transform(typeBuilder, typeDescription, adviceBinderFor(classLoader).forCall(), classLoader)
         } catch (t: Throwable) {
             if (reweaveFailureLogged.add(module.name)) {
                 log.log(
@@ -245,7 +299,8 @@ class EndpointInstrumentation(
 
     companion object {
         /**
-         * The matcher [install] registers for [module]: its [EndpointModule.classLoaderMatcher] first,
+         * The matcher [install] registers for [module], which calls [onMatched] with [module] when it
+         * accepts a class or throws on one: its [EndpointModule.classLoaderMatcher] first,
          * so a loader the module rejects never has a class parsed for it, then
          * [EndpointModule.typeMatcher] for the defining loader.
          *
@@ -253,19 +308,31 @@ class EndpointInstrumentation(
          * form builds a new `namedOneOf` for every call and this runs for every class the JVM
          * loads. A module's matcher must therefore not hold the loader it was built for.
          */
-        fun rawMatcher(module: EndpointModule): AgentBuilder.RawMatcher {
+        fun rawMatcher(
+            module: EndpointModule,
+            onMatched: (EndpointModule) -> Unit = {},
+        ): AgentBuilder.RawMatcher {
             val loaderMatcher = module.classLoaderMatcher()
             val byLoader = Collections.synchronizedMap(WeakHashMap<ClassLoader, ElementMatcher<in TypeDescription>>())
             val bootstrapMatcher = lazy(LazyThreadSafetyMode.PUBLICATION) { module.typeMatcher(null) }
             return AgentBuilder.RawMatcher { typeDescription, classLoader, _, _, _ ->
                 if (!loaderMatcher.matches(classLoader)) return@RawMatcher false
-                val typeMatcher: ElementMatcher<in TypeDescription> =
-                    if (classLoader == null) {
-                        bootstrapMatcher.value
-                    } else {
-                        byLoader.computeIfAbsent(classLoader) { module.typeMatcher(it) }
+                val matched =
+                    try {
+                        val typeMatcher: ElementMatcher<in TypeDescription> =
+                            if (classLoader == null) {
+                                bootstrapMatcher.value
+                            } else {
+                                byLoader.computeIfAbsent(classLoader) { module.typeMatcher(it) }
+                            }
+                        typeMatcher.matches(typeDescription)
+                    } catch (t: Throwable) {
+                        // A module whose matcher cannot say whether it wanted the class may have.
+                        onMatched(module)
+                        throw t
                     }
-                typeMatcher.matches(typeDescription)
+                if (matched) onMatched(module)
+                matched
             }
         }
     }
@@ -287,6 +354,7 @@ class EndpointInstrumentation(
             loaded: Boolean,
         ) {
             alreadyLoaded.set(loaded)
+            matchedModules.remove()
         }
 
         override fun onTransformation(
@@ -311,6 +379,12 @@ class EndpointInstrumentation(
                 "otherlode: endpoint instrumentation failed for $typeName, class will run without endpoint tracking",
                 throwable,
             )
+            // A re-weave keeps the bytes the first weave produced, so its failure loses no hook.
+            if (loaded) return
+            for (module in matchedModules.get().orEmpty()) {
+                if (module.weaveFailureLeavesNothingPartial) continue
+                OtherlodeEndpoints.moduleFailed(module.name, OtherlodeEndpoints.KIND_TRANSFORM_FAILED, throwable)
+            }
         }
 
         override fun onComplete(
@@ -321,6 +395,7 @@ class EndpointInstrumentation(
         ) {
             pendingDeclarations.discard()
             alreadyLoaded.remove()
+            matchedModules.remove()
         }
     }
 }

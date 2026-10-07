@@ -120,7 +120,7 @@ A runtime-generated proxy of a resource class, such as a Spring CGLIB proxy, is 
 
 Every `createContext` call registers an endpoint, with or without a handler. A later `setHandler` attaches the handler to the context. A context is a prefix match with no verb constraint, so the verb is `*` and the template is the context path exactly as registered. A request is counted when the server finds its context, before the handler runs. A request no context matches (the server's own 404) counts nothing.
 
-The module hooks the JDK's internal `sun.net.httpserver` classes, which are not a supported API. On a JDK that changes them, the module can find nothing to hook.
+The module hooks the JDK's internal `sun.net.httpserver` classes, which are not a supported API. On a JDK that changes a method the module hooks, the module switches itself off with the kind `HOOK_UNMATCHED` (see [below](#modules-that-switch-themselves-off)). Only a renamed class goes unseen, since the module then matches nothing.
 
 ## Route bridge for OpenTelemetry
 
@@ -170,19 +170,25 @@ When a compiler generates a pass-through between the framework and your function
 
 ## Modules that switch themselves off
 
-Each module is built against one version of its framework and does not check the version when it installs. If its advice throws for any reason, including a linkage error against a framework version it does not match, the module switches itself off for the rest of the process. It logs one WARNING:
+Each module is built against one version of its framework and does not check the version when it installs. A module switches itself off for the rest of the process when:
+
+- its advice throws for any reason, including a linkage error against a framework version it does not match;
+- one of its hooks matches no method on the framework class it hooks, because a framework release renamed or changed the method;
+- a framework class it hooks fails to weave.
+
+A lost registration hook would leave endpoints undeclared. A lost dispatch hook is worse: the module still declares every route but never counts a call, so every endpoint of that framework would read as never called. Switching the module off turns that silence into a report. It logs one WARNING:
 
 ```text
 otherlode: endpoint module ktor-3 disabled itself: <reason>
 ```
 
-The agent sends the module's name, the reason and a kind naming why to the collector with the next manifest. The kind separates a linkage error, any other advice failure, a transform failure and a route walk failure. A collector can then tell "this service has no endpoints" from "this service's endpoints were not instrumented". The testkit exposes it as `disabledEndpointModules()`, and its endpoint queries mention a disabled module in the error they throw for an unknown endpoint.
+The agent sends the module's name, the reason and a kind naming why to the collector with the next manifest. The kind separates a linkage error, any other advice failure, a transform failure (the module's own transform threw, or a framework class it hooks failed to weave), a route walk failure, and a hook that matched no method (`HOOK_UNMATCHED`). A collector can then tell "this service has no endpoints" from "this service's endpoints were not instrumented". The testkit exposes it as `disabledEndpointModules()`, and its endpoint queries mention a disabled module in the error they throw for an unknown endpoint.
 
 A module that switches off stops counting but does not retract. The endpoints it already declared stay in the list, and their counts stop, so they read as never called. The disabled-modules list is the only signal for that. Treat any endpoint finding from a service with a disabled module as unreliable for that framework.
 
-Two related failures do not disable a module. If a module cannot transform one class, that class runs without endpoint tracking and the agent logs a WARNING naming it. If another agent retransforms a class the module already wove and the module cannot weave again, the agent logs one WARNING for that module and that class goes untracked until it is next transformed.
+A class that fails to weave runs from its original bytes and the agent logs a WARNING naming it. The JAX-RS module is the exception to the switch-off: it hooks your own resource classes, and a class that fails to weave takes its own routes with it, so the module stays on for the rest. If another agent retransforms a class the module already wove and the module cannot weave again, nothing switches off. The agent logs one WARNING for that module and that class goes untracked until it is next transformed.
 
-A framework version that no longer has the method a module hooks does not fail. The advice finds nothing to attach to, and the service reports no endpoints for that framework with no disabled module to show for it. See [troubleshooting](troubleshooting).
+A framework class that was renamed is not caught. The module never matches it, which reads as the framework being absent. See [troubleshooting](troubleshooting).
 
 ## Settings
 

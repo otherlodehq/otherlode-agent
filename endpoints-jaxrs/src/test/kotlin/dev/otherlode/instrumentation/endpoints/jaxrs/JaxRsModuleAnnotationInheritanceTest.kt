@@ -9,8 +9,12 @@ import jakarta.ws.rs.GET
 import jakarta.ws.rs.HttpMethod
 import jakarta.ws.rs.Path
 import net.bytebuddy.ByteBuddy
+import net.bytebuddy.description.annotation.AnnotationDescription
+import net.bytebuddy.description.modifier.MethodManifestation
+import net.bytebuddy.description.modifier.Visibility
 import net.bytebuddy.description.type.TypeDescription
 import net.bytebuddy.dynamic.ClassFileLocator
+import net.bytebuddy.implementation.FixedValue
 import net.bytebuddy.pool.TypePool
 import java.lang.reflect.Proxy
 import java.net.URLClassLoader
@@ -52,6 +56,48 @@ class JaxRsModuleAnnotationInheritanceTest {
 
             val templates = calls.map { it.verb to it.template }.toSet()
             assertEquals(setOf("GET" to "/api/orders/{id}", "POST" to "/api/orders"), templates)
+        }
+    }
+
+    @Test
+    fun `an annotated native method is neither declared nor hooked`() {
+        withRecordingResolver { calls ->
+            // Generated and described from bytes, never loaded, so the test JVM's own agent never sees it.
+            val loader = JaxRsModule::class.java.classLoader
+            val name = "com.example.jaxrs.generated.NativeMethodResource"
+
+            fun annotated(
+                type: Class<out Annotation>,
+                value: String? = null,
+            ) = AnnotationDescription.Builder
+                .ofType(type)
+                .let { if (value == null) it else it.define("value", value) }
+                .build()
+            val unloaded =
+                ByteBuddy()
+                    .subclass(Any::class.java)
+                    .name(name)
+                    .annotateType(annotated(Path::class.java, "/native-method"))
+                    .defineMethod("woven", String::class.java, Visibility.PUBLIC)
+                    .intercept(FixedValue.value("woven"))
+                    .annotateMethod(annotated(GET::class.java), annotated(Path::class.java, "/woven"))
+                    .defineMethod("spin", String::class.java, Visibility.PUBLIC, MethodManifestation.NATIVE)
+                    .withoutCode()
+                    .annotateMethod(annotated(GET::class.java), annotated(Path::class.java, "/native"))
+                    .make()
+            val locator = ClassFileLocator.Compound(ClassFileLocator.Simple.of(unloaded), ClassFileLocator.ForClassLoader.of(loader))
+            val type =
+                TypePool.Default
+                    .of(locator)
+                    .describe(name)
+                    .resolve()
+            val binder = AdviceBinder(JaxRsModule::class.java.classLoader, loader).forCall()
+
+            JaxRsModule(jerseyPresent = { true }).transform(ByteBuddy().redefine<Any>(type, locator), type, binder, loader)
+
+            assertEquals(setOf("GET" to "/native-method/woven"), calls.map { it.verb to it.template }.toSet())
+            val hook = binder.recordedHooks().single()
+            assertEquals(listOf("woven"), type.declaredMethods.filter { hook.methodMatcher.matches(it) }.map { it.internalName })
         }
     }
 

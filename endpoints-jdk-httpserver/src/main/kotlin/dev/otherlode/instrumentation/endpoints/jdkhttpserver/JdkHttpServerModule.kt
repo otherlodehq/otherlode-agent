@@ -64,18 +64,16 @@ class JdkHttpServerModule : EndpointModule {
     ): DynamicType.Builder<*> =
         when (typeDescription.name) {
             SERVER_IMPL -> {
-                builder.visit(advice.bind("$ADVICE_PACKAGE.CreateContextAdvice").on(named("createContext")))
+                builder.visit(advice.hook("$ADVICE_PACKAGE.CreateContextAdvice", named("createContext")))
             }
 
             HTTP_CONTEXT_IMPL -> {
-                builder.visit(advice.bind("$ADVICE_PACKAGE.SetHandlerAdvice").on(named("setHandler")))
+                builder.visit(advice.hook("$ADVICE_PACKAGE.SetHandlerAdvice", named("setHandler")))
             }
 
             CONTEXT_LIST -> {
                 builder.visit(
-                    advice
-                        .bind("$ADVICE_PACKAGE.FindContextAdvice")
-                        .on(named<MethodDescription>("findContext").and(takesArguments(2))),
+                    advice.hook("$ADVICE_PACKAGE.FindContextAdvice", named<MethodDescription>("findContext").and(takesArguments(2))),
                 )
             }
 

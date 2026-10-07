@@ -10,6 +10,7 @@ import net.bytebuddy.dynamic.DynamicType
 import net.bytebuddy.matcher.ElementMatcher
 import net.bytebuddy.matcher.ElementMatchers.isAbstract
 import net.bytebuddy.matcher.ElementMatchers.isInterface
+import net.bytebuddy.matcher.ElementMatchers.isNative
 import net.bytebuddy.matcher.ElementMatchers.isStatic
 import net.bytebuddy.matcher.ElementMatchers.isSynthetic
 import net.bytebuddy.matcher.ElementMatchers.not
@@ -44,7 +45,7 @@ private val HTTP_METHOD_NAMES = NAMESPACES.map { "$it.HttpMethod" }.toSet()
 private val SKIPPED_SUPERTYPE_PREFIXES = listOf("java.", "jdk.", "sun.", "com.sun.", "kotlin.", "jakarta.", "javax.")
 
 private val ELIGIBLE_METHOD: ElementMatcher.Junction<MethodDescription> =
-    not(isStatic<MethodDescription>()).and(not(isAbstract())).and(not(isSynthetic()))
+    not(isStatic<MethodDescription>()).and(not(isAbstract())).and(not(isNative())).and(not(isSynthetic()))
 
 /**
  * Endpoint module for JAX-RS, covering both the `javax.ws.rs` and `jakarta.ws.rs` namespaces with
@@ -79,6 +80,8 @@ class JaxRsModule
         private val jerseyPresent: (ClassLoader?) -> Boolean = ::isJerseyPresent,
     ) : EndpointModule {
         override val name: String = MODULE
+
+        override val weaveFailureLeavesNothingPartial: Boolean = true
 
         private val log = System.getLogger(JaxRsModule::class.java.name)
         private val classPathIgnoredWarned = AtomicBoolean(false)
@@ -172,13 +175,16 @@ class JaxRsModule
                 }
             if (matched.isEmpty()) return builder
 
-            val boundAdvice = advice.bind("$ADVICE_PACKAGE.ResourceMethodAdvice")
+            val matchedMethods = matched.mapTo(mutableSetOf()) { (method, _, _) -> method.internalName to method.descriptor }
+            val matchesRead =
+                ElementMatcher<MethodDescription> { method -> (method.internalName to method.descriptor) in matchedMethods }
+            // Bound before anything is declared, so advice that cannot be bound leaves no route behind.
+            val wrapper = advice.hook("$ADVICE_PACKAGE.ResourceMethodAdvice", matchesRead)
             for ((method, verb, template) in matched) {
                 val key = "${typeDescription.name}#${method.internalName}${method.descriptor}"
                 OtherlodeEndpoints.register(MODULE, key, verb, template, null, typeDescription.name, method.internalName, method.descriptor)
             }
-            val matchedMethods = matched.mapTo(mutableSetOf()) { (method, _, _) -> method.internalName to method.descriptor }
-            return builder.visit(boundAdvice.on { method -> (method.internalName to method.descriptor) in matchedMethods })
+            return builder.visit(wrapper)
         }
 
         /**

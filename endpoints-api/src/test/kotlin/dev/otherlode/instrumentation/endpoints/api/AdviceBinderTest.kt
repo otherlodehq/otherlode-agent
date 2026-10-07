@@ -4,6 +4,7 @@ import dev.otherlode.instrumentation.endpoints.api.fixture.PingAdvice
 import net.bytebuddy.agent.ByteBuddyAgent
 import net.bytebuddy.agent.builder.AgentBuilder
 import net.bytebuddy.agent.builder.ResettableClassFileTransformer
+import net.bytebuddy.description.method.MethodDescription
 import net.bytebuddy.dynamic.ClassFileLocator
 import net.bytebuddy.matcher.ElementMatchers.named
 import java.io.File
@@ -94,5 +95,45 @@ class AdviceBinderTest {
 
         assertNotNull(withoutMap)
         assertNotNull(withEmptyMap)
+    }
+
+    @Test
+    fun `hook returns a wrapper and records the advice class with its matcher on the view that attached it`() {
+        val shared = AdviceBinder(javaClass.classLoader, javaClass.classLoader)
+        val view = shared.forCall()
+        val matcher = named<MethodDescription>("ping")
+
+        val wrapper = view.hook("dev.otherlode.instrumentation.endpoints.api.fixture.PingAdvice", matcher)
+
+        assertNotNull(wrapper)
+        val recorded = view.recordedHooks().single()
+        assertEquals("dev.otherlode.instrumentation.endpoints.api.fixture.PingAdvice", recorded.adviceClassName)
+        assertTrue(matcher === recorded.methodMatcher, "the matcher is recorded as given")
+    }
+
+    @Test
+    fun `a view's record is its own, so another view and the shared binder see none of it`() {
+        val shared = AdviceBinder(javaClass.classLoader, javaClass.classLoader)
+        val first = shared.forCall()
+        val second = shared.forCall()
+
+        first.hook("dev.otherlode.instrumentation.endpoints.api.fixture.PingAdvice", named<MethodDescription>("ping"))
+
+        assertEquals(1, first.recordedHooks().size)
+        assertTrue(second.recordedHooks().isEmpty())
+        assertTrue(shared.recordedHooks().isEmpty())
+    }
+
+    @Test
+    fun `hook with remap prefixes binds the remapped advice and records it`() {
+        val view = AdviceBinder(javaClass.classLoader, javaClass.classLoader).forCall()
+
+        view.hook(
+            "dev.otherlode.instrumentation.endpoints.api.fixture.RemapAdvice",
+            named<MethodDescription>("ping"),
+            mapOf("com/example/remap/" to "com/example/remapped/"),
+        )
+
+        assertEquals(1, view.recordedHooks().size)
     }
 }

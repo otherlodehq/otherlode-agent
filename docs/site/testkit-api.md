@@ -463,9 +463,9 @@ What switched an endpoint module off.
 |---|---|
 | `LINKAGE_ERROR` | A `LinkageError`, wherever it was caught: the framework release differs from the one the module was built for. |
 | `ADVICE_FAILED` | Any other throw from the module's advice. |
-| `TRANSFORM_FAILED` | The module's own transform threw. |
+| `TRANSFORM_FAILED` | The module's own transform threw, or a framework class it hooks failed to weave. |
 | `ROUTE_WALK_FAILED` | Walking a framework's route objects threw. |
-| `HOOK_UNMATCHED` | Reserved for a hook that matched no method on the framework class. |
+| `HOOK_UNMATCHED` | A hook matched no method on the framework class it hooks: a framework release renamed or changed the method. |
 
 ### DependencyUsage
 

@@ -46,17 +46,13 @@ class Ktor3Module : EndpointModule {
         when (typeDescription.name) {
             ROUTING_NODE -> {
                 builder.visit(
-                    advice
-                        .bind("$ADVICE_PACKAGE.HandleAdvice")
-                        .on(named<MethodDescription>("handle").and(takesArguments(1))),
+                    advice.hook("$ADVICE_PACKAGE.HandleAdvice", named<MethodDescription>("handle").and(takesArguments(1))),
                 )
             }
 
             ROUTING_ROOT -> {
                 builder.visit(
-                    advice
-                        .bind("$ADVICE_PACKAGE.ExecuteResultAdvice")
-                        .on(named<MethodDescription>("executeResult")),
+                    advice.hook("$ADVICE_PACKAGE.ExecuteResultAdvice", named<MethodDescription>("executeResult")),
                 )
             }
 

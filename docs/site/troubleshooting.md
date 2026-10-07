@@ -295,17 +295,18 @@ This is the JVM's line, not the agent's, and it is harmless. See [the CDS warnin
 otherlode: endpoint module spring-webmvc disabled itself: java.lang.NoSuchMethodError: ...
 ```
 
-An endpoint module found a framework class that does not match the version it supports and switched itself off for the rest of the process. The module name is one of `jaxrs`, `jdk-httpserver`, `ktor-2`, `ktor-3`, `spring-webmvc`, or `otel`. The other modules and the method and branch tiers keep working. The instance reports the module as disabled, with a kind naming why (linkage error, advice failure, transform failure or route walk failure), so a collector can tell "no endpoints" from "endpoints not instrumented". The testkit lists it with `collector.disabledEndpointModules()`.
+An endpoint module found a framework class that does not match the version it supports and switched itself off for the rest of the process. That happens when its advice throws, when one of its hooks matches no method on the framework class (a framework release renamed or changed the method), or when a framework class it hooks fails to weave. The log line names the cause, and for an unmatched hook it names the hook and the class. The module name is one of `jaxrs`, `jdk-httpserver`, `ktor-2`, `ktor-3`, `spring-webmvc`, or `otel`. The other modules and the method and branch tiers keep working. The instance reports the module as disabled, with a kind naming why (linkage error, advice failure, transform failure, route walk failure or an unmatched hook), so a collector can tell "no endpoints" from "endpoints not instrumented". The testkit lists it with `collector.disabledEndpointModules()`.
 
-Check your framework version against [the supported versions](endpoints). Upgrade or downgrade the framework, or set `endpointsEnabled=false` to turn the endpoint tier off. A module that disabled itself after declaring some routes leaves those routes in the report with no counting, so they read as never called. Treat that module's endpoints as unknown.
+Check your framework version against [the supported versions](endpoints) and [compatibility](compatibility). Upgrade or downgrade the framework, or set `endpointsEnabled=false` to turn the endpoint tier off. A module that disabled itself after declaring some routes leaves those routes in the report with no counting, so they read as never called. Treat that module's endpoints as unknown.
 
 Related lines:
 
 | Message | Meaning |
 |---|---|
+| `otherlode: endpoint module <name> disabled itself: <reason>` | The module is switched off. For an unmatched hook the reason names the hook and the class. |
 | `otherlode: endpoint module <name> failed to transform <class>` | The module failed on one class and was switched off for the process. |
 | `otherlode: endpoint module <name> failed while declaring its routes` | The module threw while it read the framework's route table. |
-| `otherlode: endpoint instrumentation failed for <class>, class will run without endpoint tracking` | One class could not take the module's advice. |
+| `otherlode: endpoint instrumentation failed for <class>, class will run without endpoint tracking` | One class could not take the module's advice. Every module that matched it is switched off, except JAX-RS. |
 | `otherlode: handler lambdas and method references will not be named on this JVM: <reason>` | The JDK internals the agent reads to name a Java lambda handler differ on this JVM. Endpoints still count, and the handler of a lambda route shows no method. |
 | `otherlode: jaxrs: <class>#<method> inherits conflicting JAX-RS annotations from more than one interface, using <interface>` | The first interface's annotations win. Remove the conflict. |
 | `otherlode: endpoint module discovery stopped early` | A module's provider failed to load and the rest were skipped. Report the trace. |

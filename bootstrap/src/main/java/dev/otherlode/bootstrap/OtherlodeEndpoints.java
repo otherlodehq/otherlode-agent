@@ -407,7 +407,7 @@ public final class OtherlodeEndpoints {
     /** Any other throw from the module's advice. */
     public static final int KIND_ADVICE_FAILED = 2;
 
-    /** The module's own {@code transform} threw. */
+    /** The module's own {@code transform} threw, or a framework class it hooks failed to weave. */
     public static final int KIND_TRANSFORM_FAILED = 3;
 
     /** Walking a framework's route objects threw. */

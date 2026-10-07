@@ -6,8 +6,10 @@ import net.bytebuddy.description.method.MethodDescription
 import net.bytebuddy.description.type.TypeDescription
 import net.bytebuddy.dynamic.DynamicType
 import net.bytebuddy.matcher.ElementMatcher
+import net.bytebuddy.matcher.ElementMatchers.isInterface
 import net.bytebuddy.matcher.ElementMatchers.named
 import net.bytebuddy.matcher.ElementMatchers.namedOneOf
+import net.bytebuddy.matcher.ElementMatchers.not
 import net.bytebuddy.matcher.ElementMatchers.takesArguments
 
 private const val ROUTE = "io.ktor.server.routing.Route"
@@ -34,7 +36,9 @@ private const val ADVICE_PACKAGE = "dev.otherlode.endpoints.ktor2"
 class Ktor2Module : EndpointModule {
     override val name: String = "ktor-2"
 
-    override fun typeMatcher(): ElementMatcher<in TypeDescription> = namedOneOf(ROUTE, ROUTING)
+    // Ktor 3 turned `Route` and `Routing` into interfaces whose `handle` is abstract and which
+    // declare no `executeResult`, so only the Ktor 2 classes match.
+    override fun typeMatcher(): ElementMatcher<in TypeDescription> = namedOneOf<TypeDescription>(ROUTE, ROUTING).and(not(isInterface()))
 
     override fun transform(
         builder: DynamicType.Builder<*>,
@@ -45,17 +49,13 @@ class Ktor2Module : EndpointModule {
         when (typeDescription.name) {
             ROUTE -> {
                 builder.visit(
-                    advice
-                        .bind("$ADVICE_PACKAGE.HandleAdvice")
-                        .on(named<MethodDescription>("handle").and(takesArguments(1))),
+                    advice.hook("$ADVICE_PACKAGE.HandleAdvice", named<MethodDescription>("handle").and(takesArguments(1))),
                 )
             }
 
             ROUTING -> {
                 builder.visit(
-                    advice
-                        .bind("$ADVICE_PACKAGE.ExecuteResultAdvice")
-                        .on(named<MethodDescription>("executeResult")),
+                    advice.hook("$ADVICE_PACKAGE.ExecuteResultAdvice", named<MethodDescription>("executeResult")),
                 )
             }
 

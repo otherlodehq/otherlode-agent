@@ -92,50 +92,51 @@ class SpringWebMvcModule : EndpointModule {
             HANDLER_METHOD_MAPPING -> {
                 builder
                     .visit(
-                        advice
-                            .bind("$ADVICE_PACKAGE.RegisterHandlerMethodAdvice")
-                            .on(named<MethodDescription>("registerHandlerMethod").and(takesArguments(3))),
+                        advice.hook(
+                            "$ADVICE_PACKAGE.RegisterHandlerMethodAdvice",
+                            named<MethodDescription>("registerHandlerMethod").and(takesArguments(3)),
+                        ),
                     ).visit(
-                        advice
-                            .bind("$ADVICE_PACKAGE.RegisterMappingAdvice")
-                            .on(named<MethodDescription>("registerMapping").and(takesArguments(3))),
+                        advice.hook(
+                            "$ADVICE_PACKAGE.RegisterMappingAdvice",
+                            named<MethodDescription>("registerMapping").and(takesArguments(3)),
+                        ),
                     )
             }
 
             REQUEST_MAPPING_HANDLER_MAPPING -> {
                 builder.visit(
-                    advice
-                        .bind("$ADVICE_PACKAGE.HandleMatchAdvice")
-                        .on(named<MethodDescription>("handleMatch").and(takesArguments(3))),
+                    advice.hook("$ADVICE_PACKAGE.HandleMatchAdvice", named<MethodDescription>("handleMatch").and(takesArguments(3))),
                 )
             }
 
             URL_HANDLER_MAPPING -> {
                 builder
                     .visit(
-                        advice
-                            .bind("$ADVICE_PACKAGE.RegisterUrlHandlerAdvice")
-                            .on(
-                                named<MethodDescription>("registerHandler")
-                                    .and(takesArguments(String::class.java, Any::class.java)),
-                            ),
+                        advice.hook(
+                            "$ADVICE_PACKAGE.RegisterUrlHandlerAdvice",
+                            named<MethodDescription>("registerHandler").and(takesArguments(String::class.java, Any::class.java)),
+                        ),
                     ).visit(
-                        advice
-                            .bind("$ADVICE_PACKAGE.BuildPathExposingHandlerAdvice")
-                            .on(named<MethodDescription>("buildPathExposingHandler").and(takesArguments(4))),
+                        advice.hook(
+                            "$ADVICE_PACKAGE.BuildPathExposingHandlerAdvice",
+                            named<MethodDescription>("buildPathExposingHandler").and(takesArguments(4)),
+                        ),
                     )
             }
 
             ROUTER_FUNCTION_MAPPING -> {
                 builder
                     .visit(
-                        advice
-                            .bind("$ADVICE_PACKAGE.InitRouterFunctionsAdvice")
-                            .on(named<MethodDescription>("initRouterFunctions").and(takesArguments(0))),
+                        advice.hook(
+                            "$ADVICE_PACKAGE.InitRouterFunctionsAdvice",
+                            named<MethodDescription>("initRouterFunctions").and(takesArguments(0)),
+                        ),
                     ).visit(
-                        advice
-                            .bind("$ADVICE_PACKAGE.SetAttributesAdvice")
-                            .on(named<MethodDescription>("setAttributes").and(takesArguments(3))),
+                        advice.hook(
+                            "$ADVICE_PACKAGE.SetAttributesAdvice",
+                            named<MethodDescription>("setAttributes").and(takesArguments(3)),
+                        ),
                     )
             }
 

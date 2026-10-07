@@ -47,7 +47,7 @@ class OtelBridgeModule : EndpointModule {
         classLoader: ClassLoader?,
     ): DynamicType.Builder<*> {
         val onEnd = named<MethodDescription>("onEnd").and(takesArguments(5))
-        return builder.visit(advice.bind(ADVICE_CLASS, remapPrefixesFor(typeDescription.name)).on(onEnd))
+        return builder.visit(advice.hook(ADVICE_CLASS, onEnd, remapPrefixesFor(typeDescription.name)))
     }
 }
 
@@ -56,7 +56,7 @@ class OtelBridgeModule : EndpointModule {
  * [typeName], keyed only on whether [typeName] is the shaded or the unshaded extractor name.
  * Empty for the unshaded name, since [OnEndAdvice] is already written against it directly.
  *
- * [AdviceBinder.bind] tries prefixes longest first, so the order these are written in here is for
+ * [AdviceBinder.hook] tries prefixes longest first, so the order these are written in here is for
  * readability only.
  *
  * `internal` rather than `private` so [OtelBridgeModuleTest] can pin the exact rewrite this

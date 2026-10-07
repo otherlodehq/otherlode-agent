@@ -23,6 +23,5 @@ class BrokenRouterModule : EndpointModule {
         typeDescription: TypeDescription,
         advice: AdviceBinder,
         classLoader: ClassLoader?,
-    ): DynamicType.Builder<*> =
-        builder.visit(advice.bind("dev.otherlode.endpoints.fake.BrokenRouterInvokeAdvice").on(named("invoke")))
+    ): DynamicType.Builder<*> = builder.visit(advice.hook("dev.otherlode.endpoints.fake.BrokenRouterInvokeAdvice", named("invoke")))
 }

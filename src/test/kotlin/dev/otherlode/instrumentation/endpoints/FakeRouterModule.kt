@@ -28,9 +28,9 @@ class FakeRouterModule : EndpointModule {
         classLoader: ClassLoader?,
     ): DynamicType.Builder<*> =
         builder
-            .visit(advice.bind("dev.otherlode.endpoints.fake.FakeRouterAddRouteAdvice").on(named("addRoute")))
-            .visit(advice.bind("dev.otherlode.endpoints.fake.FakeRouterInvokeAdvice").on(named("invoke")))
-            .visit(advice.bind("dev.otherlode.endpoints.fake.FakeRouterPublishAdvice").on(named("publishRoutes")))
+            .visit(advice.hook("dev.otherlode.endpoints.fake.FakeRouterAddRouteAdvice", named("addRoute")))
+            .visit(advice.hook("dev.otherlode.endpoints.fake.FakeRouterInvokeAdvice", named("invoke")))
+            .visit(advice.hook("dev.otherlode.endpoints.fake.FakeRouterPublishAdvice", named("publishRoutes")))
 
     /**
      * Walks [frameworkObject] (a [com.example.framework.FakeRouter]) reflectively, since its own
