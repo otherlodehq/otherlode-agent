@@ -779,6 +779,11 @@ class ExportSchedulerTest {
         scenario.probeRegistry.register("com.example.A", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "a", "()V", 1)))[0] = 2
         val baselines = StaticBaselineSender(scenario.exporter)
         baselines.offer(listOf(StaticBaseline(resource, emptyList(), scannedAt = 1L)))
+        // The delta send waits for the class chunk, so the dependency it releases cannot ride on
+        // that chunk and goes out on the flush's second manifest call, which this test numbers too.
+        val mainManifestSent = CountDownLatch(1)
+        scenario.exporter.afterManifestSend = { mainManifestSent.countDown() }
+        scenario.exporter.beforeDeltaSend = { assertTrue(mainManifestSent.await(5, TimeUnit.SECONDS)) }
 
         scenario.flush()
         scenario.probeRegistry.register("com.example.B", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "b", "()V", 1)))[0] = 1
