@@ -120,7 +120,7 @@ git clone https://github.com/otherlodehq/otherlode-collector /path/to/otherlode-
 | Property | Default | Meaning |
 |---|---|---|
 | `-PagentJar` | required | The shaded agent jar from the root `shadowJar`. |
-| `-PcollectorDir` | required | A local clone of `otherlode-collector`; its `Dockerfile` is built. |
+| `-PcollectorDir` | required | A local clone of `otherlode-collector`; its `Dockerfile` is built with `docker build` and BuildKit. |
 | `-Pconfig` | `headline` | `headline` or `ceiling`. |
 | `-Prepeats` | `6` | Runs per variant. A multiple of three gives each variant each position equally often. |
 | `-PwarmupSeconds` | `600` | The cap on the warmup load before the measured window. |

@@ -58,12 +58,20 @@ class Harness(
             .withFileFromPath("Dockerfile", settings.projectDir.resolve("Dockerfile.petclinic"))
             .get()
     }
+
+    /**
+     * Built with the `docker` command line, not Testcontainers. The collector's Dockerfile uses
+     * `FROM --platform=$BUILDPLATFORM`, and only BuildKit sets that variable. Testcontainers
+     * builds through the classic builder, which leaves it empty and rejects the build.
+     */
     private val collectorImage: String by lazy {
         println("Building the collector image from ${settings.collectorDir}...")
-        ImageFromDockerfile("otherlode-bench-collector", false)
-            .withFileFromPath(".", settings.collectorDir)
-            .withDockerfilePath("Dockerfile")
-            .get()
+        val image = "otherlode-bench-collector:latest"
+        val build = ProcessBuilder("docker", "build", "-t", image, settings.collectorDir.toString()).inheritIO()
+        build.environment()["DOCKER_BUILDKIT"] = "1"
+        val exit = build.start().waitFor()
+        check(exit == 0) { "docker build of the collector exited with $exit" }
+        image
     }
 
     private val cpuSplit: CpuSplit by lazy {
