@@ -718,7 +718,7 @@ fun printStackReport(service: StackService) {
         val c = cls as Map<*, *>
         println("    ${classText(c)} (${(c["methods"] as List<*>).size} methods)")
     }
-    for (finding in listOf("never-initialised", "never-instantiated")) {
+    for (finding in listOf("never-initialized", "never-instantiated")) {
         println("  ${finding.replace('-', ' ').uppercase()}:")
         for (cls in readApi(service, "/$finding$version")["classes"] as List<*>) {
             val c = cls as Map<*, *>
