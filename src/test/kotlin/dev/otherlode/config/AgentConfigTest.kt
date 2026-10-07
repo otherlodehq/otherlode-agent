@@ -455,6 +455,14 @@ class AgentConfigTest {
     }
 
     @Test
+    fun `an exportUrl whose host has an underscore falls back to the default with a warning naming the underscore`() {
+        val warnings =
+            warningsFrom { assertEquals("http://localhost:4319", parseQuietly("exportUrl=http://otherlode_collector:4319").exportUrl) }
+
+        assertEquals(1, warnings.count { it.contains("'otherlode_collector'") && it.contains("underscore") }, "$warnings")
+    }
+
+    @Test
     fun `an exportUrl with a fragment falls back to the default with a warning`() {
         val warnings = warningsFrom { assertEquals("http://localhost:4319", parseQuietly("exportUrl=http://host:4319/base#top").exportUrl) }
 

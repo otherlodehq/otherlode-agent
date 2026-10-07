@@ -296,14 +296,14 @@ object Agent {
     }
 
     /**
-     * The endpoint modules this JVM runs, or null when discovery failed. A failure here is logged
-     * the same way a failed endpoint install is, and the method tier still installs.
+     * The endpoint modules this JVM runs, or null when discovery failed. A failure here is logged at
+     * ERROR, as a failed endpoint install is, and the method tier still installs.
      */
     private fun discoverEndpointModules(config: AgentConfig): List<EndpointModule>? =
         try {
             filterEndpointModules(EndpointModules.discover(), config.otelBridgeEnabled)
         } catch (e: Throwable) {
-            log.log(Level.ERROR, "otherlode: endpoint instrumentation failed to install, continuing without endpoint tracking", e)
+            log.log(Level.ERROR, "otherlode: endpoint module discovery failed, continuing without endpoint tracking", e)
             null
         }
 

@@ -590,8 +590,8 @@ class OtherlodeInstrumentation(
         if (analysis.isKotlinClass && !analysis.hasLineNumbers) {
             log.log(
                 Level.WARNING,
-                "otherlode: ${typeDescription.name} is a Kotlin class with no line-number table; an inline function " +
-                    "in it cannot be recognised and reads as ordinary code, and its inlined copies cannot be traced",
+                "otherlode: ${typeDescription.name} is a Kotlin class with no line-number table; its probes carry " +
+                    "no line numbers, and its inlined copies cannot be traced",
             )
         }
         // A method whose sites did not pair keeps its entry probe and marks, and its sites are left

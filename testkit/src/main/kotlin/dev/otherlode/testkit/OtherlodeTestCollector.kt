@@ -605,7 +605,7 @@ public class OtherlodeTestCollector internal constructor(
      * [className] and [methodName]. `methodDescriptor` left null matches any overload.
      *
      * Throws [UnknownProbeException] if no such probe was ever declared; see that type's doc for
-     * the four cases it distinguishes.
+     * the five cases it distinguishes.
      */
     @JvmOverloads
     public fun wasHit(
@@ -3114,15 +3114,17 @@ public data class OptionalParameterRef internal constructor(
 
 /**
  * Thrown when a query names a class or method [OtherlodeTestCollector] has no probe for, instead of
- * reading as "confirmed never hit". The message names one of four cases, checked in this order:
+ * reading as "confirmed never hit". The message names one of five cases, checked in this order:
  *
- * 1. The class was matched by `includePackages` but ByteBuddy could not instrument it, so it was
+ * 1. The class was matched by `includePackages` but the agent could not instrument it, so it was
  *    reported as skipped.
- * 2. The class was declared by a complete static baseline scan, but no manifest from any instance
+ * 2. The class loaded, but no transformer was offered it, so it has no probes; a sweep of the
+ *    loaded classes reported it.
+ * 3. The class was declared by a complete static baseline scan, but no manifest from any instance
  *    ever mentioned it: it never loaded during the observation window.
- * 3. The class is instrumented and has manifest probes, but none match the requested method name
+ * 4. The class is instrumented and has manifest probes, but none match the requested method name
  *    or descriptor.
- * 4. The class was never mentioned anywhere at all: not matched by `includePackages`, misspelled,
+ * 5. The class was never mentioned anywhere at all: not matched by `includePackages`, misspelled,
  *    or not loaded yet.
  */
 public class UnknownProbeException internal constructor(

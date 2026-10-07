@@ -94,7 +94,7 @@ The `enabled` option is `false`, often through `OTHERLODE_ENABLED=false` in the 
 otherlode: endpoint instrumentation failed to install, continuing without endpoint tracking
 ```
 
-The method and branch tiers work. The endpoint tier did not install, and the instance reports no endpoints. The stack trace names the cause. If you do not need endpoints, set `endpointsEnabled=false`, which logs `otherlode: endpointsEnabled=false, no framework's endpoints will be instrumented` instead of the error. Otherwise report the trace.
+The method and branch tiers work. The endpoint tier did not install, and the instance reports no endpoints. A variant, `otherlode: endpoint module discovery failed, continuing without endpoint tracking`, means the agent could not load its list of endpoint modules. The stack trace names the cause. If you do not need endpoints, set `endpointsEnabled=false`, which logs `otherlode: endpointsEnabled=false, no framework's endpoints will be instrumented` instead of the error. Otherwise report the trace.
 
 ## An option is ignored
 
@@ -107,6 +107,7 @@ These warnings each mean the agent kept running with a default instead of your v
 | `otherlode: exportUrl must be an absolute http or https URL, ignoring 'collector:4319' and using the default http://localhost:4319` | The value has no scheme or host. The agent falls back to `http://localhost:4319`, which is why a mistyped `exportUrl` looks like a collector that never answers. A query string or fragment gets the same treatment, with its own reason. |
 | `otherlode: flushIntervalSeconds must be a whole number from 1 to 86400, ignoring '30s' and using the default of 60s` | Write plain seconds with no unit. |
 | `otherlode: enabled must be 'true' or 'false', ignoring 'yes' and using the default of true` | The same message appears for `staticBaselineEnabled`, `endpointsEnabled`, `otelBridgeEnabled` and `testRun`, each naming its own option and default. |
+| `otherlode: exportUrl's host 'otherlode_collector' has an underscore, which a URL host name cannot contain; ...` | The host name has an underscore, as a Docker Compose service name can. Java's HTTP client cannot reach such a host. Use a network alias or host name without an underscore, or an IP address. |
 | `otherlode: exportUrl uses plain http, so the auth token is sent unencrypted` | `authToken` is set and `exportUrl` starts with `http://`. Use an `https://` URL unless the collector is on the same host. |
 | `otherlode: ignoring all of OTEL_RESOURCE_ATTRIBUTES, since its entry 'x' is not key=value; no service name, namespace, version or environment is read from it` | One malformed entry discards the whole list, as the OpenTelemetry specification says. Fix the entry. |
 | `otherlode: ignoring '..' from <source>, since no URL path can name a service or namespace '..'` | A service name or namespace of `.` or `..` is refused. |
@@ -243,7 +244,7 @@ After the first flush, one INFO line counts branch sites left without a probe ac
 ## A Kotlin class has no line numbers
 
 ```text
-otherlode: com.acme.shop.Totals is a Kotlin class with no line-number table; an inline function in it cannot be recognised and reads as ordinary code, and its inlined copies cannot be traced
+otherlode: com.acme.shop.Totals is a Kotlin class with no line-number table; its probes carry no line numbers, and its inlined copies cannot be traced
 ```
 
 Something removed the debug information from the class, such as an obfuscator or a build setting that strips line numbers. The class still counts, but its probes carry no line number, an inline function reads as ordinary code, and a branch copied in from an inline function cannot be told from your own. Keep debug information in the build you instrument. The warning is logged for Kotlin classes only. A Java class without line numbers is not reported.

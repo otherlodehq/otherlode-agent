@@ -97,8 +97,19 @@ class HttpOtlpStyleExporter(
     private fun isRetryable(status: Int): Boolean = isRetryableStatus(status)
 
     companion object {
-        /** A client built on first use, with the default connect timeout; pass one to several exporters to share it. */
-        fun lazyClient(): Lazy<HttpClient> = lazy { HttpClient.newBuilder().connectTimeout(DEFAULT_TIMEOUT).build() }
+        /**
+         * A client built on first use, with the default connect timeout; pass one to several exporters to
+         * share it. It is pinned to HTTP/1.1: the JDK client's default is HTTP/2, which on a plain `http`
+         * URL sends an `Upgrade: h2c` header on every connection, and some proxies mishandle that on a POST.
+         */
+        fun lazyClient(): Lazy<HttpClient> =
+            lazy {
+                HttpClient
+                    .newBuilder()
+                    .version(HttpClient.Version.HTTP_1_1)
+                    .connectTimeout(DEFAULT_TIMEOUT)
+                    .build()
+            }
 
         private val DEFAULT_TIMEOUT: Duration = Duration.ofSeconds(10)
 

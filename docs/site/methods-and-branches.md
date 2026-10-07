@@ -89,7 +89,7 @@ The agent logs one INFO line on the first flush that finds any dropped site:
 otherlode: left 41 branch sites in 12 classes without a probe: 30 inlined from out-of-scope code, 6 coroutine machinery, 4 switch lowering, 1 in methods whose branch probes would cross a code-size limit
 ```
 
-A class compiled without debug information has no source mapping, so the agent cannot recognize an inlined copy, and a copy reads as the caller's own code. A Kotlin class with no line-number table also gets one WARNING, because the agent cannot recognize its inline functions either. Coroutine recognition does not need debug information.
+A class compiled without debug information has no source mapping, so the agent cannot recognize an inlined copy, and a copy reads as the caller's own code. A Kotlin class with no line-number table also gets one WARNING. Stripped debug information usually removes the local variable table too, and the agent then cannot recognize the class's inline functions either. Coroutine recognition does not need debug information.
 
 ### Large methods
 

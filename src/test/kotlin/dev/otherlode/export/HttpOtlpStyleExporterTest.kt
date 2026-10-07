@@ -21,6 +21,7 @@ class HttpOtlpStyleExporterTest {
     private val requestCount = AtomicInteger(0)
     private val requestedPaths = mutableListOf<String>()
     private val requestedAuthHeaders = mutableListOf<String?>()
+    private val requestedUpgradeHeaders = mutableListOf<String?>()
 
     @AfterTest
     fun tearDown() {
@@ -34,6 +35,7 @@ class HttpOtlpStyleExporterTest {
         httpServer.createContext("/") { exchange ->
             requestedPaths += exchange.requestURI.path
             requestedAuthHeaders += exchange.requestHeaders.getFirst("Authorization")
+            requestedUpgradeHeaders += exchange.requestHeaders.getFirst("Upgrade")
             val status = handler(requestCount.incrementAndGet())
             exchange.sendResponseHeaders(status, -1)
             exchange.close()
@@ -50,6 +52,16 @@ class HttpOtlpStyleExporterTest {
             initialBackoff = Duration.ofMillis(1),
             maxBackoff = Duration.ofMillis(10),
         )
+
+    @Test
+    fun `sends HTTP 1_1 without offering an h2c upgrade`() {
+        val endpoint = startServer { 200 }
+        val batch = DeltaBatch(ResourceAttributes("checkout", "1.0.0", "i-1", "test", "run-1"), emptyList())
+
+        HttpOtlpStyleExporter(endpoint = endpoint).exportDeltaBatch(batch)
+
+        assertEquals(listOf<String?>(null), requestedUpgradeHeaders)
+    }
 
     @Test
     fun `posts a delta batch to the deltas endpoint`() {

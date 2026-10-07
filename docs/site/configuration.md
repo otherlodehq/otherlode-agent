@@ -155,7 +155,7 @@ The agent refuses these values with a warning, and uses `http://localhost:4319` 
 - A value with a query string.
 - A value with a fragment.
 
-Java's URL parser reads a host name that contains an underscore, such as `http://my_collector:4319`, as having no host. The agent refuses that value like any other without a host. Use a host name without underscores, or an IP address.
+A host name that contains an underscore, such as `http://my_collector:4319`, is refused too, with a warning that names the underscore. Java's HTTP client cannot send to such a host. Use a host name or network alias without an underscore, or an IP address.
 
 For what the agent sends to this URL, and what it does when the collector is down, see [what the agent sends](data-sent).
 

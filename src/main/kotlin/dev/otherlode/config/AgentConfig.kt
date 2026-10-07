@@ -306,13 +306,30 @@ data class AgentConfig(
          * every attempt of every flush, so the collector would never be reached and the log would fill
          * with the same stack trace at each tick. A query string or a fragment falls back the same way,
          * since the appended path would land inside it.
+         *
+         * A host name with an underscore, such as a Docker Compose service name, gets its own
+         * reason. `java.net.URI` parses it with no host, and the JDK's `HttpClient` refuses such a
+         * URI too, so the value cannot be used; without the reason the warning would read as if the
+         * URL had no host at all.
          */
         private fun parseExportUrl(raw: String?): String {
             if (raw == null) return DEFAULT_EXPORT_URL
             val trimmed = raw.trim().trimEnd('/')
             val uri = runCatching { URI(trimmed) }.getOrNull()
+            val underscoreHost =
+                uri
+                    ?.takeIf { it.host == null }
+                    ?.rawAuthority
+                    ?.substringAfterLast('@')
+                    ?.substringBefore(':')
+                    ?.takeIf { '_' in it }
             val reason =
                 when {
+                    underscoreHost != null -> {
+                        "exportUrl's host '$underscoreHost' has an underscore, which a URL host name cannot " +
+                            "contain; use a host name or alias without one, or an IP address"
+                    }
+
                     uri == null || uri.scheme?.lowercase() !in setOf("http", "https") || uri.host == null -> {
                         "exportUrl must be an absolute http or https URL"
                     }

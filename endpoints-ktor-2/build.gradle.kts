@@ -29,10 +29,9 @@ dependencies {
     // dependency once this module's classes are merged into the shaded agent jar.
     compileOnly("net.bytebuddy:byte-buddy:$byteBuddyVersion")
 
-    // Compiled against the oldest supported Ktor 2.x version, per this project's no-muzzle
-    // version-drift policy (see CLAUDE.md's "Endpoint instrumentation" status entry): a module
-    // builds against its floor version and disables itself on a LinkageError against a version it
-    // does not actually match. Never `implementation`: Ktor must never be shaded into the agent
+    // Compiled against Ktor 2.3.13, the one 2.x version this module's tests run against (see the
+    // note on 2.0.3 at the end of this file). Under this project's no-muzzle version-drift policy a
+    // module disables itself on a LinkageError against a version it does not actually match. Never `implementation`: Ktor must never be shaded into the agent
     // jar, since it belongs to the target application, not to this agent.
     compileOnly("io.ktor:ktor-server-core-jvm:$ktorVersion")
 

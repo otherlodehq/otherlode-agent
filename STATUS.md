@@ -359,11 +359,13 @@ adopter's collector forwards to one multi-tenant backend.
    of the overhead benchmark on `master` is the first, and the ceiling's
    one-core startup (58.2 s at `8139271`) is the number to read.
 
-10. **Docs for the agent and the collector.** Added 2026-10-05; parked for
-    its own grill in a future session: where docs live (the READMEs, a
-    `docs/` folder, or the `otherlode.dev` site), who they are for
-    (quickstart, configuration reference, testkit guide, collector
-    deployment, reading findings), and how much of it blocks `0.1.0`.
+10. **Docs for the agent and the collector.** Added 2026-10-05. Where
+    they live was settled in otherlode.dev ADRs 0001 and 0002: each repo's
+    `docs/site/`, synced to the site per release. The agent's fifteen pages
+    landed on 2026-10-07 (`e43d82b`), each claim checked against the code;
+    the entry "Customer docs round: follow-ups" below has what it turned up.
+    Still to write: the collector's pages, and the cross-product overview
+    and quickstart in otherlode.dev's `start/`.
 
 After release: naming polish (`this$0`, facade names, the demo printer),
 the server's performance-only deferrals, gzip, a collector config file, agent-level redaction
@@ -371,6 +373,55 @@ the server's performance-only deferrals, gzip, a collector config file, agent-le
 routine and OpenTelemetry edge cases in the entries below.
 
 ## TODO
+
+### Customer docs round: follow-ups
+
+Written on 2026-10-07 while the agent's `docs/site/` pages were researched
+against the code. The small bugs it found are fixed (an underscore host in
+`exportUrl` now gets a warning that names it; the exporter is pinned to
+HTTP/1.1, where it sent `Upgrade: h2c`; three stale messages and comments).
+What is left needs a decision or a session of its own:
+
+1. **An endpoint module can go silent without saying so.** If a framework
+   release lacks the method a module's advice hooks, the advice attaches to
+   nothing: the service reports no endpoints for that framework and no entry
+   in `disabled_endpoint_modules`, the silent absence ADR 0017 rules out.
+   Reasoned from the code, not run. Needs a way to report a hook that matched
+   no method on a framework class that is present; `endpoints.md` documents
+   today's behaviour under "Modules that switch themselves off".
+2. **Re-measure overhead on the release candidate.** `docs/site/overhead.md`
+   and `benchmark-overhead/README.md` carry the runner numbers from
+   `8139271`, before the `DECORATE` round, so startup is likely overstated.
+   Re-run on the commit to be tagged and update both before `v0.1.0`.
+3. **A refused delta or manifest is re-sent forever.** A 401 or 400 fails
+   the send at once, but the next flush sends it again, every flush, for the
+   life of the process. Only the static baseline drops its chunks on 400, 413
+   or 422. Probably right for 401 (a token can rotate), worth a decision for
+   400 and 413. The exporter's KDoc says "fails at once", which is true only
+   within one send.
+4. **`SizeGuard` has no ADR.** The 8000- and 65535-byte rules, and the
+   choice that a method already over 8000 keeps its branch probes, are only
+   in code and `methods-and-branches.md`.
+5. **ADR and README drift.** Found by the docs agents; fix as part of the
+   `CLAUDE.md` trim:
+   - ADRs 0001, 0003 and 0004 open with the REBASE and probe-field design
+     their amendments replaced; ADR 0005's consequences open with the method
+     tier not being retransformation-capable.
+   - ADR 0006 says a switch has one edge per distinct case target; its own
+     consequences, `CONTEXT.md` and the code say one per case.
+   - ADR 0020 says the JAX-RS supertype walk skips bootstrap-loader classes;
+     `JaxRsModule` skips by package prefix.
+   - ADR 0030 says the dependency listing starts in `premain` (it starts on
+     the first flush or the scan) and that a `Premain-Class` jar is never a
+     dependency (a nested one is).
+   - ADR 0019 does not list the `*`-verb and `HEAD` cases the bridge skips.
+   - The README's line on `@file:JvmName` classes being skipped is stale
+     (ADR 0058), and its customer-facing sections (attach, options,
+     OpenTelemetry settings, testkit) now duplicate `docs/site/`; cut them to
+     a link.
+   - ADR 0050 and the README say a test run waits for the scan; it waits
+     only with `staticBaselineEnabled` on.
+
 
 ### Outside callers and classes that failed to load: landed in all three repos
 
