@@ -19,8 +19,9 @@ val openTelemetryInstrumentationApiVersion = "2.0.0"
 // A newer release, matched to the OpenTelemetry SDK versions below, for the module's own tests:
 // they drive a real Instrumenter end to end, which needs more of the API surface than the advice
 // class itself touches.
-val openTelemetryInstrumentationApiTestVersion = "2.31.1"
-val openTelemetrySdkVersion = "1.65.0"
+// The weekly framework canary sets both to the newest release of their lines.
+val openTelemetryInstrumentationApiTestVersion = providers.gradleProperty("otherlode.framework.otelInstrumentationApi").getOrElse("2.31.1")
+val openTelemetrySdkVersion = providers.gradleProperty("otherlode.framework.otelSdk").getOrElse("1.65.0")
 
 dependencies {
     implementation(project(":endpoints-api"))

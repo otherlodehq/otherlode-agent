@@ -13,6 +13,10 @@ repositories {
 val byteBuddyVersion = "1.18.12"
 val ktorVersion = "2.3.13"
 
+// The Ktor release the tests run against. The weekly framework canary sets it to the newest 2.x;
+// compileOnly stays on ktorVersion.
+val ktorTestVersion = providers.gradleProperty("otherlode.framework.ktor2").getOrElse("2.3.13")
+
 dependencies {
     implementation(project(":endpoints-api"))
 
@@ -47,8 +51,8 @@ dependencies {
 
     // The default test suite runs against Ktor 2.3.13, the version this module compiles against.
     // ktor-server-cio-jvm is the embedded engine the test starts a real server with.
-    testImplementation("io.ktor:ktor-server-core-jvm:$ktorVersion")
-    testImplementation("io.ktor:ktor-server-cio-jvm:$ktorVersion")
+    testImplementation("io.ktor:ktor-server-core-jvm:$ktorTestVersion")
+    testImplementation("io.ktor:ktor-server-cio-jvm:$ktorTestVersion")
 }
 
 kotlin {

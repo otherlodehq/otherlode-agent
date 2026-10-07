@@ -12,6 +12,13 @@ repositories {
 val kotlinVersion = "2.2.21"
 val byteBuddyVersion = "1.18.12"
 
+// The Spring Framework release each test suite runs against, one property per line. The weekly
+// framework canary sets them to the newest release of the line; the compile-against floor
+// (5.3.39 below) is not one of them.
+val spring53Version = providers.gradleProperty("otherlode.framework.spring53").getOrElse("5.3.39")
+val spring6Version = providers.gradleProperty("otherlode.framework.spring6").getOrElse("6.2.19")
+val spring7Version = providers.gradleProperty("otherlode.framework.spring7").getOrElse("7.0.9")
+
 dependencies {
     implementation(project(":endpoints-api"))
 
@@ -52,8 +59,8 @@ dependencies {
     // The default test suite runs against Spring Framework 6.x, driven through MockMvc, which
     // runs a real DispatcherServlet so both the registration and dispatch hooks fire without a
     // servlet container.
-    testImplementation("org.springframework:spring-webmvc:6.2.19")
-    testImplementation("org.springframework:spring-test:6.2.19")
+    testImplementation("org.springframework:spring-webmvc:$spring6Version")
+    testImplementation("org.springframework:spring-test:$spring6Version")
     testImplementation("jakarta.servlet:jakarta.servlet-api:6.0.0")
 }
 
@@ -87,8 +94,8 @@ testing {
                 implementation("org.jetbrains.kotlin:kotlin-test-junit5:$kotlinVersion")
                 implementation("net.bytebuddy:byte-buddy-agent:$byteBuddyVersion")
                 implementation("net.bytebuddy:byte-buddy:$byteBuddyVersion")
-                implementation("org.springframework:spring-webmvc:7.0.9")
-                implementation("org.springframework:spring-test:7.0.9")
+                implementation("org.springframework:spring-webmvc:$spring7Version")
+                implementation("org.springframework:spring-test:$spring7Version")
                 implementation("jakarta.servlet:jakarta.servlet-api:6.1.0")
             }
             targets {
@@ -112,8 +119,8 @@ testing {
                 implementation("org.jetbrains.kotlin:kotlin-test-junit5:$kotlinVersion")
                 implementation("net.bytebuddy:byte-buddy-agent:$byteBuddyVersion")
                 implementation("net.bytebuddy:byte-buddy:$byteBuddyVersion")
-                implementation("org.springframework:spring-webmvc:5.3.39")
-                implementation("org.springframework:spring-test:5.3.39")
+                implementation("org.springframework:spring-webmvc:$spring53Version")
+                implementation("org.springframework:spring-test:$spring53Version")
                 implementation("javax.servlet:javax.servlet-api:4.0.1")
             }
             targets {

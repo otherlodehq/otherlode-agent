@@ -451,7 +451,11 @@ order, one commit each:
    `ExportScheduler`'s "A failure stops the loop", `StaticBaselineSender`); and `data-sent.md`,
    `troubleshooting.md` and `classes.md` (which says a 413 drops the scan).
 5. CI: a scheduled framework canary running each endpoint module's tests against its framework's
-   newest release.
+   newest release. Landed 2026-10-07: `framework-canary.yml` (Mondays 03:43, and by hand) with
+   `newest-frameworks.sh`, which moves each `otherlode.framework.*` test pin to the newest stable
+   release of its line and warns, without failing, on a newer major no line covers. The first run
+   passed on Ktor 3.6.0, instrumentation-api 2.32.0 and SDK 1.66.0, and warns that Jersey 4.0.3
+   (Jakarta EE 11) is out: whether the JAX-RS module supports it is a decision for Luke.
 6. `otherlode-server`, Luke's to schedule (he is working there; nothing is changed from here):
    store and show `kind`; treat a run's zero hits as evidence only once a delta batch from it
    arrived and while its highest-sequence payload carries `counts_pending_since` 0, and say in

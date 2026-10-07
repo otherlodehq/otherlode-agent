@@ -11,6 +11,11 @@ repositories {
     mavenCentral()
 }
 
+// The Jersey release each test suite runs against, one property per line. The weekly framework
+// canary sets them to the newest release of the line. The JAX-RS API artifacts stay on their pins.
+val jersey3Version = providers.gradleProperty("otherlode.framework.jersey3").getOrElse("3.1.12")
+val jersey2Version = providers.gradleProperty("otherlode.framework.jersey2").getOrElse("2.48")
+
 dependencies {
     // EndpointModule, AdviceBinder, and the ByteBuddy-facing types this module is written
     // against. No JAX-RS artifact is a dependency anywhere in main: JaxRsModule reads annotation
@@ -46,8 +51,8 @@ dependencies {
     // supplies the dependency-injection provider Jersey needs to instantiate resource classes,
     // and jakarta.ws.rs-api is pinned explicitly even though Jersey already pulls it in
     // transitively.
-    testImplementation("org.glassfish.jersey.containers:jersey-container-jdk-http:3.1.12")
-    testImplementation("org.glassfish.jersey.inject:jersey-hk2:3.1.12")
+    testImplementation("org.glassfish.jersey.containers:jersey-container-jdk-http:$jersey3Version")
+    testImplementation("org.glassfish.jersey.inject:jersey-hk2:$jersey3Version")
     testImplementation("jakarta.ws.rs:jakarta.ws.rs-api:3.1.0")
 }
 
@@ -109,8 +114,8 @@ testing {
                 implementation(project(":endpoints-api"))
                 implementation("org.jetbrains.kotlin:kotlin-test-junit5:2.2.21")
                 implementation("net.bytebuddy:byte-buddy:1.18.12")
-                implementation("org.glassfish.jersey.containers:jersey-container-jdk-http:2.48")
-                implementation("org.glassfish.jersey.inject:jersey-hk2:2.48")
+                implementation("org.glassfish.jersey.containers:jersey-container-jdk-http:$jersey2Version")
+                implementation("org.glassfish.jersey.inject:jersey-hk2:$jersey2Version")
                 implementation("javax.ws.rs:javax.ws.rs-api:2.1.1")
             }
         }

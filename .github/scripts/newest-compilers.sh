@@ -19,7 +19,8 @@ versions() {
 
 # The newest purely numeric version (digits and dots) matching the grep pattern $2.
 newest() {
-  versions "$1" | grep -E "$2" | sort -V | tail -n 1
+  # grep finds nothing for a line with no stable release; the caller then names the line.
+  versions "$1" | { grep -E "$2" || true; } | sort -V | tail -n 1
 }
 
 property() {

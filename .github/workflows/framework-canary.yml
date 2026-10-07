@@ -1,0 +1,56 @@
+name: framework-canary
+
+on:
+  schedule:
+    - cron: '43 3 * * 1'
+  workflow_dispatch:
+
+# A red build is the whole output: the job publishes nothing and opens no issues.
+jobs:
+  canary:
+    name: a newest framework release (a red build means a release breaks an endpoint module)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          # The same JDKs the build job installs. The last version listed becomes JAVA_HOME and
+          # runs Gradle.
+          java-version: |
+            17
+            25
+            21
+      - uses: gradle/actions/setup-gradle@v4
+      # Newest stable release of each framework line the modules' tests run against. The
+      # compile-against floors in the build files do not move.
+      - id: newest
+        run: .github/scripts/newest-frameworks.sh --github
+      - name: Run every endpoint module's tests against the newest releases
+        run: >-
+          ./gradlew
+          :endpoints-spring-webmvc:check
+          :endpoints-ktor-2:check
+          :endpoints-ktor-3:check
+          :endpoints-jaxrs:check
+          :endpoints-otel-bridge:check
+          :endpoints-jdk-httpserver:check
+          --no-daemon --continue
+          ${{ steps.newest.outputs.args }}
+          -Potherlode.testJdk=21
+          -Porg.gradle.java.installations.fromEnv=JAVA_HOME_17_X64,JAVA_HOME_21_X64,JAVA_HOME_25_X64
+      - name: What a failure means
+        if: failure()
+        run: |
+          {
+            echo "An endpoint module's tests failed with the newest framework releases (${{ steps.newest.outputs.args }})."
+            echo "Most likely a framework release renamed or changed a hooked method, or broke a module in another way."
+            echo "Read the failing module's test report, compare the hooked methods with javap against that release,"
+            echo "and see ADR 0017."
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "::error title=Framework release broke a module::an endpoint module's tests failed with the newest framework releases"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: canary-test-reports
+          path: endpoints-*/build/reports/tests/
