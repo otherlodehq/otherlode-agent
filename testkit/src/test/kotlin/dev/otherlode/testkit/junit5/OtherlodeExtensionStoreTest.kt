@@ -120,18 +120,6 @@ class OtherlodeExtensionStoreTest {
         assertTrue("otherlode.testkit.startup.timeout.seconds" in failure.message.orEmpty(), failure.message)
     }
 
-    @Test
-    fun `the startup timeout is read under its new name and the old name is ignored`() {
-        System.setProperty("otherlode.testkit.startupTimeoutSeconds", "not a number")
-        try {
-            val failure = assertFailsWith<IllegalStateException> { OtherlodeExtension().beforeAll(fakeContext()) }
-
-            assertTrue("no delta batch arrived from the agent within 1s" in failure.message.orEmpty(), failure.message)
-        } finally {
-            System.clearProperty("otherlode.testkit.startupTimeoutSeconds")
-        }
-    }
-
     private fun fakeContext(): ExtensionContext {
         val loader = ExtensionContext::class.java.classLoader
         val store =

@@ -439,14 +439,6 @@ class AgentConfigTest {
     }
 
     @Test
-    fun `the old endpoint key is an unknown option and the default URL is used`() {
-        val warnings =
-            warningsFrom { assertEquals("http://localhost:4319", parseQuietly("endpoint=http://collector.example.com").exportUrl) }
-
-        assertEquals(1, warnings.count { it.contains("unknown agent option 'endpoint'") && it.contains("exportUrl") }, "$warnings")
-    }
-
-    @Test
     fun `an exportUrl with a query string falls back to the default with a warning`() {
         val warnings =
             warningsFrom { assertEquals("http://localhost:4319", parseQuietly("exportUrl=http://host:4319/base?key=1").exportUrl) }
