@@ -617,8 +617,8 @@ fun methodText(
     return "${node["class_name"]}#$shown$lineSuffix$tag"
 }
 
-// A class finding's name as a report line spells it: "never_initialised" reads
-// "never initialised".
+// A class finding's name as a report line spells it: "never_initialized" reads
+// "never initialized".
 fun findingText(finding: Any?): String = (finding as String).replace('_', ' ')
 
 // A cluster's root as one line. An untaken outcome
@@ -678,7 +678,7 @@ fun printStackReport(service: StackService) {
     )
     println(
         "  classes: declared=${classes["declared"]} loaded=${classes["loaded"]} never_loaded=${classes["never_loaded"]} " +
-            "never_initialised=${classes["never_initialised"]} never_instantiated=${classes["never_instantiated"]} " +
+            "never_initialized=${classes["never_initialized"]} never_instantiated=${classes["never_instantiated"]} " +
             "all inline or generated (not judged)=${classes["all_inline_or_generated"]}",
     )
     println(
