@@ -374,7 +374,7 @@ routine and OpenTelemetry edge cases in the entries below.
 
 ## TODO
 
-### Customer docs round: follow-ups
+### Customer docs round: follow-ups: all closed but item 2
 
 Written on 2026-10-07 while the agent's `docs/site/` pages were researched
 against the code. The small bugs it found are fixed (an underscore host in
@@ -384,29 +384,26 @@ Fixed later the same day: the testkit's fork rejection and bind failure now
 advise `maxParallelForks = 1` (Gradle gives every fork the same `-javaagent`
 arguments, so the per-fork port it suggested could not be set up), two KDocs,
 two tests of option names no release had, and `HttpOtlpStyleExporter` is
-`HttpExporter`. `CLAUDE.md` is now a tracked page of rules. What is left needs
-a decision or a session of its own:
+`HttpExporter`. `CLAUDE.md` is now a tracked page of rules. The follow-ups it
+left, with where each stands:
 
-1. **An endpoint module can go silent without saying so.** Closed in this repo 2026-10-07
-   (`35b1321`, `e9ca693`, the canary `a64ac20`); the server's display of `kind` is step 6 below. If a framework
-   release lacks the method a module's advice hooks, the advice attaches to
-   nothing: the service reports no endpoints for that framework and no entry
-   in `disabled_endpoint_modules`, the silent absence ADR 0017 rules out.
-   Reasoned from the code, not run. Needs a way to report a hook that matched
-   no method on a framework class that is present; `endpoints.md` documents
-   today's behaviour under "Modules that switch themselves off".
+1. **An endpoint module can go silent without saying so.** Closed 2026-10-07 to 2026-10-08. A
+   framework release that renamed or changed a hooked method left the module attaching nothing,
+   with no entry in `disabled_endpoint_modules`; a lost dispatch hook made every declared endpoint
+   read as never called. A hook that matches no method, or a framework class that fails to weave,
+   now switches the module off with a `kind` saying why (ADR 0017; `35b1321`, `e9ca693`), a weekly
+   canary runs every endpoint module against its framework's newest release (`a64ac20`, Jersey 4
+   added in `11c84d9`), and the server shows the kind (server `0a43d81`).
 2. **Re-measure overhead on the release candidate.** `docs/site/overhead.md`
    and `benchmark-overhead/README.md` carry the runner numbers from
    `8139271`, before the `DECORATE` round, so startup is likely overstated.
    Re-run on the commit to be tagged and update both before `v0.1.0`.
-3. **A refused delta or manifest is re-sent forever.** Closed in this repo 2026-10-07
-   (`22c5b8e`, `372609c`): resending is kept and a run says when its counts are pending; the
-   server's evidence rule is step 6 below. A 401 or 400 fails
-   the send at once, but the next flush sends it again, every flush, for the
-   life of the process. Only the static baseline drops its chunks on 400, 413
-   or 422. Probably right for 401 (a token can rotate), worth a decision for
-   400 and 413. The exporter's KDoc says "fails at once", which is true only
-   within one send.
+3. **A refused delta or manifest is re-sent forever.** Closed 2026-10-07 to 2026-10-08. Resending
+   on every flush is kept, 400 and 413 included (ADR 0009); a refused delta batch no longer holds
+   back the flush's other batches, the static baseline keeps its scan on 413 (ADR 0014), and every
+   delta batch and manifest says since when the run's counts are pending (ADR 0068; `22c5b8e`,
+   `372609c`), so the server no longer reads a run whose hits were refused as code that never ran
+   (server ADR 0059, deployed 2026-10-08).
 4. **`SizeGuard` has no ADR.** Closed 2026-10-07. The rules were in ADR 0052's 2026-10-05
    amendment, not only in code; they moved to ADR 0067, which corrects that amendment's claim that
    the 65535 rule is the one place an earlier transformer can change a layout hash.
@@ -461,10 +458,11 @@ order, one commit each:
    (Jakarta EE 11) was out. Luke decided the same day to test against it before release: the
    JAX-RS module's `jersey4Test` suite runs its tests on Jersey 4.0.3 with `jakarta.ws.rs-api`
    4.0.0, and the canary moves that pin too.
-6. `otherlode-server`: landed 2026-10-08 (server ADR 0059; `ae821c2` to `3cead54`, deployed), with:
-   store and show `kind`; treat a run's zero hits as evidence only once a delta batch from it
-   arrived and while its highest-sequence payload carries `counts_pending_since` 0, and say in
-   the UI when a run's counts are behind.
+6. `otherlode-server`: landed 2026-10-08 and deployed (server ADR 0059; `ae821c2` to `90b6988`).
+   It stores and shows a disabled module's `kind`, treats a location's zero counts as evidence only
+   where every in-scope run that knows it is settled (a delta batch arrived and its newest payload
+   says nothing is pending), shows runs whose counts are behind, and reads `counts-behind` for a
+   dependency whose status rests on one. The server's STATUS has the details.
 
 ### Outside callers and classes that failed to load: landed in all three repos
 
