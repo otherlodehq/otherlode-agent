@@ -367,6 +367,17 @@ adopter's collector forwards to one multi-tenant backend.
     Still to write: the collector's pages, and the cross-product overview
     and quickstart in otherlode.dev's `start/`.
 
+11. **Server storage: retention, expiry and class records.** Added
+    2026-10-08 after a grilling session (server ADRs 0060 and 0061). Every
+    run stored its own manifest and nothing expired, so storage grew with
+    every restart. Settled: a per-tenant retention period, a daily expiry
+    that never removes what a dead-code claim rests on, and class records
+    shared by the runs of one service. The schema is collapsed for the new
+    Cloud SQL instance Luke brings up before go-live. The server STATUS
+    entry "Storage: retention, expiry and class records" has the build
+    order. It does not block publishing the agent, but it blocks the first
+    customer.
+
 After release: naming polish (`this$0`, facade names, the demo printer),
 the server's performance-only deferrals, gzip, a collector config file, agent-level redaction
 (parked in the server's STATUS, item 18, with its trigger), and the
