@@ -461,7 +461,7 @@ order, one commit each:
    (Jakarta EE 11) was out. Luke decided the same day to test against it before release: the
    JAX-RS module's `jersey4Test` suite runs its tests on Jersey 4.0.3 with `jakarta.ws.rs-api`
    4.0.0, and the canary moves that pin too.
-6. `otherlode-server`, Luke's to schedule (he is working there; nothing is changed from here):
+6. `otherlode-server`: landed 2026-10-08 (server ADR 0059; `ae821c2` to `3cead54`, deployed), with:
    store and show `kind`; treat a run's zero hits as evidence only once a delta batch from it
    arrived and while its highest-sequence payload carries `counts_pending_since` 0, and say in
    the UI when a run's counts are behind.
