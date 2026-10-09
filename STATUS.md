@@ -378,6 +378,13 @@ adopter's collector forwards to one multi-tenant backend.
     order. It does not block publishing the agent, but it blocks the first
     customer.
 
+12. **Server read performance at realistic scale.** Added 2026-10-09. A
+    benchmark of one service with 2,000 classes and 50 runs put the report
+    at about 6.5 minutes and the call graph at about 4, in both the old and
+    the class-record layout, and version-filtered reads timed out. The
+    server STATUS entry "Read performance at realistic scale" has the
+    numbers. To grill before the first customer.
+
 After release: naming polish (`this$0`, facade names, the demo printer),
 the server's performance-only deferrals, gzip, a collector config file, agent-level redaction
 (parked in the server's STATUS, item 18, with its trigger), and the
