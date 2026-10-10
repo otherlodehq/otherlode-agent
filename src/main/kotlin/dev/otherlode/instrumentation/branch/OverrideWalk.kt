@@ -1,7 +1,9 @@
 package dev.otherlode.instrumentation.branch
 
+import dev.otherlode.instrumentation.Relation
 import dev.otherlode.instrumentation.TypeMatchPolicy
 import dev.otherlode.instrumentation.interned
+import net.bytebuddy.jar.asm.AnnotationVisitor
 import net.bytebuddy.jar.asm.ClassReader
 import net.bytebuddy.jar.asm.ClassVisitor
 import net.bytebuddy.jar.asm.MethodVisitor
@@ -10,13 +12,27 @@ import net.bytebuddy.utility.OpenedClassReader
 import java.util.Arrays
 
 /**
- * What the override walk needs of one class file: its supertype names and the methods another
- * class could override. Built from the header and method table alone, never from a method body.
+ * An overridable method that carries annotations, as the walk reads it on a supertype. [onMethod]
+ * holds its runtime-visible annotations and [classRetained] its class-retention ones, which are kept
+ * only when the adopter named an annotation. Both are internal names in class-file order.
+ */
+internal class SupertypeMethod(
+    val packagePrivate: Boolean,
+    val isAbstract: Boolean,
+    val onMethod: List<String>,
+    val classRetained: List<String>,
+)
+
+/**
+ * What the override walk needs of one class file: its supertype names, the methods another class
+ * could override, and the annotations of those that carry any. Built from the header and method
+ * table alone, never from a method body.
  *
  * Names are internal, with slashes. A method is held as its name followed by its descriptor, such
  * as `run()V`. A static method, a private method, a constructor and `<clinit>` are left out, since
  * none of them can be overridden. A package-private method is held apart, since only a class in
- * the same package can override it.
+ * the same package can override it. A method with no annotations adds nothing beyond its key, and
+ * a `java.*` type keeps no annotations, since none is a callback annotation.
  */
 internal class TypeHeader private constructor(
     val isInterface: Boolean,
@@ -24,6 +40,7 @@ internal class TypeHeader private constructor(
     val interfaces: List<String>,
     private val visible: Array<String>,
     private val packagePrivate: Array<String>,
+    private val annotated: Map<String, SupertypeMethod>,
 ) {
     /**
      * Whether this type declares [key] as a method a class can override. A package-private method
@@ -34,19 +51,74 @@ internal class TypeHeader private constructor(
         samePackage: Boolean,
     ): Boolean = Arrays.binarySearch(visible, key) >= 0 || (samePackage && Arrays.binarySearch(packagePrivate, key) >= 0)
 
+    /**
+     * The annotated method this type declares under [key], or null when it declares none or declares
+     * it without annotations. A package-private method counts only when [samePackage] is true.
+     */
+    fun annotatedMethod(
+        key: String,
+        samePackage: Boolean,
+    ): SupertypeMethod? = annotated[key]?.takeIf { samePackage || !it.packagePrivate }
+
     internal companion object {
         private val NONE = emptyArray<String>()
+
+        /** [names] interned, held as `emptyList()` or `listOf(x)` when it has no more than one. */
+        private fun compact(names: List<String>): List<String> =
+            when (names.size) {
+                0 -> emptyList()
+                1 -> listOf(names[0].interned())
+                else -> names.map { it.interned() }
+            }
 
         /**
          * The header of the class file in [bytes], or null when they do not parse. A JDK type's
          * class file has the running JDK's version, so the reader accepts versions past the ASM
-         * release ByteBuddy ships when ByteBuddy's experimental flag is on.
+         * release ByteBuddy ships when ByteBuddy's experimental flag is on. Class-retention method
+         * annotations are kept only when [configured] names an annotation.
          */
-        fun parse(bytes: ByteArray): TypeHeader? =
+        fun parse(
+            bytes: ByteArray,
+            configured: ConfiguredCallbackAnnotations = ConfiguredCallbackAnnotations.NONE,
+        ): TypeHeader? =
             try {
                 val reader = OpenedClassReader.of(bytes)
                 val visible = ArrayList<String>()
                 val packagePrivate = ArrayList<String>()
+                val annotated = HashMap<String, SupertypeMethod>()
+                val readsAnnotations = !reader.className.startsWith("java/")
+                // One method visitor serves every method of the parse: ASM visits methods one at a
+                // time, and each ends with visitEnd before the next begins.
+                var pendingKey = ""
+                var pendingPackagePrivate = false
+                var pendingAbstract = false
+                val onMethod = ArrayList<String>()
+                val classRetained = ArrayList<String>()
+                val annotationsOfMethod =
+                    object : MethodVisitor(Opcodes.ASM9) {
+                        override fun visitAnnotation(
+                            descriptor: String,
+                            isVisible: Boolean,
+                        ): AnnotationVisitor? {
+                            CallbackAnnotationFinder.internalNameOf(descriptor)?.let {
+                                if (isVisible) {
+                                    onMethod += it
+                                } else if (configured.isActive) {
+                                    classRetained += it
+                                }
+                            }
+                            return null
+                        }
+
+                        override fun visitEnd() {
+                            if (onMethod.isNotEmpty() || classRetained.isNotEmpty()) {
+                                annotated[pendingKey] =
+                                    SupertypeMethod(pendingPackagePrivate, pendingAbstract, compact(onMethod), compact(classRetained))
+                            }
+                            onMethod.clear()
+                            classRetained.clear()
+                        }
+                    }
                 val visitor =
                     object : ClassVisitor(Opcodes.ASM9) {
                         override fun visitMethod(
@@ -58,8 +130,13 @@ internal class TypeHeader private constructor(
                         ): MethodVisitor? {
                             if (!canBeOverridden(access, name)) return null
                             val key = (name + descriptor).interned()
-                            if (access and (Opcodes.ACC_PUBLIC or Opcodes.ACC_PROTECTED) != 0) visible += key else packagePrivate += key
-                            return null
+                            val isPackagePrivate = access and (Opcodes.ACC_PUBLIC or Opcodes.ACC_PROTECTED) == 0
+                            if (isPackagePrivate) packagePrivate += key else visible += key
+                            if (!readsAnnotations) return null
+                            pendingKey = key
+                            pendingPackagePrivate = isPackagePrivate
+                            pendingAbstract = access and Opcodes.ACC_ABSTRACT != 0
+                            return annotationsOfMethod
                         }
                     }
                 reader.accept(visitor, ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
@@ -69,6 +146,7 @@ internal class TypeHeader private constructor(
                     reader.interfaces.map { it.interned() },
                     sorted(visible),
                     sorted(packagePrivate),
+                    annotated.ifEmpty { emptyMap() },
                 )
             } catch (_: RuntimeException) {
                 null
@@ -86,12 +164,14 @@ internal class TypeHeader private constructor(
 
 /**
  * Finds, for the methods of one class, the first out-of-scope supertype that declares a method
- * they override.
+ * they override, and the first supertype method they override that carries a callback annotation
+ * their framework honours there.
  *
  * The walk visits the superclass, then that type's own supertypes in the same order, then each
  * interface in declaration order with its supertypes. A type seen once is not visited again, which
- * also ends a cycle. A type in scope is walked through but never named. A type whose class file
- * [headerOf] cannot read ends its branch of the walk and names nothing.
+ * also ends a cycle. A type in scope is walked through but never named as an overridden type, though
+ * its annotated methods can label. A type whose class file [headerOf] cannot read ends its branch
+ * of the walk and names nothing.
  *
  * A generic override has no declaration of its own to match, since the descriptor it matches is
  * its bridge's. So a same-class bridge that matches passes its type to the method it calls.
@@ -101,11 +181,21 @@ internal class OverrideWalk(
     private val excludePackages: List<String>,
     private val headerOf: (internalName: String) -> TypeHeader?,
 ) {
-    private class Declaring(
+    private class Supertype(
         val internalName: String,
         val header: TypeHeader,
         val packageName: String,
-    )
+        val inScope: Boolean,
+    ) {
+        fun relationOf(method: SupertypeMethod): Relation =
+            when {
+                !header.isInterface -> Relation.SUPERCLASS
+                method.isAbstract -> Relation.INTERFACE_ABSTRACT
+                else -> Relation.INTERFACE_DEFAULT
+            }
+    }
+
+    private val supertypeLists = HashMap<String, List<Supertype>>()
 
     /**
      * The out-of-scope type each method in [eligible] overrides, dotted and by (name, descriptor).
@@ -133,7 +223,7 @@ internal class OverrideWalk(
         }
         val packageName = packageOf(internalClassName)
         val result = HashMap<Pair<String, String>, String>()
-        val bridges = ArrayList<Pair<Pair<String, String>, Pair<Int, Declaring>>>()
+        val bridges = ArrayList<Pair<Pair<String, String>, Pair<Int, Supertype>>>()
         for ((key, access) in methodAccess) {
             val isBridge = access and Opcodes.ACC_BRIDGE != 0
             if ((key !in eligible && !isBridge) || !TypeHeader.canBeOverridden(access, key.first)) continue
@@ -150,6 +240,132 @@ internal class OverrideWalk(
         if (internalClassName.endsWith(DEFAULT_IMPLS_SUFFIX)) {
             val defaultBodies = eligible.filterTo(HashSet()) { key -> (methodAccess[key] ?: 0) and Opcodes.ACC_STATIC != 0 }
             result.putAll(defaultImplsTypes(internalClassName, defaultBodies))
+        }
+        return result
+    }
+
+    /**
+     * What a method reads of itself for [inheritedAnnotations]: its own annotations, and whether it
+     * already has a label of its own, which an inherited one never replaces.
+     */
+    class OwnLabels(
+        val annotationsOf: (Pair<String, String>) -> MethodAnnotations?,
+        val isLabelled: (Pair<String, String>) -> Boolean,
+    )
+
+    /**
+     * The callback annotation each method in [eligible] inherits, dotted and as written on the
+     * supertype method, by (name, descriptor). A method that inherits none is absent.
+     *
+     * The walk is that of [overriddenTypes], through supertypes in scope or not, and a bridge passes
+     * what it finds to the method it calls, as there. It stops at the first supertype method with
+     * the method's name and descriptor whose annotations pass down over its [Relation]: a method
+     * that matches but carries nothing that passes does not end it. A method that carries a
+     * `ws.rs` annotation inherits no JAX-RS annotation, whichever supertype. A `$DefaultImpls`
+     * body is looked up through its interface's method, as in [overriddenTypes].
+     *
+     * A method that already has a label of its own ([OwnLabels.isLabelled]) inherits none. When the
+     * adopter named annotations, the walk still goes through every supertype method it overrides,
+     * since each named annotation on one counts as seen.
+     */
+    fun inheritedAnnotations(
+        internalClassName: String,
+        superInternalName: String?,
+        interfaceInternalNames: List<String>,
+        methodAccess: Map<Pair<String, String>, Int>,
+        eligible: Set<Pair<String, String>>,
+        own: OwnLabels,
+        finder: CallbackAnnotationFinder,
+        sameClassCallees: (Pair<String, String>) -> Set<Pair<String, String>>,
+    ): Map<Pair<String, String>, String> {
+        val supertypes by lazy(LazyThreadSafetyMode.NONE) {
+            supertypes(internalClassName, listOfNotNull(superInternalName) + interfaceInternalNames)
+        }
+        val packageName = packageOf(internalClassName)
+        val result = HashMap<Pair<String, String>, String>()
+        val bridges = ArrayList<Triple<Pair<String, String>, Int, String>>()
+        for ((key, access) in methodAccess) {
+            val isBridge = access and Opcodes.ACC_BRIDGE != 0
+            if ((key !in eligible && !isBridge) || !TypeHeader.canBeOverridden(access, key.first)) continue
+            val probed = if (isBridge) bridgeTarget(key, methodAccess, eligible, sameClassCallees) ?: continue else key
+            if (own.isLabelled(probed) && !finder.tracksNamed) continue
+            val found =
+                inheritedFrom(
+                    supertypes,
+                    key.first + key.second,
+                    packageName,
+                    own.annotationsOf(probed)?.carriesJaxRs == true,
+                    !own.isLabelled(probed),
+                    finder,
+                ) ?: continue
+            if (isBridge) bridges += Triple(probed, found.first, found.second) else result[key] = found.second
+        }
+        for ((target, _, annotation) in bridges.sortedBy { it.second }) result.putIfAbsent(target, annotation)
+        if (internalClassName.endsWith(DEFAULT_IMPLS_SUFFIX)) {
+            val defaultBodies = eligible.filterTo(HashSet()) { key -> (methodAccess[key] ?: 0) and Opcodes.ACC_STATIC != 0 }
+            result.putAll(inheritedDefaultImpls(internalClassName, defaultBodies, own, finder))
+        }
+        return result
+    }
+
+    private fun bridgeTarget(
+        bridge: Pair<String, String>,
+        methodAccess: Map<Pair<String, String>, Int>,
+        eligible: Set<Pair<String, String>>,
+        sameClassCallees: (Pair<String, String>) -> Set<Pair<String, String>>,
+    ): Pair<String, String>? {
+        val target = sameClassCallees(bridge).singleOrNull() ?: return null
+        val targetAccess = methodAccess[target] ?: return null
+        return target.takeIf { it in eligible && TypeHeader.canBeOverridden(targetAccess, it.first) }
+    }
+
+    /**
+     * The index of the supertype and the annotation of the first supertype method under [methodKey]
+     * (name then descriptor) whose annotations pass down, or null. With [wantLabel] false the walk
+     * only records named annotations.
+     */
+    private fun inheritedFrom(
+        supertypes: List<Supertype>,
+        methodKey: String,
+        packageName: String,
+        blockJaxRs: Boolean,
+        wantLabel: Boolean,
+        finder: CallbackAnnotationFinder,
+    ): Pair<Int, String>? {
+        var label: Pair<Int, String>? = null
+        for ((index, supertype) in supertypes.withIndex()) {
+            val method = supertype.header.annotatedMethod(methodKey, supertype.packageName == packageName) ?: continue
+            finder.noteNamed(method.onMethod, method.classRetained)
+            if (label == null && wantLabel) {
+                finder
+                    .inheritable(method.onMethod, method.classRetained, supertype.relationOf(method), blockJaxRs)
+                    ?.let { label = index to it.replace('/', '.') }
+            }
+            if (!finder.tracksNamed && (label != null || !wantLabel)) break
+        }
+        return label
+    }
+
+    private fun inheritedDefaultImpls(
+        internalClassName: String,
+        eligible: Set<Pair<String, String>>,
+        own: OwnLabels,
+        finder: CallbackAnnotationFinder,
+    ): Map<Pair<String, String>, String> {
+        val interfaceName = internalClassName.removeSuffix(DEFAULT_IMPLS_SUFFIX)
+        val receiver = "(L$interfaceName;"
+        val candidates = eligible.filter { it.second.startsWith(receiver) }
+        if (candidates.isEmpty()) return emptyMap()
+        val header = headerOf(interfaceName)?.takeIf { it.isInterface } ?: return emptyMap()
+        val supertypes = supertypes(interfaceName, listOfNotNull(header.superName) + header.interfaces)
+        val packageName = packageOf(interfaceName)
+        val result = HashMap<Pair<String, String>, String>()
+        for (key in candidates) {
+            val interfaceKey = key.first + "(" + key.second.substring(receiver.length)
+            if (!header.declares(interfaceKey, samePackage = true)) continue
+            if (own.isLabelled(key) && !finder.tracksNamed) continue
+            val blockJaxRs = own.annotationsOf(key)?.carriesJaxRs == true
+            inheritedFrom(supertypes, interfaceKey, packageName, blockJaxRs, !own.isLabelled(key), finder)?.let { result[key] = it.second }
         }
         return result
     }
@@ -188,10 +404,10 @@ internal class OverrideWalk(
     }
 
     private fun firstDeclaring(
-        declaring: List<Declaring>,
+        declaring: List<Supertype>,
         key: Pair<String, String>,
         packageName: String,
-    ): Pair<Int, Declaring>? {
+    ): Pair<Int, Supertype>? {
         if (declaring.isEmpty()) return null
         val methodKey = key.first + key.second
         val index = declaring.indexOfFirst { it.header.declares(methodKey, it.packageName == packageName) }
@@ -202,23 +418,31 @@ internal class OverrideWalk(
     private fun outOfScopeSupertypes(
         root: String,
         direct: List<String>,
-    ): List<Declaring> {
-        val seen = hashSetOf(root)
-        val found = ArrayList<Declaring>()
+    ): List<Supertype> = supertypes(root, direct).filter { !it.inScope }
 
-        fun visit(name: String) {
-            if (!seen.add(name)) return
-            val header = headerOf(name) ?: return
-            if (!TypeMatchPolicy.isIncludedInternal(name, includePackages, excludePackages)) {
+    /**
+     * Every supertype of [root] the walk reaches, in scope or not, in the walk's order, from
+     * [direct] its direct supertypes. Kept for the life of the walk, since both questions ask it.
+     */
+    private fun supertypes(
+        root: String,
+        direct: List<String>,
+    ): List<Supertype> =
+        supertypeLists.getOrPut(root) {
+            val seen = hashSetOf(root)
+            val found = ArrayList<Supertype>()
+
+            fun visit(name: String) {
+                if (!seen.add(name)) return
+                val header = headerOf(name) ?: return
                 found +=
-                    Declaring(name, header, packageOf(name))
+                    Supertype(name, header, packageOf(name), TypeMatchPolicy.isIncludedInternal(name, includePackages, excludePackages))
+                header.superName?.let(::visit)
+                header.interfaces.forEach(::visit)
             }
-            header.superName?.let(::visit)
-            header.interfaces.forEach(::visit)
+            direct.forEach(::visit)
+            found
         }
-        direct.forEach(::visit)
-        return found
-    }
 
     private fun packageOf(internalName: String): String = internalName.substringBeforeLast('/', "")
 

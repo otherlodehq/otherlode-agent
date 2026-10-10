@@ -1,6 +1,8 @@
 package dev.otherlode.instrumentation.branch
 
 import dev.otherlode.instrumentation.CallbackAnnotations
+import dev.otherlode.instrumentation.Inheritance
+import dev.otherlode.instrumentation.Relation
 import net.bytebuddy.jar.asm.AnnotationVisitor
 import net.bytebuddy.jar.asm.ClassReader
 import net.bytebuddy.jar.asm.ClassVisitor
@@ -19,7 +21,18 @@ internal class MethodAnnotations(
     val onMethod: List<String>,
     val onParameters: List<String>,
     val classRetained: List<String> = emptyList(),
-)
+) {
+    /**
+     * Whether the method or one of its parameters carries a runtime-visible annotation from a
+     * `ws.rs` package. REST 4.0 section 3.6 then inherits no JAX-RS annotation for the method.
+     */
+    val carriesJaxRs: Boolean = onMethod.any { isJaxRsPackage(it) } || onParameters.any { isJaxRsPackage(it) }
+
+    private companion object {
+        fun isJaxRsPackage(internalName: String): Boolean =
+            internalName.startsWith("jakarta/ws/rs/") || internalName.startsWith("javax/ws/rs/")
+    }
+}
 
 /**
  * Finds the first callback annotation of a method, directly or through meta-annotations at any
@@ -43,9 +56,15 @@ internal class MethodAnnotations(
  * annotations in that list can sit only on a parameter, never on an annotation type, so no
  * annotation type can carry one and a walk could never find one.
  *
- * Answers are cached in [cache] when there is one, and for this finder alone otherwise. A true
- * answer is always cached. A false answer is cached only for the annotation a question started
- * from, since a false answer inside a cycle could turn true by another route.
+ * An annotation type's answer is a [Reach]: whether any listed or named annotation is reachable
+ * from it, and over which supertype relations (ADR 0069) the reachable ones pass down. A composed
+ * annotation reaching several takes every relation any of them allows. [inheritable] asks that
+ * question of the annotations on a supertype method.
+ *
+ * Answers are cached in [cache] when there is one, and for this finder alone otherwise. An answer
+ * is cached only for the annotation a question started from, whose walk visits everything reachable
+ * from it once. An answer found inside another walk may have been cut short by a cycle or by a
+ * type that walk had already visited.
  *
  * Which configured names were seen is recorded apart from the answer: every annotation on the
  * method and every type it carries is looked through once per agent, so a name behind an earlier
@@ -56,51 +75,105 @@ internal class CallbackAnnotationFinder(
     private val cache: BranchSiteAnalyzer.CrossClassTableCache?,
     private val configured: ConfiguredCallbackAnnotations = ConfiguredCallbackAnnotations.NONE,
 ) {
-    private val own = HashMap<String, Boolean>()
+    private val own = HashMap<String, Int>()
 
     /** The internal name of the first callback annotation in [annotations], or null. */
     fun first(annotations: MethodAnnotations): String? {
-        if (configured.isActive) {
-            annotations.onMethod.forEach(::lookForNamed)
-            annotations.classRetained.forEach(::lookForNamed)
-        }
-        return annotations.onMethod.firstOrNull { counts(it, namedOnly = false) }
-            ?: annotations.classRetained.firstOrNull { counts(it, namedOnly = true) }
+        if (configured.isActive) noteNamed(annotations.onMethod, annotations.classRetained)
+        return annotations.onMethod.firstOrNull { reach(it, namedOnly = false) != 0 }
+            ?: annotations.classRetained.firstOrNull { reach(it, namedOnly = true) != 0 }
             ?: annotations.onParameters.firstOrNull { it in CallbackAnnotations.onParameter }
     }
 
-    private fun counts(
-        annotation: String,
-        namedOnly: Boolean,
-    ): Boolean {
-        if (isTarget(annotation, namedOnly)) return true
-        if (isSkipped(annotation)) return false
-        return carriesTarget(annotation, namedOnly, HashSet())
+    /** Whether the adopter named any annotation, which is when [noteNamed] has work to do. */
+    val tracksNamed: Boolean
+        get() = configured.isActive
+
+    /**
+     * Records the configured names found on a method's annotations, as [first] does, for a method
+     * that is not the one being labelled. A no-op when no name is configured.
+     */
+    fun noteNamed(
+        onMethod: List<String>,
+        classRetained: List<String>,
+    ) {
+        if (!configured.isActive) return
+        onMethod.forEach(::lookForNamed)
+        classRetained.forEach(::lookForNamed)
     }
 
-    private fun carriesTarget(
+    /**
+     * The first annotation of a supertype method, as written, that passes down over [relation]: the
+     * runtime-visible ones in class-file order, then the class-retention ones against the configured
+     * names alone. With [blockJaxRs], an annotation passes down only through a reached annotation
+     * that is not a JAX-RS one.
+     */
+    fun inheritable(
+        onMethod: List<String>,
+        classRetained: List<String>,
+        relation: Relation,
+        blockJaxRs: Boolean,
+    ): String? =
+        onMethod.firstOrNull { Reach.passes(reach(it, namedOnly = false), relation, blockJaxRs) }
+            ?: classRetained.firstOrNull { Reach.passes(reach(it, namedOnly = true), relation, blockJaxRs) }
+
+    /** The [Reach] of [annotation]: what listed or named annotations it is or carries. */
+    private fun reach(
         annotation: String,
         namedOnly: Boolean,
-        visited: MutableSet<String>,
-    ): Boolean {
+    ): Int {
+        val direct = targetReach(annotation, namedOnly)
+        if (direct != 0) return direct
+        if (isSkipped(annotation)) return 0
         // A named-only answer can differ from the full one, so it is cached under its own key. No
         // internal name holds a ';'.
         val key = if (namedOnly) "$annotation;named" else annotation
         recall(key)?.let { return it }
-        val isStart = visited.isEmpty()
-        if (!visited.add(annotation)) return false
-        val answer =
-            carriedBy(annotation).any { carried ->
-                isTarget(carried, namedOnly) || (!isSkipped(carried) && carriesTarget(carried, namedOnly, visited))
-            }
-        if (answer || isStart) remember(key, answer)
-        return answer
+        return reachThrough(annotation, namedOnly, hashSetOf(annotation)).also { remember(key, it) }
     }
 
-    private fun isTarget(
+    private fun reachThrough(
         annotation: String,
         namedOnly: Boolean,
-    ): Boolean = configured.matches(annotation) || (!namedOnly && annotation in CallbackAnnotations.onMethod)
+        visited: MutableSet<String>,
+    ): Int {
+        var found = 0
+        for (carried in carriedBy(annotation)) {
+            val direct = targetReach(carried, namedOnly)
+            found =
+                found or
+                when {
+                    direct != 0 -> {
+                        direct
+                    }
+
+                    isSkipped(carried) -> {
+                        0
+                    }
+
+                    else -> {
+                        recall(if (namedOnly) "$carried;named" else carried)
+                            ?: if (visited.add(carried)) reachThrough(carried, namedOnly, visited) else 0
+                    }
+                }
+        }
+        return found
+    }
+
+    /** The [Reach] of [annotation] when it is itself a listed or named annotation, and 0 otherwise. */
+    private fun targetReach(
+        annotation: String,
+        namedOnly: Boolean,
+    ): Int {
+        var found = 0
+        if (configured.matches(annotation)) found = Reach.of(Inheritance.FROM_INTERFACES_AND_SUPERCLASSES, isJaxRs = false)
+        if (!namedOnly) {
+            CallbackAnnotations.inheritance[annotation]?.let {
+                found = found or Reach.of(it, isJaxRs = annotation in CallbackAnnotations.jaxRs)
+            }
+        }
+        return found
+    }
 
     /**
      * Records every configured name that is [annotation] or that its type carries at any depth, by
@@ -115,11 +188,11 @@ internal class CallbackAnnotationFinder(
         carriedBy(annotation).forEach(::lookForNamed)
     }
 
-    private fun recall(annotation: String): Boolean? = cache?.recallAnnotationAnswer(annotation) ?: own[annotation]
+    private fun recall(annotation: String): Int? = cache?.recallAnnotationAnswer(annotation) ?: own[annotation]
 
     private fun remember(
         annotation: String,
-        answer: Boolean,
+        answer: Int,
     ) {
         if (cache != null) cache.rememberAnnotationAnswer(annotation, answer) else own[annotation] = answer
     }
@@ -167,6 +240,43 @@ internal class CallbackAnnotationFinder(
 
     private fun isSkipped(internalName: String): Boolean =
         internalName.startsWith("java/lang/annotation/") || internalName.startsWith("kotlin/annotation/")
+
+    /**
+     * What an annotation type reaches, as bits. [COUNTS] is set when it is or carries a listed or
+     * named annotation. The next three bits hold the [Relation]s over which a reached annotation
+     * passes down, and the three after them the same for reached annotations that are not JAX-RS.
+     */
+    internal object Reach {
+        private const val COUNTS = 1
+
+        /** Where the bits for [Relation]s over any family start. */
+        private const val ANY_FAMILY_SHIFT = 1
+
+        /** Where the bits for [Relation]s over non-JAX-RS families start. */
+        private const val NON_JAX_RS_SHIFT = 4
+
+        /** The reach of one listed or named annotation under [rule]. */
+        fun of(
+            rule: Inheritance,
+            isJaxRs: Boolean,
+        ): Int =
+            rule.relations.fold(COUNTS) { bits, relation ->
+                bits or (1 shl (ANY_FAMILY_SHIFT + relation.ordinal)) or
+                    nonJaxRs(relation, isJaxRs)
+            }
+
+        private fun nonJaxRs(
+            relation: Relation,
+            isJaxRs: Boolean,
+        ): Int = if (isJaxRs) 0 else 1 shl (NON_JAX_RS_SHIFT + relation.ordinal)
+
+        /** Whether [reach] passes down over [relation], counting only non-JAX-RS annotations when [blockJaxRs]. */
+        fun passes(
+            reach: Int,
+            relation: Relation,
+            blockJaxRs: Boolean,
+        ): Boolean = reach and (1 shl ((if (blockJaxRs) NON_JAX_RS_SHIFT else ANY_FAMILY_SHIFT) + relation.ordinal)) != 0
+    }
 
     internal companion object {
         /** The element type of a no-argument method returning a one-dimensional object array, such as `()[Lcom/acme/Handles;`, or null. */

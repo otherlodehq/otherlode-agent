@@ -59,3 +59,7 @@ Settled in a grilling session with Luke. The deferred option above is built befo
 - **A WARNING for a name that marks nothing.** Rejected: a correct name is often unseen at the first flush.
 - **Counting a class-retention annotation's built-in meta-annotations.** Rejected: Spring and the other listed frameworks cannot see a class-retention annotation at run time, so it says nothing about their calls.
 - **Asking the adopter to name a repeatable annotation's container as well.** Rejected: nothing in the error would tell them, and the container is found from the class file.
+
+## Amended on 2026-10-10: inherited annotations
+
+ADR 0069 lets a method take a callback annotation from a method it overrides, by a rule per family, and adds Temporal and Axon to the list. The bullet above that an annotation must sit on the method that runs, and the STATUS follow-up it names, are replaced by it.

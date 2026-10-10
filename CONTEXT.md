@@ -277,7 +277,7 @@ A root plus every never-hit method reachable from it through call edges whose ev
 _Avoid_: dead cluster, dead code (a collector's verdict, not an observation)
 
 **Outside caller**:
-A reason code outside scope may call a method that no in-scope code calls. The method overrides or implements a method that an out-of-scope type declares, such as `Runnable.run` or `Object.toString`, or it carries an annotation a framework calls methods by, such as `@EventListener` or `@GetMapping`, from the agent's own list or named by the adopter. The agent names the type or annotation. It labels a root and changes no count and no cluster.
+A reason code outside scope may call a method that no in-scope code calls. The method overrides or implements a method that an out-of-scope type declares, such as `Runnable.run` or `Object.toString`, or it carries an annotation a framework calls methods by, such as `@EventListener` or `@GetMapping`, from the agent's own list or named by the adopter, on the method itself or, where its framework honours that, on a method it overrides. The agent names the type or annotation. It labels a root and changes no count and no cluster.
 _Avoid_: entry point (a root may be deep inside the code), framework method (`Object.toString` is no framework's)
 
 **Root**:

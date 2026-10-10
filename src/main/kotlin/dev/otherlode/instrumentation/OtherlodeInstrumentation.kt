@@ -653,6 +653,7 @@ class OtherlodeInstrumentation(
                             OutsideCallers.of(
                                 overriddenType = analysis.overriddenOutsideTypeOf(it.name, it.descriptor),
                                 annotationType = analysis.callbackAnnotationOf(it.name, it.descriptor),
+                                inheritedAnnotationType = analysis.inheritedCallbackAnnotationOf(it.name, it.descriptor),
                             ),
                     )
                 }

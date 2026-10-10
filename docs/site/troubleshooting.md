@@ -244,7 +244,7 @@ After the first flush, one INFO line counts branch sites left without a probe ac
 
 ## A method a framework calls reads as uncalled
 
-A never-hit method that a framework calls, such as a command handler or a handler your own dispatcher finds by reflection, shows as `UNCALLED` when the framework's annotation is not on the agent's built-in list. Name the annotation in [`callbackAnnotations`](configuration#callbackannotations), and the method reads `CALLED_FROM_OUTSIDE_SCOPE` from the next run. Its counts do not change. The annotation must sit on the method itself: one on an interface method the class implements does not count.
+A never-hit method that a framework calls, such as a command handler or a handler your own dispatcher finds by reflection, shows as `UNCALLED` when the framework's annotation is not on the agent's built-in list. Name the annotation in [`callbackAnnotations`](configuration#callbackannotations), and the method reads `CALLED_FROM_OUTSIDE_SCOPE` from the next run. Its counts do not change. The annotation counts on the method itself or on a method it overrides, from any superclass or interface.
 
 ```text
 otherlode: callbackAnnotations names 1 annotation not yet seen on any method: com.acme.bus.Handels. A name is matched exactly; check the spelling if its classes have loaded.

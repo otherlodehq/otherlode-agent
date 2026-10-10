@@ -154,6 +154,7 @@ object BranchSiteAnalyzer {
         private val trackedSequencesByMethod: Map<Pair<String, String>, IntArray> = emptyMap(),
         private val overriddenOutsideTypes: Map<Pair<String, String>, String> = emptyMap(),
         private val callbackAnnotations: Map<Pair<String, String>, String> = emptyMap(),
+        private val inheritedCallbackAnnotations: Map<Pair<String, String>, String> = emptyMap(),
     ) {
         /**
          * The callback annotation [name]/[descriptor] carries, dotted and as written on the method
@@ -165,6 +166,17 @@ object BranchSiteAnalyzer {
             name: String,
             descriptor: String,
         ): String? = callbackAnnotations[name to descriptor]
+
+        /**
+         * The callback annotation [name]/[descriptor] inherits from a method it overrides, dotted and
+         * as written on that supertype method, or null. It is null for a method with a callback
+         * annotation of its own, which an inherited one never replaces, for a method that gets no
+         * probe, and for every method when [analyze] was not asked for outside callers.
+         */
+        fun inheritedCallbackAnnotationOf(
+            name: String,
+            descriptor: String,
+        ): String? = inheritedCallbackAnnotations[name to descriptor]
 
         /**
          * The out-of-scope type whose method [name]/[descriptor] overrides or implements, dotted, or
@@ -337,9 +349,11 @@ object BranchSiteAnalyzer {
      * miss is not retried on every analysis either.
      *
      * It also holds the [TypeHeader] of each type the override walk reads, under the same bound but
-     * apart from the tables. A header is a few names and method keys, far lighter than a table. And
-     * it holds, for each annotation type and place, whether the type carries a callback annotation
-     * ([CallbackAnnotationFinder]), under the same bound: one flag per entry.
+     * apart from the tables. A header is a few names, method keys and the annotations of the
+     * methods that carry any, far lighter than a table. And it holds, for each annotation type,
+     * whether it reaches a listed or named annotation and over which relations those pass down
+     * ([CallbackAnnotationFinder.Reach]), once for the full question and once for the named-only
+     * one, under the same bound: one int per entry.
      */
     class CrossClassTableCache(
         private val maxEntries: Int,
@@ -363,15 +377,15 @@ object BranchSiteAnalyzer {
             get() = synchronized(headers) { headers.size }
 
         private val annotationAnswers =
-            object : LinkedHashMap<String, Boolean>(16, 0.75f, true) {
-                override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>?): Boolean = size > maxEntries
+            object : LinkedHashMap<String, Int>(16, 0.75f, true) {
+                override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Int>?): Boolean = size > maxEntries
             }
 
-        internal fun recallAnnotationAnswer(key: String): Boolean? = synchronized(annotationAnswers) { annotationAnswers[key] }
+        internal fun recallAnnotationAnswer(key: String): Int? = synchronized(annotationAnswers) { annotationAnswers[key] }
 
         internal fun rememberAnnotationAnswer(
             key: String,
-            answer: Boolean,
+            answer: Int,
         ) {
             synchronized(annotationAnswers) { annotationAnswers[key] = answer }
         }
@@ -1139,44 +1153,60 @@ object BranchSiteAnalyzer {
 
         val lambdaBodies = findLambdaBodies(internalClassName, methodAccess, rawCandidatesByMethod, eligibleMethodKeys, isScalaClass)
         val bodyClass = BodyKindRule.classify(hasEnclosingMethod, superInternalName, ownInnerClassEntry, isKotlinClass)
+        val shouldWalk = outsideCallers && eligibleMethodKeys.isNotEmpty()
+        val overrideWalk =
+            OverrideWalk(
+                includePackages,
+                excludePackages,
+                headerReader(lookup, outOfScopeLookup, includePackages, excludePackages, tableCache, callbackAnnotations),
+            )
+        val sameClassCallees = { bridge: Pair<String, String> ->
+            rawCandidatesByMethod[bridge]
+                .orEmpty()
+                .filter {
+                    it.kind == CallEdgeKind.CALL && it.owner == internalClassName && (it.name to it.descriptor) != bridge &&
+                        it.name != BOX_IMPL && it.name != UNBOX_IMPL
+                }.mapTo(mutableSetOf()) { it.name to it.descriptor }
+        }
         val overriddenOutsideTypes =
-            if (outsideCallers && eligibleMethodKeys.isNotEmpty()) {
-                OverrideWalk(
-                    includePackages,
-                    excludePackages,
-                    headerReader(lookup, outOfScopeLookup, includePackages, excludePackages, tableCache),
-                ).overriddenTypes(
+            if (shouldWalk) {
+                overrideWalk.overriddenTypes(
                     internalClassName,
                     superInternalName,
                     interfaceInternalNames,
                     methodAccess,
                     eligibleMethodKeys,
-                ) { bridge ->
-                    rawCandidatesByMethod[bridge]
-                        .orEmpty()
-                        .filter {
-                            it.kind == CallEdgeKind.CALL && it.owner == internalClassName && (it.name to it.descriptor) != bridge &&
-                                it.name != BOX_IMPL && it.name != UNBOX_IMPL
-                        }.mapTo(mutableSetOf()) { it.name to it.descriptor }
-                }
+                    sameClassCallees,
+                )
             } else {
                 emptyMap()
             }
 
+        val callbackFinder =
+            CallbackAnnotationFinder(
+                classBytesReader(lookup, outOfScopeLookup, includePackages, excludePackages),
+                tableCache,
+                callbackAnnotations,
+            )
         val callbackAnnotationByMethod =
-            if (annotationsByMethod.isEmpty()) {
-                emptyMap()
+            annotationsByMethod
+                .mapNotNull { (key, annotations) ->
+                    callbackFinder.first(annotations)?.let { key to it.replace('/', '.') }
+                }.toMap()
+        val inheritedCallbackAnnotations =
+            if (shouldWalk) {
+                overrideWalk.inheritedAnnotations(
+                    internalClassName,
+                    superInternalName,
+                    interfaceInternalNames,
+                    methodAccess,
+                    eligibleMethodKeys,
+                    OverrideWalk.OwnLabels({ annotationsByMethod[it] }, { it in callbackAnnotationByMethod }),
+                    callbackFinder,
+                    sameClassCallees,
+                )
             } else {
-                val finder =
-                    CallbackAnnotationFinder(
-                        classBytesReader(lookup, outOfScopeLookup, includePackages, excludePackages),
-                        tableCache,
-                        callbackAnnotations,
-                    )
-                annotationsByMethod
-                    .mapNotNull { (key, annotations) ->
-                        finder.first(annotations)?.let { key to it.replace('/', '.') }
-                    }.toMap()
+                emptyMap()
             }
 
         return Analysis(
@@ -1217,6 +1247,7 @@ object BranchSiteAnalyzer {
             trackedSequencesByMethod,
             overriddenOutsideTypes,
             callbackAnnotationByMethod,
+            inheritedCallbackAnnotations,
         )
     }
 
@@ -1233,9 +1264,10 @@ object BranchSiteAnalyzer {
         includePackages: List<String>,
         excludePackages: List<String>,
         tableCache: CrossClassTableCache?,
+        callbackAnnotations: ConfiguredCallbackAnnotations,
     ): (String) -> TypeHeader? {
         val bytesOf = classBytesReader(lookup, outOfScopeLookup, includePackages, excludePackages)
-        val read = { internalName: String -> bytesOf(internalName)?.let(TypeHeader::parse) }
+        val read = { internalName: String -> bytesOf(internalName)?.let { TypeHeader.parse(it, callbackAnnotations) } }
         if (tableCache != null) return { internalName -> tableCache.getOrReadHeader(internalName) { read(internalName) } }
         val own = HashMap<String, TypeHeader?>()
         return { internalName -> if (internalName in own) own[internalName] else read(internalName).also { own[internalName] = it } }

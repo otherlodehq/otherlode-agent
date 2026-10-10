@@ -419,12 +419,44 @@ for a flush five minutes after start, since the first flush is jittered
 from zero and the testkit flushes every second. Temporal was dropped from
 the cases the option covers: its annotations sit on interface methods.
 
-Follow-up with a trigger: an annotation on an in-scope interface or
-superclass method is not read for the method that implements or overrides
-it, for the built-in list as for named annotations. Temporal's
-`@WorkflowMethod` and a JAX-RS or Spring mapping on an interface are the
-known cases. Grill it when an adopter's report shows such methods reading
-*uncalled*.
+The follow-up for annotations on supertype methods was grilled the same
+day and is the next entry.
+
+### Inherited callback annotations, Temporal and Axon: in progress
+
+Grilled on 2026-10-10 with Luke; ADR 0069, ADR 0064 amended, `CONTEXT.md`'s
+"Outside caller" names inheritance. A method takes a callback annotation
+from a method it overrides, in scope or out, where its framework honours
+that, by a rule per family read from each framework's source. Precedence:
+own annotation, inherited, out-of-scope override. JAX-RS follows REST 4.0
+§3.6. Named annotations inherit from interfaces and superclasses. Temporal
+(workflow annotations from interfaces only, `@ActivityInterface` marks its
+methods) and Axon (`MessageHandler` in both packages) join the list.
+
+Landing order, one chunk and one commit each, agent only:
+
+1. The inheritance walk: type headers keep method annotations, the
+   per-family rule on every built-in name, named annotations, the
+   JAX-RS rule, the precedence, seen-tracking through supertype methods,
+   and `docs/site/call-graph.md`, `configuration.md` and
+   `troubleshooting.md`.
+2. Temporal and Axon: their names and rules, the interface-only rule,
+   type headers keeping a type's own annotations for the interface-type
+   rule, and the docs.
+
+Chunk 1 landed on 2026-10-10. Two Opus review rounds found no defect in
+the walk, the table, the precedence or the cache, and changed: header
+annotation lists held as `emptyList()`/`listOf(x)` and recorded by one
+reusable method visitor per parse (worst case was about 3 to 8 MB of
+headers per loader); JMS, actuator and startup callbacks named in the
+docs' never list; tests for a base controller implementing a generated
+interface (the walk passes an unannotated intermediate method) and for
+`@JmsListener`, which Spring meta-annotates `@MessageMapping`, passing
+nothing down directly or through a composed annotation. ADR 0069 records
+the known gaps: a generic method specialised in an intermediate class,
+a JAX-RS intermediate method carrying only `@Produces`, and Spring's
+interfaces-first order. The visibility baseline did not move; the corpora
+hold no inherited case.
 
 ### Customer docs round: follow-ups: all closed but item 2
 
