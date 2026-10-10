@@ -28,6 +28,9 @@ class InheritedCallbackAnnotationAnalyzerTest {
         const val BEAN = "org.springframework.context.annotation.Bean"
         const val RUNTIME_CALL = "com.example.outside.named.RuntimeCall"
         const val CLASS_CALL = "com.example.outside.named.ClassCall"
+        const val ACTIVITY_INTERFACE = "io.temporal.activity.ActivityInterface"
+        const val COMMAND_HANDLER = "org.axonframework.commandhandling.CommandHandler"
+        const val AXON_5_COMMAND_HANDLER = "org.axonframework.messaging.commandhandling.annotation.CommandHandler"
     }
 
     private val includePackages = listOf("com.example.target.inherit")
@@ -363,11 +366,74 @@ class InheritedCallbackAnnotationAnalyzerTest {
         assertEquals(GET_MAPPING, analysis.inheritedCallbackAnnotationOf("m", "(L$PACKAGE/Synthetic;)V"))
     }
 
+    @Test
+    fun `an activity interface's own default method is labelled by the interface annotation, and its static one is not`() {
+        assertEquals(ACTIVITY_INTERFACE, inherited("ActApi", "withBody", "()Ljava/lang/String;"))
+        assertNull(inherited("ActApi", "util", "()Ljava/lang/String;"))
+    }
+
+    @Test
+    fun `an interface that is not an activity interface labels none of its own methods`() {
+        assertNull(inherited("WfSelf", "signal"))
+    }
+
+    @Test
+    fun `an unannotated sub-interface of an activity interface adds no activity methods`() {
+        assertEquals(ACTIVITY_INTERFACE, inherited("ActMixedImpl", "plain", "()Ljava/lang/String;"))
+        assertNull(inherited("ActMixedImpl", "extra", "()Ljava/lang/String;"))
+    }
+
+    @Test
+    fun `a workflow annotation on a Kotlin default body counts, and a non-activity interface gives it no activity label`() {
+        val classes = defaultImplsClasses(signalOnOwn = true)
+        val lookupWithSynthetic: (String) -> ByteArray? = { classes[it] ?: lookup(it) }
+
+        val analysis =
+            analysisOf(
+                "$PACKAGE/Synthetic\$DefaultImpls",
+                lookup = lookupWithSynthetic,
+                bytes = classes.getValue("$PACKAGE/Synthetic\$DefaultImpls"),
+            )
+
+        assertEquals("io.temporal.workflow.SignalMethod", analysis.callbackAnnotationOf("own", "(L$PACKAGE/Synthetic;)V"))
+        assertNull(analysis.inheritedCallbackAnnotationOf("own", "(L$PACKAGE/Synthetic;)V"))
+    }
+
+    @Test
+    fun `a workflow annotation on an interface's own default method labels it`() {
+        assertEquals(
+            "io.temporal.workflow.SignalMethod",
+            analysisOf("$PACKAGE/WfSelf").callbackAnnotationOf("signal", "()V"),
+        )
+    }
+
+    @Test
+    fun `a Kotlin default body of an activity interface is labelled by the interface annotation`() {
+        val classes = defaultImplsClasses(activityInterface = true)
+        val lookupWithSynthetic: (String) -> ByteArray? = { classes[it] ?: lookup(it) }
+
+        val analysis =
+            analysisOf(
+                "$PACKAGE/Synthetic\$DefaultImpls",
+                lookup = lookupWithSynthetic,
+                bytes = classes.getValue("$PACKAGE/Synthetic\$DefaultImpls"),
+            )
+
+        assertEquals(GET_MAPPING, analysis.inheritedCallbackAnnotationOf("m", "(L$PACKAGE/Synthetic;)V"))
+        assertEquals(ACTIVITY_INTERFACE, analysis.inheritedCallbackAnnotationOf("own", "(L$PACKAGE/Synthetic;)V"))
+    }
+
     /**
      * `Synthetic : NearA` redeclares `m()V`, and `Synthetic$DefaultImpls.m(LSynthetic;)V` holds its
-     * default body, the shape kotlinc writes with `-jvm-default=disable`.
+     * default body, the shape kotlinc writes with `-jvm-default=disable`. With [activityInterface],
+     * `Synthetic` carries `@ActivityInterface` and declares `own()V`, whose default body is in
+     * `$DefaultImpls` too. With [signalOnOwn], `Synthetic` is not an activity interface, declares
+     * `own()V`, and its default body carries `@SignalMethod`, as kotlinc copies it there.
      */
-    private fun defaultImplsClasses(): Map<String, ByteArray> {
+    private fun defaultImplsClasses(
+        activityInterface: Boolean = false,
+        signalOnOwn: Boolean = false,
+    ): Map<String, ByteArray> {
         val interfaceName = "$PACKAGE/Synthetic"
         val iface = ClassWriter(0)
         iface.visit(
@@ -378,17 +444,163 @@ class InheritedCallbackAnnotationAnalyzerTest {
             "java/lang/Object",
             arrayOf("$PACKAGE/NearA"),
         )
+        if (activityInterface) iface.visitAnnotation("Lio/temporal/activity/ActivityInterface;", true).visitEnd()
+        if (activityInterface || signalOnOwn) {
+            iface.visitMethod(Opcodes.ACC_PUBLIC or Opcodes.ACC_ABSTRACT, "own", "()V", null, null).visitEnd()
+        }
         iface.visitMethod(Opcodes.ACC_PUBLIC or Opcodes.ACC_ABSTRACT, "m", "()V", null, null).visitEnd()
         iface.visitEnd()
         val impls = ClassWriter(0)
         impls.visit(Opcodes.V17, Opcodes.ACC_PUBLIC or Opcodes.ACC_FINAL, "$interfaceName\$DefaultImpls", null, "java/lang/Object", null)
-        impls.visitMethod(Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC, "m", "(L$interfaceName;)V", null, null).apply {
-            visitCode()
-            visitInsn(Opcodes.RETURN)
-            visitMaxs(0, 1)
-            visitEnd()
+        for (name in if (activityInterface || signalOnOwn) listOf("m", "own") else listOf("m")) {
+            impls.visitMethod(Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC, name, "(L$interfaceName;)V", null, null).apply {
+                if (signalOnOwn && name == "own") visitAnnotation("Lio/temporal/workflow/SignalMethod;", true).visitEnd()
+                visitCode()
+                visitInsn(Opcodes.RETURN)
+                visitMaxs(0, 1)
+                visitEnd()
+            }
         }
         impls.visitEnd()
         return mapOf(interfaceName to iface.toByteArray(), "$interfaceName\$DefaultImpls" to impls.toByteArray())
+    }
+
+    private fun assertInterfaceOnly(
+        simpleName: String,
+        method: String,
+        expected: String,
+        descriptor: String = "()V",
+    ) {
+        val analysis = analysisOf("$PACKAGE/$simpleName")
+        assertEquals(expected, analysis.inheritedCallbackAnnotationOf(method, descriptor))
+        assertNull(analysis.callbackAnnotationOf(method, descriptor))
+    }
+
+    @Test
+    fun `a workflow annotation on an interface method labels the unannotated implementation`() {
+        val prefix = "io.temporal.workflow"
+
+        assertInterfaceOnly("WfImpl", "run", "$prefix.WorkflowMethod", "()Ljava/lang/String;")
+        assertInterfaceOnly("WfImpl", "signal", "$prefix.SignalMethod")
+        assertInterfaceOnly("WfImpl", "query", "$prefix.QueryMethod", "()Ljava/lang/String;")
+        assertInterfaceOnly("WfImpl", "update", "$prefix.UpdateMethod")
+        assertInterfaceOnly("WfImpl", "validateUpdate", "$prefix.UpdateValidatorMethod")
+    }
+
+    @Test
+    fun `a workflow annotation passes down from an interface that is not a workflow interface, at any depth, abstract or default`() {
+        assertInterfaceOnly("WfLooseImpl", "poke", "io.temporal.workflow.SignalMethod")
+        assertInterfaceOnly("WfDeepImpl", "poke", "io.temporal.workflow.SignalMethod")
+        assertInterfaceOnly("WfDeepImpl", "peek", "io.temporal.workflow.QueryMethod", "()Ljava/lang/String;")
+    }
+
+    @Test
+    fun `a workflow annotation on the implementation method itself labels nothing`() {
+        val analysis = analysisOf("$PACKAGE/WfOwn")
+
+        assertNull(analysis.callbackAnnotationOf("run", "()V"))
+        assertNull(analysis.inheritedCallbackAnnotationOf("run", "()V"))
+    }
+
+    @Test
+    fun `a workflow annotation on a superclass method passes nothing down`() {
+        val analysis = analysisOf("$PACKAGE/WfBaseChild")
+
+        assertNull(analysis.callbackAnnotationOf("signal", "()V"))
+        assertNull(analysis.inheritedCallbackAnnotationOf("signal", "()V"))
+    }
+
+    @Test
+    fun `a composed annotation carrying a workflow annotation labels nothing`() {
+        val analysis = analysisOf("$PACKAGE/WfComposedImpl")
+
+        assertNull(analysis.callbackAnnotationOf("run", "()V"))
+        assertNull(analysis.inheritedCallbackAnnotationOf("run", "()V"))
+    }
+
+    @Test
+    fun `every method of an activity interface is labelled by the interface annotation, annotated or not`() {
+        assertEquals(ACTIVITY_INTERFACE, inherited("ActImpl", "plain", "()Ljava/lang/String;"))
+        assertEquals(ACTIVITY_INTERFACE, inherited("ActImpl", "withBody", "()Ljava/lang/String;"))
+        assertNull(inherited("ActImpl", "notInInterface", "()Ljava/lang/String;"))
+    }
+
+    @Test
+    fun `the methods of unannotated super-interfaces of an activity interface are labelled, at any depth`() {
+        assertEquals(ACTIVITY_INTERFACE, inherited("ActChildImpl", "child", "()Ljava/lang/String;"))
+        assertEquals(ACTIVITY_INTERFACE, inherited("ActChildImpl", "parent", "()Ljava/lang/String;"))
+        assertEquals(ACTIVITY_INTERFACE, inherited("ActChildImpl", "grand", "()Ljava/lang/String;"))
+    }
+
+    @Test
+    fun `an unannotated interface with no annotated descendant labels nothing`() {
+        assertNull(inherited("ActLooseImpl", "loose", "()Ljava/lang/String;"))
+    }
+
+    @Test
+    fun `a class that reaches an activity interface through its superclass is labelled`() {
+        assertEquals(ACTIVITY_INTERFACE, inherited("ActViaSuper", "plain", "()Ljava/lang/String;"))
+    }
+
+    @Test
+    fun `a method annotation that passes down is tried before the activity interface of the same supertype method`() {
+        assertEquals("org.springframework.context.event.EventListener", inherited("ActAnnotatedImpl", "both", "()Ljava/lang/String;"))
+    }
+
+    @Test
+    fun `an out-of-scope activity interface labels the override, which still names the overridden type`() {
+        val analysis = analysisOf("$PACKAGE/ActOutsideImpl")
+
+        assertEquals(ACTIVITY_INTERFACE, analysis.inheritedCallbackAnnotationOf("outside", "()Ljava/lang/String;"))
+        assertEquals("com.example.outside.inherit.ActOutsideApi", analysis.overriddenOutsideTypeOf("outside", "()Ljava/lang/String;"))
+    }
+
+    @Test
+    fun `a Temporal operation counts on the method itself and is not inherited, nor read through a composed annotation`() {
+        val analysis = analysisOf("$PACKAGE/TemporalOpImpl")
+
+        assertEquals("io.temporal.nexus.TemporalOperation", analysis.callbackAnnotationOf("own", "()V"))
+        assertNull(analysis.callbackAnnotationOf("op", "()V"))
+        assertNull(analysis.inheritedCallbackAnnotationOf("op", "()V"))
+        assertNull(analysis.callbackAnnotationOf("composed", "()V"))
+    }
+
+    @Test
+    fun `Axon 4 handler annotations label the method that carries them, through one level or two of meta-annotation`() {
+        val analysis = analysisOf("$PACKAGE/AxonImpl")
+
+        assertEquals(COMMAND_HANDLER, analysis.callbackAnnotationOf("command", "()V"))
+        assertEquals("org.axonframework.modelling.saga.SagaEventHandler", analysis.callbackAnnotationOf("saga", "()V"))
+        assertEquals("com.example.target.inherit.ComposedCommand", analysis.callbackAnnotationOf("composed", "()V"))
+        assertEquals("org.axonframework.lifecycle.StartHandler", analysis.callbackAnnotationOf("start", "()V"))
+    }
+
+    @Test
+    fun `an Axon 5 command handler labels the method that carries it, and so does an entity creator`() {
+        val analysis = analysisOf("$PACKAGE/Axon5Impl")
+
+        assertEquals(AXON_5_COMMAND_HANDLER, analysis.callbackAnnotationOf("command", "()V"))
+        assertEquals("org.axonframework.eventsourcing.annotation.reflection.EntityCreator", analysis.callbackAnnotationOf("creator", "()V"))
+    }
+
+    @Test
+    fun `an Axon handler passes down from an interface method, but a start handler does not`() {
+        assertEquals("org.axonframework.eventhandling.EventHandler", inherited("AxonApiImpl", "event"))
+        assertNull(inherited("AxonApiImpl", "start"))
+        assertNull(inherited("AxonStartChild", "start"))
+    }
+
+    @Test
+    fun `an Axon 5 command handler passes down from a superclass method, but an entity creator does not`() {
+        assertEquals(AXON_5_COMMAND_HANDLER, inherited("Axon5Child", "command"))
+        assertNull(inherited("Axon5Child", "creator"))
+    }
+
+    @Test
+    fun `an own Axon annotation beats an inherited Temporal one`() {
+        val analysis = analysisOf("$PACKAGE/AxonOverTemporal")
+
+        assertEquals(COMMAND_HANDLER, analysis.callbackAnnotationOf("poke", "()V"))
+        assertNull(analysis.inheritedCallbackAnnotationOf("poke", "()V"))
     }
 }

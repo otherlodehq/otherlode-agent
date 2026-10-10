@@ -136,4 +136,39 @@ class InheritedCallbackAnnotationInstrumentationTest {
         assertNull(outsideCallerOf(without, "NamedImpl", "runtime"))
         assertNull(outsideCallerOf(without, "NamedImpl", "classRetained"))
     }
+
+    @Test
+    fun `a workflow annotation labels an implementation from its interface and never on the implementation itself`() {
+        val probes = manifest("WfImpl", "WfOwn", "WfComposedImpl")
+
+        assertEquals(annotated("io.temporal.workflow.WorkflowMethod"), outsideCallerOf(probes, "WfImpl", "run"))
+        assertEquals(annotated("io.temporal.workflow.SignalMethod"), outsideCallerOf(probes, "WfImpl", "signal"))
+        assertNull(outsideCallerOf(probes, "WfOwn", "run"))
+        assertNull(outsideCallerOf(probes, "WfComposedImpl", "run"))
+    }
+
+    @Test
+    fun `an activity interface labels its methods, and beats an out-of-scope override`() {
+        val probes = manifest("ActImpl", "ActChildImpl", "ActLooseImpl", "ActOutsideImpl")
+
+        assertEquals(annotated("io.temporal.activity.ActivityInterface"), outsideCallerOf(probes, "ActImpl", "plain"))
+        assertEquals(annotated("io.temporal.activity.ActivityInterface"), outsideCallerOf(probes, "ActChildImpl", "grand"))
+        assertNull(outsideCallerOf(probes, "ActLooseImpl", "loose"))
+        assertEquals(annotated("io.temporal.activity.ActivityInterface"), outsideCallerOf(probes, "ActOutsideImpl", "outside"))
+    }
+
+    @Test
+    fun `an Axon annotation labels its method and an inherited Temporal one yields to it`() {
+        val probes = manifest("AxonImpl", "AxonApiImpl", "AxonStartChild", "AxonOverTemporal", "Axon5Child")
+
+        assertEquals(annotated("org.axonframework.commandhandling.CommandHandler"), outsideCallerOf(probes, "AxonImpl", "command"))
+        assertEquals(annotated("org.axonframework.eventhandling.EventHandler"), outsideCallerOf(probes, "AxonApiImpl", "event"))
+        assertNull(outsideCallerOf(probes, "AxonApiImpl", "start"))
+        assertNull(outsideCallerOf(probes, "AxonStartChild", "start"))
+        assertEquals(annotated("org.axonframework.commandhandling.CommandHandler"), outsideCallerOf(probes, "AxonOverTemporal", "poke"))
+        assertEquals(
+            annotated("org.axonframework.messaging.commandhandling.annotation.CommandHandler"),
+            outsideCallerOf(probes, "Axon5Child", "command"),
+        )
+    }
 }

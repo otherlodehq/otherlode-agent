@@ -49,9 +49,22 @@ class CallbackAnnotationsTest {
             "io.micronaut.http.annotation.HttpMethodMapping",
             "io.micronaut.runtime.event.annotation.EventListener",
             "com.google.common.eventbus.Subscribe",
+            "org.axonframework.messaging.annotation.MessageHandler",
+            "org.axonframework.messaging.core.annotation.MessageHandler",
         ) + bothNamespaces("ws.rs", "GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS", "Path", "HttpMethod")
 
     private val fromSuperclassesAndDefaultMethods: Set<String> = names("org.springframework.context.annotation.Bean")
+
+    private val fromInterfacesOnly: Set<String> =
+        names(
+            "io.temporal.workflow.WorkflowMethod",
+            "io.temporal.workflow.SignalMethod",
+            "io.temporal.workflow.QueryMethod",
+            "io.temporal.workflow.UpdateMethod",
+            "io.temporal.workflow.UpdateValidatorMethod",
+        )
+
+    private val directOnly: Set<String> = names("io.temporal.nexus.TemporalOperation")
 
     private val never: Set<String> =
         names(
@@ -67,6 +80,10 @@ class CallbackAnnotationsTest {
             "io.quarkus.scheduler.Scheduled",
             "io.quarkus.scheduler.Scheduled\$Schedules",
             "io.quarkus.runtime.Startup",
+            "org.axonframework.lifecycle.StartHandler",
+            "org.axonframework.lifecycle.ShutdownHandler",
+            "org.axonframework.eventsourcing.annotation.reflection.EntityCreator",
+            "org.axonframework.eventsourcing.annotation.EventCriteriaBuilder",
         ) +
             bothNamespaces("annotation", "PostConstruct", "PreDestroy") +
             bothNamespaces("ejb", "Schedule", "Schedules", "Timeout") +
@@ -91,14 +108,35 @@ class CallbackAnnotationsTest {
         assertEquals(fromInterfacesAndSuperclasses, namesWith(Inheritance.FROM_INTERFACES_AND_SUPERCLASSES))
         assertEquals(fromSuperclassesAndDefaultMethods, namesWith(Inheritance.FROM_SUPERCLASSES_AND_DEFAULT_METHODS))
         assertEquals(never, namesWith(Inheritance.NEVER))
+        assertEquals(fromInterfacesOnly, namesWith(Inheritance.FROM_INTERFACES_ONLY))
+        assertEquals(directOnly, namesWith(Inheritance.DIRECT_ONLY))
     }
 
     @Test
-    fun `the three groups together are every name that counts on a method, and none is in two`() {
-        val all = fromInterfacesAndSuperclasses + fromSuperclassesAndDefaultMethods + never
+    fun `the groups together are every name that has a rule, and none is in two`() {
+        val all = fromInterfacesAndSuperclasses + fromSuperclassesAndDefaultMethods + fromInterfacesOnly + directOnly + never
 
-        assertEquals(CallbackAnnotations.onMethod, all)
-        assertEquals(all.size, fromInterfacesAndSuperclasses.size + fromSuperclassesAndDefaultMethods.size + never.size)
+        assertEquals(CallbackAnnotations.inheritance.keys, all)
+        assertEquals(
+            all.size,
+            fromInterfacesAndSuperclasses.size + fromSuperclassesAndDefaultMethods.size + fromInterfacesOnly.size + directOnly.size +
+                never.size,
+        )
+    }
+
+    @Test
+    fun `a name counts on its own method unless its rule says it does not`() {
+        assertEquals(
+            CallbackAnnotations.inheritance.keys - fromInterfacesOnly,
+            CallbackAnnotations.inheritance.filterValues { it.countsOnMethod }.keys,
+        )
+    }
+
+    @Test
+    fun `the Temporal names are read directly, and no other name is`() {
+        val direct = CallbackAnnotations.inheritance.filterValues { it.direct }.keys
+
+        assertEquals(fromInterfacesOnly + directOnly, direct)
     }
 
     @Test
@@ -118,5 +156,7 @@ class CallbackAnnotationsTest {
         )
         assertEquals(setOf(Relation.SUPERCLASS, Relation.INTERFACE_DEFAULT), Inheritance.FROM_SUPERCLASSES_AND_DEFAULT_METHODS.relations)
         assertEquals(emptySet(), Inheritance.NEVER.relations)
+        assertEquals(setOf(Relation.INTERFACE_DEFAULT, Relation.INTERFACE_ABSTRACT), Inheritance.FROM_INTERFACES_ONLY.relations)
+        assertEquals(emptySet(), Inheritance.DIRECT_ONLY.relations)
     }
 }

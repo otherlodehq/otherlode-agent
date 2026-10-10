@@ -144,7 +144,7 @@ There is no wildcard that selects every class. A broad prefix such as `com` is a
 `callbackAnnotations` names annotations that a framework calls methods by, for a framework the agent's built-in list does not cover. A never-hit method that carries one is labelled *called from outside scope* rather than *uncalled*. The label changes no count and no cluster. See [outside callers](call-graph#outside-callers) for what the label means and what the built-in list covers.
 
 ```text
-callbackAnnotations=org.axonframework.commandhandling.CommandHandler;com.acme.bus.Handles
+callbackAnnotations=com.acme.bus.Handles;com.acme.jobs.OnJob
 ```
 
 - **Names are exact.** Each entry is one annotation type's fully qualified name. There are no prefixes or wildcards, because a prefix would also catch annotations such as `@NotBlank` or `@Nullable` in the same package and hide real dead code.

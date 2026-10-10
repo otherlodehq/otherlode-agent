@@ -7,6 +7,7 @@ import dev.otherlode.export.ConditionPart
 import dev.otherlode.export.GeneratedBy
 import dev.otherlode.export.KotlinKind
 import dev.otherlode.export.UnreadShape
+import dev.otherlode.instrumentation.CallbackAnnotations
 import dev.otherlode.instrumentation.ScalaClassDetector
 import dev.otherlode.instrumentation.TypeMatchPolicy
 import dev.otherlode.instrumentation.interned
@@ -815,6 +816,7 @@ object BranchSiteAnalyzer {
         var nextSiteIndex = 0
         var hasLineNumbers = false
         var isKotlinClass = false
+        var isActivityInterfaceClass = false
         var kotlinKind = KotlinKind.NONE
         var isScalaClass = false
 
@@ -895,6 +897,7 @@ object BranchSiteAnalyzer {
                     visible: Boolean,
                 ): AnnotationVisitor? {
                     val references = classReferenceCollector.annotation(descriptor, visible)
+                    if (visible && descriptor == ACTIVITY_INTERFACE_DESCRIPTOR) isActivityInterfaceClass = true
                     if (!kotlinMetadataDescriptorShape.matches(descriptor)) return references
                     isKotlinClass = true
                     kotlinKind = KotlinKind.ofMetadataKind(null)
@@ -1188,10 +1191,11 @@ object BranchSiteAnalyzer {
                 tableCache,
                 callbackAnnotations,
             )
+        val onInterface = classAccess and Opcodes.ACC_INTERFACE != 0 || internalClassName.endsWith(DEFAULT_IMPLS_SUFFIX)
         val callbackAnnotationByMethod =
             annotationsByMethod
                 .mapNotNull { (key, annotations) ->
-                    callbackFinder.first(annotations)?.let { key to it.replace('/', '.') }
+                    callbackFinder.first(annotations, onInterface)?.let { key to it.replace('/', '.') }
                 }.toMap()
         val inheritedCallbackAnnotations =
             if (shouldWalk) {
@@ -1204,6 +1208,7 @@ object BranchSiteAnalyzer {
                     OverrideWalk.OwnLabels({ annotationsByMethod[it] }, { it in callbackAnnotationByMethod }),
                     callbackFinder,
                     sameClassCallees,
+                    isActivityInterface = classAccess and Opcodes.ACC_INTERFACE != 0 && isActivityInterfaceClass,
                 )
             } else {
                 emptyMap()
@@ -3351,6 +3356,8 @@ object BranchSiteAnalyzer {
         val unreadRelease: String? = null,
         val cause: UnreadCause? = null,
     )
+
+    private const val ACTIVITY_INTERFACE_DESCRIPTOR = "L${CallbackAnnotations.ACTIVITY_INTERFACE};"
 
     private const val DEFAULT_IMPLS_SUFFIX = "\$DefaultImpls"
 

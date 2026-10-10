@@ -16,9 +16,18 @@ internal enum class Relation {
  * The supertype methods an annotation passes down from, as the framework that reads it behaves
  * (ADR 0069). A rule holds the [Relation]s it allows, so a rule that allows other combinations is
  * one more entry.
+ *
+ * [countsOnMethod] is false for an annotation the framework reads on interface methods only, so
+ * that it labels nothing on a class's method that carries it; it still counts on an interface's
+ * own method, or a Kotlin `$DefaultImpls` body of one, which runs when nothing overrides it.
+ * [direct] is true for an annotation the
+ * framework reads without looking through meta-annotations, so that a composed annotation carrying
+ * it counts for nothing.
  */
 internal enum class Inheritance(
     val relations: Set<Relation>,
+    val countsOnMethod: Boolean = true,
+    val direct: Boolean = false,
 ) {
     /** The framework finds the annotation on a superclass method and on any interface method. */
     FROM_INTERFACES_AND_SUPERCLASSES(Relation.entries.toSet()),
@@ -28,6 +37,15 @@ internal enum class Inheritance(
 
     /** The framework reads the annotation on the method that runs and nowhere else. */
     NEVER(emptySet()),
+
+    /**
+     * The framework reads the annotation on interface methods only, never on a class's method, and
+     * never through a meta-annotation.
+     */
+    FROM_INTERFACES_ONLY(setOf(Relation.INTERFACE_DEFAULT, Relation.INTERFACE_ABSTRACT), countsOnMethod = false, direct = true),
+
+    /** The framework reads the annotation on the method that runs, never through a meta-annotation and never from a supertype. */
+    DIRECT_ONLY(emptySet(), direct = true),
 }
 
 /**
@@ -39,7 +57,7 @@ internal enum class Inheritance(
  * runtime retention. Adding a name changes no wire field, and needs the rule its framework follows.
  *
  * Names are internal, with slashes, and a nested type keeps its `$`. [inheritance] holds the
- * annotations that count on a method, each with its rule, and [onMethod] is its names.
+ * annotations that have a rule.
  * [onParameter] holds the ones that count on a parameter, which `@Observes` and `@ObservesAsync` are
  * the only ones to use. An annotation in one set does not count in the other place:
  * `@ModelAttribute` on a parameter marks nothing.
@@ -52,18 +70,21 @@ internal object CallbackAnnotations {
     private val rules = LinkedHashMap<String, Inheritance>()
     private val jaxRsNames = HashSet<String>()
 
-    /** Each annotation that counts when it sits on the method, with the rule its framework follows. */
+    /** Each annotation with a rule, with the rule its framework follows. */
     val inheritance: Map<String, Inheritance>
 
-    /** The annotations that count when they sit on the method. */
-    val onMethod: Set<String>
-        get() = inheritance.keys
-
     /**
-     * The JAX-RS annotations among [onMethod], in both namespaces. A method that carries any
+     * The JAX-RS annotations among [inheritance], in both namespaces. A method that carries any
      * annotation from a `ws.rs` package inherits none of these (REST 4.0 section 3.6).
      */
     val jaxRs: Set<String>
+
+    /**
+     * The one type annotation that marks methods: every non-static method of an interface that
+     * carries it is an activity, and so are the methods of its unannotated super-interfaces
+     * (ADR 0069). It applies to this name alone.
+     */
+    const val ACTIVITY_INTERFACE = "io/temporal/activity/ActivityInterface"
 
     /** Annotations that count when they sit on a parameter of the method. */
     val onParameter: Set<String> =
@@ -164,6 +185,30 @@ internal object CallbackAnnotations {
             "io.quarkus.runtime.Startup",
         )
         add(web, "com.google.common.eventbus.Subscribe")
+        // Temporal reads each of these with getAnnotation, never through a meta-annotation.
+        inPackage(
+            Inheritance.FROM_INTERFACES_ONLY,
+            "io.temporal.workflow",
+            "WorkflowMethod",
+            "SignalMethod",
+            "QueryMethod",
+            "UpdateMethod",
+            "UpdateValidatorMethod",
+        )
+        add(Inheritance.DIRECT_ONLY, "io.temporal.nexus.TemporalOperation")
+        // Axon finds a handler through MessageHandler, which every handler annotation carries at some depth.
+        add(
+            web,
+            "org.axonframework.messaging.annotation.MessageHandler",
+            "org.axonframework.messaging.core.annotation.MessageHandler",
+        )
+        add(
+            never,
+            "org.axonframework.lifecycle.StartHandler",
+            "org.axonframework.lifecycle.ShutdownHandler",
+            "org.axonframework.eventsourcing.annotation.reflection.EntityCreator",
+            "org.axonframework.eventsourcing.annotation.EventCriteriaBuilder",
+        )
         inheritance = rules
         jaxRs = jaxRsNames
     }

@@ -1,5 +1,6 @@
 package dev.otherlode.instrumentation.branch
 
+import dev.otherlode.instrumentation.CallbackAnnotations
 import dev.otherlode.instrumentation.Relation
 import dev.otherlode.instrumentation.TypeMatchPolicy
 import dev.otherlode.instrumentation.interned
@@ -10,6 +11,7 @@ import net.bytebuddy.jar.asm.MethodVisitor
 import net.bytebuddy.jar.asm.Opcodes
 import net.bytebuddy.utility.OpenedClassReader
 import java.util.Arrays
+import java.util.IdentityHashMap
 
 /**
  * An overridable method that carries annotations, as the walk reads it on a supertype. [onMethod]
@@ -32,12 +34,14 @@ internal class SupertypeMethod(
  * as `run()V`. A static method, a private method, a constructor and `<clinit>` are left out, since
  * none of them can be overridden. A package-private method is held apart, since only a class in
  * the same package can override it. A method with no annotations adds nothing beyond its key, and
- * a `java.*` type keeps no annotations, since none is a callback annotation.
+ * a `java.*` type keeps no annotations, since none is a callback annotation. Of the type's own
+ * annotations only one matters, so [isActivityInterface] is all that is kept of them.
  */
 internal class TypeHeader private constructor(
     val isInterface: Boolean,
     val superName: String?,
     val interfaces: List<String>,
+    val isActivityInterface: Boolean,
     private val visible: Array<String>,
     private val packagePrivate: Array<String>,
     private val annotated: Map<String, SupertypeMethod>,
@@ -119,8 +123,21 @@ internal class TypeHeader private constructor(
                             classRetained.clear()
                         }
                     }
+                var isActivityInterface = false
                 val visitor =
                     object : ClassVisitor(Opcodes.ASM9) {
+                        override fun visitAnnotation(
+                            descriptor: String,
+                            isVisible: Boolean,
+                        ): AnnotationVisitor? {
+                            if (isVisible &&
+                                CallbackAnnotationFinder.internalNameOf(descriptor) == CallbackAnnotations.ACTIVITY_INTERFACE
+                            ) {
+                                isActivityInterface = true
+                            }
+                            return null
+                        }
+
                         override fun visitMethod(
                             access: Int,
                             name: String,
@@ -144,6 +161,7 @@ internal class TypeHeader private constructor(
                     reader.access and Opcodes.ACC_INTERFACE != 0,
                     reader.superName?.interned(),
                     reader.interfaces.map { it.interned() },
+                    isActivityInterface,
                     sorted(visible),
                     sorted(packagePrivate),
                     annotated.ifEmpty { emptyMap() },
@@ -196,6 +214,7 @@ internal class OverrideWalk(
     }
 
     private val supertypeLists = HashMap<String, List<Supertype>>()
+    private val activityInterfaceSets = IdentityHashMap<List<Supertype>, Set<String>>()
 
     /**
      * The out-of-scope type each method in [eligible] overrides, dotted and by (name, descriptor).
@@ -260,9 +279,14 @@ internal class OverrideWalk(
      * The walk is that of [overriddenTypes], through supertypes in scope or not, and a bridge passes
      * what it finds to the method it calls, as there. It stops at the first supertype method with
      * the method's name and descriptor whose annotations pass down over its [Relation]: a method
-     * that matches but carries nothing that passes does not end it. A method that carries a
+     * that matches but carries nothing that passes does not end it. Within one supertype method, a
+     * passing annotation is tried before the activity rule: a method an interface marks with
+     * `@ActivityInterface` (see [activityInterfaces]) is labelled by it. A method that carries a
      * `ws.rs` annotation inherits no JAX-RS annotation, whichever supertype. A `$DefaultImpls`
      * body is looked up through its interface's method, as in [overriddenTypes].
+     *
+     * When [isActivityInterface], the class is an interface carrying `@ActivityInterface`, and each
+     * of its own overridable methods is labelled by it, its own label aside.
      *
      * A method that already has a label of its own ([OwnLabels.isLabelled]) inherits none. When the
      * adopter named annotations, the walk still goes through every supertype method it overrides,
@@ -277,6 +301,7 @@ internal class OverrideWalk(
         own: OwnLabels,
         finder: CallbackAnnotationFinder,
         sameClassCallees: (Pair<String, String>) -> Set<Pair<String, String>>,
+        isActivityInterface: Boolean = false,
     ): Map<Pair<String, String>, String> {
         val supertypes by lazy(LazyThreadSafetyMode.NONE) {
             supertypes(internalClassName, listOfNotNull(superInternalName) + interfaceInternalNames)
@@ -301,6 +326,15 @@ internal class OverrideWalk(
             if (isBridge) bridges += Triple(probed, found.first, found.second) else result[key] = found.second
         }
         for ((target, _, annotation) in bridges.sortedBy { it.second }) result.putIfAbsent(target, annotation)
+        // An activity interface's own methods are activities too: an implementation that does not
+        // override a default method runs it.
+        if (isActivityInterface) {
+            for ((key, access) in methodAccess) {
+                if (key in eligible && TypeHeader.canBeOverridden(access, key.first) && !own.isLabelled(key)) {
+                    result.putIfAbsent(key, ACTIVITY_INTERFACE_DOTTED)
+                }
+            }
+        }
         if (internalClassName.endsWith(DEFAULT_IMPLS_SUFFIX)) {
             val defaultBodies = eligible.filterTo(HashSet()) { key -> (methodAccess[key] ?: 0) and Opcodes.ACC_STATIC != 0 }
             result.putAll(inheritedDefaultImpls(internalClassName, defaultBodies, own, finder))
@@ -333,18 +367,44 @@ internal class OverrideWalk(
         finder: CallbackAnnotationFinder,
     ): Pair<Int, String>? {
         var label: Pair<Int, String>? = null
+        val activityInterfaces = if (wantLabel) activityInterfaces(supertypes) else emptySet()
         for ((index, supertype) in supertypes.withIndex()) {
-            val method = supertype.header.annotatedMethod(methodKey, supertype.packageName == packageName) ?: continue
-            finder.noteNamed(method.onMethod, method.classRetained)
-            if (label == null && wantLabel) {
-                finder
-                    .inheritable(method.onMethod, method.classRetained, supertype.relationOf(method), blockJaxRs)
-                    ?.let { label = index to it.replace('/', '.') }
+            val samePackage = supertype.packageName == packageName
+            val method = supertype.header.annotatedMethod(methodKey, samePackage)
+            if (method != null) {
+                finder.noteNamed(method.onMethod, method.classRetained)
+                if (label == null && wantLabel) {
+                    finder
+                        .inheritable(method.onMethod, method.classRetained, supertype.relationOf(method), blockJaxRs)
+                        ?.let { label = index to it.replace('/', '.') }
+                }
+            }
+            if (label == null && supertype.internalName in activityInterfaces && supertype.header.declares(methodKey, samePackage)) {
+                label = index to ACTIVITY_INTERFACE_DOTTED
             }
             if (!finder.tracksNamed && (label != null || !wantLabel)) break
         }
         return label
     }
+
+    /**
+     * The interfaces among [supertypes] whose methods are activities: those that carry
+     * `@ActivityInterface` and every super-interface of one, at any depth. Computed once per list.
+     */
+    private fun activityInterfaces(supertypes: List<Supertype>): Set<String> =
+        activityInterfaceSets.getOrPut(supertypes) {
+            val annotated =
+                supertypes.filter { it.header.isInterface && it.header.isActivityInterface }
+            if (annotated.isEmpty()) return@getOrPut emptySet()
+            val byName = supertypes.associateBy { it.internalName }
+            val marked = HashSet<String>()
+            val pending = ArrayDeque(annotated.map { it.internalName })
+            while (pending.isNotEmpty()) {
+                val name = pending.removeLast()
+                if (marked.add(name)) byName[name]?.header?.interfaces?.let(pending::addAll)
+            }
+            marked
+        }
 
     private fun inheritedDefaultImpls(
         internalClassName: String,
@@ -365,7 +425,11 @@ internal class OverrideWalk(
             if (!header.declares(interfaceKey, samePackage = true)) continue
             if (own.isLabelled(key) && !finder.tracksNamed) continue
             val blockJaxRs = own.annotationsOf(key)?.carriesJaxRs == true
-            inheritedFrom(supertypes, interfaceKey, packageName, blockJaxRs, !own.isLabelled(key), finder)?.let { result[key] = it.second }
+            val found = inheritedFrom(supertypes, interfaceKey, packageName, blockJaxRs, !own.isLabelled(key), finder)
+            when {
+                found != null -> result[key] = found.second
+                header.isActivityInterface && !own.isLabelled(key) -> result[key] = ACTIVITY_INTERFACE_DOTTED
+            }
         }
         return result
     }
@@ -448,5 +512,7 @@ internal class OverrideWalk(
 
     private companion object {
         const val DEFAULT_IMPLS_SUFFIX = "\$DefaultImpls"
+
+        private val ACTIVITY_INTERFACE_DOTTED = CallbackAnnotations.ACTIVITY_INTERFACE.replace('/', '.')
     }
 }

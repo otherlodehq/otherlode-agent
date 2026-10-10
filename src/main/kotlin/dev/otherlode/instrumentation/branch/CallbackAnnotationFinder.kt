@@ -39,7 +39,7 @@ internal class MethodAnnotations(
  * depth (ADR 0064).
  *
  * A method's runtime-visible annotations are tried first, in class-file order, against
- * [CallbackAnnotations.onMethod] and the adopter's [configured] names. An annotation counts when it
+ * [CallbackAnnotations.inheritance] and the adopter's [configured] names. An annotation counts when it
  * is in either, or when its own type carries one. That type's class file is read through
  * [readBytes], and a type whose class file cannot be read counts only when it is listed or named
  * itself. Types in `java.lang.annotation` and `kotlin.annotation` are never read.
@@ -77,11 +77,18 @@ internal class CallbackAnnotationFinder(
 ) {
     private val own = HashMap<String, Int>()
 
-    /** The internal name of the first callback annotation in [annotations], or null. */
-    fun first(annotations: MethodAnnotations): String? {
+    /**
+     * The internal name of the first callback annotation in [annotations], or null. [onInterface]
+     * says the method is an interface's own, or a Kotlin `$DefaultImpls` body of one, where an
+     * annotation its framework reads on interface methods only counts too.
+     */
+    fun first(
+        annotations: MethodAnnotations,
+        onInterface: Boolean = false,
+    ): String? {
         if (configured.isActive) noteNamed(annotations.onMethod, annotations.classRetained)
-        return annotations.onMethod.firstOrNull { reach(it, namedOnly = false) != 0 }
-            ?: annotations.classRetained.firstOrNull { reach(it, namedOnly = true) != 0 }
+        return annotations.onMethod.firstOrNull { Reach.counts(reach(it, namedOnly = false), onInterface) }
+            ?: annotations.classRetained.firstOrNull { Reach.counts(reach(it, namedOnly = true), onInterface) }
             ?: annotations.onParameters.firstOrNull { it in CallbackAnnotations.onParameter }
     }
 
@@ -122,7 +129,7 @@ internal class CallbackAnnotationFinder(
         annotation: String,
         namedOnly: Boolean,
     ): Int {
-        val direct = targetReach(annotation, namedOnly)
+        val direct = targetReach(annotation, namedOnly, viaMeta = false)
         if (direct != 0) return direct
         if (isSkipped(annotation)) return 0
         // A named-only answer can differ from the full one, so it is cached under its own key. No
@@ -139,7 +146,7 @@ internal class CallbackAnnotationFinder(
     ): Int {
         var found = 0
         for (carried in carriedBy(annotation)) {
-            val direct = targetReach(carried, namedOnly)
+            val direct = targetReach(carried, namedOnly, viaMeta = true)
             found =
                 found or
                 when {
@@ -147,7 +154,9 @@ internal class CallbackAnnotationFinder(
                         direct
                     }
 
-                    isSkipped(carried) -> {
+                    // A listed annotation its framework reads only directly decides alone, and
+                    // here it was reached through another one, so nothing below it is read.
+                    CallbackAnnotations.inheritance[carried]?.direct == true || isSkipped(carried) -> {
                         0
                     }
 
@@ -160,16 +169,21 @@ internal class CallbackAnnotationFinder(
         return found
     }
 
-    /** The [Reach] of [annotation] when it is itself a listed or named annotation, and 0 otherwise. */
+    /**
+     * The [Reach] of [annotation] when it is itself a listed or named annotation, and 0 otherwise.
+     * With [viaMeta] it was found on an annotation type, where a listed annotation whose framework
+     * reads it directly is not seen.
+     */
     private fun targetReach(
         annotation: String,
         namedOnly: Boolean,
+        viaMeta: Boolean,
     ): Int {
         var found = 0
         if (configured.matches(annotation)) found = Reach.of(Inheritance.FROM_INTERFACES_AND_SUPERCLASSES, isJaxRs = false)
         if (!namedOnly) {
             CallbackAnnotations.inheritance[annotation]?.let {
-                found = found or Reach.of(it, isJaxRs = annotation in CallbackAnnotations.jaxRs)
+                if (!(viaMeta && it.direct)) found = found or Reach.of(it, isJaxRs = annotation in CallbackAnnotations.jaxRs)
             }
         }
         return found
@@ -243,11 +257,17 @@ internal class CallbackAnnotationFinder(
 
     /**
      * What an annotation type reaches, as bits. [COUNTS] is set when it is or carries a listed or
-     * named annotation. The next three bits hold the [Relation]s over which a reached annotation
-     * passes down, and the three after them the same for reached annotations that are not JAX-RS.
+     * named annotation that counts on the method that carries it, and [COUNTS_ON_INTERFACE] when
+     * one counts on an interface's own method, which also holds for an annotation its framework
+     * reads on interface methods only. One read directly sets its bits only when the annotation type
+     * asked about is that annotation. Bits 1 to 3 hold the [Relation]s over which a reached
+     * annotation passes down, and bits 4 to 6 the same for reached annotations that are not JAX-RS.
      */
     internal object Reach {
         private const val COUNTS = 1
+
+        /** Set beside [COUNTS], and alone for an annotation read on interface methods only. */
+        private const val COUNTS_ON_INTERFACE = 1 shl 7
 
         /** Where the bits for [Relation]s over any family start. */
         private const val ANY_FAMILY_SHIFT = 1
@@ -260,7 +280,7 @@ internal class CallbackAnnotationFinder(
             rule: Inheritance,
             isJaxRs: Boolean,
         ): Int =
-            rule.relations.fold(COUNTS) { bits, relation ->
+            rule.relations.fold(ownBits(rule)) { bits, relation ->
                 bits or (1 shl (ANY_FAMILY_SHIFT + relation.ordinal)) or
                     nonJaxRs(relation, isJaxRs)
             }
@@ -269,6 +289,22 @@ internal class CallbackAnnotationFinder(
             relation: Relation,
             isJaxRs: Boolean,
         ): Int = if (isJaxRs) 0 else 1 shl (NON_JAX_RS_SHIFT + relation.ordinal)
+
+        private fun ownBits(rule: Inheritance): Int =
+            when {
+                rule.countsOnMethod -> COUNTS or COUNTS_ON_INTERFACE
+                Relation.INTERFACE_DEFAULT in rule.relations -> COUNTS_ON_INTERFACE
+                else -> 0
+            }
+
+        /**
+         * Whether [reach] says the annotation counts on the method that carries it, which is an
+         * interface's own method, or a Kotlin `$DefaultImpls` body of one, when [onInterface].
+         */
+        fun counts(
+            reach: Int,
+            onInterface: Boolean,
+        ): Boolean = reach and (if (onInterface) COUNTS_ON_INTERFACE else COUNTS) != 0
 
         /** Whether [reach] passes down over [relation], counting only non-JAX-RS annotations when [blockJaxRs]. */
         fun passes(

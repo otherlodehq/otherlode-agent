@@ -422,7 +422,7 @@ the cases the option covers: its annotations sit on interface methods.
 The follow-up for annotations on supertype methods was grilled the same
 day and is the next entry.
 
-### Inherited callback annotations, Temporal and Axon: in progress
+### Inherited callback annotations, Temporal and Axon: landed
 
 Grilled on 2026-10-10 with Luke; ADR 0069, ADR 0064 amended, `CONTEXT.md`'s
 "Outside caller" names inheritance. A method takes a callback annotation
@@ -441,8 +441,8 @@ Landing order, one chunk and one commit each, agent only:
    and `docs/site/call-graph.md`, `configuration.md` and
    `troubleshooting.md`.
 2. Temporal and Axon: their names and rules, the interface-only rule,
-   type headers keeping a type's own annotations for the interface-type
-   rule, and the docs.
+   type headers keeping whether a type is an `@ActivityInterface`, and
+   the docs.
 
 Chunk 1 landed on 2026-10-10. Two Opus review rounds found no defect in
 the walk, the table, the precedence or the cache, and changed: header
@@ -457,6 +457,25 @@ the known gaps: a generic method specialised in an intermediate class,
 a JAX-RS intermediate method carrying only `@Produces`, and Spring's
 interfaces-first order. The visibility baseline did not move; the corpora
 hold no inherited case.
+
+Chunk 2 landed on 2026-10-10: Temporal's workflow annotations (from
+interface methods only, read directly), the `@ActivityInterface` type
+rule, `@TemporalOperation`, and Axon's `MessageHandler` in both packages
+with its lifecycle and entity-creator callbacks. The main-session review
+found that an interface's own default method, or its Kotlin
+`$DefaultImpls` body, which Temporal runs when nothing overrides it, went
+unlabelled; a workflow annotation now counts there, and an
+`@ActivityInterface` labels its own methods, the flag read from the
+analyser's own pass (reading the class's own header through its loader
+broke `CodeSourceClassFileTest`). Headers keep only whether a type is an
+activity interface. The Opus review found no code defect; it tightened
+KDoc, dropped the unused `CallbackAnnotations.onMethod`, stopped the
+meta-walk at a direct-only annotation, and pinned four boundaries. Known
+gap, accepted with Luke: an unannotated parent interface's default method
+that passes down to an `@ActivityInterface` is unlabelled when nothing
+overrides it, since a parent loads before its sub-interfaces; closing it
+would need a label after publishing, a wire question, or a classpath scan.
+Trigger: an adopter's report shows such a body reading uncalled.
 
 ### Customer docs round: follow-ups: all closed but item 2
 
