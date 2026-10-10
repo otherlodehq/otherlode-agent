@@ -447,6 +447,10 @@ data class BranchOutcome(
  * [condition] is the expression the site tests, in the class's source language, as the
  * fall-through side reads it. A switch's condition is its subject. It is empty when the agent
  * could not write the expression in source terms.
+ *
+ * [stringHashCodeSwitch] is true for a switch on the value `String.hashCode()` returns, which the
+ * agent left as a plain switch. Each [BranchOutcome.caseKey] of such a switch is the hash code of a
+ * string, often a literal the source names, so a collector that redacts literals can clear them.
  */
 data class BranchSite(
     val siteIndex: Int,
@@ -455,6 +459,7 @@ data class BranchSite(
     val outcomes: List<BranchOutcome>,
     val guard: Int? = null,
     val condition: List<ConditionPart> = emptyList(),
+    val stringHashCodeSwitch: Boolean = false,
 ) {
     /**
      * What this site adds to a manifest or baseline chunk's weight: one entry for the site, one per

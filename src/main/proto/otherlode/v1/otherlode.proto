@@ -413,6 +413,11 @@ message BranchSite {
   // one after the other with nothing between them. Empty when the agent could not write the
   // expression in source terms.
   repeated ConditionPart condition = 6;
+  // True for a switch on the value String.hashCode() returns, which the agent left as a plain
+  // switch. Each case_key of such a switch is the hash code of a string, often a literal the source
+  // names, so a collector that redacts literals can clear them. A string switch the agent read back
+  // has no such site, since the agent drops its hash switch. False for a conditional.
+  bool string_hash_code_switch = 7;
 }
 
 // What one part of a condition holds.

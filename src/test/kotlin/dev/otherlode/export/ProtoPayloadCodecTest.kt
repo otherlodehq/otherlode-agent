@@ -988,6 +988,67 @@ class ProtoPayloadCodecTest {
     }
 
     @Test
+    fun `a switch on String hashCode is marked on the wire through the manifest and the baseline, and any other site is not`() {
+        val hashSwitch =
+            BranchSite(
+                siteIndex = 5,
+                siteKey = null,
+                line = 50,
+                outcomes =
+                    listOf(
+                        BranchOutcome(13, BranchRole.CASE, caseKey = "open".hashCode()),
+                        BranchOutcome(14, BranchRole.DEFAULT),
+                    ),
+                stringHashCodeSwitch = true,
+            )
+        val sites = listOf(hashSwitch) + sampleBranchSites
+        val manifest =
+            ProbeManifest(
+                resource = ResourceAttributes("checkout", "1.0.0", "", null, "run-1"),
+                probes =
+                    listOf(
+                        ProbeLocation(
+                            classId = 0,
+                            probeIndex = 0,
+                            kind = ProbeKind.METHOD,
+                            className = "com.example.Foo",
+                            methodName = "bar",
+                            methodDescriptor = "(Ljava/lang/String;)I",
+                            line = 50,
+                            branchIndex = null,
+                            branchSites = sites,
+                        ),
+                    ),
+            )
+        val baseline =
+            StaticBaseline(
+                resource = ResourceAttributes("checkout", null, "instance-1", null, "run-1"),
+                declaredClasses =
+                    listOf(
+                        DeclaredClass(
+                            className = "com.example.Foo",
+                            methods = listOf(DeclaredMethod("bar", "(Ljava/lang/String;)I", branchSites = sites)),
+                        ),
+                    ),
+                scannedAt = 1000L,
+            )
+
+        val bytes = ProtoPayloadCodec.encode(manifest)
+
+        assertEquals(manifest, ProtoPayloadCodec.decodeProbeManifest(bytes))
+        assertEquals(baseline, ProtoPayloadCodec.decodeStaticBaseline(ProtoPayloadCodec.encode(baseline)))
+        assertEquals(
+            listOf(true, false, false),
+            ProtoProbeManifest
+                .parseFrom(bytes)
+                .probesList
+                .single()
+                .branchSitesList
+                .map { it.stringHashCodeSwitch },
+        )
+    }
+
+    @Test
     fun `each outcome's routine kind round-trips through the manifest and the baseline`() {
         val site =
             BranchSite(

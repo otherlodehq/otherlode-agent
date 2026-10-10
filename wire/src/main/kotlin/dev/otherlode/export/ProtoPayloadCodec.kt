@@ -314,6 +314,7 @@ object ProtoPayloadCodec {
                 .setLine(site.line)
                 .addAllOutcomes(site.outcomes.map { toProto(it) })
                 .addAllCondition(site.condition.map { toProto(it) })
+                .setStringHashCodeSwitch(site.stringHashCodeSwitch)
         site.siteKey?.let { builder.siteKey = it }
         site.guard?.let { builder.guard = it }
         return builder.build()
@@ -327,6 +328,7 @@ object ProtoPayloadCodec {
             outcomes = site.outcomesList.map { fromProto(it) },
             guard = if (site.hasGuard()) site.guard else null,
             condition = site.conditionList.map { fromProto(it) },
+            stringHashCodeSwitch = site.stringHashCodeSwitch,
         )
 
     private fun toProto(part: ConditionPart): ProtoConditionPart =
