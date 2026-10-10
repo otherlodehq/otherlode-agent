@@ -142,7 +142,8 @@ message ProbeDelta {
   int64 hits_total = 5;
 }
 
-// Sent frequently (every 30-60s). Only carries probes and endpoints whose
+// Sent on every flush, every 60 s by default. flushIntervalSeconds sets
+// the interval from 1 to 86400 s. Only carries probes and endpoints whose
 // hits_total changed since the last successfully delivered batch, not a
 // full snapshot, so payload size stays independent of total probe or
 // endpoint count.
