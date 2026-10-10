@@ -4,7 +4,7 @@ description: How the agent reports which of your service's libraries are unloade
 order: 60
 ---
 
-The agent reports on libraries without instrumenting them. It combines three observations: which jars are on the classpath, which of their classes the JVM loaded, and which library classes your own code names. A collector turns those into a status for each dependency. The agent never decides that a library can be removed, and neither does a status. Each status is an observation that tells you where to look.
+The agent reports on libraries without instrumenting them. It combines three observations: which jars are on the classpath, which of their classes the JVM loaded, and which library classes your own code names. The server turns those into a status for each dependency. The agent never decides that a library can be removed, and neither does a status. Each status is an observation that tells you where to look.
 
 ## What counts as a dependency
 

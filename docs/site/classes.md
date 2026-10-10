@@ -22,7 +22,7 @@ This page covers the whole class. For what the agent records inside a class that
 | Nothing to probe | The class loaded and has no method, default-argument site or static initialiser the agent probes. | Nothing, except in the static baseline's unprobed list. |
 | Left out | The class is synthetic, or a framework generated it at runtime. | Nothing. |
 
-A class holds at most one of never loaded, never initialised and never instantiated: the first that applies, in that order. A collector judges these findings. The agent sends the facts they rest on.
+A class holds at most one of never loaded, never initialised and never instantiated: the first that applies, in that order. The server judges these findings. The agent sends the facts they rest on.
 
 ## Instrumented classes
 

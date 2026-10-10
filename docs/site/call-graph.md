@@ -8,7 +8,7 @@ order: 70
 
 A method with zero hits is a weak finding on its own. It may have zero hits only because the one method that calls it has zero hits too. If you delete the callee and leave the caller, you have gained nothing, and if you delete the caller and leave the callee, you have left dead code behind. A flat list of never-hit methods cannot tell you which method to delete first.
 
-The agent therefore reads one more fact about each method: which other methods in your code it refers to. A collector joins those references into a call graph, then groups never-hit methods into unreached clusters. An unreached cluster is a root plus every never-hit method that can be reached from the root and whose in-scope callers are all inside the cluster. Deleting the root removes the whole cluster, and the cluster tells you what you are deleting.
+The agent therefore reads one more fact about each method: which other methods in your code it refers to. The server joins those references into a call graph, then groups never-hit methods into unreached clusters. An unreached cluster is a root plus every never-hit method that can be reached from the root and whose in-scope callers are all inside the cluster. Deleting the root removes the whole cluster, and the cluster tells you what you are deleting.
 
 The rest of this page explains how the graph is built and how to read a cluster's root.
 
@@ -124,4 +124,4 @@ clusters
 	.forEach { println("${it.root.className}#${it.root.methodName}: ${it.membersTotal} methods") }
 ```
 
-A test JVM sees only what its tests exercise, so a cluster there means "these tests never reach it". Judge production by the collector's view across your instances.
+A test JVM sees only what its tests exercise, so a cluster there means "these tests never reach it". Judge production by the server's view across your instances.

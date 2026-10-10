@@ -6,7 +6,7 @@ order: 30
 
 The agent counts two things inside the classes that `includePackages` selects: how often each method is entered, and how often each outcome of each conditional is taken. This page lists what gets a counter, what does not, and what the agent records about each one so that a collector can describe it in your source's terms. Endpoints are on [endpoints](endpoints), whole classes on [classes](classes), and call edges on the [call graph](call-graph) page.
 
-Every count is a cumulative total since the process started. The agent decides nothing about whether code is dead. It reports counts, marks and descriptions, and a collector judges.
+Every count is a cumulative total since the process started. The agent decides nothing about whether code is dead. It reports counts, marks and descriptions, and the server judges.
 
 ## Methods
 

@@ -14,7 +14,7 @@ The agent collects that evidence. It counts how often each method runs, which wa
 
 A count of zero means the code did not run in the processes the agent watched, over the time it watched them. It does not mean the code cannot run. A quarterly job, a failover path and an error handler for a rare outage all read zero until the day they matter.
 
-So the agent reports raw counts and nothing more. It carries no threshold, no "dead" flag and no confidence score. The collector holds every instance's data over weeks and deploys, so the collector decides how long a path must stay at zero before anyone should act on it. This split is the right one because the agent cannot know any of that. One instance sees one slice of traffic, and a rule baked into the agent would be wrong for half of its adopters. Putting the judgement in the collector also lets it change without redeploying the agent into your services.
+So the agent reports raw counts and nothing more. It carries no threshold, no "dead" flag and no confidence score. The collector forwards what the agents send and stores none of it. The server stores every run of every instance over weeks and deploys, and judges which code no run reached. Its finding is a lead to check, not a verdict, so you decide how long a path must stay at zero before you act on it. See [how findings are judged](/docs/server/how-it-works). This split is the right one because the agent cannot know any of that. One instance sees one slice of traffic, and a rule baked into the agent would be wrong for half of its adopters. Putting the judgement in the server also lets it change without redeploying the agent into your services.
 
 The same line decides what the agent is careful about. The agent is built so that missing data never reads as a confident zero. Wherever it cannot count something, it says so. The sections below return to this.
 
@@ -46,19 +46,19 @@ Prometheus's model was the obvious alternative, and it fits badly. A scrape reco
 
 Each instance picks a random offset for its first flush, then flushes at a fixed rate, so a fleet does not call the collector on the same tick. The interval is fixed, not adaptive, because the goal is a picture over time rather than freshness.
 
-Every flush sends an update of the counts that changed, even when nothing changed. The empty update is a heartbeat. Without it a collector cannot tell an instance that is up but idle from one that has crashed or lost its network. A flush also sends descriptions of newly loaded classes (which class, method and line each probe is), only once per class. A class that loads late is described on the flush after it loads. See [what the agent sends](data-sent) for the contents and what happens when the collector is down.
+Every flush sends an update of the counts that changed, even when nothing changed. The empty update is a heartbeat. Without it the server cannot tell an instance that is up but idle from one that has crashed or lost its network. A flush also sends descriptions of newly loaded classes (which class, method and line each probe is), only once per class. A class that loads late is described on the flush after it loads. See [what the agent sends](data-sent) for the contents and what happens when the collector is down.
 
 The transport is plain HTTP with a protobuf body, through the JDK's own client. gRPC would add a networking library to every JVM you run it in, with its own risk of version clashes against an app that already uses gRPC, to gain streaming that a request every 60 seconds does not need.
 
 ## Cumulative totals make retries and restarts harmless
 
-Each update carries a probe's total since the process started, not the amount it grew by. The collector keeps the larger of the value it holds and the value it receives.
+Each update carries a probe's total since the process started, not the amount it grew by. The server keeps the larger of the value it holds and the value it receives.
 
-This is the design's central choice. A sender that retries has a hazard: the collector may process a request while the reply is lost, and the agent then sends the same bytes again. If the payload were an increment, the collector would add it twice. A larger-of merge is the same whether a value arrives once, twice or out of order, so the collector needs no deduplication cache and the agent needs no retry queue. The agent only advances its record of what was delivered after the collector confirms a send, so a failed send leaves the record where it was and the next flush reports the live total again.
+This is the design's central choice. A sender that retries has a hazard: the collector may process a request while the reply is lost, and the agent then sends the same bytes again. If the payload were an increment, the server would add it twice. A larger-of merge is the same whether a value arrives once, twice or out of order, so the server needs no deduplication cache and the agent needs no retry queue. The agent only advances its record of what was delivered after the collector confirms a send, so a failed send leaves the record where it was and the next flush reports the live total again.
 
 That also bounds memory. The data is a set of arrays sized by your code, not your traffic, so an unreachable collector cannot make the agent's buffers grow. If the process dies during a long outage, the cost is the counts since the last confirmed flush, at most one interval's worth. Each send retries a handful of times with a growing delay for failures a retry could fix (a connection error, a 5xx, a 408 or a 429), and fails at once on any other 4xx, since the collector has already read the request and refused it. A flush on shutdown, marked as the last one, lets the collector tell an instance that exited cleanly from one that vanished.
 
-Cumulative totals bring one problem, which is a restart. A process that restarts counts from zero, and a larger-of merge would sit at the old, higher total. The agent stops that with a run id, a random value made once at startup and stamped on every payload. A collector keeps each run's data apart and merges within a run only. The instance id defaults to a fresh random value per process, so a restart is normally a new instance anyway. The run id is what keeps results correct when you pin the instance id to something stable, such as a pod name. A restart under a pinned id is then still a new run, and a late update from the old process names the old run and cannot overwrite the new one.
+Cumulative totals bring one problem, which is a restart. A process that restarts counts from zero, and a larger-of merge would sit at the old, higher total. The agent stops that with a run id, a random value made once at startup and stamped on every payload. The server keeps each run's data apart and merges within a run only. The instance id defaults to a fresh random value per process, so a restart is normally a new instance anyway. The run id is what keeps results correct when you pin the instance id to something stable, such as a pod name. A restart under a pinned id is then still a new run, and a late update from the old process names the old run and cannot overwrite the new one.
 
 ## Shape comes from the class file, probes go in last
 
@@ -85,7 +85,7 @@ When the agent cannot instrument a class, it skips the class and says so. It log
 
 The same rule covers a class that was woven but never defined, for example because a dependency was missing at load. The agent holds that class's probes back from the first report until it has evidence the class exists: a count above zero, or the JVM listing it as loaded. A class that never gets that evidence is named as failed to load. That is a deployment problem, not dead code. [Classes](classes) lists these states.
 
-If the agent cannot start safely, it turns itself off completely and sends nothing. It does this when the support class it needs in the bootstrap loader cannot be installed, or when no include rules are set. A missing instance is something a collector shows. An instance that runs but reports zero everywhere would look like a service with no live code.
+If the agent cannot start safely, it turns itself off completely and sends nothing. It does this when the support class it needs in the bootstrap loader cannot be installed, or when no include rules are set. A missing instance is something you can see in the server's list of instances. An instance that runs but reports zero everywhere would look like a service with no live code.
 
 If a tool such as an IDE swaps a woven class for a changed one, the agent refuses when the class file on disk differs from the one it wove, and the JVM rejects that swap. The class keeps running with its probes. With the class file unchanged, the agent weaves the new bytes against the plan from the first weave and renumbers nothing.
 
@@ -97,6 +97,6 @@ Each of these choices has a price, and you pay it knowingly.
 - Approximate counts. Use them to ask whether code ran, not how many times it ran, to the last digit.
 - Memory outside the Java heap. Because the agent runs after other agents, the JVM keeps a copy of each woven class's received bytes.
 - One interval of data lost if a process dies during a collector outage.
-- Descriptions sent once. After the collector confirms a class's description, the agent frees it from memory. A collector that loses that description gets it again only when the instance restarts.
+- Descriptions sent once. After the collector confirms a class's description, the agent frees it from memory. If the description is lost after that, the server gets it again only when the instance restarts.
 
 See [overhead](overhead) for measured costs.
