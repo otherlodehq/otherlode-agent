@@ -104,8 +104,8 @@ The manifest says what each id in a delta batch names. It carries the resource a
 
 | Field | Content |
 |---|---|
-| `probes` | One per probe: `class_id`, `probe_index`, `kind`, class name, method name, method descriptor, source line, parameter names, generic signature, and flags for inline, static, lambda body and extension receiver |
-| `probes[].branch_sites` | For a branch probe: the site's line, condition, outcomes with their roles, guarded line ranges (source file name plus first and last line) and case labels. See [methods and branches](methods-and-branches) |
+| `probes` | One per probe: `class_id`, `probe_index`, `kind`, class name, method name, method descriptor, source line, parameter names, generic signature, and flags for inline, static, lambda body and extension receiver. A branch probe also carries its `branch_key` |
+| `probes[].branch_sites` | For a branch probe: the site's `site_key`, line, condition, outcomes with their roles, guarded line ranges (source file name plus first and last line) and case labels. See [methods and branches](methods-and-branches) |
 | `probes[].calls`, `probes[].referenced_classes` | Call edges to other classes in scope, and names of classes outside it that the method refers to |
 | `class_locations` | Per class: super class name, interface names, source file name, body kind, and source name |
 | `class_references` | Per class: names of classes it refers to outside any probed method |
@@ -119,9 +119,15 @@ The manifest says what each id in a delta batch names. It carries the resource a
 | `references_recorded`, `dependencies_listed` | Flags a collector uses to know when references and the startup dependency listing are complete |
 | `payload_sequence`, `counts_pending_since` | Where the run stands in delivering its counts; see [Pending counts](#pending-counts) |
 
+#### Branch and site keys
+
+A `branch_key` names one outcome of a branch site across builds and instances, and a `site_key` names the site. Each key is 32 lowercase hex characters, compared only for equality. The agent derives a branch key from the class, the method name and descriptor, the origin class, the condition fingerprint and the outcome. A site key comes from the same inputs without the outcome. The origin class is the class of the inline function a branch was copied from, and empty for the class's own code. The condition fingerprint is the instructions that compute the condition. A key stays the same across builds while its inputs do not change. A key is absent when the agent cannot name an outcome safely. See [methods and branches](methods-and-branches) for what changes a key and when it is absent.
+
 #### Condition text and string literals
 
 A branch site's condition is source-like text rebuilt from bytecode, in parts. A part is code, a placeholder, or a string literal. A string literal part holds the string constant from your class file as the compiler stored it, such as `"ENABLE_LEGACY_DISCOUNT"` in `if (System.getenv("ENABLE_LEGACY_DISCOUNT") != null)`. It also holds the labels of a `when` or `switch` on a string. Nothing is read at run time: the text is a constant in your bytecode, never a value your program computed or received. A constant that holds a secret, such as a hard-coded password or a key compared against input, is sent as it is. A collector can replace string literal parts, because they are marked as such.
+
+The condition fingerprint includes the string constants in the condition, so the [keys](#branch-and-site-keys) of a condition that holds a string literal depend on its text. A branch key for a case of a `when` or `switch` on a string also covers the case's label. <!-- TODO: keys -->
 
 #### Names and paths
 
@@ -139,7 +145,7 @@ The agent sends a static baseline only when you set `staticBaselineEnabled`. A b
 
 | Field | Content |
 |---|---|
-| `declared_classes` | Per class: name, super class and interface names, source file name, body kind, and per method the name, descriptor, parameter names, generic signature, call edges, branch sites (with conditions) and referenced classes |
+| `declared_classes` | Per class: name, super class and interface names, source file name, body kind, and per method the name, descriptor, parameter names, generic signature, call edges, branch sites (with conditions and site keys) and referenced classes |
 | `unreadable_classes` | Name of a class file the scanner could not read, and the reason |
 | `unprobed_classes` | Name of a class with no method to count, and the reason |
 | `external_classes` | The same mapping as in the manifest |
