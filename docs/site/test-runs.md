@@ -1,10 +1,10 @@
 ---
 title: Name the tests that call your code
-description: Run the agent in your test JVM with testRun so a collector can name the tests that call a method production never does.
+description: Run the agent in your test JVM with testRun so the server can name the tests that call a method production never does.
 order: 100
 ---
 
-Production holds no test classes. A method that only your tests call therefore reads as uncalled in production, the same as a method that nothing calls. To have the collector name those tests, run the agent in your test JVM as well, against the same collector, and mark that run as a test run.
+Production holds no test classes. A method that only your tests call therefore reads as uncalled in production, the same as a method that nothing calls. To have the server name those tests, run the agent in your test JVM as well, against the same collector, and mark that run as a test run.
 
 This page covers the agent's side. How the server shows a test run in its findings is in the server's docs.
 
@@ -12,7 +12,7 @@ This page covers the agent's side. How the server shows a test run in its findin
 
 A test run is a run whose agent has `testRun=true`. The agent probes, records call edges and scans as it does anywhere else. It differs in three ways:
 
-- Every payload of the run carries a flag saying it is a test run. The collector uses that flag to leave the run out of every finding about production and to read only its call edges.
+- Every payload of the run carries a flag saying it is a test run. The server uses that flag to leave the run out of every finding about production and to read only its call edges.
 - If no source sets an environment, the environment is `test`. Any environment you set, through an option or through OpenTelemetry's settings, wins over it.
 - At shutdown, the agent sends its final flush, then waits up to 15 seconds for the static baseline scan to end. It logs a warning if the scan has not ended by then. The wait happens only when `staticBaselineEnabled` is on.
 
@@ -59,15 +59,15 @@ Every option also has a system property and an environment variable. See the [co
 
 ## Why each setting matters
 
-**Matching service name.** The collector keys findings by service. A test run under another name never meets production's methods.
+**Matching service name.** The server keys findings by service. A test run under another name never meets production's methods.
 
 **`staticBaselineEnabled` in the test JVM.** Without the scan, the agent reports edges only from test classes that loaded. A test class that never loaded has its edges missing.
 
-**`staticBaselineEnabled` in production.** Set it there too. Without a complete production scan, the collector cannot rule out a caller in a production class that never loaded. It then names the tests that call a method but does not call the method "called only by tests".
+**`staticBaselineEnabled` in production.** Set it there too. Without a complete production scan, the server cannot rule out a caller in a production class that never loaded. It then names the tests that call a method but does not call the method "called only by tests".
 
-**A pinned `serviceInstanceId`.** The agent makes a fresh random instance ID for each JVM unless you set one. Every test JVM then becomes its own instance, and the collector keeps its edges until it prunes that instance. A fixed ID per test task gives the collector one current picture per task. A pinned ID does not merge counts across restarts, because each process also gets its own run ID.
+**A pinned `serviceInstanceId`.** The agent makes a fresh random instance ID for each JVM unless you set one. Every test JVM then becomes its own instance, and the server reads each one's edges until its run passes your tenant's retention period. A fixed ID per test task gives the server one current picture per task, since it reads the newest test run of each instance. A pinned ID does not merge counts across restarts, because each process also gets its own run ID.
 
-With `maxParallelForks` above 1, the forks of one task share the pinned ID. The collector keeps only the newest manifest per instance, so the newest fork's manifest hides the others'. The scan still covers every test class, whichever fork sends it.
+With `maxParallelForks` above 1, the forks of one task share the pinned ID. The server reads the manifest edges of only the newest test run of each instance, so the newest fork's manifest hides the others'. The scan still covers every test class, whichever fork sends it.
 
 **An unset environment.** The `test` default keeps a test run's data in an environment of its own, apart from production's, as a second guard beside the flag.
 
@@ -79,7 +79,7 @@ A collector with an environment of its own and `insert` keeps the agent's `test`
 
 The wait for the scan can add up to 15 seconds to a test task's exit, and more when the collector is slow or unreachable. A test JVM often exits before the scan ends, and the scan is the only source of edges from test classes that never loaded. The agent flushes first, so a runner that halts a slow JVM still delivers the final manifest.
 
-If the scan does not end in time, the agent logs a warning that the run may send no complete scan. The collector then falls back to the run's manifest edges, and to an earlier complete scan of the same pinned instance if there is one. That older scan can name test classes you have since deleted.
+If the scan does not end in time, the agent logs a warning that the run may send no complete scan. The server then reads the run's manifest edges, and the newest complete scan of the same pinned instance if an earlier run sent one. That older scan can name test classes you have since deleted.
 
 ## Related pages
 
