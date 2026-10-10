@@ -47,7 +47,7 @@ The agent lists the startup classpath once per process, off the application's ma
 
 The agent does not read Spring Boot's classpath index. A packaged launch ignores it, and it can leave out a jar that still runs.
 
-A jar the agent cannot read is skipped with one WARNING, and the listing continues. If the whole listing fails, the agent logs a WARNING, reports no dependencies from that instance, and the collector reads the instance as having none listed, not as having a partial list.
+A jar the agent cannot read is skipped with one WARNING, and the listing continues. If the whole listing fails, the agent logs a WARNING, reports no dependencies from that instance, and the server reads the instance as having none listed, not as having a partial list.
 
 ### Dependencies discovered at load
 
@@ -57,18 +57,20 @@ A jar discovered at load can never read as unloaded, because a class from it alr
 
 ## Statuses
 
-A collector derives one status per dependency from three observations, checked in this order. The first condition that holds decides the status.
+The server derives one status per dependency from the runs in scope, checked in this order. The first condition that holds decides the status, except that counts behind takes the place of four of them. [Unused dependencies](/docs/server/findings#unused-dependencies) gives the server's full rules.
 
 | Status | Meaning |
 |---|---|
-| Resources only | Every instance's listing counted no class in the jar, as with native libraries, web assets, or message bundles. Loading says nothing about use, so the collector claims nothing else. |
+| Resources only | Every instance's listing counted no class in the jar, and no instance loaded a class from it, as with native libraries, web assets, or message bundles. Loading says nothing about use, so the server claims nothing else. |
+| Stale | Some instance listed the jar from its startup classpath, and no instance in scope loaded a class from it, but the service has recorded a class loading from it before. It claims nothing about removal. |
 | Unloaded | Some instance listed the jar from its startup classpath, and no instance loaded a class from it. |
 | Loaded | A class loaded, and no instance that lists the jar records references, so nothing further is claimed. |
 | Used | Your code holds a live reference to the jar. |
 | Failed to load | No live reference, and your code references the jar from a class that failed to load. |
-| No live reference | The jar has no live reference, and the collector cannot tell unreferenced from unreached. |
+| No live reference | The jar has no live reference, and the server cannot tell unreferenced from unreached. |
 | Unreferenced | A class from the jar loaded, and nothing in your code references the jar. |
 | Unreached | Your code references the jar, but only from methods that were never hit or classes that never loaded. |
+| Counts behind | The jar would read as stale, unloaded, no live reference or unreached, but the zero count behind that status comes from a run that has not delivered all its counts. It claims nothing. See [pending counts](data-sent#pending-counts). |
 
 Because the agent refuses to start without include rules, every running agent records references. "Loaded" appears only when no instance that lists the jar sent references.
 
@@ -113,13 +115,13 @@ A reference is live when either holds:
 
 An inline method's own references never count, because its callers carry copies of the body. Read [methods and branches](methods-and-branches) for inline methods.
 
-A reference from a method that was never hit, or from a class that never loaded, is not live. The collector can see a reference in a class that never loaded only through the static baseline.
+A reference from a method that was never hit, or from a class that never loaded, is not live. The server can see a reference in a class that never loaded only through the static baseline.
 
 ### Absent references
 
 A reference to a class no loader can find is an absent reference. Typical causes are code guarded by a check for an optional library, or a loader that throws when asked for the class. The agent reports it with every site that holds it and maps it to no dependency.
 
-### When the collector can judge each level
+### When the server can judge each level
 
 | Level | Needs |
 |---|---|
@@ -127,9 +129,9 @@ A reference to a class no loader can find is an absent reference. Typical causes
 | Used, failed to load, no live reference | The instance's include rules are set (the agent always runs with them) and the recorded references. |
 | Unreferenced, unreached | A complete [static baseline](classes) from every instance that lists the dependency. Set `staticBaselineEnabled=true` to send it. |
 
-Without a complete baseline, a collector cannot see a reference held in a class that never loaded. It would call such a dependency unreferenced when it is unreached. So without the baseline it reports "no live reference", which is true either way.
+Without a complete baseline, the server cannot see a reference held in a class that never loaded. It would call such a dependency unreferenced when it is unreached. So without the baseline it reports "no live reference", which is true either way.
 
-A baseline is complete only when every chunk of one scan has arrived. A collector judges each dependency from the instances that list it. A collector merges instances by `groupId:artifactId` across versions and shows the versions it saw.
+A baseline is complete only when every chunk of one scan has arrived. The server judges each dependency from the runs in scope that list it. It merges dependencies by `groupId:artifactId` across versions and shows the versions it saw.
 
 The failed to load status applies when a reference comes from a class that a complete baseline declares and some run named as failed to load, and no run loaded. It asks for review and claims no removal. The class may fail because of the very classpath that jar is on, and a dependency used only by a long-failing class may not be needed. Read [classes](classes) for how the agent names a class that failed to load.
 
@@ -139,15 +141,15 @@ Every Kotlin class carries the runtime-visible `kotlin.Metadata` annotation, so 
 
 ## When a dependency is listed
 
-The agent sends a dependency's entry only after a send that carried its first loaded-class count was confirmed. A collector that saw the entry first would read a used jar as unloaded. The agent holds back the mapping from a referenced class to that dependency under the same condition. An absent reference names no dependency, so nothing holds it back.
+The agent sends a dependency's entry only after a send that carried its first loaded-class count was confirmed. If the server saw the entry first, it would read a used jar as unloaded. The agent holds back the mapping from a referenced class to that dependency under the same condition. An absent reference names no dependency, so nothing holds it back.
 
-The manifest of each instance also carries a flag that means "dependencies listed". The agent sets it once the startup listing finished, every startup dependency has been delivered, and every reference mapping recorded before the listing ended has been delivered. Before that point, an empty list of dependencies or absent references means "not listed yet", not "none". A collector can then judge a dependency as soon as its entry arrives.
+The manifest of each instance also carries a flag that means "dependencies listed". The agent sets it once the startup listing finished, every startup dependency has been delivered, and every reference mapping recorded before the listing ended has been delivered. Before that point, an empty list of dependencies or absent references means "not listed yet", not "none". The server can then judge a dependency as soon as its entry arrives.
 
 The entry usually arrives in the same flush as the first count, and at the earliest on the flush after the listing ends.
 
 ## Query dependencies in tests
 
-[The testkit](testkit) applies the collector's rules inside one test JVM. See [the testkit API](testkit-api) for the signatures.
+[The testkit](testkit) applies the server's rules inside one test JVM. See [the testkit API](testkit-api) for the signatures.
 
 | Query | Returns |
 |---|---|
