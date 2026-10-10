@@ -406,7 +406,7 @@ with a WARNING, and one INFO line naming any annotation not yet seen on a
 method, decided at the first flush five minutes after start or at the final
 flush. No wire, collector, server or testkit change.
 
-Landed on 2026-10-10 as one chunk, with `docs/site/configuration.md`,
+Landed on 2026-10-10 as one chunk (`5dbca51`), with `docs/site/configuration.md`,
 `call-graph.md` and `troubleshooting.md`. Two Opus review rounds changed
 the design in four places, each now in ADR 0064's amendment: a repeated
 named annotation is matched through its container (javac writes only the
@@ -444,7 +444,7 @@ Landing order, one chunk and one commit each, agent only:
    type headers keeping whether a type is an `@ActivityInterface`, and
    the docs.
 
-Chunk 1 landed on 2026-10-10. Two Opus review rounds found no defect in
+Chunk 1 landed on 2026-10-10 (`312fe08`). Two Opus review rounds found no defect in
 the walk, the table, the precedence or the cache, and changed: header
 annotation lists held as `emptyList()`/`listOf(x)` and recorded by one
 reusable method visitor per parse (worst case was about 3 to 8 MB of
@@ -458,7 +458,7 @@ a JAX-RS intermediate method carrying only `@Produces`, and Spring's
 interfaces-first order. The visibility baseline did not move; the corpora
 hold no inherited case.
 
-Chunk 2 landed on 2026-10-10: Temporal's workflow annotations (from
+Chunk 2 landed on 2026-10-10 (`957937f`): Temporal's workflow annotations (from
 interface methods only, read directly), the `@ActivityInterface` type
 rule, `@TemporalOperation`, and Axon's `MessageHandler` in both packages
 with its lifecycle and entity-creator callbacks. The main-session review
@@ -679,9 +679,10 @@ HttpHandler` where it read `uncalled`. The README gains the root kind, the
 query and the kotlin-stdlib note. Agent chunks 0 to 5 are done; step 6 is
 Luke's.
 
-Follow-ups with triggers: an agent option for an adopter's own callback
-annotations (an adopter asks, or uncalled roots carry in-house
-annotations); a server-side visibility gate over fixture payloads.
+Follow-ups with triggers: a server-side visibility gate over fixture
+payloads. The agent option for an adopter's own callback annotations was
+built on 2026-10-10 (`5dbca51`); see "An adopter's own callback
+annotations".
 
 ### Classes that failed to load, made certain, and the dependencies only they use: landed
 
