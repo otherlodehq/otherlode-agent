@@ -24,7 +24,7 @@ enum ProbeKind {
 // table), a $DefaultImpls method that only forwards to the interface's own default method, a Java
 // record's equals/hashCode/toString, an overload @JvmOverloads adds, or Scala's case-class
 // plumbing, static forwarders and object serialization. A branch probe carries the mark of the
-// method it sits in. A collector leaves a generated probe out of never-hit, stale-hit, and the call
+// method it sits in. The server leaves a generated probe out of never-hit, stale-hit, and the call
 // graph by default, since the compiler will emit the method again regardless of what the adopter
 // does; its hit count is still evidence, so the probe itself is kept rather than dropped.
 enum GeneratedBy {
@@ -65,7 +65,7 @@ enum GeneratedBy {
 // The family of compiler output a probe's code belongs to when the agent could not read its body.
 // An unread shape is a probe whose code has the outline of compiler output but whose body matches
 // no shape this agent has read for that compiler. It is a statement about the agent, not about who
-// wrote the code. A collector keeps the probe and its count, leaves it out of every never-hit
+// wrote the code. The server keeps the probe and its count, leaves it out of every never-hit
 // finding and the call graph, and lists it apart under its family.
 enum UnreadShape {
   // Never written: UnreadShape is only set inside an origin oneof, where unset means the adopter's
@@ -127,7 +127,7 @@ message ResourceAttributes {
 }
 
 // hits_total is a cumulative count from process start, not the count since
-// the last flush. A collector merges it with max() across retries and
+// the last flush. The server merges it with max() across retries and
 // reordering, so a re-delivered or reordered value cannot double-count.
 //
 // first_seen_at is stamped by the first flush that observed a non-zero
@@ -143,15 +143,18 @@ message ProbeDelta {
 }
 
 // Sent on every flush, every 60 s by default. flushIntervalSeconds sets
-// the interval from 1 to 86400 s. Only carries probes and endpoints whose
-// hits_total changed since the last successfully delivered batch, not a
-// full snapshot, so payload size stays independent of total probe or
-// endpoint count.
+// the interval from 1 to 86400 s. Carries only the probes and endpoints
+// whose hits_total changed, and the dependencies whose
+// loaded_classes_total changed, since the last successfully delivered
+// batch. It is not a full snapshot, so payload size stays independent of
+// the number of probes, endpoints and dependencies. A flush with no change
+// still sends an empty batch, as a heartbeat that tells the server the
+// instance is alive.
 message DeltaBatch {
   ResourceAttributes resource = 1;
   repeated ProbeDelta deltas = 2;
   repeated EndpointDelta endpoint_deltas = 3;
-  // Set on every delta batch the agent's shutdown hook sends. A collector uses it to tell an
+  // Set on every delta batch the agent's shutdown hook sends. The server uses it to tell an
   // instance that ended cleanly from one that went silent, and may report how many instances
   // stopped without one, since up to one flush interval of their hits may be missing. Never set
   // on a scheduled flush.
@@ -167,7 +170,7 @@ message DeltaBatch {
 
 // Why code outside scope may call a method that no in-scope code calls. Set only on a METHOD
 // probe, which has at most one reason. An annotation wins over an override, and the first
-// annotation in class-file order wins. A collector labels a never-hit root that has no in-scope
+// annotation in class-file order wins. The server labels a never-hit root that has no in-scope
 // caller and an outside caller "called from outside scope". The field changes no count and no
 // cluster.
 message OutsideCaller {
@@ -213,7 +216,7 @@ message ProbeLocation {
   // Set only for an OPTIONAL_ARGUMENT probe: the parameter's name from the target's
   // LocalVariableTable, or empty when the target carries no debug info.
   string parameter_name = 11;
-  // Set only for an OPTIONAL_ARGUMENT probe. A collector claims "never supplied" (omission total
+  // Set only for an OPTIONAL_ARGUMENT probe. The server claims "never supplied" (omission total
   // equals the target's hit total) only when this is false and inline is false, since an
   // overridable target's omissions are spread across whichever override actually ran, which this
   // location cannot relate. It claims "always supplied" (omission total zero while the target was
@@ -222,7 +225,7 @@ message ProbeLocation {
   // Set only for an OPTIONAL_ARGUMENT probe whose target lives in another class: a Scala
   // constructor getter declared on a companion module class, whose target constructor lives on
   // the class the module compiles for. Empty when the target is in the probe's own class, and
-  // never set for Kotlin. A collector joins an omission probe to its target's METHOD probe by
+  // never set for Kotlin. The server joins an omission probe to its target's METHOD probe by
   // target_class_name when set, otherwise by class_name.
   string target_class_name = 13;
   // Set only for a METHOD probe: the in-scope call edges read from this method's own bytecode at
@@ -234,7 +237,7 @@ message ProbeLocation {
   // Dotted, and empty when the probe is the class's own code.
   string inlined_from_class_name = 15;
   // Set for a METHOD probe, for a BRANCH probe as the mark of the method it sits in, and for an
-  // OPTIONAL_ARGUMENT probe as its target's own mark, so a collector leaves a generated method's
+  // OPTIONAL_ARGUMENT probe as its target's own mark, so the server leaves a generated method's
   // conditionals out of never-hit with the method, and abstains from never-supplied and
   // always-supplied on a generated target (a data class's copy) the way it abstains on an inline
   // one. Unset (GENERATED_BY_UNSPECIFIED is never sent) for an ordinary method the adopter wrote; see
@@ -252,12 +255,12 @@ message ProbeLocation {
   // Classes the bootstrap or platform loader provides, and classes read from a directory on the
   // classpath, are never listed. A name's ExternalClass entry may arrive on a later manifest than
   // the name itself, since it is resolved only once the startup listing has finished; a name that
-  // never gets one belongs to no dependency (a jar of the adopter's own, an agent jar) and a
-  // collector ignores it.
+  // never gets one belongs to no dependency (a jar of the adopter's own, an agent jar) and the
+  // server ignores it.
   repeated string referenced_classes = 17;
   // Set only for a BRANCH probe: an opaque lowercase hex token naming this outcome across builds
   // and instances, compared only for equality. Unset when the agent cannot name the outcome
-  // safely. A collector treats a missing key as an outcome it has never seen.
+  // safely. The server treats a missing key as an outcome it has never seen.
   optional string branch_key = 18;
   // Set only for a METHOD probe. True when the method is a lambda body: an invokedynamic in its own
   // class names it as the LambdaMetafactory implementation (directly or through scalac's boxing
@@ -318,7 +321,7 @@ enum BranchRole {
 }
 
 // Why a kept branch outcome is real but not worth a person's time when it never runs. The agent
-// reads it from the bytecode of the outcome's path. A collector keeps the probe and its count, but
+// reads it from the bytecode of the outcome's path. The server keeps the probe and its count, but
 // leaves a routine outcome out of every never-hit finding and counts it apart.
 enum RoutineKind {
   // Never written: RoutineKind is only set inside an origin oneof, where unset means the outcome is
@@ -432,7 +435,7 @@ message ConditionPart {
   string text = 2;
 }
 
-// What a CallEdge records. A collector reaches the target of either kind the same way; the kind
+// What a CallEdge records. The server reaches the target of either kind the same way; the kind
 // only changes how the edge is named and drawn.
 enum CallEdgeKind {
   // The caller runs the callee: an invoke instruction, a new, or a static field use that runs the
@@ -457,8 +460,8 @@ message CallEdge {
   string method_descriptor = 3;
   // True for an invokevirtual or invokeinterface call, false for invokestatic or invokespecial,
   // except that a same-class call to a private, static, or final target is reported false even
-  // when the raw instruction is invokevirtual, since such a target can never be overridden. A
-  // collector widens a virtual edge to every override it knows about, and treats a non-virtual
+  // when the raw instruction is invokevirtual, since such a target can never be overridden. The
+  // server widens a virtual edge to every override it knows about, and treats a non-virtual
   // edge as naming its one real target exactly.
   bool virtual = 4;
   // CALL, the zero value, or CREATES; see CallEdgeKind. An edge that takes the place of a
@@ -492,8 +495,8 @@ message CallEdge {
 }
 
 // What a loaded class's own header says about it, sent once per class alongside its probes. Its
-// superclass and direct interfaces let a collector widen a CallEdge.virtual call to every type that
-// overrides or inherits its callee. Its source file lets a collector say where the class's code is.
+// superclass and direct interfaces let the server widen a CallEdge.virtual call to every type that
+// overrides or inherits its callee. Its source file lets the server say where the class's code is.
 message ClassLocation {
   int32 class_id = 1;
   // Dotted, as the class header names it. Empty only for java.lang.Object itself, which this
@@ -588,7 +591,7 @@ message UnreportedClass {
 
 // A class the agent wove and withheld for good because the JVM never defined it. The agent cannot
 // see why the JVM refused it: the LinkageError or VerifyError is thrown after the transformer
-// returns. A collector reads it as failed to load, never as never loaded. A class any in-scope run
+// returns. The server reads it as failed to load, never as never loaded. A class any in-scope run
 // loaded is loaded, whatever another run says. Sent once, and delivered incrementally like
 // unreported_classes.
 //
@@ -609,7 +612,7 @@ message SkippedClass {
 }
 
 // Sent incrementally, per instance and run: a flush carries only what no
-// confirmed manifest has carried yet, so the collector can resolve probe IDs
+// confirmed manifest has carried yet, so the server can resolve probe IDs
 // to source locations without the agent repeating this metadata on every
 // delta batch. Endpoints and disabled endpoint modules share the same
 // incremental delivery, and an endpoint whose handler join changed since it
@@ -618,7 +621,7 @@ message SkippedClass {
 // class_id is assigned by each process's own registry, in whatever order
 // that process's classes happen to load, so the same class_id can mean a
 // different class in two instances of the same (service, version), or in
-// two runs of one pinned instance. A collector keys every class_id and
+// two runs of one pinned instance. The server keys every class_id and
 // endpoint_id on the resource's service_instance_id and run_id, the same
 // way it keys a delta batch's.
 message ProbeManifest {
@@ -647,11 +650,11 @@ message ProbeManifest {
   // True when this instance records references, which it does only when its include rules are
   // set: with every class in scope nothing is out of scope to reference, so empty reference lists
   // would otherwise read as "no dependency is referenced". Set on every manifest the instance
-  // sends. A collector claims unreferenced or unreached only for an instance that sent it true.
+  // sends. The server claims unreferenced or unreached only for an instance that sent it true.
   bool references_recorded = 13;
   // True once every dependency the startup listing found, and every reference mapping recorded
   // before the listing ended, has been delivered on a confirmed manifest. Each dependency's entry
-  // is sent only after a confirmed delta send carried its first counts, so a collector can judge a
+  // is sent only after a confirmed delta send carried its first counts, so the server can judge a
   // dependency once its entry arrives. Once true, it is set on every manifest the instance sends.
   // A listing that failed never sets it. Before it is true, an empty list of dependencies or
   // absent references means "not listed yet", not "none".
@@ -677,14 +680,14 @@ message ProbeManifest {
 
 // No line field, unlike ProbeLocation: the static scan records no line for a
 // declared method. Identity is (class, method_name, method_descriptor), which
-// is how a collector joins a declared method to a manifest probe.
+// is how the server joins a declared method to a manifest probe.
 message DeclaredMethod {
   string method_name = 1;
   string method_descriptor = 2;
   // Read from the LocalVariableTable, the same rule as ProbeLocation.inline.
   bool inline = 3;
   // The in-scope call edges read from this method's own bytecode, the same rule
-  // ProbeLocation.calls uses. A collector treats a baseline edge and a manifest edge as one
+  // ProbeLocation.calls uses. The server treats a baseline edge and a manifest edge as one
   // graph: for a class the agent both scanned and later loaded, the two describe the same
   // bytecode.
   repeated CallEdge calls = 4;
@@ -757,7 +760,7 @@ message UnreadableClass {
 // An in-scope class with no concrete method to put a probe in: an
 // interface with only abstract methods, an annotation type. The agent
 // never registers such a class dynamically, so it can never appear in a
-// ProbeManifest, and a collector must not read its absence there as
+// ProbeManifest, and the server must not read its absence there as
 // "never loaded". Kept as its own bucket so it stays visible rather than
 // silently dropped from the inventory.
 message UnprobedClass {
@@ -768,14 +771,14 @@ message UnprobedClass {
 // Sent once per process, independent of the reactive ProbeManifest: a
 // load-independent inventory of what exists on the classpath under
 // includePackages, built by reading bytecode directly rather than
-// waiting for the JVM to load it. The collector diffs this against
+// waiting for the JVM to load it. The server diffs this against
 // classes that actually register dynamically; one declared here and
 // never reported dynamically was never even constructed.
 //
 // One scan may arrive as several messages. Every chunk of the same scan
 // carries the same resource and scanned_at, so (service_instance_id,
 // run_id, scanned_at) identifies the scan; chunk_index (0-based) and chunk_count
-// say which part this is and how many to expect. A collector should only
+// say which part this is and how many to expect. The server should only
 // diff a scan once it holds every chunk; a partial scan can only say
 // "declared" for the classes it has, never "never loaded" for the rest.
 message StaticBaseline {
@@ -809,7 +812,7 @@ enum EndpointDiscoverySource {
 // endpoint_id.
 //
 // A record may be re-sent when a field learned later (the handler join)
-// changes; a collector upserts by (service_instance_id, run_id, endpoint_id).
+// changes; the server upserts by (service_instance_id, run_id, endpoint_id).
 message EndpointLocation {
   int32 endpoint_id = 1;
   // Uppercase HTTP method, or "*" when the framework leaves it unconstrained.
@@ -840,7 +843,7 @@ message EndpointDelta {
 }
 
 // An endpoint module that switched itself off, because it could no longer vouch for the
-// endpoints it declares and counts. Reported so a collector can tell "no endpoints" from
+// endpoints it declares and counts. Reported so the server can tell "no endpoints" from
 // "endpoints not instrumented", the same reason SkippedClass exists for classes. A module is
 // switched off whole and once; its endpoints declared before that stop being counted.
 message DisabledEndpointModule {
