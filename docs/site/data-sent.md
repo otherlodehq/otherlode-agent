@@ -8,7 +8,7 @@ order: 130
 
 The agent pushes three kinds of payload to the collector you set with `exportUrl`. Every payload is a protobuf message, and a payload names code (classes, methods, source files, lines, conditions, routes, jars) and counts. It carries no request data and no argument or return value.
 
-The agent has no redaction setting. It sends what this page lists. A collector can remove fields before it forwards them, so a deployment that needs redaction sends through a collector with redaction switched on. An agent that posts straight to a backend sends everything in clear.
+The agent has no redaction setting. It sends what this page lists. A collector with redaction switched on replaces the text of [string literal parts](#condition-text-and-string-literals) with `…` before it forwards a payload, either every such part or those that match a pattern you set. It keeps every field it knows. It drops any field it does not know, which happens when the agent is newer than the collector, and marks that payload with `fields_stripped`. A deployment that needs redaction sends through a collector with redaction switched on. An agent that posts straight to a backend sends everything in clear.
 
 ## Requests
 
@@ -65,7 +65,7 @@ Every payload carries the same resource attributes.
 | `run_id` | A random `UUID` made once per process. It differs on every start, even under a pinned `service_instance_id` |
 | `test_run` | True when you started the agent with `testRun` |
 | `agent_version` | The agent jar's version, empty when unknown |
-| `fields_stripped` | Never set by the agent. A collector sets it when it removed a field before forwarding |
+| `fields_stripped` | Never set by the agent. A collector sets it only while its redaction is switched on, when it dropped a field it does not know before forwarding |
 
 The agent adds no host name, address, user name, environment variable or system property. Resource attributes come from your configuration, from OpenTelemetry's `service.*` and `deployment.environment*` settings (see [configuration options](configuration)), and from service name detection when you set none.
 
