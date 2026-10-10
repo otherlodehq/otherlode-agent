@@ -1,7 +1,8 @@
 # Otherlode agent
 
 A Java agent that finds code a running JVM app never exercises. It reports
-observations to a collector; the collector and server decide what is dead.
+observations to a collector, which forwards them to the server. The server
+decides what is dead.
 
 Read the code for how something works. This file holds rules, not a
 description of the design, so it cannot go stale about the code.
@@ -38,7 +39,7 @@ A change that breaks one of these needs an ADR first.
 - **Nothing is published before it is confirmed.** The wire has no
   retraction.
 - **The agent reports observations.** Thresholds and "dead" belong to the
-  collector and server.
+  server.
 - **Inlined code is Java and names no `kotlin.*` type.** The shaded jar
   relocates the Kotlin stdlib; `verifyAgentJar` fails the build on one.
 - **Wire changes are additive**, checked by `buf breaking`. A new field
