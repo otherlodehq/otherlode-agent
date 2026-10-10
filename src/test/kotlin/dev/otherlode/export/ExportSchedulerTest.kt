@@ -2,6 +2,7 @@ package dev.otherlode.export
 
 import dev.otherlode.Agent
 import dev.otherlode.config.AgentConfig
+import dev.otherlode.config.CallbackAnnotationName
 import dev.otherlode.dependencies.DependencyListingRun
 import dev.otherlode.dependencies.LoadedDependencyCounter
 import dev.otherlode.dependencies.StartupClasspathLister
@@ -9,6 +10,7 @@ import dev.otherlode.dependencies.TestJars
 import dev.otherlode.instrumentation.LoadedClassSweep
 import dev.otherlode.instrumentation.branch.BranchDropCounts
 import dev.otherlode.instrumentation.branch.BranchDropReason
+import dev.otherlode.instrumentation.branch.ConfiguredCallbackAnnotations
 import dev.otherlode.instrumentation.branch.UnreadCause
 import dev.otherlode.instrumentation.branch.UnreadShapeCounts
 import dev.otherlode.instrumentation.staticscan.StaticBaselineSender
@@ -1806,6 +1808,121 @@ class ExportSchedulerTest {
             }
 
         assertEquals(1, records.count { it.message.contains("branch sites") })
+    }
+
+    private fun namedAnnotations(vararg written: String) =
+        ConfiguredCallbackAnnotations(written.map { CallbackAnnotationName(it, it.replace('$', '.')) })
+
+    private fun unseenLines(records: List<LogRecord>) = records.filter { it.message.contains("callbackAnnotations") }
+
+    /** A scheduler for [named] whose clock reads [now], started at time zero. */
+    private fun schedulerAt(
+        named: ConfiguredCallbackAnnotations,
+        now: () -> Long,
+    ) = ExportScheduler(
+        config,
+        resource,
+        ProbeRegistry(),
+        EndpointRegistry(),
+        RecordingExporter(),
+        callbackAnnotations = named,
+        clock = now,
+    )
+
+    private val fiveMinutes = ExportScheduler.UNSEEN_CALLBACK_ANNOTATIONS_AFTER.toMillis()
+
+    @Test
+    fun `five minutes after start a flush logs one INFO line naming the annotations not yet seen, in the adopter's order and spelling`() {
+        val named = namedAnnotations("com.acme.Zeta", "com.acme.Bus\$Handler", "com.acme.Seen", "com.acme.Alpha")
+        named.markSeen("com.acme.Seen")
+        var now = 0L
+        val scheduler = schedulerAt(named) { now }
+
+        now = fiveMinutes
+        val records = captureLogRecords(ExportScheduler::class.java.name) { scheduler.flush() }
+
+        val line = unseenLines(records).single()
+        assertEquals(JulLevel.INFO, line.level)
+        assertEquals(
+            "otherlode: callbackAnnotations names 3 annotations not yet seen on any method: " +
+                "com.acme.Zeta, com.acme.Bus\$Handler, com.acme.Alpha. " +
+                "A name is matched exactly; check the spelling if its classes have loaded.",
+            line.message,
+        )
+    }
+
+    @Test
+    fun `the unseen-annotations line says annotation in the singular for one name`() {
+        var now = 0L
+        val scheduler = schedulerAt(namedAnnotations("com.acme.Only")) { now }
+
+        now = fiveMinutes
+        val records = captureLogRecords(ExportScheduler::class.java.name) { scheduler.flush() }
+
+        assertTrue(unseenLines(records).single().message.contains("names 1 annotation not yet seen"), records.toString())
+    }
+
+    @Test
+    fun `nothing is logged about callback annotations when every name was seen or none is configured`() {
+        val allSeen = namedAnnotations("com.acme.A", "com.acme.B\$C")
+        allSeen.markSeen("com.acme.A")
+        allSeen.markSeen("com.acme.B.C")
+        var now = 0L
+        val seenScheduler = schedulerAt(allSeen) { now }
+        val noneScheduler = schedulerAt(namedAnnotations()) { now }
+        now = fiveMinutes
+
+        val records =
+            captureLogRecords(ExportScheduler::class.java.name) {
+                seenScheduler.flush()
+                noneScheduler.flush()
+            }
+
+        assertEquals(emptyList(), unseenLines(records))
+    }
+
+    @Test
+    fun `a flush before five minutes leaves the unseen annotations undecided, so a name seen in the meantime is not logged`() {
+        val named = namedAnnotations("com.acme.Late")
+        var now = 0L
+        val scheduler = schedulerAt(named) { now }
+
+        val records =
+            captureLogRecords(ExportScheduler::class.java.name) {
+                now = fiveMinutes - 1
+                scheduler.flush()
+                named.markSeen("com.acme.Late")
+                now = fiveMinutes
+                scheduler.flush()
+            }
+
+        assertEquals(emptyList(), unseenLines(records))
+    }
+
+    @Test
+    fun `the final flush decides the unseen annotations when it comes before five minutes`() {
+        val scheduler = schedulerAt(namedAnnotations("com.acme.Short")) { 1_000L }
+
+        val records = captureLogRecords(ExportScheduler::class.java.name) { scheduler.flush(final = true) }
+
+        assertEquals(1, unseenLines(records).size)
+    }
+
+    @Test
+    fun `the unseen-annotations line is decided once and never logged again`() {
+        var now = 0L
+        val scheduler = schedulerAt(namedAnnotations("com.acme.Never")) { now }
+
+        val records =
+            captureLogRecords(ExportScheduler::class.java.name) {
+                now = fiveMinutes
+                scheduler.flush()
+                now = 2 * fiveMinutes
+                scheduler.flush()
+                scheduler.flush(final = true)
+            }
+
+        assertEquals(1, unseenLines(records).size)
     }
 
     @Test

@@ -6,7 +6,7 @@ order: 20
 
 ## Options at a glance
 
-The agent has 15 options. You can set each one in the `-javaagent` argument string, as a JVM system property, or as an environment variable. The agent reads them once, at startup.
+The agent has 16 options. You can set each one in the `-javaagent` argument string, as a JVM system property, or as an environment variable. The agent reads them once, at startup.
 
 ```text
 -javaagent:/path/to/otherlode-agent-<version>.jar=serviceName=my-service,includePackages=com.acme.shop
@@ -30,6 +30,7 @@ The system property and environment variable names come from the option name. Th
 | `flushIntervalSeconds` | `otherlode.flush.interval.seconds` | `OTHERLODE_FLUSH_INTERVAL_SECONDS` |
 | `includePackages` | `otherlode.include.packages` | `OTHERLODE_INCLUDE_PACKAGES` |
 | `excludePackages` | `otherlode.exclude.packages` | `OTHERLODE_EXCLUDE_PACKAGES` |
+| `callbackAnnotations` | `otherlode.callback.annotations` | `OTHERLODE_CALLBACK_ANNOTATIONS` |
 | `staticBaselineEnabled` | `otherlode.static.baseline.enabled` | `OTHERLODE_STATIC_BASELINE_ENABLED` |
 | `enabled` | `otherlode.enabled` | `OTHERLODE_ENABLED` |
 | `endpointsEnabled` | `otherlode.endpoints.enabled` | `OTHERLODE_ENDPOINTS_ENABLED` |
@@ -50,6 +51,7 @@ The system property and environment variable names come from the option name. Th
 | `flushIntervalSeconds` | `60` | A whole number of seconds from `1` to `86400` | Warning, and the default is used |
 | `includePackages` | None. Required. | Dotted package or class prefixes, separated by `;` | Glob and path prefixes are dropped with a warning. If no prefix is left, the agent logs an ERROR and disables itself |
 | `excludePackages` | None | Dotted package or class prefixes, separated by `;` | Glob and path prefixes are dropped with a warning |
+| `callbackAnnotations` | None | Fully qualified annotation type names, separated by `;` | A name that cannot be a type name is dropped with a warning |
 | `staticBaselineEnabled` | `false` | `true` or `false`, in any letter case | Warning, and the default is used |
 | `enabled` | `true` | `true` or `false`, in any letter case | Warning, and the default is used |
 | `endpointsEnabled` | `true` | `true` or `false`, in any letter case | Warning, and the default is used |
@@ -136,6 +138,31 @@ The ERROR starts with `otherlode: includePackages is not set, so the agent is di
 There is no wildcard that selects every class. A broad prefix such as `com` is accepted as a choice you made.
 
 `enabled=false` is checked before the include rules, so a deliberately disabled agent logs one INFO line and not the ERROR.
+
+## callbackAnnotations
+
+`callbackAnnotations` names annotations that a framework calls methods by, for a framework the agent's built-in list does not cover. A never-hit method that carries one is labelled *called from outside scope* rather than *uncalled*. The label changes no count and no cluster. See [outside callers](call-graph#outside-callers) for what the label means and what the built-in list covers.
+
+```text
+callbackAnnotations=org.axonframework.commandhandling.CommandHandler;com.acme.bus.Handles
+```
+
+- **Names are exact.** Each entry is one annotation type's fully qualified name. There are no prefixes or wildcards, because a prefix would also catch annotations such as `@NotBlank` or `@Nullable` in the same package and hide real dead code.
+- **A nested annotation can be written either way.** `com.acme.Bus.Handler` and `com.acme.Bus$Handler` name the same annotation. Prefer the `.` form: in a shell or a Dockerfile, `$Handler` is read as a variable and dropped, leaving `com.acme.Bus`.
+- **Retention does not matter for a named annotation.** It counts whether it has `RUNTIME` or `CLASS` retention, so a Java annotation declared with no `@Retention` works. A `SOURCE` annotation never reaches the class file and cannot work. An annotation with `CLASS` retention that you did not name counts only when it carries a named one, never because it carries a framework annotation from the built-in list, since the framework cannot see it at run time.
+- **A repeated annotation is matched through its container.** When a repeatable annotation is used twice on a method, the class file holds only its container, such as `@Handles.List`. Name the repeatable annotation alone; the agent recognises the container, and the label names the container, since that is what the method carries.
+- **It counts on the method that runs.** Directly on the method, or carried by an annotation you put on the method, at any depth. An annotation on a parameter or on a class marks nothing, and neither does one on an interface or superclass method that the method implements or overrides. Temporal's `@WorkflowMethod`, which sits on the workflow interface, is not covered.
+- **It adds to the built-in list.** The built-in names keep counting, and the option cannot remove one.
+
+If you want to mark methods that only your own code calls by reflection, declare an annotation of your own and name it here. The agent ships no annotation for this, so your code takes no dependency on it.
+
+An entry that cannot be an annotation's name, such as one with a `/`, a `*`, a leading `@` or no package, is dropped with a warning that suggests a spelling where it can. The agent cannot tell at startup whether a well-formed name exists. At the first flush five minutes or more after startup, or at shutdown if that comes first, it logs one INFO line naming each annotation it has not yet seen on a method:
+
+```text
+otherlode: callbackAnnotations names 1 annotation not yet seen on any method: com.acme.bus.Handels. A name is matched exactly; check the spelling if its classes have loaded.
+```
+
+A correctly spelled name appears in that line too when none of the classes that use it has loaded yet.
 
 ## exportUrl
 

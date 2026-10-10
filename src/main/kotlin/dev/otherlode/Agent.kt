@@ -20,6 +20,7 @@ import dev.otherlode.instrumentation.ClassFileByteCache
 import dev.otherlode.instrumentation.LoadedClassSweep
 import dev.otherlode.instrumentation.OtherlodeInstrumentation
 import dev.otherlode.instrumentation.branch.BranchDropCounts
+import dev.otherlode.instrumentation.branch.ConfiguredCallbackAnnotations
 import dev.otherlode.instrumentation.branch.UnreadShapeCounts
 import dev.otherlode.instrumentation.endpoints.EndpointInstrumentation
 import dev.otherlode.instrumentation.endpoints.EndpointModules
@@ -150,6 +151,7 @@ object Agent {
         val staticBaselineMismatchDetector = StaticBaselineMismatchDetector()
         val branchDropCounts = BranchDropCounts()
         val unreadShapeCounts = UnreadShapeCounts()
+        val callbackAnnotations = ConfiguredCallbackAnnotations(config.callbackAnnotations)
 
         // Found before the method tier installs: its analysis writes the forwarder table, and only
         // for the handler interfaces these modules name (ADR 0035).
@@ -164,6 +166,7 @@ object Agent {
                 staticBaselineMismatchDetector,
                 branchDropCounts = branchDropCounts,
                 unreadShapeCounts = unreadShapeCounts,
+                callbackAnnotations = callbackAnnotations,
                 externalClassRegistry = externalClassRegistry,
                 handlerForwarders = handlerForwarders,
                 classFileCache = classFileCache,
@@ -232,6 +235,7 @@ object Agent {
                     exporter,
                     branchDropCounts = branchDropCounts,
                     unreadShapeCounts = unreadShapeCounts,
+                    callbackAnnotations = callbackAnnotations,
                     loadedClassSweep =
                         LoadedClassSweep(
                             instrumentation,

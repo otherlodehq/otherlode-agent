@@ -111,6 +111,7 @@ These warnings each mean the agent kept running with a default instead of your v
 | `otherlode: exportUrl uses plain http, so the auth token is sent unencrypted` | `authToken` is set and `exportUrl` starts with `http://`. Use an `https://` URL unless the collector is on the same host. |
 | `otherlode: ignoring all of OTEL_RESOURCE_ATTRIBUTES, since its entry 'x' is not key=value; no service name, namespace, version or environment is read from it` | One malformed entry discards the whole list, as the OpenTelemetry specification says. Fix the entry. |
 | `otherlode: ignoring '..' from <source>, since no URL path can name a service or namespace '..'` | A service name or namespace of `.` or `..` is refused. |
+| `otherlode: callbackAnnotations entry '@com.acme.Handles' is not a fully qualified annotation type name and is ignored: write the dotted name with its package and no wildcard, such as 'com.acme.Handles'` | An entry in [`callbackAnnotations`](configuration#callbackannotations) has a leading `@`, a `/`, a `*`, a trailing `.class`, no package, or a part that is not a Java identifier. The agent drops that entry and keeps the others. Write the annotation's name as you would import it. |
 
 [Configuration options](configuration) lists every option and where its value comes from.
 
@@ -240,6 +241,16 @@ otherlode: com.acme.shop.Cart's bytecode could not be read; any method of it tha
 The agent could not read the class's bytes from its loader or from the bytes it received. Methods still count, with less detail. If you see this for ordinary classes, report the class and its loader.
 
 After the first flush, one INFO line counts branch sites left without a probe across the process and splits the count by reason: inlined from code outside your include rules, coroutine machinery, switch lowering, and code-size limits. Most of those are deliberate. [Methods and branches](methods-and-branches) explains what the agent leaves out and why.
+
+## A method a framework calls reads as uncalled
+
+A never-hit method that a framework calls, such as a command handler or a handler your own dispatcher finds by reflection, shows as `UNCALLED` when the framework's annotation is not on the agent's built-in list. Name the annotation in [`callbackAnnotations`](configuration#callbackannotations), and the method reads `CALLED_FROM_OUTSIDE_SCOPE` from the next run. Its counts do not change. The annotation must sit on the method itself: one on an interface method the class implements does not count.
+
+```text
+otherlode: callbackAnnotations names 1 annotation not yet seen on any method: com.acme.bus.Handels. A name is matched exactly; check the spelling if its classes have loaded.
+```
+
+This INFO line names each annotation the agent has not yet found on a method. It is logged once, at the first flush five minutes or more after startup, or at shutdown if that comes first, and only when some name is unseen. Check the spelling, and that the name is the annotation's own and not the class it sits in. A correct name is listed too when none of the classes that use it has loaded yet.
 
 ## A Kotlin class has no line numbers
 

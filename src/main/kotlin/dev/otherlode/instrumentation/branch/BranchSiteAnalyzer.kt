@@ -790,6 +790,7 @@ object BranchSiteAnalyzer {
         fingerprintVisitor: ((onResult: (ConditionFingerprinter.MethodResult) -> Unit) -> MethodVisitor)? = null,
         outsideCallers: Boolean = false,
         outOfScopeLookup: ((internalName: String) -> ByteArray?)? = null,
+        callbackAnnotations: ConfiguredCallbackAnnotations = ConfiguredCallbackAnnotations.NONE,
         methodFilter: (name: String, descriptor: String) -> Boolean,
     ): Analysis {
         val readClass = readOnce(lookup)
@@ -929,7 +930,7 @@ object BranchSiteAnalyzer {
                         }
                     val main =
                         if (outsideCallers && (name to descriptor) in eligibleMethodKeys && name != "<init>" && name != "<clinit>") {
-                            AnnotationRecorder(named) { annotationsByMethod[name to descriptor] = it }
+                            AnnotationRecorder(named, callbackAnnotations) { annotationsByMethod[name to descriptor] = it }
                         } else {
                             named
                         }
@@ -1162,12 +1163,16 @@ object BranchSiteAnalyzer {
                 emptyMap()
             }
 
-        val callbackAnnotations =
+        val callbackAnnotationByMethod =
             if (annotationsByMethod.isEmpty()) {
                 emptyMap()
             } else {
                 val finder =
-                    CallbackAnnotationFinder(classBytesReader(lookup, outOfScopeLookup, includePackages, excludePackages), tableCache)
+                    CallbackAnnotationFinder(
+                        classBytesReader(lookup, outOfScopeLookup, includePackages, excludePackages),
+                        tableCache,
+                        callbackAnnotations,
+                    )
                 annotationsByMethod
                     .mapNotNull { (key, annotations) ->
                         finder.first(annotations)?.let { key to it.replace('/', '.') }
@@ -1211,7 +1216,7 @@ object BranchSiteAnalyzer {
             sizeGuard,
             trackedSequencesByMethod,
             overriddenOutsideTypes,
-            callbackAnnotations,
+            callbackAnnotationByMethod,
         )
     }
 

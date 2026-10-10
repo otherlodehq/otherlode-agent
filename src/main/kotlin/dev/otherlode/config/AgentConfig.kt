@@ -96,6 +96,13 @@ data class AgentConfig(
      * that call production code.
      */
     val testRun: Boolean,
+    /**
+     * Annotation types the adopter names as callback annotations, in the order written. A method that
+     * carries one, directly or through meta-annotations, has an outside caller of kind
+     * `CALLBACK_ANNOTATION`, as for the built-in list. Empty unless `callbackAnnotations` is set. An
+     * entry that is not a well-formed type name is dropped with a WARNING.
+     */
+    val callbackAnnotations: List<CallbackAnnotationName>,
 ) {
     companion object {
         /** OpenTelemetry's name for a Java service that names none. */
@@ -129,6 +136,7 @@ data class AgentConfig(
                 "endpointsEnabled",
                 "otelBridgeEnabled",
                 "testRun",
+                "callbackAnnotations",
             )
 
         /**
@@ -200,6 +208,7 @@ data class AgentConfig(
                 endpointsEnabled = parseBoolean("endpointsEnabled", resolve("endpointsEnabled"), default = true),
                 otelBridgeEnabled = parseBoolean("otelBridgeEnabled", resolve("otelBridgeEnabled"), default = false),
                 testRun = testRun,
+                callbackAnnotations = parseCallbackAnnotations(resolve("callbackAnnotations")),
             )
         }
 
@@ -295,6 +304,52 @@ data class AgentConfig(
                 )
             }
             return usable
+        }
+
+        /**
+         * Splits a `;`-separated list of annotation type names. An entry is kept when it has a package
+         * and every dot-separated part is a Java identifier, so `com.acme.Bus$Handler` and
+         * `com.acme.Bus.Handler` are both kept. Any other entry is dropped with one WARNING that
+         * suggests a corrected spelling when the obvious repairs (a leading `@`, `/` for `.`, a
+         * trailing `.class`) produce a well-formed name. Dropping every entry is not an error.
+         */
+        private fun parseCallbackAnnotations(raw: String?): List<CallbackAnnotationName> {
+            val entries =
+                raw
+                    ?.split(";")
+                    ?.map { it.trim() }
+                    ?.filter { it.isNotEmpty() }
+                    ?: return emptyList()
+            val kept = mutableListOf<CallbackAnnotationName>()
+            for (entry in entries) {
+                if (isTypeName(entry)) {
+                    kept += CallbackAnnotationName(entry, entry.replace('$', '.'))
+                    continue
+                }
+                val corrected = entry.removePrefix("@").replace('/', '.').removeSuffix(".class")
+                log.log(
+                    Level.WARNING,
+                    "otherlode: callbackAnnotations entry '$entry' is not a fully qualified annotation type name and is " +
+                        "ignored: write the dotted " +
+                        "name with its package and no wildcard" + if (isTypeName(corrected)) ", such as '$corrected'" else "",
+                )
+            }
+            return kept
+        }
+
+        /**
+         * Whether [name] has at least two dot-separated parts, each a Java identifier. A trailing
+         * `.class` is a class literal, not a type name, though `class` passes as an identifier part.
+         */
+        private fun isTypeName(name: String): Boolean {
+            val parts = name.split('.')
+            return parts.size >= 2 &&
+                parts.last() != "class" &&
+                parts.all { part ->
+                    part.isNotEmpty() &&
+                        Character.isJavaIdentifierStart(part[0]) &&
+                        part.drop(1).all(Character::isJavaIdentifierPart)
+                }
         }
 
         /**

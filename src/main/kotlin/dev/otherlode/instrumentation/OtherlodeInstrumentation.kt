@@ -11,6 +11,7 @@ import dev.otherlode.instrumentation.branch.BranchDropReason
 import dev.otherlode.instrumentation.branch.BranchProbeAsmVisitorWrapper
 import dev.otherlode.instrumentation.branch.BranchSite
 import dev.otherlode.instrumentation.branch.BranchSiteAnalyzer
+import dev.otherlode.instrumentation.branch.ConfiguredCallbackAnnotations
 import dev.otherlode.instrumentation.branch.DefaultSite
 import dev.otherlode.instrumentation.branch.HandlerForwarder
 import dev.otherlode.instrumentation.branch.KeptBranchSite
@@ -135,6 +136,8 @@ class OtherlodeInstrumentation(
     private val classFileCache: ClassFileByteCache = ClassFileByteCache(),
     /** Reads a woven class's own file from its code source; see [CodeSourceClassFile] for the warm-up. */
     private val codeSourceClassFile: CodeSourceClassFile = CodeSourceClassFile(),
+    /** The adopter's named callback annotations, and which of them a transform has seen. */
+    private val callbackAnnotations: ConfiguredCallbackAnnotations = ConfiguredCallbackAnnotations(config.callbackAnnotations),
 ) {
     private val log = System.getLogger(OtherlodeInstrumentation::class.java.name)
 
@@ -1393,6 +1396,7 @@ class OtherlodeInstrumentation(
             receivedBytes,
             outsideCallers = true,
             outOfScopeLookup = uncachedLookup(classLoader),
+            callbackAnnotations = callbackAnnotations,
         ) { name, descriptor -> (name to descriptor) in eligible }
     }
 

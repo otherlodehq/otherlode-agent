@@ -392,6 +392,40 @@ routine and OpenTelemetry edge cases in the entries below.
 
 ## TODO
 
+### An adopter's own callback annotations: landed
+
+Grilled on 2026-10-10 with Luke; ADR 0064 and ADR 0016 amended,
+`CONTEXT.md`'s "Outside caller" names the adopter's annotations. The
+option ADR 0064 deferred is built before 0.1.0: `callbackAnnotations`
+names annotation types a framework the built-in list misses calls methods
+by, so a never-hit handler reads *called from outside scope*, not
+*uncalled*. Exact names, `.` or `$` for a nested type, either retention
+(invisible annotations read only when the option names something), on
+methods and through meta-annotations, add-only, malformed entries dropped
+with a WARNING, and one INFO line naming any annotation not yet seen on a
+method, decided at the first flush five minutes after start or at the final
+flush. No wire, collector, server or testkit change.
+
+Landed on 2026-10-10 as one chunk, with `docs/site/configuration.md`,
+`call-graph.md` and `troubleshooting.md`. Two Opus review rounds changed
+the design in four places, each now in ADR 0064's amendment: a repeated
+named annotation is matched through its container (javac writes only the
+container, JLS 9.7.5); a class-retention annotation leads only to a named
+one, so an unnamed one carrying `@EventListener` never counts; "seen" is
+tracked apart from the label, through every type a method's annotations
+carry, built-in types included (spring-context 6.2.19's `@EventListener`
+carries `@Reflective`, which an adopter may name); and the INFO line waits
+for a flush five minutes after start, since the first flush is jittered
+from zero and the testkit flushes every second. Temporal was dropped from
+the cases the option covers: its annotations sit on interface methods.
+
+Follow-up with a trigger: an annotation on an in-scope interface or
+superclass method is not read for the method that implements or overrides
+it, for the built-in list as for named annotations. Temporal's
+`@WorkflowMethod` and a JAX-RS or Spring mapping on an interface are the
+known cases. Grill it when an adopter's report shows such methods reading
+*uncalled*.
+
 ### Customer docs round: follow-ups: all closed but item 2
 
 Written on 2026-10-07 while the agent's `docs/site/` pages were researched

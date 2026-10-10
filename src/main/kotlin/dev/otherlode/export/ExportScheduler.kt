@@ -5,6 +5,7 @@ import dev.otherlode.dependencies.DependencyListingRun
 import dev.otherlode.instrumentation.LoadedClassSweep
 import dev.otherlode.instrumentation.branch.BranchDropCounts
 import dev.otherlode.instrumentation.branch.BranchDropReason
+import dev.otherlode.instrumentation.branch.ConfiguredCallbackAnnotations
 import dev.otherlode.instrumentation.branch.UnreadCause
 import dev.otherlode.instrumentation.branch.UnreadShapeCounts
 import dev.otherlode.instrumentation.staticscan.StaticBaselineSender
@@ -52,6 +53,8 @@ class ExportScheduler(
     private val branchDropCounts: BranchDropCounts = BranchDropCounts(),
     /** Unread shape totals; see [maybeLogUnreadShapes]. */
     private val unreadShapeCounts: UnreadShapeCounts = UnreadShapeCounts(),
+    /** The adopter's named callback annotations and which were seen; see [maybeLogUnseenCallbackAnnotations]. */
+    private val callbackAnnotations: ConfiguredCallbackAnnotations = ConfiguredCallbackAnnotations(config.callbackAnnotations),
     /**
      * Confirms classes the registry withholds and finds classes that loaded but reached no
      * transformer; see [maybeSweep]. Null when nothing supplied one, which is every test that does
@@ -77,7 +80,7 @@ class ExportScheduler(
      * sends, the shutdown flush excepted. The default releases nothing.
      */
     private val releaseQuietCaches: () -> Unit = {},
-    /** Milliseconds since the epoch; read once per flush. Injectable so a test controls it. */
+    /** Milliseconds since the epoch; read once per flush and once at construction. Injectable so a test controls it. */
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
     private val log = System.getLogger(ExportScheduler::class.java.name)
@@ -85,6 +88,10 @@ class ExportScheduler(
     private val branchDropsLogged = AtomicBoolean(false)
     private val unreadShapesLogged = AtomicBoolean(false)
     private val receivedBytesClassesLogged = AtomicBoolean(false)
+    private val callbackAnnotationsChecked = AtomicBoolean(false)
+
+    /** When this scheduler was built, which is at agent start; see [maybeLogUnseenCallbackAnnotations]. */
+    private val startedAt = clock()
     private val cacheReleaseFailureLogged = AtomicBoolean(false)
 
     /** Set once a manifest carrying `dependenciesListed = true` was confirmed; see [sendDependenciesListedIfDue]. */
@@ -210,6 +217,7 @@ class ExportScheduler(
             maybeLogBranchDrops()
             maybeLogUnreadShapes()
             maybeLogReceivedBytesClasses()
+            maybeLogUnseenCallbackAnnotations(final, flushStart)
             maybeSweep(final)
             // Read after the sweep, so this flush's delta sends carry the counts of this generation.
             val generation = dependencyRegistry.countGeneration
@@ -382,6 +390,32 @@ class ExportScheduler(
             "otherlode: ${count(classes.toLong(), "class", "classes")} had no class file, so " +
                 "${if (classes == 1) "its shape was" else "their shapes were"} read from the bytes " +
                 "${if (classes == 1) "it" else "they"} arrived as, which another agent may have changed.",
+        )
+    }
+
+    /**
+     * Logs one INFO line naming each configured callback annotation not yet seen on a method, in the
+     * order and spelling the adopter wrote them. It is decided once, at the first flush that runs
+     * [UNSEEN_CALLBACK_ANNOTATIONS_AFTER] or more after start, or at the final flush if that comes
+     * first, and not revisited. An earlier flush can run before the application has loaded its
+     * classes, since the first one is jittered from zero and a test run flushes every second. A
+     * correctly spelled name whose classes have not loaded is still named, so this is INFO. See
+     * [ConfiguredCallbackAnnotations].
+     */
+    private fun maybeLogUnseenCallbackAnnotations(
+        final: Boolean,
+        now: Long,
+    ) {
+        if (callbackAnnotationsChecked.get()) return
+        if (!final && now - startedAt < UNSEEN_CALLBACK_ANNOTATIONS_AFTER.toMillis()) return
+        if (!callbackAnnotationsChecked.compareAndSet(false, true)) return
+        val unseen = callbackAnnotations.unseen()
+        if (unseen.isEmpty()) return
+        log.log(
+            Level.INFO,
+            "otherlode: callbackAnnotations names ${count(unseen.size.toLong(), "annotation", "annotations")} not yet seen on any " +
+                "method: ${unseen.joinToString(", ") { it.written }}. A name is matched exactly; check the spelling if its " +
+                "classes have loaded.",
         )
     }
 
@@ -809,6 +843,12 @@ class ExportScheduler(
     }
 
     companion object {
+        /**
+         * How long after start the unseen callback annotations are first judged. Long enough for an
+         * application to have started and loaded its handlers.
+         */
+        val UNSEEN_CALLBACK_ANNOTATIONS_AFTER: Duration = Duration.ofMinutes(5)
+
         /** A delta is a few dozen bytes on the wire, so this is well under a megabyte per POST. */
         const val DEFAULT_MAX_DELTAS_PER_BATCH: Int = 20_000
 

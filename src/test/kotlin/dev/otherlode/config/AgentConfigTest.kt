@@ -526,6 +526,84 @@ class AgentConfigTest {
         UUID.fromString(first)
     }
 
+    @Test
+    fun `callbackAnnotations is empty by default`() {
+        assertEquals(emptyList(), parseQuietly("serviceName=checkout").callbackAnnotations)
+    }
+
+    @Test
+    fun `callbackAnnotations resolves from agent args, then the system property, then the environment variable`() {
+        val property = mapOf("otherlode.callback.annotations" to "com.acme.FromProperty")
+        val env = mapOf("OTHERLODE_CALLBACK_ANNOTATIONS" to "com.acme.FromEnv")
+
+        fun written(config: AgentConfig) = config.callbackAnnotations.map { it.written }
+
+        val all =
+            AgentConfig.parse(
+                "callbackAnnotations=com.acme.FromArgs",
+                env = env::get,
+                systemProperties = property::get,
+                detectServiceName = { null },
+            )
+        val propertyAndEnv = AgentConfig.parse(null, env = env::get, systemProperties = property::get, detectServiceName = { null })
+        val envOnly = AgentConfig.parse(null, env = env::get, systemProperties = { null }, detectServiceName = { null })
+
+        assertEquals(listOf("com.acme.FromArgs"), written(all))
+        assertEquals(listOf("com.acme.FromProperty"), written(propertyAndEnv))
+        assertEquals(listOf("com.acme.FromEnv"), written(envOnly))
+    }
+
+    @Test
+    fun `callbackAnnotations keeps well-formed names, with a dollar sign or a dot for a nested type, and normalises the dollar`() {
+        var parsed: AgentConfig? = null
+        val warnings =
+            warningsFrom { parsed = parseQuietly("callbackAnnotations=com.acme.Handler ; com.acme.Bus\$Handler;com.acme.Bus.Handler;a.b") }
+        val config = parsed!!
+
+        assertEquals(emptyList(), warnings)
+        assertEquals(
+            listOf("com.acme.Handler", "com.acme.Bus\$Handler", "com.acme.Bus.Handler", "a.b"),
+            config.callbackAnnotations.map { it.written },
+        )
+        assertEquals(
+            listOf("com.acme.Handler", "com.acme.Bus.Handler", "com.acme.Bus.Handler", "a.b"),
+            config.callbackAnnotations.map { it.dotted },
+        )
+    }
+
+    @Test
+    fun `callbackAnnotations drops a malformed name with one WARNING each and suggests a spelling where one is obvious`() {
+        var config: AgentConfig? = null
+        val warnings =
+            warningsFrom {
+                config =
+                    parseQuietly(
+                        "callbackAnnotations=com/acme/X;@com.acme.Y;com.acme.*;Handler;com.acme.1X;com.acme.Z.class;com.acme.Kept;com..W",
+                    )
+            }
+
+        assertEquals(listOf("com.acme.Kept"), config!!.callbackAnnotations.map { it.written })
+        assertEquals(7, warnings.size, warnings.toString())
+        assertTrue(warnings.all { it.startsWith("otherlode: callbackAnnotations entry '") }, warnings.toString())
+
+        fun warningFor(entry: String) = warnings.single { it.contains("'$entry'") }
+        assertTrue(warningFor("com/acme/X").contains("such as 'com.acme.X'"), warningFor("com/acme/X"))
+        assertTrue(warningFor("@com.acme.Y").contains("such as 'com.acme.Y'"), warningFor("@com.acme.Y"))
+        assertTrue(warningFor("com.acme.Z.class").contains("such as 'com.acme.Z'"), warningFor("com.acme.Z.class"))
+        for (entry in listOf("com.acme.*", "Handler", "com.acme.1X", "com..W")) {
+            assertTrue(!warningFor(entry).contains("such as"), warningFor(entry))
+        }
+    }
+
+    @Test
+    fun `a blank callbackAnnotations value means none and logs nothing`() {
+        var config: AgentConfig? = null
+        val warnings = warningsFrom { config = parseQuietly("callbackAnnotations= ; ;") }
+
+        assertEquals(emptyList(), config!!.callbackAnnotations)
+        assertEquals(emptyList(), warnings)
+    }
+
     /** Parses [agentArgs] with no environment or system properties unless given, so the JVM running the tests cannot change the result. */
     private fun parseQuietly(
         agentArgs: String,

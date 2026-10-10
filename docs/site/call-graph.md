@@ -103,7 +103,7 @@ The agent therefore labels each method with the reason code outside your scope m
 - `OVERRIDES_METHOD`: the method overrides or implements a method that a type outside your scope declares, such as `java.lang.Runnable` or `java.lang.Object`. The label names that type.
 - `CALLBACK_ANNOTATION`: the method, or one of its parameters, carries an annotation that a framework calls methods by, such as `@EventListener` or `@GetMapping`. The label names the annotation as written, so an annotation you composed yourself is named, not the one it carries.
 
-The agent has a built-in list of callback annotations, covering Spring, Jakarta and `javax`, JAX-RS, the Kafka, Rabbit and JMS listeners, Micronaut, Quarkus and others. No option adds your own annotations to the list. A runtime annotation that is not on the list, such as `@Nullable`, never counts, because it would hide real dead code.
+The agent has a built-in list of callback annotations, covering Spring, Jakarta and `javax`, JAX-RS, the Kafka, Rabbit and JMS listeners, Micronaut, Quarkus and others. For a framework the list does not cover, such as Axon or an in-house dispatcher, name its annotations in the [`callbackAnnotations`](configuration#callbackannotations) option. A named annotation counts on a method only, never on a parameter. An annotation that is neither on the list nor named, such as `@Nullable`, never counts, because it would hide real dead code.
 
 A method has at most one outside caller. An annotation wins over an override, because it says more about who calls the method. `ProbeRef.outsideCaller` carries the label in the testkit.
 

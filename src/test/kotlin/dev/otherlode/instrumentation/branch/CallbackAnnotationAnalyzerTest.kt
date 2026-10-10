@@ -1,6 +1,11 @@
 package dev.otherlode.instrumentation.branch
 
+import dev.otherlode.config.CallbackAnnotationName
 import net.bytebuddy.dynamic.ClassFileLocator
+import net.bytebuddy.jar.asm.ClassReader
+import net.bytebuddy.jar.asm.ClassVisitor
+import net.bytebuddy.jar.asm.MethodVisitor
+import net.bytebuddy.jar.asm.Opcodes
 import net.bytebuddy.utility.OpenedClassReader
 import java.io.File
 import kotlin.test.Test
@@ -165,5 +170,167 @@ class CallbackAnnotationAnalyzerTest {
         annotationOf("composed", tableCache = cache)
 
         assertEquals(emptyList(), reads.filter { it.endsWith("/Composed") || it.endsWith("/Marker") })
+    }
+
+    private fun namedAnnotations(vararg dotted: String) =
+        ConfiguredCallbackAnnotations(dotted.map { CallbackAnnotationName(it, it.replace('$', '.')) })
+
+    private fun namedAnnotationOf(
+        className: String,
+        method: String,
+        configured: ConfiguredCallbackAnnotations,
+        descriptor: String = "()V",
+        tableCache: BranchSiteAnalyzer.CrossClassTableCache? = null,
+    ): String? =
+        checkNotNull(fromBuildOutput(className)).let { bytes ->
+            BranchSiteAnalyzer
+                .analyzeThrough(
+                    OpenedClassReader.of(bytes),
+                    bytes,
+                    lookup,
+                    listOf("com.example.target.named"),
+                    emptyList(),
+                    tableCache,
+                    emptySet(),
+                    { null },
+                    null,
+                    outsideCallers = true,
+                    callbackAnnotations = configured,
+                    methodFilter = { name, _ -> name == method },
+                ).callbackAnnotationOf(method, descriptor)
+        }
+
+    private fun recordedOn(
+        method: String,
+        configured: ConfiguredCallbackAnnotations,
+    ): MethodAnnotations? {
+        val bytes = checkNotNull(fromBuildOutput("com/example/target/named/NamedCallbacks"))
+        var recorded: MethodAnnotations? = null
+        OpenedClassReader.of(bytes).accept(
+            object : ClassVisitor(Opcodes.ASM9) {
+                override fun visitMethod(
+                    access: Int,
+                    name: String,
+                    descriptor: String,
+                    signature: String?,
+                    exceptions: Array<out String>?,
+                ): MethodVisitor? = if (name == method) AnnotationRecorder(null, configured) { recorded = it } else null
+            },
+            ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES,
+        )
+        return recorded
+    }
+
+    @Test
+    fun `with no configured name a class-retention annotation is not recorded, and with one it is recorded apart`() {
+        assertNull(recordedOn("classCall", ConfiguredCallbackAnnotations.NONE))
+        val withName = checkNotNull(recordedOn("classCall", namedAnnotations("com.example.outside.named.RuntimeCall")))
+        assertEquals(emptyList(), withName.onMethod)
+        assertEquals(listOf("com/example/outside/named/ClassCall"), withName.classRetained)
+        assertEquals(
+            listOf("com/example/outside/named/RuntimeCall"),
+            checkNotNull(recordedOn("runtimeCall", ConfiguredCallbackAnnotations.NONE)).onMethod,
+        )
+    }
+
+    @Test
+    fun `with no configured name no class-retention annotation type is read`() {
+        namedAnnotationOf("com/example/target/named/NamedCallbacks", "composedOfClass", ConfiguredCallbackAnnotations.NONE)
+        namedAnnotationOf("com/example/target/named/NamedCallbacks", "classCall", ConfiguredCallbackAnnotations.NONE)
+        namedAnnotationOf("com/example/target/named/NamedCallbacks", "classRepeated", ConfiguredCallbackAnnotations.NONE)
+
+        assertEquals(
+            emptyList(),
+            reads.filter { it.endsWith("/ClassCall") || it.endsWith("/ClassRepeatedList") || it.endsWith("/ClassRepeated") },
+        )
+    }
+
+    @Test
+    fun `a configured name marks a class-retention annotation, and with none configured it marks nothing`() {
+        val named = namedAnnotations("com.example.outside.named.ClassCall")
+
+        assertEquals(
+            "com.example.outside.named.ClassCall",
+            namedAnnotationOf("com/example/target/named/NamedCallbacks", "classCall", named),
+        )
+        assertNull(namedAnnotationOf("com/example/target/named/NamedCallbacks", "classCall", ConfiguredCallbackAnnotations.NONE))
+    }
+
+    @Test
+    fun `a name reached through a composed annotation is recorded as seen, and one nothing reached is not`() {
+        val named = namedAnnotations("com.example.outside.named.ClassCall", "com.example.outside.named.RuntimeCall")
+
+        namedAnnotationOf("com/example/target/named/NamedCallbacks", "composedOfClass", named)
+
+        assertEquals(listOf("com.example.outside.named.RuntimeCall"), named.unseen().map { it.written })
+    }
+
+    @Test
+    fun `a named annotation behind a built-in one on the same method is recorded as seen`() {
+        val named = namedAnnotations("com.example.outside.named.RuntimeCall")
+
+        assertEquals(
+            "org.springframework.context.event.EventListener",
+            namedAnnotationOf("com/example/target/named/NamedCallbacks", "builtInThenNamed", named),
+        )
+        assertEquals(emptyList(), named.unseen())
+    }
+
+    @Test
+    fun `a named annotation carried by another named one is recorded as seen`() {
+        val named = namedAnnotations("com.example.target.named.ComposedOfRuntime", "com.example.outside.named.RuntimeCall")
+
+        assertEquals(
+            "com.example.target.named.ComposedOfRuntime",
+            namedAnnotationOf("com/example/target/named/NamedCallbacks", "composedOfRuntime", named),
+        )
+        assertEquals(emptyList(), named.unseen())
+    }
+
+    @Test
+    fun `a name is recorded as seen even when a shared cache answers the label`() {
+        val cache = BranchSiteAnalyzer.CrossClassTableCache(100)
+        namedAnnotationOf(
+            "com/example/target/named/NamedCallbacks",
+            "composedOfRuntime",
+            namedAnnotations("com.example.outside.named.RuntimeCall"),
+            tableCache = cache,
+        )
+        val second = namedAnnotations("com.example.outside.named.RuntimeCall")
+
+        assertEquals(
+            "com.example.target.named.ComposedOfRuntime",
+            namedAnnotationOf("com/example/target/named/NamedCallbacks", "composedOfRuntime", second, tableCache = cache),
+        )
+        assertEquals(emptyList(), second.unseen())
+    }
+
+    @Test
+    fun `a named annotation reached only through a built-in one's type is recorded as seen`() {
+        val named = namedAnnotations("com.example.outside.named.FrameworkCarried")
+
+        namedAnnotationOf("com/example/target/named/NamedCallbacks", "builtIn", named)
+
+        assertEquals(emptyList(), named.unseen())
+    }
+
+    @Test
+    fun `a named repeatable annotation used twice is recorded as seen through its container`() {
+        val named = namedAnnotations("com.example.outside.named.RepeatedCall")
+
+        namedAnnotationOf("com/example/target/named/NamedCallbacks", "repeated", named)
+
+        assertEquals(emptyList(), named.unseen())
+    }
+
+    @Test
+    fun `a built-in name the adopter also named is recorded as seen`() {
+        val named = namedAnnotations("org.springframework.context.event.EventListener")
+
+        assertEquals(
+            "org.springframework.context.event.EventListener",
+            namedAnnotationOf("com/example/target/named/NamedCallbacks", "builtIn", named),
+        )
+        assertEquals(emptyList(), named.unseen())
     }
 }
