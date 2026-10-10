@@ -236,7 +236,7 @@ Restart the test, or debug with a task that leaves the agent off. A redefinition
 
 ## Name the tests that call your code
 
-To have your production collector name the tests that call a method, run the agent in your test JVM with `testRun=true`. That is a different setup from this page. See [name the tests that call your code](test-runs).
+To have the server name the tests that call a method in production, run the agent in your test JVM with `testRun=true`. That is a different setup from this page. See [name the tests that call your code](test-runs).
 
 ## Handle new enum values
 

@@ -104,6 +104,6 @@ The cost follows matched classes, so the first lever is narrower `includePackage
 - **Use `excludePackages`** to remove generated or hot utility packages from a broad include.
 - **Watch startup on a small instance.** If your service runs on one or two CPUs, measure its time to first request with and without the agent, as the benchmark does. Startup grows most there.
 - **Leave the static baseline off** unless you need to know about classes that never load. Turn it on for a deliberate run, not on every instance.
-- **Lengthen `flushIntervalSeconds`** if you want fewer wakeups. The cost of a steady flush is small, so this changes little, and a longer interval delays what the collector sees.
+- **Lengthen `flushIntervalSeconds`** if you want fewer wakeups. The cost of a steady flush is small, so this changes little, and a longer interval delays what the server sees.
 
 To measure your own service, compare time to first request, throughput, CPU per request, and live heap with and without `-javaagent`. Compare per-request figures, not totals, when the service is saturated: a variant that serves more requests also allocates and collects more in total.

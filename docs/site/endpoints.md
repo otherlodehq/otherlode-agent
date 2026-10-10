@@ -24,7 +24,7 @@ Each framework has its own module. A module does nothing on a JVM where its fram
 | JDK `com.sun.net.httpserver.HttpServer` | `jdk-httpserver` | JDK 21, the test toolchain | Once the server found the context, before the handler runs |
 | Any framework OpenTelemetry instruments | `otel` | `opentelemetry-instrumentation-api` 2.31.1, and the OpenTelemetry Java agent 2.31.1's relocated copy. It compiles against 2.0.0 | Span end, after the handler ran. Off by default |
 
-The module name is what the agent logs, what a collector sees as the endpoint's framework, and what appears in the list of [disabled modules](#modules-that-switch-themselves-off).
+The module name is what the agent logs, what the server shows as the endpoint's framework, and what appears in the list of [disabled modules](#modules-that-switch-themselves-off).
 
 One Spring module covers Spring Framework 5.3 through 7 and both the `javax` and `jakarta` servlet namespaces. The project's demo runs it inside a Spring Boot 4.1.1 fat jar. The Ktor modules are separate because Ktor 3 replaced `Route` with `RoutingNode`. The JAX-RS module reads annotations from either namespace.
 
@@ -53,7 +53,7 @@ The servlet context path is not part of the template. Spring reports the applica
 
 A framework mapping that lists several paths or verbs gives one endpoint per combination. `@RequestMapping(path = ["/a", "/b"], method = [GET, POST])` is four endpoints.
 
-Two registrations that name the same verb and template are one endpoint with one count, even from two servers in the same JVM or from two frameworks. The numeric endpoint id the agent assigns is only meaningful inside one run, so a collector identifies an endpoint across instances by its verb and template. The framework recorded for the endpoint is the one that registered it first. Two routes that differ only in a part the agent does not read merge for the same reason. Each module below says what it does not read.
+Two registrations that name the same verb and template are one endpoint with one count, even from two servers in the same JVM or from two frameworks. The numeric endpoint id the agent assigns is only meaningful inside one run, so the server identifies an endpoint across instances by its verb and template. The framework recorded for the endpoint is the one that registered it first. Two routes that differ only in a part the agent does not read merge for the same reason. Each module below says what it does not read.
 
 ## Declared and discovered
 
@@ -182,7 +182,7 @@ A lost registration hook would leave endpoints undeclared. A lost dispatch hook 
 otherlode: endpoint module ktor-3 disabled itself: <reason>
 ```
 
-The agent sends the module's name, the reason and a kind naming why to the collector with the next manifest. The kind separates a linkage error, any other advice failure, a transform failure (the module's own transform threw, or a framework class it hooks failed to weave), a route walk failure, and a hook that matched no method (`HOOK_UNMATCHED`). A collector can then tell "this service has no endpoints" from "this service's endpoints were not instrumented". The testkit exposes it as `disabledEndpointModules()`, and its endpoint queries mention a disabled module in the error they throw for an unknown endpoint.
+The agent sends the module's name, the reason and a kind naming why to the collector with the next manifest. The kind separates a linkage error, any other advice failure, a transform failure (the module's own transform threw, or a framework class it hooks failed to weave), a route walk failure, and a hook that matched no method (`HOOK_UNMATCHED`). The server can then tell "this service has no endpoints" from "this service's endpoints were not instrumented". The testkit exposes it as `disabledEndpointModules()`, and its endpoint queries mention a disabled module in the error they throw for an unknown endpoint.
 
 A module that switches off stops counting but does not retract. The endpoints it already declared stay in the list, and their counts stop, so they read as never called. The disabled-modules list is the only signal for that. Treat any endpoint finding from a service with a disabled module as unreliable for that framework.
 

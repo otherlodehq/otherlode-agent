@@ -99,7 +99,7 @@ includePackages=com.acme.shop;com.acme.billing
 
 Choose the root of the code you can delete. That includes your internal libraries that arrive as jars, so a shared `com.acme.common` belongs in the list if you own it. A prefix matches a whole package segment, so `com.acme` matches `com.acme.shop` and does not match `com.acmeinternal`. `excludePackages` removes prefixes from the match, and an exclusion always wins.
 
-The agent has no default for this option and no wildcard. If `includePackages` is missing, empty, or set only through `excludePackages`, the agent logs one error, disables itself for the life of the JVM, and instruments and exports nothing. Your application still starts and runs normally. The collector sees no instance at all, which is the signal that something needs fixing.
+The agent has no default for this option and no wildcard. If `includePackages` is missing, empty, or set only through `excludePackages`, the agent logs one error, disables itself for the life of the JVM, and instruments and exports nothing. Your application still starts and runs normally. The server lists no instance for it, which is the signal that something needs fixing.
 
 A prefix written as a glob (`com.acme.*`) or a path (`com/acme`) matches no class. The agent drops it with a warning that names the spelling that would match, and does not apply that spelling for you. If every prefix is dropped this way, the agent refuses to start, as it does for a missing option.
 
@@ -155,7 +155,7 @@ Beyond that line, the agent prints mostly problems, so the absence of an error i
 | `otherlode: could not install the bootstrap holder; the agent is disabled for this JVM` | The agent could not write its small helper jar to `java.io.tmpdir`, for example on a read-only or full filesystem. |
 | `otherlode: ignoring unknown agent option '...'` | A misspelled option. The line lists the options that exist. |
 
-The second check is the collector. The agent sends a batch on every flush, even when no count has changed, so an instance that is alive and idle still reports. Within one flush interval of startup, your collector should show the instance under the `serviceName` you set. To see it sooner, add `flushIntervalSeconds=1` while you test.
+The second check is the server. The agent sends a batch on every flush, even when no count has changed, so an instance that is alive and idle still reports. Within one flush interval of startup, the server should show the service under the `serviceName` you set. See [send data from your collector](/docs/server/connect#confirm-the-service-appears). To see it sooner, add `flushIntervalSeconds=1` while you test.
 
 If a flush cannot reach the collector, the agent logs a warning at the failed send, with the cause, and retries on the next flush:
 

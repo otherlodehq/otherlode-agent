@@ -13,12 +13,12 @@ This page covers the whole class. For what the agent records inside a class that
 | State | What puts a class there | Where you see it |
 |---|---|---|
 | Instrumented | The class loaded, matched the rules, and has at least one method, default-argument site or static initialiser to probe. | Its probes reach the collector in the manifest. |
-| Never initialised | The class loaded, has a static initialiser, and no instance ran it. | `neverInitialized()` in [the testkit](testkit-api), and the collector's class findings. |
-| Never instantiated | The class loaded, and none of its constructors ran in any instance. | `neverInstantiated()`, and the collector's class findings. |
+| Never initialised | The class loaded, has a static initialiser, and no instance ran it. | `neverInitialized()` in [the testkit](testkit-api), and the server's class findings. |
+| Never instantiated | The class loaded, and none of its constructors ran in any instance. | `neverInstantiated()`, and the server's class findings. |
 | Skipped | The class matched the rules and the agent could not instrument it. | A `WARNING` log line, `skippedClasses()`, and the manifest's skipped list. |
 | Loaded where no transformer saw it | The class loaded, but the JVM offered it to no transformer. | One `INFO` log line, and the manifest. |
 | Failed to load | The agent wove the class and the JVM never defined it. | A `WARNING` log line, `failedToLoad()`, and the manifest. |
-| Never loaded | A complete static baseline declared the class and no manifest ever mentioned it. | `neverLoaded()`, and the collector's class findings. |
+| Never loaded | A complete static baseline declared the class and no manifest ever mentioned it. | `neverLoaded()`, and the server's class findings. |
 | Nothing to probe | The class loaded and has no method, default-argument site or static initialiser the agent probes. | Nothing, except in the static baseline's unprobed list. |
 | Left out | The class is synthetic, or a framework generated it at runtime. | Nothing. |
 
@@ -55,7 +55,7 @@ Both findings leave out the class's inline, generated and unread-shape methods w
 
 ## Skipped classes
 
-The agent skips a class that matched the rules and that it could not instrument. The class runs unchanged. The agent records the class name and a reason, once per class name, and sends the list in the manifest, so a collector shows the class as skipped and never as dead code.
+The agent skips a class that matched the rules and that it could not instrument. The class runs unchanged. The agent records the class name and a reason, once per class name, and sends the list in the manifest, so the server counts the class as loaded and never as dead code.
 
 Two causes put a class here:
 
@@ -75,7 +75,7 @@ A type that a field or method signature names, but that is not a supertype, does
 
 The JVM does not call a transformer for a class it loads while the same thread is inside another transform. The agent never sees such a class, and neither does any other agent. It is defined and runs, but it has no probes and does not appear in the manifest as an instrumented or skipped class. Next to a complete static baseline that declared it, the class would read as never loaded, though it ran.
 
-The agent finds these classes by sweeping every class the JVM holds. A sweep keeps the loaded classes that are in scope and that the agent never registered, skipped or found to have nothing to probe. It names each one in the manifest, and a collector counts it as loaded. It makes no claim about the class's methods.
+The agent finds these classes by sweeping every class the JVM holds. A sweep keeps the loaded classes that are in scope and that the agent never registered, skipped or found to have nothing to probe. It names each one in the manifest, and the server counts it as loaded. It makes no claim about the class's methods.
 
 The sweep runs every tenth flush and on the shutdown flush. With the default `flushIntervalSeconds` of 60, that is about every ten minutes. The sweep ignores:
 
@@ -120,7 +120,7 @@ If the agent cannot read the stack that shows when a definition attempt started 
 otherlode: the definition attempt of a woven class could not be read from its thread's stack; such classes are never reported as failed to load
 ```
 
-A class that failed to load is a deployment to fix, never dead code. A collector reads it that way even where a complete baseline declared the class. If some instance loaded the class, the class is loaded, whatever another instance says. `failedToLoad()` lists the classes some manifest named and no instance loaded, and `neverLoaded()` leaves them out.
+A class that failed to load is a deployment to fix, never dead code. The server reads it that way even where a complete baseline declared the class. If some instance loaded the class, the class is loaded, whatever another instance says. `failedToLoad()` lists the classes some manifest named and no instance loaded, and `neverLoaded()` leaves them out.
 
 ## Never loaded
 
@@ -155,9 +155,9 @@ Each class the scan finds in scope lands in one of three lists:
 | Unprobed | A class with nothing to probe, such as an interface with only abstract methods or an annotation type. |
 | Unreadable | A class file the scan could not read or resolve, with the reason. The scan logs nothing about it. |
 
-Only a declared class can be never loaded. The live tier never registers an unprobed class, so declaring one would make a collector call a heavily used marker interface never loaded. An unreadable class never silently drops out of the inventory, since it is on the list.
+Only a declared class can be never loaded. The live tier never registers an unprobed class, so declaring one would make the server call a heavily used marker interface never loaded. An unreadable class never silently drops out of the inventory, since it is on the list.
 
-A collector calls a declared class never loaded only when it holds the complete scan. The agent sends the scan in chunks of about 20,000 entries, and each chunk says its position out of the total. The agent sends the chunks in order and stops at the first failure. It sends the rest after the next flush that the collector confirms, and logs these lines on the way:
+The server calls a declared class never loaded only when it holds the complete scan. The agent sends the scan in chunks of about 20,000 entries, and each chunk says its position out of the total. The agent sends the chunks in order and stops at the first failure. It sends the rest after the next flush that the collector confirms, and logs these lines on the way:
 
 ```text
 otherlode: failed to send static baseline chunk 2 of 3; it and the chunks after it are sent again after a flush the collector confirms
@@ -171,7 +171,7 @@ In the testkit, `neverLoaded()` also leaves out a declared class whose methods a
 
 The scan can only find classes in places it knows to look. It cannot find a class whose location another system decides at run time. If you start Tomcat with `java -cp bootstrap.jar:tomcat-juli.jar org.apache.catalina.startup.Bootstrap start`, nothing about your application is on `java.class.path`. Tomcat reads `server.xml` after the agent's scan has finished, finds `webapps/shop.war`, and builds a class loader for it. A plugin loader that scans a directory at its own discretion has the same effect.
 
-Classes in those places are instrumented normally when they load, since the JVM tells the agent about every class any loader defines. What they lack is a declaration. A class in the WAR that never loads is not in the baseline, and so a collector never calls it never loaded.
+Classes in those places are instrumented normally when they load, since the JVM tells the agent about every class any loader defines. What they lack is a declaration. A class in the WAR that never loads is not in the baseline, and so the server never calls it never loaded.
 
 The agent warns you when it detects the gap. If a class registers when it loads and is in none of the scan's lists, the scan missed it for this process. The agent logs this line once per class:
 

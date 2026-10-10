@@ -4,7 +4,7 @@ description: What the agent counts in your methods and conditionals, what it lea
 order: 30
 ---
 
-The agent counts two things inside the classes that `includePackages` selects: how often each method is entered, and how often each outcome of each conditional is taken. This page lists what gets a counter, what does not, and what the agent records about each one so that a collector can describe it in your source's terms. Endpoints are on [endpoints](endpoints), whole classes on [classes](classes), and call edges on the [call graph](call-graph) page.
+The agent counts two things inside the classes that `includePackages` selects: how often each method is entered, and how often each outcome of each conditional is taken. This page lists what gets a counter, what does not, and what the agent records about each one so that the server can describe it in your source's terms. Endpoints are on [endpoints](endpoints), whole classes on [classes](classes), and call edges on the [call graph](call-graph) page.
 
 Every count is a cumulative total since the process started. The agent decides nothing about whether code is dead. It reports counts, marks and descriptions, and the server judges.
 
@@ -43,7 +43,7 @@ Each probed method carries these facts to the collector.
 | Fact | Meaning |
 |---|---|
 | Name, descriptor, first line | The line is -1 when the class has no line-number table. |
-| Static | Whether the method is `static`. A collector uses it to tell a class meant to have instances from a holder of static functions. |
+| Static | Whether the method is `static`. The server uses it to tell a class meant to have instances from a holder of static functions. |
 | Parameter names | Read from the class file's `MethodParameters` attribute, or else from the local variable table. Empty when the class was compiled without either, and never partial. Compiler names such as `$this$shout` are sent as written. |
 | Generic signature | The method's `Signature` attribute, which keeps the generic types the descriptor erases. |
 | Extension receiver | Whether the first parameter is a Kotlin extension receiver. |
@@ -129,7 +129,7 @@ A part the agent cannot write in source terms, such as a call to an unrelated me
 - Renaming the method or changing its signature.
 - A compiler upgrade that changes the bytecode.
 
-A key is absent, and a collector treats the outcome as new, when two sites in one method share the same condition instructions, or when the agent cannot fingerprint the condition with confidence. A class compiled without a local variable table loses keys for conditions on same-typed locals. The site has a key made the same way without the outcome. The testkit shows an outcome's key as `ProbeRef.branchKey`.
+A key is absent, and the server treats the outcome as new, when two sites in one method share the same condition instructions, or when the agent cannot fingerprint the condition with confidence. A class compiled without a local variable table loses keys for conditions on same-typed locals. The site has a key made the same way without the outcome. The testkit shows an outcome's key as `ProbeRef.branchKey`.
 
 ### Switches
 
@@ -174,7 +174,7 @@ An optional parameter is a value parameter with a default, so a caller can leave
 
 kotlinc compiles a function with defaults to the function itself plus a synthetic `f$default`. The `$default` method takes a bitmask of the omitted parameters, fills in each default, and calls `f`. A constructor with defaults gets the same shape, with a `DefaultConstructorMarker` parameter. A caller that omits nothing calls `f` directly.
 
-The agent puts one omission probe per optional parameter at the entry of `f$default`, and increments it for each parameter whose bit is set in the mask. It reports the probe on `f`, not on `f$default`, so a collector joins it to `f`'s entry probe by the identity it has. An omission probe carries:
+The agent puts one omission probe per optional parameter at the entry of `f$default`, and increments it for each parameter whose bit is set in the mask. It reports the probe on `f`, not on `f$default`, so the server joins it to `f`'s entry probe by the identity it has. An omission probe carries:
 
 - The parameter's zero-based index among the value parameters. Receivers are not counted.
 - The parameter's name, read from `f`'s local variable table, empty when the class has none.
@@ -187,15 +187,15 @@ The agent recognizes `$default` from its body, never from an annotation. `@JvmOv
 
 scalac writes a public default getter `f$default$N` for each optional parameter, and the compiler calls it for every call that omits parameter N. The getter's own entry slot is reported as an omission of parameter N on the target `f`, with index N - 1 (a Scala extension receiver counts, since it is a JVM parameter), and the getter gets no ordinary method probe. The getter must resolve to exactly one method in the same class, whose Nth parameter has the getter's return type or is a by-name `Function0`. If it resolves to none or several, the agent logs one INFO line and reports the getter as an ordinary method named `f$default$N`.
 
-A constructor default is declared on the companion's module class and also appears as a static forwarder on the class itself. Both resolve to the same constructor, so one parameter can carry two omission probes. A collector sums them before it judges. The line of a re-kinded getter is the getter's own first line, and -1 for the static forwarder, which has no line-number table.
+A constructor default is declared on the companion's module class and also appears as a static forwarder on the class itself. Both resolve to the same constructor, so one parameter can carry two omission probes. The server sums them before it judges. The line of a re-kinded getter is the getter's own first line, and -1 for the static forwarder, which has no line-number table.
 
 ### Findings
 
-A collector judges two things from an optional parameter's omission total and its function's hit total:
+The server judges two things from an optional parameter's omission total and its function's hit total:
 
 | Finding | Rule | Meaning |
 |---|---|---|
-| Never supplied | The omission total equals the function's hit total | Every caller took the default, so the parameter can go. The collector claims it only for a function that cannot be overridden, because an override's calls spread the counts. |
+| Never supplied | The omission total equals the function's hit total | Every caller took the default, so the parameter can go. The server claims it only for a function that cannot be overridden, because an override's calls spread the counts. |
 | Always supplied | The omission total is zero and the function was hit at least once | The default value is dead. |
 
 Neither is claimed when the target is an inline function, a generated method such as a data class's `copy` (`copy(x = 1)` is how `copy` is meant to be used), or an unread shape.
@@ -208,7 +208,7 @@ kotlinc copies a Kotlin `inline` function's body into each Kotlin caller. The fu
 
 The mark has these effects:
 
-- A collector makes no never-hit claim about an inline method, and none about a branch inside it.
+- The server makes no never-hit claim about an inline method, and none about a branch inside it.
 - A class whose declared methods are all inline gets no never-loaded claim.
 - The testkit's `neverHit()` lists no inline method. `wasHit` and `hitCount` stay raw.
 
@@ -216,7 +216,7 @@ The copies of an inline function in a caller are separate branch sites. See [Sit
 
 ## Generated methods
 
-A generated method is one the compiler writes from a declaration rather than from a body you wrote. The agent keeps its entry probe, and the branch probes inside it, and marks it with what generated it. A collector leaves a generated probe out of every never-hit finding and out of the call graph, because the compiler would write the method again whatever you do. The count is still reported, since a `copy` that is called is a `copy` in use. The testkit's `neverHit()` leaves generated methods out.
+A generated method is one the compiler writes from a declaration rather than from a body you wrote. The agent keeps its entry probe, and the branch probes inside it, and marks it with what generated it. The server leaves a generated probe out of every never-hit finding and out of the call graph, because the compiler would write the method again whatever you do. The count is still reported, since a `copy` that is called is a `copy` in use. The testkit's `neverHit()` leaves generated methods out.
 
 The agent reads each mark from the shape of the method's body, never from the Kotlin or Scala metadata. The testkit exposes the mark as `ProbeRef.generatedBy`, which is null for ordinary code.
 
@@ -246,7 +246,7 @@ A generated method is no node in the [call graph](call-graph). A call to a gener
 
 ## Unread shapes
 
-An unread shape is a probe whose code has the outline of compiler output but whose body matches no shape the agent has read for that compiler. It is a statement about the agent, not about who wrote the code. The agent counts the probe and reports its hits, but a collector makes no finding from it, includes it in no unreached cluster, and lists it apart with its family. The testkit's `neverHit()` leaves unread shapes out and `neverHitUnreadShapes()` lists them.
+An unread shape is a probe whose code has the outline of compiler output but whose body matches no shape the agent has read for that compiler. It is a statement about the agent, not about who wrote the code. The agent counts the probe and reports its hits, but the server makes no finding from it, includes it in no unreached cluster, and lists it apart with its family. The testkit's `neverHit()` leaves unread shapes out and `neverHitUnreadShapes()` lists them.
 
 | Family | Reads as | Outline |
 |---|---|---|

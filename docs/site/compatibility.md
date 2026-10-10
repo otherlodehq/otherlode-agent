@@ -36,7 +36,7 @@ The agent tells a compiler's generated code (a data class's `copy`, a case class
 | Scala 2 | scalac 2.12.20, 2.13.15, 2.13.16 and 2.13.18. A Scala 2 class does not name its compiler, so the rules are version-blind: they accept every body shape found in a survey of 2.12.18 to 2.12.21 and 2.13.14 to 2.13.18, and the tested releases stand for those shapes. |
 | Scala 3 | Each release from 3.3.3 to 3.9.0, one at a time. A Scala 3 class names the release that wrote it. The releases the agent reads are listed in `scala3-read-releases.txt` inside the agent jar. |
 
-Code from any other compiler, or from a release that changed a shape, is probed and counted like any other code. If its outline looks like compiler output but its body is not one the agent has read, the agent reports it as an unread shape. An unread shape is never called dead code and never part of an unreached cluster, and the collector lists it apart. See [methods and branches](methods-and-branches).
+Code from any other compiler, or from a release that changed a shape, is probed and counted like any other code. If its outline looks like compiler output but its body is not one the agent has read, the agent reports it as an unread shape. An unread shape is never called dead code and never part of an unreached cluster, and the server lists it apart. See [methods and branches](methods-and-branches).
 
 On the first flush that finds an unread shape, the agent logs one WARNING that counts them by family and names each Scala 3 release it has not read. A scheduled CI job compiles the fixtures with the newest release of each compiler every week. A changed shape fails that build before it reaches a report.
 

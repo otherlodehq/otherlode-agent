@@ -36,7 +36,7 @@ Most problems are visible at WARNING and above. The DEBUG lines add detail about
 
 ## The agent is disabled
 
-A disabled agent instruments nothing and sends nothing, and your application starts and runs as if the flag were absent. The collector sees no instance at all.
+A disabled agent instruments nothing and sends nothing, and your application starts and runs as if the flag were absent. The server lists no instance for it.
 
 ### includePackages is missing
 
@@ -173,7 +173,7 @@ This logs once. The chunks stay pending and go out one per flush after a flush w
 otherlode: the static baseline scan did not end within 15s of shutdown, so this test run may send no complete scan
 ```
 
-This appears only with `testRun` and `staticBaselineEnabled` both on. The shutdown hook waits 15 seconds for the scan, and the scan was still running. A collector holds an incomplete scan and makes no never-loaded claim from it. Run the scan on a smaller classpath, or accept that this test run reports no complete scan.
+This appears only with `testRun` and `staticBaselineEnabled` both on. The shutdown hook waits 15 seconds for the scan, and the scan was still running. The server makes no never-loaded claim from an incomplete scan. Run the scan on a smaller classpath, or accept that this test run reports no complete scan.
 
 ## A test fails with a version mismatch
 
@@ -202,7 +202,7 @@ The class is in your include rules, but a superclass or interface, at any depth,
 otherlode: instrumentation failed for com.acme.shop.Report, class will run uninstrumented
 ```
 
-The agent could not weave the class. The stack trace under the line says why, and the class runs unchanged. A skipped class appears in the collector with the reason, and the report does not call it dead. [Classes](classes) lists the class states. If the cause is not in your build, report the class, its compiler and the trace.
+The agent could not weave the class. The stack trace under the line says why, and the class runs unchanged. The server counts a skipped class as loaded, and the report does not call it dead. [Classes](classes) lists the class states. If the cause is not in your build, report the class, its compiler and the trace.
 
 The testkit lists skipped classes with `collector.skippedClasses()`.
 

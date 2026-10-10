@@ -124,7 +124,7 @@ otherlode: 'com.acme.*' matches no class and is ignored: write a dotted package 
 
 ### An empty includePackages disables the agent
 
-The agent needs a scope to probe. When `includePackages` has no usable prefix, the agent logs one ERROR, disables itself for the life of the JVM, installs nothing and sends nothing. The collector sees no instance at all, which is the visible signal. An instance that reported zero probes would read as a service with no dead code.
+The agent needs a scope to probe. When `includePackages` has no usable prefix, the agent logs one ERROR, disables itself for the life of the JVM, installs nothing and sends nothing. The server lists no instance for it, which is the visible signal. An instance that reported zero probes would read as a service with no dead code.
 
 An empty list is any of these.
 
@@ -218,11 +218,11 @@ Each payload names the service that sent it with these values.
 
 At each step, the first value that is not blank wins. A service is known by its namespace and its name together. With no namespace, the service is in the unspecified namespace.
 
-A service name or namespace of `.` or `..` is skipped with a warning, as if it were blank, and the next source gives the value. A collector shows a service at a URL path that holds both values, and browsers drop `.` and `..` path segments, so neither value can name a service. The check covers every source of a name or a namespace, including OpenTelemetry's and detection.
+A service name or namespace of `.` or `..` is skipped with a warning, as if it were blank, and the next source gives the value. The server shows a service at a URL path that holds both values, and browsers drop `.` and `..` path segments, so neither value can name a service. The check covers every source of a name or a namespace, including OpenTelemetry's and detection.
 
-The agent never reads the instance ID from OpenTelemetry's `service.instance.id`. Many deployment templates give every replica the same value there, and the collector merges hit counts per instance. Set `serviceInstanceId` yourself to pin the ID, for example to a pod name or to a name for a test task.
+The agent never reads the instance ID from OpenTelemetry's `service.instance.id`. Many deployment templates give every replica the same value there, and the server counts instances by that ID, so the replicas would read as one instance. Set `serviceInstanceId` yourself to pin the ID, for example to a pod name or to a name for a test task.
 
-Each process also gets a random run ID, which no option sets. A restart under a pinned instance ID is therefore a new run. A collector keeps the data of each run apart.
+Each process also gets a random run ID, which no option sets. A restart under a pinned instance ID is therefore a new run. The server keeps the data of each run apart.
 
 ## OpenTelemetry's settings
 
@@ -295,7 +295,7 @@ Detection reads the classpath files these ways.
 - A `.properties` file is read as ISO 8859-1, as Spring reads it by default.
 - A YAML file is read as nested block mappings (`spring:`, then `application:`, then `name:`) with plain, single-quoted or double-quoted values and `#` comments. The first document that names the application wins when a file holds several documents split by `---`. The agent does not read flow mappings, block scalars (`|`, `>`), anchors, aliases, escapes or a dotted key such as `spring.application.name:`.
 
-If detection finds nothing, the name is `unknown_service:java`, OpenTelemetry's name for a Java service that names none. A collector treats a name that starts with `unknown_service` as a service that was never named.
+If detection finds nothing, the name is `unknown_service:java`, OpenTelemetry's name for a Java service that names none. The server treats a name that starts with `unknown_service` as a service that was never named.
 
 ## Other settings the agent reads
 

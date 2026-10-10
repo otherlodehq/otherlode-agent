@@ -19,7 +19,7 @@ A call edge is one method's reference to one other method, or to a class's stati
 Two limits follow from reading bytecode.
 
 - **Only your code is in the graph.** An edge is recorded only when the callee is inside your [`includePackages`](configuration) scope. A call into the JDK, a framework or a library leaves no edge. The agent records those classes separately, as dependency usage, and never feeds them into clusters.
-- **The callee is named as the bytecode names it.** The agent does not work out which override a virtual call lands on, because while it transforms one class it has no view of the rest of your hierarchy. It sends each class's superclass and interfaces with the class. The collector uses them to widen a virtual call to every override it knows, and to walk up to an inherited method.
+- **The callee is named as the bytecode names it.** The agent does not work out which override a virtual call lands on, because while it transforms one class it has no view of the rest of your hierarchy. It sends each class's superclass and interfaces with the class. The server uses them to widen a virtual call to every override it knows, and to walk up to an inherited method.
 
 ## Which code shapes make an edge
 
@@ -34,7 +34,7 @@ Each of these records an edge from the method that contains it.
 | A lambda or method reference compiled to `invokedynamic` | An edge to the lambda body or the referenced method. It is marked as a creation edge. |
 | `new` or a read of `INSTANCE` on a body class | A creation edge to each method the body class declares. |
 
-A creation edge reaches its target the way a call does, since a lambda body can run only after the method that makes it has run. The collector displays it differently, so a lambda body shows as "lambda in `handleCheckout`" instead of as its compiler name.
+A creation edge reaches its target the way a call does, since a lambda body can run only after the method that makes it has run. The server displays it differently, so a lambda body shows as "lambda in `handleCheckout`" instead of as its compiler name.
 
 A static field read or write records no edge when it is on the class's own fields, and an instance field access records none at all, because the constructor edge already exists.
 
@@ -46,7 +46,7 @@ A body class is a class that exists only to carry code its creator hands to some
 
 ### Pass-throughs
 
-Compilers generate methods that only forward a call. Examples are a bridge method, an `access$` accessor, Kotlin's `$default` method and the class kotlinc generates for a function reference. A forwarder has no probe of its own, so an edge into one would name a method with no hit count. Instead the agent follows the forwarder and attributes its callees to whoever referenced it, across classes if need be. So `x.f(1)` on a function with a default argument reaches `f`, and `::twice` gives its creator an edge to `twice`. If the agent cannot read a class's bytes, the edge stays as written and the collector treats the callee as unknown.
+Compilers generate methods that only forward a call. Examples are a bridge method, an `access$` accessor, Kotlin's `$default` method and the class kotlinc generates for a function reference. A forwarder has no probe of its own, so an edge into one would name a method with no hit count. Instead the agent follows the forwarder and attributes its callees to whoever referenced it, across classes if need be. So `x.f(1)` on a function with a default argument reaches `f`, and `::twice` gives its creator an edge to `twice`. If the agent cannot read a class's bytes, the edge stays as written and the server treats the callee as unknown.
 
 ## Which edges are missing
 
@@ -82,13 +82,13 @@ The testkit's `RootKind` names five kinds of root. They call for different actio
 | `UNTAKEN_OUTCOME` | A branch outcome that never ran, in a method that did. | The most actionable kind. See below. |
 | `CLASS_FINDING` | A class that is never loaded, never initialised or never instantiated. | The class is the finding. Its cluster is listed only when it holds more than the methods the finding already covers. |
 
-A collector that also receives [test runs](test-runs) adds a kind for a method called only by tests. The testkit does not have it.
+When the server also receives [test runs](test-runs), it adds a kind for a method called only by tests. The testkit does not have it.
 
 ### An untaken outcome roots the cluster behind it
 
 Suppose an `if` in a method that runs on every request has a branch that has never been taken, and that branch constructs a `LegacyDiscountCalculator` and calls its `apply`. Without outcomes in the graph, the constructor and `apply` would be separate roots, each "reached from hit" because the checkout handler ran. Nothing would tell you they are one feature.
 
-The agent records, for each edge, the innermost branch outcome that its call site sits behind. The collector treats an edge as a call from that outcome, not from the method. If the outcome never ran, the outcome is the root, and everything reachable only through it joins the cluster. Deleting that side of the `if` removes the cluster. An outcome root that has no method behind it gives no cluster, since the finding already says everything there is.
+The agent records, for each edge, the innermost branch outcome that its call site sits behind. The server treats an edge as a call from that outcome, not from the method. If the outcome never ran, the outcome is the root, and everything reachable only through it joins the cluster. Deleting that side of the `if` removes the cluster. An outcome root that has no method behind it gives no cluster, since the finding already says everything there is.
 
 Branch outcomes that are routine, like a null check's null side, or that the agent could not read, are not nodes. A call they guard starts at its method instead. See [methods and branches](methods-and-branches) for which outcomes those are.
 
