@@ -71,11 +71,9 @@ With `maxParallelForks` above 1, the forks of one task share the pinned ID. The 
 
 **An unset environment.** The `test` default keeps a test run's data in an environment of its own, apart from production's, as a second guard beside the flag.
 
-## Older and environment-stamping collectors
+## Environment-stamping collectors
 
-A collector built before the test-run flag existed drops it when its redaction is on. The run then reaches the backend as an ordinary run in the `test` environment, apart from production's. If that collector also stamps its own environment with `upsert`, the test run lands in production's environment. Update the collector before you turn `testRun` on.
-
-A collector with an environment of its own and `insert` keeps the agent's `test`, and counts each of the run's payloads as an environment mismatch.
+A collector with an environment of its own and `insert` keeps the agent's `test`, and counts each of the run's payloads as an environment mismatch. A collector with `upsert` counts the same mismatch and writes its own environment over `test`, so the run shares that environment and only the test-run flag keeps it apart from production.
 
 ## Expect a longer shutdown
 
