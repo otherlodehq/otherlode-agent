@@ -221,6 +221,10 @@ adopter's collector forwards to one multi-tenant backend.
      workflow; a `linux/amd64` and `linux/arm64` image on GHCR tagged
      `X.Y.Z`, `X.Y` and `latest` with build provenance; no binaries; the
      redaction WARNING and README say "the latest collector".
+   - Before the first release of each: the collector's GHCR package made
+     public, and the org secret `OTHERLODE_DEV_DOCS_TOKEN` visible to this
+     repo and the collector, or the release's docs job skips the sync to
+     otherlode.dev with only a notice.
    - Landing order, one chunk and one commit each: (1) JDK 17 floor and CI
      leg; (2) the agent's publishing build (nmcp, signing, POMs, sources and
      javadoc jars, the testkit's stdlib on its shadow variant), proved with
@@ -391,6 +395,30 @@ the server's performance-only deferrals, gzip, a collector config file, agent-le
 routine and OpenTelemetry edge cases in the entries below.
 
 ## TODO
+
+### Redacted literals stay unguessable: landed in all three repos
+
+Grilled on 2026-10-10 with Luke. Collector redaction blanked a literal's
+text, but the keys built from it let anyone holding a payload test
+guesses offline: `branch_key` and `site_key` hash the condition
+fingerprint, which holds string constants, and an unread string switch's
+`case_key` is each literal's `String.hashCode()`.
+
+- Agent `bdc59f6`: `BranchSite.string_hash_code_switch` marks every switch
+  on `String.hashCode()` the agent leaves plain, a hand-written one
+  included (Luke's call), with ADR 0038 amended.
+- Collector `3892e5c` (ADR 0007): with redaction on, an HMAC under a
+  collector-held secret (`OTHERLODE_COLLECTOR_REDACT_SECRET` or `_FILE`)
+  re-keys both keys, case keys of a marked switch are cleared, and every
+  forward carries `Otherlode-Redaction: <secret fingerprint>`.
+- Server `8b27152` (ADR 0065): a tenant can require that header and
+  refuse payloads without it.
+- The same day the customer docs, `CLAUDE.md` and proto comments stopped
+  calling the server "the collector" (`82b05cd` and the commits around
+  it): the collector forwards, the server stores and judges.
+
+Release order follows: the collector carrying the bindings first, then
+the agent, which `release.sh` already enforces.
 
 ### An adopter's own callback annotations: landed
 
