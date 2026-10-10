@@ -1414,7 +1414,8 @@ object BranchSiteAnalyzer {
     }
 
     /**
-     * Attaches each site's condition fingerprint and, for a switch, its case keys, from
+     * Attaches each site's condition fingerprint and, for a switch, its case keys and whether it
+     * switches on `String.hashCode()`, from
      * [fingerprintsByMethod], which a [ConditionFingerprinter.FingerprintCollection] filled during the
      * main walk, or null when it failed. Fingerprint `i` of a method
      * goes to that method's `i`-th entry in [sites], in encounter order, dropped sites counted:
@@ -1438,7 +1439,7 @@ object BranchSiteAnalyzer {
      *
      * A string switch lowering [SwitchLowering] cannot read leaves its sites as plain numeric ones,
      * except that each bucket's last `equals` check marks its collision-only outcome as
-     * [BranchSite.unreadOutcome].
+     * [BranchSite.unreadOutcome]. Its hash switch keeps [BranchSite.stringHashCodeSwitch].
      */
     private fun attachConditionFingerprints(
         sites: MutableList<BranchSite>,
@@ -1462,6 +1463,7 @@ object BranchSiteAnalyzer {
                         conditionFingerprint = result.fingerprints[ordinal],
                         caseKeys = result.caseKeys[ordinal],
                         condition = if (site.dropReason == null) conditionOf(result, ordinal) else emptyList(),
+                        stringHashCodeSwitch = ordinal in result.stringHashCodeSwitches,
                     )
             }
             for ((ordinal, offset) in result.unreadCollisionOutcomes) {

@@ -75,6 +75,7 @@ class SharedFingerprintWalkTest {
                 )
             },
             result.unreadCollisionOutcomes,
+            result.stringHashCodeSwitches,
         )
 
     @Test

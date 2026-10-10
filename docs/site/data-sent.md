@@ -105,7 +105,7 @@ The manifest says what each id in a delta batch names. It carries the resource a
 | Field | Content |
 |---|---|
 | `probes` | One per probe: `class_id`, `probe_index`, `kind`, class name, method name, method descriptor, source line, parameter names, generic signature, and flags for inline, static, lambda body and extension receiver. A branch probe also carries its `branch_key` |
-| `probes[].branch_sites` | For a branch probe: the site's `site_key`, line, condition, outcomes with their roles, guarded line ranges (source file name plus first and last line) and case labels. See [methods and branches](methods-and-branches) |
+| `probes[].branch_sites` | For a branch probe: the site's `site_key`, line, condition, outcomes with their roles, guarded line ranges (source file name plus first and last line), case keys and case labels. `string_hash_code_switch` marks a switch on `String.hashCode()`. Each case key of such a switch is the hash code of a string, often one of your literals, so a collector can clear them. See [methods and branches](methods-and-branches) |
 | `probes[].calls`, `probes[].referenced_classes` | Call edges to other classes in scope, and names of classes outside it that the method refers to |
 | `class_locations` | Per class: super class name, interface names, source file name, body kind, and source name |
 | `class_references` | Per class: names of classes it refers to outside any probed method |

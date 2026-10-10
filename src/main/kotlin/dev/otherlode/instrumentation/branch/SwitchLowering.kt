@@ -121,6 +121,16 @@ internal object SwitchLowering {
         return Scan(readings, unreadCollisions)
     }
 
+    /**
+     * Whether the switch at [index] in [insns] tests the value `String.hashCode()` returns, which
+     * holds when the call is the instruction right before it. Every compiler's string switch
+     * lowering has this form, and so does an adopter's own `switch (s.hashCode())`.
+     */
+    fun switchesOnStringHashCode(
+        insns: List<Insn>,
+        index: Int,
+    ): Boolean = insns.getOrNull(index - 1) == STRING_HASH_CODE
+
     /** Whether [insn] reads javac's or kotlinc's enum map array. */
     fun isEnumMapRead(insn: Insn): Boolean =
         insn is Insn.Field &&
@@ -199,8 +209,7 @@ internal object SwitchLowering {
                 }
             }
 
-        private fun isStringHashCode(index: Int): Boolean =
-            insns.getOrNull(index) == Insn.MethodCall(Opcodes.INVOKEVIRTUAL, STRING_OWNER, "hashCode", "()I")
+        private fun isStringHashCode(index: Int): Boolean = insns.getOrNull(index) == STRING_HASH_CODE
 
         /**
          * An `equals` check against a literal on local [temp] at [index]: `aload t; ldc "s"` as
@@ -538,6 +547,7 @@ internal object SwitchLowering {
     /** How many instructions JaCoCo's probe takes: the array load, the index, the `1`, the store. */
     private const val COVERAGE_PROBE_LENGTH = 4
     private const val STRING_OWNER = "java/lang/String"
+    private val STRING_HASH_CODE = Insn.MethodCall(Opcodes.INVOKEVIRTUAL, STRING_OWNER, "hashCode", "()I")
     private const val OBJECT_OWNER = "java/lang/Object"
     private const val SWITCH_BOOTSTRAPS = "java/lang/runtime/SwitchBootstraps"
     private const val MATCH_EXCEPTION = "java/lang/MatchException"

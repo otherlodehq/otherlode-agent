@@ -70,6 +70,7 @@ data class KeptBranchSite(
                     }.rightSized(),
             guard = guard,
             condition = site.condition.rightSized(),
+            stringHashCodeSwitch = site.stringHashCodeSwitch,
         )
 
     private fun List<LineRange>.compactRanges(): List<LineRange> =

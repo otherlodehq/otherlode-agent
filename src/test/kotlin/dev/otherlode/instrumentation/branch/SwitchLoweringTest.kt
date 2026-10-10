@@ -303,6 +303,73 @@ class SwitchLoweringTest {
         }
     }
 
+    // --- a switch on String.hashCode() ---
+
+    /** Whether each kept site of [method] in [analysis] is marked, as its payload sends it. */
+    private fun hashCodeMarks(
+        analysis: BranchSiteAnalyzer.Analysis,
+        method: String,
+    ): List<Boolean> = kept(analysis, method).map { it.toPayload().stringHashCodeSwitch }
+
+    @Test
+    fun `javac string switch the agent reads - no kept site is marked as a switch on String hashCode`() {
+        assertEquals(listOf(false), hashCodeMarks(java, "stringStatement"))
+        assertTrue(dropped(java, "stringStatement").any { it.stringHashCodeSwitch }, "the dropped hash switch is the marked one")
+    }
+
+    @Test
+    fun `javac string switch the agent cannot read - the hash switch is marked, and its equals checks and index switch are not`() {
+        val bytes = OutlineMutations.rewrite(javaBytes(), "stringStatement", OutlineMutations::nopAfterFirstStore)
+        val analysis = analysis(bytes)
+
+        assertEquals(listOf(true) + List(6) { false }, hashCodeMarks(analysis, "stringStatement"))
+        val hashSwitch = kept(analysis, "stringStatement").first()
+        assertEquals(
+            listOf("open", "closed", "done", "Aa").map { it.hashCode() }.sorted(),
+            hashSwitch.outcomes.mapNotNull { it.caseKey },
+            "each case key is a literal's hash code, Aa and BB sharing one",
+        )
+    }
+
+    @Test
+    fun `kotlinc and scalac string matches the agent reads - no kept site is marked`() {
+        val scala2 = analysis(ScalaFixtures.classBytes("scala2", "Switches"))
+        val scala3 = analysis(ScalaFixtures.classBytes("scala3", "Switches"))
+
+        for ((analysis, method) in listOf(
+            kotlin to "stringWhen",
+            kotlin to "stringNullable",
+            scala2 to "stringMatch",
+            scala3 to "stringMatch",
+        )) {
+            assertTrue(hashCodeMarks(analysis, method).none { it }, method)
+        }
+    }
+
+    @Test
+    fun `kotlinc string when the agent cannot read - the hash switch is marked, and its equals checks are not`() {
+        val bytes = OutlineMutations.rewrite(kotlinBytes(), "stringWhen", OutlineMutations::nopAfterFirstStore)
+
+        assertEquals(listOf(true) + List(5) { false }, hashCodeMarks(analysis(bytes), "stringWhen"))
+    }
+
+    @Test
+    fun `a switch the source writes on a string's hash code is marked`() {
+        val site = kept(java, "handWrittenHashSwitch").single()
+
+        assertTrue(site.toPayload().stringHashCodeSwitch)
+        assertEquals(listOf("open".hashCode(), null), site.outcomes.map { it.caseKey })
+    }
+
+    @Test
+    fun `an enum or pattern switch is not marked, read or not`() {
+        val plain = BranchSiteAnalyzer.analyze(javaBytes(), includePackages = listOf("com.example")) { name, _ -> name != "<init>" }
+
+        assertEquals(listOf(false), hashCodeMarks(plain, "enumExpression"), "an enum switch the agent could not read")
+        val others = java.keptSites.filter { it.site.methodName != "handWrittenHashSwitch" }
+        assertTrue(others.isNotEmpty() && others.none { it.toPayload().stringHashCodeSwitch })
+    }
+
     // --- fallback ---
 
     @Test

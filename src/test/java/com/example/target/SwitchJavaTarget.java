@@ -98,4 +98,14 @@ public class SwitchJavaTarget {
             default -> 0;
         };
     }
+
+    /** A switch the source writes on a string's hash code. No lowering is read from it. */
+    public int handWrittenHashSwitch(String status) {
+        switch (status.hashCode()) {
+            case 3417674: // "open".hashCode()
+                return 1;
+            default:
+                return 0;
+        }
+    }
 }

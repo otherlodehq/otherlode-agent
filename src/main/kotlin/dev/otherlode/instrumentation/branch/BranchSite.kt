@@ -55,6 +55,12 @@ import dev.otherlode.export.UnreadShape
  * offset of the one outcome of a string switch lowering that [SwitchLowering] could not read,
  * which only a hash collision can reach; it is an unread shape of
  * [UnreadShape.STRING_SWITCH] and still gets its probe.
+ *
+ * [stringHashCodeSwitch] is true for a switch on the value `String.hashCode()` returns, so each of
+ * its [caseKeys] is the hash code of a string. The agent drops that switch from a lowering
+ * [SwitchLowering] reads, so only a switch the agent left plain reaches the wire with it set. It
+ * comes from the same [ConditionFingerprinter] result as [caseKeys], so a switch with no case keys
+ * is never marked.
  */
 data class BranchSite(
     val methodName: String,
@@ -73,6 +79,7 @@ data class BranchSite(
     val unprobedOutcome: Int? = null,
     val unreadShape: UnreadShape = UnreadShape.NONE,
     val unreadOutcome: Int? = null,
+    val stringHashCodeSwitch: Boolean = false,
 ) {
     /**
      * The offsets of the outcomes that get a probe, in offset order: every outcome less a

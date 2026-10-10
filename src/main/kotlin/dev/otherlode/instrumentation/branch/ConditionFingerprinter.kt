@@ -38,6 +38,9 @@ object ConditionFingerprinter {
      * [unreadCollisionOutcomes] holds, by ordinal, the outcome offset of each `equals` check's
      * not-equal side that only a hash collision can reach, in a switch on `String.hashCode()` that
      * [SwitchLowering] could not read: 0 when the check jumps on not-equal, 1 when it falls through.
+     *
+     * [stringHashCodeSwitches] holds the ordinal of each switch on `String.hashCode()`, by
+     * [SwitchLowering.switchesOnStringHashCode]. Its case keys are hash codes of strings.
      */
     class MethodResult(
         val fingerprints: List<String?>,
@@ -45,6 +48,7 @@ object ConditionFingerprinter {
         val conditionOf: (ordinal: Int) -> List<ConditionPart> = { emptyList() },
         val loweredSwitches: List<LoweredSwitch> = emptyList(),
         val unreadCollisionOutcomes: Map<Int, Int> = emptyMap(),
+        val stringHashCodeSwitches: Set<Int> = emptySet(),
     )
 
     /**
@@ -559,6 +563,7 @@ object ConditionFingerprinter {
 
             val fingerprints = ArrayList<String?>(trackedSites)
             val caseKeys = ArrayList<List<Int>?>(trackedSites)
+            val stringHashCodeSwitches = HashSet<Int>()
 
             // A forward jump or switch records the depth its target enters with, before that
             // label is reached. A backward target is never looked up here, since this method has
@@ -611,7 +616,10 @@ object ConditionFingerprinter {
                 depthAt[i] = depth ?: -1
 
                 val insn = insns[i]
-                if (insn is Insn.TableSwitch || insn is Insn.LookupSwitch) hasSwitch = true
+                if (insn is Insn.TableSwitch || insn is Insn.LookupSwitch) {
+                    hasSwitch = true
+                    if (SwitchLowering.switchesOnStringHashCode(insns, i)) stringHashCodeSwitches += fingerprints.size
+                }
                 if (isTrackedSite(insn)) {
                     fingerprints += windowFingerprint(zeroPoint, i, ::localNameAt)
                     caseKeys += caseKeysOf(insn)
@@ -678,6 +686,7 @@ object ConditionFingerprinter {
                     },
                     loweredSwitches = loweredSwitches,
                     unreadCollisionOutcomes = unreadCollisionOutcomes,
+                    stringHashCodeSwitches = stringHashCodeSwitches,
                 ),
             )
         }
