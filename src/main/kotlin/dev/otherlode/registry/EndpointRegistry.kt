@@ -98,7 +98,7 @@ class EndpointRegistry {
         /**
          * Hit count, incremented once per matched request. A plain, non-atomic increment: the
          * same accepted lost-update tradeoff [ProbeRegistry]'s count arrays make, since an
-         * occasional lost count under race does not matter for a 30-60s delta export.
+         * occasional lost count under race does not matter for a total exported once per flush.
          */
         @JvmField
         var count: Long = 0
