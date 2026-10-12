@@ -463,6 +463,40 @@ customer configured) or becomes the target's; the reported path is free
 to change only until the first release. Test with a linked jar in
 another folder whose manifest names a sibling jar.
 
+### scalac 3.10.0 drops the fields that name an enum's parameterised cases: to fix
+
+Found 2026-10-12 by the compiler canary, which has failed on 3.10.0 since
+its run of 2026-10-05. In 3.9.0 an enum's companion (`Shape$`) holds a
+static field per parameterised case, `Circle: Shape$Circle$`. 3.10.0 no
+longer writes it. The case classes and their companions are still there,
+singleton cases keep their `ACC_ENUM` fields, and every method body is the
+same as in 3.9.0.
+
+`enumCases` in `ScalaGeneratedMethods` builds an enum's cases, in ordinal
+order, from those fields. Over a 3.10.0 class it finds only the singleton
+cases, so:
+
+- A parameterised case's `ordinal()` gets no outline (`ordinalOf` is -1),
+  so it is marked as the adopter's own code. It is not even an unread
+  shape, and it can read as dead code. This holds whether or not 3.10.0 is
+  on the read list, and with no `.tasty` file.
+- The companion's `fromOrdinal` gives the singleton cases the wrong
+  ordinals (0 and 1 in place of 2 and 3) and reads as an unread shape.
+  While 3.10.0 is off the read list this is only counted, never a finding.
+
+The matrix run with 3.10.0 added to the read list fails on `Shape`,
+`Gapped`, `Op` and `Term` in `Enums.scala`: 8 mark differences, and
+`Shape$.fromOrdinal` and `Gapped$.fromOrdinal` as extra unread shapes.
+
+To do: find a parameterised case and its ordinal some other way when the
+companion has no field for it. One source is the case class's constant
+`ordinal()` together with the `$new(ordinal, name)` calls in the
+companion's `<clinit>`. Write the failing test first. Once
+`ScalacMatrixTest` passes, add 3.10.0 to `scala3-read-releases.txt` and to
+`otherlode.matrix.scalac`, and the canary goes green. 3.10.0 also writes a
+parameterised case's `equals` with an extra local, which the rules already
+read.
+
 ### Redacted literals stay unguessable: landed in all three repos
 
 Grilled on 2026-10-10 with Luke. Collector redaction blanked a literal's
