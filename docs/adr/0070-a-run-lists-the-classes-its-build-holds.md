@@ -33,3 +33,8 @@ The listing holds names only. It carries no per-class hash. A name is enough to 
 - A run sends one more payload at startup. The `overhead` page states its cost once it is measured.
 - The new message and fields are additive (`buf breaking`). The collector gets a route for the new path and a bindings bump, since redaction strips a field the bindings do not know.
 - The `configuration`, `data-sent`, `overhead` and `classes` pages change in the commit that ships the listing.
+
+## Settled while building it, 2026-10-14
+
+- **A listing with a hole is never sent.** When a root, jar or nested jar the agent reads fails to open or read, the run sends no listing and logs a WARNING that names the file. The server reads a class's absence from a complete listing as proof the build lacks it, so a partial listing would turn an unreadable jar into removed code. The blind spots in the consequences above are different: the agent never reads those places, and the server's coverage check keeps them from proving anything.
+- **The include rules travel as the agent applied them**, after configuration parsing trims each entry, drops a trailing `.` and drops entries with `*` or `/`. A prefix covers a name that equals it or continues it with `.` or `$`, as `TypeMatchPolicy` matches.

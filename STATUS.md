@@ -404,7 +404,11 @@ repos, for server ADR 0066 (removed code).
 1. `ClassListing` on the wire, sent to `/v1/otherlode/class-listing` in
    chunks like the baseline, with the include and exclude rules it
    applied. `StaticBaseline` gains the same rules field.
-   `ResourceAttributes` gains `flush_interval_seconds`.
+   `ResourceAttributes` gains `flush_interval_seconds`. Landed: the schema,
+   the Kotlin models and the codec. A review sharpened the proto comments
+   a Go reader depends on: the prefix rule (equal, or continued by `.` or
+   `$`), zero meaning an unknown interval, absent rules, and a listing
+   with a hole never being sent (added to ADR 0070).
 2. List names from the baseline's roots and from nested `BOOT-INF/lib`
    and `WEB-INF/lib` jars, without parsing. Reuse `JarContents`.
 3. `classListingEnabled`, on by default.

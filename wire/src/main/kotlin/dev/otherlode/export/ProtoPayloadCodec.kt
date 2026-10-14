@@ -6,6 +6,7 @@ import dev.otherlode.proto.BranchRole as ProtoBranchRole
 import dev.otherlode.proto.BranchSite as ProtoBranchSite
 import dev.otherlode.proto.CallEdge as ProtoCallEdge
 import dev.otherlode.proto.CallEdgeKind as ProtoCallEdgeKind
+import dev.otherlode.proto.ClassListing as ProtoClassListing
 import dev.otherlode.proto.ClassLocation as ProtoClassLocation
 import dev.otherlode.proto.ClassReferences as ProtoClassReferences
 import dev.otherlode.proto.ConditionPart as ProtoConditionPart
@@ -26,6 +27,7 @@ import dev.otherlode.proto.EndpointLocation as ProtoEndpointLocation
 import dev.otherlode.proto.ExternalClass as ProtoExternalClass
 import dev.otherlode.proto.FailedClass as ProtoFailedClass
 import dev.otherlode.proto.GeneratedBy as ProtoGeneratedBy
+import dev.otherlode.proto.IncludeRules as ProtoIncludeRules
 import dev.otherlode.proto.KotlinKind as ProtoKotlinKind
 import dev.otherlode.proto.LineRange as ProtoLineRange
 import dev.otherlode.proto.OutsideCaller as ProtoOutsideCaller
@@ -44,7 +46,7 @@ import dev.otherlode.proto.UnreadableClass as ProtoUnreadableClass
 import dev.otherlode.proto.UnreportedClass as ProtoUnreportedClass
 
 /**
- * Encodes and decodes [DeltaBatch], [ProbeManifest], and [StaticBaseline] to and from the wire
+ * Encodes and decodes [DeltaBatch], [ProbeManifest], [StaticBaseline] and [ClassListing] to and from the wire
  * schema defined in `otherlode.proto`. This lets an [Exporter] implementation, or anything reading
  * what one sent, work without depending on the generated protobuf classes directly.
  */
@@ -60,6 +62,10 @@ object ProtoPayloadCodec {
     fun decodeProbeManifest(bytes: ByteArray): ProbeManifest = fromProto(ProtoProbeManifest.parseFrom(bytes))
 
     fun decodeStaticBaseline(bytes: ByteArray): StaticBaseline = fromProto(ProtoStaticBaseline.parseFrom(bytes))
+
+    fun encode(listing: ClassListing): ByteArray = toProto(listing).toByteArray()
+
+    fun decodeClassListing(bytes: ByteArray): ClassListing = fromProto(ProtoClassListing.parseFrom(bytes))
 
     private fun toProto(batch: DeltaBatch): ProtoDeltaBatch =
         ProtoDeltaBatch
@@ -94,6 +100,7 @@ object ProtoPayloadCodec {
                 .setTestRun(resource.testRun)
                 .setAgentVersion(resource.agentVersion)
                 .setFieldsStripped(resource.fieldsStripped)
+                .setFlushIntervalSeconds(resource.flushIntervalSeconds)
         resource.serviceVersion?.let { builder.serviceVersion = it }
         resource.environment?.let { builder.environment = it }
         resource.serviceNamespace?.let { builder.serviceNamespace = it }
@@ -111,6 +118,7 @@ object ProtoPayloadCodec {
             testRun = resource.testRun,
             agentVersion = resource.agentVersion,
             fieldsStripped = resource.fieldsStripped,
+            flushIntervalSeconds = resource.flushIntervalSeconds,
         )
 
     private fun toProto(delta: ProbeDelta): ProtoProbeDelta =
@@ -660,6 +668,7 @@ object ProtoPayloadCodec {
             .setChunkIndex(baseline.chunkIndex)
             .setChunkCount(baseline.chunkCount)
             .addAllExternalClasses(baseline.externalClasses.map { toProto(it) })
+            .apply { baseline.includeRules?.let { includeRules = toProto(it) } }
             .build()
 
     private fun fromProto(baseline: ProtoStaticBaseline): StaticBaseline =
@@ -672,6 +681,41 @@ object ProtoPayloadCodec {
             chunkIndex = baseline.chunkIndex,
             chunkCount = baseline.chunkCount,
             externalClasses = baseline.externalClassesList.map { fromProto(it) },
+            includeRules = if (baseline.hasIncludeRules()) fromProto(baseline.includeRules) else null,
+        )
+
+    private fun toProto(rules: IncludeRules): ProtoIncludeRules =
+        ProtoIncludeRules
+            .newBuilder()
+            .addAllIncludePackages(rules.includePackages)
+            .addAllExcludePackages(rules.excludePackages)
+            .build()
+
+    private fun fromProto(rules: ProtoIncludeRules): IncludeRules =
+        IncludeRules(
+            includePackages = rules.includePackagesList,
+            excludePackages = rules.excludePackagesList,
+        )
+
+    private fun toProto(listing: ClassListing): ProtoClassListing =
+        ProtoClassListing
+            .newBuilder()
+            .setResource(toProto(listing.resource))
+            .addAllClassNames(listing.classNames)
+            .setIncludeRules(toProto(listing.includeRules))
+            .setListedAt(listing.listedAt)
+            .setChunkIndex(listing.chunkIndex)
+            .setChunkCount(listing.chunkCount)
+            .build()
+
+    private fun fromProto(listing: ProtoClassListing): ClassListing =
+        ClassListing(
+            resource = fromProto(listing.resource),
+            classNames = listing.classNamesList,
+            includeRules = fromProto(listing.includeRules),
+            listedAt = listing.listedAt,
+            chunkIndex = listing.chunkIndex,
+            chunkCount = listing.chunkCount,
         )
 
     private fun toProto(unprobedClass: UnprobedClass): ProtoUnprobedClass =

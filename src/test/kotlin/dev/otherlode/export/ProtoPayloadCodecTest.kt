@@ -11,6 +11,7 @@ import dev.otherlode.proto.BranchRole as ProtoBranchRole
 import dev.otherlode.proto.BranchSite as ProtoBranchSite
 import dev.otherlode.proto.CallEdge as ProtoCallEdge
 import dev.otherlode.proto.CallEdgeKind as ProtoCallEdgeKind
+import dev.otherlode.proto.ClassListing as ProtoClassListing
 import dev.otherlode.proto.ClassLocation as ProtoClassLocation
 import dev.otherlode.proto.ConditionPart as ProtoConditionPart
 import dev.otherlode.proto.ConditionPartKind as ProtoConditionPartKind
@@ -116,6 +117,51 @@ class ProtoPayloadCodecTest {
         val baseline = StaticBaseline(resource = testRun, declaredClasses = emptyList(), scannedAt = 1000L)
         assertTrue(ProtoStaticBaseline.parseFrom(ProtoPayloadCodec.encode(baseline)).resource.testRun)
         assertEquals(testRun, ProtoPayloadCodec.decodeStaticBaseline(ProtoPayloadCodec.encode(baseline)).resource)
+    }
+
+    @Test
+    fun `the flush interval round-trips on the resource and is zero by default`() {
+        val resource = ResourceAttributes("checkout", null, "i-1", null, "run-1", flushIntervalSeconds = 60)
+        val batch = DeltaBatch(resource, emptyList())
+
+        assertEquals(60, ProtoDeltaBatch.parseFrom(ProtoPayloadCodec.encode(batch)).resource.flushIntervalSeconds)
+        assertEquals(resource, ProtoPayloadCodec.decodeDeltaBatch(ProtoPayloadCodec.encode(batch)).resource)
+        assertEquals(0, ResourceAttributes("checkout", null, "i-1", null, "run-1").flushIntervalSeconds)
+    }
+
+    @Test
+    fun `a class listing round-trips with its include rules and chunk position`() {
+        val listing =
+            ClassListing(
+                resource = ResourceAttributes("checkout", null, "i-1", null, "run-1", flushIntervalSeconds = 30),
+                classNames = listOf("com.acme.A", "com.acme.B"),
+                includeRules = IncludeRules(listOf("com.acme"), listOf("com.acme.generated")),
+                listedAt = 1234L,
+                chunkIndex = 1,
+                chunkCount = 3,
+            )
+
+        val proto = ProtoClassListing.parseFrom(ProtoPayloadCodec.encode(listing))
+
+        assertEquals(listOf("com.acme.A", "com.acme.B"), proto.classNamesList)
+        assertEquals(listOf("com.acme"), proto.includeRules.includePackagesList)
+        assertEquals(listOf("com.acme.generated"), proto.includeRules.excludePackagesList)
+        assertEquals(1, proto.chunkIndex)
+        assertEquals(3, proto.chunkCount)
+        assertEquals(listing, ProtoPayloadCodec.decodeClassListing(ProtoPayloadCodec.encode(listing)))
+    }
+
+    @Test
+    fun `a static baseline carries its include rules when set and none when null`() {
+        val resource = ResourceAttributes("checkout", null, "i-1", null, "run-1")
+        val withRules =
+            StaticBaseline(resource, declaredClasses = emptyList(), scannedAt = 1L, includeRules = IncludeRules(listOf("com.acme")))
+        val without = StaticBaseline(resource, declaredClasses = emptyList(), scannedAt = 1L)
+
+        assertTrue(ProtoStaticBaseline.parseFrom(ProtoPayloadCodec.encode(withRules)).hasIncludeRules())
+        assertEquals(withRules, ProtoPayloadCodec.decodeStaticBaseline(ProtoPayloadCodec.encode(withRules)))
+        assertFalse(ProtoStaticBaseline.parseFrom(ProtoPayloadCodec.encode(without)).hasIncludeRules())
+        assertEquals(without, ProtoPayloadCodec.decodeStaticBaseline(ProtoPayloadCodec.encode(without)))
     }
 
     @Test

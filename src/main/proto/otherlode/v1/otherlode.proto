@@ -92,8 +92,9 @@ enum UnreadShape {
   UNREAD_SHAPE_STRING_SWITCH = 7;
 }
 
-// Who sent a payload. DeltaBatch, ProbeManifest and StaticBaseline each carry one, and one process
-// stamps the same values on all three.
+// Who sent a payload. DeltaBatch, ProbeManifest, StaticBaseline and ClassListing each carry one,
+// and one process stamps the same values on all four. A collector may set fields_stripped on any
+// one of them.
 message ResourceAttributes {
   string service_name = 1;
   optional string service_version = 2;
@@ -124,6 +125,12 @@ message ResourceAttributes {
   // not know before forwarding the payload (redaction, collector ADR 0005). A consumer makes no
   // never-hit or cluster claim from a run that carried it.
   bool fields_stripped = 9;
+  // The time between the run's flushes, in whole seconds, from 1 to 86400. Every payload of a
+  // process carries the same value. Zero means unknown: a sender that does not set the field. A
+  // run whose last delta batch carried no final_flush and that has sent nothing for several
+  // intervals may be treated as stopped, so a consumer reads this to tell a killed run from a
+  // quiet one (server ADR 0066). An agent that cannot reach its collector also sends nothing.
+  int32 flush_interval_seconds = 10;
 }
 
 // hits_total is a cumulative count from process start, not the count since
@@ -800,6 +807,45 @@ message StaticBaseline {
   // absent. This agent never sets it: the baseline's mappings go out on the manifest, so each name
   // is sent once per instance. See ExternalClass.
   repeated ExternalClass external_classes = 9;
+  // The include and exclude rules the scan applied. A class outside them is not in the scan
+  // because the rules left it out, not because the build lacks it. Absent when the sender did not
+  // say; a consumer then cannot tell which classes the rules left out.
+  IncludeRules include_rules = 10;
+}
+
+// The include and exclude rules the agent applied: dotted package or class name prefixes, after
+// the agent trimmed each entry, dropped a trailing '.', and dropped every entry with a '*' or '/'.
+// A prefix covers a dotted class name that equals it or continues it with '.' or '$', so
+// "com.acme" covers "com.acme.Foo" and "com.acme$Inner" but not "com.acmeinternal.Foo". A class is
+// in scope when some include prefix covers it and no exclude prefix does. Classes under
+// "dev.otherlode." are never in scope.
+message IncludeRules {
+  repeated string include_packages = 1;
+  repeated string exclude_packages = 2;
+}
+
+// The names of the classes a run's build holds under its include rules, sent once per process
+// (agent ADR 0070). The agent reads them from jar central directories and class folders without
+// reading a class file, so the listing says which classes exist, not what they contain. Like the
+// static baseline, it leaves out module-info, package-info and every class file under META-INF/.
+//
+// One listing may be delivered as several of these. Every chunk of the same listing carries the
+// same resource, include_rules and listed_at, so run_id and listed_at name one listing;
+// chunk_index (0-based) and chunk_count (at least 1) say which part this is and how many to
+// expect. A consumer may read a class's absence from a listing only once it holds every chunk. A
+// listing that matches no class is one chunk with no names. A run sends no listing at all when a
+// root, jar or nested jar it reads fails to open or read, since a listing with a hole would read
+// as classes the build lacks.
+message ClassListing {
+  ResourceAttributes resource = 1;
+  // Dotted binary names, distinct across the listing. The agent sends them in ascending order, but
+  // a consumer must not rely on the order.
+  repeated string class_names = 2;
+  IncludeRules include_rules = 3;
+  // When the listing was made, in milliseconds since the epoch.
+  int64 listed_at = 4;
+  int32 chunk_index = 5;
+  int32 chunk_count = 6;
 }
 
 // How the agent learned of an endpoint.

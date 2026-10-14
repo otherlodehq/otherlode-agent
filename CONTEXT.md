@@ -332,7 +332,7 @@ A once-per-process inventory of the classes and methods on the classpath under t
 _Avoid_: inventory, classpath scan (the scan is the act; the baseline is the payload)
 
 **Class listing**:
-A once-per-process list of the names of the classes on the classpath under the include rules, read from jar directories and class folders without reading a class file, sent in chunks. It says which classes a run's build holds, not what they contain.
+A once-per-process list of the names of the classes on the classpath under the include rules, read from jar central directories and class folders without reading a class file, sent in chunks. It says which classes a run's build holds, not what they contain.
 _Avoid_: class index, inventory, manifest (the probe manifest is a different payload)
 
 **Declared class**:

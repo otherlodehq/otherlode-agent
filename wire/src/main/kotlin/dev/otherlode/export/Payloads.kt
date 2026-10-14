@@ -135,6 +135,10 @@ enum class UnreadShape {
  * [fieldsStripped] is set by a collector, never by the agent, when it removed a field its own
  * bindings did not know before forwarding. A consumer makes no never-hit or cluster claim from a
  * run that carried it. It comes last, with a default, like the other additions.
+ *
+ * [flushIntervalSeconds] is the time between the run's flushes, from 1 to 86400 seconds. A consumer
+ * reads it to tell a run that stopped without its final flush from one that is quiet between
+ * flushes. Zero means unknown: a sender that does not set it.
  */
 data class ResourceAttributes(
     val serviceName: String,
@@ -146,6 +150,7 @@ data class ResourceAttributes(
     val testRun: Boolean = false,
     val agentVersion: String = "",
     val fieldsStripped: Boolean = false,
+    val flushIntervalSeconds: Int = 0,
 ) {
     /** Holds the agent's `forNewRun`, which builds one from its configuration. */
     companion object
@@ -812,6 +817,9 @@ data class UnprobedClass(
  * [externalClasses] maps referenced class names to their dependency, or to absent. This agent
  * never sets it: the baseline's mappings go out on the manifest, so each name is sent once per
  * instance. See [ExternalClass].
+ *
+ * [includeRules] are the include and exclude rules the scan applied, so a consumer can tell a class
+ * the rules left out from one the build lacks. Null when the sender did not say.
  */
 data class StaticBaseline(
     val resource: ResourceAttributes,
@@ -822,6 +830,37 @@ data class StaticBaseline(
     val chunkIndex: Int = 0,
     val chunkCount: Int = 1,
     val externalClasses: List<ExternalClass> = emptyList(),
+    val includeRules: IncludeRules? = null,
+)
+
+/**
+ * The include and exclude rules the agent applied: dotted package or class name prefixes, as
+ * configuration parsing leaves them. A prefix covers a name that equals it or continues it with `.`
+ * or `$`. A class is in scope when some include prefix covers it and no exclude prefix does.
+ */
+data class IncludeRules(
+    val includePackages: List<String>,
+    val excludePackages: List<String> = emptyList(),
+)
+
+/**
+ * The names of the classes a run's build holds under [includeRules], sent once per process (agent
+ * ADR 0070). They are read from jar central directories and class folders without reading a class
+ * file, so the listing says which classes exist, not what they contain. [classNames] are dotted and
+ * distinct across the listing, sent in ascending order.
+ *
+ * One listing may be delivered as several of these. Every chunk carries the same [resource],
+ * [includeRules] and [listedAt]; [chunkIndex] (0-based) and [chunkCount] say which part this is and
+ * how many to expect. A consumer may read a class's absence only once it holds every chunk. Decoding
+ * a message with no rules gives empty rules, which cover no class.
+ */
+data class ClassListing(
+    val resource: ResourceAttributes,
+    val classNames: List<String>,
+    val includeRules: IncludeRules,
+    val listedAt: Long,
+    val chunkIndex: Int = 0,
+    val chunkCount: Int = 1,
 )
 
 /**
