@@ -388,6 +388,10 @@ adopter's collector forwards to one multi-tenant backend.
     the class-record layout, and version-filtered reads timed out. The
     server STATUS entry "Read performance at realistic scale" has the
     numbers. To grill before the first customer.
+13. **A linked jar's `Class-Path` in the dependency listing.** Added
+    2026-10-14. The entry "The dependency listing reads a linked jar's
+    `Class-Path` from the link" has the fix. Its reported path can change
+    freely only until the release.
 
 After release: naming polish (`this$0`, facade names, the demo printer),
 the server's performance-only deferrals, gzip, a collector config file, agent-level redaction
@@ -425,11 +429,37 @@ repos, for server ADR 0066 (removed code).
    - Boot `PropertiesLauncher` `loader.path` folders (documented as a
      blind spot; the server's coverage rule limits the damage).
    The dependency listing shares the `Class-Path` parser but still
-   resolves it against a symbolic link's own path.
+   resolves it against a symbolic link's own path: see the next entry.
 3. `classListingEnabled`, on by default.
 4. Measure the listing's cost on demo-spring and a large classpath.
 5. Update `configuration`, `data-sent`, `overhead` and `classes`.
 6. Collector: the route and the bindings bump.
+
+### The dependency listing reads a linked jar's `Class-Path` from the link: to fix before release
+
+Found on 2026-10-14 in the class listing's review. `StartupClasspathLister`
+passes a classpath entry to `listJar` as its absolute path, so
+`classPathEntries` resolves the manifest's relative `Class-Path` entries
+against the folder that holds the symbolic link. The JDK's system loader
+reads the entry through its canonical path, so it resolves them against
+the folder of the jar the link points to. `ClassLister` already does
+this.
+
+It matters only when a classpath jar is a link to a jar in another
+folder and its manifest has relative `Class-Path` entries, as in a
+symlink tree such as Bazel runfiles. A link to a jar in the same folder,
+as distros lay out `/usr/share/java`, resolves the same either way. When
+it does matter, a jar the JVM loads is left out of the listing with no
+sign, or a same-named jar beside the link is listed with its version.
+It cannot cause a false removal (server ADR 0066), since every build of
+the service resolves the same wrong path and a dependency is removed
+only after an earlier listing named it.
+
+Fix: resolve `Class-Path` against the canonical file, as `ClassLister`
+does. Decide whether the reported path stays the link's (what the
+customer configured) or becomes the target's; the reported path is free
+to change only until the first release. Test with a linked jar in
+another folder whose manifest names a sibling jar.
 
 ### Redacted literals stay unguessable: landed in all three repos
 
