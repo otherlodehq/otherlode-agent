@@ -400,7 +400,7 @@ routine and OpenTelemetry edge cases in the entries below.
 
 ## TODO
 
-### Class listing and flush interval: decided (ADR 0070), to build
+### Class listing and flush interval: landed, cost not measured
 
 Decided on 2026-10-14 with Luke, in a grilling session across the three
 repos, for server ADR 0066 (removed code).
@@ -430,10 +430,12 @@ repos, for server ADR 0066 (removed code).
      blind spot; the server's coverage rule limits the damage).
    The dependency listing shares the `Class-Path` parser but still
    resolves it against a symbolic link's own path: see the next entry.
-3. `classListingEnabled`, on by default.
-4. Measure the listing's cost on demo-spring and a large classpath.
-5. Update `configuration`, `data-sent`, `overhead` and `classes`.
-6. Collector: the route and the bindings bump.
+3. `classListingEnabled`, on by default. Landed.
+4. Measure the listing's cost on demo-spring and a large classpath. Open.
+5. Update `configuration`, `data-sent`, `overhead` and `classes`. Landed,
+   with `troubleshooting` and `testkit-api`.
+6. Collector: the route and the bindings bump. Landed in the collector
+   as `69d5a58`.
 
 ### The dependency listing reads a linked jar's `Class-Path` from the link: to fix before release
 
