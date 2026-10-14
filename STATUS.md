@@ -7,445 +7,64 @@ change follows.
 
 ## Pre-release checklist
 
-Drawn up 2026-09-26 from every open item in the three repos' STATUS files,
-READMEs and CI. It covers all three repos, since a release ships them
-together. The order: what is hard to undo once published, and what would
-make an adopter's first report wrong, comes before polish. The release
-publishes the agent (with its testkit) and the collector as open source.
-`otherlode-server` stays closed source and hosted (server ADR 0001), so every
-adopter's collector forwards to one multi-tenant backend.
+What stays open before the release, across all three repos, since a release
+ships them together. The release publishes the agent (with its testkit) and
+the collector as open source. `otherlode-server` stays closed source and
+hosted (server ADR 0001), so every adopter's collector forwards to one
+multi-tenant backend.
 
-1. **Run on a real Spring Boot service.** Done on 2026-09-26 against the
-   compose stack, through `runSpringDemoStack` and `runShapesStack` (Java
-   anonymous classes and a lambda, a companion object, a data class, a
-   suspend function, and the Scala 2 and 3 fixture drivers), reading both
-   the report and the web UI. Correct: Spring endpoints and their handlers,
-   never-loaded classes, anonymous class and lambda names ("second Runnable
-   anonymous class in run", "Supplier lambda in run at line 32"), suspend
-   function names, untaken conditions with the code only they reach, and
-   "always supplied" on Scala defaults. What was wrong is item 2.
-2. **Fix the false findings the real runs showed**, most noise first:
-   - Scala case-class and object plumbing reads as dead code: `canEqual`,
-     `copy`, `equals`, `hashCode`, `productElement` and its `Name(s)`,
-     `unapply`, `fromProduct`, `curried`, `tupled`, the companion's
-     `toString` and `writeReplace`, and an object's `writeReplace`. Each is
-     its own uncalled cluster root. Scala needs what ADR 0026 gives Kotlin
-     data classes.
-   - Scala objects are counted twice: each `Driver$` method has a twin on
-     `Driver` at line -1, the static forwarder scalac adds, so 14 methods
-     give 28 rows and every cluster doubles.
-   - Both Scala bullets above landed on 2026-09-26 in all three repos
-     (ADR 0048): agent `53cf4e9`, collector bindings `7c36b23`, server
-     labels `9725015`. Case-class and companion plumbing is `CASE_CLASS`,
-     static forwarders `STATIC_FORWARDER` (passed through), an object's
-     `writeReplace` `SCALA_OBJECT`, each recognised by the body scalac
-     writes, never by line. A first line-based rule failed four review
-     rounds on layouts (wrapped parameters, body `val`s, a hand-written
-     `copy` with defaults) and hid hand-written code, so it was replaced
-     before commit; seven review rounds in all. The rebuilt stack labels a
-     Scala 3 run's probes 37 `case_class`, 21 `static_forwarder`, 2
-     `scala_object`, and the Scala never-hit lists hold only the fixtures'
-     uncalled methods. Not covered, in ADR 0048: Scala 3 enum class and
-     singleton-case plumbing, `Enumeration`, `lazy val` plumbing, `Array`
-     and `Unit` elements, symbolic names, value-class elements, aliased
-     superclass parameters, local case classes that capture a value, and
-     Scala versions other than 2.13 and 3.3.
-   - The two coroutine bullets landed on 2026-09-26 under ADR 0025, amended
-     (`c1b59c5`).
-     The stack form of the suspended-marker compare (`dup; invokestatic
-     getCOROUTINE_SUSPENDED; if_acmpne`: the debug-probe hook in an inlined
-     `suspendCoroutine`, and a `Unit` function's tail-call return) is
-     coroutine machinery inside a suspend-shaped method; the marker-slot
-     tracking the local-slot shape uses is cleared at the next jump, switch or
-     call, since an unrelated later `ASTORE` was being taken for the marker.
-     A suspend lambda's `create` and `invoke` (direct superclass
-     `SuspendLambda` or `RestrictedSuspendLambda`) get no probe, are not
-     declared, and pass through, the ADR 0047 mechanism: `invoke` never runs
-     when a library starts the lambda through `create` (stdlib 2.2.21
-     `IntrinsicsJvm.kt`), `create` only repeats `invokeSuspend`, which holds
-     the body. Put to Luke as "either one reads as never hit", which was wrong
-     about `create` (`invoke` calls it); the choice stands on the corrected
-     reason. A `runShapesStack` rerun under a fresh version shows neither
-     row; the shapes report's branch sites are the three the adopter wrote.
-   - The Scala 3 lambda-body bullet landed on 2026-09-26 (ADR 0034,
-     amended; `4152a99`). Scala 3 names a body owned by a method `<method>$$anonfun$N`
-     (`LambdaLift.newName`, 3.3.4), which the scalac name rule did not know.
-     The by-name closure `callByName$$anonfun$1` is not synthetic, so it was
-     probed but unflagged; worse, a lambda written in a method or a class
-     body (`label$$anonfun$1`, `$init$$$anonfun$1`) is synthetic, so it was
-     not probed at all and its branches went uncounted, a gap no fixture
-     covered. The rule takes the Scala 3 shape. A lambda Scala 3 lifts out
-     of a nested class into the top-level class
-     (`…$Inner$$_$bump$$anonfun$1`, created from the nested class) is
-     flagged by that expanded name, settled with Luke; a boxing one is
-     reached through its expanded bridge (`…$$_$show$$anonfun$adapted$1`)
-     to its short-named body. `InlineLambdaHost`
-     and `NestedLambdaHost` pin both compilers; `runShapesStack` shows the
-     Scala 3 by-name closure folded into `callByName`, as Scala 2's is.
-   - The utility-class constructor bullet landed on 2026-09-26 (server ADR
-     0034, amended; server `48783b9`, agent `d7af7d4`). A never-hit `<init>` of a class no run constructed and
-     no class finding covers, the report's `unjudged_constructors`, is
-     treated in the cluster graph as `<clinit>` is: reached through, never
-     a root, never listed or counted, and its class can be listed whole
-     without it. Settled with Luke over the alternatives of letting a call
-     from it not count or dropping it from the graph. Server graph and
-     store, the testkit's `unreachedClusters()` and the stub collector all
-     apply it.
-   - The accessor log bullet landed on 2026-09-26 (ADR 0021, amended;
-     `bf47594`).
-     kotlinc's accessor for a private constructor, `<init>(params...,
-     DefaultConstructorMarker)`, was read as a default-filling constructor.
-     Every companion object and sealed class has one, so each logged the
-     INFO line. Worse, a call from another class was resolved by dropping
-     the accessor's last value parameter: an edge to the wrong constructor
-     when the class had one of that descriptor, otherwise a verbatim edge to
-     the unprobed accessor, leaving the private constructor with no caller.
-     An accessor is now told by its body (exactly one call to a constructor
-     of its class, `this(params...)` with only the marker dropped), is no
-     default site and not logged, and passes through to the private
-     constructor.
-   - Not seen in these runs, landed on 2026-10-06 in all three repos: a
-     named class implementing a framework interface read as an uncalled
-     root, and a class that failed to load read as never loaded. See the
-     closed entries "Outside callers and classes that failed to load" and
-     "Classes that failed to load, made certain". kotlin-stdlib
-     always reading as used, through `kotlin.Metadata`, is closed as true:
-     a Kotlin service cannot drop it, and a Java service that pulls it in
-     is judged on its real use, since Java classes carry no
-     `kotlin.Metadata`.
-   - An unread body reads as the adopter's code, found after item 3 landed:
-     current Scala patch releases make every case class's `hashCode` dead code,
-     and kotlinc 2.1 and earlier a never-hit stub per interface default method.
-     Settled on 2026-10-03 (ADRs 0054, 0055) and landed on 2026-10-04 in all
-     three repos: agent `1ccb7a5` to `a985ad1`, collector `cdf423b`, server
-     `b200bc2` and `6dbc56a`. Compiler output the agent has not read is an
-     unread shape, never a finding. The closed entry "An unread body is an
-     unread shape" has each step; the shapes still unread are in Parked.
-   - Naming, after release: `Tariff$Companion`, `Cc$` and `Driver$` show
-     their JVM names in the UI, and Scala signatures read with Java types and
-     `x$0` parameter names. A data class property's getter reads as never
-     hit when only `copy`, `toString` and the class's own methods read the
-     field; that is true, and noisy.
-3. **Another agent ahead of or behind this one.** Done on 2026-10-03;
-   ADRs 0052 and 0053. With JaCoCo ahead, every exact-body result is read
-   from JaCoCo's output; with this agent ahead, which is Gradle's default
-   for an adopter's test task, JaCoCo's report loses every woven class. The
-   plan is the closed entry "Another agent ahead of or behind this one". It
-   sits here because the testkit's first report is wrong and the adopter's
-   coverage report breaks.
-4. **Settle the one-way doors before anything is published.** Settled on
-   2026-10-04 in a grilling session (ADRs 0056 and 0057, amendments to 0016,
-   0045 and 0054, collector ADR 0005, server ADR 0054) and built the same
-   day in all three repos; the closed entry "One-way doors settled before
-   release" lists the commits.
-   - Testkit API (ADR 0056): Java and Kotlin callers; the testkit owns its
-     result types and shades wire and protobuf; data classes only grow, with
-     internal constructors; enums grow in minor releases; findings merge
-     across instances as the server's do; seven queries and `rootSite`
-     become internal; `explicitApi()` and an ABI dump; American spelling in
-     identifiers; `otherlode.testkit.startup.timeout.seconds`; the testkit
-     refuses an agent of another version.
-   - ADR 0054's wire surfaces: the zero values inside `origin` oneofs become
-     `_UNSPECIFIED` and are never written; `UNREAD_SHAPE_STRING_SWITCH`;
-     `agent_version` is opaque; a collector that strips unknown fields sets
-     `ResourceAttributes.fields_stripped`, and the server makes no claim from
-     that run.
-   - Option names (ADR 0016, amended): `endpoint` becomes `exportUrl`, which
-     refuses a query string or fragment; no option begins with `testkit` or
-     `collector`; OTel's `service.version` is read, its
-     `service.instance.id` never (ADR 0045, amended); every other name stands.
-   - Versioning (ADR 0057, superseded by ADR 0062 on 2026-10-05):
-     `otherlode-agent` and `otherlode-testkit` go to Maven Central under
-     `dev.otherlode` and share a version from `0.1.0`; the collector, at
-     first in lockstep, has its own version (item 6). The version lives in
-     the tree and a release is a matching `vX.Y.Z` tag.
-5. **Security basics, sized to how the server is hosted.** Settled on
-   2026-09-27 in a grilling session: server ADRs 0040 to 0043 and
-   collector ADR 0003. The plan, its ten chunks and what is deferred are
-   in the server STATUS under "Security for the hosted service". In
-   short: WorkOS AuthKit for login (Google, Microsoft or GitHub, or a
-   tenant's own SAML or OIDC SSO connection, enforced), with the tenant
-   check at login and the server's own sessions; `admin` and `viewer`
-   roles; row-level security behind the tenant filter; API keys scoped
-   `ingest` or `read` with an ingest limit per tenant; audit events that
-   show operator actions to the tenant; hosting on GCP Cloud Run and
-   Cloud SQL; nothing costs money before a paying customer needs it.
-   All ten chunks have landed: production went live on 2026-09-28, moved
-   to `otherlode-production` on 2026-09-30, and has had browser login
-   since 2026-10-02. What stays before the first customer (the company,
-   the privacy policy, the domain, the front door) is the server STATUS's
-   "Go-live checklist"; none of it blocks publishing the agent, but no
-   collector can be given an ingest URL until the front door exists.
-   - Server: the full Content-Security-Policy landed on 2026-09-27
-     (server `788716b`). Its regression guard is chunk 2 of the server
-     plan: a CI check on the built `dist/` and a jsdom Select test.
-   - Collector: its auth token takes a comma-separated list, and
-     `OTHERLODE_COLLECTOR_AUTH_TOKEN_FILE` and
-     `OTHERLODE_COLLECTOR_FORWARD_AUTH_TOKEN_FILE` read files that are
-     re-read every 30 seconds (collector ADR 0003; chunk 1 of the server
-     plan). TLS is documented rather than built: the README's TLS
-     section (collector `b838535`, 2026-09-27) says it must sit behind a
-     TLS-terminating proxy, since the agent-to-collector hop carries the
-     token and literals redaction has not yet seen.
-   - Agent: URL schemes are case-insensitive everywhere (2026-09-27).
-     `parseEndpoint` lowercases the endpoint's scheme, so `HTTP://host`
-     with a token gets the plain-http warning it used to skip; a `FILE:`
-     `Class-Path` entry is followed; and `CodeSourceLocation` reads
-     `jar:FILE:` and `Jar:Nested:` URLs. `java.net.URL` lowercases only the
-     outermost protocol, and `ReferencedClassLocator` matches its prefixes
-     ignoring case too, since a custom handler's `toExternalForm` can print
-     any case.
-6. **Release mechanics.** Grilled on 2026-10-05 with Luke after two research
-   passes (what couples the three repos; how to publish to the Central
-   Portal), ADRs 0062 and 0063, collector ADR 0006, collector ADR 0005
-   amended; ADR 0057 superseded.
-   - Versioning (ADR 0062): the agent and the testkit share a version; the
-     collector has its own, `v0.1.0` first, cut just before the agent's
-     `0.1.0`, and adopters run the latest. Nothing reads the collector's
-     version, and the newest collector serves every agent. The one ordering
-     rule: before an agent release that changed the schema, the server's
-     `master` and the latest collector release carry bindings at least as
-     new as it.
-   - Cutting (ADR 0063): `scripts/release.sh X.Y.Z` locally (changelog
-     section required, the bindings check through `gh api` with an override,
-     the release commit, the tag, the next SNAPSHOT); the tag workflow
-     refuses a mismatched or SNAPSHOT tag, runs every JDK leg, and uploads
-     one Portal deployment through nmcp, both artifacts from the shadow
-     component, signed by a dedicated `releases@otherlode.dev` key held in a
-     `release` environment only `v*` tags reach. `USER_MANAGED` for `0.1.0`
-     (GitHub release a draft until Luke publishes on the Portal), `AUTOMATIC`
-     after. The GitHub release carries the agent jar, its `.asc` and
-     `SHA256SUMS`, with the changelog section. A manual rehearsal uploads
-     `0.0.0-rehearsal.<run>` and drops it.
-   - Collector (collector ADR 0006): its own `release.sh`, changelog and tag
-     workflow; a `linux/amd64` and `linux/arm64` image on GHCR tagged
-     `X.Y.Z`, `X.Y` and `latest` with build provenance; no binaries; the
-     redaction WARNING and README say "the latest collector".
-   - Before the first release of each: the collector's GHCR package made
-     public, and the org secret `OTHERLODE_DEV_DOCS_TOKEN` visible to this
-     repo and the collector, or the release's docs job skips the sync to
-     otherlode.dev with only a notice.
-   - Landing order, one chunk and one commit each: (1) JDK 17 floor and CI
-     leg; (2) the agent's publishing build (nmcp, signing, POMs, sources and
-     javadoc jars, the testkit's stdlib on its shadow variant), proved with
-     the local bundle; (3) the agent's release and rehearsal workflows,
-     `release.sh` with the bindings check, `CHANGELOG.md`; (4) the
-     collector's release pieces and rewording; then Luke's steps and the
-     rehearsal.
-   - Chunk 1 landed on 2026-10-05: the agent, bootstrap, wire, the endpoint
-     modules, the testkit, the demos and the general fixtures compile with
-     `release 17` and `-Xjdk-release=17` on the JDK 21 toolchain, and CI's
-     test matrix is 17, 21 and 25. The agent needed no change: the lambda
-     factory's `interfaceClass`, `implInfo` and `spinInnerClass` exist on 17.
-     `verifyAgentJar` and `verifyTestkitJar` fail on a class above 61 (an
-     entry under `META-INF/versions/N/` is held to Java N). The four Java
-     fixtures that use pattern matching for switch compile at release 21 in
-     their own task, copied into `compileTestJava`'s output as an input of
-     that task; tests that define them skip on 17, per case
-     (`ClassFileSupport`). Review moved the probe-window `modern` form from
-     release 21 to 17, since at 21 the dynamic-constant probe path had no
-     window test on a JDK 17, and narrowed the JaCoCo-ahead comparison to
-     drop only the two release-21 classes on 17.
-   - Chunk 2 landed on 2026-10-05: `maven-publish`, `signing` and nmcp 1.6.2
-     in the root and the testkit, through a shared `gradle/publishing.gradle.kts`.
-     Both publish the shadow component, with sources jars (main Kotlin and
-     Java only), javadoc jars (a README for the agent, Dokka for the testkit),
-     LICENSE and NOTICE in every jar, and `org.gradle.jvm.version` 17 in the
-     Gradle metadata, so a JVM 11 consumer fails at resolution. The testkit's
-     POM lists kotlin-stdlib at runtime scope, from its shadow variant. Gradle
-     names a signing key by the low 32 bits of its id and takes only eight hex
-     digits (`PgpKeyId`), so `SIGNING_KEY_ID` is reduced to those and defaults
-     to the release subkey's `BC8D3F42`: the `release` environment needs four
-     secrets, `MAVEN_CENTRAL_USERNAME`, `MAVEN_CENTRAL_PASSWORD`, `SIGNING_KEY`
-     and `SIGNING_PASSWORD`. `verifyPublication` checks the deployment zip
-     (layout, checksums, signatures when signed, POM fields, dependencies,
-     both main jars against their shadowJar output and version, the `.module`
-     variants), runs in CI on the JDK 21 leg, and runs before every upload,
-     since nmcp resolves the aggregation leniently and a testkit that failed
-     to resolve would drop out silently. A SNAPSHOT upload is refused when the
-     task graph is built. Proved by a signed run with a throwaway subkey-only
-     export, ten signatures verified; nothing uploaded. For chunk 3: nmcp
-     prints the deployment id only in its log ("Nmcp: deployment bundle '<id>'
-     uploaded."), and retries the upload POST up to three times, so a lost
-     response can leave a duplicate deployment.
-   - Chunk 3 landed on 2026-10-06: `release.yml` (tag `v*.*.*`: guard, the
-     whole suite through a callable `gradle.yml`, the upload, then a separate
-     GitHub-release job), `rehearsal.yml` (tag `rehearsal/<n>`: upload
-     `0.0.0-rehearsal.<n>`, wait for validation, drop through the Portal API),
-     `scripts/release.sh`, `scripts/changelog-section.sh` and `CHANGELOG.md`.
-     Three Opus review rounds; what they changed is ADR 0063's 2026-10-06
-     amendment. The one that would have stopped every release: CI's test job
-     ran `verifyPublication` unsigned at the release version, which demanded a
-     signature, so signing is now required only when the upload task is in
-     the build. Luke's GitHub setup is done and was checked through the API on
-     2026-10-06: the `release` environment admits tags `v*` and `rehearsal/*`
-     and holds the four secrets, no `CENTRAL_PUBLISHING_TYPE` is set, the
-     "Release tags" ruleset covers both patterns with only the admin role able
-     to bypass, and immutable releases are on. Workflows outside the
-     secret-holding jobs still use v4 of every action, several majors behind;
-     bumping them is a follow-up.
-   - Rehearsal 1 passed on 2026-10-06 (tag `rehearsal/1` at `3d3dd0e`, run
-     37386314582): signed with the release subkey, `verifyPublication`
-     passed, deployment `33c6eaa9-4638-4488-b156-77903a9f5b8d` reached
-     VALIDATED within seconds, and the API drop removed it (the status query
-     afterwards found nothing). Not yet known: whether a dropped deployment
-     frees its version; a `rehearsal/1-again` tag answers it.
-   - Chunk 4 landed on 2026-10-06 in the collector (`304718d`): a `v*.*.*`
-     tag runs a guard, its CI, a multi-arch image (`linux/amd64`,
-     `linux/arm64`, cross-compiled) pushed to
-     `ghcr.io/otherlodehq/otherlode-collector` as `X.Y.Z`, `X.Y` and `latest`
-     with an SBOM, provenance and a build-provenance attestation, then a
-     published GitHub release naming the digest; `scripts/release.sh` builds
-     before each commit; the redaction WARNING and README say "the latest
-     collector". One Opus review; its findings are in the commit. The
-     collector's `Release tags` ruleset and release immutability are on.
-   - Left in item 6: cutting collector `v0.1.0` and agent `0.1.0`, then
-     making the GHCR package public. Cutting them is a deliberate action
-     for a future session, Luke's call (2026-10-06): the agent's needs its
-     `## [0.1.0]` changelog section written, and the collector's must exist
-     first, since `release.sh` refuses an agent release until it does.
-   - Luke's steps, needed before the rehearsal. Done on 2026-10-05: the
-     `releases@otherlode.dev` group (Google Workspace, external posting on),
-     the signing key (fingerprints and expiry under "Reminders for expiring
-     keys and credentials") on keys.openpgp.org and keyserver.ubuntu.com, the
-     Portal account (`luke@otherlode.dev`), the `dev.otherlode` namespace,
-     verified by its TXT record on the apex `otherlode.dev`, and a Portal user
-     token. Done on 2026-10-06: the `release` environment and its secrets, the
-     tag ruleset, immutable releases.
-   - The flaky `CodeSourceClassFileTest` is fixed (2026-10-06). A race in the
-     test, not the agent: with the real daemon warmer, the warm-up thread can
-     finish before `isWarmed` re-checks the state, so the first read
-     legitimately answers bytes, and the two tests asserted null. Production
-     is unaffected, since the key is marked warm only after the warm-up
-     thread opened the location outside any transform. The tests hold the
-     warm-up's open until the first read has answered; reproduced on demand
-     with an injected delay, then 0 failures in 80 stressed runs over JDK 17,
-     21 and 25. The class KDoc now says the first read can answer bytes.
-   - Agent CI moved to `bufbuild/buf-action` on 2026-09-27, which also
-     checks formatting. It runs every check but not the push, which is a
-     `buf push --label master` step after it: the action's own push labels
-     from a live look at origin and fails once master has moved on. The
-     module's default label on the registry moved from `main` to `master`
-     to match; `main` stays frozen at `34b5239c`, and nothing refers to it.
-     The switch left two registry commits with identical content:
-     `24387a85` created `master`, and `91a74c73` moved it at the moment the
-     default switched, with the check state only default-label commits
-     carry, so most likely the switch itself re-committed it. Buf's docs do
-     not say so; unconfirmed. Runs queue per ref, since two publishes in
-     flight could move the label back, and a manual run checks a change to
-     the workflow alone without publishing.
-   - The collector's HEALTHCHECK landed on 2026-09-27 (collector `e5d3e2f`),
-     and the server's probe got the same proxy and address fixes (server
-     `19f08fa`). The collector's build image is `golang:1.26-alpine`
-     (collector `65989bc`), with Dependabot ignoring golang minor and major
-     bumps, since `go 1.26.0` in `go.mod` is the floor for importers.
-   - Server: it is not published; GitHub Actions deploys it to Cloud Run by
-     digest through Workload Identity Federation.
-7. **Measure the overhead.** Grilled on 2026-10-04; the closed entry "Runtime
-   overhead". Before release: the PetClinic macro
-   harness with its headline and ceiling numbers in the README, the hot-path
-   JMH suite, the deterministic CI checks, and, moved before release on
-   2026-10-04, the code-size guard, the flush and registry benchmark and the
-   nightly schedule.
-8. **Weave everything that can be woven, and never crash an adopter's
-   class.** Grilled on 2026-10-04; the closed entry "Probe arrays, validation and
-   placeholders". A woven class could throw
-   `NullPointerException` where the original ran (ADR 0060), and 312 of the
-   ceiling run's 4462 matched classes were skipped, most of them needlessly
-   (ADRs 0058, 0059).
-9. **Startup and heap.** Grilled and landed on 2026-10-05; the closed
-   entries "The agent's startup and heap" and "`DECORATE` instead of
-   `REBASE`, and the entry probe in ASM". On the runner (`8139271`) the
-   headline's startup overhead went from +76% to +22.4%, inside the 25%
-   target, and the ceiling's retained heap after delivery from +117.5 MB to
-   +26.5 MB locally. The ceiling's one-core startup on the runner improved
-   far less, from 64.0 s to 58.2 s with the agent (15.2 s and 18.2 s
-   without), than it did pinned locally in Docker (21.5 s over 6.8 s on one
-   CPU). Nobody has looked into why. The `DECORATE` round (`b1dec7d` to `a3c4330`) landed after that
-   run. The overhead runs on `master`, nightly and by hand, have measured it
-   since 2026-10-07 (the latest passing run is 38537477681, on 2026-10-14),
-   but nobody has read their numbers: `docs/site/overhead.md` and
-   `benchmark-overhead/README.md` still quote `8139271`, so startup is likely
-   overstated. Left before `v0.1.0`: read those runs, starting with the
-   ceiling's one-core startup, then re-run on the commit to be tagged and
-   update both pages.
+1. **Measure the overhead on the release candidate.** The `DECORATE` round
+   (`b1dec7d` to `a3c4330`) landed after the runner numbers that
+   `docs/site/overhead.md` and `benchmark-overhead/README.md` quote
+   (`8139271`), so startup there is likely overstated. The overhead runs on
+   `master`, nightly and by hand, have measured it since 2026-10-07 (the
+   latest passing run is 38537477681, on 2026-10-14), but nobody has read
+   their numbers. Start with the ceiling's one-core startup. At `8139271` it
+   improved far less on the runner, from 64.0 s to 58.2 s with the agent
+   (15.2 s and 18.2 s without), than pinned locally in Docker (21.5 s over
+   6.8 s on one CPU), and nobody has looked into why. Then re-run on the
+   commit to be tagged and update both pages.
+2. **A linked jar's `Class-Path` in the dependency listing.** The TODO entry
+   below has the fix. Its reported path can change freely only until the
+   release.
+3. **Cut the releases** (ADRs 0062 and 0063, collector ADR 0006). Cutting
+   is Luke's call. Collector `v0.1.0` goes first, since the agent's
+   `release.sh` refuses a release until it exists. The agent's needs its
+   `## [0.1.0]` changelog section written. Before the first release of each,
+   make the collector's GHCR package public, and make the org secret
+   `OTHERLODE_DEV_DOCS_TOKEN` visible to this repo and the collector, or the
+   release's docs job skips the sync to otherlode.dev with only a notice.
+   Still unknown: whether a dropped Portal deployment frees its version. A
+   `rehearsal/1-again` tag answers it. Workflows outside the secret-holding
+   jobs use v4 of every action, several majors behind.
+4. **The quickstart** in otherlode.dev's `start/` (that repo's ADR 0001).
+   The agent's and collector's pages and the overview are written.
+5. **Before the first customer, in `otherlode-server`'s STATUS:** the
+   "Go-live checklist" (the company, the privacy policy, the domain, the
+   front door; no collector can be given an ingest URL until the front door
+   exists), "Storage: retention, expiry and class records", and "Read
+   performance at realistic scale", still to grill. None of them blocks
+   publishing the agent.
 
-10. **Docs for the agent and the collector.** Added 2026-10-05. Where
-    they live was settled in otherlode.dev ADRs 0001 and 0002: each repo's
-    `docs/site/`, synced to the site per release. The agent's fifteen pages
-    landed on 2026-10-07 (`e43d82b`), each claim checked against the code;
-    the closed entry "Customer docs round: follow-ups" has what it turned up.
-    Still to write: the collector's pages, and the cross-product overview
-    and quickstart in otherlode.dev's `start/`.
-
-11. **Server storage: retention, expiry and class records.** Added
-    2026-10-08 after a grilling session (server ADRs 0060 and 0061). Every
-    run stored its own manifest and nothing expired, so storage grew with
-    every restart. Settled: a per-tenant retention period, a daily expiry
-    that never removes what a dead-code claim rests on, and class records
-    shared by the runs of one service. The schema is collapsed for the new
-    Cloud SQL instance Luke brings up before go-live. The server STATUS
-    entry "Storage: retention, expiry and class records" has the build
-    order. It does not block publishing the agent, but it blocks the first
-    customer.
-
-12. **Server read performance at realistic scale.** Added 2026-10-09. A
-    benchmark of one service with 2,000 classes and 50 runs put the report
-    at about 6.5 minutes and the call graph at about 4, in both the old and
-    the class-record layout, and version-filtered reads timed out. The
-    server STATUS entry "Read performance at realistic scale" has the
-    numbers. To grill before the first customer.
-13. **A linked jar's `Class-Path` in the dependency listing.** Added
-    2026-10-14. The entry "The dependency listing reads a linked jar's
-    `Class-Path` from the link" has the fix. Its reported path can change
-    freely only until the release.
-
-After release: naming polish (`this$0`, the demo printer), the server's
-performance-only deferrals, gzip, a collector config file, agent-level
-redaction (parked in the server's STATUS, item 18, with its trigger), and
-the edge cases under "Parked" below.
+After release: what "Parked" lists, the server's performance-only
+deferrals, gzip, a collector config file, and agent-level redaction
+(parked in the server's STATUS, item 18, with its trigger).
 
 ## TODO
 
-Entries whose work is done are removed. The ones the checklist above names,
-and every entry closed on 2026-10-14, are in `git show e54e33b:STATUS.md`.
+### The class listing's cost is not measured
 
-### Class listing and flush interval: landed, cost not measured
+The class listing (ADR 0070) has landed in the agent and the collector.
+Measure its cost on demo-spring and on a large classpath.
 
-Decided on 2026-10-14 with Luke, in a grilling session across the three
-repos, for server ADR 0066 (removed code).
+Known gaps in what it lists, all rare, all listing less than the JVM loads:
 
-1. `ClassListing` on the wire, sent to `/v1/otherlode/class-listing` in
-   chunks like the baseline, with the include and exclude rules it
-   applied. `StaticBaseline` gains the same rules field.
-   `ResourceAttributes` gains `flush_interval_seconds`. Landed: the schema,
-   the Kotlin models and the codec. A review sharpened the proto comments
-   a Go reader depends on: the prefix rule (equal, or continued by `.` or
-   `$`), zero meaning an unknown interval, absent rules, and a listing
-   with a hole never being sent (added to ADR 0070).
-2. List names from the baseline's roots and from nested `BOOT-INF/lib`
-   and `WEB-INF/lib` jars, without parsing. Reuse `JarContents`. Landed with
-   steps 3, 5 and 6's agent side. Three review rounds made the lister
-   read the classpath the way the system loader does: symbolic links
-   resolved, `Class-Path` parsed as `URLClassPath` parses it, agent jars
-   read, exploded Spring Boot images read by the launcher layout,
-   multi-release versioned-only classes listed, and no listing for an
-   empty class path, an empty element, a module path or a linked image.
-   Known gaps, all rare, all listing less than the JVM loads:
-   - A nested jar with junk between its entries: `ZipInputStream` stops
-     at the junk with no error, while Boot reads the central directory.
-   - JDK 17's `META-INF/INDEX.LIST`, which can name jars outside
-     `Class-Path` (JDK 18 dropped it).
-   - Boot `PropertiesLauncher` `loader.path` folders (documented as a
-     blind spot; the server's coverage rule limits the damage).
-   The dependency listing shares the `Class-Path` parser but still
-   resolves it against a symbolic link's own path: see the next entry.
-3. `classListingEnabled`, on by default. Landed.
-4. Measure the listing's cost on demo-spring and a large classpath. Open.
-5. Update `configuration`, `data-sent`, `overhead` and `classes`. Landed,
-   with `troubleshooting` and `testkit-api`.
-6. Collector: the route and the bindings bump. Landed in the collector
-   as `69d5a58`.
+- A nested jar with junk between its entries: `ZipInputStream` stops at the
+  junk with no error, while Boot reads the central directory.
+- JDK 17's `META-INF/INDEX.LIST`, which can name jars outside `Class-Path`
+  (JDK 18 dropped it).
+- Boot `PropertiesLauncher` `loader.path` folders (documented as a blind
+  spot; the server's coverage rule limits the damage).
 
 ### The dependency listing reads a linked jar's `Class-Path` from the link: to fix before release
 
@@ -585,20 +204,6 @@ edit deleted would read as never hit unless a collector learns the old entry
 is superseded, which may need a wire field), and whether that is worth it for a
 development convenience.
 
-### Nothing is published anywhere
-
-No build in this repo publishes an artifact. An adopter cannot depend on the
-agent jar or on `otherlode-testkit` except by building them, which also means the
-testkit's whole reason for existing, letting someone else's test suite assert
-on dead code, has no distribution. The wire schema is the one thing that is
-published, to the Buf Schema Registry, and CI does that on every push that
-touches the proto.
-
-What gets published, under which version, and the testkit's frozen surface
-were settled on 2026-10-04 (ADRs 0056 and 0057, the versioning superseded by
-0062), and how a release is cut and published on 2026-10-05 (ADR 0063). The
-publishing itself is checklist item 6.
-
 ### The endpoint tier has no confirmation
 
 `EndpointInstrumentation` stages and commits declarations from its own
@@ -623,9 +228,6 @@ dispatch for the other modules.
 - Per-framework disable flags. One `endpointsEnabled` switch and the
   self-disabling modules cover everything known so far; this is only worth
   building if an adopter needs to turn one module off by hand.
-
-OpenAPI as a source of endpoints was set aside (ADR 0017). A contract-diff
-feature built on it is parked in `otherlode-server`'s STATUS.
 
 ## Parked
 
@@ -740,25 +342,6 @@ Open before any of this is built:
   output.
 
 
-### A module disabled after it has already declared routes
-
-A module that throws is switched off for the rest of the process, and its
-dispatch advice stops counting from then on. Routes it declared for classes
-it handled successfully keep their manifest rows, so their counts freeze
-wherever they were: a route the framework still serves reads as never called
-once its count sat at zero.
-
-Settled in favour of the collector, not the agent. The agent keeps reporting
-what it saw: the endpoints it declared, and the module it disabled, with the
-time it happened. A collector joins the two, since a module's name is the
-same string its endpoints carry as `framework`, and leaves every endpoint of
-a module disabled everywhere it is known out of its dead-code claims, the
-way it leaves out an inline probe. Withdrawing the endpoints instead would
-need a tombstone on the wire and would throw away that the route existed and
-was served at all, which is true whatever happened to the module later. Same
-shape for a module disabled through the runtime `declare` walk, which
-predates the transform-time staging.
-
 ### A transformer later in the chain replacing the agent's bytes
 
 The third failure past `onTransformation`, and the one ADR 0028 does not
@@ -790,7 +373,7 @@ keeps out of the agent, so composing one is an adopter's own call.
 ### Small gaps the landed work left, after release
 
 Each was recorded when its work landed and waits for a reason to touch the
-code. The entries they came from are in `git show e54e33b:STATUS.md`.
+code.
 
 Settings:
 
@@ -904,8 +487,7 @@ Ideas nobody has asked for:
 
 What the compiler canary and the reviews found that the agent does not
 read. Each reads as an unread shape, never a finding, unless it says
-otherwise. ADRs 0054 and 0055 hold the rule; the closed entry "An unread
-body is an unread shape" has the history.
+otherwise. ADRs 0054 and 0055 hold the rule.
 
 - Scala 3: a Java-compatible enum (`extends java.lang.Enum`), a local enum
   (it gets no outline), backticked case names, an enum that overrides
