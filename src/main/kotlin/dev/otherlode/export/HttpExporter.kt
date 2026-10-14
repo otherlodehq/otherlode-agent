@@ -61,6 +61,10 @@ class HttpExporter(
         post("$endpoint/v1/otherlode/static-baseline", ProtoPayloadCodec.encode(baseline))
     }
 
+    override fun exportClassListing(listing: ClassListing) {
+        post("$endpoint/v1/otherlode/class-listing", ProtoPayloadCodec.encode(listing))
+    }
+
     private fun post(
         uri: String,
         body: ByteArray,

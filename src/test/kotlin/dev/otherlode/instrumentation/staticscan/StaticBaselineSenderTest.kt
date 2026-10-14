@@ -1,5 +1,6 @@
 package dev.otherlode.instrumentation.staticscan
 
+import dev.otherlode.export.ClassListing
 import dev.otherlode.export.DeltaBatch
 import dev.otherlode.export.ExportFailedException
 import dev.otherlode.export.Exporter
@@ -30,6 +31,8 @@ class StaticBaselineSenderTest {
             attempts += baseline.chunkIndex
             failure(baseline)?.let { throw it }
         }
+
+        override fun exportClassListing(listing: ClassListing) {}
     }
 
     @Test

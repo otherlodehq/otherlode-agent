@@ -66,10 +66,11 @@ Two pieces of work that would otherwise be startup cost run later:
 
 - The dependency listing, which reads every jar on the classpath to find its identity, starts at the top of the first flush on the export thread, not in `premain`. It reads each nested jar in a fat jar.
 - The first full manifest goes out on the first flush, at a random point inside the first interval.
+- The class listing (on by default) runs on its own background thread, named `otherlode-class-listing`, started once at startup and not in `premain`. It reads the file names in each class folder and the central directory of each jar on the classpath. A jar nested in a Spring Boot fat jar has to be streamed and decompressed to read its entry names, as the dependency listing also does at startup. It parses no class file, and it runs once per process. A JVM started with no class path reads the working directory as its class path, and the listing then walks every folder under it, so start the application from its own folder or give it a class path. With `classListingEnabled=false` the thread does not start. See [classes](classes#the-class-listing).
 
 ## The flush thread and the network
 
-The agent runs one scheduled thread named `otherlode-export` and two send threads named `otherlode-export-send`, all daemon threads. They do not keep your JVM alive. With the static baseline on, one more thread scans the classpath. A graceful shutdown starts a short-lived thread for the final flush.
+The agent runs one scheduled thread named `otherlode-export` and two send threads named `otherlode-export-send`, all daemon threads. They do not keep your JVM alive. The class listing runs on one more thread for a short time at startup, and with the static baseline on, another thread scans the classpath. A graceful shutdown starts a short-lived thread for the final flush.
 
 On each flush (every 60 seconds by default, with a random offset for the first one so a fleet does not flush at the same instant), the thread:
 

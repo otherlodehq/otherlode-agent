@@ -1,6 +1,7 @@
 package dev.otherlode.benchmark
 
 import dev.otherlode.export.BodyKind
+import dev.otherlode.export.ClassListing
 import dev.otherlode.export.DeltaBatch
 import dev.otherlode.export.Exporter
 import dev.otherlode.export.KotlinKind
@@ -250,6 +251,10 @@ class EncodingExporter : Exporter {
 
     override fun exportStaticBaseline(baseline: StaticBaseline) {
         bytes.addAndGet(ProtoPayloadCodec.encode(baseline).size.toLong())
+    }
+
+    override fun exportClassListing(listing: ClassListing) {
+        bytes.addAndGet(ProtoPayloadCodec.encode(listing).size.toLong())
     }
 }
 

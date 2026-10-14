@@ -15,6 +15,7 @@ fun ResourceAttributes.Companion.forNewRun(config: AgentConfig): ResourceAttribu
         serviceNamespace = config.serviceNamespace,
         testRun = config.testRun,
         agentVersion = implementationVersionOf(Agent::class.java),
+        flushIntervalSeconds = config.flushInterval.seconds.toInt(),
     )
 
 /**

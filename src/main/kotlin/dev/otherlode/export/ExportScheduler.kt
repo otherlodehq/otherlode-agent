@@ -1,5 +1,6 @@
 package dev.otherlode.export
 
+import dev.otherlode.classlisting.ClassListingSender
 import dev.otherlode.config.AgentConfig
 import dev.otherlode.dependencies.DependencyListingRun
 import dev.otherlode.instrumentation.LoadedClassSweep
@@ -70,6 +71,11 @@ class ExportScheduler(
      * a flush whose own sends it confirmed. Null when the static baseline is off.
      */
     private val staticBaselineSender: StaticBaselineSender? = null,
+    /**
+     * Class listing chunks the collector has not confirmed yet, sent again like the static
+     * baseline's. Null when the class listing is off.
+     */
+    private val classListingSender: ClassListingSender? = null,
     /**
      * The startup dependency listing, run at the top of the first flush so that flush's sweep and
      * manifest see every dependency. The default has nothing to run.
@@ -232,9 +238,12 @@ class ExportScheduler(
             if (released) allConfirmed = sendManifestDelta() && allConfirmed
             if (allConfirmed) {
                 sendDependenciesListedIfDue()
-                // One chunk per flush, and none from the shutdown flush, so a slow baseline send
-                // never holds up a heartbeat or spends the shutdown budget.
-                if (!final) staticBaselineSender?.retryPending()
+                // One chunk per sender per flush, and none from the shutdown flush, so a slow
+                // resend never holds up a heartbeat or spends the shutdown budget.
+                if (!final) {
+                    staticBaselineSender?.retryPending()
+                    classListingSender?.retryPending()
+                }
             }
             if (!final) releaseCaches()
         } catch (t: Throwable) {

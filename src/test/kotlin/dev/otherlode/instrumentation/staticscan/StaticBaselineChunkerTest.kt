@@ -8,6 +8,7 @@ import dev.otherlode.export.ConditionPart
 import dev.otherlode.export.ConditionPartKind
 import dev.otherlode.export.DeclaredClass
 import dev.otherlode.export.DeclaredMethod
+import dev.otherlode.export.IncludeRules
 import dev.otherlode.export.LineRange
 import dev.otherlode.export.ResourceAttributes
 import dev.otherlode.export.UnprobedClass
@@ -54,6 +55,21 @@ class StaticBaselineChunkerTest {
         assertEquals(listOf(listOf("A"), listOf("B", "C")), chunks.map { c -> c.declaredClasses.map { it.className } })
         assertEquals(listOf(0, 1), chunks.map { it.chunkIndex })
         assertTrue(chunks.all { it.chunkCount == 2 && it.scannedAt == 42L && it.resource == resource })
+    }
+
+    @Test
+    fun `every chunk carries the include rules the scan applied`() {
+        val result =
+            StaticScanResult(
+                declaredClasses = listOf(declared("A", 3), declared("B", 3), declared("C", 1)),
+                unreadableClasses = emptyList(),
+            )
+        val rules = IncludeRules(listOf("com.example"), listOf("com.example.internal"))
+
+        val chunks = StaticBaselineChunker.chunk(result, resource, scannedAt = 1L, maxEntriesPerChunk = 7, includeRules = rules)
+
+        assertEquals(2, chunks.size)
+        assertEquals(setOf<IncludeRules?>(rules), chunks.map { it.includeRules }.toSet())
     }
 
     @Test

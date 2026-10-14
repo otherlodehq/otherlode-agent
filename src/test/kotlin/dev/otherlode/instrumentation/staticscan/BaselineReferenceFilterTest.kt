@@ -4,6 +4,7 @@ import dev.otherlode.Agent
 import dev.otherlode.dependencies.DependencyListingRun
 import dev.otherlode.dependencies.StartupClasspathLister
 import dev.otherlode.dependencies.TestJars
+import dev.otherlode.export.ClassListing
 import dev.otherlode.export.DeclaredClass
 import dev.otherlode.export.DeclaredMethod
 import dev.otherlode.export.DeltaBatch
@@ -48,6 +49,8 @@ class BaselineReferenceFilterTest {
         override fun exportStaticBaseline(baseline: StaticBaseline) {
             baselines += baseline
         }
+
+        override fun exportClassListing(listing: ClassListing) {}
     }
 
     private fun indexedRegistry(): DependencyRegistry = DependencyRegistry(indexClassNames = true)

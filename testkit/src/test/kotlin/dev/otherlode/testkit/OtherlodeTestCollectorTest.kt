@@ -5,6 +5,7 @@ import dev.otherlode.export.BranchRole
 import dev.otherlode.export.BranchSite
 import dev.otherlode.export.CallEdge
 import dev.otherlode.export.CallEdgeKind
+import dev.otherlode.export.ClassListing
 import dev.otherlode.export.ClassLocation
 import dev.otherlode.export.ConditionPart
 import dev.otherlode.export.ConditionPartKind
@@ -19,6 +20,7 @@ import dev.otherlode.export.EndpointLocation
 import dev.otherlode.export.FailedClass
 import dev.otherlode.export.GeneratedBy
 import dev.otherlode.export.HttpExporter
+import dev.otherlode.export.IncludeRules
 import dev.otherlode.export.KotlinKind
 import dev.otherlode.export.LineRange
 import dev.otherlode.export.OutsideCaller
@@ -1113,6 +1115,35 @@ class OtherlodeTestCollectorTest {
         assertTrue(target.rejectedPayloads().all { "could not be decoded" in it }, "${target.rejectedPayloads()}")
         assertFailsWith<IllegalStateException> { target.neverHit() }
         assertFailsWith<IllegalStateException> { target.awaitNextFlush(Duration.ofMillis(150)) }
+    }
+
+    @Test
+    fun `a class listing is answered 200 and keeps nothing, and does not fail a later query`() {
+        val target = startCollector()
+        val listing =
+            ClassListing(
+                resource = ResourceAttributes("checkout", "1.0.0", "i-1", "test", "run-1"),
+                classNames = listOf("com.acme.A", "com.acme.B"),
+                includeRules = IncludeRules(listOf("com.acme")),
+                listedAt = 1000L,
+            )
+
+        val status = postStatus(target, "class-listing", ProtoPayloadCodec.encode(listing))
+        exporterFor(target).exportClassListing(listing)
+
+        assertEquals(200, status)
+        assertEquals(emptyList(), target.rejectedPayloads())
+        assertEquals(emptyList(), target.neverHit())
+    }
+
+    @Test
+    fun `a class listing body that does not decode is answered 400 like any other payload`() {
+        val target = startCollector()
+
+        val status = postStatus(target, "class-listing", byteArrayOf(0, 0, 0, 0))
+
+        assertEquals(400, status)
+        assertTrue(target.rejectedPayloads().single().contains("class listing could not be decoded"), "${target.rejectedPayloads()}")
     }
 
     private fun postStatus(

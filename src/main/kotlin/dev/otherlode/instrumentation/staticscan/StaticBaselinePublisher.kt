@@ -1,6 +1,7 @@
 package dev.otherlode.instrumentation.staticscan
 
 import dev.otherlode.export.Exporter
+import dev.otherlode.export.IncludeRules
 import dev.otherlode.export.ResourceAttributes
 import dev.otherlode.registry.ProbeRegistry
 import java.lang.System.Logger.Level
@@ -20,10 +21,10 @@ import java.lang.System.Logger.Level
  * would carry JDK names and names nothing maps, and losing the references is better than losing
  * the baseline.
  *
- * Chunks are sent in order through [sender], and the first failure stops the send. The chunks
- * left are sent again after a later flush the collector confirms; until they arrive the
- * collector holds a partial scan, which it can recognise from `chunk_count` and must not diff as
- * if it were complete.
+ * Every chunk carries [includeRules], the rules the scan applied. Chunks are sent in order
+ * through [sender], and the first failure stops the send. The chunks left are sent again after a
+ * later flush the collector confirms; until they arrive the collector holds a partial scan, which
+ * it can recognise from `chunk_count` and must not diff as if it were complete.
  */
 class StaticBaselinePublisher(
     private val scan: () -> StaticScanResult,
@@ -33,6 +34,7 @@ class StaticBaselinePublisher(
     private val maxEntriesPerChunk: Int = DEFAULT_MAX_ENTRIES_PER_CHUNK,
     private val filterReferences: (StaticScanResult) -> StaticScanResult = StaticScanResult::withoutReferences,
     private val sender: StaticBaselineSender = StaticBaselineSender(exporter),
+    private val includeRules: IncludeRules? = null,
 ) {
     private val log = System.getLogger(StaticBaselinePublisher::class.java.name)
 
@@ -57,7 +59,7 @@ class StaticBaselinePublisher(
                 log.log(Level.WARNING, "otherlode: could not filter the static baseline's references; it is sent without them", e)
                 result.withoutReferences()
             }
-        sender.offer(StaticBaselineChunker.chunk(filtered, resource, System.currentTimeMillis(), maxEntriesPerChunk))
+        sender.offer(StaticBaselineChunker.chunk(filtered, resource, System.currentTimeMillis(), maxEntriesPerChunk, includeRules))
         sender.sendPending()
     }
 

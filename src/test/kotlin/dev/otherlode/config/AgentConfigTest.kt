@@ -26,6 +26,7 @@ class AgentConfigTest {
         assertEquals(emptyList(), config.includePackages)
         assertEquals(emptyList(), config.excludePackages)
         assertEquals(false, config.staticBaselineEnabled)
+        assertEquals(true, config.classListingEnabled)
         assertEquals(true, config.enabled)
         assertEquals(true, config.endpointsEnabled)
         assertEquals(false, config.otelBridgeEnabled)
@@ -43,6 +44,34 @@ class AgentConfigTest {
     fun `staticBaselineEnabled is case-insensitive, and an unparseable value warns and falls back to the default of false`() {
         assertEquals(true, AgentConfig.parse("staticBaselineEnabled=TRUE").staticBaselineEnabled)
         assertEquals(false, AgentConfig.parse("staticBaselineEnabled=yes").staticBaselineEnabled)
+    }
+
+    @Test
+    fun `classListingEnabled defaults to true and each source can turn it off`() {
+        assertEquals(true, parseQuietly("serviceName=checkout").classListingEnabled)
+        assertEquals(false, parseQuietly("classListingEnabled=false").classListingEnabled)
+
+        val fromProperty =
+            AgentConfig.parse(null, env = { null }, systemProperties = mapOf("otherlode.class.listing.enabled" to "false")::get)
+        assertEquals(false, fromProperty.classListingEnabled)
+
+        val fromEnv =
+            AgentConfig.parse(null, env = mapOf("OTHERLODE_CLASS_LISTING_ENABLED" to "false")::get, systemProperties = { null })
+        assertEquals(false, fromEnv.classListingEnabled)
+    }
+
+    @Test
+    fun `classListingEnabled is case-insensitive, and an unparseable value warns and falls back to the default of true`() {
+        assertEquals(false, parseQuietly("classListingEnabled=FALSE").classListingEnabled)
+
+        var config: AgentConfig? = null
+        val warnings = warningsFrom { config = parseQuietly("classListingEnabled=yes") }
+
+        assertEquals(true, config!!.classListingEnabled)
+        assertEquals(
+            listOf("otherlode: classListingEnabled must be 'true' or 'false', ignoring 'yes' and using the default of true"),
+            warnings,
+        )
     }
 
     @Test

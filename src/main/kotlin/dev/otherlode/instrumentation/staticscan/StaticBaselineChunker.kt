@@ -1,6 +1,7 @@
 package dev.otherlode.instrumentation.staticscan
 
 import dev.otherlode.export.DeclaredClass
+import dev.otherlode.export.IncludeRules
 import dev.otherlode.export.ResourceAttributes
 import dev.otherlode.export.StaticBaseline
 import dev.otherlode.export.UnprobedClass
@@ -17,7 +18,7 @@ import dev.otherlode.export.UnreadableClass
  * [dev.otherlode.registry.ProbeRegistry] gives a manifest class for the same reason; every
  * unreadable or unprobed class counts as one.
  * Classes are never split across chunks, so a declared class heavier than [maxEntriesPerChunk]
- * gets a chunk of its own. Every chunk carries the same resource and [scannedAt], and its own
+ * gets a chunk of its own. Every chunk carries the same resource, [includeRules] and [scannedAt], and its own
  * `chunkIndex` out of `chunkCount`, so a collector can tell when it holds the whole scan.
  *
  * Always produces at least one chunk: an empty scan is still a statement ("nothing declared").
@@ -28,6 +29,7 @@ object StaticBaselineChunker {
         resource: ResourceAttributes,
         scannedAt: Long,
         maxEntriesPerChunk: Int,
+        includeRules: IncludeRules? = null,
     ): List<StaticBaseline> {
         require(maxEntriesPerChunk > 0) { "maxEntriesPerChunk must be positive" }
         val chunks = mutableListOf<Chunk>()
@@ -64,6 +66,7 @@ object StaticBaselineChunker {
                 scannedAt = scannedAt,
                 chunkIndex = index,
                 chunkCount = chunks.size,
+                includeRules = includeRules,
             )
         }
     }

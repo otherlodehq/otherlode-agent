@@ -32,6 +32,7 @@ The system property and environment variable names come from the option name. Th
 | `excludePackages` | `otherlode.exclude.packages` | `OTHERLODE_EXCLUDE_PACKAGES` |
 | `callbackAnnotations` | `otherlode.callback.annotations` | `OTHERLODE_CALLBACK_ANNOTATIONS` |
 | `staticBaselineEnabled` | `otherlode.static.baseline.enabled` | `OTHERLODE_STATIC_BASELINE_ENABLED` |
+| `classListingEnabled` | `otherlode.class.listing.enabled` | `OTHERLODE_CLASS_LISTING_ENABLED` |
 | `enabled` | `otherlode.enabled` | `OTHERLODE_ENABLED` |
 | `endpointsEnabled` | `otherlode.endpoints.enabled` | `OTHERLODE_ENDPOINTS_ENABLED` |
 | `otelBridgeEnabled` | `otherlode.otel.bridge.enabled` | `OTHERLODE_OTEL_BRIDGE_ENABLED` |
@@ -53,6 +54,7 @@ The system property and environment variable names come from the option name. Th
 | `excludePackages` | None | Dotted package or class prefixes, separated by `;` | Glob and path prefixes are dropped with a warning |
 | `callbackAnnotations` | None | Fully qualified annotation type names, separated by `;` | A name that cannot be a type name is dropped with a warning |
 | `staticBaselineEnabled` | `false` | `true` or `false`, in any letter case | Warning, and the default is used |
+| `classListingEnabled` | `true` | `true` or `false`, in any letter case | Warning, and the default is used |
 | `enabled` | `true` | `true` or `false`, in any letter case | Warning, and the default is used |
 | `endpointsEnabled` | `true` | `true` or `false`, in any letter case | Warning, and the default is used |
 | `otelBridgeEnabled` | `false` | `true` or `false`, in any letter case | Warning, and the default is used |
@@ -92,7 +94,7 @@ A `-D` flag is as visible as the argument string, since anyone who can list proc
 
 ## Boolean options
 
-`staticBaselineEnabled`, `enabled`, `endpointsEnabled`, `otelBridgeEnabled` and `testRun` accept `true` or `false` in any letter case. `yes`, `1`, and anything else that is not blank produce a warning and the option's default, not `false`. The warning names the option and the default it falls back to.
+`staticBaselineEnabled`, `classListingEnabled`, `enabled`, `endpointsEnabled`, `otelBridgeEnabled` and `testRun` accept `true` or `false` in any letter case. `yes`, `1`, and anything else that is not blank produce a warning and the option's default, not `false`. The warning names the option and the default it falls back to.
 
 | Option | When it is on |
 |---|---|
@@ -100,6 +102,7 @@ A `-D` flag is as visible as the argument string, since anyone who can list proc
 | `endpointsEnabled` | The agent installs its framework endpoint modules. One switch covers all of them, and there are no per-framework flags. A module activates only when its framework is on the application's classpath. With the option off, the agent logs one INFO line and reports no endpoints, and `otelBridgeEnabled` has no effect. The endpoint modules ignore `includePackages` and `excludePackages`. See [endpoints](endpoints). |
 | `otelBridgeEnabled` | The agent also counts the route that OpenTelemetry's own HTTP server instrumentation resolved, for a framework no endpoint module covers. It needs `endpointsEnabled`. See [endpoints](endpoints). |
 | `staticBaselineEnabled` | The agent scans the classpath once, on a background thread, for classes under `includePackages` that never load. Off by default because the cost of the scan grows with the size of the classpath. See [classes](classes). |
+| `classListingEnabled` | The agent lists the names of the classes the classpath holds under `includePackages`, once, on a background thread, and sends the list. It reads the central directories of jars and class folders and parses no class file. On by default. With it off, the server cannot tell a class you removed from one that has not loaded yet. See [classes](classes). |
 | `testRun` | The agent marks every payload of this run as a test run, and a run with no named environment reports to the environment `test`. At shutdown, after the final flush, a test run with `staticBaselineEnabled` on waits up to 15 seconds for the static baseline scan to finish. See [naming the tests that call your code](test-runs). |
 
 ## includePackages and excludePackages
@@ -166,13 +169,14 @@ A correctly spelled name appears in that line too when none of the classes that 
 
 ## exportUrl
 
-`exportUrl` is the base URL of the collector. The agent posts to three paths under it.
+`exportUrl` is the base URL of the collector. The agent posts to four paths under it.
 
 | Path | Carries |
 |---|---|
 | `/v1/otherlode/deltas` | Delta batches, which double as the heartbeat |
 | `/v1/otherlode/manifest` | The probe manifest |
 | `/v1/otherlode/static-baseline` | The static baseline, when it is enabled |
+| `/v1/otherlode/class-listing` | The class listing, unless it is switched off |
 
 The agent normalises the value before it uses it. It trims spaces, drops trailing `/` characters, and lowercases the scheme, so `HTTPS://Collector.example.com/` becomes `https://Collector.example.com`. The host and the path keep the letter case you wrote. A path is kept: `https://gateway.example.com/otherlode` posts to `https://gateway.example.com/otherlode/v1/otherlode/deltas`.
 
@@ -203,6 +207,8 @@ otherlode: exportUrl uses plain http, so the auth token is sent unencrypted
 `flushIntervalSeconds` is the time between flushes, in whole seconds. The accepted range is `1` to `86400` (one day). A decimal, a negative number, zero, a value above one day and text such as `30s` all produce a warning and the default of `60`.
 
 The agent starts the first flush at a random point within the first interval, so a fleet of instances that start together does not send at the same moment. The flushes after it follow every interval at a fixed rate.
+
+Every payload carries the interval as `flush_interval_seconds`, so the server can tell a run that stopped without its final flush from one that is quiet between flushes.
 
 ## Service identity
 

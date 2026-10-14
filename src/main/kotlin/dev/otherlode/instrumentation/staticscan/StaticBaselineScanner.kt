@@ -494,14 +494,27 @@ class StaticBaselineScanner(
  * one. `module-info` and `package-info` carry no methods and are not types an adopter's code refers
  * to, so they are left out too.
  *
- * Shared by the static baseline scan and the dependency listing, so both count a jar's classes by
- * one rule.
+ * Shared by the static baseline scan, the dependency listing and the class listing, so all three
+ * count a jar's classes by one rule.
  */
 internal fun isClassEntry(path: String): Boolean {
     if (!path.endsWith(".class") || path.startsWith("META-INF/")) return false
     val simpleName = path.substringAfterLast('/').removeSuffix(".class")
     return simpleName != "module-info" && simpleName != "package-info"
 }
+
+/**
+ * The path of a multi-release jar's versioned class entry after its `META-INF/versions/N/` prefix,
+ * or null when [path] is not one. The JVM loads such an entry when it opens the jar for a runtime
+ * of version N or later, so a class can exist only there.
+ */
+internal fun versionedClassPath(path: String): String? {
+    val match = VERSIONED_ENTRY.matchEntire(path) ?: return null
+    val inner = match.groupValues[1]
+    return if (isClassEntry(inner)) inner else null
+}
+
+private val VERSIONED_ENTRY = Regex("^META-INF/versions/[0-9]+/(.+)$")
 
 /** Reads a class's bytes from a fixed prefix inside [jarFile], for nested classpath roots such as `BOOT-INF/classes/`. */
 private class PrefixedJarClassFileLocator(

@@ -39,7 +39,7 @@ data class AgentConfig(
      */
     val environment: String?,
     /**
-     * Base URL of the collector. The exporter appends `/v1/otherlode/{deltas,manifest,static-baseline}`
+     * Base URL of the collector. The exporter appends `/v1/otherlode/{deltas,manifest,static-baseline,class-listing}`
      * to it, so a query string or fragment is refused.
      */
     val exportUrl: String,
@@ -69,6 +69,12 @@ data class AgentConfig(
      * usual "on unless configured otherwise" default.
      */
     val staticBaselineEnabled: Boolean,
+    /**
+     * On by default. Once per process, a background thread lists the names of the classes the
+     * classpath holds under the include rules and the agent sends them as a class listing. With it
+     * off, the server can never prove a class of this run's build is gone.
+     */
+    val classListingEnabled: Boolean,
     /**
      * On by default. When false, [dev.otherlode.Agent] logs one line and does
      * nothing else: no bootstrap holder, no transformer, no exporter, no scheduler. Lets an
@@ -132,6 +138,7 @@ data class AgentConfig(
                 "includePackages",
                 "excludePackages",
                 "staticBaselineEnabled",
+                "classListingEnabled",
                 "enabled",
                 "endpointsEnabled",
                 "otelBridgeEnabled",
@@ -204,6 +211,7 @@ data class AgentConfig(
                 includePackages = prefixes,
                 excludePackages = excludedPrefixes,
                 staticBaselineEnabled = parseBoolean("staticBaselineEnabled", resolve("staticBaselineEnabled"), default = false),
+                classListingEnabled = parseBoolean("classListingEnabled", resolve("classListingEnabled"), default = true),
                 enabled = parseBoolean("enabled", resolve("enabled"), default = true),
                 endpointsEnabled = parseBoolean("endpointsEnabled", resolve("endpointsEnabled"), default = true),
                 otelBridgeEnabled = parseBoolean("otelBridgeEnabled", resolve("otelBridgeEnabled"), default = false),

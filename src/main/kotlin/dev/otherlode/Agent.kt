@@ -1,5 +1,8 @@
 package dev.otherlode
 
+import dev.otherlode.classlisting.ClassLister
+import dev.otherlode.classlisting.ClassListingPublisher
+import dev.otherlode.classlisting.ClassListingSender
 import dev.otherlode.config.AgentConfig
 import dev.otherlode.config.IncludeRulesRefusal
 import dev.otherlode.config.MainClassSuggestion
@@ -13,6 +16,7 @@ import dev.otherlode.export.DependencyDiscoverySource
 import dev.otherlode.export.ExportScheduler
 import dev.otherlode.export.Exporter
 import dev.otherlode.export.HttpExporter
+import dev.otherlode.export.IncludeRules
 import dev.otherlode.export.ResourceAttributes
 import dev.otherlode.export.forNewRun
 import dev.otherlode.instrumentation.BootstrapInstallException
@@ -89,6 +93,8 @@ object Agent {
         val endpointTransformer: ResettableClassFileTransformer? = null,
         val dependencyRegistry: DependencyRegistry = DependencyRegistry(),
         val resource: ResourceAttributes,
+        /** The thread the class listing runs on, or null when `classListingEnabled` is off. */
+        val classListingWorker: Thread? = null,
     ) {
         fun stop() {
             Runtime.getRuntime().removeShutdownHook(shutdownHook)
@@ -225,6 +231,16 @@ object Agent {
                 } else {
                     null
                 }
+            // Built the same way: the listing thread sends first, the scheduler resends.
+            val classListingSender =
+                if (config.classListingEnabled) {
+                    ClassListingSender(
+                        exporter,
+                        retryExporter = HttpExporter(config.exportUrl, config.authToken, httpClient, maxAttempts = 1),
+                    )
+                } else {
+                    null
+                }
             val dependencyListing = dependencyListingRun(config, dependencyRegistry)
             val started =
                 ExportScheduler(
@@ -246,6 +262,7 @@ object Agent {
                     dependencyRegistry = dependencyRegistry,
                     externalClassRegistry = externalClassRegistry,
                     staticBaselineSender = staticBaselineSender,
+                    classListingSender = classListingSender,
                     dependencyListing = dependencyListing,
                     releaseQuietCaches = otherlodeInstrumentation::releaseQuietCaches,
                 )
@@ -273,7 +290,9 @@ object Agent {
                 }, "otherlode-shutdown-hook")
             addShutdownHook(hook)
             shutdownHook = hook
+            val listingWorker = classListingSender?.let { classListingThread(config, resource, it) }
             scanWorker?.start()
+            listingWorker?.start()
             return Running(
                 started,
                 instrumentation,
@@ -284,6 +303,7 @@ object Agent {
                 endpointTransformer,
                 dependencyRegistry,
                 resource,
+                listingWorker,
             )
         } catch (e: Throwable) {
             // Each step is tried on its own, so one that fails neither stops the rest nor hides
@@ -347,8 +367,30 @@ object Agent {
                 mismatchDetector,
                 filterReferences = referenceFilter::filter,
                 sender = sender,
+                includeRules = IncludeRules(config.includePackages, config.excludePackages),
             )
         val worker = Thread({ publisher.run(resource) }, "otherlode-static-baseline-scan")
+        worker.isDaemon = true
+        return worker
+    }
+
+    /**
+     * The thread the class listing runs on, unstarted and a daemon, off `premain` for the same
+     * reason as the scan's. It fires once per process and nothing waits for it at shutdown. See
+     * [ClassListingPublisher] for what it sends.
+     */
+    private fun classListingThread(
+        config: AgentConfig,
+        resource: ResourceAttributes,
+        sender: ClassListingSender,
+    ): Thread {
+        val publisher =
+            ClassListingPublisher(
+                ClassLister(config.includePackages, config.excludePackages)::list,
+                IncludeRules(config.includePackages, config.excludePackages),
+                sender,
+            )
+        val worker = Thread({ publisher.run(resource) }, "otherlode-class-listing")
         worker.isDaemon = true
         return worker
     }

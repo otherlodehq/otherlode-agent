@@ -1,6 +1,7 @@
 package dev.otherlode.export
 
 import dev.otherlode.Agent
+import dev.otherlode.classlisting.ClassListingSender
 import dev.otherlode.config.AgentConfig
 import dev.otherlode.config.CallbackAnnotationName
 import dev.otherlode.dependencies.DependencyListingRun
@@ -49,6 +50,7 @@ private class RecordingExporter : Exporter {
     var deltaBatches = mutableListOf<DeltaBatch>()
     var manifests = mutableListOf<ProbeManifest>()
     var staticBaselines = mutableListOf<StaticBaseline>()
+    var classListings = mutableListOf<ClassListing>()
 
     /** Every confirmed delta batch and manifest, in the order the sends were confirmed. */
     val sent: MutableList<Any> = Collections.synchronizedList(mutableListOf())
@@ -92,6 +94,10 @@ private class RecordingExporter : Exporter {
     override fun exportStaticBaseline(baseline: StaticBaseline) {
         staticBaselines += baseline
     }
+
+    override fun exportClassListing(listing: ClassListing) {
+        classListings += listing
+    }
 }
 
 private class FailingExporter : Exporter {
@@ -100,6 +106,8 @@ private class FailingExporter : Exporter {
     override fun exportManifest(manifest: ProbeManifest) = throw RuntimeException("collector unreachable")
 
     override fun exportStaticBaseline(baseline: StaticBaseline) = throw RuntimeException("collector unreachable")
+
+    override fun exportClassListing(listing: ClassListing) = throw RuntimeException("collector unreachable")
 }
 
 /**
@@ -346,6 +354,38 @@ class ExportSchedulerTest {
     }
 
     @Test
+    fun `a pending class listing chunk goes out after a flush the collector confirmed, and not after one it refused or the final one`() {
+        val exporter = RecordingExporter()
+        val sender = ClassListingSender(exporter)
+        sender.offer(listOf(ClassListing(resource, listOf("com.acme.A"), IncludeRules(listOf("com.acme")), listedAt = 1L)))
+        val scheduler = ExportScheduler(config, resource, ProbeRegistry(), EndpointRegistry(), exporter, classListingSender = sender)
+
+        exporter.failDeltaBatches = true
+        scheduler.flush()
+        assertEquals(0, exporter.classListings.size, "the collector refused this flush, so no retry")
+
+        exporter.failDeltaBatches = false
+        scheduler.flush(final = true)
+        assertEquals(0, exporter.classListings.size, "the shutdown flush never spends its budget on the listing")
+
+        scheduler.flush()
+        assertEquals(1, exporter.classListings.size)
+    }
+
+    @Test
+    fun `a flush sends at most one pending class listing chunk`() {
+        val exporter = RecordingExporter()
+        val sender = ClassListingSender(exporter)
+        val rules = IncludeRules(listOf("com.acme"))
+        sender.offer(List(3) { ClassListing(resource, listOf("com.acme.C$it"), rules, listedAt = 1L, chunkIndex = it, chunkCount = 3) })
+        val scheduler = ExportScheduler(config, resource, ProbeRegistry(), EndpointRegistry(), exporter, classListingSender = sender)
+
+        scheduler.flush()
+
+        assertEquals(listOf(0), exporter.classListings.map { it.chunkIndex })
+    }
+
+    @Test
     fun `a flush sends at most one pending static baseline chunk`() {
         val exporter = RecordingExporter()
         val sender = StaticBaselineSender(exporter)
@@ -396,6 +436,8 @@ class ExportSchedulerTest {
                 }
 
                 override fun exportStaticBaseline(baseline: StaticBaseline) {}
+
+                override fun exportClassListing(listing: ClassListing) {}
             }
         val scheduler = ExportScheduler(config, resource, registry, EndpointRegistry(), exporter)
 
@@ -473,6 +515,18 @@ class ExportSchedulerTest {
     }
 
     @Test
+    fun `a new run carries the flush interval of its config in whole seconds`() {
+        fun intervalOf(options: String?) =
+            ResourceAttributes.forNewRun(
+                AgentConfig.parse(options, env = { null }, systemProperties = { null }, detectServiceName = { null }),
+            )
+
+        assertEquals(60, intervalOf(null).flushIntervalSeconds)
+        assertEquals(15, intervalOf("flushIntervalSeconds=15").flushIntervalSeconds)
+        assertEquals(86_400, intervalOf("flushIntervalSeconds=86400").flushIntervalSeconds)
+    }
+
+    @Test
     fun `a new run carries the test-run flag and the test environment from its config`() {
         val testRun =
             ResourceAttributes.forNewRun(
@@ -507,6 +561,8 @@ class ExportSchedulerTest {
                 }
 
                 override fun exportStaticBaseline(baseline: StaticBaseline) {}
+
+                override fun exportClassListing(listing: ClassListing) {}
             }
         val scheduler =
             ExportScheduler(config, resource, registry, EndpointRegistry(), exporter, maxDeltasPerBatch = 1, maxManifestEntriesPerChunk = 1)
@@ -547,6 +603,8 @@ class ExportSchedulerTest {
         }
 
         override fun exportStaticBaseline(baseline: StaticBaseline) {}
+
+        override fun exportClassListing(listing: ClassListing) {}
     }
 
     private class TwoBatchScenario(
@@ -725,6 +783,8 @@ class ExportSchedulerTest {
         }
 
         override fun exportStaticBaseline(baseline: StaticBaseline) {}
+
+        override fun exportClassListing(listing: ClassListing) {}
     }
 
     private fun refusal(status: Int = 413) = ExportFailedException("refused", status, refused = true)
@@ -1162,6 +1222,8 @@ class ExportSchedulerTest {
         override fun exportManifest(manifest: ProbeManifest) {}
 
         override fun exportStaticBaseline(baseline: StaticBaseline) {}
+
+        override fun exportClassListing(listing: ClassListing) {}
     }
 
     @Test
@@ -1294,6 +1356,8 @@ class ExportSchedulerTest {
         override fun exportManifest(manifest: ProbeManifest) {}
 
         override fun exportStaticBaseline(baseline: StaticBaseline) {}
+
+        override fun exportClassListing(listing: ClassListing) {}
     }
 
     @Test

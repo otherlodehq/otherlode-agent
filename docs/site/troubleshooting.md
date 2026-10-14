@@ -106,7 +106,7 @@ These warnings each mean the agent kept running with a default instead of your v
 | `otherlode: ignoring malformed agent option 'x' (expected key=value; a value cannot contain a comma, set such a value through a system property or environment variable instead)` | A comma split the argument string into a piece with no `=`. A value that holds a comma, such as several packages joined with commas, must come from a system property or environment variable. Separate packages with `;`. |
 | `otherlode: exportUrl must be an absolute http or https URL, ignoring 'collector:4319' and using the default http://localhost:4319` | The value has no scheme or host. The agent falls back to `http://localhost:4319`, which is why a mistyped `exportUrl` looks like a collector that never answers. A query string or fragment gets the same treatment, with its own reason. |
 | `otherlode: flushIntervalSeconds must be a whole number from 1 to 86400, ignoring '30s' and using the default of 60s` | Write plain seconds with no unit. |
-| `otherlode: enabled must be 'true' or 'false', ignoring 'yes' and using the default of true` | The same message appears for `staticBaselineEnabled`, `endpointsEnabled`, `otelBridgeEnabled` and `testRun`, each naming its own option and default. |
+| `otherlode: enabled must be 'true' or 'false', ignoring 'yes' and using the default of true` | The same message appears for `staticBaselineEnabled`, `classListingEnabled`, `endpointsEnabled`, `otelBridgeEnabled` and `testRun`, each naming its own option and default. |
 | `otherlode: exportUrl's host 'otherlode_collector' has an underscore, which a URL host name cannot contain; ...` | The host name has an underscore, as a Docker Compose service name can. Java's HTTP client cannot reach such a host. Use a network alias or host name without an underscore, or an IP address. |
 | `otherlode: exportUrl uses plain http, so the auth token is sent unencrypted` | `authToken` is set and `exportUrl` starts with `http://`. Use an `https://` URL unless the collector is on the same host. |
 | `otherlode: ignoring all of OTEL_RESOURCE_ATTRIBUTES, since its entry 'x' is not key=value; no service name, namespace, version or environment is read from it` | One malformed entry discards the whole list, as the OpenTelemetry specification says. Fix the entry. |
@@ -140,24 +140,24 @@ One send makes up to 5 attempts, so a single failure takes several seconds to lo
 
 ### The collector answers with a status
 
-The exception message is `otherlode: unexpected status <code> from <exportUrl>/v1/otherlode/<deltas|manifest|static-baseline>`.
+The exception message is `otherlode: unexpected status <code> from <exportUrl>/v1/otherlode/<deltas|manifest|static-baseline|class-listing>`.
 
 | Status | Cause and fix |
 |---|---|
 | `401`, `403` | The token is missing or wrong, or the collector wants a token and none is set. Set `OTHERLODE_AUTH_TOKEN`. The agent does not retry within a send. It sends again on the next flush, so it recovers after you rotate the token. |
-| `404` | The URL does not reach a collector. The agent appends `/v1/otherlode/deltas`, `/v1/otherlode/manifest` and `/v1/otherlode/static-baseline` to `exportUrl`, so a proxy must forward those paths. Drop any path from `exportUrl` that the collector does not expect. |
+| `404` | The URL does not reach a collector. The agent appends `/v1/otherlode/deltas`, `/v1/otherlode/manifest`, `/v1/otherlode/static-baseline` and `/v1/otherlode/class-listing` to `exportUrl`, so a proxy must forward those paths. Drop any path from `exportUrl` that the collector does not expect. |
 | `301`, `302`, `307`, `308` | The agent does not follow redirects. A proxy that redirects `http` to `https` causes this. Put the final `https://` URL in `exportUrl`. |
 | `400`, `422` | The receiver rejected the content. With the testkit's collector, see [A test fails with a version mismatch](#a-test-fails-with-a-version-mismatch). With another receiver, see its log for the reason. |
-| `413` | The receiver refused the request body as too large. A reverse proxy or gateway in front of the collector usually has the limit. Raise it. The agent keeps the static baseline after a `413` and sends it once the limit is raised, with no restart. The agent splits its payloads by entry count, not by size, so the fix is on the receiving side. [What the agent sends](data-sent#chunk-caps) lists the caps. Once a count has been refused, the run says on each later payload that its counts are pending, so a collector does not read its zero hits as never hit. Payloads stamped before the first refusal in that flush say nothing of it. |
+| `413` | The receiver refused the request body as too large. A reverse proxy or gateway in front of the collector usually has the limit. Raise it. The agent keeps the static baseline and the class listing after a `413` and sends them once the limit is raised, with no restart. The agent splits its payloads by entry count, not by size, so the fix is on the receiving side. [What the agent sends](data-sent#chunk-caps) lists the caps. Once a count has been refused, the run says on each later payload that its counts are pending, so a collector does not read its zero hits as never hit. Payloads stamped before the first refusal in that flush say nothing of it. |
 | `408`, `429`, `5xx` | The agent retries these within the send. If they persist across flushes, the collector is overloaded or down. |
 
-The agent resends the same payload on the next flush for every status above, so a repeated warning means the answer has not changed. The static baseline is the exception. For `400` and `422` it logs a warning and stops sending the scan, since the same bytes meet the same answer:
+The agent resends the same payload on the next flush for every status above, so a repeated warning means the answer has not changed. The static baseline and the class listing are the exception. For `400` and `422` each logs a warning and stops sending, since the same bytes meet the same answer:
 
 ```text
 otherlode: the collector refused static baseline chunk 3 of 7 with status 400, which resending the same bytes cannot change; the scan is not sent again
 ```
 
-A static baseline refused this way is not sent again in this process. A `413` is not refused this way: the agent keeps the scan and sends it after a later flush the collector confirms.
+The class listing logs the same line with `class listing chunk` and `the listing is not sent again`. A static baseline or class listing refused this way is not sent again in this process. A `413` is not refused this way: the agent keeps the scan or the listing and sends it after a later flush the collector confirms.
 
 ### A static baseline send fails
 
@@ -166,6 +166,29 @@ otherlode: failed to send static baseline chunk 1 of 4; it and the chunks after 
 ```
 
 This logs once. The chunks stay pending and go out one per flush after a flush whose own sends the collector confirmed. If the main sends fail, fix those first.
+
+### A class listing send fails
+
+```text
+otherlode: failed to send class listing chunk 1 of 2; it and the chunks after it are sent again after a flush the collector confirms
+```
+
+The class listing is sent as the static baseline is. This logs once, and the chunks stay pending and go out one per flush after a flush whose own sends the collector confirmed. A `404` here with working deltas means the collector does not serve `/v1/otherlode/class-listing` yet: update the collector. The listing goes out once the route exists.
+
+### No class listing is sent
+
+```text
+otherlode: could not read /opt/app/lib/broken.jar for the class listing, so no class listing is sent: zip END header not found
+```
+
+A directory, a jar or a jar nested in a Spring Boot executable jar could not be read, so this process sends no class listing at all. A partial listing would read as proof that the missing classes were removed. The line names the file and the cause. Fix or remove the file and restart. A classpath entry that does not exist is not an error: the JVM ignores it, and so does the listing.
+
+```text
+otherlode: java.class.path is empty or has an empty element, which the JVM reads as the working directory, so no class listing is sent
+otherlode: this JVM runs from a module path or a linked image, which the class listing does not read, so no class listing is sent
+```
+
+The listing reads only the class path, and only when it names every folder the JVM reads. Name the classpath, or remove a leading, trailing or doubled path separator, to get a listing. An application that runs from the module path or a `jlink` image sends none.
 
 ### A test run ended before the scan did
 

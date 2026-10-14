@@ -104,6 +104,23 @@ class HttpExporterTest {
     }
 
     @Test
+    fun `posts a class listing to the class-listing endpoint`() {
+        val endpoint = startServer { 200 }
+        val exporter = exporterFor(endpoint)
+        val listing =
+            ClassListing(
+                resource = ResourceAttributes("checkout", "1.0.0", "i-1", "test", "run-1"),
+                classNames = listOf("com.acme.A", "com.acme.B"),
+                includeRules = IncludeRules(listOf("com.acme")),
+                listedAt = 1000L,
+            )
+
+        exporter.exportClassListing(listing)
+
+        assertEquals(listOf("/v1/otherlode/class-listing"), requestedPaths)
+    }
+
+    @Test
     fun `retries a transient server error and succeeds once the server recovers`() {
         val endpoint = startServer { requestNumber -> if (requestNumber < 3) 503 else 200 }
         val exporter = exporterFor(endpoint)

@@ -410,7 +410,22 @@ repos, for server ADR 0066 (removed code).
    `$`), zero meaning an unknown interval, absent rules, and a listing
    with a hole never being sent (added to ADR 0070).
 2. List names from the baseline's roots and from nested `BOOT-INF/lib`
-   and `WEB-INF/lib` jars, without parsing. Reuse `JarContents`.
+   and `WEB-INF/lib` jars, without parsing. Reuse `JarContents`. Landed with
+   steps 3, 5 and 6's agent side. Three review rounds made the lister
+   read the classpath the way the system loader does: symbolic links
+   resolved, `Class-Path` parsed as `URLClassPath` parses it, agent jars
+   read, exploded Spring Boot images read by the launcher layout,
+   multi-release versioned-only classes listed, and no listing for an
+   empty class path, an empty element, a module path or a linked image.
+   Known gaps, all rare, all listing less than the JVM loads:
+   - A nested jar with junk between its entries: `ZipInputStream` stops
+     at the junk with no error, while Boot reads the central directory.
+   - JDK 17's `META-INF/INDEX.LIST`, which can name jars outside
+     `Class-Path` (JDK 18 dropped it).
+   - Boot `PropertiesLauncher` `loader.path` folders (documented as a
+     blind spot; the server's coverage rule limits the damage).
+   The dependency listing shares the `Class-Path` parser but still
+   resolves it against a symbolic link's own path.
 3. `classListingEnabled`, on by default.
 4. Measure the listing's cost on demo-spring and a large classpath.
 5. Update `configuration`, `data-sent`, `overhead` and `classes`.

@@ -2713,6 +2713,20 @@ public class OtherlodeTestCollector internal constructor(
     }
 
     /**
+     * Answers a class listing and keeps nothing from it: no query reads a listing. A body that does
+     * not decode is rejected like any other payload's.
+     */
+    private fun handleClassListing(exchange: HttpExchange) {
+        val bytes = exchange.requestBody.readBytes()
+        try {
+            ProtoPayloadCodec.decodeClassListing(bytes)
+        } catch (e: Exception) {
+            return reject(exchange, undecodable("class listing", e))
+        }
+        respond(exchange, 200)
+    }
+
+    /**
      * Throws [IllegalStateException] listing every reason in [rejectedPayloads] once there is one.
      * Every public query and wait calls this first, so a test fails on a rejected payload even
      * when it never looks at [rejectedPayloads]: a query answered without that payload's data
@@ -2888,6 +2902,7 @@ public class OtherlodeTestCollector internal constructor(
             httpServer.createContext("/v1/otherlode/deltas", collector::handleDeltaBatch)
             httpServer.createContext("/v1/otherlode/manifest", collector::handleManifest)
             httpServer.createContext("/v1/otherlode/static-baseline", collector::handleStaticBaseline)
+            httpServer.createContext("/v1/otherlode/class-listing", collector::handleClassListing)
             startDaemon(httpServer)
             return collector
         }

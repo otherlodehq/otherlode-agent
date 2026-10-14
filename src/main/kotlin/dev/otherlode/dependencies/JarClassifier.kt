@@ -43,6 +43,16 @@ internal class JarClassifier(
         ORDINARY,
     }
 
+    /**
+     * Whether [manifest] marks a Spring Boot fat jar, executable war or exploded one, whatever else
+     * it says. The class listing reads such an application by its launcher's layout even when the
+     * manifest also names an agent.
+     */
+    fun isBootApplication(manifest: Manifest?): Boolean {
+        val attributes = manifest?.mainAttributes ?: return false
+        return BOOT_ATTRIBUTES.any { attributes.getValue(it) != null }
+    }
+
     fun kindOf(manifest: Manifest?): Kind {
         val attributes = manifest?.mainAttributes ?: Attributes()
         return when {

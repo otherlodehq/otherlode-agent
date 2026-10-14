@@ -6,7 +6,7 @@ order: 130
 
 ## Summary
 
-The agent pushes three kinds of payload to the collector you set with `exportUrl`. Every payload is a protobuf message, and a payload names code (classes, methods, source files, lines, conditions, routes, jars) and counts. It carries no request data and no argument or return value.
+The agent pushes four kinds of payload to the collector you set with `exportUrl`. Every payload is a protobuf message, and a payload names code (classes, methods, source files, lines, conditions, routes, jars) and counts. It carries no request data and no argument or return value.
 
 The agent has no redaction setting. It sends what this page lists. A collector with redaction switched on replaces the text of [string literal parts](#condition-text-and-string-literals) with `…` before it forwards a payload, either every such part or those that match a pattern you set. It keeps every field it knows. It drops any field it does not know, which happens when the agent is newer than the collector, and marks that payload with `fields_stripped`. A deployment that needs redaction sends through a collector with redaction switched on. An agent that posts straight to a backend sends everything in clear.
 
@@ -19,6 +19,7 @@ Every request is a `POST` to a path under `exportUrl`. The agent drops a trailin
 | `/v1/otherlode/deltas` | Delta batch | Every flush, even when empty |
 | `/v1/otherlode/manifest` | Probe manifest | On a flush that has something not yet delivered |
 | `/v1/otherlode/static-baseline` | Static baseline chunk | Once per process, when `staticBaselineEnabled` is on |
+| `/v1/otherlode/class-listing` | Class listing chunk | Once per process, when `classListingEnabled` is on, which is the default |
 
 Each request has these headers:
 
@@ -37,7 +38,7 @@ The agent flushes on a fixed interval, `flushIntervalSeconds`, 60 seconds by def
 
 Each flush sends the delta batch and, if something is waiting, the manifest, at the same time. A flush that finds a dependency whose counts were just delivered sends one more manifest for it, and a flush that completes the dependency listing may send one more, empty, manifest that says so.
 
-On a graceful JVM exit a shutdown hook runs one last flush with `final_flush` set on its delta batches. It has a budget of 10 seconds in total, shared with any flush still running, and it skips the static baseline retry. A flush still working against an unreachable collector can use the whole budget, and then no final flush runs. `kill -9`, an out-of-memory kill and a crash send no final flush.
+On a graceful JVM exit a shutdown hook runs one last flush with `final_flush` set on its delta batches. It has a budget of 10 seconds in total, shared with any flush still running, and it skips the static baseline and class listing retries. A flush still working against an unreachable collector can use the whole budget, and then no final flush runs. `kill -9`, an out-of-memory kill and a crash send no final flush.
 
 ### Chunk caps
 
@@ -48,6 +49,7 @@ A payload that would be larger than its cap is split into several requests, sent
 | Delta batch | 20,000 entries (probe, endpoint and dependency deltas together) |
 | Probe manifest | 5,000 entries, where call edges, referenced classes and branch sites inside a probe each count as an entry |
 | Static baseline | About 20,000 entries, where a declared class weighs its methods plus their call edges, branch sites and references. A class is never split, so a heavier class gets a chunk of its own |
+| Class listing | 20,000 class names |
 
 ## Payloads
 
@@ -65,6 +67,7 @@ Every payload carries the same resource attributes.
 | `run_id` | A random `UUID` made once per process. It differs on every start, even under a pinned `service_instance_id` |
 | `test_run` | True when you started the agent with `testRun` |
 | `agent_version` | The agent jar's version, empty when unknown |
+| `flush_interval_seconds` | The value of `flushIntervalSeconds`, in whole seconds. The server reads it to tell a run that stopped without its final flush from one that is quiet between flushes |
 | `fields_stripped` | Never set by the agent. A collector sets it only while its redaction is switched on, when it dropped a field it does not know before forwarding |
 
 The agent adds no host name, address, user name, environment variable or system property. Resource attributes come from your configuration, from OpenTelemetry's `service.*` and `deployment.environment*` settings (see [configuration options](configuration)), and from service name detection when you set none.
@@ -91,7 +94,7 @@ The ids refer to the manifest of the same run. They mean nothing without it.
 
 ### Pending counts
 
-Every delta batch and manifest carries two numbers that tell the server whether the run's counts are behind. Static baseline chunks carry neither.
+Every delta batch and manifest carries two numbers that tell the server whether the run's counts are behind. Static baseline and class listing chunks carry neither.
 
 - `payload_sequence` numbers the run's delta batches and manifests from 1, one higher each time. The payload with the highest number is the run's latest word, whatever order the payloads arrived in. A gap in the numbers means nothing.
 - `counts_pending_since` is 0 when, as of the moment the payload was stamped, no count the run sent has been refused or gone unanswered. Otherwise it is the time, in milliseconds since the epoch, of the flush in which that first happened.
@@ -149,8 +152,22 @@ The agent sends a static baseline only when you set `staticBaselineEnabled`. A b
 | `unreadable_classes` | Name of a class file the scanner could not read, and the reason |
 | `unprobed_classes` | Name of a class with no method to count, and the reason |
 | `external_classes` | The same mapping as in the manifest |
+| `include_rules` | The include and exclude rules the scan applied, as the agent parsed them: `include_packages` and `exclude_packages` |
 
 The server uses the baseline only when it holds every chunk of a scan, which `chunk_count` tells it. See [classes](classes).
+
+### Class listing chunk
+
+The agent sends a class listing unless you set `classListingEnabled=false`. A background thread lists the names of the classes the classpath holds under your `includePackages` and sends them once, without reading a class file. It also looks inside the jars nested in a Spring Boot executable jar or WAR. Each chunk carries the resource attributes, the rules, `listed_at`, `chunk_index` and `chunk_count`.
+
+| Field | Content |
+|---|---|
+| `class_names` | The dotted names of the listed classes, distinct across the listing and sent in ascending order. A chunk holds at most 20,000 |
+| `include_rules` | The include and exclude rules the listing applied, as the agent parsed them. A prefix covers a name that equals it, or continues it with `.` or `$`. The server uses them to tell a class outside the rules from a class the build lacks |
+| `listed_at` | When the listing was made, in milliseconds since the epoch. Every chunk of one listing carries the same value |
+| `chunk_index`, `chunk_count` | Which part this chunk is, counting from 0, and how many parts the listing has |
+
+A listing that matches no class is one chunk with no names. A process sends no listing when a directory, jar or nested jar it reads cannot be read, because the server reads a class's absence from a complete listing as proof that the build lacks it. The server uses a listing only when it holds every chunk. See [classes](classes#the-class-listing).
 
 ## What the agent never sends
 
@@ -183,6 +200,7 @@ Every other status, including a `401`, `403`, `404` and a redirect, fails the se
 - **Delta batch.** The counts are not marked as delivered. The next flush reports the live cumulative count again, which is how a lost acknowledgement or a late batch heals. A refused request, meaning a `4xx` status the agent does not retry, does not stop the flush: the later delta requests still go, and the refused one is built again on the next flush. Any other failure stops the flush's delta requests at that one; the manifest, sent alongside, is not affected. The requests it did confirm stay confirmed either way. Counts a collector has not confirmed are pending: the next flush leads with an empty delta batch that says so, sent on its own so the news arrives even when the batch with the counts is refused for its size. A flush that then confirms every batch with counts ends with another empty batch saying nothing is pending.
 - **Manifest.** A chunk the collector did not confirm stays pending and is built again on the next flush. The agent builds, sends and confirms one chunk at a time and stops at the first failure. A disabled endpoint module goes first, on a manifest of its own, before any class chunk, since its record is what tells the server the endpoints sent earlier are no longer counted.
 - **Static baseline.** Chunks go out in order and the first failure stops the send. The chunks left are sent again, one per flush, after a flush whose own sends the collector confirmed. A `400` or `422` answer means the collector refused the content, and the agent drops every chunk left and logs a warning. Any other failure keeps the chunks, such as a `401` while a token rotates or a `413`, since a proxy's size limit can be raised while the process runs. The scan is never repeated in a process.
+- **Class listing.** Sent and resent as the static baseline is, with the same rules for each status. A `400` or `422` answer drops the listing for the process. Any other failure keeps the chunks, including a `404` from a collector that does not serve the route yet.
 - **Resending a delivered payload.** If the collector processed a request but the agent never saw the answer, the agent sends the same payload again. Cumulative counts and chunk indexes make the repeat harmless.
 
 Each failure logs a warning that names the payload and says the agent will retry on the next flush. A flush that fails never stops the schedule.

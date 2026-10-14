@@ -1,6 +1,6 @@
 ---
 title: Classes
-description: Every state the agent can report a class in, what puts a class there, the static baseline that finds classes that never load, and which generated classes the agent leaves out.
+description: Every state the agent can report a class in, what puts a class there, the static baseline that finds classes that never load, the class listing that shows removed code, and which generated classes the agent leaves out.
 order: 50
 ---
 
@@ -181,6 +181,24 @@ otherlode: com.acme.Foo registered dynamically but was not in the static baselin
 
 Classes that register before the scan finishes are checked when it ends, with a similar line that begins `otherlode: com.acme.Foo registered dynamically before the static baseline scan finished and was not found by it`. This matters at startup, which is when an application server deploys its WAR. The warning appears only when `staticBaselineEnabled` is on. The classes the agent leaves out never trigger it.
 
+## The class listing
+
+A class that is missing from a run's probes may be deleted, or it may not have loaded yet. The static baseline can name every class, but it is off by default. The **class listing** is on by default and cheaper: once per process, the agent lists the names of the classes the build holds. The server uses it to tell removed code from code that has not loaded.
+
+The listing holds names only. It reads no class file, so it says which classes exist and not what they contain. It lists every class file whose name falls under `includePackages` and under no prefix in `excludePackages`. Like the scan, it leaves out `module-info` and `package-info`. In a multi-release jar, a class under `META-INF/versions/N/` is listed by its own name, since the JVM can load a class from there. The rules that need a class's bytes, such as the synthetic-class rule in [Classes the agent leaves out](#classes-the-agent-leaves-out), do not apply to it. The listing carries the include and exclude rules it applied, so the server can tell a class outside them from a class that is gone.
+
+It reads the classpath the way the JVM's system class loader does:
+
+- Each entry of `java.class.path`, read through its real path when it is a symbolic link, and the jars that a manifest `Class-Path` names. A directory is walked, and any other file is read as a jar, whatever its extension.
+- In a Spring Boot executable jar or WAR, the classes under `BOOT-INF/classes/` or `WEB-INF/classes/`, and the classes in each nested jar under `BOOT-INF/lib/`, or `WEB-INF/lib/` and `WEB-INF/lib-provided/`. A multi-module application keeps its own classes in nested jars, and `includePackages` filters them like any other.
+- A directory that holds an unpacked Spring Boot application, as a container image built by Spring Boot's build plugins or a buildpack runs it, the same way: its `BOOT-INF/classes/` and every jar in its library folder.
+
+Like the scan, the listing cannot see a class whose location another system decides at run time: a WAR that an application server deploys, an OSGi bundle, a plugin folder, or the extra folders Spring Boot's `PropertiesLauncher` reads from `loader.path`. The server accepts a class's absence only when an earlier listing named that class, so a place the agent never reads cannot turn into a false removal.
+
+The agent sends a listing only when it read the whole classpath. If a directory, a jar or a nested jar that exists cannot be opened or read, the agent sends no listing for that process and logs one warning that names the file and the cause. A listing with a hole would read as proof that the missing classes are gone. A classpath entry that does not exist is skipped, as the JVM skips it. The agent also sends no listing when `java.class.path` is empty or has an empty element, which the JVM reads as the working directory, or when the JVM runs from a module path or a linked image, which the listing does not read.
+
+The agent sends the listing in chunks of at most 20,000 names, in order, and each chunk says its position out of the total. It sends chunks again like the baseline's: after a flush the collector confirmed, one per flush, and a `400` or `422` answer drops the rest. Set `classListingEnabled=false` to switch it off. See [configuration options](configuration) and [what the agent sends](data-sent#class-listing-chunk).
+
 ## Classes the agent leaves out
 
 The agent never instruments, declares or reports these classes, and the sweep ignores them too:
@@ -213,3 +231,10 @@ Every line starts with `otherlode:`.
 | `WARNING` | `failed to send static baseline chunk <i> of <n>; ...` | A chunk will be sent again. |
 | `WARNING` | `the collector refused static baseline chunk <i> of <n> with status <code>, ...` | The collector refused a chunk with a `400` or `422`. The agent does not resend the scan. |
 | `INFO` | `the static baseline reached the collector after a retry` | A failed chunk got through. |
+| `WARNING` | `could not read <file> for the class listing, so no class listing is sent: <cause>` | A directory, jar or nested jar could not be read, so this process sends no class listing. |
+| `WARNING` | `java.class.path is empty or has an empty element, which the JVM reads as the working directory, so no class listing is sent` | Name the classpath, or remove the empty element, such as a leading or trailing `:`, to get a listing. |
+| `WARNING` | `this JVM runs from a module path or a linked image, which the class listing does not read, so no class listing is sent` | The application runs from the module path or a `jlink` image. No listing is sent, so the server removes no code for this process. |
+| `WARNING` | `the class listing failed, so no class listing is sent` | An unexpected error stopped the listing. The stack trace follows. |
+| `WARNING` | `failed to send class listing chunk <i> of <n>; ...` | A chunk will be sent again. |
+| `WARNING` | `the collector refused class listing chunk <i> of <n> with status <code>, ...` | The collector refused a chunk with a `400` or `422`. The agent does not resend the listing. |
+| `INFO` | `the class listing reached the collector after a retry` | A failed chunk got through. |

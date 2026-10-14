@@ -2,9 +2,11 @@ package dev.otherlode
 
 import com.sun.net.httpserver.HttpServer
 import dev.otherlode.dependencies.ListedDependency
+import dev.otherlode.export.ClassListing
 import dev.otherlode.export.DependencyDiscoverySource
 import dev.otherlode.export.DependencyIdentity
 import dev.otherlode.export.DependencyIdentitySource
+import dev.otherlode.export.IncludeRules
 import dev.otherlode.export.ProtoPayloadCodec
 import dev.otherlode.export.StaticBaseline
 import dev.otherlode.instrumentation.endpoints.api.AdviceBinder
@@ -167,7 +169,10 @@ class AgentTest {
             assertNotNull(running)
             Thread.sleep(200)
             val started = currentThreadNames() - before
-            assertTrue(started.none { it.contains("listing") }, "unexpected listing thread: $started")
+            assertTrue(
+                started.none { it.contains("listing") && it != "otherlode-class-listing" },
+                "unexpected dependency listing thread: $started",
+            )
         } finally {
             running?.stop()
         }
@@ -284,7 +289,8 @@ class AgentTest {
         // under com.example.target, so a scan of the default roots must declare one of them.
         val running =
             Agent.start(
-                "includePackages=com.example.target,flushIntervalSeconds=3600,endpointsEnabled=false," +
+                "includePackages=com.example.target,excludePackages=com.example.target.excluded," +
+                    "flushIntervalSeconds=3600,endpointsEnabled=false," +
                     "staticBaselineEnabled=true,exportUrl=http://localhost:${collector.address.port}",
                 instrumentation,
             )
@@ -294,6 +300,73 @@ class AgentTest {
             val baseline = received.get(30, TimeUnit.SECONDS)
             assertTrue(baseline.declaredClasses.any { it.className == "com.example.target.SampleTarget" })
             assertEquals(1, baseline.chunkCount)
+            assertEquals(IncludeRules(listOf("com.example.target"), listOf("com.example.target.excluded")), baseline.includeRules)
+        } finally {
+            running?.stop()
+            collector.stop(0)
+        }
+    }
+
+    @Test
+    fun `the class listing reaches the collector with the rules, the flush interval and the classes under them`() {
+        val received = CompletableFuture<ClassListing>()
+        val collector = HttpServer.create(InetSocketAddress("localhost", 0), 0)
+        collector.createContext("/v1/otherlode/class-listing") { exchange ->
+            received.complete(ProtoPayloadCodec.decodeClassListing(exchange.requestBody.readBytes()))
+            exchange.sendResponseHeaders(200, -1)
+            exchange.close()
+        }
+        collector.start()
+        val instrumentation = ByteBuddyAgent.install()
+
+        // The test classpath carries the compiled fixtures under com.example.target.
+        val running =
+            Agent.start(
+                "includePackages=com.example.target,flushIntervalSeconds=3600,endpointsEnabled=false," +
+                    "exportUrl=http://localhost:${collector.address.port}",
+                instrumentation,
+            )
+        try {
+            assertNotNull(running)
+            val listing = received.get(30, TimeUnit.SECONDS)
+            assertTrue("com.example.target.SampleTarget" in listing.classNames, listing.classNames.toString())
+            assertTrue(listing.classNames.all { it.startsWith("com.example.target.") }, listing.classNames.toString())
+            assertEquals(listing.classNames.sorted(), listing.classNames)
+            assertEquals(IncludeRules(listOf("com.example.target"), emptyList()), listing.includeRules)
+            assertEquals(1, listing.chunkCount)
+            assertEquals(running.resource, listing.resource)
+            assertEquals(3600, listing.resource.flushIntervalSeconds)
+        } finally {
+            running?.stop()
+            collector.stop(0)
+        }
+    }
+
+    @Test
+    fun `classListingEnabled=false sends no class listing`() {
+        val paths = ConcurrentHashMap.newKeySet<String>()
+        val collector = HttpServer.create(InetSocketAddress("localhost", 0), 0)
+        collector.createContext("/") { exchange ->
+            paths += exchange.requestURI.path
+            exchange.requestBody.readBytes()
+            exchange.sendResponseHeaders(200, -1)
+            exchange.close()
+        }
+        collector.start()
+        val instrumentation = ByteBuddyAgent.install()
+
+        val running =
+            Agent.start(
+                "includePackages=com.example.target,flushIntervalSeconds=3600,endpointsEnabled=false," +
+                    "classListingEnabled=false,exportUrl=http://localhost:${collector.address.port}",
+                instrumentation,
+            )
+        try {
+            assertNotNull(running)
+            assertNull(running.classListingWorker, "a class listing thread was made with the listing off")
+            running.scheduler.flush()
+
+            assertFalse("/v1/otherlode/class-listing" in paths, paths.toString())
         } finally {
             running?.stop()
             collector.stop(0)

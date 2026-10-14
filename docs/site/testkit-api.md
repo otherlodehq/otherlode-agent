@@ -38,7 +38,7 @@ The agent under test must run with `includePackages` set and `exportUrl` pointin
 | `exportUrl: String` | The base URL for the agent's `exportUrl` option, such as `http://localhost:54321`. |
 | `close()` | Stops the server. A wait that is running, or begins later, throws `IllegalStateException`. |
 
-The collector serves the agent's three payload types: delta batches, probe manifests, and static baselines. It keeps what the agent reports for each instance, and each query merges instances by name, as described below.
+The collector serves the agent's four payload types: delta batches, probe manifests, static baselines and class listings. It keeps what the agent reports for each instance, and each query merges instances by name, as described below. It answers a class listing and keeps nothing from it, since no query reads one.
 
 ### Waits
 

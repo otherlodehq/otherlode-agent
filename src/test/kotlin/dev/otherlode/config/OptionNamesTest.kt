@@ -9,6 +9,7 @@ class OptionNamesTest {
         assertEquals("otherlode.service.name", OptionNames.systemProperty("serviceName"))
         assertEquals("otherlode.flush.interval.seconds", OptionNames.systemProperty("flushIntervalSeconds"))
         assertEquals("otherlode.static.baseline.enabled", OptionNames.systemProperty("staticBaselineEnabled"))
+        assertEquals("otherlode.class.listing.enabled", OptionNames.systemProperty("classListingEnabled"))
         assertEquals("otherlode.auth.token", OptionNames.systemProperty("authToken"))
         assertEquals("otherlode.include.packages", OptionNames.systemProperty("includePackages"))
         assertEquals("otherlode.exclude.packages", OptionNames.systemProperty("excludePackages"))
@@ -21,6 +22,7 @@ class OptionNamesTest {
         assertEquals("OTHERLODE_SERVICE_NAME", OptionNames.environmentVariable("serviceName"))
         assertEquals("OTHERLODE_FLUSH_INTERVAL_SECONDS", OptionNames.environmentVariable("flushIntervalSeconds"))
         assertEquals("OTHERLODE_STATIC_BASELINE_ENABLED", OptionNames.environmentVariable("staticBaselineEnabled"))
+        assertEquals("OTHERLODE_CLASS_LISTING_ENABLED", OptionNames.environmentVariable("classListingEnabled"))
         assertEquals(
             "OTHERLODE_AUTH_TOKEN",
             OptionNames.environmentVariable("authToken"),

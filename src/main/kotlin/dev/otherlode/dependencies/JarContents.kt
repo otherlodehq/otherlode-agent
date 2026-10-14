@@ -1,6 +1,7 @@
 package dev.otherlode.dependencies
 
 import dev.otherlode.instrumentation.staticscan.isClassEntry
+import dev.otherlode.instrumentation.staticscan.versionedClassPath
 import java.io.ByteArrayInputStream
 import java.util.Properties
 import java.util.jar.JarFile
@@ -14,7 +15,9 @@ import java.util.zip.ZipInputStream
  * [JarFile] for a jar on disk or a [ZipInputStream] for a jar stored inside another.
  *
  * [classNames] are dotted, distinct, and counted by [isClassEntry], the same rule the static
- * baseline scan uses. [pomProperties] holds every entry at
+ * baseline scan uses. [versionedClassNames] are the dotted names of the classes a multi-release
+ * jar keeps under `META-INF/versions/N/`, named by their path after that prefix; the class listing
+ * reads them, since a class can live only there. [pomProperties] holds every entry at
  * `META-INF/maven/<group>/<artifact>/pom.properties`, in entry order.
  *
  * A jar with no entries at all is rejected with a [ZipException]. [ZipInputStream] reads bytes
@@ -25,6 +28,7 @@ internal class JarContents(
     val classNames: Set<String>,
     val pomProperties: List<Properties>,
     val manifest: Manifest?,
+    val versionedClassNames: Set<String> = emptySet(),
 ) {
     companion object {
         private val POM_PROPERTIES = Regex("^META-INF/maven/[^/]+/[^/]+/pom\\.properties$")
@@ -32,6 +36,7 @@ internal class JarContents(
 
         fun of(jarFile: JarFile): JarContents {
             val classNames = linkedSetOf<String>()
+            val versioned = linkedSetOf<String>()
             val poms = mutableListOf<Properties>()
             var entries = 0
             for (entry in jarFile.entries()) {
@@ -41,10 +46,11 @@ internal class JarContents(
                 when {
                     isClassEntry(name) -> classNames += dottedName(name)
                     POM_PROPERTIES.matches(name) -> poms += jarFile.getInputStream(entry).use { loadProperties(it.readBytes()) }
+                    else -> versionedClassPath(name)?.let { versioned += dottedName(it) }
                 }
             }
             if (entries == 0) throw ZipException("${jarFile.name} holds no zip entries")
-            return JarContents(classNames, poms, jarFile.manifest)
+            return JarContents(classNames, poms, jarFile.manifest, versioned)
         }
 
         /**
@@ -54,6 +60,7 @@ internal class JarContents(
          */
         fun of(stream: ZipInputStream): JarContents {
             val classNames = linkedSetOf<String>()
+            val versioned = linkedSetOf<String>()
             val poms = mutableListOf<Properties>()
             var manifest: Manifest? = null
             var entries = 0
@@ -66,10 +73,11 @@ internal class JarContents(
                     isClassEntry(name) -> classNames += dottedName(name)
                     POM_PROPERTIES.matches(name) -> poms += loadProperties(stream.readBytes())
                     name.equals(MANIFEST_ENTRY, ignoreCase = true) -> manifest = Manifest(ByteArrayInputStream(stream.readBytes()))
+                    else -> versionedClassPath(name)?.let { versioned += dottedName(it) }
                 }
             }
             if (entries == 0) throw ZipException("the stream holds no zip entries")
-            return JarContents(classNames, poms, manifest)
+            return JarContents(classNames, poms, manifest, versioned)
         }
 
         private fun dottedName(entryName: String): String = entryName.removeSuffix(".class").replace('/', '.')

@@ -1,9 +1,11 @@
 package dev.otherlode.instrumentation.staticscan
 
+import dev.otherlode.export.ClassListing
 import dev.otherlode.export.DeclaredClass
 import dev.otherlode.export.DeclaredMethod
 import dev.otherlode.export.DeltaBatch
 import dev.otherlode.export.Exporter
+import dev.otherlode.export.IncludeRules
 import dev.otherlode.export.ProbeKind
 import dev.otherlode.export.ProbeManifest
 import dev.otherlode.export.ResourceAttributes
@@ -32,6 +34,8 @@ class StaticBaselinePublisherTest {
             if (baseline.chunkIndex == failOnChunk) throw RuntimeException("collector unreachable")
             baselines += baseline
         }
+
+        override fun exportClassListing(listing: ClassListing) {}
     }
 
     private fun scanOf(vararg classNames: String) =
@@ -50,6 +54,26 @@ class StaticBaselinePublisherTest {
         assertEquals(listOf(0, 1, 2), exporter.baselines.map { it.chunkIndex })
         assertTrue(exporter.baselines.all { it.chunkCount == 3 })
         assertEquals(listOf("A", "B", "C"), exporter.baselines.map { it.declaredClasses.single().className })
+    }
+
+    @Test
+    fun `every chunk carries the include rules the publisher was given`() {
+        val exporter = RecordingExporter()
+        val rules = IncludeRules(listOf("com.example"), listOf("com.example.internal"))
+        val publisher =
+            StaticBaselinePublisher(
+                { scanOf("A", "B", "C") },
+                exporter,
+                ProbeRegistry(),
+                StaticBaselineMismatchDetector(),
+                1,
+                includeRules = rules,
+            )
+
+        publisher.run(resource)
+
+        assertEquals(3, exporter.baselines.size)
+        assertEquals(setOf<IncludeRules?>(rules), exporter.baselines.map { it.includeRules }.toSet())
     }
 
     @Test
