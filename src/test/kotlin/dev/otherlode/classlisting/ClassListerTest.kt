@@ -254,6 +254,22 @@ class ClassListerTest {
     }
 
     @Test
+    fun `a symbolic-link jar reached through a Class-Path resolves its own Class-Path against the link's folder`() {
+        val main =
+            TestJars.write(
+                dir.resolve("app/main.jar"),
+                listOf(classEntry("com.acme.Main")),
+                mapOf("Class-Path" to "../links/hop.jar"),
+            )
+        TestJars.write(dir.resolve("real/next.jar"), listOf(classEntry("com.acme.target.Next")))
+        val hop = TestJars.write(dir.resolve("real/hop.jar"), listOf(classEntry("com.acme.Hop")), mapOf("Class-Path" to "next.jar"))
+        TestJars.write(dir.resolve("links/next.jar"), listOf(classEntry("com.acme.link.Next")))
+        Files.createSymbolicLink(dir.resolve("links/hop.jar"), hop)
+
+        assertEquals(listOf("com.acme.Hop", "com.acme.Main", "com.acme.link.Next"), lister(classPath(main)).list())
+    }
+
+    @Test
     fun `a Class-Path entry the JDK accepts is followed, brackets and tab separators included`() {
         TestJars.write(dir.resolve("lib/a[1].jar"), listOf(classEntry("com.acme.a.A")))
         TestJars.write(dir.resolve("lib/b.jar"), listOf(classEntry("com.acme.b.B")))
@@ -395,7 +411,45 @@ class ClassListerTest {
 
         assertNull(listed)
         assertEquals(1, warnings.size, warnings.toString())
-        assertTrue("broken-1.0.jar" in warnings.single().message, warnings.single().message)
+        assertTrue("${fat.toRealPath()}!/BOOT-INF/lib/broken-1.0.jar" in warnings.single().message, warnings.single().message)
+    }
+
+    @Test
+    fun `a link loop in an exploded Spring Boot application's library folder still gives a listing`() {
+        val app = Files.createDirectories(dir.resolve("workspace"))
+        Files.createDirectories(app.resolve("META-INF"))
+        Files.write(app.resolve("META-INF/MANIFEST.MF"), "Manifest-Version: 1.0\nSpring-Boot-Lib: BOOT-INF/lib/\n\n".toByteArray())
+        TestJars.write(app.resolve("BOOT-INF/lib/core.jar"), listOf(classEntry("com.acme.core.Core")))
+        Files.createSymbolicLink(app.resolve("BOOT-INF/lib/loop"), app.resolve("BOOT-INF/lib"))
+
+        assertEquals(listOf("com.acme.core.Core"), lister(classPath(app)).list())
+    }
+
+    @Test
+    fun `an exploded Spring Boot application a Class-Path also names is read by its launcher's layout`() {
+        val app = Files.createDirectories(dir.resolve("app"))
+        Files.createDirectories(app.resolve("META-INF"))
+        Files.write(app.resolve("META-INF/MANIFEST.MF"), "Manifest-Version: 1.0\nSpring-Boot-Lib: BOOT-INF/lib/\n\n".toByteArray())
+        Files.createDirectories(app.resolve("BOOT-INF/classes/com/acme"))
+        Files.write(app.resolve("BOOT-INF/classes/com/acme/App.class"), ByteArray(4))
+        TestJars.write(app.resolve("BOOT-INF/lib/lib.jar"), listOf(classEntry("com.acme.lib.L")))
+        val first = TestJars.write(dir.resolve("first.jar"), listOf(classEntry("com.acme.first.F")), mapOf("Class-Path" to "app/"))
+
+        assertEquals(listOf("com.acme.App", "com.acme.first.F", "com.acme.lib.L"), lister(classPath(first, app)).list())
+    }
+
+    @Test
+    fun `an exploded Spring Boot application with a malformed classpath index gives no listing`() {
+        val app = Files.createDirectories(dir.resolve("workspace"))
+        Files.createDirectories(app.resolve("META-INF"))
+        Files.write(app.resolve("META-INF/MANIFEST.MF"), "Manifest-Version: 1.0\nSpring-Boot-Lib: BOOT-INF/lib/\n\n".toByteArray())
+        TestJars.write(app.resolve("BOOT-INF/lib/core.jar"), listOf(classEntry("com.acme.core.Core")))
+        Files.write(app.resolve("BOOT-INF/classpath.idx"), "BOOT-INF/lib/core.jar\n".toByteArray())
+
+        val warnings = warningsFrom { assertNull(lister(classPath(app)).list()) }
+
+        assertEquals(1, warnings.size)
+        assertTrue("Malformed classpath index" in warnings.single().message, warnings.single().message)
     }
 
     @Test

@@ -54,7 +54,17 @@ internal fun nestedJarNames(
 }
 
 /**
- * The jars [manifest]'s `Class-Path` names, resolved the way the JDK's `URLClassPath` resolves
+ * A file a `Class-Path` attribute names. [isDirectory] is true when its URL ends in `/`: the JDK
+ * reads such an entry only as a directory of classes, and any other entry only as a jar, whatever
+ * is on disk at [file].
+ */
+internal data class ClassPathEntry(
+    val file: File,
+    val isDirectory: Boolean,
+)
+
+/**
+ * The files [manifest]'s `Class-Path` names, resolved the way the JDK's `URLClassPath` resolves
  * them for a jar on disk. The value splits on the whitespace `StringTokenizer` splits on. Each
  * entry is a URL relative to [jar]. An entry whose protocol is not `file` (compared ignoring
  * case) is dropped, and so is a jar entry whose host is neither empty nor `localhost`, as the
@@ -68,11 +78,11 @@ internal fun nestedJarNames(
 internal fun classPathEntries(
     jar: File,
     manifest: Manifest?,
-): List<File> {
+): List<ClassPathEntry> {
     val value = manifest?.mainAttributes?.getValue("Class-Path") ?: return emptyList()
     val base = jar.toURI().toURL()
     val tokens = StringTokenizer(value)
-    val entries = mutableListOf<File>()
+    val entries = mutableListOf<ClassPathEntry>()
     while (tokens.hasMoreTokens()) {
         val resolved =
             try {
@@ -85,7 +95,7 @@ internal fun classPathEntries(
         // The JDK reads a directory URL's local path whatever its host, and a jar URL only when
         // the host is empty or localhost.
         if (!resolved.file.endsWith("/") && host.isNotEmpty() && !host.equals("localhost", ignoreCase = true)) continue
-        entries += File(percentDecoded(resolved.file))
+        entries += ClassPathEntry(File(percentDecoded(resolved.file)), isDirectory = resolved.file.endsWith("/"))
     }
     return entries
 }

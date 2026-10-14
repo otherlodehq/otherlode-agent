@@ -1,9 +1,10 @@
 package dev.otherlode.classlisting
 
+import dev.otherlode.dependencies.ClasspathVisitor
+import dev.otherlode.dependencies.ClasspathWalker
 import dev.otherlode.dependencies.JarClassifier
 import dev.otherlode.dependencies.JarContents
 import dev.otherlode.dependencies.bootLibPrefixes
-import dev.otherlode.dependencies.classPathEntries
 import dev.otherlode.dependencies.nestedJarNames
 import dev.otherlode.instrumentation.TypeMatchPolicy
 import dev.otherlode.instrumentation.staticscan.isClassEntry
@@ -26,11 +27,10 @@ import java.util.zip.ZipInputStream
  * Lists the classes the startup classpath holds under the include rules, by name, without reading
  * a class file.
  *
- * The roots are each entry of [classPath] (split on [File.pathSeparator]) and every jar a manifest
- * `Class-Path` attribute reaches from one, resolved by [classPathEntries], each file once. As the
- * JDK's system loader does, an entry of [classPath] is read through its canonical path, so a
- * `Class-Path` named by a jar reached through a symbolic link resolves against the link's target.
- * A root that does not exist holds nothing, as the JVM ignores it. Any file is read as a jar,
+ * Which files are read, and at which paths, is [ClasspathWalker]'s: each entry of [classPath]
+ * (split on [File.pathSeparator]), every file a manifest `Class-Path` attribute reaches from one,
+ * and an exploded Spring Boot application's libraries, as the JVM's loaders read them. A root that
+ * does not exist holds nothing, as the JVM ignores it. Any file on the classpath is read as a jar,
  * whatever its extension, as the system loader does:
  *
  * - A Spring Boot fat jar or executable war contributes the classes under `BOOT-INF/classes/` or
@@ -41,8 +41,8 @@ import java.util.zip.ZipInputStream
  *
  * A directory is walked. A directory whose `META-INF/MANIFEST.MF` marks an exploded Spring Boot
  * application is read the way its launcher reads it: the classes under `BOOT-INF/classes/` or
- * `WEB-INF/classes/` without that prefix, the classes at its root, and every jar under its library
- * folders.
+ * `WEB-INF/classes/` without that prefix, the classes at its root, and the classes of every
+ * library the walker finds for it.
  *
  * A class counts by the static baseline's rule ([isClassEntry]). In a jar, a multi-release entry
  * under `META-INF/versions/N/` also counts, by its path after that prefix, since a class can exist
@@ -51,7 +51,8 @@ import java.util.zip.ZipInputStream
  * The result is complete or absent. A server reads a class's absence from a complete listing as
  * proof that the build lacks it, so a listing with a hole would turn an unreadable jar into removed
  * code. [list] logs one WARNING and returns null when a root that exists, a jar or a nested jar
- * cannot be read, when [classPath] is empty or has an empty element (which the JVM reads as the
+ * cannot be read, when an exploded application's classpath index is malformed (Boot does not
+ * launch then), when [classPath] is empty or has an empty element (which the JVM reads as the
  * working directory), and when [modulePath] or [mainModule] is set, since this lister reads
  * neither a module path nor a linked image.
  */
@@ -75,27 +76,21 @@ class ClassLister(
             return refuse("java.class.path is empty or has an empty element, which the JVM reads as the working directory")
         }
         val names = sortedSetOf<String>()
-        val visited = mutableSetOf<File>()
-        val pending = ArrayDeque(elements.filter { it.isNotEmpty() }.map { Root(File(it), fromClassPath = true) })
-        var location: File? = null
         try {
-            while (pending.isNotEmpty()) {
-                val (given, fromClassPath) = pending.removeFirst()
-                location = given
-                if (!given.exists()) continue
-                val canonical = given.canonicalFile
-                if (!visited.add(canonical)) continue
-                val root = if (fromClassPath) canonical else given.absoluteFile
-                val referenced = if (root.isDirectory) listDirectory(root, names) else listJar(root, names)
-                referenced.asReversed().forEach { pending.addFirst(Root(it, fromClassPath = false)) }
-            }
-        } catch (e: Exception) {
-            val where = (e as? NestedJarException)?.location ?: location
-            val cause = (e as? NestedJarException)?.cause ?: e
+            ClasspathWalker(classifier).walk(elements, Listing(names))
+        } catch (e: ListingFailed) {
             log.log(
                 Level.WARNING,
-                "otherlode: could not read $where for the class listing, so no class listing is sent: ${cause.message ?: cause}",
-                cause,
+                "otherlode: could not read ${e.location} for the class listing, so no class listing is sent: ${e.cause.message ?: e.cause}",
+                e.cause,
+            )
+            return null
+        } catch (e: Exception) {
+            // The walker hands a failure to read a file to the visitor, so what reaches here failed outside any one file.
+            log.log(
+                Level.WARNING,
+                "otherlode: could not walk the classpath for the class listing, so no class listing is sent: ${e.message ?: e}",
+                e,
             )
             return null
         }
@@ -107,35 +102,62 @@ class ClassLister(
         return null
     }
 
-    /**
-     * Lists a directory root, as an exploded Spring Boot application when its manifest says so,
-     * and returns the jars the `Class-Path` of its library jars names: Boot's launcher loads an
-     * exploded application's library jars through a `URLClassLoader`, which follows them.
-     */
-    private fun listDirectory(
-        root: File,
-        names: MutableSet<String>,
-    ): List<File> {
-        val manifestFile = File(root, "META-INF/MANIFEST.MF")
-        val manifest = if (manifestFile.isFile) manifestFile.inputStream().use(::Manifest) else null
-        if (!classifier.isBootApplication(manifest)) {
-            walk(root.toPath()) { relative -> if (isClassEntry(relative)) addIfIncluded(relative, names) }
-            return emptyList()
-        }
-        val libPrefixes = bootLibPrefixes(manifest?.mainAttributes ?: Attributes())
-        val referenced = mutableListOf<File>()
-        walk(root.toPath()) { relative ->
-            when {
-                libPrefixes.any { relative.startsWith(it) } -> referenced += listLibraryJar(File(root, relative), names)
-                else -> addApplicationEntry(relative, names)
+    /** Adds to [names] what each file the walker reaches holds, and ends the walk at the first file it cannot read. */
+    private inner class Listing(
+        private val names: MutableSet<String>,
+    ) : ClasspathVisitor {
+        override fun jar(
+            jar: File,
+            jarFile: JarFile,
+        ) {
+            val manifest = jarFile.manifest
+            if (classifier.isBootApplication(manifest)) {
+                for (entry in jarFile.entries()) {
+                    if (!entry.isDirectory) addApplicationEntry(entry.name, names)
+                }
+                listNestedJars(jar, jarFile, manifest?.mainAttributes ?: Attributes(), names)
+            } else {
+                addJarClasses(jarFile, names)
             }
         }
-        return referenced
+
+        override fun directory(directory: File) {
+            walk(directory.toPath()) { relative -> if (isClassEntry(relative)) addIfIncluded(relative, names) }
+        }
+
+        override fun explodedApplication(
+            root: File,
+            manifest: Manifest,
+        ) {
+            val libPrefixes = bootLibPrefixes(manifest.mainAttributes)
+            // The walker reads the library folders, so they are not walked here.
+            walk(root.toPath(), skip = { folder -> libPrefixes.any { folder.startsWith(it) } }) { relative ->
+                addApplicationEntry(relative, names)
+            }
+        }
+
+        override fun libraryJar(
+            application: File,
+            jar: File,
+            jarFile: JarFile,
+        ) = addJarClasses(jarFile, names)
+
+        override fun unreadable(
+            location: String,
+            cause: Exception,
+        ) {
+            val nested = cause as? NestedJarException
+            throw ListingFailed(nested?.location ?: location, nested?.cause ?: cause)
+        }
     }
 
-    /** Calls [visit] with the root-relative, `/`-separated path of every file under [root]. */
+    /**
+     * Calls [visit] with the root-relative, `/`-separated path of every file under [root], leaving
+     * out each folder whose path, ending in `/`, [skip] accepts.
+     */
     private fun walk(
         root: Path,
+        skip: (String) -> Boolean = { false },
         visit: (String) -> Unit,
     ) {
         Files.walkFileTree(
@@ -143,6 +165,18 @@ class ClassLister(
             setOf(FileVisitOption.FOLLOW_LINKS),
             Int.MAX_VALUE,
             object : SimpleFileVisitor<Path>() {
+                override fun preVisitDirectory(
+                    dir: Path,
+                    attrs: BasicFileAttributes,
+                ): FileVisitResult =
+                    if (dir != root &&
+                        skip(root.relativize(dir).joinToString("/") + "/")
+                    ) {
+                        FileVisitResult.SKIP_SUBTREE
+                    } else {
+                        FileVisitResult.CONTINUE
+                    }
+
                 override fun visitFile(
                     file: Path,
                     attrs: BasicFileAttributes,
@@ -183,43 +217,6 @@ class ClassLister(
      */
     private fun jarClassPath(entryName: String): String? = if (isClassEntry(entryName)) entryName else versionedClassPath(entryName)
 
-    /** Adds [jar]'s classes to [names] and returns the jars its `Class-Path` names. */
-    private fun listJar(
-        jar: File,
-        names: MutableSet<String>,
-    ): List<File> {
-        JarFile(jar).use { jarFile ->
-            val manifest = jarFile.manifest
-            if (classifier.isBootApplication(manifest)) {
-                for (entry in jarFile.entries()) {
-                    if (!entry.isDirectory) addApplicationEntry(entry.name, names)
-                }
-                listNestedJars(jar, jarFile, manifest?.mainAttributes ?: Attributes(), names)
-            } else {
-                addJarClasses(jarFile, names)
-            }
-            return classPathEntries(jar, manifest)
-        }
-    }
-
-    /**
-     * Adds the classes of a library jar an exploded Spring Boot application keeps on disk, and
-     * returns the jars its `Class-Path` names.
-     */
-    private fun listLibraryJar(
-        jar: File,
-        names: MutableSet<String>,
-    ): List<File> {
-        try {
-            return JarFile(jar).use {
-                addJarClasses(it, names)
-                classPathEntries(jar, it.manifest)
-            }
-        } catch (e: Exception) {
-            throw NestedJarException(jar.path, e)
-        }
-    }
-
     private fun addJarClasses(
         jarFile: JarFile,
         names: MutableSet<String>,
@@ -258,12 +255,13 @@ class ClassLister(
         if (TypeMatchPolicy.isIncluded(name, includes, excludes)) names += name
     }
 
-    /** A root to list. [fromClassPath] is true for an entry of `java.class.path` itself. */
-    private data class Root(
-        val file: File,
-        val fromClassPath: Boolean,
-    )
+    /** Carries the file the listing could not read and why out of the walk. */
+    private class ListingFailed(
+        val location: String,
+        override val cause: Throwable,
+    ) : Exception(cause)
 
+    /** A nested jar [location], written `outer!/entry`, that could not be read. */
     private class NestedJarException(
         val location: String,
         cause: Exception,

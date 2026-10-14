@@ -107,7 +107,7 @@ class StartupClasspathLister(
         try {
             JarFile(jar).use { jarFile ->
                 val manifest = jarFile.manifest
-                val referenced = classPathEntries(jar, manifest)
+                val referenced = classPathEntries(jar, manifest).map { it.file }
                 val origin = DependencyOrigin.FlatJar(jar.toPath())
                 when (classifier.kindOf(manifest)) {
                     JarClassifier.Kind.AGENT -> {
