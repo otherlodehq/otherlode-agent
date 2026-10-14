@@ -23,3 +23,7 @@ A dependency's `location` is for display only (ADR 0030): the jar's path, or its
 ## Consequences
 
 - A path under another user's home folder, as when one user runs a jar from another's, still names that user. That is rare and outside what the agent can know.
+
+## Amended on 2026-10-14: a home folder behind a symbolic link
+
+A location is the real path the JVM reads a jar at (ADR 0030, amended 2026-10-14), and so is every location the sweep reads from a `CodeSource`. When `user.home` sits behind a symbolic link, as when `/home` links to `/usr/home`, a real path does not start with `user.home`, and the location names the person. The registry therefore also matches the real path of `user.home`, read once, and writes either prefix as `~`. Leaving this as a rare case was rejected: the agent resolves the link itself, so the agent causes the leak, unlike the other user's home folder above, which the agent cannot know about. Decided with Luke.

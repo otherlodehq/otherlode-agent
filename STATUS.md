@@ -65,31 +65,27 @@ Known gaps in what it lists, all rare, all listing less than the JVM loads:
 - Boot `PropertiesLauncher` `loader.path` folders (documented as a blind
   spot; the server's coverage rule limits the damage).
 
-### The dependency listing reads a linked jar's `Class-Path` from the link: to fix before release
+### The dependency listing reads a linked jar's `Class-Path` from the link: in flight
 
 Found on 2026-10-14 in the class listing's review. `StartupClasspathLister`
-passes a classpath entry to `listJar` as its absolute path, so
-`classPathEntries` resolves the manifest's relative `Class-Path` entries
-against the folder that holds the symbolic link. The JDK's system loader
-reads the entry through its canonical path, so it resolves them against
-the folder of the jar the link points to. `ClassLister` already does
-this.
+resolves a classpath jar's relative `Class-Path` entries against the folder
+that holds a symbolic link, where the JVM resolves them against the folder
+of the jar the link points to. It also skips a classpath directory that
+holds an exploded Spring Boot application, so that application's library
+jars are found only once a class loads from them. `ClassLister` reads both
+cases right. Decided on 2026-10-14 in ADR 0030's and ADR 0051's amendments
+of that date: one shared walker, the JDK's resolution rules, the real path
+as `location`, exploded Boot applications listed, and `~` matched against
+the real path of `user.home` too.
 
-It matters only when a classpath jar is a link to a jar in another
-folder and its manifest has relative `Class-Path` entries, as in a
-symlink tree such as Bazel runfiles. A link to a jar in the same folder,
-as distros lay out `/usr/share/java`, resolves the same either way. When
-it does matter, a jar the JVM loads is left out of the listing with no
-sign, or a same-named jar beside the link is listed with its version.
-It cannot cause a false removal (server ADR 0066), since every build of
-the service resolves the same wrong path and a dependency is removed
-only after an earlier listing named it.
+Landing order:
 
-Fix: resolve `Class-Path` against the canonical file, as `ClassLister`
-does. Decide whether the reported path stays the link's (what the
-customer configured) or becomes the target's; the reported path is free
-to change only until the first release. Test with a linked jar in
-another folder whose manifest names a sibling jar.
+1. A shared classpath walker, with `ClassLister` moved onto it.
+2. `StartupClasspathLister` moved onto it: the JDK's rules, the real path as
+   `location`, exploded Boot applications, `docs/site/dependencies.md`.
+3. The `~` rule matches the real path of `user.home`.
+4. A test that runs a JVM over a tree of linked jars and checks the walker
+   against what its system loader loads.
 
 ### scalac 3.10.0 drops the fields that name an enum's parameterised cases: to fix
 
