@@ -396,6 +396,22 @@ routine and OpenTelemetry edge cases in the entries below.
 
 ## TODO
 
+### Class listing and flush interval: decided (ADR 0070), to build
+
+Decided on 2026-10-14 with Luke, in a grilling session across the three
+repos, for server ADR 0066 (removed code).
+
+1. `ClassListing` on the wire, sent to `/v1/otherlode/class-listing` in
+   chunks like the baseline, with the include and exclude rules it
+   applied. `StaticBaseline` gains the same rules field.
+   `ResourceAttributes` gains `flush_interval_seconds`.
+2. List names from the baseline's roots and from nested `BOOT-INF/lib`
+   and `WEB-INF/lib` jars, without parsing. Reuse `JarContents`.
+3. `classListingEnabled`, on by default.
+4. Measure the listing's cost on demo-spring and a large classpath.
+5. Update `configuration`, `data-sent`, `overhead` and `classes`.
+6. Collector: the route and the bindings bump.
+
 ### Redacted literals stay unguessable: landed in all three repos
 
 Grilled on 2026-10-10 with Luke. Collector redaction blanked a literal's

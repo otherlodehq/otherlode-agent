@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted, amended by 0070
 ---
 
 # The static baseline is an opt-in classpath scan sent as its own chunked message
@@ -22,3 +22,5 @@ The scan is off by default (`staticBaselineEnabled=false`). It runs once per pro
 - A chunk the collector does not confirm is kept and sent again, in order, one per flush and with one attempt each, after a flush whose own sends the collector confirmed, so a collector that starts after the scan ends (the testkit's, bound in `beforeAll`) still receives the whole baseline. A resent chunk is harmless: a collector keeps received chunks by index. A refusal of the content (400, 413, 422) drops the scan for the process; any other refusal keeps it. A baseline whose first send failed at chunk k of n is complete after n − k more confirmed flushes. Amended 2026-10-03 in a review; the first cut sent once and gave up.
 
 Amended 2026-10-07 in the grill on the customer docs round's follow-ups: a 413 keeps the scan, as a 5xx does, and only a 400 or 422 drops it. A 413 usually comes from a reverse proxy whose limit its operator can raise while the process runs, and delta batches recover from one then (ADR 0009); dropping the scan would leave a restart as the only way to get it. The chunks are already held while any other refusal is retried, so keeping them adds no memory.
+
+Amended 2026-10-14 by ADR 0070: a scan carries the include and exclude rules it applied, as the class listing does, so the server can tell a class outside them from one that is gone.
