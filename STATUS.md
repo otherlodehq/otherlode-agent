@@ -39,16 +39,15 @@ multi-tenant backend.
    jobs use v4 of every action, several majors behind.
 4. **The quickstart** in otherlode.dev's `start/` (that repo's ADR 0001).
    The agent's and collector's pages and the overview are written.
-5. **Before the first customer, in `otherlode-server`'s STATUS:** the
-   "Go-live checklist" (the company, the privacy policy, the domain, the
-   front door; no collector can be given an ingest URL until the front door
-   exists), "Storage: retention, expiry and class records", and "Read
-   performance at realistic scale", still to grill. None of them blocks
-   publishing the agent.
+5. **Before the first customer:** the server STATUS's "Go-live
+   checklist" (the company, the privacy policy, the site, the front door,
+   one snapshot refresh measured on db-f1-micro). No collector can be given
+   an ingest URL until the front door exists. None of it blocks publishing
+   the agent.
 
 After release: what "Parked" lists, the server's performance-only
 deferrals, gzip, a collector config file, and agent-level redaction
-(parked in the server's STATUS, item 18, with its trigger).
+(the server STATUS's parked "Redaction in the agent", with its trigger).
 
 ## TODO
 
