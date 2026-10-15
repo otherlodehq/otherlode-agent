@@ -19,7 +19,10 @@ import java.util.logging.Logger as JulLogger
 
 class StartupClasspathListerTest {
     @TempDir
-    lateinit var dir: Path
+    lateinit var tempDir: Path
+
+    /** The real path of the temp folder, so expected paths match the real paths the walker hands out. */
+    private val dir: Path get() = tempDir.toRealPath()
 
     private fun classPath(vararg paths: Path): String = paths.joinToString(File.pathSeparator) { it.toString() }
 
@@ -474,5 +477,271 @@ class StartupClasspathListerTest {
 
         assertEquals(setOf("org.lib.Old"), listed.single { it.identities.single().artifactId == "lib" }.classNames)
         assertEquals(setOf("org.shared.Both"), listed.single { it.identities.single().artifactId == "other" }.classNames)
+    }
+
+    private fun explodedApplication(
+        relative: String,
+        libFolder: String = "BOOT-INF/lib/",
+        extraManifest: String = "",
+    ): Path {
+        val app = Files.createDirectories(dir.resolve(relative))
+        Files.createDirectories(app.resolve("META-INF"))
+        Files.write(
+            app.resolve("META-INF/MANIFEST.MF"),
+            "Manifest-Version: 1.0\nSpring-Boot-Lib: $libFolder\n$extraManifest\n".toByteArray(),
+        )
+        return app
+    }
+
+    @Test
+    fun `a linked classpath jar is located at its real path and the sibling beside the target is listed, not the one beside the link`() {
+        TestJars.write(dir.resolve("real/sibling-1.0.jar"), listOf(pom("g", "real-sibling", "1.0"), classEntry("org.real.R")))
+        val target =
+            TestJars.write(dir.resolve("real/main-1.0.jar"), listOf(classEntry("org.main.M")), mapOf("Class-Path" to "sibling-1.0.jar"))
+        TestJars.write(dir.resolve("links/sibling-1.0.jar"), listOf(pom("g", "link-sibling", "1.0"), classEntry("org.link.L")))
+        val link = Files.createSymbolicLink(dir.resolve("links/main-1.0.jar"), target)
+
+        val listed = lister(classPath(link)).list()
+
+        assertEquals(listOf("main", "real-sibling"), artifacts(listed))
+        assertEquals(target.toString(), listed[0].location)
+        assertEquals(dir.resolve("real/sibling-1.0.jar").toString(), listed[1].location)
+    }
+
+    @Test
+    fun `a link reached through a Class-Path resolves its own Class-Path against the link's folder and is located at the link`() {
+        val main =
+            TestJars.write(
+                dir.resolve("app/main-1.0.jar"),
+                listOf(classEntry("org.main.M")),
+                mapOf("Class-Path" to "../links/hop-1.0.jar"),
+            )
+        TestJars.write(dir.resolve("real/next-1.0.jar"), listOf(pom("g", "real-next", "1.0"), classEntry("org.real.N")))
+        val hop =
+            TestJars.write(dir.resolve("real/hop-1.0.jar"), listOf(classEntry("org.hop.H")), mapOf("Class-Path" to "next-1.0.jar"))
+        TestJars.write(dir.resolve("links/next-1.0.jar"), listOf(pom("g", "link-next", "1.0"), classEntry("org.link.N")))
+        val link = Files.createSymbolicLink(dir.resolve("links/hop-1.0.jar"), hop)
+
+        val listed = lister(classPath(main)).list()
+
+        assertEquals(listOf("main", "hop", "link-next"), artifacts(listed))
+        assertEquals(link.toString(), listed[1].location)
+        assertEquals(dir.resolve("links/next-1.0.jar").toString(), listed[2].location)
+    }
+
+    @Test
+    fun `an exploded Spring Boot application lists its library jars as dependencies, judged as a jar in a fat jar is`() {
+        val app = explodedApplication("app")
+        Files.createDirectories(app.resolve("BOOT-INF/classes/com/acme"))
+        Files.write(app.resolve("BOOT-INF/classes/com/acme/App.class"), ByteArray(4))
+        TestJars.write(app.resolve("BOOT-INF/classes/not-a-library-1.0.jar"), listOf(classEntry("org.classes.C")))
+        val plain = TestJars.write(app.resolve("BOOT-INF/lib/plain-1.0.jar"), listOf(classEntry("org.plain.P")))
+        TestJars.write(
+            app.resolve("BOOT-INF/lib/agentish-1.0.jar"),
+            listOf(classEntry("org.agentish.A")),
+            mapOf("Premain-Class" to "org.agentish.A"),
+        )
+        val own = TestJars.write(app.resolve("BOOT-INF/lib/acme-module-1.0.jar"), listOf(classEntry("com.acme.module.M")))
+        val judged = mutableListOf<DependencyOrigin>()
+
+        val listed =
+            StartupClasspathLister(listOf("com.acme"), emptyList(), classPath(app), onNotADependency = { judged += it }).list()
+
+        assertEquals(listOf("agentish", "plain"), artifacts(listed).sorted())
+        assertEquals(plain.toString(), listed.single { it.identities.single().artifactId == "plain" }.location)
+        assertEquals(DependencyOrigin.FlatJar(plain), listed.single { it.identities.single().artifactId == "plain" }.origin)
+        assertEquals(
+            listOf<DependencyOrigin>(DependencyOrigin.FlatJar(own)),
+            judged,
+            "only the adopter's own library jar is judged not a dependency",
+        )
+    }
+
+    @Test
+    fun `an exploded application's library jar comes after the system classpath, so a jar with its identity keeps that location`() {
+        val app = explodedApplication("app")
+        TestJars.write(
+            app.resolve("BOOT-INF/lib/lib-1.0.jar"),
+            listOf(pom("g", "lib", "1.0"), classEntry("org.shared.Both"), classEntry("org.lib.OnlyInApp")),
+        )
+        val other = TestJars.write(dir.resolve("other/lib-2.0.jar"), listOf(pom("g", "lib", "2.0"), classEntry("org.shared.Both")))
+
+        val listed = StartupClasspathLister(emptyList(), emptyList(), classPath(app, other), keepClassNames = true).list()
+
+        assertEquals(other.toString(), listed.single().location)
+        assertEquals(setOf("org.shared.Both", "org.lib.OnlyInApp"), listed.single().classNames)
+    }
+
+    @Test
+    fun `a class name held by an exploded application's library and a system classpath jar is credited to the system jar`() {
+        val app = explodedApplication("app")
+        TestJars.write(app.resolve("BOOT-INF/lib/lib-1.0.jar"), listOf(pom("g", "lib", "1.0"), classEntry("org.shared.Both")))
+        val other = TestJars.write(dir.resolve("other-1.0.jar"), listOf(pom("g", "other", "1.0"), classEntry("org.shared.Both")))
+
+        val listed = StartupClasspathLister(emptyList(), emptyList(), classPath(app, other), keepClassNames = true).list()
+
+        assertEquals(setOf("org.shared.Both"), listed.single { it.identities.single().artifactId == "other" }.classNames)
+        assertTrue(listed.single { it.identities.single().artifactId == "lib" }.classNames.isEmpty())
+    }
+
+    @Test
+    fun `an exploded executable war lists the jars under WEB-INF lib and WEB-INF lib-provided`() {
+        val app =
+            explodedApplication(
+                "war",
+                libFolder = "WEB-INF/lib/",
+                extraManifest = "Main-Class: org.springframework.boot.loader.launch.WarLauncher\n",
+            )
+        TestJars.write(app.resolve("WEB-INF/lib/a-1.0.jar"), listOf(classEntry("org.a.A")))
+        TestJars.write(app.resolve("WEB-INF/lib-provided/b-2.0.jar"), listOf(classEntry("org.b.B")))
+        TestJars.write(app.resolve("BOOT-INF/lib/c-3.0.jar"), listOf(classEntry("org.c.C")))
+        TestJars.write(app.resolve("WEB-INF/classes/d-4.0.jar"), listOf(classEntry("org.d.D")))
+
+        assertEquals(listOf("a", "b"), artifacts(lister(classPath(app)).list()))
+    }
+
+    @Test
+    fun `a jar whose contents cannot be judged is skipped with one WARNING naming it, and its Class-Path is still followed`() {
+        TestJars.write(dir.resolve("next-1.0.jar"), listOf(classEntry("org.next.N")))
+        val bad = dir.resolve("bad-1.0.jar")
+        TestJars.write(
+            bad,
+            listOf("META-INF/maven/g/bad/pom.properties" to "groupId=g\nartifactId=bad\nversion=1.0\n".repeat(50).toByteArray()),
+            mapOf("Class-Path" to "next-1.0.jar"),
+        )
+        corruptEntryData(bad, "META-INF/maven/g/bad/pom.properties")
+        val lib = TestJars.write(dir.resolve("lib-1.0.jar"), listOf(classEntry("org.lib.L")))
+
+        lateinit var listed: List<ListedDependency>
+        val records = captureLogRecords { listed = lister(classPath(bad, lib)).list() }
+
+        assertEquals(listOf("next", "lib"), artifacts(listed))
+        val warnings = records.filter { it.level == JulLevel.WARNING }
+        assertEquals(1, warnings.size)
+        assertTrue(warnings.single().message.contains(bad.toString()), warnings.single().message)
+    }
+
+    /** Overwrites the first bytes of the compressed data of [entryName] in [jar], so reading the entry fails. */
+    private fun corruptEntryData(
+        jar: Path,
+        entryName: String,
+    ) {
+        val bytes = Files.readAllBytes(jar)
+        val name = entryName.toByteArray()
+        val at = (0..bytes.size - name.size).first { index -> name.indices.all { bytes[index + it] == name[it] } }
+        // The local header's extra field length sits two bytes before the name.
+        val extra = (bytes[at - 2].toInt() and 0xff) or ((bytes[at - 1].toInt() and 0xff) shl 8)
+        val data = at + name.size + extra
+        for (offset in 0 until 4) bytes[data + offset] = 0xff.toByte()
+        Files.write(jar, bytes)
+    }
+
+    @Test
+    fun `a Class-Path entry ending in a slash is read only as a directory, so a jar file it names is not listed`() {
+        TestJars.write(dir.resolve("libs/named-1.0.jar"), listOf(classEntry("org.named.N")))
+        TestJars.write(dir.resolve("libs/slash-1.0.jar"), listOf(classEntry("org.slash.S")))
+        val app =
+            TestJars.write(
+                dir.resolve("app-1.0.jar"),
+                listOf(classEntry("org.app.A")),
+                mapOf("Class-Path" to "libs/named-1.0.jar libs/slash-1.0.jar/"),
+            )
+
+        assertEquals(listOf("app", "named"), artifacts(lister(classPath(app)).list()))
+    }
+
+    @Test
+    fun `a Class-Path entry naming a folder reads it only when it ends in a slash`() {
+        val unpacked = explodedApplication("unpacked")
+        TestJars.write(unpacked.resolve("BOOT-INF/lib/inner-1.0.jar"), listOf(classEntry("org.inner.I")))
+        val withSlash =
+            TestJars.write(dir.resolve("a-1.0.jar"), listOf(classEntry("org.a.A")), mapOf("Class-Path" to "unpacked/"))
+        val withoutSlash =
+            TestJars.write(dir.resolve("b-1.0.jar"), listOf(classEntry("org.b.B")), mapOf("Class-Path" to "unpacked"))
+
+        assertEquals(listOf("a", "inner"), artifacts(lister(classPath(withSlash)).list()))
+        assertEquals(listOf("b"), artifacts(lister(classPath(withoutSlash)).list()))
+    }
+
+    @Test
+    fun `a jar reached at two paths is judged once, at the first, so no second record waits for a load it never gets`() {
+        val core = TestJars.write(dir.resolve("store/foo-core-1.2.jar"), listOf(classEntry("org.foo.Foo")))
+        val link = Files.createSymbolicLink(dir.resolve("foo.jar"), core)
+        val app = TestJars.write(dir.resolve("app-1.0.jar"), listOf(classEntry("org.app.App")), mapOf("Class-Path" to "foo.jar"))
+
+        val listed = lister(classPath(link, app)).list()
+
+        assertEquals(listOf("foo-core", "app"), artifacts(listed))
+        assertEquals(core.toString(), listed[0].location)
+    }
+
+    @Test
+    fun `a jar an exploded application's library names in its Class-Path is judged as a library, whatever the name order`() {
+        val app = explodedApplication("app")
+        TestJars.write(app.resolve("BOOT-INF/lib/a-1.0.jar"), listOf(classEntry("org.a.A")), mapOf("Class-Path" to "zagentish-1.0.jar"))
+        TestJars.write(
+            app.resolve("BOOT-INF/lib/zagentish-1.0.jar"),
+            listOf(classEntry("org.agentish.Z")),
+            mapOf("Premain-Class" to "org.agentish.Z"),
+        )
+
+        assertEquals(listOf("a", "zagentish"), artifacts(lister(classPath(app)).list()))
+    }
+
+    @Test
+    fun `a library jar that cannot be read is skipped with one WARNING naming it and its siblings are still listed`() {
+        val app = explodedApplication("app")
+        TestJars.write(app.resolve("BOOT-INF/lib/a-1.0.jar"), listOf(classEntry("org.a.A")))
+        Files.write(app.resolve("BOOT-INF/lib/broken-1.0.jar"), "not a zip".toByteArray())
+        TestJars.write(app.resolve("BOOT-INF/lib/c-1.0.jar"), listOf(classEntry("org.c.C")))
+        lateinit var listed: List<ListedDependency>
+
+        val warnings = captureLogRecords { listed = lister(classPath(app)).list() }.filter { it.level == JulLevel.WARNING }
+
+        assertEquals(listOf("a", "c"), artifacts(listed))
+        assertEquals(1, warnings.size)
+        assertTrue(warnings.single().message.contains("BOOT-INF/lib/broken-1.0.jar"), warnings.single().message)
+    }
+
+    @Test
+    fun `an exploded application whose classpath index is malformed is skipped with one WARNING and the listing goes on`() {
+        val app = explodedApplication("app")
+        TestJars.write(app.resolve("BOOT-INF/lib/a-1.0.jar"), listOf(classEntry("org.a.A")))
+        Files.write(app.resolve("BOOT-INF/classpath.idx"), "BOOT-INF/lib/a-1.0.jar\n".toByteArray())
+        val other = TestJars.write(dir.resolve("other-1.0.jar"), listOf(classEntry("org.other.O")))
+        lateinit var listed: List<ListedDependency>
+
+        val warnings = captureLogRecords { listed = lister(classPath(app, other)).list() }.filter { it.level == JulLevel.WARNING }
+
+        assertEquals(listOf("other"), artifacts(listed))
+        assertEquals(1, warnings.size)
+        assertTrue(warnings.single().message.contains(app.toString()), warnings.single().message)
+    }
+
+    @Test
+    fun `a classpath jar an exploded application also holds is judged once, by the system loader that reads it first`() {
+        val core = TestJars.write(dir.resolve("store/foo-core-1.2.jar"), listOf(classEntry("org.foo.Foo")))
+        val app = explodedApplication("app")
+        Files.createDirectories(app.resolve("BOOT-INF/lib"))
+        Files.createSymbolicLink(app.resolve("BOOT-INF/lib/foo.jar"), core)
+
+        assertEquals(listOf("foo-core"), artifacts(lister(classPath(core, app)).list()))
+    }
+
+    @Test
+    fun `an agent jar on the classpath stays not a dependency when an exploded application also holds it`() {
+        val agent =
+            TestJars.write(
+                dir.resolve("otel-1.0.jar"),
+                listOf(classEntry("io.otel.Agent")),
+                mapOf(
+                    "Premain-Class" to "io.otel.Agent",
+                ),
+            )
+        val app = explodedApplication("app")
+        Files.createDirectories(app.resolve("BOOT-INF/lib"))
+        Files.createSymbolicLink(app.resolve("BOOT-INF/lib/otel.jar"), agent)
+
+        assertEquals(emptyList(), artifacts(lister(classPath(agent, app)).list()))
     }
 }

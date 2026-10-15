@@ -33,7 +33,7 @@ import java.util.zip.ZipInputStream
  * does not exist holds nothing, as the JVM ignores it. Any file on the classpath is read as a jar,
  * whatever its extension, as the system loader does:
  *
- * - A Spring Boot fat jar or executable war contributes the classes under `BOOT-INF/classes/` or
+ * - A Spring Boot fat jar or executable war the system loader reads contributes the classes under `BOOT-INF/classes/` or
  *   `WEB-INF/classes/`, named without that prefix, the classes at its own root, and the classes of
  *   each nested jar Boot's launcher puts on the classpath.
  * - Any other jar contributes its classes, a jar that names an agent included: the include rules

@@ -301,7 +301,7 @@ The warning appears only with `staticBaselineEnabled=true`. The scan walks the c
 
 The consequence is for the never-loaded finding. The scan cannot list what it cannot see, so a class in such a location can never be reported as never loaded. Treat that finding as incomplete for this deployment. A variant of the line says `registered dynamically before the static baseline scan finished`; it has the same cause. [Classes](classes) explains the baseline and its limits.
 
-The dependency listing has its own warnings, such as `otherlode: the startup dependency listing failed; no dependencies will be reported` and `otherlode: could not read <jar> for the dependency listing, skipping it`. They mean the listing skipped a jar or all jars, so dependency findings for this instance are missing or incomplete. [Dependencies](dependencies) describes the listing.
+The dependency listing has its own warnings, such as `otherlode: the startup dependency listing failed; no dependencies will be reported` and `otherlode: could not read <path> for the dependency listing, skipping it`. They mean the listing skipped a jar, the libraries of an unpacked Spring Boot application, or all jars, so dependency findings for this instance are missing or incomplete. [Dependencies](dependencies) describes the listing.
 
 ## HotSwap is refused
 

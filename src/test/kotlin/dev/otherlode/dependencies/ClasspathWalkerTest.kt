@@ -205,7 +205,7 @@ class ClasspathWalkerTest {
             listOf(
                 "app:app",
                 "lib:app/BOOT-INF/lib/c.jar",
-                "jar:extra.jar",
+                "lib:extra.jar",
                 "lib:app/BOOT-INF/lib/nested/deep/b.dat",
                 "lib:app/BOOT-INF/lib/z.jar",
             ),
@@ -298,7 +298,7 @@ class ClasspathWalkerTest {
 
         assertEquals(
             // Boot's loader has opened sibling.jar's URL through the Class-Path, so the library entry adds nothing.
-            listOf("app:app", "lib:app/BOOT-INF/lib/core.jar", "jar:app/BOOT-INF/lib/sibling.jar"),
+            listOf("app:app", "lib:app/BOOT-INF/lib/core.jar", "lib:app/BOOT-INF/lib/sibling.jar"),
             walk(app),
         )
     }
@@ -407,7 +407,7 @@ class ClasspathWalkerTest {
         jar("named.jar")
 
         assertEquals(
-            listOf("app:app", "jar:after.jar", "jar:named.jar", "lib:app/BOOT-INF/lib/core.jar", "jar:extra/cp.jar"),
+            listOf("app:app", "jar:after.jar", "jar:named.jar", "lib:app/BOOT-INF/lib/core.jar", "lib:extra/cp.jar"),
             walk(app, after),
         )
     }

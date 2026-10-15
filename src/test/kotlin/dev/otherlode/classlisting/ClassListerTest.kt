@@ -467,4 +467,19 @@ class ClassListerTest {
 
         assertNull(lister(classPath(dir.resolve("classes"), garbage)).list())
     }
+
+    @Test
+    fun `a fat jar an exploded application's library names in its Class-Path is read as a plain jar, as its loader opens it`() {
+        val app = Files.createDirectories(dir.resolve("workspace"))
+        Files.createDirectories(app.resolve("META-INF"))
+        Files.write(app.resolve("META-INF/MANIFEST.MF"), "Manifest-Version: 1.0\nSpring-Boot-Lib: BOOT-INF/lib/\n\n".toByteArray())
+        TestJars.write(app.resolve("BOOT-INF/lib/core.jar"), listOf(classEntry("com.acme.core.Core")), mapOf("Class-Path" to "fat.jar"))
+        TestJars.write(
+            app.resolve("BOOT-INF/lib/fat.jar"),
+            listOf(classEntry("com.acme.Root"), "BOOT-INF/classes/com/acme/Inner.class" to ByteArray(4)),
+            mapOf("Spring-Boot-Lib" to "BOOT-INF/lib/"),
+        )
+
+        assertEquals(listOf("com.acme.Root", "com.acme.core.Core"), lister(classPath(app)).list())
+    }
 }

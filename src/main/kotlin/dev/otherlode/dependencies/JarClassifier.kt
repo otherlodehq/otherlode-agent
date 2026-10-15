@@ -10,9 +10,10 @@ import java.util.jar.Manifest
  * The rules for whether a jar is a dependency, shared by the startup listing and by the sweep
  * when it meets a jar the listing never saw.
  *
- * A jar on its own (on the classpath, or opened through a `file:` URL) is never a dependency when
- * its manifest names an agent or marks it as a Spring Boot fat jar or executable war
- * ([kindOf]). A jar stored inside a fat jar is judged by the adopter's-own rule alone. The agent
+ * A jar on its own (one the system loader reads, or one the sweep meets through a `file:` URL) is
+ * never a dependency when its manifest names an agent or marks it as a Spring Boot fat jar or
+ * executable war ([kindOf]). A jar stored inside a fat jar, or one an exploded Spring Boot
+ * application's own loader reads, is judged by the adopter's-own rule alone. The agent
  * rule exists because a `-javaagent` jar sits on the classpath; a jar under `BOOT-INF/lib` that
  * carries `Premain-Class`, such as `byte-buddy-agent`, is a library the application calls, not a
  * running agent, so it stays a dependency.
@@ -78,7 +79,8 @@ internal class JarClassifier(
     }
 
     /**
-     * Judges a jar stored inside a fat jar: null when it is the agent's or the adopter's own, else the dependency
+     * Judges a jar stored inside a fat jar, or one an exploded Spring Boot application's own loader
+     * reads: null when it is the agent's or the adopter's own, else the dependency
      * with its identity read. [displayName] names the jar in the INFO line the adopter's-own rule
      * may log.
      */

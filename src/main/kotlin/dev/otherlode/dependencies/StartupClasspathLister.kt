@@ -8,6 +8,7 @@ import java.io.File
 import java.lang.System.Logger.Level
 import java.util.jar.Attributes
 import java.util.jar.JarFile
+import java.util.jar.Manifest
 import java.util.zip.ZipInputStream
 
 /**
@@ -27,17 +28,23 @@ data class ListedDependency(
 /**
  * Lists the dependencies on the startup classpath.
  *
- * Walks every entry of [classPath] (split on [File.pathSeparator]) and every jar a manifest
- * `Class-Path` attribute reaches from one, resolved against the referencing jar the way the JDK's
- * system loader resolves it, each jar once. Like the system loader, any file that is not a
- * directory is read as a jar, whatever its extension. A missing entry and a directory are never
- * dependencies. Neither is a jar whose manifest names an agent (`Premain-Class` or
- * `Launcher-Agent-Class`), though its `Class-Path` is still followed.
+ * Which files are read, at which paths and in what order is [ClasspathWalker]'s: each entry of
+ * [classPath] (split on [File.pathSeparator]), the files a manifest `Class-Path` reaches from one,
+ * and an exploded Spring Boot application's libraries, as the JVM's class loaders read them. The
+ * order is the search order. A dependency's location is the path the walker read its jar at.
+ *
+ * A file on the classpath is read as a jar, whatever its extension. A missing entry and a
+ * directory are never dependencies. Neither is a jar whose manifest names an agent
+ * (`Premain-Class` or `Launcher-Agent-Class`), though its `Class-Path` is still followed.
  *
  * A Spring Boot fat jar or executable war (a manifest with `Spring-Boot-Classpath-Index` or
  * `Spring-Boot-Lib`) is the application, never a dependency. Its dependencies are the nested jars
  * Boot's launcher puts on the classpath (see [nestedJarNames]), each streamed from the outer jar
- * with nothing extracted to disk.
+ * with nothing extracted to disk. An exploded application on the classpath is the same: its own
+ * classes are the adopter's, and each jar its own loader reads is judged as a jar stored in a fat
+ * jar is, so a library jar that names an agent is still a dependency.
+ *
+ * A file the walker reaches at two paths is judged once, at the first, and keeps that location.
  *
  * A jar holding any class the include rules admit is the adopter's own and not a dependency.
  * [JarClassifier] holds these rules, shared with the sweep's discovery at load.
@@ -67,18 +74,9 @@ class StartupClasspathLister(
     /** Walks the classpath and returns the dependencies found, in the order the JDK would search them. */
     fun list(): List<ListedDependency> {
         val found = LinkedHashMap<List<String>, ListedDependency>()
-        val visited = mutableSetOf<File>()
         val claimed = HashSet<String>()
-        val pending = ArrayDeque(classPath.split(File.pathSeparator).filter { it.isNotEmpty() }.map(::File))
-        while (pending.isNotEmpty()) {
-            val root = pending.removeFirst()
-            if (!root.isFile) continue
-            val canonical = runCatching { root.canonicalFile }.getOrDefault(root.absoluteFile)
-            if (!visited.add(canonical)) continue
-            val referenced = listJar(root.absoluteFile) { add(found, claimed, it) }
-            // Searched straight after the jar naming them, before the next classpath entry, as the JDK does.
-            referenced.asReversed().forEach(pending::addFirst)
-        }
+        val entries = classPath.split(File.pathSeparator).filter { it.isNotEmpty() }
+        ClasspathWalker(classifier).walk(entries, Listing { add(found, claimed, it) })
         return found.values.toList()
     }
 
@@ -99,54 +97,87 @@ class StartupClasspathLister(
         if (keepClassNames) found[key] = first.copy(classNames = first.classNames + kept.classNames)
     }
 
-    /** Lists one flat jar, reporting each dependency it yields to [emit]; returns the jars its `Class-Path` names. */
-    private fun listJar(
-        jar: File,
-        emit: (ListedDependency) -> Unit,
-    ): List<File> {
-        try {
-            JarFile(jar).use { jarFile ->
-                val manifest = jarFile.manifest
-                val referenced = classPathEntries(jar, manifest).map { it.file }
-                val origin = DependencyOrigin.FlatJar(jar.toPath())
-                when (classifier.kindOf(manifest)) {
-                    JarClassifier.Kind.AGENT -> {
-                        onNotADependency(origin)
-                    }
+    /** Reports to [emit] each dependency the walker's files yield, and skips a file it cannot read with one WARNING. */
+    private inner class Listing(
+        private val emit: (ListedDependency) -> Unit,
+    ) : ClasspathVisitor {
+        /** The real path of each file already judged. */
+        private val judged = HashSet<File>()
 
-                    JarClassifier.Kind.BOOT_APPLICATION -> {
-                        onNotADependency(origin)
-                        listNestedJars(jar, jarFile, manifest?.mainAttributes ?: Attributes(), emit)
-                    }
+        /**
+         * Whether [jar] is judged for the first time. The walker reads a file once for each path and
+         * loader it is reached by, as the JVM does. The first read in search order is where the
+         * file's classes load from, so it decides. A second judgement could only add a record that
+         * never counts a load, or contradict the first.
+         */
+        private fun firstJudgement(jar: File): Boolean =
+            judged.add(runCatching { jar.toPath().toRealPath().toFile() }.getOrDefault(jar.absoluteFile))
 
-                    JarClassifier.Kind.ORDINARY -> {
-                        val listed = classifier.classifyFlat(JarContents.of(jarFile), jar.name, jar.path, origin)
-                        if (listed != null) emit(listed) else onNotADependency(origin)
-                    }
+        override fun jar(
+            jar: File,
+            jarFile: JarFile,
+        ) {
+            if (!firstJudgement(jar)) return
+            val manifest = jarFile.manifest
+            val origin = DependencyOrigin.FlatJar(jar.toPath())
+            when (classifier.kindOf(manifest)) {
+                JarClassifier.Kind.AGENT -> {
+                    onNotADependency(origin)
                 }
-                return referenced
-            }
-        } catch (e: Exception) {
-            log.log(Level.WARNING, "otherlode: could not read $jar for the dependency listing, skipping it", e)
-            return emptyList()
-        }
-    }
 
-    private fun listNestedJars(
-        outer: File,
-        jarFile: JarFile,
-        attributes: Attributes,
-        emit: (ListedDependency) -> Unit,
-    ) {
-        for (entryName in nestedJarNames(jarFile, attributes)) {
-            val entry = jarFile.getJarEntry(entryName) ?: continue
-            try {
-                val contents = ZipInputStream(jarFile.getInputStream(entry)).use(JarContents::of)
-                val origin = DependencyOrigin.NestedJar(outer.toPath(), entryName)
-                val listed = classifier.classifyNested(contents, entryName.substringAfterLast('/'), entryName, "$outer!/$entryName", origin)
-                if (listed != null) emit(listed) else onNotADependency(origin)
-            } catch (e: Exception) {
-                log.log(Level.WARNING, "otherlode: could not read $outer!/$entryName for the dependency listing, skipping it", e)
+                JarClassifier.Kind.BOOT_APPLICATION -> {
+                    onNotADependency(origin)
+                    listNestedJars(jar, jarFile, manifest?.mainAttributes ?: Attributes())
+                }
+
+                JarClassifier.Kind.ORDINARY -> {
+                    val listed = classifier.classifyFlat(JarContents.of(jarFile), jar.name, jar.path, origin)
+                    if (listed != null) emit(listed) else onNotADependency(origin)
+                }
+            }
+        }
+
+        override fun directory(directory: File) = Unit
+
+        override fun explodedApplication(
+            root: File,
+            manifest: Manifest,
+        ) = Unit
+
+        override fun libraryJar(
+            application: File,
+            jar: File,
+            jarFile: JarFile,
+        ) {
+            if (!firstJudgement(jar)) return
+            val origin = DependencyOrigin.FlatJar(jar.toPath())
+            val listed = classifier.classifyNested(JarContents.of(jarFile), jar.name, jar.path, jar.path, origin)
+            if (listed != null) emit(listed) else onNotADependency(origin)
+        }
+
+        override fun unreadable(
+            location: String,
+            cause: Exception,
+        ) {
+            log.log(Level.WARNING, "otherlode: could not read $location for the dependency listing, skipping it", cause)
+        }
+
+        private fun listNestedJars(
+            outer: File,
+            jarFile: JarFile,
+            attributes: Attributes,
+        ) {
+            for (entryName in nestedJarNames(jarFile, attributes)) {
+                val entry = jarFile.getJarEntry(entryName) ?: continue
+                try {
+                    val contents = ZipInputStream(jarFile.getInputStream(entry)).use(JarContents::of)
+                    val origin = DependencyOrigin.NestedJar(outer.toPath(), entryName)
+                    val listed =
+                        classifier.classifyNested(contents, entryName.substringAfterLast('/'), entryName, "$outer!/$entryName", origin)
+                    if (listed != null) emit(listed) else onNotADependency(origin)
+                } catch (e: Exception) {
+                    unreadable("$outer!/$entryName", e)
+                }
             }
         }
     }

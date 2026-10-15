@@ -12,7 +12,7 @@ A dependency is one jar on the classpath that is not your own code. These jars a
 
 - A jar that holds any class your [include rules](configuration) admit. It is your own code, even when it also bundles other libraries. When such a jar also holds classes outside your include rules, the agent logs one INFO line naming the jar and the count of those classes.
 - A classpath directory, and `BOOT-INF/classes` or `WEB-INF/classes` inside a fat jar.
-- A jar on the classpath whose manifest has `Premain-Class` or `Launcher-Agent-Class`, so the Otherlode agent, an OpenTelemetry agent, and a profiler never read as unused. The agent also skips the jar it was loaded from, and any jar that holds a class in its own package. A jar nested inside a fat jar is judged by the include rules alone, so a library such as `byte-buddy-agent` that carries `Premain-Class` stays a dependency there.
+- A jar on the classpath whose manifest has `Premain-Class` or `Launcher-Agent-Class`, so the Otherlode agent, an OpenTelemetry agent, and a profiler never read as unused. The agent also skips the jar it was loaded from, and any jar that holds a class in its own package. A jar nested inside a fat jar, or one an unpacked Spring Boot application's own class loader reads (its library folders, its classpath index, and the jars their `Class-Path` names), is judged by the include rules alone, so a library such as `byte-buddy-agent` that carries `Premain-Class` stays a dependency there.
 - A Spring Boot fat jar or executable WAR itself. Its manifest has `Spring-Boot-Classpath-Index` or `Spring-Boot-Lib`. The jars nested inside it are the dependencies.
 
 A service shipped as one shaded jar that holds your code therefore reports no dependencies.
@@ -22,7 +22,7 @@ A service shipped as one shaded jar that holds your code therefore reports no de
 The agent identifies a jar by `groupId:artifactId`, in this order:
 
 1. Each `META-INF/maven/<group>/<artifact>/pom.properties` that has an `artifactId`. The version comes from the same file.
-2. The file name, when no `pom.properties` names an artifact. The agent strips a `.jar` or `.zip` extension, then splits at the first `-` after which the rest looks like a version: digits with a dot, or digits followed by `-SNAPSHOT`, then any qualifiers. `guava-33.0.0-jre.jar` is `guava` at `33.0.0-jre`. A bare number is not a version, so `endpoints-ktor-2.jar` is all artifact name. A file-name identity has an empty group, and the jar's manifest `Implementation-Version` fills in a version the file name lacks.
+2. The file name, when no `pom.properties` names an artifact. It is the name of the file at the path the agent reads, which for a `java.class.path` entry is the file its symbolic links point to. The agent strips a `.jar` or `.zip` extension, then splits at the first `-` after which the rest looks like a version: digits with a dot, or digits followed by `-SNAPSHOT`, then any qualifiers. `guava-33.0.0-jre.jar` is `guava` at `33.0.0-jre`. A bare number is not a version, so `endpoints-ktor-2.jar` is all artifact name. A file-name identity has an empty group, and the jar's manifest `Implementation-Version` fills in a version the file name lacks.
 
 The manifest's `Implementation-Title` is never used. Several jars can share one title.
 
@@ -32,7 +32,7 @@ A jar with several `pom.properties` files, which is what a shaded jar has, is on
 
 ### Location
 
-Each dependency carries a location for display. For a jar on disk it is the jar's path, and for a nested jar it is the entry path, such as `BOOT-INF/lib/jackson-databind-2.17.0.jar`. A leading home folder (the `user.home` system property) is written as `~`, so a jar in the Maven cache shows as `~/.m2/repository/...` and the path does not name the person running the agent. Only a whole leading folder matches: `/home/al` does not rewrite `/home/alice/x.jar`.
+Each dependency carries a location for display. For a jar on disk it is the path the JVM reads the jar at. For an entry of `java.class.path` it is the entry's real path, with every symbolic link in it followed. A jar a manifest `Class-Path` names shows the path the manifest gives, resolved against the folder of the jar that names it. A jar in an unpacked Spring Boot application shows its path under the application's folder. A jar reached at two paths shows the first one in search order. For a nested jar it is the entry path, such as `BOOT-INF/lib/jackson-databind-2.17.0.jar`. A leading home folder (the `user.home` system property) is written as `~`, so a jar in the Maven cache shows as `~/.m2/repository/...` and the path does not name the person running the agent. Only a whole leading folder matches: `/home/al` does not rewrite `/home/alice/x.jar`.
 
 ## Where the agent looks
 
@@ -40,12 +40,13 @@ The agent lists the startup classpath once per process, off the application's ma
 
 | Source | What the agent reads |
 |---|---|
-| `java.class.path` | Each entry that is a file. It reads any non-directory as a jar, whatever its extension, as the JDK's system loader does. |
-| Manifest `Class-Path` | Each `file:` entry a jar names, searched right after the jar that names it. |
+| `java.class.path` | Each entry, read through its real path. A file is read as a jar, whatever its extension, as the JDK's system loader does. A directory is not a dependency itself. |
+| Manifest `Class-Path` | Each `file:` entry a jar names, searched right after the jar that names it. An entry ending in `/` is a directory, never a dependency. |
+| Unpacked Spring Boot application on the classpath | Every file under `BOOT-INF/lib/`, or `WEB-INF/lib/` and `WEB-INF/lib-provided/`, plus every jar its classpath index names. Each is a dependency unless it holds your own classes. A jar there that names an agent is still a dependency, as in a fat jar. These are searched after every `java.class.path` entry, as Spring Boot's class loader asks the JVM's loader first. |
 | Spring Boot executable jar | Every file under `BOOT-INF/lib/`, streamed out of the fat jar with nothing extracted to disk. |
 | Executable WAR | Every file under `WEB-INF/lib/` and `WEB-INF/lib-provided/`. |
 
-The agent does not read Spring Boot's classpath index. A packaged launch ignores it, and it can leave out a jar that still runs.
+The agent reads Spring Boot's classpath index only for an unpacked application, as Spring Boot's launcher does. A packaged launch ignores the index, and it can leave out a jar that still runs, so the agent lists every file under the library folders of a packaged jar.
 
 A jar the agent cannot read is skipped with one WARNING, and the listing continues. If the whole listing fails, the agent logs a WARNING, reports no dependencies from that instance, and the server reads the instance as having none listed, not as having a partial list.
 

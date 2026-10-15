@@ -189,7 +189,7 @@ The listing holds names only. It reads no class file, so it says which classes e
 
 It reads the classpath the way the JVM's system class loader does:
 
-- Each entry of `java.class.path`, read through its real path when it is a symbolic link, and the jars that a manifest `Class-Path` names. A directory is walked, and any other file is read as a jar, whatever its extension.
+- Each entry of `java.class.path`, read through its real path with every symbolic link in it followed, and the jars that a manifest `Class-Path` names. A directory is walked, and any other file is read as a jar, whatever its extension.
 - In a Spring Boot executable jar or WAR, the classes under `BOOT-INF/classes/` or `WEB-INF/classes/`, and the classes in each nested jar under `BOOT-INF/lib/`, or `WEB-INF/lib/` and `WEB-INF/lib-provided/`. A multi-module application keeps its own classes in nested jars, and `includePackages` filters them like any other.
 - A directory that holds an unpacked Spring Boot application, as a container image built by Spring Boot's build plugins or a buildpack runs it, the same way: its `BOOT-INF/classes/`, every jar in its library folder, and every jar or folder its classpath index names.
 

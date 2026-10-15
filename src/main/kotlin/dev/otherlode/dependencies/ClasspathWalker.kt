@@ -13,10 +13,7 @@ import java.util.jar.Manifest
  * thread, and a [JarFile] it hands over is closed when the callback returns.
  */
 internal interface ClasspathVisitor {
-    /**
-     * A jar on its own: an entry of `java.class.path`, or a jar a `Class-Path` names, including
-     * one that an exploded application's library jar names.
-     */
+    /** A jar the system loader reads: an entry of `java.class.path`, or a jar a `Class-Path` names. */
     fun jar(
         jar: File,
         jarFile: JarFile,
@@ -35,7 +32,10 @@ internal interface ClasspathVisitor {
         manifest: Manifest,
     )
 
-    /** A jar in the library folders or the classpath index of the exploded Spring Boot application at [application]. */
+    /**
+     * A jar the loader of the exploded Spring Boot application at [application] reads: one in its
+     * library folders or classpath index, or one their `Class-Path` names.
+     */
     fun libraryJar(
         application: File,
         jar: File,
@@ -116,14 +116,9 @@ internal class ClasspathWalker(
                         emptyList()
                     }
 
-                    root.kind == Root.Kind.LIBRARY ->
-                        readJar(
-                            file,
-                            root.application,
-                            visitor,
-                        ) { visitor.libraryJar(root.application!!, file, it) }
+                    root.application != null -> readJar(file, root.application, visitor) { visitor.libraryJar(root.application, file, it) }
 
-                    else -> readJar(file, root.application, visitor) { visitor.jar(file, it) }
+                    else -> readJar(file, null, visitor) { visitor.jar(file, it) }
                 }
             // The first of them is read first, so it goes on the front last.
             next.asReversed().forEach(pending::addFirst)

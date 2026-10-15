@@ -452,7 +452,7 @@ A finding about a whole class. A class holds at most one, the first that applies
 
 | Value | Meaning |
 |---|---|
-| `STARTUP_CLASSPATH` | Listed from the startup classpath, which includes the jars under a fat jar's `BOOT-INF/lib`, `WEB-INF/lib` and `lib-provided`. |
+| `STARTUP_CLASSPATH` | Listed from the startup classpath, which includes the jars under a fat jar's or an unpacked Spring Boot application's `BOOT-INF/lib`, `WEB-INF/lib` and `lib-provided`. |
 | `LOAD` | Seen only because a class from it loaded. Such a dependency never reads as unloaded. |
 
 ### DisabledEndpointModuleKind
