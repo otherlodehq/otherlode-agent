@@ -1,5 +1,5 @@
 ---
-description: Build a settled design as sequential chunks, autonomously through the landing order. A Sonnet subagent implements each chunk from a written brief and hands back; the main session reviews the implementation and fixes findings, a fresh Opus reviewer re-reviews every big fix until the main session is satisfied, then it runs the build, commits one chunk per commit, and continues to the next unless the user asked for a breakpoint. Manual invocation only.
+description: Build a settled design as sequential chunks, autonomously through the landing order. A Sonnet subagent implements each chunk from a written brief and hands back; a fresh Opus reviewer and the main session review it, the main session fixes every finding that holds, and every big fix goes back to a fresh Opus reviewer until both are satisfied; then it runs the build, commits one chunk per commit, and continues to the next unless the user asked for a breakpoint. Manual invocation only.
 argument-hint: [which chunk to build next, or the design section that lists the landing order]
 disable-model-invocation: true
 ---
@@ -7,9 +7,9 @@ disable-model-invocation: true
 # Chunked build
 
 Turn an already-settled design into code one chunk at a time. Each chunk is
-built by a Sonnet subagent from a brief this session writes, reviewed here
-by reading the implementation, its big fixes re-reviewed by a fresh Opus
-subagent, and committed only after a clean pass.
+built by a Sonnet subagent from a brief this session writes, reviewed by a fresh Opus
+subagent and by this session, its big fixes re-reviewed by another fresh
+Opus subagent, and committed only after a clean pass.
 `$ARGUMENTS` names the chunk to build next, or the design section whose
 landing order says what comes next.
 
@@ -21,8 +21,8 @@ landing order says what comes next.
 - One Sonnet subagent (`general-purpose`, `model: sonnet`) implements one
   chunk, with "do not commit" in its brief. It hands back to the main
   session; it does not decide.
-- A fresh Opus subagent (`general-purpose`, `model: opus`) reviews each big
-  fix the main session makes. It reports findings and never edits. A new
+- A fresh Opus subagent (`general-purpose`, `model: opus`) reviews each chunk's
+  diff, then each big fix the main session makes. It reports findings and never edits. A new
   reviewer each round, so no reviewer checks its own earlier advice.
 - Research and fact-finding (reading library sources, compiling scratch
   fixtures, running `javap`) go to Opus subagents too, never to the
@@ -80,6 +80,10 @@ need a decision the design did not make.
 
 ## 3. Review the implementation, not the report
 
+Hand the chunk's uncommitted diff to a fresh Opus reviewer, briefed as
+step 4 describes, and read the implementation yourself while it runs.
+Treat its report as step 4 does.
+
 Read the diff of every main-source file the chunk changed, in full. Trace
 the new rule from the one place it is defined through every caller, and
 confirm two callers that must agree (a reactive path and a static one, an
@@ -117,7 +121,7 @@ code or the library source before acting on it, fix the ones that hold,
 and say why the others do not.
 
 Repeat (review, fix, a fresh Opus review of every big fix) until the main
-session is happy and a full pass finds nothing. Small fixes are re-read
+session and the reviewer are both happy and a full pass finds nothing. Small fixes are re-read
 here and need no reviewer. The commit follows a clean pass, not the last
 fix.
 
