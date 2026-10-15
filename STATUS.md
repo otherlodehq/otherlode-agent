@@ -24,10 +24,7 @@ multi-tenant backend.
    (15.2 s and 18.2 s without), than pinned locally in Docker (21.5 s over
    6.8 s on one CPU), and nobody has looked into why. Then re-run on the
    commit to be tagged and update both pages.
-2. **A linked jar's `Class-Path` in the dependency listing.** The TODO entry
-   below has the fix. Its reported path can change freely only until the
-   release.
-3. **Cut the releases** (ADRs 0062 and 0063, collector ADR 0006). Cutting
+2. **Cut the releases** (ADRs 0062 and 0063, collector ADR 0006). Cutting
    is Luke's call. Collector `v0.1.0` goes first, since the agent's
    `release.sh` refuses a release until it exists. The agent's needs its
    `## [0.1.0]` changelog section written. Before the first release of each,
@@ -37,9 +34,9 @@ multi-tenant backend.
    Still unknown: whether a dropped Portal deployment frees its version. A
    `rehearsal/1-again` tag answers it. Workflows outside the secret-holding
    jobs use v4 of every action, several majors behind.
-4. **The quickstart** in otherlode.dev's `start/` (that repo's ADR 0001).
+3. **The quickstart** in otherlode.dev's `start/` (that repo's ADR 0001).
    The agent's and collector's pages and the overview are written.
-5. **Before the first customer:** the server STATUS's "Go-live
+4. **Before the first customer:** the server STATUS's "Go-live
    checklist" (the company, the privacy policy, the site, the front door,
    one snapshot refresh measured on db-f1-micro). No collector can be given
    an ingest URL until the front door exists. None of it blocks publishing
@@ -64,28 +61,6 @@ Known gaps in what it lists, all rare, all listing less than the JVM loads:
   (JDK 18 dropped it).
 - Boot `PropertiesLauncher` `loader.path` folders (documented as a blind
   spot; the server's coverage rule limits the damage).
-
-### The dependency listing reads a linked jar's `Class-Path` from the link: in flight
-
-Found on 2026-10-14 in the class listing's review. `StartupClasspathLister`
-resolves a classpath jar's relative `Class-Path` entries against the folder
-that holds a symbolic link, where the JVM resolves them against the folder
-of the jar the link points to. It also skips a classpath directory that
-holds an exploded Spring Boot application, so that application's library
-jars are found only once a class loads from them. `ClassLister` reads both
-cases right. Decided on 2026-10-14 in ADR 0030's and ADR 0051's amendments
-of that date: one shared walker, the JDK's resolution rules, the real path
-as `location`, exploded Boot applications listed, and `~` matched against
-the real path of `user.home` too.
-
-Landing order:
-
-1. A shared classpath walker, with `ClassLister` moved onto it.
-2. `StartupClasspathLister` moved onto it: the JDK's rules, the real path as
-   `location`, exploded Boot applications, `docs/site/dependencies.md`.
-3. The `~` rule matches the real path of `user.home`.
-4. A test that runs a JVM over a tree of linked jars and checks the walker
-   against what its system loader loads.
 
 ### scalac 3.10.0 drops the fields that name an enum's parameterised cases: to fix
 
@@ -453,8 +428,24 @@ Names:
 
 Dependencies and the testkit:
 
-- A `byte-buddy-agent` jar flat in an exploded war's `WEB-INF/lib` is turned
-  away by the agent-jar rule and reads as no dependency rather than as one.
+- A `byte-buddy-agent` jar flat in the `WEB-INF/lib` of a war an
+  application server deploys is turned away by the sweep's agent-jar rule
+  and reads as no dependency rather than as one. An unpacked Spring Boot
+  application on the classpath lists it as one (ADR 0030, amended
+  2026-10-14).
+- A packed Spring Boot jar's nested jars are listed where the fat jar sits
+  in the search order, though Boot's loader searches them after the whole
+  system classpath. It changes which jar keeps a shared identity's location
+  and class names only when the fat jar shares `java.class.path` with other
+  entries, as in `java -cp app.jar:x.jar ...JarLauncher`; `java -jar` leaves
+  only the fat jar.
+- A `Class-Path` token that is not a valid URL makes the JVM skip the whole
+  jar, while the listings skip only that token and read the rest
+  (`classPathEntries`). Both listings read more than the JVM loads there,
+  never less.
+- `withHomeAsTilde` turns a home of `C:\` into `C:`, so on Windows every
+  `C:\...` location would read as `~\...`, though its KDoc says a root home
+  changes nothing.
 - The testkit's `awaitSettled` counts two delta batches after its start,
   which assumes one batch per flush, so a flush split into several batches
   can wake it before the hit totals settle. ADR 0036 fixed the same flaw in
