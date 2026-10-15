@@ -68,7 +68,7 @@ A change that breaks one of these needs an ADR first.
   where the code is genuinely unintuitive: a non-obvious invariant, a
   workaround forced by a constraint, something a reader would misread.
   Don't narrate what the code already says.
-- Run the `humanizer` skill over any comment before treating it as
+- Run the `unslop` skill over any comment before treating it as
   finished: no em dashes, no stock AI phrasing ("crucial," "seamless,"
   "robust," "leverage"), no sentence that restates the code.
 - Never describe code relative to time ("now," "currently," "previously
