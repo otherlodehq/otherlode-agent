@@ -571,6 +571,81 @@ class DependencyRegistryTest {
     }
 
     @Test
+    fun `a location under the target of a home folder that is a link is stored with the target as a tilde`(
+        @TempDir dir: Path,
+    ) {
+        val base = dir.toRealPath()
+        val target = Files.createDirectories(base.resolve("usr-home").resolve("alice"))
+        val link = Files.createSymbolicLink(base.resolve("home-alice"), target)
+        val registry = DependencyRegistry(homeDirectory = link.toString())
+        registry.add(DependencyIdentity("g", "a", "1"), location = "$target/.m2/repository/g/a/1/a-1.jar")
+        registry.add(DependencyIdentity("g", "b", "1"), location = "$target/app.jar!/BOOT-INF/lib/b-1.jar")
+        registry.add(DependencyIdentity("g", "c", "1"), location = "$target-other/c-1.jar")
+
+        assertEquals(
+            listOf("~/.m2/repository/g/a/1/a-1.jar", "~/app.jar!/BOOT-INF/lib/b-1.jar", "$target-other/c-1.jar"),
+            registry.entries().map { it.location },
+        )
+    }
+
+    @Test
+    fun `a location under a home folder as given still becomes a tilde when the folder is a link`(
+        @TempDir dir: Path,
+    ) {
+        val base = dir.toRealPath()
+        val target = Files.createDirectories(base.resolve("usr-home").resolve("alice"))
+        val link = Files.createSymbolicLink(base.resolve("home-alice"), target)
+        val registry = DependencyRegistry(homeDirectory = link.toString())
+        registry.add(DependencyIdentity("g", "a", "1"), location = "$link/.m2/repository/g/a/1/a-1.jar")
+        registry.add(DependencyIdentity("g", "b", "1"), location = "$base/elsewhere/b-1.jar")
+
+        assertEquals(
+            listOf("~/.m2/repository/g/a/1/a-1.jar", "$base/elsewhere/b-1.jar"),
+            registry.entries().map { it.location },
+        )
+    }
+
+    @Test
+    fun `the longer home prefix wins when one is inside the other`(
+        @TempDir dir: Path,
+    ) {
+        val base = dir.toRealPath()
+        val real = Files.createDirectories(base.resolve("a"))
+        val link = Files.createSymbolicLink(real.resolve("home"), real)
+        val registry = DependencyRegistry(homeDirectory = link.toString())
+        registry.add(DependencyIdentity("g", "a", "1"), location = "$link/a-1.jar")
+        registry.add(DependencyIdentity("g", "b", "1"), location = "$real/b-1.jar")
+
+        assertEquals(
+            listOf("~/a-1.jar", "~/b-1.jar"),
+            registry.entries().map { it.location },
+        )
+        assertEquals("~/x.jar", withAnyHomeAsTilde("/h/a/home/x.jar", listOf("/h/a/home", "/h/a")))
+        assertEquals("~/x.jar", withAnyHomeAsTilde("/h/a/home/x.jar", listOf("/h/a", "/h/a/home")))
+        assertEquals("~/home-x/x.jar", withAnyHomeAsTilde("/h/a/home-x/x.jar", listOf("/h/a/home", "/h/a")))
+    }
+
+    @Test
+    fun `a missing home folder matches as given, and a blank, null or invalid one changes nothing, without throwing`(
+        @TempDir dir: Path,
+    ) {
+        val missing = dir.toRealPath().resolve("missing")
+        val location = "$missing/x.jar"
+        val outside = "${dir.toRealPath()}/y.jar"
+
+        val registry = DependencyRegistry(homeDirectory = missing.toString())
+        registry.add(DependencyIdentity("g", "a", "1"), location = location)
+        registry.add(DependencyIdentity("g", "b", "1"), location = outside)
+        assertEquals(listOf("~/x.jar", outside), registry.entries().map { it.location })
+
+        for (home in listOf("", "   ", null, "/home/a\u0000b")) {
+            val other = DependencyRegistry(homeDirectory = home)
+            other.add(DependencyIdentity("g", "a", "1"), location = location)
+            assertEquals(listOf(location), other.entries().map { it.location }, "home: $home")
+        }
+    }
+
+    @Test
     fun `only a whole leading home folder becomes a tilde`() {
         assertEquals("~/x.jar", withHomeAsTilde("/home/al/x.jar", "/home/al/"))
         assertEquals("/home/alice/x.jar", withHomeAsTilde("/home/alice/x.jar", "/home/al"))

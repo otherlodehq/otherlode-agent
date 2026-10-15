@@ -6,6 +6,8 @@ import dev.otherlode.export.DependencyIdentity
 import dev.otherlode.export.DependencyIdentitySource
 import dev.otherlode.export.DependencyLocation
 import java.io.File
+import java.io.IOException
+import java.nio.file.InvalidPathException
 import java.nio.file.Path
 import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap
@@ -67,6 +69,8 @@ sealed interface DependencyOrigin {
  * A record's location is for display, and a jar under the user's home folder, such as one in
  * `~/.m2`, would put the user's name on the wire. So [register] stores it with the home folder
  * written as `~` ([withHomeAsTilde]), and [homeDirectory] is `user.home` unless a test sets it.
+ * A location can be a real path, so when the home folder is reached through a symbolic link, its
+ * real path, read once when the registry is built, is written as `~` too ([withAnyHomeAsTilde]).
  *
  * Safe to use from several threads: the listing registers, the sweep records loads and
  * registers jars found at load on the scheduler thread, and the send pool computes and advances.
@@ -75,6 +79,11 @@ class DependencyRegistry(
     indexClassNames: Boolean = false,
     private val homeDirectory: String? = System.getProperty("user.home"),
 ) {
+    /** [homeDirectory] and, when it differs, its real path. Both are written as `~`. */
+    private val homePrefixes: List<String> =
+        listOfNotNull(homeDirectory, realPathOf(homeDirectory))
+            .distinctBy { it.trimEnd('/', '\\') }
+
     /** How the startup listing ended, as [awaitListing] saw it. */
     enum class ListingOutcome {
         /** Finished, with every dependency it found registered. */
@@ -224,7 +233,7 @@ class DependencyRegistry(
         classNames: Collection<String> = emptyList(),
     ): Int {
         require(identities.isNotEmpty()) { "a dependency at $location needs at least one identity" }
-        val shown = withHomeAsTilde(location, homeDirectory)
+        val shown = withAnyHomeAsTilde(location, homePrefixes)
         val id = registerEntry(identities, identitySource, shown, discoverySource, classCount, origin)
         classIndex?.let { index -> for (className in classNames) index.putIfAbsent(className, id) }
         return id
@@ -458,5 +467,35 @@ internal fun withHomeAsTilde(
         rest.isEmpty() -> "~"
         rest[0] == '/' || rest[0] == '\\' -> "~$rest"
         else -> location
+    }
+}
+
+/**
+ * [location] with the longest of [homes] that leads it written as `~`, by [withHomeAsTilde]'s
+ * whole-folder rule. Only one home is replaced.
+ */
+internal fun withAnyHomeAsTilde(
+    location: String,
+    homes: List<String>,
+): String {
+    for (home in homes.sortedByDescending { it.trimEnd('/', '\\').length }) {
+        val shown = withHomeAsTilde(location, home)
+        if (shown != location) return shown
+    }
+    return location
+}
+
+/**
+ * The real path of [home] with every symbolic link followed, or null when [home] is null or
+ * blank, cannot be resolved, or is not a valid path.
+ */
+private fun realPathOf(home: String?): String? {
+    if (home.isNullOrBlank()) return null
+    return try {
+        Path.of(home).toRealPath().toString()
+    } catch (_: IOException) {
+        null
+    } catch (_: InvalidPathException) {
+        null
     }
 }

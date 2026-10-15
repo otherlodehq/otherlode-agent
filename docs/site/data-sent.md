@@ -136,7 +136,7 @@ The condition fingerprint includes the string constants in the condition, so the
 
 Class, method and parameter names, source file names and line numbers come from your class files. A class compiled without debug information sends no lines or parameter names.
 
-A dependency's `location` is the jar's path or its entry inside a fat jar, such as `~/.m2/repository/org/x/x-1.0.jar` or `BOOT-INF/lib/x-1.0.jar`. A path that starts with the JVM's `user.home` folder is written with `~` in its place, so the payload does not name the account that ran the agent. Only a whole leading folder matches: `/home/al` does not rewrite `/home/alice/x.jar`. A path under another user's home folder is sent as it is.
+A dependency's `location` is the jar's path or its entry inside a fat jar, such as `~/.m2/repository/org/x/x-1.0.jar` or `BOOT-INF/lib/x-1.0.jar`. A path that starts with the JVM's `user.home` folder is written with `~` in its place, so the payload does not name the account that ran the agent. Only a whole leading folder matches: `/home/al` does not rewrite `/home/alice/x.jar`. When the home folder is reached through a symbolic link, a path under its real path, with every link followed, is written with `~` too. A path under another user's home folder is sent as it is.
 
 #### Endpoint routes
 
@@ -174,7 +174,7 @@ A listing that matches no class is one chunk with no names. A process sends no l
 - The path, query string, headers, parameters or body of a request, or a response.
 - Argument values, return values, field values, or exception messages from your code.
 - Environment variables or system properties.
-- Host names, addresses, or user names, apart from a user name inside a jar path that is not under `user.home`.
+- Host names, addresses, or user names, apart from a user name inside a jar path that is not under `user.home` or its real path.
 - Source code. Source file names and line numbers go out, and so does condition text rebuilt from bytecode, but no source file content.
 
 A probe only increments a counter in an array. It reads no value.
