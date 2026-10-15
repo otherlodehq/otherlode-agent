@@ -96,22 +96,6 @@ companion's `<clinit>`. Write the failing test first. Once
 parameterised case's `equals` with an extra local, which the rules already
 read.
 
-### An adopter class in a named module cannot reach the probe arrays: to look at
-
-Recorded in the probe-array round (ADR 0060) as a gap that predates it, and
-tracked nowhere else. A woven class reaches its counts through
-`OtherlodeProbeArrays`, in the boot loader's unnamed module
-(`ProbeArrayMembers`, `ProbeArrayForm`). A class in a named module reads
-only the modules it declares, so it needs a read edge to that one. The
-endpoint tier adds the edge for its own advice through `redefineModule`
-(`EndpointInstrumentation`, `LambdaFactoryHook`). The method tier adds
-none for adopter modules. No test weaves a class in a named module.
-
-If the edge is missing, the woven class fails where the unwoven one ran,
-which breaks the weaving invariant. To do: write the failing test first,
-with a fixture module on the module path under the include rules, then
-add the read edge when such a class is first transformed.
-
 ### Reminders for expiring keys and credentials: to decide
 
 Raised 2026-10-05 by Luke while creating the release signing key. Nothing

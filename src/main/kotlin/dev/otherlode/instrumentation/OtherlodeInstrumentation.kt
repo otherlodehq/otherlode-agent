@@ -237,7 +237,7 @@ class OtherlodeInstrumentation(
         // makeRaw and a plain addTransformer rather than installOn with a retransforming
         // redefinition strategy: installOn would also check retransformation support and run a
         // discovery pass, when all this needs is the registration flag.
-        val transformer = buildTransformer()
+        val transformer = buildTransformer(instrumentation)
         if (classBytesCapture != null) instrumentation.addTransformer(classBytesCapture, true)
         try {
             instrumentation.addTransformer(transformer, true)
@@ -248,7 +248,7 @@ class OtherlodeInstrumentation(
         return transformer
     }
 
-    private fun buildTransformer(): ResettableClassFileTransformer =
+    private fun buildTransformer(instrumentation: Instrumentation): ResettableClassFileTransformer =
         AgentBuilder
             // The method tier decorates, and DecoratingTypeStrategy builds every class's builder
             // with its own configuration, so the ByteBuddy instance an AgentBuilder carries is never
@@ -276,6 +276,9 @@ class OtherlodeInstrumentation(
             // The pool ByteBuddy describes the class with. A decoration resolves nothing the class
             // names, so a pool per transform reads only the class's own bytes.
             .with(AgentBuilder.PoolStrategy.Default.FAST)
+            // Must stay before TransformResultListener: an edge that failed after the commit would
+            // leave probes registered for a class that runs unwoven.
+            .assureReadEdgeTo(instrumentation, OtherlodeProbeArrays::class.java)
             .with(TransformResultListener())
             .type(typeMatcher())
             .transform { builder, typeDescription, classLoader, _, protectionDomain ->
