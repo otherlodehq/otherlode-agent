@@ -16,7 +16,7 @@ class ClasspathWalkerTest {
     @TempDir
     lateinit var tempDir: Path
 
-    /** The real path of the temp folder, so expected paths match the real paths the walker hands out. */
+    /** The real path of the temp folder, so expected paths match the canonical paths the walker hands out. */
     private val dir: Path get() = tempDir.toRealPath()
 
     private class Recorder(
@@ -172,6 +172,13 @@ class ClasspathWalkerTest {
         val link = Files.createSymbolicLink(dir.resolve("main-link.jar"), target)
 
         assertEquals(listOf("jar:real/main.jar", "jar:real/dep.jar"), walk(link, target))
+    }
+
+    @Test
+    fun `a classpath entry with dot-dot after a missing folder is read at its canonical path, as the JVM collapses it`() {
+        jar("dotdot/x.jar")
+
+        assertEquals(listOf("jar:dotdot/x.jar"), walk(dir.resolve("nonexistent/../dotdot/x.jar")))
     }
 
     @Test

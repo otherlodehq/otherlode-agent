@@ -3,7 +3,6 @@ package dev.otherlode.dependencies
 import java.io.File
 import java.io.IOException
 import java.nio.file.Files
-import java.nio.file.InvalidPathException
 import java.nio.file.Path
 import java.util.jar.JarFile
 import java.util.jar.Manifest
@@ -68,9 +67,11 @@ internal interface ClasspathVisitor {
  * resolves against that path.
  *
  * Paths resolve as the JDK resolves them:
- * - An entry of `java.class.path` is read through its real path, links followed, and is skipped
- *   when that path cannot be read (`ClassLoaders.toFileURL`). The visitor gets the real path, and
- *   the entry's `Class-Path` resolves against it.
+ * - An entry of `java.class.path` is read through its canonical path (`URLClassPath.toFileURL`,
+ *   through `File.getCanonicalFile`): links are followed as far as the path resolves, and any
+ *   rest, `..` included, is collapsed as text with no link in it followed. An entry with no file
+ *   at that path is skipped. The visitor gets the canonical path, and the entry's `Class-Path`
+ *   resolves against it.
  * - A file a `Class-Path` names is read at the path given, with no link followed
  *   (`URLClassPath`), so its own `Class-Path` resolves against the folder that holds the link. A
  *   URL that ends in `/` is read only as a directory and any other only as a jar, and a target
@@ -128,7 +129,7 @@ internal class ClasspathWalker(
     /** The file [root] reads, or null when the JVM would not read it. */
     private fun resolve(root: Root): File? =
         when (root.kind) {
-            Root.Kind.CLASS_PATH -> realFile(root.file)
+            Root.Kind.CLASS_PATH -> canonicalFile(root.file)?.takeIf { it.exists() }
             Root.Kind.REFERENCED -> root.file.absoluteFile.takeIf { if (root.isDirectory) it.isDirectory else it.isFile }
             // A classpath index can name a file that does not exist, which Boot's loader then finds nothing in.
             Root.Kind.LIBRARY -> root.file.takeIf { it.exists() }
@@ -285,13 +286,11 @@ internal class ClasspathWalker(
         return null
     }
 
-    /** The real path of [entry], or null when it cannot be read, as the JDK drops such an entry. */
-    private fun realFile(entry: File): File? =
+    /** The canonical path of [entry], or null when it cannot be formed, as the JDK drops such an entry. */
+    private fun canonicalFile(entry: File): File? =
         try {
-            entry.toPath().toRealPath().toFile()
+            entry.canonicalFile
         } catch (_: IOException) {
-            null
-        } catch (_: InvalidPathException) {
             null
         }
 
@@ -306,7 +305,7 @@ internal class ClasspathWalker(
         val isDirectory: Boolean = false,
     ) {
         enum class Kind {
-            /** An entry of `java.class.path`, read through its real path. */
+            /** An entry of `java.class.path`, read through its canonical path. */
             CLASS_PATH,
 
             /** A file a `Class-Path` names, read as given. */

@@ -21,7 +21,7 @@ class StartupClasspathListerTest {
     @TempDir
     lateinit var tempDir: Path
 
-    /** The real path of the temp folder, so expected paths match the real paths the walker hands out. */
+    /** The real path of the temp folder, so expected paths match the canonical paths the walker hands out. */
     private val dir: Path get() = tempDir.toRealPath()
 
     private fun classPath(vararg paths: Path): String = paths.joinToString(File.pathSeparator) { it.toString() }
