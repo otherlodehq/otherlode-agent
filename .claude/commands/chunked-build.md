@@ -96,7 +96,7 @@ Read the subagent's deviations and flagged doubts with particular care.
 They are the places it was unsure, and in practice they are where the
 review finds something.
 
-Run the `humanizer` skill's checks over every comment and KDoc the chunk
+Run the `unslop` skill's checks over every comment and KDoc the chunk
 added: stock words, em dashes, sentences restating the code, time-relative
 wording.
 

@@ -83,7 +83,7 @@ that nobody would notice breaking.
 
 ## 4. Comments and docs
 
-Run the `humanizer` skill's checks over every comment or doc block you add
+Run the `unslop` skill's checks over every comment or doc block you add
 or touch, and scan the rest of the codebase for its patterns: stock words,
 em dashes, sentences that restate the code, time-relative wording
 ("now", "previously"). Fix what you find in the files you are already in;
