@@ -53,6 +53,7 @@ internal object ScalaGeneratedMethods {
     private const val OLD_NO_CASE_RECIPE = "enum case not found: \u0001"
     private const val OUTER_FIELD = "\$outer"
     private const val OBJECT = "java/lang/Object"
+    private const val JAVA_ENUM = "java/lang/Enum"
     private const val STRING = "java/lang/String"
     private const val PRODUCT = "scala/Product"
     private const val ITERATOR = "Lscala/collection/Iterator;"
@@ -190,16 +191,13 @@ internal object ScalaGeneratedMethods {
     /**
      * Whether this is the class of an enum case, every method of which scalac writes: a case has no
      * body, and scalac rejects any other subclass of an enum (E125). It is a class whose superclass
-     * is a Scala 3 enum class, or one implementing `scala.runtime.EnumValue` whose superclass
-     * implements `scala.reflect.Enum`, which covers a singleton case of an enum that extends
-     * `java.lang.Enum`. Only the superclass's header is read.
+     * is a Scala 3 enum class. Only the superclass's header is read.
      */
     private fun ClassShape.isEnumCaseClass(lookup: (String) -> ByteArray?): Boolean {
         val parent = superName?.takeIf { it != OBJECT } ?: return false
         return try {
             val header = lookup(parent)?.let(::ClassReader) ?: return false
-            val parentInterfaces = header.interfaces.toList()
-            isEnumClass(header.access, header.superName, parentInterfaces) || (ENUM_VALUE in interfaces && ENUM in parentInterfaces)
+            isEnumClass(header.access, header.interfaces.toList())
         } catch (_: Exception) {
             false
         }
@@ -922,10 +920,13 @@ internal object ScalaGeneratedMethods {
     /**
      * The plumbing scalac 3 writes for an `enum`, read from `javap -c -p` over `Suit`, `Planet`,
      * `Shape`, `Level`, `EnumHost.Mode`, `Hue` and `Color` in `Enums.scala`, `Switches.scala` and
-     * `Scala3Only.scala`. Four kinds of class carry it, told apart by structure only scalac writes:
+     * `Scala3Only.scala`; `Dir`, `Metal` and `JavaEnumHost.Gear` in `JavaEnums.scala`; and `Tone` and
+     * `Mark` in `EnumsExtendingClass.scala`. Four kinds of class carry it, told apart by structure only
+     * scalac writes:
      *
-     * - The enum class: abstract, `ACC_ENUM`, extending `Object` and implementing `scala.reflect.Enum`
-     *   ([enumClassPlumbing]).
+     * - The enum class: abstract, `ACC_ENUM` and implementing `scala.reflect.Enum`, whatever it
+     *   extends: `Object`, `java.lang.Enum` or a class of the adopter's ([enumClassPlumbing]). scalac
+     *   sets `ACC_ENUM` only on an enum and its cases.
      * - Its companion module class, which implements `scala.deriving.Mirror$Sum` and whose partner is an
      *   enum class ([enumCompanionPlumbing]).
      * - The class of a singleton case: final, implementing `scala.runtime.EnumValue` and
@@ -956,17 +957,12 @@ internal object ScalaGeneratedMethods {
     }
 
     /** Whether the class is a Scala 3 enum class: see [enumPlumbing]. */
-    private fun ClassShape.isEnumClass(): Boolean = isEnumClass(access, superName, interfaces)
+    private fun ClassShape.isEnumClass(): Boolean = isEnumClass(access, interfaces)
 
     private fun isEnumClass(
         access: Int,
-        superName: String?,
         interfaces: List<String>,
-    ): Boolean =
-        access and Opcodes.ACC_ENUM != 0 &&
-            access and Opcodes.ACC_ABSTRACT != 0 &&
-            superName == OBJECT &&
-            ENUM in interfaces
+    ): Boolean = access and Opcodes.ACC_ENUM != 0 && access and Opcodes.ACC_ABSTRACT != 0 && ENUM in interfaces
 
     /**
      * The cases of the enum [enumName], in ordinal order, read from this companion; null when they
@@ -1447,7 +1443,9 @@ internal object ScalaGeneratedMethods {
      * suffix and read them with `getfield`; a case with its own class (`case A extends E(1)`) returns
      * constants, and the name must be a singleton case of the companion whose ordinal is the
      * constant `ordinal` returns. `productPrefix` and `toString` return the name, and `hashCode`
-     * (Scala 3.3.7 and later on the 3.3 line, 3.7.3 and later) is `String.hashCode` of it.
+     * (Scala 3.3.7 and later on the 3.3 line, 3.7.3 and later) is `String.hashCode` of it. A singleton
+     * of a Java-compatible enum has only the forwarders and a `productPrefix` that is
+     * `aload_0; invokevirtual <this class>.name; areturn`.
      */
     private fun singletonCasePlumbing(
         shape: ClassShape,
@@ -1500,6 +1498,13 @@ internal object ScalaGeneratedMethods {
             )
         if (readResolve != null && readResolve.isPrivate && readResolve.body == resolves) result += READ_RESOLVE
 
+        if (family.enumClass.superName == JAVA_ENUM) {
+            val nameCall = listOf(aload(0), Insn.Call(Opcodes.INVOKEVIRTUAL, self, "name", "()L$STRING;"), areturn())
+            if (shape.methods["productPrefix" to "()L$STRING;"]?.takeIf { !it.isStatic }?.body == nameCall) {
+                result += "productPrefix" to "()L$STRING;"
+            }
+            return result
+        }
         val nameLoad = singletonNameLoad(shape, family) ?: return result
         val ordinalKey = "ordinal" to "()I"
         val ordinalBody = shape.methods[ordinalKey]?.takeIf { !it.isStatic }?.body

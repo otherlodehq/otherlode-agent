@@ -62,22 +62,19 @@ Known gaps in what it lists, all rare, all listing less than the JVM loads:
 - Boot `PropertiesLauncher` `loader.path` folders (documented as a blind
   spot; the server's coverage rule limits the damage).
 
-### Java-compatible, class-nested and local Scala 3 enums: building
+### Class-nested and local Scala 3 enums: building
 
 Designed 2026-10-15 with Luke, recorded in ADR 0054's second amendment of
-that date. Until it lands, these enums' plumbing reads as the adopter's code
-and an unused method as never hit: a Java-compatible enum's companion,
-Product forwarders and singleton case; a local enum's companion; and an enum
-inside a class's `ordinal(E)` on a read release. Each chunk lands as a
-failing-test commit, then the fix.
+that date, whose Java-compatible and class-extending enums have landed.
+Until the rest lands, a local enum's companion reads as the adopter's code,
+an unused method of it as never hit, and so does an enum inside a class's
+`ordinal(E)` on a read release. Each chunk lands as a failing-test commit,
+then the fix.
 
-1. Java-compatible enums: the enum class test takes `java.lang.Enum` as a
-   superclass, and the singleton's `productPrefix` rule. Fixtures at top
-   level and in an object, singleton-only and with constructor arguments.
-2. A companion with no `MODULE$`, an enum inside a class: reached by name,
+1. A companion with no `MODULE$`, an enum inside a class: reached by name,
    its instance-field bodies, per-case accessors and the singleton's
    `readResolve` read. The `EnumHolder.Inner` fixture is the test.
-3. Local enums: the companion paired through a case, the no-case message
+2. Local enums: the companion paired through a case, the no-case message
    with one or more `_$`, and the singleton's `readResolve` through the
    host's lazy accessor. Fixtures in an object's method, a class's method
    and a lambda, two same-named enums in one class, and an adopter object
@@ -453,12 +450,15 @@ What the compiler canary and the reviews found that the agent does not
 read. Each reads as an unread shape, never a finding, unless it says
 otherwise. ADRs 0054 and 0055 hold the rule.
 
-- Scala 3: backticked case names, an enum that overrides `productPrefix`,
-  and two case names with the same hash. Scala 3.3
+- Scala 3: backticked case names, an enum that overrides or inherits
+  `productPrefix`, and two case names with the same hash. An enum whose
+  singleton never reads its name gets no `$name` field and a `$new` calling
+  `<init>(I)V`, and every enum after it in the same source file gets
+  singleton fields whose suffixes differ (`$name$1` beside `_$ordinal$2`),
+  so its singleton's `ordinal` is held as an unread shape too. Scala 3.3
   at its default Java 8 target writes `valueOf` and `fromOrdinal` with a
   `StringBuilder`, which reads as unread shapes until it is read (ADR 0055,
-  amended). Java-compatible, class-nested and local enums are their own
-  TODO entry.
+  amended). Class-nested and local enums are their own TODO entry.
 - Unread shapes are recorded at transform time, before ADR 0007's commit
   point, so a transform that then fails is still counted in the first-flush
   summary, as are outcome counts and the received-bytes count. Classes
