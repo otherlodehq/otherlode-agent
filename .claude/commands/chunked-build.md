@@ -152,8 +152,8 @@ pager's status, not ktlint's.
 One chunk, one commit, directly on the branch the project's notes say to
 use. The message says what the chunk does and why in plain sentences, and
 names the bytecode or library fact the review added when there is one.
-Credit the model with a `Co-Authored-By` line. Never add a session link
-to a public repo's history.
+Credit the model with a `Co-Authored-By` line. Never add a session id or
+session link to a commit message.
 
 Then add a status entry to the project's design notes: what landed, what
 the review changed and why, and the facts learned that the design section

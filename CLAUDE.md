@@ -61,6 +61,8 @@ A change that breaks one of these needs an ADR first.
   that restores documented behaviour, or an internal change needs none.
 - **Releases are deliberate.** Never cut a release or push a `v*` tag
   unless a maintainer asks.
+- **No session ids or links in commit messages.** A commit message never
+  carries a `Claude-Session` line, a session link or a session id.
 
 ## Comments
 
