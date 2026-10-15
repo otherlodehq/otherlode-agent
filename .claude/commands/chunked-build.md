@@ -1,15 +1,15 @@
 ---
-description: Build a settled design as sequential chunks, autonomously through the landing order. A Sonnet subagent implements each chunk from a written brief and hands back; a fresh Opus reviewer and the main session review it, the main session fixes every finding that holds, and every big fix goes back to a fresh Opus reviewer until both are satisfied; then it runs the build, commits one chunk per commit, and continues to the next unless the user asked for a breakpoint. Manual invocation only.
+description: Build a settled design as sequential chunks, autonomously through the landing order. Each chunk goes through power-mode's review loop from a written brief; then the main session runs the build, commits one chunk per commit, and continues to the next unless the user asked for a breakpoint. Manual invocation only.
 argument-hint: [which chunk to build next, or the design section that lists the landing order]
 disable-model-invocation: true
 ---
 
 # Chunked build
 
-Turn an already-settled design into code one chunk at a time. Each chunk is
-built by a Sonnet subagent from a brief this session writes, reviewed by a fresh Opus
-subagent and by this session, its big fixes re-reviewed by another fresh
-Opus subagent, and committed only after a clean pass.
+Turn an already-settled design into code one chunk at a time. Each chunk
+goes through the review loop in `.claude/skills/power-mode/SKILL.md`, from a brief
+this session writes, and is committed only after a clean pass. This file
+adds how to brief, review and verify a chunk.
 `$ARGUMENTS` names the chunk to build next, or the design section whose
 landing order says what comes next.
 
@@ -18,16 +18,13 @@ landing order says what comes next.
 - The main session owns the design, the briefs, the review, the fixes,
   the commit message and the project's status log. Judgement never moves
   to a subagent.
-- One Sonnet subagent (`general-purpose`, `model: sonnet`) implements one
-  chunk, with "do not commit" in its brief. It hands back to the main
-  session; it does not decide.
-- A fresh Opus subagent (`general-purpose`, `model: opus`) reviews each chunk's
-  diff, then each big fix the main session makes. It reports findings and never edits. A new
-  reviewer each round, so no reviewer checks its own earlier advice.
+- The implementer, the reviewers and their models follow the review loop
+  and the model rule in `.claude/skills/power-mode/SKILL.md`. The implementer hands
+  back to the main session; it does not decide. A new reviewer each round,
+  so no reviewer checks its own earlier advice.
 - Research and fact-finding (reading library sources, compiling scratch
-  fixtures, reading `javap` output) go to Opus subagents too, never to the
-  implementer. A Haiku subagent (`model: haiku`) may fetch raw material for
-  them, such as copied sources or `javap` dumps, and report it verbatim.
+  fixtures, reading `javap` output) go to their own subagents, never to
+  the implementer.
 - Chunks run one after another, never in parallel. They share the build
   directory and usually a few central files, and the next brief depends on
   what the last review found.
@@ -66,7 +63,7 @@ text goes to the subagent verbatim. It states:
 
 ## 2. Launch and wait
 
-Launch the Sonnet subagent with the brief. Do not touch the files it is
+Launch the implementer with the brief. Do not touch the files it is
 working in. When it reports, treat the report as a claim to check, not a result.
 
 The loop runs on its own: brief, launch, review, commit, next brief, next
@@ -81,8 +78,8 @@ need a decision the design did not make.
 
 ## 3. Review the implementation, not the report
 
-Hand the chunk's uncommitted diff to a fresh Opus reviewer, briefed as
-step 4 describes, and read the implementation yourself while it runs.
+Hand the chunk's uncommitted diff to a fresh reviewer, briefed as step 4
+describes, and read the implementation yourself while it runs.
 Treat its report as step 4 does.
 
 Read the diff of every main-source file the chunk changed, in full. Trace
@@ -112,19 +109,16 @@ The main session implements the fixes itself; it does not send the chunk
 back to the implementer. A test that pins a boundary the chunk left
 unpinned counts as a finding.
 
-A big fix (one that changes a rule, touches several files, or adds tests
-of its own, rather than a rename or a one-line correction) goes to a fresh
-Opus reviewer once it is complete. Brief it with the settled design, the
+Each big fix, as the review loop defines it, goes to a fresh reviewer
+once it is complete. Brief a reviewer with the settled design, the
 ADRs, the facts already verified, and the uncommitted diff (`git diff HEAD`
 plus untracked files, in every repo the chunk touched), and ask for
 findings only. Treat its report as claims: check each finding against the
 code or the library source before acting on it, fix the ones that hold,
 and say why the others do not.
 
-Repeat (review, fix, a fresh Opus review of every big fix) until the main
-session and the reviewer are both happy and a full pass finds nothing. Small fixes are re-read
-here and need no reviewer. The commit follows a clean pass, not the last
-fix.
+Repeat as the review loop says. The commit follows a clean pass, not the
+last fix.
 
 ## 5. Verify yourself
 
@@ -152,8 +146,7 @@ pager's status, not ktlint's.
 One chunk, one commit, directly on the branch the project's notes say to
 use. The message says what the chunk does and why in plain sentences, and
 names the bytecode or library fact the review added when there is one.
-Credit the model with a `Co-Authored-By` line. Never add a session id or
-session link to a commit message.
+Credit the model with a `Co-Authored-By` line.
 
 Then add a status entry to the project's design notes: what landed, what
 the review changed and why, and the facts learned that the design section

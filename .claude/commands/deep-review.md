@@ -16,22 +16,17 @@ inspection, and the report must say which ones did.
 - The main session does the reading, the reasoning and the verification:
   the candidate list, each eye trace and each failing repro test. Do not
   hand judgement to a subagent.
-- Fixes go through the recursive review loop of `/chunked-build`. A Sonnet
-  subagent (`model: sonnet`) writes the fix from a written brief that names
-  the failing test. A fresh Opus reviewer (`model: opus`) reviews the diff
-  and edits nothing. The main session checks each finding against the code
-  and fixes every one that holds. Each big fix goes back to a new fresh
-  reviewer until the main session and the reviewer are both happy.
-- A fix that is a design change does not happen inside the review. A design
-  change adds or changes a public API, a wire field, a table, a behaviour a
-  customer sees, or what an ADR decided. Grill it with `/grill-with-docs`
-  first, or list it under recommendations when the user is not there.
-- Give fetch-and-dump work to a Haiku subagent (`model: haiku`):
-  disassembling a jar, collecting sources from a dependency cache, pulling
-  raw logs. It reports verbatim and never summarises, counts or gives a
-  verdict. Do work that one command or a script can do directly, such as
-  listing test names or parsing a coverage report into a table. Give every
-  subagent an exact brief and expected output shape.
+- Fixes go through the review loop in `.claude/skills/power-mode/SKILL.md`, from a
+  brief that names the failing test.
+- A fix that is a design change, as power-mode's "Grill every design
+  change" defines it, does not happen inside the review. Grill it with
+  `/grill-with-docs` first, or list it under recommendations when the user
+  is not there.
+- Helpers take their model from power-mode's model rule. Fetch-and-dump
+  jobs here are disassembling a jar, collecting sources from a dependency
+  cache and pulling raw logs. Do work that one command or a script can do
+  directly, such as listing test names or parsing a coverage report into a
+  table. Give every subagent an exact brief and expected output shape.
 - The main session reviews every subagent result before using it, and
   reviews the final edits (read the diff, run the tests) before reporting
   them.

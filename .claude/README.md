@@ -16,3 +16,11 @@ on, so a fresh checkout has them without a user-level install:
 
 Only the skill prompts and their format references are copied. Upstream
 packaging (plugin manifests, validators, Codex metadata) is left out.
+
+`shared-files` lists the paths every otherlode repo carries as an exact copy
+of this repo's: these skills and commands, `.githooks/commit-msg`, the
+session-start hook in `settings.json` that turns the git hook on, and the
+`Claude config` workflow. Edit a shared path here, then copy it to the
+other repos. That workflow runs `check-shared.sh` in every repo and fails
+when a copy differs from this repo's master. It also fails a push whose
+commit messages carry a session id or link.
