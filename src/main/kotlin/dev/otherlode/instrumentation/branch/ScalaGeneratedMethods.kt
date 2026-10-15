@@ -71,6 +71,7 @@ internal object ScalaGeneratedMethods {
     private const val MIRROR_SINGLETON = "scala/deriving/Mirror\$Singleton"
     private const val NO_SUCH_ELEMENT = "java/util/NoSuchElementException"
     private const val ILLEGAL_ARGUMENT = "java/lang/IllegalArgumentException"
+    private const val LAZY_REF = "scala/runtime/LazyRef"
     private const val STRING_CONCAT = "java/lang/invoke/StringConcatFactory"
     private const val THROWABLE = "java/lang/Throwable"
     private const val VALUES_FIELD = "\$values"
@@ -79,7 +80,7 @@ internal object ScalaGeneratedMethods {
     /** The flags scalac gives the static field of each enum case in the enum's companion, `ACC_ENUM` aside. */
     private const val PLAIN_CASE_FIELD_FLAGS = Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC or Opcodes.ACC_FINAL
 
-    /** The flags scalac gives the instance field that keeps a singleton case in the companion of an enum declared inside a class. */
+    /** The flags scalac gives the instance field that keeps a singleton case in the companion of an enum declared inside a class or a method. */
     private const val INSTANCE_CASE_FIELD_FLAGS = Opcodes.ACC_PRIVATE or Opcodes.ACC_FINAL
 
     /** A field's visibility, `static` and `final` bits, without `transient` or the deprecation ASM reports as a flag. */
@@ -115,6 +116,9 @@ internal object ScalaGeneratedMethods {
 
     /** The only element types scalac 2.13.15 specialises `Tuple2` on, by descriptor. */
     private val TUPLE2_SPECIALISED = setOf("I", "J", "D", "C", "Z")
+
+    /** The descriptor of an enum companion's `fromOrdinal`: an `int` in, an object type out. */
+    private val FROM_ORDINAL_DESCRIPTOR = Regex("\\(I\\)L[^;\\[]+;")
 
     private val WRITE_REPLACE = "writeReplace" to "()Ljava/lang/Object;"
     private val ORDINAL = "ordinal" to "()I"
@@ -167,7 +171,9 @@ internal object ScalaGeneratedMethods {
      * let the adopter write ([isEnumCaseClass], [isRefusedInEnumCompanion]), and a case accessor only
      * scalac can give an enum's companion ([enumCaseAccessorKeys]), stay unread shapes on a read
      * release too: there they are scalac's in a shape the rules do not read, such as one with
-     * backticked case names. [releaseOf] is asked, with the class's internal name, only when such a method
+     * backticked case names. The companion of a local enum counts when [pairEnumCompanion] pairs it,
+     * even if a class the pairing needs cannot be read; an object the adopter wrote that only looks like
+     * one is not held. [releaseOf] is asked, with the class's internal name, only when such a method
      * exists and the class is Scala 3's.
      */
     fun analyse(
@@ -188,9 +194,9 @@ internal object ScalaGeneratedMethods {
 
             ScalaReleases.isRead(release) -> {
                 val enumCase = shape.isEnumCaseClass(lookup)
-                val enumCompanion = !enumCase && shape.isEnumCompanionShape(lookup)
-                val accessors = if (enumCompanion) enumCaseAccessorKeys(shape, lookup) else emptySet()
-                val held = candidates.filterKeys { enumCase || (enumCompanion && (isRefusedInEnumCompanion(it) || it in accessors)) }
+                val pairing = if (enumCase) null else pairEnumCompanion(shape, lookup)
+                val accessors = pairing?.let { enumCaseAccessorKeys(shape, it.enumClass, lookup) }.orEmpty()
+                val held = candidates.filterKeys { enumCase || (pairing != null && (isRefusedInEnumCompanion(it) || it in accessors)) }
                 Result(generated, held, null, UnreadCause.UNREAD_STRUCTURE.takeIf { held.isNotEmpty() })
             }
 
@@ -227,12 +233,63 @@ internal object ScalaGeneratedMethods {
     }
 
     /**
-     * A class named for an enum's companion that implements `scala.deriving.Mirror$Sum` and whose
-     * partner reads as an enum class. The companion of an enum declared inside a class has no
-     * `MODULE$`, so this does not require a module class.
+     * The enum class a Scala 3 class is the companion of, and whether the pairing is certain. A class
+     * implementing `scala.deriving.Mirror$Sum` whose name ends in `$` is paired by name when the class
+     * named like it without the `$` is an enum class, which covers a top-level enum's companion and
+     * that of an enum nested in an object or a class. Otherwise it is paired as the companion of a
+     * local enum, one declared in a method, whose name does not follow from the enum's
+     * (`Host$Suit$1` and `Host$Suit$3$`), when all of these hold:
+     *
+     * 1. it has no `MODULE$`;
+     * 2. P, the return type of its one `fromOrdinal(I)L...;` that is not a bridge, is an enum class.
+     *    scalac refuses a second one from the adopter, and writes a bridge with a wider return when
+     *    the companion extends a trait declaring `fromOrdinal`;
+     * 3. P and the class have the same `EnclosingMethod`, and the class lists P in its `InnerClasses`;
+     * 4. a class it lists in `InnerClasses` extends P and either has it as its outer class, a
+     *    parameterised case, or is enclosed by it, a singleton case's anonymous class.
+     *
+     * Only an enum case may extend P (E125) and every enum has a case (E145), so a class passing the
+     * first three steps that no listed class ties to P is an object the adopter wrote, and the pairing
+     * is null. When a class the last step needs cannot be read, neither answer is certain and the
+     * pairing is not [EnumPairing.certain].
      */
-    private fun ClassShape.isEnumCompanionShape(lookup: (String) -> ByteArray?): Boolean =
-        internalName.endsWith("$") && MIRROR_SUM in interfaces && readClass(partnerName(this), lookup)?.isEnumClass() == true
+    private fun pairEnumCompanion(
+        shape: ClassShape,
+        lookup: (String) -> ByteArray?,
+    ): EnumPairing? {
+        if (!shape.isScala || !shape.isScala3 || !shape.internalName.endsWith("$") || MIRROR_SUM !in shape.interfaces) return null
+        readClass(shape.internalName.removeSuffix("$"), lookup)?.takeIf { it.isEnumClass() }?.let { return EnumPairing(it, true, false) }
+        if (shape.hasOwnModuleField) return null
+        val fromOrdinal =
+            shape.methods.filter { (key, method) ->
+                key.first == "fromOrdinal" &&
+                    FROM_ORDINAL_DESCRIPTOR.matches(key.second) &&
+                    method.access and Opcodes.ACC_BRIDGE == 0
+            }
+        val enumName = fromOrdinal.keys.singleOrNull()?.let { Type.getReturnType(it.second).internalName } ?: return null
+        val enumClass = readClass(enumName, lookup)?.takeIf { it.isEnumClass() } ?: return null
+        val enclosing = shape.enclosingMethod ?: return null
+        if (enumClass.enclosingMethod != enclosing || shape.innerClasses.none { it.name == enumName }) return null
+        var unreadable = false
+        for (entry in shape.innerClasses.distinctBy { it.name }) {
+            val byOuter = entry.outerName == shape.internalName
+            if (entry.name == shape.internalName || entry.name == enumName || !(byOuter || entry.outerName == null)) continue
+            val listed = readClass(entry.name, lookup, bodiesOf = emptySet())
+            if (listed == null) {
+                unreadable = true
+            } else if (listed.superName == enumName && (byOuter || listed.enclosingMethod?.owner == shape.internalName)) {
+                return EnumPairing(enumClass, true, true)
+            }
+        }
+        return if (unreadable) EnumPairing(enumClass, false, true) else null
+    }
+
+    /** The enum class of a companion, [certain] unless a class [pairEnumCompanion] reads could not be read, and whether the companion is [local]. */
+    private class EnumPairing(
+        val enumClass: ClassShape,
+        val certain: Boolean,
+        val local: Boolean,
+    )
 
     private val REFUSED_COMPANION_METHODS = setOf("values", "valueOf", "fromOrdinal", "\$new")
 
@@ -348,7 +405,8 @@ internal object ScalaGeneratedMethods {
 
     /**
      * Mirrors [enumPlumbing]: the methods of an enum class, its companion (the case accessors of an
-     * instance companion included), a singleton case and a parameterised case that the enum rules
+     * instance companion included, and that of a local enum whether or not [pairEnumCompanion] could
+     * read every class it needs), a singleton case and a parameterised case that the enum rules
      * read, with the descriptors they read them with.
      */
     private fun enumOutline(
@@ -367,7 +425,7 @@ internal object ScalaGeneratedMethods {
             )
         }
         if (shape.internalName.endsWith("$") && MIRROR_SUM in shape.interfaces) {
-            val enumClass = readClass(shape.internalName.removeSuffix("$"), lookup)?.takeIf { it.isEnumClass() } ?: return emptyList()
+            val enumClass = pairEnumCompanion(shape, lookup)?.enumClass ?: return emptyList()
             val enumType = "L${enumClass.internalName};"
             return listOf(
                 "values" to "()[$enumType",
@@ -376,7 +434,7 @@ internal object ScalaGeneratedMethods {
                 "\$new" to "(I$string)$enumType",
                 "ordinal" to "($enumType)I",
                 "ordinal" to "($objectType)I",
-            ) + enumCaseAccessorKeys(shape, lookup)
+            ) + enumCaseAccessorKeys(shape, enumClass, lookup)
         }
         val singleton = ENUM_VALUE in shape.interfaces && MIRROR_SINGLETON in shape.interfaces && shape.isFinal
         val enumClass = shape.superName?.let { readClass(it, lookup) }?.takeIf { it.isEnumClass() } ?: return emptyList()
@@ -518,6 +576,13 @@ internal object ScalaGeneratedMethods {
 
     private val LOCAL_SUFFIX = Regex("\\$\\d+$")
 
+    /** A local or anonymous class's `EnclosingMethod` attribute: the class that encloses it and, when a method does, its name and descriptor. */
+    private data class EnclosingMethod(
+        val owner: String,
+        val name: String?,
+        val descriptor: String?,
+    )
+
     /** One declared field: its access flags, name and descriptor. */
     private class FieldShape(
         val access: Int,
@@ -581,6 +646,7 @@ internal object ScalaGeneratedMethods {
         val superName: String?,
         val interfaces: List<String>,
         val fields: List<FieldShape>,
+        val enclosingMethod: EnclosingMethod? = null,
     ) {
         /** A class compiled for a Scala `object`: its name ends in `$` and it holds its own instance in `MODULE$`. */
         val isModuleClass: Boolean get() = internalName.endsWith("$") && hasOwnModuleField
@@ -683,6 +749,7 @@ internal object ScalaGeneratedMethods {
         val fields = mutableListOf<FieldShape>()
         val methods = mutableMapOf<Pair<String, String>, MethodShape>()
         val innerClasses = mutableListOf<InnerClassEntry>()
+        var enclosingMethod: EnclosingMethod? = null
 
         val visitor =
             object : ClassVisitor(Opcodes.ASM9) {
@@ -716,6 +783,14 @@ internal object ScalaGeneratedMethods {
                     access: Int,
                 ) {
                     innerClasses += InnerClassEntry(name, outerName, innerName, access)
+                }
+
+                override fun visitOuterClass(
+                    owner: String,
+                    name: String?,
+                    descriptor: String?,
+                ) {
+                    enclosingMethod = EnclosingMethod(owner, name, descriptor)
                 }
 
                 override fun visitField(
@@ -773,6 +848,7 @@ internal object ScalaGeneratedMethods {
             classSuper,
             classInterfaces,
             fields,
+            enclosingMethod,
         )
     }
 
@@ -934,18 +1010,20 @@ internal object ScalaGeneratedMethods {
      * The plumbing scalac 3 writes for an `enum`, read from `javap -c -p` over `Suit`, `Planet`,
      * `Shape`, `Level`, `EnumHost.Mode`, `Hue` and `Color` in `Enums.scala`, `Switches.scala` and
      * `Scala3Only.scala`; `Dir`, `Metal` and `JavaEnumHost.Gear` in `JavaEnums.scala`; and `Tone` and
-     * `Mark` in `EnumsExtendingClass.scala`; and the enums of `ClassNestedEnums.scala` and
-     * `EnumHolder.Inner` in `Enums.scala`. Four kinds of class carry it, told apart by structure only
-     * scalac writes:
+     * `Mark` in `EnumsExtendingClass.scala`; the enums of `ClassNestedEnums.scala` and
+     * `EnumHolder.Inner` in `Enums.scala`; and the enums declared in methods in `LocalEnums.scala`.
+     * Four kinds of class carry it, told apart by structure only scalac writes:
      *
      * - The enum class: abstract, `ACC_ENUM` and implementing `scala.reflect.Enum`, whatever it
      *   extends: `Object`, `java.lang.Enum` or a class of the adopter's ([enumClassPlumbing]). scalac
      *   sets `ACC_ENUM` only on an enum and its cases.
-     * - Its companion, which implements `scala.deriving.Mirror$Sum` and whose partner is an enum class
-     *   ([enumCompanionPlumbing]). It is a module class with the cases in static fields, or, for an
-     *   enum declared inside a class, a class with no `MODULE$` that keeps them in instance fields.
+     * - Its companion, which implements `scala.deriving.Mirror$Sum` and is paired with an enum class
+     *   ([pairEnumCompanion], [enumCompanionPlumbing]). It is a module class with the cases in static
+     *   fields, or, for an enum declared inside a class or in a method, a class with no `MODULE$` that
+     *   keeps them in instance fields.
      * - The class of a singleton case: final, implementing `scala.runtime.EnumValue` and
-     *   `scala.deriving.Mirror$Singleton`, extending an enum class ([singletonCasePlumbing]).
+     *   `scala.deriving.Mirror$Singleton`, extending an enum class ([singletonCasePlumbing]). The
+     *   companion of a local enum is found from the case ([enumFamilyOf]).
      * - A parameterised case, a final case class extending an enum class ([parameterisedCasePlumbing]).
      *   Only its `ordinal` is enum plumbing; the rest is the case class rules' to mark.
      *
@@ -960,14 +1038,15 @@ internal object ScalaGeneratedMethods {
         if (!shape.isScala || !shape.isScala3) return emptySet()
         if (shape.isEnumClass()) return enumClassPlumbing(shape)
         if (shape.internalName.endsWith("$") && MIRROR_SUM in shape.interfaces) {
-            val enumClass = readClass(shape.internalName.removeSuffix("$"), lookup)?.takeIf { it.isEnumClass() } ?: return emptySet()
-            return enumCompanionPlumbing(EnumFamily(enumClass, shape, shape.enumCases(enumClass.internalName, lookup)), lookup)
+            val pairing = pairEnumCompanion(shape, lookup)?.takeIf { it.certain } ?: return emptySet()
+            val enumName = pairing.enumClass.internalName
+            return enumCompanionPlumbing(EnumFamily(pairing.enumClass, shape, shape.enumCases(enumName, lookup), pairing.local), lookup)
         }
         val singleton = ENUM_VALUE in shape.interfaces && MIRROR_SINGLETON in shape.interfaces && shape.isFinal
         if (!singleton && !shape.declaresConstantOrdinal()) return emptySet()
         val superName = shape.superName ?: return emptySet()
         val enumClass = readClass(superName, lookup)?.takeIf { it.isEnumClass() } ?: return emptySet()
-        val family = enumFamilyOf(enumClass, lookup) ?: return emptySet()
+        val family = enumFamilyOf(shape, singleton, enumClass, lookup) ?: return emptySet()
         return if (singleton) singletonCasePlumbing(shape, family) else parameterisedCasePlumbing(shape, family)
     }
 
@@ -988,7 +1067,7 @@ internal object ScalaGeneratedMethods {
      * 3.9.0 and earlier also write a static companion field for each. Each one's ordinal is the constant its
      * `ordinal()` returns. The singletons take the ordinals the parameterised cases leave, in field
      * order, which is declaration order. In a module companion a singleton case is a static
-     * `ACC_ENUM` field. In a companion with no `MODULE$`, that of an enum declared inside a class, it
+     * `ACC_ENUM` field. In a companion with no `MODULE$`, that of an enum declared inside a class or a method, it
      * is a private final instance field of the enum type whose same-named accessor returns the
      * enum type and has the bit scalac sets only on an enum case's symbol, which a field the adopter
      * wrote lacks. A listed final class that cannot be read, a parameterised case with no constant
@@ -1081,12 +1160,21 @@ internal object ScalaGeneratedMethods {
             null
         }
 
-    /** An enum class and its companion, with the cases the companion names, [cases] being null when they cannot be read. */
+    /**
+     * An enum class and its companion, with the cases the companion names, [cases] being null when they cannot be read.
+     * [local] is true when the companion was paired as that of a local enum ([pairEnumCompanion]).
+     */
     private class EnumFamily(
         val enumClass: ClassShape,
         val companion: ClassShape,
         val cases: List<EnumCase>?,
+        val local: Boolean = false,
+        /** Whether [host] is an interface, a trait, whose lazy accessor is called with `invokeinterface`. */
+        val hostInterface: Boolean = false,
     ) {
+        /** The class whose method declares a local enum, which holds the lazy accessor of its companion. */
+        val host: String? get() = if (local) companion.enclosingMethod?.owner else null
+
         val singletonType: String = "L${enumClass.internalName};"
 
         /** Whether the companion keeps its cases in instance fields read through accessors, as one with no `MODULE$` does. */
@@ -1100,14 +1188,43 @@ internal object ScalaGeneratedMethods {
         fun singletonOrdinalOf(name: String): Int = singletons?.firstOrNull { it.name == name }?.ordinal ?: -1
     }
 
-    /** The family of [enumClass], its companion found by name; the companion of an enum declared inside a class has no `MODULE$`. */
+    /**
+     * The family of [enumClass] that the case class [caseShape] belongs to. The companion is found by
+     * name; the companion of an enum declared inside a class has no `MODULE$`. A local enum's companion
+     * is not named like its enum, so it is found from the case: a [singleton] case's anonymous class is
+     * enclosed by it, and a parameterised case lists it as its outer class. It counts only when it
+     * pairs with [enumClass] ([pairEnumCompanion]).
+     */
     private fun enumFamilyOf(
+        caseShape: ClassShape,
+        singleton: Boolean,
         enumClass: ClassShape,
         lookup: (String) -> ByteArray?,
     ): EnumFamily? {
-        val companion = readClass("${enumClass.internalName}$", lookup) ?: return null
-        if (!companion.isScala3 || MIRROR_SUM !in companion.interfaces) return null
-        return EnumFamily(enumClass, companion, companion.enumCases(enumClass.internalName, lookup))
+        val named = readClass("${enumClass.internalName}$", lookup)
+        if (named != null) {
+            if (!named.isScala3 || MIRROR_SUM !in named.interfaces) return null
+            return EnumFamily(enumClass, named, named.enumCases(enumClass.internalName, lookup))
+        }
+        val companionName =
+            if (singleton) {
+                caseShape.enclosingMethod?.owner
+            } else {
+                caseShape.innerClasses.firstOrNull { it.name == caseShape.internalName }?.outerName
+            }
+        val companion = companionName?.let { readClass(it, lookup) } ?: return null
+        val pairing =
+            pairEnumCompanion(companion, lookup)?.takeIf { it.certain && it.enumClass.internalName == enumClass.internalName }
+                ?: return null
+        val hostInterface =
+            companion.enclosingMethod?.owner?.let { host ->
+                try {
+                    lookup(host)?.let { ClassReader(it).access and Opcodes.ACC_INTERFACE != 0 }
+                } catch (_: Exception) {
+                    null
+                }
+            } == true
+        return EnumFamily(enumClass, companion, companion.enumCases(enumClass.internalName, lookup), pairing.local, hostInterface)
     }
 
     /**
@@ -1276,10 +1393,10 @@ internal object ScalaGeneratedMethods {
      */
     private fun enumCaseAccessorKeys(
         shape: ClassShape,
+        enumClass: ClassShape,
         lookup: (String) -> ByteArray?,
     ): Set<Pair<String, String>> {
         if (shape.isModuleClass) return emptySet()
-        val enumClass = readClass(shape.internalName.removeSuffix("$"), lookup)?.takeIf { it.isEnumClass() } ?: return emptySet()
         val enumType = "L${enumClass.internalName};"
         val result = mutableSetOf<Pair<String, String>>()
         for ((key, method) in shape.methods) {
@@ -1332,6 +1449,24 @@ internal object ScalaGeneratedMethods {
         }
     }
 
+    /**
+     * Whether [name] is how a no-case message names the enum of [family]: its source name after the last `.`, and for a
+     * local enum, which scalac names with one `_$` per enclosing term, a name that starts with the package of the enum
+     * class, ends with `.`, one or more `_$` and the source name, and holds no space.
+     */
+    private fun namesEnum(
+        name: String,
+        family: EnumFamily,
+    ): Boolean {
+        val enumClass = family.enumClass
+        if (!family.local) return name.substringAfterLast('.') == enumClass.sourceName
+        val pkg = enumClass.internalName.substringBeforeLast('/', "").replace('/', '.')
+        val prefix = if (pkg.isEmpty()) "" else "$pkg."
+        return name.startsWith(prefix) &&
+            ' ' !in name &&
+            Regex("\\.(?:_\\$)+" + Regex.escape(enumClass.sourceName) + "$").containsMatchIn(name)
+    }
+
     /** The string-concatenation call that builds scalac's `has no case with <what>` message. */
     private fun Match.noCaseMessage(
         family: EnumFamily,
@@ -1348,7 +1483,7 @@ internal object ScalaGeneratedMethods {
                     recipe != null &&
                     recipe.startsWith("enum ") &&
                     recipe.endsWith(tail) &&
-                    recipe.removePrefix("enum ").removeSuffix(tail).substringAfterLast('.') == family.enumClass.sourceName
+                    namesEnum(recipe.removePrefix("enum ").removeSuffix(tail), family)
             }
         }
     }
@@ -1545,7 +1680,7 @@ internal object ScalaGeneratedMethods {
      * <init>(String, int); areturn`, where the class reads as the singleton-case class of this enum.
      * Scala 3.3.3, 3.4.0 and 3.4.1 also pass the companion: `aload_0` after `iload_1`, to
      * `<init>(String, int, <companion>)`. An instance companion, that of an enum declared inside a
-     * class, always does and reads only that form.
+     * class or a method, always does and reads only that form.
      */
     private fun matchesEnumNew(
         family: EnumFamily,
@@ -1595,6 +1730,8 @@ internal object ScalaGeneratedMethods {
      * private `readResolve` is `getstatic <companion>.MODULE$; aload_0; invokevirtual ordinal;
      * invokevirtual <companion>.fromOrdinal; areturn`, with `aload_0; getfield $outer` in place of the
      * `getstatic` when the companion has no `MODULE$` and the class's `$outer` field is of its type.
+     * The companion of a local enum is reached through the host's lazy accessor instead
+     * ([localReadResolve]).
      * The name and ordinal come in two forms. Cases that share a class (`case A, B`) keep them in the
      * fields `$name$N` and `_$ordinal$N` of one suffix and read them with `getfield`; a case with its
      * own class (`case A extends E(1)`) returns constants, and the name must be a singleton case of
@@ -1644,27 +1781,25 @@ internal object ScalaGeneratedMethods {
             if (shape.methods[key]?.takeIf { !it.isStatic }?.body == expected) result += key
         }
         val readResolve = shape.methods[READ_RESOLVE]
-        val companionLoad =
-            if (family.instanceCases) {
-                val outer = shape.fields.singleOrNull { it.name == OUTER_FIELD && it.access and Opcodes.ACC_STATIC == 0 }
-                outer?.takeIf { it.descriptor == "L$companion;" }?.let {
-                    listOf(
-                        aload(0),
-                        Insn.Field(Opcodes.GETFIELD, self, OUTER_FIELD, it.descriptor),
-                    )
-                }
-            } else {
-                listOf(Insn.Field(Opcodes.GETSTATIC, companion, MODULE_FIELD, "L$companion;"))
-            }
         val resolves =
-            companionLoad.orEmpty() +
-                listOf(
-                    aload(0),
-                    Insn.Call(Opcodes.INVOKEVIRTUAL, self, "ordinal", "()I"),
-                    Insn.Call(Opcodes.INVOKEVIRTUAL, companion, "fromOrdinal", "(I)$enumType"),
-                    areturn(),
-                )
-        if (readResolve != null && readResolve.isPrivate && companionLoad != null && readResolve.body == resolves) result += READ_RESOLVE
+            if (family.local) {
+                localReadResolve(shape, family, readResolve?.body)
+            } else {
+                val companionLoad =
+                    if (family.instanceCases) {
+                        val outer = shape.fields.singleOrNull { it.name == OUTER_FIELD && it.access and Opcodes.ACC_STATIC == 0 }
+                        outer?.takeIf { it.descriptor == "L$companion;" }?.let {
+                            listOf(
+                                aload(0),
+                                Insn.Field(Opcodes.GETFIELD, self, OUTER_FIELD, it.descriptor),
+                            )
+                        }
+                    } else {
+                        listOf(Insn.Field(Opcodes.GETSTATIC, companion, MODULE_FIELD, "L$companion;"))
+                    }
+                companionLoad?.let { it + resolvedOrdinal(self, companion, enumType) }
+            }
+        if (readResolve != null && readResolve.isPrivate && resolves != null && readResolve.body == resolves) result += READ_RESOLVE
 
         if (family.enumClass.superName == JAVA_ENUM) {
             val nameCall = listOf(aload(0), Insn.Call(Opcodes.INVOKEVIRTUAL, self, "name", "()L$STRING;"), areturn())
@@ -1698,6 +1833,85 @@ internal object ScalaGeneratedMethods {
         val hash = nameLoad + Insn.Call(Opcodes.INVOKEVIRTUAL, STRING, "hashCode", "()I") + Insn.Plain(Opcodes.IRETURN)
         if (shape.methods["hashCode" to "()I"]?.takeIf { !it.isStatic }?.body == hash) result += "hashCode" to "()I"
         return result
+    }
+
+    /** The tail of a singleton case's `readResolve`: `aload_0; invokevirtual ordinal; invokevirtual <companion>.fromOrdinal; areturn`. */
+    private fun resolvedOrdinal(
+        self: String,
+        companion: String,
+        enumType: String,
+    ): List<Insn> =
+        listOf(
+            aload(0),
+            Insn.Call(Opcodes.INVOKEVIRTUAL, self, "ordinal", "()I"),
+            Insn.Call(Opcodes.INVOKEVIRTUAL, companion, "fromOrdinal", "(I)$enumType"),
+            areturn(),
+        )
+
+    /**
+     * The `readResolve` body of a local enum's singleton case, built from the names [body] uses where
+     * scalac generates them, or null when [body] is not one of these shapes. It reaches the companion
+     * through the lazy accessor of the host, the class whose method declares the enum, passing the
+     * `LazyRef` the companion was created with. The host is `getstatic <host>.MODULE$` for an object
+     * or `this.$outer.<outer accessor>()` for a class, the accessor being a method of the companion
+     * that returns the host. The `LazyRef` is a field of the companion, read through `this.$outer`,
+     * or of a case with constructor arguments, read from `this`. The accessor is `invokevirtual
+     * <host>.<accessor>(LazyRef)<companion>`, or `invokeinterface` when the host is a trait. The
+     * names of the outer accessor, the field and the host's accessor are free; the owners and
+     * descriptors are not.
+     */
+    private fun localReadResolve(
+        shape: ClassShape,
+        family: EnumFamily,
+        body: List<Insn>?,
+    ): List<Insn>? {
+        val host = family.host ?: return null
+        body ?: return null
+        val self = shape.internalName
+        val companion = family.companion
+        val companionType = "L${companion.internalName};"
+        val hostType = "L$host;"
+        val lazyRef = "L$LAZY_REF;"
+        val outer =
+            shape.fields
+                .singleOrNull { it.name == OUTER_FIELD && it.access and Opcodes.ACC_STATIC == 0 }
+                ?.takeIf { it.descriptor == companionType }
+        val loadOuter = listOf(aload(0), Insn.Field(Opcodes.GETFIELD, self, OUTER_FIELD, companionType))
+
+        fun declaresLazyRef(
+            owner: ClassShape,
+            name: String,
+        ): Boolean = owner.fields.any { it.name == name && it.descriptor == lazyRef && it.access and Opcodes.ACC_STATIC == 0 }
+        val hostLoad =
+            if (body.firstOrNull() == Insn.Field(Opcodes.GETSTATIC, host, MODULE_FIELD, hostType)) {
+                body.take(1)
+            } else {
+                val accessor = (body.getOrNull(2) as? Insn.Call)?.name ?: return null
+                val read = Insn.Call(Opcodes.INVOKEVIRTUAL, companion.internalName, accessor, "()$hostType")
+                if (outer == null || companion.methods[accessor to "()$hostType"]?.isStatic != false) return null
+                loadOuter + read
+            }
+        val rest = body.drop(hostLoad.size)
+        val lazyLoad =
+            if (outer != null && rest.getOrNull(1) == loadOuter[1]) {
+                val name = (rest.getOrNull(2) as? Insn.Field)?.name ?: return null
+                if (!declaresLazyRef(companion, name)) return null
+                loadOuter + Insn.Field(Opcodes.GETFIELD, companion.internalName, name, lazyRef)
+            } else {
+                val name = (rest.getOrNull(1) as? Insn.Field)?.name ?: return null
+                if (!declaresLazyRef(shape, name)) return null
+                listOf(aload(0), Insn.Field(Opcodes.GETFIELD, self, name, lazyRef))
+            }
+        val lazyAccessor = (rest.getOrNull(lazyLoad.size) as? Insn.Call)?.name ?: return null
+        return hostLoad +
+            lazyLoad +
+            Insn.Call(
+                if (family.hostInterface) Opcodes.INVOKEINTERFACE else Opcodes.INVOKEVIRTUAL,
+                host,
+                lazyAccessor,
+                "($lazyRef)$companionType",
+            ) +
+            resolvedOrdinal(self, companion.internalName, family.singletonType)
     }
 
     /**

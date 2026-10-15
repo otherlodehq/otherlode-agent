@@ -62,21 +62,6 @@ Known gaps in what it lists, all rare, all listing less than the JVM loads:
 - Boot `PropertiesLauncher` `loader.path` folders (documented as a blind
   spot; the server's coverage rule limits the damage).
 
-### Local Scala 3 enums: building
-
-Designed 2026-10-15 with Luke, recorded in ADR 0054's second amendment of
-that date, of which all but local enums has landed. Until it does, a local
-enum's companion reads as the adopter's code and an unused method of it as
-never hit. It lands as a failing-test commit, then the fix: the companion
-paired through a case, the no-case message with one or more `_$`, and the
-singleton's `readResolve` through the host's lazy accessor. Fixtures in an
-object's method, a class's method and a lambda, two same-named enums in one
-class, and an adopter object shaped like a companion, which stays the
-adopter's. The same commit adds "or a method" to the class-nested sentence
-in `docs/site/methods-and-branches.md`, the wording Luke approved.
-
-The amendment holds the bytecode facts it depends on.
-
 ### Reminders for expiring keys and credentials: to decide
 
 Raised 2026-10-05 by Luke while creating the release signing key. Nothing
@@ -430,6 +415,10 @@ Overhead and memory:
   enum's analysis pass at 210 ms with the field route these replaced, and
   at 273 ms with full case-class reads, an upper bound for this route. An
   all-singleton enum reads only its companion.
+- A local Scala 3 enum's companion and cases each pair the companion by
+  reading every class it lists, and the pairing runs two or three times per
+  class: about 9 to 11 class reads for a companion and 7 to 9 for a case,
+  once at load. Not measured, and local enums are rare.
 
 Ideas nobody has asked for:
 
@@ -453,7 +442,10 @@ otherwise. ADRs 0054 and 0055 hold the rule.
   so its singleton's `ordinal` is held as an unread shape too. Scala 3.3
   at its default Java 8 target writes `valueOf` and `fromOrdinal` with a
   `StringBuilder`, which reads as unread shapes until it is read (ADR 0055,
-  amended). Local enums are their own TODO entry.
+  amended). A local enum declared in a static context, a constructor
+  argument (`class Sub extends Base({ enum E ... })`) or a `@static` method
+  at 3.10.0, has a singleton `readResolve` calling the host's lazy accessor
+  with `invokestatic`, which reads as an unread shape.
 - Unread shapes are recorded at transform time, before ADR 0007's commit
   point, so a transform that then fails is still counted in the first-flush
   summary, as are outcome counts and the received-bytes count. Classes
