@@ -916,4 +916,84 @@ class ScalaGeneratedMethodMarkingTest {
         }
         assertEquals(GeneratedBy.NONE, probes.methodsOf("NestedParam\$Rank").single { it.methodName == "points" }.generatedBy)
     }
+
+    @Test
+    fun `scala 3 - the plumbing of a local enum is marked ENUM and what the adopter wrote is not`() {
+        val singletonCase =
+            setOf(
+                "canEqual",
+                "productArity",
+                "productElement",
+                "productElementName",
+                "fromProduct",
+                "readResolve",
+                "productPrefix",
+                "toString",
+                "ordinal",
+                "hashCode",
+            )
+        val companion = setOf("values", "valueOf", "\$new", "fromOrdinal", "ordinal")
+        val enumPlumbing =
+            mapOf(
+                "LocalObjectHost\$Pip\$3\$" to companion + setOf("Hearts", "Spades", "Clubs"),
+                "LocalObjectHost\$Pip\$3\$\$anon\$1" to singletonCase,
+                "LocalObjectHost\$Form\$3\$" to setOf("\$new", "fromOrdinal", "ordinal", "Disc", "Dot", "Origin"),
+                "LocalObjectHost\$Form\$3\$\$anon\$2" to singletonCase,
+                "LocalObjectHost\$Orb\$3\$" to setOf("values", "valueOf", "fromOrdinal", "ordinal", "Mercury", "Venus"),
+                "LocalObjectHost\$\$anon\$3" to singletonCase,
+                "LocalObjectHost\$\$anon\$4" to singletonCase,
+                "LocalObjectHost\$Door\$3\$" to companion + setOf("Open", "Shut"),
+                "LocalObjectHost\$Door\$3\$\$anon\$5" to singletonCase,
+                "LocalClassHost\$Rune\$3\$" to companion + setOf("Fehu", "Uruz", "Thurs"),
+                "LocalClassHost\$Rune\$3\$\$anon\$7" to singletonCase,
+                "LocalClassHost\$Term\$3\$" to setOf("\$new", "fromOrdinal", "ordinal", "Num", "Nil"),
+                "LocalClassHost\$Term\$3\$\$anon\$8" to singletonCase,
+                "LocalClassHost\$Beat\$3\$" to companion + setOf("Up", "Down"),
+                "LocalClassHost\$Beat\$3\$\$anon\$9" to singletonCase,
+                "LocalClassHost\$Twin\$3\$" to companion + setOf("A", "B"),
+                "LocalClassHost\$Twin\$3\$\$anon\$10" to singletonCase,
+                "LocalClassHost\$Twin\$6\$" to companion + setOf("X", "Y", "Z"),
+                "LocalClassHost\$Twin\$6\$\$anon\$11" to singletonCase,
+                "LocalClassHost\$Gem\$3\$" to setOf("values", "valueOf", "fromOrdinal", "ordinal", "Ruby", "Opal"),
+                "LocalClassHost\$\$anon\$12" to singletonCase,
+                "LocalClassHost\$\$anon\$13" to singletonCase,
+            )
+        val others =
+            listOf(
+                "LocalObjectHost",
+                "LocalObjectHost\$",
+                "LocalClassHost",
+                "LocalObjectHost\$Form\$3\$Disc",
+                "LocalClassHost\$Term\$3\$Num",
+                "LocalObjectHost\$Fake\$5\$",
+            )
+        val probes = probesAfterLoading("scala3", *(enumPlumbing.keys + others).toTypedArray())
+
+        for ((simpleName, plumbing) in enumPlumbing) {
+            val methods =
+                probes.methodsOf(simpleName).filter {
+                    it.methodName != "<init>" && it.methodName != "parse" &&
+                        !(simpleName.contains("Door") && it.methodDescriptor.contains("Door\$1;)I"))
+                }
+            assertTrue(methods.isNotEmpty(), simpleName)
+            for (method in methods) {
+                val expected = if (method.methodName in plumbing) GeneratedBy.ENUM else GeneratedBy.NONE
+                assertEquals(expected, method.generatedBy, "$simpleName.${method.methodName}${method.methodDescriptor}")
+            }
+        }
+        val door = "L$TYPES/LocalObjectHost\$Door\$1;"
+        assertEquals(GeneratedBy.NONE, probes.method("LocalObjectHost\$Door\$3\$", "ordinal", "($door)I").generatedBy)
+        assertEquals(GeneratedBy.NONE, probes.method("LocalObjectHost\$Door\$3\$", "parse", "(Ljava/lang/String;)$door").generatedBy)
+        assertEquals(GeneratedBy.ENUM, probes.method("LocalObjectHost\$Form\$3\$Disc", "ordinal", "()I").generatedBy)
+        assertEquals(GeneratedBy.ENUM, probes.method("LocalClassHost\$Term\$3\$Num", "ordinal", "()I").generatedBy)
+        assertEquals(GeneratedBy.NONE, probes.method("LocalObjectHost\$Form\$3\$Disc", "radius", "()D").generatedBy)
+        for (host in listOf("LocalObjectHost\$", "LocalClassHost")) {
+            val lazy = probes.methodsOf(host).filter { it.methodDescriptor.startsWith("(Lscala/runtime/LazyRef;)") }
+            assertTrue(lazy.isNotEmpty(), host)
+            assertTrue(lazy.all { it.generatedBy == GeneratedBy.NONE }, "$host: ${lazy.map { it.methodName }}")
+        }
+        val lookalike = probes.methodsOf("LocalObjectHost\$Fake\$5\$")
+        assertTrue(lookalike.isNotEmpty())
+        assertTrue(lookalike.all { it.generatedBy == GeneratedBy.NONE }, lookalike.map { it.methodName }.toString())
+    }
 }

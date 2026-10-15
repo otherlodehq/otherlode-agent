@@ -210,8 +210,9 @@ class ScalacMatrixTest {
     /**
      * The methods every Scala 3 build reports as unread shapes when no `.tasty` file can be read,
      * as `Owner.name`: the fixtures' hand-written methods inside an outline (`toString` of
-     * `Written`, `Multi`, `Svc`, `BodyVal` and `HandCopy`, `HandCopy.hashCode`, and the lookalikes
-     * of `CaseLookalikes.scala`), which with no compiler named cannot be told from scalac's.
+     * `Written`, `Multi`, `Svc`, `BodyVal` and `HandCopy`, `HandCopy.hashCode`, the lookalikes
+     * of `CaseLookalikes.scala`, and the hand-written `ordinal` in the companion of the local enum
+     * `Door` in `LocalEnums.scala`), which with no compiler named cannot be told from scalac's.
      */
     private val scala3VersionBlindUnread =
         setOf(
@@ -233,6 +234,7 @@ class ScalacMatrixTest {
             "Lie2.productArity",
             "Lie2.productElement",
             "Lie2.productElementName",
+            "LocalObjectHost\$Door\$3\$.ordinal",
             "Multi.toString",
             "NoCanEqual.equals",
             "Svc.toString",

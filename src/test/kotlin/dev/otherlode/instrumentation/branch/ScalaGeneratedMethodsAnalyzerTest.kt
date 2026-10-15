@@ -1307,6 +1307,824 @@ class ScalaGeneratedMethodsAnalyzerTest {
         assertEquals(UnreadShape.SCALA_ENUM, analysis.unreadShape(word.first, word.second))
     }
 
+    /**
+     * The classes of a local enum of `LocalEnums.scala`: the enum class, its [companion], its singleton cases' classes and
+     * their names, an optional parameterised case's class, and the top-level class [host] that holds its method. A
+     * hand-written `ordinal(E)` in [companion] is not scalac's.
+     */
+    private class LocalEnum(
+        val enumClass: String,
+        val companion: String,
+        val singletonClasses: List<String>,
+        val singletonNames: List<String>,
+        val host: String,
+        val parameterised: String? = null,
+        val withNew: Boolean = true,
+        val handWrittenOrdinal: Boolean = false,
+    )
+
+    private val localEnums =
+        listOf(
+            LocalEnum(
+                "LocalObjectHost\$Pip\$1",
+                "LocalObjectHost\$Pip\$3\$",
+                listOf("LocalObjectHost\$Pip\$3\$\$anon\$1"),
+                listOf("Hearts", "Spades", "Clubs"),
+                "LocalObjectHost",
+            ),
+            LocalEnum(
+                "LocalObjectHost\$Form\$1",
+                "LocalObjectHost\$Form\$3\$",
+                listOf("LocalObjectHost\$Form\$3\$\$anon\$2"),
+                listOf("Dot", "Origin"),
+                "LocalObjectHost",
+                parameterised = "LocalObjectHost\$Form\$3\$Disc",
+            ),
+            LocalEnum(
+                "LocalObjectHost\$Orb\$1",
+                "LocalObjectHost\$Orb\$3\$",
+                listOf("LocalObjectHost\$\$anon\$3", "LocalObjectHost\$\$anon\$4"),
+                listOf("Mercury", "Venus"),
+                "LocalObjectHost",
+                withNew = false,
+            ),
+            LocalEnum(
+                "LocalObjectHost\$Door\$1",
+                "LocalObjectHost\$Door\$3\$",
+                listOf("LocalObjectHost\$Door\$3\$\$anon\$5"),
+                listOf("Open", "Shut"),
+                "LocalObjectHost",
+                handWrittenOrdinal = true,
+            ),
+            LocalEnum(
+                "LocalObjectHost\$Fake\$1",
+                "LocalObjectHost\$Fake\$3\$",
+                listOf("LocalObjectHost\$Fake\$3\$\$anon\$6"),
+                listOf("A", "B"),
+                "LocalObjectHost",
+            ),
+            LocalEnum(
+                "LocalClassHost\$Rune\$1",
+                "LocalClassHost\$Rune\$3\$",
+                listOf("LocalClassHost\$Rune\$3\$\$anon\$7"),
+                listOf("Fehu", "Uruz", "Thurs"),
+                "LocalClassHost",
+            ),
+            LocalEnum(
+                "LocalClassHost\$Term\$1",
+                "LocalClassHost\$Term\$3\$",
+                listOf("LocalClassHost\$Term\$3\$\$anon\$8"),
+                listOf("Nil"),
+                "LocalClassHost",
+                parameterised = "LocalClassHost\$Term\$3\$Num",
+            ),
+            LocalEnum(
+                "LocalClassHost\$Beat\$1",
+                "LocalClassHost\$Beat\$3\$",
+                listOf("LocalClassHost\$Beat\$3\$\$anon\$9"),
+                listOf("Up", "Down"),
+                "LocalClassHost",
+            ),
+            LocalEnum(
+                "LocalClassHost\$Twin\$1",
+                "LocalClassHost\$Twin\$3\$",
+                listOf("LocalClassHost\$Twin\$3\$\$anon\$10"),
+                listOf("A", "B"),
+                "LocalClassHost",
+            ),
+            LocalEnum(
+                "LocalClassHost\$Twin\$4",
+                "LocalClassHost\$Twin\$6\$",
+                listOf("LocalClassHost\$Twin\$6\$\$anon\$11"),
+                listOf("X", "Y", "Z"),
+                "LocalClassHost",
+            ),
+            LocalEnum(
+                "LocalClassHost\$Gem\$1",
+                "LocalClassHost\$Gem\$3\$",
+                listOf("LocalClassHost\$\$anon\$12", "LocalClassHost\$\$anon\$13"),
+                listOf("Ruby", "Opal"),
+                "LocalClassHost",
+                withNew = false,
+            ),
+            LocalEnum(
+                "LocalTraitHost\$Tide\$1",
+                "LocalTraitHost\$Tide\$3\$",
+                listOf("LocalTraitHost\$Tide\$3\$\$anon\$14"),
+                listOf("Ebb", "Flow"),
+                "LocalTraitHost",
+            ),
+            LocalEnum(
+                "LocalGenericHost\$Shade\$1",
+                "LocalGenericHost\$Shade\$3\$",
+                listOf("LocalGenericHost\$Shade\$3\$\$anon\$15"),
+                listOf("Light", "Dark"),
+                "LocalGenericHost",
+            ),
+        )
+
+    private fun localEnum(enumClass: String): LocalEnum = localEnums.single { it.enumClass == enumClass }
+
+    private fun LocalEnum.companionMethods(): List<Pair<String, String>> {
+        val ordinal = "ordinal" to "(L$PACKAGE/$enumClass;)I"
+        val accessor = parameterised?.let { it.substringAfterLast('$') to "()L$PACKAGE/$it\$;" }
+        return nestedCompanionMethods(enumClass, singletonNames, parameterised != null, withNew)
+            .filter { !handWrittenOrdinal || it != ordinal } + listOfNotNull(accessor)
+    }
+
+    private fun scalaBuild(version: String) =
+        if (version ==
+            "3.3.4"
+        ) {
+            CompilerFixtures.scalaBaseline(version)
+        } else {
+            CompilerFixtures.scalac(version)
+        }
+
+    private fun methodKeys(classBytes: ByteArray): List<Pair<String, String>> {
+        val keys = mutableListOf<Pair<String, String>>()
+        ClassReader(classBytes).accept(
+            object : ClassVisitor(Opcodes.ASM9) {
+                override fun visitMethod(
+                    access: Int,
+                    name: String,
+                    descriptor: String,
+                    signature: String?,
+                    exceptions: Array<out String>?,
+                ): MethodVisitor? = null.also { keys += name to descriptor }
+            },
+            ClassReader.SKIP_CODE,
+        )
+        return keys
+    }
+
+    @Test
+    fun `scala 3 - the companion of a local enum reads its plumbing and case accessors exactly`() {
+        for (version in listOf("3.3.4") + scala3Versions) {
+            for (local in localEnums) assertEnumReadExactly(version, local.companion, local.companionMethods())
+        }
+    }
+
+    @Test
+    fun `scala 3 - the singleton cases of a local enum read their plumbing and readResolve exactly`() {
+        for (version in listOf("3.3.4") + scala3Versions) {
+            for (local in localEnums) {
+                for (singleton in local.singletonClasses) assertEnumReadExactly(version, singleton, singletonCaseMethods)
+            }
+        }
+    }
+
+    @Test
+    fun `scala 3 - the parameterised case of a local enum reads its ordinal and accessor exactly`() {
+        for (version in listOf("3.3.4") + scala3Versions) {
+            for (case in localEnums.mapNotNull { it.parameterised }) assertEnumReadExactly(version, case, listOf("ordinal" to "()I"))
+        }
+    }
+
+    @Test
+    fun `scala 3 - a local enum's hand-written ordinal and method are the adopter's and its bridge is scalac's`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val door = localEnum("LocalObjectHost\$Door\$1")
+        val analysis = analyzeWith(build.classBytes(door.companion), build.lookup, tastyOf(door.host, "Scala 3.3.4"))
+        val type = "L$PACKAGE/${door.enumClass};"
+
+        assertEquals(GeneratedBy.NONE, analysis.generatedBy("ordinal", "($type)I"))
+        assertEquals(UnreadShape.NONE, analysis.unreadShape("ordinal", "($type)I"))
+        assertEquals(GeneratedBy.NONE, analysis.generatedBy("parse", "(Ljava/lang/String;)$type"))
+        assertEquals(UnreadShape.NONE, analysis.unreadShape("parse", "(Ljava/lang/String;)$type"))
+        assertEquals(GeneratedBy.ENUM, analysis.generatedBy("ordinal", "(Ljava/lang/Object;)I"))
+        assertEquals(GeneratedBy.ENUM, analysis.generatedBy("valueOf", "(Ljava/lang/String;)$type"))
+    }
+
+    @Test
+    fun `scala 3 - an object shaped like a local enum's companion gets no mark and no unread shape`() {
+        for (version in listOf("3.3.4") + scala3Versions) {
+            val build = scalaBuild(version)
+            val bytes = build.classBytes("LocalObjectHost\$Fake\$5\$")
+            val analysis = analyzeWith(bytes, build.lookup, tastyOf("LocalObjectHost", "Scala 3.3.4"))
+            val keys = methodKeys(bytes)
+
+            assertTrue(keys.any { it.first == "fromOrdinal" }, "scalac $version")
+            for ((name, descriptor) in keys) {
+                assertEquals(GeneratedBy.NONE, analysis.generatedBy(name, descriptor), "scalac $version $name$descriptor")
+                assertEquals(UnreadShape.NONE, analysis.unreadShape(name, descriptor), "scalac $version $name$descriptor")
+            }
+        }
+    }
+
+    @Test
+    fun `scala 3 - a local enum's companion whose tying case class cannot be read is held and marks nothing`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val pip = localEnum("LocalObjectHost\$Pip\$1")
+        val tying = "$PACKAGE/${pip.singletonClasses.single()}"
+        val type = "L$PACKAGE/${pip.enumClass};"
+        val lookups =
+            mapOf(
+                "no class" to { name: String -> if (name == tying) null else build.lookup(name) },
+                "a failing read" to { name: String -> if (name == tying) error("unreadable") else build.lookup(name) },
+            )
+        val held =
+            listOf(
+                "values" to "()[$type",
+                "valueOf" to "(Ljava/lang/String;)$type",
+                "fromOrdinal" to "(I)$type",
+                "\$new" to "(ILjava/lang/String;)$type",
+                "ordinal" to "(Ljava/lang/Object;)I",
+            ) + pip.singletonNames.map { it to "()$type" }
+
+        for ((label, lookup) in lookups) {
+            val analysis = analyzeWith(build.classBytes(pip.companion), lookup, tastyOf(pip.host, "Scala 3.3.4"))
+            for ((name, descriptor) in methodKeys(build.classBytes(pip.companion))) {
+                assertEquals(GeneratedBy.NONE, analysis.generatedBy(name, descriptor), "$label $name$descriptor")
+                val expected = if ((name to descriptor) in held) UnreadShape.SCALA_ENUM else UnreadShape.NONE
+                assertEquals(expected, analysis.unreadShape(name, descriptor), "$label $name$descriptor")
+            }
+            assertNull(analysis.unreadRelease, label)
+        }
+    }
+
+    @Test
+    fun `scala 3 - a local enum's companion with no readable case class holds its accessors and plumbing`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val form = localEnum("LocalObjectHost\$Form\$1")
+        val type = "L$PACKAGE/${form.enumClass};"
+        val disc = "Disc" to "()L$PACKAGE/${form.parameterised}\$;"
+        val lookup = { name: String ->
+            if (name == "$PACKAGE/${form.parameterised}" ||
+                name == "$PACKAGE/${form.singletonClasses.single()}"
+            ) {
+                null
+            } else {
+                build.lookup(name)
+            }
+        }
+
+        val analysis = analyzeWith(build.classBytes(form.companion), lookup, tastyOf(form.host, "Scala 3.3.4"))
+
+        assertEquals(GeneratedBy.NONE, analysis.generatedBy("fromOrdinal", "(I)$type"))
+        assertEquals(UnreadShape.SCALA_ENUM, analysis.unreadShape("fromOrdinal", "(I)$type"))
+        assertEquals(UnreadShape.SCALA_ENUM, analysis.unreadShape(disc.first, disc.second))
+        assertEquals(UnreadShape.SCALA_ENUM, analysis.unreadShape("Dot", "()$type"))
+    }
+
+    @Test
+    fun `scala 3 - a local enum's refused methods and case accessors stay unread shapes on a read release`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        for (local in listOf(
+            localEnum("LocalObjectHost\$Pip\$1"),
+            localEnum("LocalClassHost\$Term\$1"),
+            localEnum("LocalClassHost\$Gem\$1"),
+        )) {
+            val type = "L$PACKAGE/${local.enumClass};"
+            val refused =
+                local.companionMethods().filter { (name, descriptor) ->
+                    name in setOf("values", "valueOf", "fromOrdinal", "\$new") || descriptor == "(Ljava/lang/Object;)I" ||
+                        name in local.singletonNames || descriptor.startsWith("()L$PACKAGE/${local.parameterised}")
+                }
+            assertTrue(refused.size > 3, local.enumClass)
+            for ((name, descriptor) in refused) {
+                val analysis =
+                    analyzeWith(withNop(build.classBytes(local.companion), setOf(name)), build.lookup, tastyOf(local.host, "Scala 3.3.4"))
+                assertEquals(UnreadShape.SCALA_ENUM, analysis.unreadShape(name, descriptor), "${local.companion}.$name$descriptor")
+                assertEquals(GeneratedBy.NONE, analysis.generatedBy(name, descriptor), "${local.companion}.$name$descriptor")
+                assertNull(analysis.unreadRelease, "${local.companion}.$name$descriptor")
+            }
+            val ordinal =
+                analyzeWith(withNop(build.classBytes(local.companion), setOf("ordinal")), build.lookup, tastyOf(local.host, "Scala 3.3.4"))
+            assertEquals(UnreadShape.NONE, ordinal.unreadShape("ordinal", "($type)I"), local.companion)
+        }
+    }
+
+    @Test
+    fun `scala 3 - a singleton case of a local enum whose companion cannot be paired is held on a read release and marks nothing`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        for (local in localEnums) {
+            val missing = "$PACKAGE/${local.companion}"
+            val lookup = { name: String -> if (name == missing) null else build.lookup(name) }
+            val tasty = tastyOf(local.host, "Scala 3.3.4")
+
+            for (singleton in local.singletonClasses) {
+                val analysis = analyzeWith(build.classBytes(singleton), lookup, tasty)
+                for ((name, descriptor) in singletonCaseMethods.filter { it.first != "hashCode" }) {
+                    assertEquals(GeneratedBy.NONE, analysis.generatedBy(name, descriptor), "$singleton.$name")
+                    assertEquals(UnreadShape.SCALA_ENUM, analysis.unreadShape(name, descriptor), "$singleton.$name")
+                }
+            }
+            local.parameterised?.let { case ->
+                val analysis = analyzeWith(build.classBytes(case), lookup, tasty)
+                assertEquals(GeneratedBy.NONE, analysis.generatedBy("ordinal", "()I"), case)
+                assertEquals(UnreadShape.SCALA_ENUM, analysis.unreadShape("ordinal", "()I"), case)
+            }
+        }
+    }
+
+    @Test
+    fun `scala 3 - the host's lazy-object methods of a local enum stay the adopter's`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        for ((host, tasty) in listOf("LocalObjectHost\$" to "LocalObjectHost", "LocalClassHost" to "LocalClassHost")) {
+            val analysis = analyzeWith(build.classBytes(host), build.lookup, tastyOf(tasty, "Scala 3.3.4"))
+            val lazy = methodKeys(build.classBytes(host)).filter { it.second.startsWith("(Lscala/runtime/LazyRef;)") }
+
+            assertTrue(lazy.size >= 5, host)
+            for ((name, descriptor) in lazy) {
+                assertEquals(GeneratedBy.NONE, analysis.generatedBy(name, descriptor), "$host.$name")
+                assertEquals(UnreadShape.NONE, analysis.unreadShape(name, descriptor), "$host.$name")
+            }
+        }
+    }
+
+    /** [classBytes] with the middle of every `enum <middle> has no case with ...` recipe passed through [middle]. */
+    private fun withNoCaseMiddle(
+        classBytes: ByteArray,
+        middle: (String) -> String,
+    ): ByteArray {
+        val writer = ClassWriter(0)
+        val visitor =
+            object : ClassVisitor(Opcodes.ASM9, writer) {
+                override fun visitMethod(
+                    access: Int,
+                    name: String,
+                    descriptor: String,
+                    signature: String?,
+                    exceptions: Array<out String>?,
+                ): MethodVisitor {
+                    val delegate = super.visitMethod(access, name, descriptor, signature, exceptions)
+                    return object : MethodVisitor(Opcodes.ASM9, delegate) {
+                        override fun visitInvokeDynamicInsn(
+                            name: String,
+                            descriptor: String,
+                            bootstrapMethodHandle: Handle,
+                            vararg bootstrapMethodArguments: Any,
+                        ) = super.visitInvokeDynamicInsn(
+                            name,
+                            descriptor,
+                            bootstrapMethodHandle,
+                            *bootstrapMethodArguments
+                                .map { argument ->
+                                    val recipe = argument as? String
+                                    val split = recipe?.indexOf(" has no case with ")
+                                    if (recipe != null && recipe.startsWith("enum ") && split != null && split > 0) {
+                                        "enum " + middle(recipe.substring(5, split)) + recipe.substring(split)
+                                    } else {
+                                        argument
+                                    }
+                                }.toTypedArray(),
+                        )
+                    }
+                }
+            }
+        ClassReader(classBytes).accept(visitor, 0)
+        return writer.toByteArray()
+    }
+
+    @Test
+    fun `scala 3 - a local enum's no-case message names the package, the host and one or more _$ before the enum`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val pip = localEnum("LocalObjectHost\$Pip\$1")
+        val type = "L$PACKAGE/${pip.enumClass};"
+        val dotted = "com.example.scalatarget"
+        val variants =
+            mapOf(
+                "as scalac writes it" to ("$dotted.LocalObjectHost\$._\$Pip" to true),
+                "a deeper nesting" to ("$dotted.LocalObjectHost\$._\$_\$_\$Pip" to true),
+                "a nested host" to ("$dotted.LocalObjectHost\$._\$Inner\$._\$Pip" to true),
+                "no package" to ("LocalObjectHost\$._\$Pip" to false),
+                "another package" to ("org.example.LocalObjectHost\$._\$Pip" to false),
+                "no _$" to ("$dotted.LocalObjectHost\$.Pip" to false),
+                "no dot before the _$" to ("$dotted.LocalObjectHost\$_\$Pip" to false),
+                "another enum" to ("$dotted.LocalObjectHost\$._\$Other" to false),
+                "a space" to ("$dotted.LocalObjectHost\$ ._\$Pip" to false),
+                "a suffix after the enum" to ("$dotted.LocalObjectHost\$._\$Pip2" to false),
+                "no enum prefix of the name" to ("$dotted.LocalObjectHost\$._\$_Pip" to false),
+            )
+
+        for ((label, variant) in variants) {
+            val bytes = withNoCaseMiddle(build.classBytes(pip.companion)) { variant.first }
+            val analysis = analyze(bytes, build.lookup)
+            val expected = if (variant.second) GeneratedBy.ENUM else GeneratedBy.NONE
+
+            assertEquals(expected, analysis.generatedBy("valueOf", "(Ljava/lang/String;)$type"), "$label valueOf")
+            assertEquals(expected, analysis.generatedBy("fromOrdinal", "(I)$type"), "$label fromOrdinal")
+            assertEquals(GeneratedBy.ENUM, analysis.generatedBy("values", "()[$type"), "$label values")
+        }
+    }
+
+    @Test
+    fun `scala 3 - the no-case message of an enum that is not local keeps its exact middle`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val gate = "L$PACKAGE/NestedCompanion\$Gate;"
+        val suit = "L$PACKAGE/Suit;"
+        val cases =
+            listOf(
+                Triple("NestedCompanion\$Gate\$", "valueOf", "(Ljava/lang/String;)$gate") to
+                    "com.example.scalatarget.NestedCompanion._\$Gate",
+                Triple("NestedCompanion\$Gate\$", "fromOrdinal", "(I)$gate") to "com.example.scalatarget.NestedCompanion._\$_\$Gate",
+                Triple("Suit\$", "valueOf", "(Ljava/lang/String;)$suit") to "com.example.scalatarget._\$Suit",
+                Triple("Suit\$", "fromOrdinal", "(I)$suit") to "com.example.scalatarget._\$Suit",
+            )
+
+        for ((target, middle) in cases) {
+            val (companion, name, descriptor) = target
+            val original = analyze(build.classBytes(companion), build.lookup)
+            val changed = analyze(withNoCaseMiddle(build.classBytes(companion)) { middle }, build.lookup)
+
+            assertEquals(GeneratedBy.ENUM, original.generatedBy(name, descriptor), "$companion.$name")
+            assertEquals(GeneratedBy.NONE, changed.generatedBy(name, descriptor), "$companion.$name with $middle")
+        }
+    }
+
+    /** [classBytes] with the `EnclosingMethod` passed through [enclosing]: owner, method name and descriptor. */
+    private fun withEnclosingMethod(
+        classBytes: ByteArray,
+        enclosing: (Triple<String, String?, String?>) -> Triple<String, String?, String?>,
+    ): ByteArray {
+        val writer = ClassWriter(0)
+        val visitor =
+            object : ClassVisitor(Opcodes.ASM9, writer) {
+                override fun visitOuterClass(
+                    owner: String,
+                    name: String?,
+                    descriptor: String?,
+                ) {
+                    val (changedOwner, changedName, changedDescriptor) = enclosing(Triple(owner, name, descriptor))
+                    super.visitOuterClass(changedOwner, changedName, changedDescriptor)
+                }
+            }
+        ClassReader(classBytes).accept(visitor, 0)
+        return writer.toByteArray()
+    }
+
+    /** [classBytes] without the `InnerClasses` entry of the class [internalName]. */
+    private fun withoutInnerClass(
+        classBytes: ByteArray,
+        internalName: String,
+    ): ByteArray {
+        val writer = ClassWriter(0)
+        val visitor =
+            object : ClassVisitor(Opcodes.ASM9, writer) {
+                override fun visitInnerClass(
+                    name: String,
+                    outerName: String?,
+                    innerName: String?,
+                    access: Int,
+                ) {
+                    if (name != internalName) super.visitInnerClass(name, outerName, innerName, access)
+                }
+            }
+        ClassReader(classBytes).accept(visitor, 0)
+        return writer.toByteArray()
+    }
+
+    @Test
+    fun `scala 3 - a class that fails a step of the local pairing is the adopter's`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val pip = localEnum("LocalObjectHost\$Pip\$1")
+        val companion = build.classBytes(pip.companion)
+        val singleton = "$PACKAGE/${pip.singletonClasses.single()}"
+        val enumClass = "$PACKAGE/${pip.enumClass}"
+        val type = "L$enumClass;"
+        val tasty = tastyOf(pip.host, "Scala 3.3.4")
+        val notEnum = withHeader(build.classBytes(pip.enumClass), access = { it and Opcodes.ACC_ENUM.inv() })
+        val elsewhere = withEnclosingMethod(build.classBytes(pip.enumClass)) { Triple(it.first, "elsewhere", it.third) }
+        val otherDescriptor = withEnclosingMethod(build.classBytes(pip.enumClass)) { Triple(it.first, it.second, "()J") }
+        val otherOwner = withEnclosingMethod(build.classBytes(pip.enumClass)) { Triple("$PACKAGE/LocalClassHost", it.second, it.third) }
+        val notSubclass = withHeader(build.classBytes(pip.singletonClasses.single()), superName = { "java/lang/Object" })
+        val enclosedElsewhere = withEnclosingMethod(build.classBytes(pip.singletonClasses.single())) { Triple(enumClass, null, null) }
+        val variants =
+            mapOf(
+                "a MODULE$ field" to
+                    (
+                        ClassWriter(0)
+                            .also { writer ->
+                                ClassReader(companion).accept(
+                                    object : ClassVisitor(Opcodes.ASM9, writer) {
+                                        override fun visitEnd() {
+                                            super.visitField(
+                                                Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC or Opcodes.ACC_FINAL,
+                                                "MODULE\$",
+                                                "L$PACKAGE/${pip.companion};",
+                                                null,
+                                                null,
+                                            )
+                                            super.visitEnd()
+                                        }
+                                    },
+                                    0,
+                                )
+                            }.toByteArray() to build.lookup
+                    ),
+                "no Mirror.Sum" to (withHeader(companion, interfaces = { it - "scala/deriving/Mirror\$Sum" }) to build.lookup),
+                "an enum class that is not one" to
+                    (companion to { name: String -> if (name == enumClass) notEnum else build.lookup(name) }),
+                "an enum class with another enclosing method" to
+                    (companion to { name: String -> if (name == enumClass) elsewhere else build.lookup(name) }),
+                "an enum class with another enclosing descriptor" to
+                    (companion to { name: String -> if (name == enumClass) otherDescriptor else build.lookup(name) }),
+                "an enum class with another enclosing owner" to
+                    (companion to { name: String -> if (name == enumClass) otherOwner else build.lookup(name) }),
+                "an enum class the companion does not list" to (withoutInnerClass(companion, enumClass) to build.lookup),
+                "no listed class ties: the singleton is not listed" to (withoutInnerClass(companion, singleton) to build.lookup),
+                "no listed class ties: the singleton extends another class" to
+                    (companion to { name: String -> if (name == singleton) notSubclass else build.lookup(name) }),
+                "no listed class ties: the singleton is enclosed by another class" to
+                    (companion to { name: String -> if (name == singleton) enclosedElsewhere else build.lookup(name) }),
+            )
+
+        for ((label, variant) in variants) {
+            val (bytes, lookup) = variant
+            val analysis = analyzeWith(bytes, lookup, tasty)
+            for ((name, descriptor) in methodKeys(bytes)) {
+                assertEquals(GeneratedBy.NONE, analysis.generatedBy(name, descriptor), "$label $name$descriptor")
+                assertEquals(UnreadShape.NONE, analysis.unreadShape(name, descriptor), "$label $name$descriptor")
+            }
+            assertTrue(methodKeys(bytes).contains("fromOrdinal" to "(I)$type"), label)
+        }
+    }
+
+    @Test
+    fun `scala 3 - a local companion whose parameterised case lists another outer and whose singleton is not listed is the adopter's`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val form = localEnum("LocalObjectHost\$Form\$1")
+        val enumClass = "$PACKAGE/${form.enumClass}"
+        val disc = "$PACKAGE/${form.parameterised}"
+        val writer = ClassWriter(0)
+        ClassReader(withoutInnerClass(build.classBytes(form.companion), "$PACKAGE/${form.singletonClasses.single()}")).accept(
+            object : ClassVisitor(Opcodes.ASM9, writer) {
+                override fun visitInnerClass(
+                    name: String,
+                    outerName: String?,
+                    innerName: String?,
+                    access: Int,
+                ) = super.visitInnerClass(name, if (name == disc) enumClass else outerName, innerName, access)
+            },
+            0,
+        )
+        val bytes = writer.toByteArray()
+
+        val analysis = analyzeWith(bytes, build.lookup, tastyOf(form.host, "Scala 3.3.4"))
+
+        for ((name, descriptor) in methodKeys(bytes)) {
+            assertEquals(GeneratedBy.NONE, analysis.generatedBy(name, descriptor), "$name$descriptor")
+            assertEquals(UnreadShape.NONE, analysis.unreadShape(name, descriptor), "$name$descriptor")
+        }
+        val untouched = analyzeWith(build.classBytes(form.companion), build.lookup, tastyOf(form.host, "Scala 3.3.4"))
+        assertEquals(GeneratedBy.ENUM, untouched.generatedBy("fromOrdinal", "(I)L$enumClass;"))
+    }
+
+    @Test
+    fun `scala 3 - a trait-hosted local enum singleton's readResolve stays held on a read release when the trait cannot be read`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val tide = localEnum("LocalTraitHost\$Tide\$1")
+        val singleton = tide.singletonClasses.single()
+        val lookup = { name: String -> if (name == "$PACKAGE/LocalTraitHost") null else build.lookup(name) }
+
+        val analysis = analyzeWith(build.classBytes(singleton), lookup, tastyOf(tide.host, "Scala 3.3.4"))
+
+        assertEquals(
+            GeneratedBy.ENUM,
+            analyze(build.classBytes(singleton), build.lookup).generatedBy("readResolve", "()Ljava/lang/Object;"),
+        )
+        assertEquals(GeneratedBy.NONE, analysis.generatedBy("readResolve", "()Ljava/lang/Object;"))
+        assertEquals(UnreadShape.SCALA_ENUM, analysis.unreadShape("readResolve", "()Ljava/lang/Object;"))
+    }
+
+    @Test
+    fun `scala 3 - a local companion extending a generic trait that declares fromOrdinal pairs past the bridge`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val shade = localEnum("LocalGenericHost\$Shade\$1")
+        val bytes = build.classBytes(shade.companion)
+
+        assertTrue(methodKeys(bytes).contains("fromOrdinal" to "(I)Ljava/lang/Object;"))
+        assertEquals(GeneratedBy.ENUM, analyze(bytes, build.lookup).generatedBy("fromOrdinal", "(I)L$PACKAGE/${shade.enumClass};"))
+    }
+
+    private class Ref(
+        val owner: String,
+        val name: String,
+        val descriptor: String,
+    )
+
+    /** [classBytes] with the field and method references in the body of [method] passed through [field] and [call]. */
+    private fun withRewrittenRefs(
+        classBytes: ByteArray,
+        method: String,
+        field: (Ref) -> Ref = { it },
+        call: (Ref) -> Ref = { it },
+    ): ByteArray {
+        val writer = ClassWriter(0)
+        val visitor =
+            object : ClassVisitor(Opcodes.ASM9, writer) {
+                override fun visitMethod(
+                    access: Int,
+                    name: String,
+                    descriptor: String,
+                    signature: String?,
+                    exceptions: Array<out String>?,
+                ): MethodVisitor {
+                    val delegate = super.visitMethod(access, name, descriptor, signature, exceptions)
+                    if (name != method) return delegate
+                    return object : MethodVisitor(Opcodes.ASM9, delegate) {
+                        override fun visitFieldInsn(
+                            opcode: Int,
+                            owner: String,
+                            name: String,
+                            descriptor: String,
+                        ) {
+                            val ref = field(Ref(owner, name, descriptor))
+                            super.visitFieldInsn(opcode, ref.owner, ref.name, ref.descriptor)
+                        }
+
+                        override fun visitMethodInsn(
+                            opcode: Int,
+                            owner: String,
+                            name: String,
+                            descriptor: String,
+                            isInterface: Boolean,
+                        ) {
+                            val ref = call(Ref(owner, name, descriptor))
+                            super.visitMethodInsn(opcode, ref.owner, ref.name, ref.descriptor, isInterface)
+                        }
+                    }
+                }
+            }
+        ClassReader(classBytes).accept(visitor, 0)
+        return writer.toByteArray()
+    }
+
+    private val resolve = "readResolve" to "()Ljava/lang/Object;"
+
+    @Test
+    fun `scala 3 - a local enum singleton's readResolve is read through the host's lazy accessor in each form`() {
+        val forms =
+            listOf(
+                "an object host" to "LocalObjectHost\$Pip\$3\$\$anon\$1",
+                "an object host, a case with constructor arguments" to "LocalObjectHost\$\$anon\$3",
+                "a class host" to "LocalClassHost\$Rune\$3\$\$anon\$7",
+                "a class host, a case with constructor arguments" to "LocalClassHost\$\$anon\$12",
+                "a lambda in a class host" to "LocalClassHost\$Beat\$3\$\$anon\$9",
+            )
+        for (version in listOf("3.3.4") + scala3Versions) {
+            val build = scalaBuild(version)
+            for ((label, singleton) in forms) {
+                assertEquals(
+                    GeneratedBy.ENUM,
+                    analyze(build.classBytes(singleton), build.lookup).generatedBy(resolve.first, resolve.second),
+                    "$version $label",
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `scala 3 - a local enum singleton's readResolve pins the owners and descriptors of the host's accessor and the lazy field`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val host = "$PACKAGE/LocalObjectHost\$"
+        val classHost = "$PACKAGE/LocalClassHost"
+        val lazyRef = "Lscala/runtime/LazyRef;"
+        val forms =
+            mapOf(
+                "LocalObjectHost\$Pip\$3\$\$anon\$1" to ("$PACKAGE/LocalObjectHost\$Pip\$3\$" to host),
+                "LocalObjectHost\$\$anon\$3" to ("$PACKAGE/LocalObjectHost\$Orb\$3\$" to host),
+                "LocalClassHost\$Rune\$3\$\$anon\$7" to ("$PACKAGE/LocalClassHost\$Rune\$3\$" to classHost),
+                "LocalClassHost\$\$anon\$12" to ("$PACKAGE/LocalClassHost\$Gem\$3\$" to classHost),
+            )
+
+        for ((singleton, owners) in forms) {
+            val (companion, hostClass) = owners
+            val bytes = build.classBytes(singleton)
+            val renamedAccessor =
+                withRewrittenRefs(bytes, "readResolve", call = {
+                    if (it.descriptor.startsWith("($lazyRef)")) Ref(it.owner, "renamed", it.descriptor) else it
+                })
+            val accessorOnCompanion =
+                withRewrittenRefs(bytes, "readResolve", call = {
+                    if (it.descriptor.startsWith("($lazyRef)")) Ref(companion, it.name, it.descriptor) else it
+                })
+            val accessorReturnsObject =
+                withRewrittenRefs(bytes, "readResolve", call = {
+                    if (it.descriptor.startsWith("($lazyRef)")) Ref(it.owner, it.name, "($lazyRef)Ljava/lang/Object;") else it
+                })
+            val accessorTakesObject =
+                withRewrittenRefs(bytes, "readResolve", call = {
+                    if (it.descriptor.startsWith("($lazyRef)")) Ref(it.owner, it.name, "(Ljava/lang/Object;)L$companion;") else it
+                })
+            val lazyOnHost =
+                withRewrittenRefs(bytes, "readResolve", field = {
+                    if (it.descriptor ==
+                        lazyRef
+                    ) {
+                        Ref(hostClass, it.name, it.descriptor)
+                    } else {
+                        it
+                    }
+                })
+            val lazyUndeclared =
+                withRewrittenRefs(bytes, "readResolve", field = {
+                    if (it.descriptor ==
+                        lazyRef
+                    ) {
+                        Ref(it.owner, "undeclared", it.descriptor)
+                    } else {
+                        it
+                    }
+                })
+            val lazyOtherType =
+                withRewrittenRefs(bytes, "readResolve", field = {
+                    if (it.descriptor ==
+                        lazyRef
+                    ) {
+                        Ref(it.owner, it.name, "Ljava/lang/Object;")
+                    } else {
+                        it
+                    }
+                })
+
+            assertEquals(
+                GeneratedBy.ENUM,
+                analyze(bytes, build.lookup).generatedBy(resolve.first, resolve.second),
+                "$singleton as scalac wrote it",
+            )
+            assertEquals(
+                GeneratedBy.ENUM,
+                analyze(renamedAccessor, build.lookup).generatedBy(resolve.first, resolve.second),
+                "$singleton host accessor name is free",
+            )
+            for ((name, changed) in mapOf(
+                "an accessor on the companion" to accessorOnCompanion,
+                "an accessor returning Object" to accessorReturnsObject,
+                "an accessor taking Object" to accessorTakesObject,
+                "a lazy field on the host" to lazyOnHost,
+                "a lazy field nothing declares" to lazyUndeclared,
+                "a lazy field of another type" to lazyOtherType,
+            )) {
+                assertEquals(
+                    GeneratedBy.NONE,
+                    analyze(changed, build.lookup).generatedBy(resolve.first, resolve.second),
+                    "$singleton $name",
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `scala 3 - a local enum singleton's readResolve in a class host pins its outer accessor, and in an object host its MODULE field`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val classCompanion = "$PACKAGE/LocalClassHost\$Rune\$3\$"
+        val classSingleton = build.classBytes("LocalClassHost\$Rune\$3\$\$anon\$7")
+        val objectSingleton = build.classBytes("LocalObjectHost\$Pip\$3\$\$anon\$1")
+        val outerOf = { ref: Ref -> ref.owner == classCompanion && ref.descriptor == "()L$PACKAGE/LocalClassHost;" }
+        val renamedOuter =
+            withRewrittenRefs(classSingleton, "readResolve", call = { if (outerOf(it)) Ref(it.owner, "elsewhere", it.descriptor) else it })
+        val otherOuter =
+            withRewrittenRefs(
+                classSingleton,
+                "readResolve",
+                call = { if (outerOf(it)) Ref(it.owner, it.name, "()Ljava/lang/Object;") else it },
+            )
+        val otherModule =
+            withRewrittenRefs(objectSingleton, "readResolve", field = {
+                if (it.name ==
+                    "MODULE\$"
+                ) {
+                    Ref("$PACKAGE/LocalClassHost", it.name, "L$PACKAGE/LocalClassHost;")
+                } else {
+                    it
+                }
+            })
+        val otherModuleType =
+            withRewrittenRefs(objectSingleton, "readResolve", field = {
+                if (it.name ==
+                    "MODULE\$"
+                ) {
+                    Ref(it.owner, it.name, "Ljava/lang/Object;")
+                } else {
+                    it
+                }
+            })
+
+        assertEquals(GeneratedBy.ENUM, analyze(objectSingleton, build.lookup).generatedBy(resolve.first, resolve.second))
+        assertEquals(
+            GeneratedBy.NONE,
+            analyze(renamedOuter, build.lookup).generatedBy(resolve.first, resolve.second),
+            "an outer accessor the companion lacks",
+        )
+        assertEquals(
+            GeneratedBy.NONE,
+            analyze(otherOuter, build.lookup).generatedBy(resolve.first, resolve.second),
+            "an outer accessor returning Object",
+        )
+        assertEquals(
+            GeneratedBy.NONE,
+            analyze(otherModule, build.lookup).generatedBy(resolve.first, resolve.second),
+            "a MODULE field of another class",
+        )
+        assertEquals(
+            GeneratedBy.NONE,
+            analyze(otherModuleType, build.lookup).generatedBy(resolve.first, resolve.second),
+            "a MODULE field of another type",
+        )
+    }
+
     /** [classBytes] with the access flags of the method [name][descriptor] passed through [access]. */
     private fun withMethodAccess(
         classBytes: ByteArray,
