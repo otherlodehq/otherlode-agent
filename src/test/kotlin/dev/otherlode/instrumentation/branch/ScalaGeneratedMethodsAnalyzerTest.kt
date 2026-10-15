@@ -894,6 +894,32 @@ class ScalaGeneratedMethodsAnalyzerTest {
     }
 
     @Test
+    fun `scala 3 - an enum extending a class of the adopter's reads its plumbing exactly`() {
+        for (version in listOf("3.3.4") + scala3Versions) {
+            val build = if (version == "3.3.4") CompilerFixtures.scalaBaseline(version) else CompilerFixtures.scalac(version)
+            assertEnumReadExactly(version, "Tone", productForwarders)
+            assertEnumReadExactly(version, "Tone\$", companionMethods("Tone"))
+            assertEnumReadExactly(version, build.classNames().single { it.startsWith("Tone\$\$anon") }, singletonCaseMethods)
+            assertEnumReadExactly(version, "Mark", productForwarders)
+            assertEnumReadExactly(version, "Mark\$", companionMethods("Mark").filter { it.first != "values" && it.first != "valueOf" })
+            assertEnumReadExactly(version, build.classNames().single { it.startsWith("Mark\$\$anon") }, singletonCaseMethods)
+            assertEnumReadExactly(version, "Mark\$Scored", listOf("ordinal" to "()I"))
+        }
+    }
+
+    @Test
+    fun `scala 3 - a case of an enum extending a class of the adopter's is held on a read release when its body is not read`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val singleton = build.classNames().single { it.startsWith("Mark\$\$anon") }
+
+        val analysis = analyzeWith(withNop(build.classBytes(singleton), setOf("canEqual")), build.lookup, tastyOf("Mark", "Scala 3.3.4"))
+        val scored = analyzeWith(withNop(build.classBytes("Mark\$Scored"), setOf("ordinal")), build.lookup, tastyOf("Mark", "Scala 3.3.4"))
+
+        assertEquals(UnreadShape.SCALA_ENUM, analysis.unreadShape("canEqual", "(Ljava/lang/Object;)Z"))
+        assertEquals(UnreadShape.SCALA_ENUM, scored.unreadShape("ordinal", "()I"))
+    }
+
+    @Test
     fun `scala 3 - an enum nested in an object or with a singleton case of its own class reads its plumbing exactly`() {
         for (version in listOf("3.3.4") + scala3Versions) {
             val build = if (version == "3.3.4") CompilerFixtures.scalaBaseline(version) else CompilerFixtures.scalac(version)
@@ -955,25 +981,79 @@ class ScalaGeneratedMethodsAnalyzerTest {
         return writer.toByteArray()
     }
 
-    /** [classBytes] with its superclass changed to [superName]. */
-    private fun withSuperclass(
+    /** [classBytes] with its access flags, superclass and interfaces passed through [access], [superName] and [interfaces]. */
+    private fun withHeader(
         classBytes: ByteArray,
-        superName: String,
+        access: (Int) -> Int = { it },
+        superName: (String?) -> String? = { it },
+        interfaces: (List<String>) -> List<String> = { it },
     ): ByteArray {
         val writer = ClassWriter(0)
         val visitor =
             object : ClassVisitor(Opcodes.ASM9, writer) {
                 override fun visit(
                     version: Int,
-                    access: Int,
+                    flags: Int,
                     name: String,
                     signature: String?,
-                    ignored: String?,
-                    interfaces: Array<out String>?,
-                ) = super.visit(version, access, name, signature, superName, interfaces)
+                    parent: String?,
+                    implemented: Array<out String>?,
+                ) = super.visit(
+                    version,
+                    access(flags),
+                    name,
+                    signature,
+                    superName(parent),
+                    interfaces(implemented.orEmpty().toList()).toTypedArray(),
+                )
             }
         ClassReader(classBytes).accept(visitor, 0)
         return writer.toByteArray()
+    }
+
+    @Test
+    fun `scala 3 - an enum class needs ACC_ENUM, ACC_ABSTRACT and scala_reflect_Enum, whatever its superclass`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val suit = build.classBytes("Suit")
+        val variants =
+            mapOf(
+                "unchanged" to suit,
+                "java.lang.Enum superclass" to withHeader(suit, superName = { "java/lang/Enum" }),
+                "no ACC_ENUM" to withHeader(suit, access = { it and Opcodes.ACC_ENUM.inv() }),
+                "no ACC_ABSTRACT" to withHeader(suit, access = { it and Opcodes.ACC_ABSTRACT.inv() }),
+                "no scala.reflect.Enum" to withHeader(suit, interfaces = { it - "scala/reflect/Enum" }),
+                "a class of the adopter's as superclass" to withHeader(suit, superName = { "java/lang/Number" }),
+            )
+        val enumClasses = setOf("unchanged", "java.lang.Enum superclass", "a class of the adopter's as superclass")
+        for ((label, enumClass) in variants) {
+            val lookup = { name: String -> if (name == "$PACKAGE/Suit") enumClass else build.lookup(name) }
+            val expected = if (label in enumClasses) GeneratedBy.ENUM else GeneratedBy.NONE
+
+            val analysis = analyze(build.classBytes("Suit\$"), lookup)
+
+            assertEquals(expected, analysis.generatedBy("values", "()[L$PACKAGE/Suit;"), label)
+        }
+    }
+
+    @Test
+    fun `scala 3 - a class implementing EnumValue over a scala_reflect_Enum that is not an enum class is not held on a read release`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val suit = build.classBytes("Suit")
+        val notEnums =
+            mapOf(
+                "no ACC_ENUM" to withHeader(suit, access = { it and Opcodes.ACC_ENUM.inv() }),
+                "no ACC_ABSTRACT" to withHeader(suit, access = { it and Opcodes.ACC_ABSTRACT.inv() }),
+                "no scala.reflect.Enum" to withHeader(suit, interfaces = { it - "scala/reflect/Enum" }),
+            )
+        val singleton = build.classNames().first { it.startsWith("Suit\$\$anon") }
+        for ((label, notEnum) in notEnums) {
+            val lookup = { name: String -> if (name == "$PACKAGE/Suit") notEnum else build.lookup(name) }
+
+            val analysis = analyzeWith(build.classBytes(singleton), lookup, tastyOf("Suit", "Scala 3.3.4"))
+
+            assertEquals(UnreadShape.NONE, analysis.unreadShape("canEqual", "(Ljava/lang/Object;)Z"), label)
+            assertEquals(GeneratedBy.NONE, analysis.generatedBy("canEqual", "(Ljava/lang/Object;)Z"), label)
+        }
     }
 
     @Test
@@ -1072,17 +1152,110 @@ class ScalaGeneratedMethodsAnalyzerTest {
         }
     }
 
+    /** [classBytes] with `productPrefix()Ljava/lang/String;` rewritten to the instructions [emit] writes. */
+    private fun withProductPrefix(
+        classBytes: ByteArray,
+        emit: (MethodVisitor) -> Unit,
+    ): ByteArray {
+        val writer = ClassWriter(0)
+        val visitor =
+            object : ClassVisitor(Opcodes.ASM9, writer) {
+                override fun visitMethod(
+                    access: Int,
+                    name: String,
+                    descriptor: String,
+                    signature: String?,
+                    exceptions: Array<out String>?,
+                ): MethodVisitor? {
+                    val target = super.visitMethod(access, name, descriptor, signature, exceptions)
+                    if (name != "productPrefix" || descriptor != "()Ljava/lang/String;") return target
+                    target.visitCode()
+                    emit(target)
+                    target.visitMaxs(1, 1)
+                    target.visitEnd()
+                    return null
+                }
+            }
+        ClassReader(classBytes).accept(visitor, 0)
+        return writer.toByteArray()
+    }
+
+    private val javaSingletonCaseMethods =
+        singletonCaseMethods.filter { it.first !in setOf("readResolve", "toString", "ordinal", "hashCode") }
+
     @Test
-    fun `scala 3 - a singleton case of an enum extending java_lang_Enum stays an unread shape on a read release`() {
+    fun `scala 3 - a Java-compatible enum class's Product forwarders are read exactly`() {
+        for (version in listOf("3.3.4") + scala3Versions) {
+            for (enumName in listOf("Dir", "Metal", "JavaEnumHost\$Gear")) {
+                assertEnumReadExactly(version, enumName, productForwarders)
+            }
+        }
+    }
+
+    @Test
+    fun `scala 3 - a Java-compatible enum's companion reads its values, valueOf, fromOrdinal, new and ordinal exactly`() {
+        for (version in listOf("3.3.4") + scala3Versions) {
+            assertEnumReadExactly(version, "Dir\$", companionMethods("Dir"))
+            assertEnumReadExactly(version, "Metal\$", companionMethods("Metal").filter { it.first != "\$new" })
+            assertEnumReadExactly(version, "JavaEnumHost\$Gear\$", companionMethods("JavaEnumHost\$Gear"))
+        }
+    }
+
+    @Test
+    fun `scala 3 - a Java-compatible enum's singleton cases are read exactly with productPrefix as name()`() {
+        for (version in listOf("3.3.4") + scala3Versions) {
+            for (singleton in listOf("Dir\$\$anon\$1", "Metal\$\$anon\$2", "Metal\$\$anon\$3", "JavaEnumHost\$Gear\$\$anon\$4")) {
+                assertEnumReadExactly(version, singleton, javaSingletonCaseMethods)
+            }
+        }
+    }
+
+    @Test
+    fun `scala 3 - a Java-compatible enum's singleton has no productPrefix rule beyond name() and stays an unread shape`() {
         val build = CompilerFixtures.scalaBaseline("3.3.4")
-        val suit = withSuperclass(build.classBytes("Suit"), "java/lang/Enum")
-        val lookup = { name: String -> if (name == "$PACKAGE/Suit") suit else build.lookup(name) }
-        val singleton = build.classNames().first { it.startsWith("Suit\$\$anon") }
+        val prefix = "productPrefix" to "()Ljava/lang/String;"
+        val bodies =
+            mapOf<String, (MethodVisitor) -> Unit>(
+                "a constant" to { v ->
+                    v.visitLdcInsn("North")
+                    v.visitInsn(Opcodes.ARETURN)
+                },
+                "name() on another owner" to { v ->
+                    v.visitVarInsn(Opcodes.ALOAD, 0)
+                    v.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "$PACKAGE/Dir", "name", "()Ljava/lang/String;", false)
+                    v.visitInsn(Opcodes.ARETURN)
+                },
+                "toString()" to { v ->
+                    v.visitVarInsn(Opcodes.ALOAD, 0)
+                    v.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "$PACKAGE/Dir\$\$anon\$1", "toString", "()Ljava/lang/String;", false)
+                    v.visitInsn(Opcodes.ARETURN)
+                },
+            )
 
-        val analysis = analyzeWith(build.classBytes(singleton), lookup, tastyOf("Suit", "Scala 3.3.4"))
+        for ((label, emit) in bodies) {
+            val bytes = withProductPrefix(build.classBytes("Dir\$\$anon\$1"), emit)
+            val analysis = analyzeWith(bytes, build.lookup, tastyOf("Dir", "Scala 3.3.4"))
 
-        assertEquals(GeneratedBy.NONE, analysis.generatedBy("canEqual", "(Ljava/lang/Object;)Z"))
-        assertEquals(UnreadShape.CASE_CLASS, analysis.unreadShape("canEqual", "(Ljava/lang/Object;)Z"))
+            assertEquals(GeneratedBy.NONE, analysis.generatedBy(prefix.first, prefix.second), label)
+            assertEquals(UnreadShape.SCALA_ENUM, analysis.unreadShape(prefix.first, prefix.second), label)
+        }
+    }
+
+    @Test
+    fun `scala 3 - the name() productPrefix is not enum plumbing in a singleton of an enum not extending java_lang_Enum`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        for (singleton in listOf("Suit\$\$anon\$1", "Planet\$\$anon\$2", "Tone\$\$anon\$1", "Mark\$\$anon\$2")) {
+            val bytes =
+                withProductPrefix(build.classBytes(singleton)) { v ->
+                    v.visitVarInsn(Opcodes.ALOAD, 0)
+                    v.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "$PACKAGE/$singleton", "name", "()Ljava/lang/String;", false)
+                    v.visitInsn(Opcodes.ARETURN)
+                }
+
+            val analysis = analyze(bytes, build.lookup)
+
+            assertEquals(GeneratedBy.NONE, analysis.generatedBy("productPrefix", "()Ljava/lang/String;"), singleton)
+        }
     }
 
     @Test

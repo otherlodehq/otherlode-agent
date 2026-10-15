@@ -775,4 +775,82 @@ class ScalaGeneratedMethodMarkingTest {
         assertEquals(GeneratedBy.CASE_CLASS, probes.method("Shape\$Circle", "hashCode", "()I").generatedBy)
         assertEquals(GeneratedBy.NONE, probes.method("Shape\$Circle", "radius", "()D").generatedBy)
     }
+
+    @Test
+    fun `scala 3 - a Java-compatible enum's plumbing is marked ENUM and what the adopter wrote is not`() {
+        val singletonCase =
+            setOf("canEqual", "productArity", "productElement", "productElementName", "fromProduct", "productPrefix")
+        val companion = setOf("values", "valueOf", "\$new", "fromOrdinal", "ordinal")
+        val enumPlumbing =
+            mapOf(
+                "Dir\$" to companion,
+                "Dir\$\$anon\$1" to singletonCase,
+                "Metal\$" to companion,
+                "Metal\$\$anon\$2" to singletonCase,
+                "Metal\$\$anon\$3" to singletonCase,
+                "JavaEnumHost\$Gear\$" to companion,
+                "JavaEnumHost\$Gear\$\$anon\$4" to singletonCase,
+            )
+        val enumClasses = listOf("Dir", "Metal", "JavaEnumHost\$Gear")
+        val probes = probesAfterLoading("scala3", *(enumPlumbing.keys + enumClasses).toTypedArray())
+
+        for ((simpleName, plumbing) in enumPlumbing) {
+            val methods =
+                probes.methodsOf(simpleName).filter {
+                    it.methodName != "<init>" && it.methodName != "writeReplace"
+                }
+            assertTrue(methods.isNotEmpty(), simpleName)
+            for (method in methods) {
+                val expected = if (method.methodName in plumbing) GeneratedBy.ENUM else GeneratedBy.NONE
+                assertEquals(expected, method.generatedBy, "$simpleName.${method.methodName}${method.methodDescriptor}")
+            }
+        }
+        val statics = mapOf("values" to GeneratedBy.ENUM, "valueOf" to GeneratedBy.ENUM, "fromOrdinal" to GeneratedBy.STATIC_FORWARDER)
+        for (enumName in enumClasses) {
+            for ((name, expected) in statics) {
+                assertEquals(
+                    expected,
+                    probes.methodsOf(enumName).single { it.static && it.methodName == name }.generatedBy,
+                    "$enumName.$name",
+                )
+            }
+        }
+        assertEquals(GeneratedBy.NONE, probes.methodsOf("Metal").single { it.methodName == "mass" }.generatedBy)
+    }
+
+    @Test
+    fun `scala 3 - the plumbing of an enum extending a class of the adopter's is marked ENUM and the class is not`() {
+        val singletonCase =
+            setOf(
+                "canEqual",
+                "productArity",
+                "productElement",
+                "productElementName",
+                "fromProduct",
+                "readResolve",
+                "productPrefix",
+                "toString",
+                "ordinal",
+                "hashCode",
+            )
+        val enumPlumbing =
+            mapOf(
+                "Tone\$" to setOf("values", "valueOf", "\$new", "fromOrdinal", "ordinal"),
+                "Tone\$\$anon\$1" to singletonCase,
+                "Mark\$" to setOf("\$new", "fromOrdinal", "ordinal"),
+                "Mark\$\$anon\$2" to singletonCase,
+            )
+        val probes = probesAfterLoading("scala3", *(enumPlumbing.keys + listOf("Tone", "Mark", "Mark\$Scored", "Tagged")).toTypedArray())
+
+        for ((simpleName, plumbing) in enumPlumbing) {
+            val methods = probes.methodsOf(simpleName).filter { it.methodName != "<init>" && it.methodName != "writeReplace" }
+            assertTrue(methods.isNotEmpty(), simpleName)
+            for (method in methods) {
+                val expected = if (method.methodName in plumbing) GeneratedBy.ENUM else GeneratedBy.NONE
+                assertEquals(expected, method.generatedBy, "$simpleName.${method.methodName}${method.methodDescriptor}")
+            }
+        }
+        assertEquals(GeneratedBy.ENUM, probes.method("Mark\$Scored", "ordinal", "()I").generatedBy)
+        assertEquals(GeneratedBy.NONE, probes.methodsOf("Tagged").single { it.methodName == "tag" }.generatedBy)
+    }
 }
