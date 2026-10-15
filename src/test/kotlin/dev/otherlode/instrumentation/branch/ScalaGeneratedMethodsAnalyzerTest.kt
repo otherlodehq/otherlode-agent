@@ -933,6 +933,408 @@ class ScalaGeneratedMethodsAnalyzerTest {
         }
     }
 
+    private fun nestedAccessor(
+        enumName: String,
+        case: String,
+    ) = case to "()L$PACKAGE/$enumName;"
+
+    private fun nestedCompanionMethods(
+        enumName: String,
+        cases: List<String>,
+        parameterised: Boolean = false,
+        withNew: Boolean = true,
+    ): List<Pair<String, String>> =
+        companionMethods(enumName)
+            .filter { !parameterised || (it.first != "values" && it.first != "valueOf") }
+            .filter { withNew || it.first != "\$new" } + cases.map { nestedAccessor(enumName, it) }
+
+    private val nestedEnums =
+        listOf(
+            Triple("NestedSingletons\$Compass", listOf("North", "East", "South", "West"), "NestedSingletons\$\$anon\$1"),
+            Triple("NestedSingletons\$Side", listOf("Left", "Right"), "NestedSingletons\$\$anon\$2"),
+            Triple("NestedMixed\$Token", listOf("Space", "Tab"), "NestedMixed\$\$anon\$3"),
+            Triple("NestedCompanion\$Gate", listOf("Open", "Closed"), "NestedCompanion\$\$anon\$6"),
+        )
+
+    @Test
+    fun `scala 3 - the companion of an enum declared inside a class reads its plumbing and case accessors exactly`() {
+        for (version in listOf("3.3.4") + scala3Versions) {
+            val build = if (version == "3.3.4") CompilerFixtures.scalaBaseline(version) else CompilerFixtures.scalac(version)
+            for ((enumName, cases, _) in nestedEnums) {
+                val mixed = enumName == "NestedMixed\$Token"
+                val methods = nestedCompanionMethods(enumName, cases, parameterised = mixed)
+                assertEnumReadExactly(version, "$enumName\$", methods)
+            }
+            val holder = build.classNames().single { it.startsWith("EnumHolder\$\$anon") }
+            assertEnumReadExactly(version, "EnumHolder\$Inner\$", nestedCompanionMethods("EnumHolder\$Inner", listOf("Up", "Down")))
+            assertEnumReadExactly(version, holder, singletonCaseMethods)
+        }
+    }
+
+    @Test
+    fun `scala 3 - the companion of a class-nested enum whose cases extend its constructor reads without a new`() {
+        for (version in listOf("3.3.4") + scala3Versions) {
+            val methods = nestedCompanionMethods("NestedParam\$Rank", listOf("Low", "High"), withNew = false)
+            assertEnumReadExactly(version, "NestedParam\$Rank\$", methods)
+            for (singleton in listOf("NestedParam\$\$anon\$4", "NestedParam\$\$anon\$5")) {
+                assertEnumReadExactly(version, singleton, singletonCaseMethods)
+            }
+        }
+    }
+
+    @Test
+    fun `scala 3 - the singleton cases and parameterised case of a class-nested enum read exactly`() {
+        for (version in listOf("3.3.4") + scala3Versions) {
+            for ((_, _, singleton) in nestedEnums) assertEnumReadExactly(version, singleton, singletonCaseMethods)
+            assertEnumReadExactly(version, "NestedMixed\$Token\$Word", listOf("ordinal" to "()I"))
+        }
+    }
+
+    @Test
+    fun `scala 3 - the accessor of a class-nested enum's parameterised case is read from the field kept for that case`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val word = "Word" to "()L$PACKAGE/NestedMixed\$Token\$Word\$;"
+
+        assertEquals(GeneratedBy.ENUM, build.marks("NestedMixed\$Token\$").of(word.first, word.second))
+        val renamed =
+            withBody(build.classBytes("NestedMixed\$Token\$"), word.first) { v ->
+                v.visitVarInsn(Opcodes.ALOAD, 0)
+                v.visitFieldInsn(Opcodes.GETFIELD, "$PACKAGE/NestedMixed\$Token\$", "Tab", "L$PACKAGE/NestedMixed\$Token;")
+                v.visitInsn(Opcodes.ARETURN)
+            }
+        val secondField =
+            ClassWriter(0)
+                .also { writer ->
+                    ClassReader(build.classBytes("NestedMixed\$Token\$")).accept(
+                        object : ClassVisitor(Opcodes.ASM9, writer) {
+                            override fun visitEnd() {
+                                super.visitField(
+                                    Opcodes.ACC_PRIVATE or Opcodes.ACC_FINAL,
+                                    "Word\$lzy9",
+                                    word.second.removePrefix("()"),
+                                    null,
+                                    null,
+                                )
+                                super.visitEnd()
+                            }
+                        },
+                        0,
+                    )
+                }.toByteArray()
+
+        assertEquals(GeneratedBy.ENUM, analyze(secondField, build.lookup).generatedBy(word.first, word.second))
+        val caseObject = word.second.removePrefix("()")
+        val withOther =
+            ClassWriter(0)
+                .also { writer ->
+                    ClassReader(build.classBytes("NestedMixed\$Token\$")).accept(
+                        object : ClassVisitor(Opcodes.ASM9, writer) {
+                            override fun visitEnd() {
+                                super.visitField(Opcodes.ACC_PUBLIC or Opcodes.ACC_FINAL, "other", caseObject, null, null)
+                                super.visitEnd()
+                            }
+                        },
+                        0,
+                    )
+                }.toByteArray()
+        for (field in listOf("other", "Word\$lzy9")) {
+            val reads =
+                withBody(withOther, word.first) { v ->
+                    v.visitVarInsn(Opcodes.ALOAD, 0)
+                    v.visitFieldInsn(Opcodes.GETFIELD, "$PACKAGE/NestedMixed\$Token\$", field, caseObject)
+                    v.visitInsn(Opcodes.ARETURN)
+                }
+
+            assertEquals(GeneratedBy.NONE, analyze(reads, build.lookup).generatedBy(word.first, word.second), field)
+        }
+        assertEquals(GeneratedBy.NONE, analyze(renamed, build.lookup).generatedBy(word.first, word.second))
+    }
+
+    @Test
+    fun `scala 3 - a hand-written value or method in a class-nested enum's companion is not marked and is no case`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val gate = "L$PACKAGE/NestedCompanion\$Gate;"
+        val companion = build.marks("NestedCompanion\$Gate\$")
+
+        assertEquals(GeneratedBy.NONE, companion.of("fallback", "()$gate"))
+        assertEquals(GeneratedBy.NONE, companion.of("parse", "(Ljava/lang/String;)$gate"))
+        assertEquals(
+            GeneratedBy.ENUM,
+            companion.of("valueOf", "(Ljava/lang/String;)$gate"),
+            "the value is no case, so the cases are Open and Closed",
+        )
+        assertEquals(GeneratedBy.ENUM, companion.of("fromOrdinal", "(I)$gate"))
+    }
+
+    @Test
+    fun `scala 3 - a field is a singleton case of a class-nested enum only when its accessor has the case bit`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val gate = "L$PACKAGE/NestedCompanion\$Gate;"
+        val bytes = build.classBytes("NestedCompanion\$Gate\$")
+        val caseBit = 0x4000
+
+        val withoutBit = withMethodAccess(bytes, "Open", "()$gate") { it and caseBit.inv() }
+        val fallbackWithBit = withMethodAccess(bytes, "fallback", "()$gate") { it or caseBit }
+        val noBit = analyze(withoutBit, build.lookup)
+        val extraCase = analyze(fallbackWithBit, build.lookup)
+
+        assertEquals(GeneratedBy.NONE, noBit.generatedBy("Open", "()$gate"))
+        assertEquals(GeneratedBy.NONE, noBit.generatedBy("valueOf", "(Ljava/lang/String;)$gate"), "Open is no case, so valueOf misses it")
+        assertEquals(GeneratedBy.NONE, extraCase.generatedBy("valueOf", "(Ljava/lang/String;)$gate"), "a third case is not in valueOf")
+    }
+
+    @Test
+    fun `scala 3 - a class-nested enum's companion paired with no enum class marks nothing`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val notEnum =
+            withHeader(build.classBytes("NestedCompanion\$Gate"), access = { it and Opcodes.ACC_ENUM.inv() })
+        val missing = { name: String -> if (name == "$PACKAGE/NestedCompanion\$Gate") null else build.lookup(name) }
+        val lookups =
+            mapOf(
+                "not an enum class" to { name: String -> if (name == "$PACKAGE/NestedCompanion\$Gate") notEnum else build.lookup(name) },
+                "no class of that name" to missing,
+            )
+
+        for ((label, lookup) in lookups) {
+            val analysis = analyze(build.classBytes("NestedCompanion\$Gate\$"), lookup)
+            val gate = "L$PACKAGE/NestedCompanion\$Gate;"
+            for ((name, descriptor) in nestedCompanionMethods("NestedCompanion\$Gate", listOf("Open", "Closed"))) {
+                assertEquals(GeneratedBy.NONE, analysis.generatedBy(name, descriptor), "$label $name$descriptor")
+            }
+            assertEquals(GeneratedBy.NONE, analysis.generatedBy("Open", "()$gate"), label)
+        }
+    }
+
+    @Test
+    fun `scala 3 - a class-nested enum's refused methods stay unread shapes on a read release, its ordinal and plain accessor do not`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val gate = "L$PACKAGE/NestedCompanion\$Gate;"
+        val refused =
+            listOf(
+                "values" to "()[$gate",
+                "valueOf" to "(Ljava/lang/String;)$gate",
+                "fromOrdinal" to "(I)$gate",
+                "\$new" to "(ILjava/lang/String;)$gate",
+                "ordinal" to "(Ljava/lang/Object;)I",
+                "Open" to "()$gate",
+            )
+        val tasty = tastyOf("NestedCompanion", "Scala 3.3.4")
+
+        for ((name, descriptor) in refused) {
+            val analysis = analyzeWith(withNop(build.classBytes("NestedCompanion\$Gate\$"), setOf(name)), build.lookup, tasty)
+            assertEquals(UnreadShape.SCALA_ENUM, analysis.unreadShape(name, descriptor), "$name$descriptor")
+            assertEquals(GeneratedBy.NONE, analysis.generatedBy(name, descriptor), "$name$descriptor")
+            assertNull(analysis.unreadRelease, "$name$descriptor")
+        }
+        for ((name, descriptor) in listOf("ordinal" to "($gate)I", "fallback" to "()$gate", "parse" to "(Ljava/lang/String;)$gate")) {
+            val analysis = analyzeWith(withNop(build.classBytes("NestedCompanion\$Gate\$"), setOf(name)), build.lookup, tasty)
+            assertEquals(UnreadShape.NONE, analysis.unreadShape(name, descriptor), "$name$descriptor")
+        }
+    }
+
+    @Test
+    fun `scala 3 - the accessor of a class-nested enum's parameterised case with an unread body is an unread shape on a read release`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val word = "Word" to "()L$PACKAGE/NestedMixed\$Token\$Word\$;"
+
+        val analysis =
+            analyzeWith(
+                withNop(build.classBytes("NestedMixed\$Token\$"), setOf("Word")),
+                build.lookup,
+                tastyOf("NestedMixed", "Scala 3.3.4"),
+            )
+
+        assertEquals(UnreadShape.SCALA_ENUM, analysis.unreadShape(word.first, word.second))
+    }
+
+    @Test
+    fun `scala 3 - a class-nested enum's singleton case stays an unread shape on a read release when its readResolve is not read`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+
+        val analysis =
+            analyzeWith(
+                withNop(build.classBytes("NestedSingletons\$\$anon\$1"), setOf("readResolve")),
+                build.lookup,
+                tastyOf("NestedSingletons", "Scala 3.3.4"),
+            )
+
+        assertEquals(UnreadShape.SCALA_ENUM, analysis.unreadShape("readResolve", "()Ljava/lang/Object;"))
+    }
+
+    @Test
+    fun `scala 3 - a class-nested enum singleton's readResolve needs its outer field to be the companion`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val bytes = build.classBytes("NestedSingletons\$\$anon\$1")
+        val other = withField(bytes, "\$outer", descriptor = { "Ljava/lang/Object;" })
+
+        assertEquals(GeneratedBy.ENUM, analyze(bytes, build.lookup).generatedBy("readResolve", "()Ljava/lang/Object;"))
+        assertEquals(GeneratedBy.NONE, analyze(other, build.lookup).generatedBy("readResolve", "()Ljava/lang/Object;"))
+    }
+
+    /** [classBytes] with the access flags and descriptor of the field [name] passed through [access] and [descriptor]. */
+    private fun withField(
+        classBytes: ByteArray,
+        name: String,
+        access: (Int) -> Int = { it },
+        descriptor: (String) -> String = { it },
+    ): ByteArray {
+        val writer = ClassWriter(0)
+        val visitor =
+            object : ClassVisitor(Opcodes.ASM9, writer) {
+                override fun visitField(
+                    flags: Int,
+                    fieldName: String,
+                    fieldDescriptor: String,
+                    signature: String?,
+                    value: Any?,
+                ) = if (fieldName == name) {
+                    super.visitField(access(flags), fieldName, descriptor(fieldDescriptor), signature, value)
+                } else {
+                    super.visitField(flags, fieldName, fieldDescriptor, signature, value)
+                }
+            }
+        ClassReader(classBytes).accept(visitor, 0)
+        return writer.toByteArray()
+    }
+
+    /** [classBytes] with the body of the method [name] replaced by what [emit] writes. */
+    private fun withBody(
+        classBytes: ByteArray,
+        name: String,
+        emit: (MethodVisitor) -> Unit,
+    ): ByteArray {
+        val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
+        val visitor =
+            object : ClassVisitor(Opcodes.ASM9, writer) {
+                override fun visitMethod(
+                    access: Int,
+                    methodName: String,
+                    descriptor: String,
+                    signature: String?,
+                    exceptions: Array<out String>?,
+                ): MethodVisitor? {
+                    val delegate = super.visitMethod(access, methodName, descriptor, signature, exceptions)
+                    if (methodName != name) return delegate
+                    delegate.visitCode()
+                    emit(delegate)
+                    delegate.visitMaxs(0, 0)
+                    delegate.visitEnd()
+                    return null
+                }
+            }
+        ClassReader(classBytes).accept(visitor, 0)
+        return writer.toByteArray()
+    }
+
+    @Test
+    fun `scala 3 - a class-nested enum's parameterised case accessor is read whatever number scalac gives its field`() {
+        for (version in listOf("3.3.4") + scala3Versions) {
+            for ((enumName, singleton) in listOf(
+                "NestedMixed\$Token" to "Space",
+                "NestedSharedName\$Token" to "Blank",
+                "NestedSharedNameAgain\$Token" to "Gap",
+            )) {
+                val word = "Word" to "()L$PACKAGE/$enumName\$Word\$;"
+                assertEnumReadExactly(
+                    version,
+                    "$enumName\$",
+                    nestedCompanionMethods(enumName, listOf(singleton), parameterised = true) + word,
+                )
+            }
+        }
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        assertEquals(GeneratedBy.NONE, build.marks("NestedSharedName").of("Word", "()L$PACKAGE/NestedSharedName\$Word\$;"))
+    }
+
+    @Test
+    fun `scala 3 - a class-nested enum's singleton case carrying an annotation is still a case`() {
+        for (version in listOf("3.3.4") + scala3Versions) {
+            val build = if (version == "3.3.4") CompilerFixtures.scalaBaseline(version) else CompilerFixtures.scalac(version)
+            assertEnumReadExactly(
+                version,
+                "NestedAnnotated\$Era\$",
+                nestedCompanionMethods("NestedAnnotated\$Era", listOf("Old", "Mid", "New")),
+            )
+            assertEnumReadExactly(version, build.classNames().single { it.startsWith("NestedAnnotated\$\$anon") }, singletonCaseMethods)
+        }
+    }
+
+    @Test
+    fun `scala 3 - a class-nested enum's companion reads only the instance forms of new and values`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val companion = build.classBytes("EnumHolder\$Inner\$")
+        val inner = "L$PACKAGE/EnumHolder\$Inner;"
+        val singleton = "$PACKAGE/" + build.classNames().single { it.startsWith("EnumHolder\$\$anon") }
+        val plainNew =
+            withBody(companion, "\$new") { v ->
+                v.visitTypeInsn(Opcodes.NEW, singleton)
+                v.visitInsn(Opcodes.DUP)
+                v.visitVarInsn(Opcodes.ALOAD, 2)
+                v.visitVarInsn(Opcodes.ILOAD, 1)
+                v.visitMethodInsn(Opcodes.INVOKESPECIAL, singleton, "<init>", "(Ljava/lang/String;I)V", false)
+                v.visitInsn(Opcodes.ARETURN)
+            }
+        val staticValues = withField(companion, "\$values", access = { it or Opcodes.ACC_STATIC })
+
+        assertEquals(GeneratedBy.ENUM, analyze(companion, build.lookup).generatedBy("\$new", "(ILjava/lang/String;)$inner"))
+        assertEquals(GeneratedBy.NONE, analyze(plainNew, build.lookup).generatedBy("\$new", "(ILjava/lang/String;)$inner"))
+        assertEquals(GeneratedBy.ENUM, analyze(companion, build.lookup).generatedBy("values", "()[$inner"))
+        assertEquals(GeneratedBy.NONE, analyze(staticValues, build.lookup).generatedBy("values", "()[$inner"))
+    }
+
+    @Test
+    fun `scala 3 - the accessor of a final case class the adopter nests in a class-nested enum's companion is the adopter's`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val hint = "Hint" to "()L$PACKAGE/NestedCompanionHint\$Mode\$Hint\$;"
+
+        val analysis =
+            analyzeWith(build.classBytes("NestedCompanionHint\$Mode\$"), build.lookup, tastyOf("NestedCompanionHint", "Scala 3.3.4"))
+
+        assertEquals(GeneratedBy.NONE, analysis.generatedBy(hint.first, hint.second))
+        assertEquals(UnreadShape.NONE, analysis.unreadShape(hint.first, hint.second))
+        assertEquals(GeneratedBy.ENUM, analysis.generatedBy("values", "()[L$PACKAGE/NestedCompanionHint\$Mode;"))
+    }
+
+    @Test
+    fun `scala 3 - a class-nested enum's parameterised case accessor stays held on a read release when its case cannot be read`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val word = "Word" to "()L$PACKAGE/NestedMixed\$Token\$Word\$;"
+        val lookup = { name: String -> if (name == "$PACKAGE/NestedMixed\$Token\$Word") null else build.lookup(name) }
+
+        val analysis = analyzeWith(build.classBytes("NestedMixed\$Token\$"), lookup, tastyOf("NestedMixed", "Scala 3.3.4"))
+
+        assertEquals(GeneratedBy.NONE, analysis.generatedBy(word.first, word.second))
+        assertEquals(UnreadShape.SCALA_ENUM, analysis.unreadShape(word.first, word.second))
+    }
+
+    /** [classBytes] with the access flags of the method [name][descriptor] passed through [access]. */
+    private fun withMethodAccess(
+        classBytes: ByteArray,
+        name: String,
+        descriptor: String,
+        access: (Int) -> Int,
+    ): ByteArray {
+        val writer = ClassWriter(0)
+        val visitor =
+            object : ClassVisitor(Opcodes.ASM9, writer) {
+                override fun visitMethod(
+                    flags: Int,
+                    methodName: String,
+                    methodDescriptor: String,
+                    signature: String?,
+                    exceptions: Array<out String>?,
+                ) = super.visitMethod(
+                    if (methodName == name && methodDescriptor == descriptor) access(flags) else flags,
+                    methodName,
+                    methodDescriptor,
+                    signature,
+                    exceptions,
+                )
+            }
+        ClassReader(classBytes).accept(visitor, 0)
+        return writer.toByteArray()
+    }
+
     /** [classBytes] with the constant `ordinal()I` pushes changed from [from] to [to], both between 0 and 5. */
     private fun withOrdinalConstant(
         classBytes: ByteArray,

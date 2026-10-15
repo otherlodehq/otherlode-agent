@@ -853,4 +853,67 @@ class ScalaGeneratedMethodMarkingTest {
         assertEquals(GeneratedBy.ENUM, probes.method("Mark\$Scored", "ordinal", "()I").generatedBy)
         assertEquals(GeneratedBy.NONE, probes.methodsOf("Tagged").single { it.methodName == "tag" }.generatedBy)
     }
+
+    @Test
+    fun `scala 3 - the plumbing of an enum declared inside a class is marked ENUM and what the adopter wrote is not`() {
+        val singletonCase =
+            setOf(
+                "canEqual",
+                "productArity",
+                "productElement",
+                "productElementName",
+                "fromProduct",
+                "readResolve",
+                "productPrefix",
+                "toString",
+                "ordinal",
+                "hashCode",
+            )
+        val companion = setOf("values", "valueOf", "\$new", "fromOrdinal", "ordinal")
+        val enumPlumbing =
+            mapOf(
+                "NestedSingletons\$Compass\$" to companion + setOf("North", "East", "South", "West"),
+                "NestedSingletons\$\$anon\$1" to singletonCase,
+                "NestedSingletons\$Side\$" to companion + setOf("Left", "Right"),
+                "NestedSingletons\$\$anon\$2" to singletonCase,
+                "NestedMixed\$Token\$" to setOf("\$new", "fromOrdinal", "ordinal", "Word", "Space", "Tab"),
+                "NestedMixed\$\$anon\$3" to singletonCase,
+                "NestedParam\$Rank\$" to setOf("values", "valueOf", "fromOrdinal", "ordinal", "Low", "High"),
+                "NestedParam\$\$anon\$4" to singletonCase,
+                "NestedParam\$\$anon\$5" to singletonCase,
+                "NestedCompanion\$Gate\$" to companion + setOf("Open", "Closed"),
+                "NestedCompanion\$\$anon\$6" to singletonCase,
+            )
+        val enumClasses =
+            listOf(
+                "NestedSingletons",
+                "NestedSingletons\$Compass",
+                "NestedSingletons\$Side",
+                "NestedMixed",
+                "NestedMixed\$Token",
+                "NestedMixed\$Token\$Word",
+                "NestedParam",
+                "NestedParam\$Rank",
+                "NestedCompanion",
+                "NestedCompanion\$Gate",
+            )
+        val probes = probesAfterLoading("scala3", *(enumPlumbing.keys + enumClasses).toTypedArray())
+
+        for ((simpleName, plumbing) in enumPlumbing) {
+            val methods =
+                probes.methodsOf(simpleName).filter {
+                    it.methodName != "<init>" && it.methodName != "writeReplace" && it.methodName != "fallback" && it.methodName != "parse"
+                }
+            assertTrue(methods.isNotEmpty(), simpleName)
+            for (method in methods) {
+                val expected = if (method.methodName in plumbing) GeneratedBy.ENUM else GeneratedBy.NONE
+                assertEquals(expected, method.generatedBy, "$simpleName.${method.methodName}${method.methodDescriptor}")
+            }
+        }
+        assertEquals(GeneratedBy.ENUM, probes.method("NestedMixed\$Token\$Word", "ordinal", "()I").generatedBy)
+        for (name in listOf("fallback", "parse")) {
+            assertEquals(GeneratedBy.NONE, probes.methodsOf("NestedCompanion\$Gate\$").single { it.methodName == name }.generatedBy, name)
+        }
+        assertEquals(GeneratedBy.NONE, probes.methodsOf("NestedParam\$Rank").single { it.methodName == "points" }.generatedBy)
+    }
 }

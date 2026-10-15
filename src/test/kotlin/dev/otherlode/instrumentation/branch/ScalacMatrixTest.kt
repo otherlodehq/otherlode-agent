@@ -41,8 +41,6 @@ class ScalacMatrixTest {
             }
         }
 
-        private const val SCALA_PACKAGE = "com/example/scalatarget"
-
         /** scalac's infix for an anonymous class, `$$anon`. */
         private const val ANONYMOUS = "${'$'}${'$'}anon"
 
@@ -199,44 +197,26 @@ class ScalacMatrixTest {
         }
 
     /**
-     * The only unread shapes in a Scala 3 build, every release in the matrix being read: the
-     * plumbing of an enum declared inside a class (`EnumHolder.Inner`), whose companion has no
-     * `MODULE$` and so matches none of the read shapes, and which scalac refuses to let the adopter
-     * write. Its `ordinal(Inner)` can be written by hand and so is not among them.
+     * The unread shapes in a Scala 3 build, every release in the matrix being read: none. The
+     * plumbing of every fixture enum is marked, including those declared inside a class
+     * (`EnumHolder.Inner` and the enums of `ClassNestedEnums.scala`), whose companion has no `MODULE$`.
      */
-    private val scala3ReadUnread =
-        listOf(
-            "EnumHolder\$\$anon.readResolve()Ljava/lang/Object; SCALA_ENUM",
-            "EnumHolder\$Inner\$.values()[L$SCALA_PACKAGE/EnumHolder\$Inner; SCALA_ENUM",
-            "EnumHolder\$Inner\$.valueOf(Ljava/lang/String;)L$SCALA_PACKAGE/EnumHolder\$Inner; SCALA_ENUM",
-            "EnumHolder\$Inner\$.\$new(ILjava/lang/String;)L$SCALA_PACKAGE/EnumHolder\$Inner; SCALA_ENUM",
-            "EnumHolder\$Inner\$.fromOrdinal(I)L$SCALA_PACKAGE/EnumHolder\$Inner; SCALA_ENUM",
-            "EnumHolder\$Inner\$.ordinal(Ljava/lang/Object;)I SCALA_ENUM",
-        )
-
     @ParameterizedTest(name = "scalac {0}")
     @MethodSource("scala3Versions")
-    fun `a Scala 3 build's only unread shapes are the plumbing of an enum declared inside a class`(version: String) {
-        assertEquals(scala3ReadUnread.sorted(), unreadOf(CompilerFixtures.scalac(version)).sorted(), "scalac $version")
+    fun `a Scala 3 build has no unread shapes on a read release`(version: String) {
+        assertEquals(emptyList(), unreadOf(CompilerFixtures.scalac(version)).sorted(), "scalac $version")
     }
 
     /**
      * The methods every Scala 3 build reports as unread shapes when no `.tasty` file can be read,
      * as `Owner.name`: the fixtures' hand-written methods inside an outline (`toString` of
      * `Written`, `Multi`, `Svc`, `BodyVal` and `HandCopy`, `HandCopy.hashCode`, and the lookalikes
-     * of `CaseLookalikes.scala`), which with no compiler named cannot be told from scalac's, and the
-     * plumbing of the enum declared inside `EnumHolder`.
+     * of `CaseLookalikes.scala`), which with no compiler named cannot be told from scalac's.
      */
     private val scala3VersionBlindUnread =
         setOf(
             "BodyVal.toString",
             "E3.equals",
-            "EnumHolder\$\$anon.readResolve",
-            "EnumHolder\$Inner\$.\$new",
-            "EnumHolder\$Inner\$.fromOrdinal",
-            "EnumHolder\$Inner\$.ordinal",
-            "EnumHolder\$Inner\$.valueOf",
-            "EnumHolder\$Inner\$.values",
             "FZC.canEqual",
             "HandCopy.hashCode",
             "HandCopy.toString",
