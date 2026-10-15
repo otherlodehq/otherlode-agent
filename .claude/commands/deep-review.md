@@ -13,14 +13,26 @@ inspection, and the report must say which ones did.
 
 ## Who does what
 
-- The main (Fable) session does the reading, the reasoning, the verification
-  and the fixes. Do not hand judgement to a subagent.
-- Delegate to a Sonnet subagent only for mechanical work that needs no
-  thinking: disassembling a jar, parsing a coverage report into a table,
-  listing test names, collecting sources from a dependency cache. Give it an
+- The main session does the reading, the reasoning and the verification:
+  the candidate list, each eye trace and each failing repro test. Do not
+  hand judgement to a subagent.
+- Fixes go through the recursive review loop of `/chunked-build`. A Sonnet
+  subagent (`model: sonnet`) writes the fix from a written brief that names
+  the failing test. A fresh Opus reviewer (`model: opus`) reviews the diff
+  and edits nothing. The main session checks each finding against the code
+  and fixes every one that holds. Each big fix goes back to a new fresh
+  reviewer until the main session and the reviewer are both happy.
+- A fix that is a design change does not happen inside the review. A design
+  change adds or changes a public API, a wire field, a table, a behaviour a
+  customer sees, or what an ADR decided. Grill it with `/grill-with-docs`
+  first, or list it under recommendations when the user is not there.
+- Delegate other work to a Sonnet subagent only when it is mechanical and
+  needs no thinking: disassembling a jar, parsing a coverage report into a
+  table, listing test names, collecting sources from a dependency cache. Give it an
   exact brief and expected output shape.
-- Fable reviews every subagent result before using it, and reviews its own
-  edits (read the diff, run the tests) before reporting them.
+- The main session reviews every subagent result before using it, and
+  reviews the final edits (read the diff, run the tests) before reporting
+  them.
 
 ## 1. Read everything in scope
 
@@ -44,7 +56,7 @@ records both:
    and the state it depends on. Write down the exact conditions.
 2. **Repro test.** Write a test that pins the intended behaviour, run it
    against the unmodified code and confirm it fails for the reason you
-   expect. Then fix, and confirm it passes. A test that was green before the
+   expect. Then fix it through the review loop, and confirm the test passes. A test that was green before the
    fix proves nothing.
 
 If either step shows the candidate is harmless, record it under
@@ -96,7 +108,7 @@ claim the code contradicts.
 
 ## 5. Quality-of-life and smells
 
-Report, and fix when small and safe: duplicated logic that has already
+Report, and fix through the review loop when small and safe: duplicated logic that has already
 drifted, a public API that lets a caller silently get the wrong answer, a
 missing log line at a point where the design notes promise one, a test that
 cannot fail. Leave larger refactors as recommendations with a reason.
