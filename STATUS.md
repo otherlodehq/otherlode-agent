@@ -62,25 +62,20 @@ Known gaps in what it lists, all rare, all listing less than the JVM loads:
 - Boot `PropertiesLauncher` `loader.path` folders (documented as a blind
   spot; the server's coverage rule limits the damage).
 
-### Class-nested and local Scala 3 enums: building
+### Local Scala 3 enums: building
 
 Designed 2026-10-15 with Luke, recorded in ADR 0054's second amendment of
-that date, whose Java-compatible and class-extending enums have landed.
-Until the rest lands, a local enum's companion reads as the adopter's code,
-an unused method of it as never hit, and so does an enum inside a class's
-`ordinal(E)` on a read release. Each chunk lands as a failing-test commit,
-then the fix.
+that date, of which all but local enums has landed. Until it does, a local
+enum's companion reads as the adopter's code and an unused method of it as
+never hit. It lands as a failing-test commit, then the fix: the companion
+paired through a case, the no-case message with one or more `_$`, and the
+singleton's `readResolve` through the host's lazy accessor. Fixtures in an
+object's method, a class's method and a lambda, two same-named enums in one
+class, and an adopter object shaped like a companion, which stays the
+adopter's. The same commit adds "or a method" to the class-nested sentence
+in `docs/site/methods-and-branches.md`, the wording Luke approved.
 
-1. A companion with no `MODULE$`, an enum inside a class: reached by name,
-   its instance-field bodies, per-case accessors and the singleton's
-   `readResolve` read. The `EnumHolder.Inner` fixture is the test.
-2. Local enums: the companion paired through a case, the no-case message
-   with one or more `_$`, and the singleton's `readResolve` through the
-   host's lazy accessor. Fixtures in an object's method, a class's method
-   and a lambda, two same-named enums in one class, and an adopter object
-   shaped like a companion, which stays the adopter's.
-
-The amendment holds the bytecode facts each chunk depends on.
+The amendment holds the bytecode facts it depends on.
 
 ### Reminders for expiring keys and credentials: to decide
 
@@ -458,7 +453,7 @@ otherwise. ADRs 0054 and 0055 hold the rule.
   so its singleton's `ordinal` is held as an unread shape too. Scala 3.3
   at its default Java 8 target writes `valueOf` and `fromOrdinal` with a
   `StringBuilder`, which reads as unread shapes until it is read (ADR 0055,
-  amended). Class-nested and local enums are their own TODO entry.
+  amended). Local enums are their own TODO entry.
 - Unread shapes are recorded at transform time, before ADR 0007's commit
   point, so a transform that then fails is still counted in the first-flush
   summary, as are outcome counts and the received-bytes count. Classes
