@@ -36,8 +36,8 @@ import kotlin.test.assertTrue
  * same module can resolve a dynamic constant before the JVM's edge lands and fail for good, so the
  * agent adds the edge itself before it hands back the woven bytes (ADR 0004). Both probe-array
  * forms are covered, since they reach the holder at different instructions. Also pins that a class
- * whose edge cannot be added is skipped with no probes registered, and that a class the agent does
- * not weave leaves its module without the edge.
+ * whose edge cannot be added is skipped with no probes registered, and that the agent adds no edge
+ * for a class it does not weave.
  */
 class NamedModuleWeavingTest {
     private val instrumentation: Instrumentation = ByteBuddyAgent.install()
@@ -109,6 +109,31 @@ class NamedModuleWeavingTest {
             }
     }
 
+    /**
+     * Records whether the fixture's module reads the holder, from a transformer registered after the
+     * agent's, so before the JVM adds its own edge for a class that any agent, JaCoCo included, changed.
+     */
+    private fun recordReadsAtLoadHook(fixture: VersionedFixtures.Fixture): List<Boolean> {
+        val reads = mutableListOf<Boolean>()
+        val later =
+            object : ClassFileTransformer {
+                override fun transform(
+                    module: Module?,
+                    loader: ClassLoader?,
+                    className: String?,
+                    classBeingRedefined: Class<*>?,
+                    protectionDomain: ProtectionDomain?,
+                    classfileBuffer: ByteArray?,
+                ): ByteArray? {
+                    if (className == fixture.internalName && module != null) reads += module.canRead(holderModule)
+                    return null
+                }
+            }
+        probe = later
+        instrumentation.addTransformer(later, true)
+        return reads
+    }
+
     private fun hitsOf(
         registry: ProbeRegistry,
         className: String,
@@ -154,10 +179,11 @@ class NamedModuleWeavingTest {
     }
 
     @Test
-    fun `a class in a named module that the include rules do not match runs unwoven and gets no read edge`() {
+    fun `a class in a named module that the include rules do not match runs unwoven and the agent adds no read edge`() {
         val registry = ProbeRegistry()
         val fixture = VersionedFixtures.plain(55)
         install(registry, "com.example.unrelated")
+        val readsAtLoadHook = recordReadsAtLoadHook(fixture)
         val module = defineNamedModule(fixture)
 
         val type = Class.forName(fixture.name, true, module.classLoader)
@@ -166,7 +192,7 @@ class NamedModuleWeavingTest {
         assertEquals(module, type.module)
         assertEquals(1, type.getMethod("pick", Int::class.java).invoke(target, 3))
         assertEquals(emptyList(), hitsOf(registry, fixture.name, "pick"))
-        assertFalse(module.canRead(holderModule))
+        assertEquals(listOf(false), readsAtLoadHook)
     }
 
     @Test
@@ -174,28 +200,12 @@ class NamedModuleWeavingTest {
         val fixture = VersionedFixtures.plain(55)
         val registry = ProbeRegistry()
         install(registry, VersionedFixtures.PACKAGE)
-        val readsAtLaterTransformer = mutableListOf<Boolean>()
-        val later =
-            object : ClassFileTransformer {
-                override fun transform(
-                    module: Module?,
-                    loader: ClassLoader?,
-                    className: String?,
-                    classBeingRedefined: Class<*>?,
-                    protectionDomain: ProtectionDomain?,
-                    classfileBuffer: ByteArray?,
-                ): ByteArray? {
-                    if (className == fixture.internalName && module != null) readsAtLaterTransformer += module.canRead(holderModule)
-                    return null
-                }
-            }
-        probe = later
-        instrumentation.addTransformer(later, true)
+        val readsAtLoadHook = recordReadsAtLoadHook(fixture)
         val module = defineNamedModule(fixture)
 
         Class.forName(fixture.name, true, module.classLoader)
 
-        assertEquals(listOf(true), readsAtLaterTransformer)
+        assertEquals(listOf(true), readsAtLoadHook)
     }
 
     @Test
@@ -214,6 +224,7 @@ class NamedModuleWeavingTest {
                 ): Unit = throw IllegalStateException("edge refused")
             }
         install(registry, VersionedFixtures.PACKAGE, refusing)
+        val readsAtLoadHook = recordReadsAtLoadHook(fixture)
         val module = defineNamedModule(fixture)
 
         val type = Class.forName(fixture.name, true, module.classLoader)
@@ -224,6 +235,6 @@ class NamedModuleWeavingTest {
         assertEquals(emptyList(), manifest.probes.filter { it.className == fixture.name })
         assertEquals(listOf(fixture.name), manifest.skippedClasses.map { it.className })
         assertTrue("edge refused" in manifest.skippedClasses.single().reason, manifest.skippedClasses.single().reason)
-        assertFalse(module.canRead(holderModule))
+        assertEquals(listOf(false), readsAtLoadHook)
     }
 }
