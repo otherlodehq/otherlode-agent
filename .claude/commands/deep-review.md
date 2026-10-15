@@ -86,8 +86,9 @@ that nobody would notice breaking.
 Run the `unslop` skill's checks over every comment or doc block you add
 or touch, and scan the rest of the codebase for its patterns: stock words,
 em dashes, sentences that restate the code, time-relative wording
-("now", "previously"). Fix what you find in the files you are already in;
-list the rest.
+("now", "previously"), and comments that the comment rule in the repo's
+`CLAUDE.md` does not allow. Fix what you find in the files you are already
+in; list the rest.
 
 Check user-facing docs against the code: an options table that misses an
 option the parser accepts, a README command that no longer exists, an ADR

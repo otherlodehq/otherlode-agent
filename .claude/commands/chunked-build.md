@@ -98,7 +98,8 @@ review finds something.
 
 Run the `unslop` skill's checks over every comment and KDoc the chunk
 added: stock words, em dashes, sentences restating the code, time-relative
-wording.
+wording. Delete every comment that the comment rule in the repo's
+`CLAUDE.md` does not allow.
 
 ## 4. Fix everything found, regardless of size
 

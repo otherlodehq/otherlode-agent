@@ -64,13 +64,15 @@ A change that breaks one of these needs an ADR first.
 
 ## Comments
 
-- KDoc/Javadoc on public types and functions. An inline `//` comment only
-  where the code is genuinely unintuitive: a non-obvious invariant, a
-  workaround forced by a constraint, something a reader would misread.
-  Don't narrate what the code already says.
+- KDoc/Javadoc on public types and functions.
+- Avoid code comments. Do not write comments that restate what the code
+  does, and do not write comments that explain why a choice was made or
+  why one construct was picked over another (e.g. "use X, not Y"). Write
+  one only for a hard constraint or surprising consequence that the code
+  and its tests cannot convey, and keep it short.
 - Run the `unslop` skill over any comment before treating it as
   finished: no em dashes, no stock AI phrasing ("crucial," "seamless,"
   "robust," "leverage"), no sentence that restates the code.
 - Never describe code relative to time ("now," "currently," "previously
-  did X," "new in this change"). Say what the code does and why; git holds
-  when. `STATUS.md` is the exception, since a tracker is about state.
+  did X," "new in this change"). Say what the code does; git holds when.
+  `STATUS.md` is the exception, since a tracker is about state.
