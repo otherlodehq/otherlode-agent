@@ -34,7 +34,7 @@ The agent tells a compiler's generated code (a data class's `copy`, a case class
 | Kotlin | kotlinc 1.9.25, 2.1.21, 2.2.21 and 2.4.20. They stand for 1.9 to 2.4. 2.1.21 stands for the releases that default to `-jvm-default=disable`. |
 | Java | javac 17, 21 and 25 |
 | Scala 2 | scalac 2.12.20, 2.13.15, 2.13.16 and 2.13.18. A Scala 2 class does not name its compiler, so the rules are version-blind: they accept every body shape found in a survey of 2.12.18 to 2.12.21 and 2.13.14 to 2.13.18, and the tested releases stand for those shapes. |
-| Scala 3 | Each release from 3.3.3 to 3.9.0, one at a time. A Scala 3 class names the release that wrote it. The releases the agent reads are listed in `scala3-read-releases.txt` inside the agent jar. |
+| Scala 3 | Each release from 3.3.3 to 3.10.0, one at a time. A Scala 3 class names the release that wrote it. The releases the agent reads are listed in `scala3-read-releases.txt` inside the agent jar. |
 
 Code from any other compiler, or from a release that changed a shape, is probed and counted like any other code. If its outline looks like compiler output but its body is not one the agent has read, the agent reports it as an unread shape. An unread shape is never called dead code and never part of an unreached cluster, and the server lists it apart. See [methods and branches](methods-and-branches).
 

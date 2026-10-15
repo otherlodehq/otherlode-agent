@@ -1397,11 +1397,11 @@ class ScalaGeneratedMethodsAnalyzerTest {
             val broken = withNop(build.classBytes(case.simpleName), setOf(case.method))
             val label = "${case.simpleName}.${case.method}${case.descriptor}"
 
-            val analysis = analyzeWith(broken, build.lookup, tastyOf(case.tastyOwner, "Scala 3.10.0"))
+            val analysis = analyzeWith(broken, build.lookup, tastyOf(case.tastyOwner, "Scala 3.11.0"))
 
             assertEquals(case.family, analysis.unreadShape(case.method, case.descriptor), label)
             assertEquals(GeneratedBy.NONE, analysis.generatedBy(case.method, case.descriptor), label)
-            assertEquals("3.10.0", analysis.unreadRelease, label)
+            assertEquals("3.11.0", analysis.unreadRelease, label)
         }
     }
 
@@ -1444,7 +1444,7 @@ class ScalaGeneratedMethodsAnalyzerTest {
         for ((simpleName, name, descriptor) in cases) {
             val broken = withNop(build.classBytes(simpleName), setOf(name, "hashCode"))
             val owner = simpleName.removeSuffix("$")
-            for (tooling in listOf("Scala 3.3.4", "Scala 3.10.0", null)) {
+            for (tooling in listOf("Scala 3.3.4", "Scala 3.11.0", null)) {
                 val analysis = analyzeWith(broken, build.lookup, tastyOf(owner, tooling))
 
                 assertEquals(UnreadShape.NONE, analysis.unreadShape(name, descriptor), "$simpleName.$name with $tooling")
@@ -1478,7 +1478,7 @@ class ScalaGeneratedMethodsAnalyzerTest {
                 if (path ==
                     "$PACKAGE/Shape.tasty"
                 ) {
-                    tastyHeader("Scala 3.10.0")
+                    tastyHeader("Scala 3.11.0")
                 } else {
                     null
                 }
@@ -1488,7 +1488,7 @@ class ScalaGeneratedMethodsAnalyzerTest {
         val analysis = analyzeWith(broken, build.lookup, resources)
 
         assertEquals(UnreadShape.CASE_CLASS, analysis.unreadShape("hashCode", "()I"))
-        assertEquals("3.10.0", analysis.unreadRelease)
+        assertEquals("3.11.0", analysis.unreadRelease)
         assertEquals(listOf("$PACKAGE/Shape\$Circle.tasty", "$PACKAGE/Shape.tasty"), asked)
     }
 
@@ -1497,7 +1497,7 @@ class ScalaGeneratedMethodsAnalyzerTest {
         val build = CompilerFixtures.scalaBaseline("3.3.4")
         val cache = BranchSiteAnalyzer.CrossClassTableCache(16)
         val asked = mutableListOf<String>()
-        val resources = { path: String -> (if (path == "$PACKAGE/Cc.tasty") tastyHeader("Scala 3.10.0") else null).also { asked += path } }
+        val resources = { path: String -> (if (path == "$PACKAGE/Cc.tasty") tastyHeader("Scala 3.11.0") else null).also { asked += path } }
 
         for (simpleName in listOf("Cc", "Cc\$", "Cc", "Cc\$")) {
             val analysis =
@@ -1508,7 +1508,7 @@ class ScalaGeneratedMethodsAnalyzerTest {
                     tableCache = cache,
                     resourceLookup = resources,
                 ) { name, _ -> name != "<clinit>" }
-            assertEquals("3.10.0", analysis.unreadRelease, simpleName)
+            assertEquals("3.11.0", analysis.unreadRelease, simpleName)
         }
 
         assertEquals(1, asked.count { it == "$PACKAGE/Cc.tasty" })

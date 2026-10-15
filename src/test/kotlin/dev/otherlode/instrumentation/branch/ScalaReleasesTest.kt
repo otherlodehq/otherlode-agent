@@ -61,13 +61,13 @@ class ScalaReleasesTest {
     }
 
     @Test
-    fun `the read list holds the releases from 3 3 3 to 3 9 0 and no release candidate`() {
-        for (release in listOf("3.3.3", "3.3.8", "3.4.0", "3.4.3", "3.5.2", "3.6.4", "3.7.4", "3.8.4", "3.9.0")) {
+    fun `the read list holds the releases from 3 3 3 to 3 10 0 and no release candidate`() {
+        for (release in listOf("3.3.3", "3.3.8", "3.4.0", "3.4.3", "3.5.2", "3.6.4", "3.7.4", "3.8.4", "3.9.0", "3.10.0")) {
             assertTrue(ScalaReleases.isRead(release), release)
         }
         assertFalse(ScalaReleases.isRead("3.3.2"))
         assertFalse(ScalaReleases.isRead("3.9.1"))
-        assertFalse(ScalaReleases.isRead("3.10.0"))
+        assertFalse(ScalaReleases.isRead("3.11.0"))
         assertTrue(ScalaReleases.read.none { '-' in it }, "release candidates are never read")
     }
 }

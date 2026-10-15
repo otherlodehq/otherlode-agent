@@ -97,7 +97,7 @@ class ScalaUnreadShapeMarkingTest {
 
     @Test
     fun `a broken plumbing body is an unread shape on a release the agent has not read`() {
-        val run = load("Scala 3.10.0")
+        val run = load("Scala 3.11.0")
 
         for (name in BrokenScalaFixtures.BROKEN) {
             val probe = run.probes.first { it.kind == ProbeKind.METHOD && it.methodName == name }
@@ -111,7 +111,7 @@ class ScalaUnreadShapeMarkingTest {
 
     @Test
     fun `the branch probes of an unread method carry its unread shape`() {
-        val run = load("Scala 3.10.0")
+        val run = load("Scala 3.11.0")
 
         val branches = run.probes.filter { it.kind == ProbeKind.BRANCH && it.methodName == "equals" }
         assertTrue(branches.isNotEmpty(), "Cc.equals has branch sites")
@@ -122,7 +122,7 @@ class ScalaUnreadShapeMarkingTest {
 
     @Test
     fun `the omission probes of an unread method carry its unread shape`() {
-        val run = load("Scala 3.10.0")
+        val run = load("Scala 3.11.0")
 
         val omissions = run.probes.filter { it.kind == ProbeKind.OPTIONAL_ARGUMENT && it.methodName == "copy" }
         assertEquals(2, omissions.size, "copy's two default getters")
@@ -161,15 +161,15 @@ class ScalaUnreadShapeMarkingTest {
 
     @Test
     fun `an unread release logs one warning naming the class, the release and the method count`() {
-        val run = load("Scala 3.10.0")
+        val run = load("Scala 3.11.0")
 
         val warning = run.warnings.single().message
         assertEquals(
-            "otherlode: $PACKAGE.Cc was compiled by Scala 3.10.0, which this agent has not read; " +
+            "otherlode: $PACKAGE.Cc was compiled by Scala 3.11.0, which this agent has not read; " +
                 "3 methods that look like compiler output are reported as unread shapes",
             warning,
         )
-        assertEquals(listOf("3.10.0"), run.counts.unreadReleases())
+        assertEquals(listOf("3.11.0"), run.counts.unreadReleases())
         assertEquals(
             mapOf(UnreadShape.CASE_CLASS to 3L),
             UnreadShape.entries.associateWith { run.counts.countOf(it) }.filterValues { it > 0 },
@@ -178,8 +178,8 @@ class ScalaUnreadShapeMarkingTest {
 
     @Test
     fun `the warning is logged once per class even when two loaders define it`() {
-        val run = load("Scala 3.10.0", loaders = 2)
+        val run = load("Scala 3.11.0", loaders = 2)
 
-        assertEquals(1, run.warnings.count { it.message.contains("$PACKAGE.Cc was compiled by Scala 3.10.0") })
+        assertEquals(1, run.warnings.count { it.message.contains("$PACKAGE.Cc was compiled by Scala 3.11.0") })
     }
 }

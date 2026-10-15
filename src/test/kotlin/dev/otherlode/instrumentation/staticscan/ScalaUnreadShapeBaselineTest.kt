@@ -33,7 +33,7 @@ class ScalaUnreadShapeBaselineTest {
 
     @Test
     fun `a scan declares a broken plumbing method as an unread shape on a release the agent has not read`() {
-        val methods = methodsOfCc("Scala 3.10.0")
+        val methods = methodsOfCc("Scala 3.11.0")
 
         for (name in BrokenScalaFixtures.BROKEN) {
             val method = methods.single { it.methodName == name && !it.methodName.contains("\$default") }
@@ -47,7 +47,7 @@ class ScalaUnreadShapeBaselineTest {
 
     @Test
     fun `a scan gives a default getter the unread shape of the method it fills a default for`() {
-        val methods = methodsOfCc("Scala 3.10.0")
+        val methods = methodsOfCc("Scala 3.11.0")
 
         for (getter in methods.filter { it.methodName.startsWith("copy\$default\$") }) {
             assertEquals(UnreadShape.CASE_CLASS, getter.unreadShape, getter.methodName)
@@ -100,7 +100,7 @@ class ScalaUnreadShapeBaselineTest {
         assertEquals(UnreadShape.NONE, methods.single { it.methodName == "hashCode" }.unreadShape)
         assertEquals(
             UnreadShape.CASE_CLASS,
-            methodsOfCcInJar("Scala 3.10.0", prefix = "").single { it.methodName == "hashCode" }.unreadShape,
+            methodsOfCcInJar("Scala 3.11.0", prefix = "").single { it.methodName == "hashCode" }.unreadShape,
         )
     }
 

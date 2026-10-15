@@ -262,14 +262,14 @@ A branch probe inherits the unread shape of its method. A branch outcome can als
 
 How a body counts as unread depends on whether the class names its compiler:
 
-- A Scala 3 class names the exact release that compiled it. When the release is one the agent has read, a plumbing-named method that fails its rule is hand-written and ordinary. When the release is not on the list, the method is an unread shape. See [compatibility](compatibility) for the compilers the agent has read.
+- A Scala 3 class names the exact release that compiled it. When the release is one the agent has read, a plumbing-named method that fails its rule is hand-written and ordinary, unless scalac does not let you write it: any method of an enum case's class, and an enum companion's `values`, `valueOf`, `fromOrdinal`, `$new` and `ordinal(Object)`. Those stay unread shapes. When the release is not on the list, the method is an unread shape. See [compatibility](compatibility) for the compilers the agent has read.
 - A Scala 2 class does not name its compiler. A method in the outline that matches no read shape is an unread shape, and that includes a hand-written override of case-class plumbing, such as your own `toString` in a case class. The price of not knowing the compiler is that such an override lands in the unread list and not in a finding.
 - The coroutine and string-switch outlines contain only shapes no source produces, so the answer does not depend on a compiler release.
 
 The agent logs one WARNING on the first flush that finds any unread shape. It counts them per family, names each Scala 3 release the agent has not read, and says a newer agent may read them. It names the Scala 2 case separately when one applies:
 
 ```text
-otherlode: 12 methods in 3 classes look like compiler output this agent has not read, and are reported as unread shapes rather than dead code (9 Scala case-class plumbing, 3 Scala object serialization). Scala 3 releases this agent has not read: 3.10.0. A newer agent may read them.
+otherlode: 12 methods in 3 classes look like compiler output this agent has not read, and are reported as unread shapes rather than dead code (9 Scala case-class plumbing, 3 Scala object serialization). Scala 3 releases this agent has not read: 3.11.0. A newer agent may read them.
 ```
 
 A Scala 3 class with an unread release also gets one WARNING of its own that names the release.

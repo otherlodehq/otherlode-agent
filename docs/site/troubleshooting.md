@@ -286,7 +286,7 @@ Something removed the debug information from the class, such as an obfuscator or
 ## The agent reports compiler output it has not read
 
 ```text
-otherlode: 12 methods in 3 classes look like compiler output this agent has not read, and are reported as unread shapes rather than dead code (...). Scala 3 releases this agent has not read: 3.7.0. A newer agent may read them.
+otherlode: 12 methods in 3 classes look like compiler output this agent has not read, and are reported as unread shapes rather than dead code (...). Scala 3 releases this agent has not read: 3.11.0. A newer agent may read them.
 ```
 
 Your classes use a compiler version whose generated code the agent does not recognise, so it reports those methods as unread shapes and not as never hit. The message names the families and, for Scala 3, the releases. Nothing needs fixing in your code. Upgrade to an agent release that reads your compiler, or ignore the rows marked unread. A second line, `otherlode: <class> was compiled by Scala <version>, which this agent has not read; ...`, names the class. [Methods and branches](methods-and-branches) lists the shapes.

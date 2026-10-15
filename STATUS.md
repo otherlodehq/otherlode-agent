@@ -62,39 +62,26 @@ Known gaps in what it lists, all rare, all listing less than the JVM loads:
 - Boot `PropertiesLauncher` `loader.path` folders (documented as a blind
   spot; the server's coverage rule limits the damage).
 
-### scalac 3.10.0 drops the fields that name an enum's parameterised cases: to fix
+### A Java-compatible or local Scala 3 enum's plumbing reads as the adopter's code: to fix
 
-Found 2026-10-12 by the compiler canary, which has failed on 3.10.0 since
-its run of 2026-10-05. In 3.9.0 an enum's companion (`Shape$`) holds a
-static field per parameterised case, `Circle: Shape$Circle$`. 3.10.0 no
-longer writes it. The case classes and their companions are still there,
-singleton cases keep their `ACC_ENUM` fields, and every method body is the
-same as in 3.9.0.
+Found 2026-10-15 by the review of the 3.10.0 fix. The enum outlines start
+from the enum class, which they recognise only as an abstract `ACC_ENUM`
+class extending `Object` and implementing `scala.reflect.Enum`. An enum
+that extends `java.lang.Enum` fails that, and a local enum's companion is
+not named after its enum. So on any release these get no outline and read
+as the adopter's code, never-hit when unused, a false dead-code claim:
 
-`enumCases` in `ScalaGeneratedMethods` builds an enum's cases, in ordinal
-order, from those fields. Over a 3.10.0 class it finds only the singleton
-cases, so:
+- the companion's `values`, `valueOf`, `fromOrdinal`, `$new` and `ordinal`,
+  for both kinds;
+- a Java-compatible enum class's four `Product` forwarders;
+- a Java-compatible enum's singleton class's two `fromProduct` methods,
+  which only the enum outline names. Its other plumbing is held as unread
+  shapes on a read release (ADR 0054, amended 2026-10-15).
 
-- A parameterised case's `ordinal()` gets no outline (`ordinalOf` is -1),
-  so it is marked as the adopter's own code. It is not even an unread
-  shape, and it can read as dead code. This holds whether or not 3.10.0 is
-  on the read list, and with no `.tasty` file.
-- The companion's `fromOrdinal` gives the singleton cases the wrong
-  ordinals (0 and 1 in place of 2 and 3) and reads as an unread shape.
-  While 3.10.0 is off the read list this is only counted, never a finding.
-
-The matrix run with 3.10.0 added to the read list fails on `Shape`,
-`Gapped`, `Op` and `Term` in `Enums.scala`: 8 mark differences, and
-`Shape$.fromOrdinal` and `Gapped$.fromOrdinal` as extra unread shapes.
-
-To do: find a parameterised case and its ordinal some other way when the
-companion has no field for it. One source is the case class's constant
-`ordinal()` together with the `$new(ordinal, name)` calls in the
-companion's `<clinit>`. Write the failing test first. Once
-`ScalacMatrixTest` passes, add 3.10.0 to `scala3-read-releases.txt` and to
-`otherlode.matrix.scalac`, and the canary goes green. 3.10.0 also writes a
-parameterised case's `equals` with an extra local, which the rules already
-read.
+ADR 0054 accepts the local enum's gap; the Java-compatible one was listed
+under "Compiler shapes not yet read" as an unread shape, which it is not.
+Both are rare in application code. To do: give each an outline, with a
+failing test first.
 
 ### Reminders for expiring keys and credentials: to decide
 
@@ -441,9 +428,14 @@ Overhead and memory:
 - Overhead results live in each run. Committing them to a results branch
   waits until a trend view across months is wanted.
 - Condition text is not interned (`MetadataCompaction`), a possible saving.
-- A Scala 3 enum costs one class read per case for each enum class
-  transformed, which grows with the square of the case count: about 6,900
-  reads for an 80-case enum, once, at load. Not measured.
+- A Scala 3 enum costs, for each of its classes transformed, a read of its
+  companion and of each parameterised case's class (only that class's
+  `ordinal` body), which grows with the square of the case count: about
+  6,900 reads for an 80-case enum, once, at load. Not measured since the
+  reads were cut to `ordinal`; the 2026-10-15 review measured an 80-case
+  enum's analysis pass at 210 ms with the field route these replaced, and
+  at 273 ms with full case-class reads, an upper bound for this route. An
+  all-singleton enum reads only its companion.
 
 Ideas nobody has asked for:
 
@@ -459,13 +451,13 @@ What the compiler canary and the reviews found that the agent does not
 read. Each reads as an unread shape, never a finding, unless it says
 otherwise. ADRs 0054 and 0055 hold the rule.
 
-- Scala 3: a Java-compatible enum (`extends java.lang.Enum`), a local enum
-  (it gets no outline), backticked case names, an enum that overrides
-  `productPrefix`, and two case names with the same hash. An enum inside a
-  class reports scalac's `ordinal(E)` as the adopter's own on a read
-  release. Scala 3.3 at its default Java 8 target writes `valueOf` and
-  `fromOrdinal` with a `StringBuilder`, which reads as unread shapes until
-  it is read (ADR 0055, amended). 3.10.0 is its own TODO entry.
+- Scala 3: backticked case names, an enum that overrides `productPrefix`,
+  and two case names with the same hash. An enum inside a class reports
+  scalac's `ordinal(E)` as the adopter's own on a read release. Scala 3.3
+  at its default Java 8 target writes `valueOf` and `fromOrdinal` with a
+  `StringBuilder`, which reads as unread shapes until it is read (ADR 0055,
+  amended). A Java-compatible or local enum's companion is its own TODO
+  entry.
 - Unread shapes are recorded at transform time, before ADR 0007's commit
   point, so a transform that then fails is still counted in the first-flush
   summary, as are outcome counts and the received-bytes count. Classes
