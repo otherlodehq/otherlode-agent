@@ -8,7 +8,6 @@ on, so a fresh checkout has them without a user-level install:
 
 | Skill | Source | Licence |
 | --- | --- | --- |
-| `humanizer` | https://github.com/blader/humanizer (v2.11.2) | MIT, `LICENSE` beside it |
 | `grilling`, `domain-modeling`, `grill-me`, `grill-with-docs` | https://github.com/mattpocock/skills | MIT, `LICENSE` beside each |
 | `technical-writing` | https://github.com/cursor/plugins/tree/main/pstack/skills/technical-writing (`23e4138`) | MIT, `LICENSE` beside it |
 | `unslop` | https://github.com/cursor/plugins/tree/main/pstack/skills/unslop (`70b2dc8`) | MIT, `LICENSE` beside it |
