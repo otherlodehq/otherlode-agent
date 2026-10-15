@@ -96,3 +96,17 @@ class EnumHolder {
 
   def first: Inner = Inner.Up
 }
+
+/** An enum nested in an object, with a parameterised case beside a singleton. */
+object CaseHost {
+  enum Kind {
+    case Box(n: Int)
+    case Empty
+  }
+}
+
+/** A singleton case with its own class after a parameterised case, so its ordinal is not its place among the singletons. */
+enum Coin(val v: Int) {
+  case Custom(n: Int) extends Coin(n)
+  case Penny extends Coin(1)
+}

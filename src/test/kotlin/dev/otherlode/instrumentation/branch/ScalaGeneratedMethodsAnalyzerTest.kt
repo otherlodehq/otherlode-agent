@@ -894,6 +894,231 @@ class ScalaGeneratedMethodsAnalyzerTest {
     }
 
     @Test
+    fun `scala 3 - an enum nested in an object or with a singleton case of its own class reads its plumbing exactly`() {
+        for (version in listOf("3.3.4") + scala3Versions) {
+            val build = if (version == "3.3.4") CompilerFixtures.scalaBaseline(version) else CompilerFixtures.scalac(version)
+            val withoutNames = { enumName: String -> companionMethods(enumName).filter { it.first != "values" && it.first != "valueOf" } }
+            assertEnumReadExactly(version, "CaseHost\$Kind\$", withoutNames("CaseHost\$Kind"))
+            assertEnumReadExactly(version, "CaseHost\$Kind\$Box", listOf("ordinal" to "()I"))
+            assertEnumReadExactly(version, "Coin\$", withoutNames("Coin").filter { it.first != "\$new" })
+            assertEnumReadExactly(version, "Coin\$Custom", listOf("ordinal" to "()I"))
+            val penny = build.classNames().single { it.startsWith("Coin\$\$anon") }
+            assertEnumReadExactly(version, penny, singletonCaseMethods)
+        }
+    }
+
+    /** [classBytes] with the constant `ordinal()I` pushes changed from [from] to [to], both between 0 and 5. */
+    private fun withOrdinalConstant(
+        classBytes: ByteArray,
+        from: Int,
+        to: Int,
+    ): ByteArray {
+        val writer = ClassWriter(0)
+        val visitor =
+            object : ClassVisitor(Opcodes.ASM9, writer) {
+                override fun visitMethod(
+                    access: Int,
+                    name: String,
+                    descriptor: String,
+                    signature: String?,
+                    exceptions: Array<out String>?,
+                ): MethodVisitor {
+                    val delegate = super.visitMethod(access, name, descriptor, signature, exceptions)
+                    if (name != "ordinal" || descriptor != "()I") return delegate
+                    return object : MethodVisitor(Opcodes.ASM9, delegate) {
+                        override fun visitInsn(opcode: Int) =
+                            super.visitInsn(if (opcode == Opcodes.ICONST_0 + from) Opcodes.ICONST_0 + to else opcode)
+                    }
+                }
+            }
+        ClassReader(classBytes).accept(visitor, 0)
+        return writer.toByteArray()
+    }
+
+    /** [classBytes] without the fields named in [names]. */
+    private fun withoutFields(
+        classBytes: ByteArray,
+        names: Set<String>,
+    ): ByteArray {
+        val writer = ClassWriter(0)
+        val visitor =
+            object : ClassVisitor(Opcodes.ASM9, writer) {
+                override fun visitField(
+                    access: Int,
+                    name: String,
+                    descriptor: String,
+                    signature: String?,
+                    value: Any?,
+                ) = if (name in names) null else super.visitField(access, name, descriptor, signature, value)
+            }
+        ClassReader(classBytes).accept(visitor, 0)
+        return writer.toByteArray()
+    }
+
+    /** [classBytes] with its superclass changed to [superName]. */
+    private fun withSuperclass(
+        classBytes: ByteArray,
+        superName: String,
+    ): ByteArray {
+        val writer = ClassWriter(0)
+        val visitor =
+            object : ClassVisitor(Opcodes.ASM9, writer) {
+                override fun visit(
+                    version: Int,
+                    access: Int,
+                    name: String,
+                    signature: String?,
+                    ignored: String?,
+                    interfaces: Array<out String>?,
+                ) = super.visit(version, access, name, signature, superName, interfaces)
+            }
+        ClassReader(classBytes).accept(visitor, 0)
+        return writer.toByteArray()
+    }
+
+    @Test
+    fun `scala 3 - a parameterised case's ordinal stays an unread enum shape on a read release when its companion cannot be read`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val lookup = { name: String -> if (name == "$PACKAGE/Shape\$") null else build.lookup(name) }
+
+        val analysis = analyzeWith(build.classBytes("Shape\$Circle"), lookup, tastyOf("Shape", "Scala 3.3.4"))
+
+        assertEquals(GeneratedBy.NONE, analysis.generatedBy("ordinal", "()I"))
+        assertEquals(UnreadShape.SCALA_ENUM, analysis.unreadShape("ordinal", "()I"))
+    }
+
+    @Test
+    fun `scala 3 - a parameterised case whose ordinal collides with another case's leaves unmarked only what needs the ordinals`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val circle = withOrdinalConstant(build.classBytes("Shape\$Circle"), 0, 1)
+        val lookup = { name: String -> if (name == "$PACKAGE/Shape\$Circle") circle else build.lookup(name) }
+        val shape = "L$PACKAGE/Shape;"
+        val singleton = build.classNames().single { it.startsWith("Shape\$\$anon") }
+
+        val case = analyzeWith(circle, lookup, tastyOf("Shape", "Scala 3.3.4"))
+        val companion = analyze(build.classBytes("Shape\$"), lookup)
+        val singletonCase = analyze(build.classBytes(singleton), lookup)
+
+        assertEquals(GeneratedBy.ENUM, build.marks("Shape\$").of("fromOrdinal", "(I)$shape"), "the unchanged family is read")
+        assertEquals(GeneratedBy.NONE, case.generatedBy("ordinal", "()I"))
+        assertEquals(UnreadShape.SCALA_ENUM, case.unreadShape("ordinal", "()I"))
+        assertEquals(GeneratedBy.NONE, companion.generatedBy("fromOrdinal", "(I)$shape"))
+        for ((name, descriptor) in listOf(
+            "\$new" to "(ILjava/lang/String;)$shape",
+            "ordinal" to "($shape)I",
+            "ordinal" to "(Ljava/lang/Object;)I",
+        )) {
+            assertEquals(GeneratedBy.ENUM, companion.generatedBy(name, descriptor), "Shape$.$name$descriptor needs no ordinal")
+        }
+        for ((name, descriptor) in listOf(
+            "canEqual" to "(Ljava/lang/Object;)Z",
+            "readResolve" to "()Ljava/lang/Object;",
+            "productPrefix" to "()Ljava/lang/String;",
+            "ordinal" to "()I",
+        )) {
+            assertEquals(GeneratedBy.ENUM, singletonCase.generatedBy(name, descriptor), "$singleton.$name reads its ordinal from a field")
+        }
+    }
+
+    @Test
+    fun `scala 3 - a listed case class that cannot be read or has no constant ordinal leaves the cases unread`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val op = "L$PACKAGE/Op;"
+        val brokenLit = withNop(build.classBytes("Op\$Lit"), setOf("ordinal"))
+        // Op's parameterised case must stay last: skipping it then leaves the singletons' ordinals right, so only an unread list fails fromOrdinal.
+        val lookups =
+            mapOf(
+                "unreadable" to { name: String -> if (name == "$PACKAGE/Op\$Lit") null else build.lookup(name) },
+                "no constant ordinal" to { name: String -> if (name == "$PACKAGE/Op\$Lit") brokenLit else build.lookup(name) },
+            )
+
+        assertEquals(GeneratedBy.ENUM, build.marks("Op\$").of("fromOrdinal", "(I)$op"), "the unchanged family is read")
+        for ((label, lookup) in lookups) {
+            val companion = analyze(build.classBytes("Op\$"), lookup)
+            assertEquals(GeneratedBy.NONE, companion.generatedBy("fromOrdinal", "(I)$op"), label)
+            assertEquals(GeneratedBy.ENUM, companion.generatedBy("\$new", "(ILjava/lang/String;)$op"), label)
+        }
+    }
+
+    @Test
+    fun `scala 3 - a parameterised case's ordinal past the case count leaves the cases unread`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val neg = withOrdinalConstant(build.classBytes("Term\$Neg"), 1, 5)
+        val lookup = { name: String -> if (name == "$PACKAGE/Term\$Neg") neg else build.lookup(name) }
+
+        val analysis = analyzeWith(neg, lookup, tastyOf("Term", "Scala 3.3.4"))
+
+        val num = analyzeWith(build.classBytes("Term\$Num"), lookup, tastyOf("Term", "Scala 3.3.4"))
+
+        assertEquals(GeneratedBy.ENUM, build.marks("Term\$Neg").of("ordinal", "()I"), "the unchanged case is read")
+        assertEquals(GeneratedBy.ENUM, build.marks("Term\$Num").of("ordinal", "()I"), "the unchanged case is read")
+        for ((label, case) in listOf("Neg" to analysis, "Num" to num)) {
+            assertEquals(GeneratedBy.NONE, case.generatedBy("ordinal", "()I"), label)
+            assertEquals(UnreadShape.SCALA_ENUM, case.unreadShape("ordinal", "()I"), label)
+        }
+    }
+
+    @Test
+    fun `scala 3 - a singleton case's plumbing stays an unread enum shape on a read release when its companion cannot be read`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val singleton = build.classNames().first { it.startsWith("Suit\$\$anon") }
+        val lookup = { name: String -> if (name == "$PACKAGE/Suit\$") null else build.lookup(name) }
+
+        val analysis = analyzeWith(build.classBytes(singleton), lookup, tastyOf("Suit", "Scala 3.3.4"))
+
+        for ((name, descriptor) in listOf("ordinal" to "()I", "readResolve" to "()Ljava/lang/Object;")) {
+            assertEquals(GeneratedBy.NONE, analysis.generatedBy(name, descriptor), name)
+            assertEquals(UnreadShape.SCALA_ENUM, analysis.unreadShape(name, descriptor), name)
+        }
+    }
+
+    @Test
+    fun `scala 3 - a singleton case of an enum extending java_lang_Enum stays an unread shape on a read release`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val suit = withSuperclass(build.classBytes("Suit"), "java/lang/Enum")
+        val lookup = { name: String -> if (name == "$PACKAGE/Suit") suit else build.lookup(name) }
+        val singleton = build.classNames().first { it.startsWith("Suit\$\$anon") }
+
+        val analysis = analyzeWith(build.classBytes(singleton), lookup, tastyOf("Suit", "Scala 3.3.4"))
+
+        assertEquals(GeneratedBy.NONE, analysis.generatedBy("canEqual", "(Ljava/lang/Object;)Z"))
+        assertEquals(UnreadShape.CASE_CLASS, analysis.unreadShape("canEqual", "(Ljava/lang/Object;)Z"))
+    }
+
+    @Test
+    fun `scala 3 - a parameterised case's case-class plumbing in a shape not read stays unread on a read release`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+
+        val analysis =
+            analyzeWith(withNop(build.classBytes("Shape\$Circle"), setOf("hashCode")), build.lookup, tastyOf("Shape", "Scala 3.3.4"))
+
+        assertEquals(UnreadShape.CASE_CLASS, analysis.unreadShape("hashCode", "()I"))
+        assertNull(analysis.unreadRelease)
+    }
+
+    @Test
+    fun `scala 3 - a nested class of an enum's companion that is not final is never read for the cases`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val lookup = { name: String -> if (name == "$PACKAGE/Tint\$Swatch") null else build.lookup(name) }
+
+        assertEquals(GeneratedBy.ENUM, analyze(build.classBytes("Tint\$"), lookup).generatedBy("values", "()[L$PACKAGE/Tint;"))
+    }
+
+    @Test
+    fun `scala 3 - a family is read from the companion's inner classes when it has no field for a parameterised case`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val companion = withoutFields(build.classBytes("Shape\$"), setOf("Circle", "Square"))
+
+        val analysis = analyze(companion, build.lookup)
+
+        assertEquals(GeneratedBy.ENUM, analysis.generatedBy("fromOrdinal", "(I)L$PACKAGE/Shape;"))
+        val lookup = { name: String -> if (name == "$PACKAGE/Shape\$") companion else build.lookup(name) }
+        for (case in listOf("Shape\$Circle", "Shape\$Square")) {
+            assertEquals(GeneratedBy.ENUM, analyze(build.classBytes(case), lookup).generatedBy("ordinal", "()I"), case)
+        }
+    }
+
+    @Test
     fun `scala 3 - a singleton case's class is read exactly in both forms`() {
         for (version in listOf("3.3.4") + scala3Versions) {
             // $$anon$1 keeps the name and ordinal in fields; Planet's cases return constants.
