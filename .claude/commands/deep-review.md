@@ -26,10 +26,12 @@ inspection, and the report must say which ones did.
   change adds or changes a public API, a wire field, a table, a behaviour a
   customer sees, or what an ADR decided. Grill it with `/grill-with-docs`
   first, or list it under recommendations when the user is not there.
-- Delegate other work to a Sonnet subagent only when it is mechanical and
-  needs no thinking: disassembling a jar, parsing a coverage report into a
-  table, listing test names, collecting sources from a dependency cache. Give it an
-  exact brief and expected output shape.
+- Give fetch-and-dump work to a Haiku subagent (`model: haiku`):
+  disassembling a jar, collecting sources from a dependency cache, pulling
+  raw logs. It reports verbatim and never summarises, counts or gives a
+  verdict. Do work that one command or a script can do directly, such as
+  listing test names or parsing a coverage report into a table. Give every
+  subagent an exact brief and expected output shape.
 - The main session reviews every subagent result before using it, and
   reviews the final edits (read the diff, run the tests) before reporting
   them.
@@ -134,15 +136,15 @@ cannot fail. Leave larger refactors as recommendations with a reason.
 - Every finding in the report has its test named, and the test is in the
   tree.
 
-Do not commit unless the user asked for that in the invocation; show the
-diff summary instead.
+Commit each separate fix on its own, with the test that pins it, unless the
+user asks for one commit. Never commit a fix before the gate passes.
 
 ## 7. Report
 
 Lead with the outcome in one line. Then, in this order:
 
-1. Verified bugs: what, the evidence from both verification steps, the fix,
-   the test that pins it, and how likely it is in practice.
+1. Verified bugs: what, the evidence from both verification steps, the fix
+   and its commit, the test that pins it, and how likely it is in practice.
 2. Checked, not bugs: each candidate and the reason it is harmless.
 3. Coverage: per-module numbers in a short table, then the uncovered
    behaviour that matters and what was done about it.

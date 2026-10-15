@@ -25,8 +25,9 @@ landing order says what comes next.
   diff, then each big fix the main session makes. It reports findings and never edits. A new
   reviewer each round, so no reviewer checks its own earlier advice.
 - Research and fact-finding (reading library sources, compiling scratch
-  fixtures, running `javap`) go to Opus subagents too, never to the
-  implementer.
+  fixtures, reading `javap` output) go to Opus subagents too, never to the
+  implementer. A Haiku subagent (`model: haiku`) may fetch raw material for
+  them, such as copied sources or `javap` dumps, and report it verbatim.
 - Chunks run one after another, never in parallel. They share the build
   directory and usually a few central files, and the next brief depends on
   what the last review found.
