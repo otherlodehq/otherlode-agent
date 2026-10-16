@@ -14,7 +14,6 @@ import dev.otherlode.export.HttpExporter
 import dev.otherlode.export.ProbeDelta
 import dev.otherlode.export.ProbeKind
 import dev.otherlode.export.ProbeLocation
-import dev.otherlode.export.ProbeManifest
 import dev.otherlode.export.ResourceAttributes
 import dev.otherlode.export.RoutineKind
 import dev.otherlode.export.StaticBaseline
@@ -50,7 +49,7 @@ class CrossInstanceFindingsTest {
     ) {
         val exporter = HttpExporter(target.exportUrl)
         val resource = ResourceAttributes("svc", null, instance, null, "run-$instance")
-        exporter.exportManifest(ProbeManifest(resource, probes))
+        exporter.exportManifest(watchedManifest(resource, probes))
         val kinds = probes.associate { (it.classId to it.probeIndex) to it.kind }
         exporter.exportDeltaBatch(
             DeltaBatch(resource, hits.map { (c, p) -> ProbeDelta(c, p, kinds.getValue(c to p), 1L, hitCount) }),

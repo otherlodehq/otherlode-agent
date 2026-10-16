@@ -5,6 +5,7 @@ import dev.otherlode.export.BranchRole
 import dev.otherlode.export.BranchSite
 import dev.otherlode.export.CallEdge
 import dev.otherlode.export.CallEdgeKind
+import dev.otherlode.export.ClassFailedToInitialize
 import dev.otherlode.export.ClassListing
 import dev.otherlode.export.ClassLocation
 import dev.otherlode.export.ConditionPart
@@ -21,6 +22,7 @@ import dev.otherlode.export.FailedClass
 import dev.otherlode.export.GeneratedBy
 import dev.otherlode.export.HttpExporter
 import dev.otherlode.export.IncludeRules
+import dev.otherlode.export.InitializationFailure
 import dev.otherlode.export.KotlinKind
 import dev.otherlode.export.LineRange
 import dev.otherlode.export.OutsideCaller
@@ -28,7 +30,6 @@ import dev.otherlode.export.OutsideCallerKind
 import dev.otherlode.export.ProbeDelta
 import dev.otherlode.export.ProbeKind
 import dev.otherlode.export.ProbeLocation
-import dev.otherlode.export.ProbeManifest
 import dev.otherlode.export.ProtoPayloadCodec
 import dev.otherlode.export.ResourceAttributes
 import dev.otherlode.export.RoutineKind
@@ -197,7 +198,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         val manifest =
-            ProbeManifest(
+            watchedManifest(
                 resource = ResourceAttributes("svc", "1.0", "i-1", null, "run-1"),
                 probes = listOf(methodProbe(1, 0, "com.acme.Foo", "bar", "()V", 10)),
             )
@@ -219,7 +220,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         val manifest =
-            ProbeManifest(
+            watchedManifest(
                 resource = ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 probes =
                     listOf(
@@ -252,10 +253,10 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(ResourceAttributes("svc", null, "i-1", null, "run-1"), listOf(methodProbe(1, 0, "com.acme.A", "m", "()V", 1))),
+            watchedManifest(ResourceAttributes("svc", null, "i-1", null, "run-1"), listOf(methodProbe(1, 0, "com.acme.A", "m", "()V", 1))),
         )
         exporter.exportManifest(
-            ProbeManifest(ResourceAttributes("svc", null, "i-2", null, "run-1"), listOf(methodProbe(1, 0, "com.acme.B", "m", "()V", 1))),
+            watchedManifest(ResourceAttributes("svc", null, "i-2", null, "run-1"), listOf(methodProbe(1, 0, "com.acme.B", "m", "()V", 1))),
         )
 
         exporter.exportDeltaBatch(
@@ -340,7 +341,7 @@ class OtherlodeTestCollectorTest {
         thread(isDaemon = true) {
             Thread.sleep(50)
             exporter.exportManifest(
-                ProbeManifest(
+                watchedManifest(
                     ResourceAttributes("svc", null, "i-1", null, "run-1"),
                     listOf(methodProbe(1, 0, "com.acme.Foo", "bar", "()V", 1)),
                 ),
@@ -358,7 +359,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 emptyList(),
                 skippedClasses = listOf(SkippedClass("com.acme.Skipped", "cannot add @JvmName on class", 1L)),
@@ -373,7 +374,7 @@ class OtherlodeTestCollectorTest {
     fun `an unknown probe on a class the sweep found loaded says no transformer saw it`() {
         val target = startCollector()
         exporterFor(target).exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 emptyList(),
                 unreportedClasses = listOf(UnreportedClass("com.acme.Unseen", 1L)),
@@ -409,7 +410,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 listOf(methodProbe(1, 0, "com.acme.TextKt", "greet", "()V", 1)),
                 classLocations =
@@ -445,7 +446,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 listOf(methodProbe(1, 0, "com.acme.Has", "real", "()V", 1)),
             ),
@@ -468,7 +469,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 listOf(
                     methodProbe(1, 0, "com.acme.Foo", "a", "()V", 1),
@@ -503,7 +504,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 listOf(
                     ProbeLocation(
@@ -534,7 +535,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 listOf(
                     methodProbe(1, 0, "com.acme.Foo", "a", "()V", 1),
@@ -554,7 +555,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 listOf(
                     methodProbe(1, 0, "com.acme.Foo", "f", "(I)V", 1),
@@ -574,7 +575,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 listOf(
                     methodProbe(1, 0, "com.acme.Point", "getX", "()I", 1),
@@ -604,13 +605,13 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 listOf(omissionProbe(1, 0, "com.acme.Foo", "f", "(II)V", 1, parameterIndex = 0, parameterName = "count")),
             ),
         )
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-2", null, "run-1"),
                 listOf(omissionProbe(1, 0, "com.acme.Foo", "f", "(II)V", 1, parameterIndex = 0, parameterName = "count")),
             ),
@@ -638,7 +639,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 listOf(omissionProbe(1, 0, "com.acme.Foo", "f", "(II)V", 1, parameterIndex = 0, parameterName = "count")),
             ),
@@ -653,7 +654,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 listOf(
                     methodProbe(1, 0, "com.acme.Foo", "f", "(I)V", 10),
@@ -685,7 +686,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 listOf(
                     methodProbe(1, 0, "com.acme.Base", "greet", "(Ljava/lang/String;)V", 10),
@@ -721,7 +722,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 listOf(
                     methodProbe(1, 0, "com.acme.Foo", "f", "(I)V", 10),
@@ -748,7 +749,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 listOf(
                     methodProbe(1, 0, "com.acme.Point", "copy", "(II)Lcom/acme/Point;", 10).copy(generatedBy = GeneratedBy.DATA_CLASS),
@@ -776,7 +777,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 listOf(
                     omissionProbe(
@@ -809,7 +810,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 listOf(
                     methodProbe(1, 0, "com.acme.FooKt", "f", "(I)V", 10),
@@ -850,7 +851,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 listOf(
                     methodProbe(2, 0, "com.example.scalatarget.Cc", "<init>", "(II)V", 71),
@@ -902,7 +903,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 listOf(
                     methodProbe(3, 0, "com.example.scalatarget.Cc", "<init>", "(II)V", 71),
@@ -959,7 +960,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 listOf(methodProbe(2, 0, "com.example.scalatarget.Cc", "<init>", "(II)V", 71)),
             ),
@@ -977,14 +978,14 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 emptyList(),
                 skippedClasses = listOf(SkippedClass("com.acme.B", "r2", 2L)),
             ),
         )
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-2", null, "run-1"),
                 emptyList(),
                 skippedClasses = listOf(SkippedClass("com.acme.A", "r1", 1L), SkippedClass("com.acme.B", "r2-dup", 3L)),
@@ -1038,7 +1039,7 @@ class OtherlodeTestCollectorTest {
             ),
         )
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 listOf(methodProbe(1, 0, "com.acme.Loaded", "m", "()V", 1)),
             ),
@@ -1177,7 +1178,7 @@ class OtherlodeTestCollectorTest {
                 postStatus(
                     target,
                     "manifest",
-                    ProtoPayloadCodec.encode(ProbeManifest(noRun, listOf(methodProbe(1, 0, "com.acme.Foo", "bar", "()V", 1)))),
+                    ProtoPayloadCodec.encode(watchedManifest(noRun, listOf(methodProbe(1, 0, "com.acme.Foo", "bar", "()V", 1)))),
                 ),
                 postStatus(target, "static-baseline", ProtoPayloadCodec.encode(StaticBaseline(noRun, emptyList(), scannedAt = 1L))),
             )
@@ -1205,7 +1206,7 @@ class OtherlodeTestCollectorTest {
                 postStatus(
                     target,
                     "manifest",
-                    ProtoPayloadCodec.encode(ProbeManifest(stripped, listOf(methodProbe(1, 0, "com.acme.Foo", "bar", "()V", 1)))),
+                    ProtoPayloadCodec.encode(watchedManifest(stripped, listOf(methodProbe(1, 0, "com.acme.Foo", "bar", "()V", 1)))),
                 ),
                 postStatus(target, "static-baseline", ProtoPayloadCodec.encode(StaticBaseline(stripped, emptyList(), scannedAt = 1L))),
             )
@@ -1225,7 +1226,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(ResourceAttributes("svc", null, "i-1", null, "run-1"), listOf(methodProbe(1, 0, "com.acme.A", "m", "()V", 1))),
+            watchedManifest(ResourceAttributes("svc", null, "i-1", null, "run-1"), listOf(methodProbe(1, 0, "com.acme.A", "m", "()V", 1))),
         )
         val restarted = ResourceAttributes("svc", null, "i-1", null, "run-2")
 
@@ -1239,7 +1240,7 @@ class OtherlodeTestCollectorTest {
                 postStatus(
                     target,
                     "manifest",
-                    ProtoPayloadCodec.encode(ProbeManifest(restarted, listOf(methodProbe(1, 0, "com.acme.B", "m", "()V", 1)))),
+                    ProtoPayloadCodec.encode(watchedManifest(restarted, listOf(methodProbe(1, 0, "com.acme.B", "m", "()V", 1)))),
                 ),
                 postStatus(target, "static-baseline", ProtoPayloadCodec.encode(StaticBaseline(restarted, emptyList(), scannedAt = 1L))),
             )
@@ -1355,7 +1356,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 emptyList(),
                 endpoints = listOf(endpoint(0, "GET", "/checkout"), endpoint(1, "GET", "/promo")),
@@ -1382,14 +1383,14 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 emptyList(),
                 endpoints = listOf(endpoint(0, "GET", "/checkout")),
             ),
         )
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-2", null, "run-1"),
                 emptyList(),
                 endpoints = listOf(endpoint(0, "GET", "/checkout")),
@@ -1419,7 +1420,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 emptyList(),
                 endpoints = listOf(endpoint(0, "GET", "/checkout")),
@@ -1428,7 +1429,7 @@ class OtherlodeTestCollectorTest {
         assertEquals(null, target.endpoints().single().handlerClass)
 
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 emptyList(),
                 endpoints = listOf(endpoint(0, "GET", "/checkout", handlerClass = "com.acme.Checkout", handlerMethod = "handle")),
@@ -1445,7 +1446,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 emptyList(),
                 endpoints = listOf(endpoint(0, "GET", "/checkout")),
@@ -1474,7 +1475,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 emptyList(),
                 endpoints = listOf(endpoint(0, "GET", "/checkout")),
@@ -1505,7 +1506,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 emptyList(),
                 disabledEndpointModules =
@@ -1533,7 +1534,7 @@ class OtherlodeTestCollectorTest {
         thread(isDaemon = true) {
             Thread.sleep(50)
             exporter.exportManifest(
-                ProbeManifest(
+                watchedManifest(
                     ResourceAttributes("svc", null, "i-1", null, "run-1"),
                     emptyList(),
                     endpoints = listOf(endpoint(0, "GET", "/checkout")),
@@ -1552,7 +1553,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 emptyList(),
                 disabledEndpointModules =
@@ -1563,7 +1564,7 @@ class OtherlodeTestCollectorTest {
             ),
         )
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-2", null, "run-1"),
                 emptyList(),
                 disabledEndpointModules = listOf(DisabledEndpointModule("ktor", "r1-dup", 3L, DisabledEndpointModuleKind.TRANSFORM_FAILED)),
@@ -1578,7 +1579,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 emptyList(),
                 disabledEndpointModules = listOf(DisabledEndpointModule("ktor", "r1", 1L, DisabledEndpointModuleKind.ROUTE_WALK_FAILED)),
@@ -1593,7 +1594,7 @@ class OtherlodeTestCollectorTest {
     fun `a disabled module with no kind is answered 400, since an agent of this testkit's version always sends one`() {
         val target = startCollector()
         val manifest =
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 emptyList(),
                 disabledEndpointModules = listOf(DisabledEndpointModule("jax-rs", "r2", 2L, DisabledEndpointModuleKind.UNSPECIFIED)),
@@ -1608,7 +1609,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 probes =
                     listOf(
@@ -1634,7 +1635,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 probes =
                     listOf(
@@ -1669,7 +1670,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 probes = listOf(methodProbe(1, 0, "com.acme.D", "job", "()V", 1)),
             ),
@@ -1689,7 +1690,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 probes =
                     listOf(
@@ -1745,7 +1746,7 @@ class OtherlodeTestCollectorTest {
     @Test
     fun `a virtual edge widens through classLocations to a never-hit override, a non-virtual edge does not`() {
         fun manifestWith(virtual: Boolean) =
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 probes =
                     listOf(
@@ -1798,7 +1799,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 probes =
                     listOf(
@@ -1858,7 +1859,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 probes =
                     listOf(
@@ -1905,7 +1906,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 probes =
                     listOf(
@@ -1965,7 +1966,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 probes =
                     listOf(
@@ -2008,7 +2009,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 probes =
                     listOf(
@@ -2068,7 +2069,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 probes =
                     listOf(
@@ -2101,7 +2102,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 probes =
                     listOf(
@@ -2141,7 +2142,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 probes =
                     listOf(
@@ -2159,7 +2160,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 probes =
                     listOf(
@@ -2212,7 +2213,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 probes =
                     listOf(
@@ -2241,7 +2242,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 probes =
                     listOf(
@@ -2262,7 +2263,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 probes =
                     listOf(
@@ -2308,7 +2309,7 @@ class OtherlodeTestCollectorTest {
             ),
         )
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 emptyList(),
                 unreportedClasses = listOf(UnreportedClass("com.acme.Deflected", 5L)),
@@ -2350,7 +2351,7 @@ class OtherlodeTestCollectorTest {
         // The manifest's own row for A.m carries no edges, as a class whose bytes the agent could
         // not read at transform time would; the baseline's declaration is the only source.
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 listOf(methodProbe(1, 0, "com.acme.A", "m", "()V", 1), methodProbe(2, 0, "com.acme.B", "n", "()V", 1)),
             ),
@@ -2382,7 +2383,7 @@ class OtherlodeTestCollectorTest {
                     ),
             )
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 resource,
                 probes =
                     listOf(
@@ -2421,7 +2422,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 probes =
                     listOf(
@@ -2443,7 +2444,7 @@ class OtherlodeTestCollectorTest {
         val exporter = exporterFor(target)
         val resource = ResourceAttributes("svc", null, "i-1", null, "run-1")
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 resource,
                 probes =
                     listOf(
@@ -2484,7 +2485,7 @@ class OtherlodeTestCollectorTest {
                     ),
             )
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 resource,
                 probes =
                     listOf(
@@ -2525,7 +2526,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 listOf(
                     methodProbe(1, 0, "com.acme.Point", "copy", "(II)Lcom/acme/Point;", 10).copy(unreadShape = UnreadShape.CASE_CLASS),
@@ -2557,7 +2558,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 probes =
                     listOf(
@@ -2591,7 +2592,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 probes =
                     listOf(
@@ -2636,7 +2637,7 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 probes =
                     listOf(
@@ -2711,7 +2712,7 @@ class OtherlodeTestCollectorTest {
         val exporter = exporterFor(target)
         val resource = ResourceAttributes("svc", null, "i-1", null, "run-1")
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 resource,
                 probes =
                     listOf(
@@ -2777,7 +2778,7 @@ class OtherlodeTestCollectorTest {
         val resource = ResourceAttributes("svc", null, "i-1", null, "run-1")
         val site = ifSite(siteIndex = 0, line = 11, takenIndex = 0, fallThroughIndex = 1, condition = "broken")
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 resource,
                 probes =
                     listOf(
@@ -2811,7 +2812,7 @@ class OtherlodeTestCollectorTest {
         val resource = ResourceAttributes("svc", null, "i-1", null, "run-1")
         val site = ifSite(siteIndex = 0, line = 11, takenIndex = 0, fallThroughIndex = 1, condition = "legacy")
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 resource,
                 probes =
                     listOf(
@@ -2862,7 +2863,7 @@ class OtherlodeTestCollectorTest {
         val exporter = exporterFor(target)
         val resource = ResourceAttributes("svc", null, "i-1", null, "run-1")
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 resource,
                 probes =
                     listOf(
@@ -2911,7 +2912,7 @@ class OtherlodeTestCollectorTest {
         val exporter = exporterFor(target)
         val resource = ResourceAttributes("svc", null, "i-1", null, "run-1")
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 resource,
                 probes =
                     listOf(
@@ -2969,7 +2970,7 @@ class OtherlodeTestCollectorTest {
         val exporter = exporterFor(target)
         val resource = ResourceAttributes("svc", null, "i-1", null, "run-1")
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 resource,
                 probes =
                     listOf(
@@ -3000,7 +3001,7 @@ class OtherlodeTestCollectorTest {
         val exporter = exporterFor(target)
         val resource = ResourceAttributes("svc", null, "i-1", null, "run-1")
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 resource,
                 probes =
                     listOf(
@@ -3032,7 +3033,7 @@ class OtherlodeTestCollectorTest {
         val exporter = exporterFor(target)
         val resource = ResourceAttributes("svc", null, "i-1", null, "run-1")
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 resource,
                 probes =
                     listOf(
@@ -3084,7 +3085,7 @@ class OtherlodeTestCollectorTest {
     ) {
         val exporter = exporterFor(target)
         val resource = ResourceAttributes("svc", null, "i-1", null, "run-1")
-        exporter.exportManifest(ProbeManifest(resource, probes))
+        exporter.exportManifest(watchedManifest(resource, probes))
         val kinds = probes.associate { (it.classId to it.probeIndex) to it.kind }
         exporter.exportDeltaBatch(DeltaBatch(resource, hits.map { (c, p) -> ProbeDelta(c, p, kinds.getValue(c to p), 1L, 1L) }))
     }
@@ -3576,13 +3577,13 @@ class OtherlodeTestCollectorTest {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 listOf(methodProbe(1, 0, "com.acme.Task", "run", "()V", 4, outsideCaller = overridesRunnable)),
             ),
         )
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-2", null, "run-2"),
                 listOf(methodProbe(1, 0, "com.acme.Task", "run", "()V", 4)),
             ),
@@ -3607,7 +3608,7 @@ class OtherlodeTestCollectorTest {
             ),
         )
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 emptyList(),
                 failedClasses = listOf(FailedClass("com.acme.Zed", 5L), FailedClass("com.acme.Broken", 5L)),
@@ -3630,14 +3631,14 @@ class OtherlodeTestCollectorTest {
             ),
         )
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 emptyList(),
                 failedClasses = listOf(FailedClass("com.acme.Mixed", 5L)),
             ),
         )
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 ResourceAttributes("svc", null, "i-2", null, "run-2"),
                 listOf(methodProbe(1, 0, "com.acme.Mixed", "m", "()V", 3)),
             ),
@@ -3645,5 +3646,67 @@ class OtherlodeTestCollectorTest {
 
         assertEquals(emptyList(), target.failedToLoad())
         assertEquals(emptyList(), target.neverLoaded())
+    }
+
+    private fun probeOutcomeScenario(threw: Boolean): OtherlodeTestCollector {
+        val target = startCollector()
+        val exporter = exporterFor(target)
+        val resource = ResourceAttributes("svc", null, "i-1", null, "run-1")
+        val site = ifSite(siteIndex = 0, line = 11, takenIndex = 0, fallThroughIndex = 1, condition = "legacy")
+        exporter.exportManifest(
+            watchedManifest(
+                resource,
+                probes =
+                    listOf(
+                        methodProbe(1, 3, "com.acme.App", "<clinit>", "()V", 9),
+                        ProbeLocation(1, 4, ProbeKind.INITIALIZER_RETURNED, "com.acme.App", "<clinit>", "()V", 9, null),
+                        ProbeLocation(1, 5, ProbeKind.INITIALIZER_THREW, "com.acme.App", "<clinit>", "()V", 9, null),
+                        methodProbe(
+                            1,
+                            0,
+                            "com.acme.App",
+                            "handle",
+                            "()V",
+                            10,
+                            calls = listOf(CallEdge("com.acme.Legacy", "apply", "()V", virtual = false, guard = 1)),
+                            branchSites = listOf(site),
+                        ),
+                        branchProbe(1, 1, "com.acme.App", "handle", "()V", 11, branchIndex = 0, siteIndex = 0),
+                        branchProbe(1, 2, "com.acme.App", "handle", "()V", 11, branchIndex = 1, siteIndex = 0),
+                        methodProbe(2, 0, "com.acme.Legacy", "apply", "()V", 4, static = true),
+                        methodProbe(2, 1, "com.acme.Legacy", "ok", "()V", 5, static = true),
+                    ),
+                classLocations = listOf(ClassLocation(1, null, emptyList()), ClassLocation(2, null, emptyList())),
+                classesFailedToInitialize =
+                    if (threw) {
+                        listOf(ClassFailedToInitialize("com.acme.App", InitializationFailure.STATIC_INITIALIZER_THREW, 1L))
+                    } else {
+                        emptyList()
+                    },
+            ),
+        )
+        val deltas =
+            listOf(
+                ProbeDelta(1, 3, ProbeKind.METHOD, 1L, 1L),
+                ProbeDelta(1, 0, ProbeKind.METHOD, 1L, 1L),
+                ProbeDelta(1, 1, ProbeKind.BRANCH, 1L, 1L),
+                ProbeDelta(2, 1, ProbeKind.METHOD, 1L, 1L),
+            ) + if (threw) listOf(ProbeDelta(1, 5, ProbeKind.INITIALIZER_THREW, 1L, 1L)) else emptyList()
+        exporter.exportDeltaBatch(DeltaBatch(resource, deltas))
+        return target
+    }
+
+    @Test
+    fun `an untaken outcome in a class whose initialiser is still running is no cluster root`() {
+        val clusters = probeOutcomeScenario(threw = false).unreachedClusters()
+
+        assertTrue(clusters.none { it.root.className == "com.acme.App" }, clusters.toString())
+    }
+
+    @Test
+    fun `an untaken outcome in a class that failed to initialise is no cluster root`() {
+        val clusters = probeOutcomeScenario(threw = true).unreachedClusters()
+
+        assertTrue(clusters.none { it.root.className == "com.acme.App" }, clusters.toString())
     }
 }

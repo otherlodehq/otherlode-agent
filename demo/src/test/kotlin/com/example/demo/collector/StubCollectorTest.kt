@@ -100,6 +100,7 @@ class StubCollectorTest {
                 "manifest",
                 ProbeManifest
                     .newBuilder()
+                    .setVerifierRejectionsWatched(true)
                     .setResource(stripped)
                     .addProbes(probe)
                     .build(),
@@ -134,6 +135,8 @@ class StubCollectorTest {
     @Test
     fun `an initialiser slot is never a never-hit row`() {
         val run = resource("run-slots")
+        val label = "in class findings (reported by class):"
+        val before = countOn(neverHitReport(), label)
 
         fun probe(
             index: Int,
@@ -154,6 +157,7 @@ class StubCollectorTest {
                 "manifest",
                 ProbeManifest
                     .newBuilder()
+                    .setVerifierRejectionsWatched(true)
                     .setResource(run)
                     .addProbes(probe(0, ProbeKind.METHOD, "check"))
                     .addProbes(probe(1, ProbeKind.METHOD, "<clinit>"))
@@ -175,7 +179,7 @@ class StubCollectorTest {
         )
 
         val report = neverHitReport()
-        assertTrue("in class findings (reported by class): 2" in report, report.joinToString("\n"))
+        assertEquals(before + 2, countOn(report, label), report.joinToString("\n"))
         assertTrue(report.none { it.contains("INITIALIZER_") }, report.joinToString("\n"))
     }
 
@@ -204,6 +208,7 @@ class StubCollectorTest {
                 "manifest",
                 ProbeManifest
                     .newBuilder()
+                    .setVerifierRejectionsWatched(true)
                     .setResource(testRun)
                     .addProbes(probe)
                     .build(),
@@ -262,6 +267,7 @@ class StubCollectorTest {
                 "manifest",
                 ProbeManifest
                     .newBuilder()
+                    .setVerifierRejectionsWatched(true)
                     .setResource(run)
                     .addUnreportedClasses(UnreportedClass.newBuilder().setClassName("com.acme.sweep.LoadedInsideATransform"))
                     .build(),
@@ -306,6 +312,7 @@ class StubCollectorTest {
                 "manifest",
                 ProbeManifest
                     .newBuilder()
+                    .setVerifierRejectionsWatched(true)
                     .setResource(run)
                     .addProbes(method(0, "com.acme.outside.Task", caller(OutsideCallerKind.OVERRIDES_METHOD, "java.util.Map\$Entry")))
                     .addProbes(
@@ -354,6 +361,7 @@ class StubCollectorTest {
                 "manifest",
                 ProbeManifest
                     .newBuilder()
+                    .setVerifierRejectionsWatched(true)
                     .setResource(run)
                     .addFailedClasses(FailedClass.newBuilder().setClassName("com.acme.failed.Broken").setWithheldAt(5L))
                     .build(),
@@ -392,6 +400,7 @@ class StubCollectorTest {
         val manifest =
             ProbeManifest
                 .newBuilder()
+                .setVerifierRejectionsWatched(true)
                 .setResource(resource("run-naming"))
                 .addProbes(probe(0, "com.acme.naming.TextKt"))
                 .addProbes(probe(1, "com.acme.naming.Words"))
@@ -504,6 +513,7 @@ class StubCollectorTest {
         val manifest =
             ProbeManifest
                 .newBuilder()
+                .setVerifierRejectionsWatched(true)
                 .setResource(resource("run-fold"))
                 // ran() ran and took outcome 0. Outcome 1 never ran and guards site 1, whose null side
                 // is routine. Site 1 folds into outcome 1's row.
@@ -591,6 +601,7 @@ class StubCollectorTest {
         val manifest =
             ProbeManifest
                 .newBuilder()
+                .setVerifierRejectionsWatched(true)
                 .setResource(resource("run-lone"))
                 .addProbes(location(0, ProbeKind.METHOD).addBranchSites(site))
                 .addProbes(location(1, ProbeKind.BRANCH).setLine(6).setSiteIndex(0).setBranchIndex(0))
@@ -656,6 +667,7 @@ class StubCollectorTest {
         val manifest =
             ProbeManifest
                 .newBuilder()
+                .setVerifierRejectionsWatched(true)
                 .setResource(resource("run-unread"))
                 .addProbes(method(0, "hashCode", 4).setUnreadShape(UnreadShape.UNREAD_SHAPE_CASE_CLASS))
                 .addProbes(method(1, "real", 8))

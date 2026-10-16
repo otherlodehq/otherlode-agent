@@ -159,11 +159,12 @@ The entry usually arrives in the same flush as the first count, and at the earli
 | `unreferencedDependencies()` | Every dependency with status unreferenced. |
 | `unreachedDependencies()` | Every dependency with status unreached, with the sites that reference it. |
 | `failedToLoadDependencies()` | Every dependency with status failed to load. |
+| `failedToInitializeDependencies()` | Every dependency with no live reference that is referenced from a class that failed to initialise, and from none that failed to load. |
 | `absentReferences()` | Every absent reference, with its sites. |
 | `awaitDependency(groupId, artifactId, timeout)` | Waits until a manifest lists the dependency. |
 | `awaitDependenciesListed(timeout)` | Waits until every instance heard from has sent the "dependencies listed" flag. |
 
-The result of a query is a `DependencyStatus` with a `DependencyUsage` value. `DependencyUsage` has the values `UNLOADED`, `UNREFERENCED`, `UNREACHED`, `NO_LIVE_REFERENCE`, `FAILED_TO_LOAD`, `USED`, `LOADED`, and `RESOURCES_ONLY`. A later release can add values, so a `when` over it needs an `else` branch. Each referencing site prints as `Class#method`, with `(class level)`, `(never loaded)`, or `(failed to load)` where they apply.
+The result of a query is a `DependencyStatus` with a `DependencyUsage` value. `DependencyUsage` has the values `UNLOADED`, `UNREFERENCED`, `UNREACHED`, `NO_LIVE_REFERENCE`, `FAILED_TO_LOAD`, `USED`, `LOADED`, `RESOURCES_ONLY`, and `FAILED_TO_INITIALIZE`. A later release can add values, so a `when` over it needs an `else` branch. Each referencing site prints as `Class#method`, with `(class level)`, `(never loaded)`, `(failed to load)`, or `(failed to initialise)` where they apply.
 
 These rules apply to the queries:
 

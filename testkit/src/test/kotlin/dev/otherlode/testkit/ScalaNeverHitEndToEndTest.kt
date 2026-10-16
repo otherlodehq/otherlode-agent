@@ -93,7 +93,14 @@ class ScalaNeverHitEndToEndTest {
         driver.getMethod("callSimpleAllOmitted").invoke(null)
 
         val exportScheduler =
-            ExportScheduler(config, TestResources.forConfig(config), registry, EndpointRegistry(), HttpExporter(target.exportUrl))
+            ExportScheduler(
+                config,
+                TestResources.forConfig(config),
+                registry,
+                EndpointRegistry(),
+                HttpExporter(target.exportUrl),
+                verifierWatch = watchedVerifier(),
+            )
         scheduler = exportScheduler
         exportScheduler.start()
         target.awaitProbe("$PACKAGE.Driver\$", "callSimpleNoneOmitted", Duration.ofSeconds(10))

@@ -4,7 +4,6 @@ import dev.otherlode.export.DeltaBatch
 import dev.otherlode.export.HttpExporter
 import dev.otherlode.export.ProbeDelta
 import dev.otherlode.export.ProbeLocation
-import dev.otherlode.export.ProbeManifest
 import dev.otherlode.export.ProtoPayloadCodec
 import dev.otherlode.export.ResourceAttributes
 import java.net.URI
@@ -34,7 +33,7 @@ class CollectorVersionAndMarksTest {
 
     private fun manifestBody(agentVersion: String): ByteArray =
         ProtoPayloadCodec.encode(
-            ProbeManifest(resource(agentVersion), listOf(ProbeLocation(1, 0, WireProbeKind.METHOD, "com.acme.A", "m", "()V", 1, null))),
+            watchedManifest(resource(agentVersion), listOf(ProbeLocation(1, 0, WireProbeKind.METHOD, "com.acme.A", "m", "()V", 1, null))),
         )
 
     private fun post(
@@ -102,7 +101,7 @@ class CollectorVersionAndMarksTest {
         val exporter = HttpExporter(target.exportUrl)
         val unmarked = resource("")
         exporter.exportManifest(
-            ProbeManifest(unmarked, listOf(ProbeLocation(1, 0, WireProbeKind.METHOD, "com.acme.A", "m", "()V", 1, null))),
+            watchedManifest(unmarked, listOf(ProbeLocation(1, 0, WireProbeKind.METHOD, "com.acme.A", "m", "()V", 1, null))),
         )
         exporter.exportDeltaBatch(DeltaBatch(unmarked, listOf(ProbeDelta(1, 0, WireProbeKind.METHOD, 1L, 0L))))
 

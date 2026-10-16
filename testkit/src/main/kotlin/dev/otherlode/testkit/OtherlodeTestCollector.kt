@@ -7,6 +7,7 @@ import dev.otherlode.export.BranchSite
 import dev.otherlode.export.CallEdge
 import dev.otherlode.export.CallEdgeKind
 import dev.otherlode.export.ConditionPartKind
+import dev.otherlode.export.InitializationFailure
 import dev.otherlode.export.KotlinKind
 import dev.otherlode.export.ProbeManifest
 import dev.otherlode.export.ProtoPayloadCodec
@@ -62,8 +63,17 @@ import dev.otherlode.export.UnreadShape as WireUnreadShape
  * assigned it. A branch outcome is the same outcome by its branch key when it has one, and by its
  * branch index only when it has none. A finding therefore names no instance.
  *
+ * Those findings, the dependency queries whose verdict rests on a method never hit
+ * ([unreachedDependencies], [failedToLoadDependencies], [failedToInitializeDependencies] and a
+ * [dependency] that reads so), and [unreachedClusters] rest on zero counts. A class the JVM's
+ * verifier rejects fires no probe, so they throw [IllegalStateException], naming each instance and
+ * why, while any instance's manifest says the agent's hook on `VerifyError` was not installed, or
+ * an instance counts a `VerifyError` message in no read format. A query that reads no zero count,
+ * such as [hitCount], [wasHit], [failedToLoad] or [failedToInitialize], still answers. A class that
+ * failed to initialise ([failedToInitialize]) and its subtypes are left out of the findings.
+ *
  * Dependency queries ([dependency], [unloadedDependencies], [unreferencedDependencies],
- * [unreachedDependencies], [failedToLoadDependencies], [absentReferences]) apply the collector's dependency rules within this
+ * [unreachedDependencies], [failedToLoadDependencies], [failedToInitializeDependencies], [absentReferences]) apply the collector's dependency rules within this
  * one test JVM and follow the same rule again: a dependency no manifest has listed throws
  * [UnknownDependencyException], and a question the data cannot answer yet, or at all without a
  * complete static baseline, throws [IllegalStateException] instead of returning an empty list.
@@ -498,6 +508,18 @@ public class OtherlodeTestCollector internal constructor(
     private val baselineReferences = ConcurrentHashMap<InstanceKey<String>, BaselineReferences>()
     private val instancesRecordingReferences: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
+    /** The reasons each instance gave for a class it named in `classes_failed_to_initialize`, by class name. */
+    private val initializationFailures = ConcurrentHashMap<InstanceKey<String>, Set<InitializationFailure>>()
+
+    /** A class's supertypes as each instance's `ClassLocation` gave them, by class name. */
+    private val supertypesByInstance = ConcurrentHashMap<InstanceKey<String>, SupertypesInfo>()
+
+    /** Instances any of whose manifests said the agent's hook on `VerifyError` was not installed. */
+    private val unwatchedInstances: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    /** The highest `unplaced_verification_failures` each instance reported. */
+    private val unplacedVerificationFailures = ConcurrentHashMap<String, Long>()
+
     /** Every instance that sent a manifest with `dependencies_listed` set; see [awaitDependenciesListed]. */
     private val instancesWithDependenciesListed: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val instanceIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
@@ -728,9 +750,19 @@ public class OtherlodeTestCollector internal constructor(
      * zero while its target was called at least once in some instance: the default value is dead.
      * See [neverSupplied] for why "combined" matters and how instances merge. Claimed for any
      * target, overridable or not. A target with no
-     * method probe at all, or an inline target, is skipped, the same as [neverSupplied].
+     * method probe at all, or an inline target, is skipped, the same as [neverSupplied]. Throws
+     * [IllegalStateException] while an instance's zero counts are not evidence, as [neverHit] does.
      */
-    public fun alwaysSupplied(): List<OptionalParameterRef> = checked { optionalParameterFindings { omitted, _, _ -> omitted == 0L } }
+    public fun alwaysSupplied(): List<OptionalParameterRef> =
+        checkedZeroCounts {
+            optionalParameterFindings {
+                omitted,
+                _,
+                _,
+                ->
+                omitted == 0L
+            }
+        }
 
     /**
      * Groups every `OPTIONAL_ARGUMENT` location, merged across instances, by the parameter it
@@ -880,8 +912,14 @@ public class OtherlodeTestCollector internal constructor(
      * matches no shape the agent has read, a branch probe in such a method, and an outcome the agent
      * marked unread. That is a fact about the agent, not about the adopter's code.
      * [neverHitUnreadShapes] lists those.
+     *
+     * A class that failed to initialise ([failedToInitialize]) and its subtypes are left out too:
+     * they can never run in that JVM, so a zero count says nothing about their code.
+     *
+     * Throws [IllegalStateException] while any instance is unwatched or has an unplaced verification
+     * failure; see [neverInitialized].
      */
-    public fun neverHit(): List<ProbeRef> = checked { neverHitRows().filter { it.routine == null && it.unreadShape == null } }
+    public fun neverHit(): List<ProbeRef> = checkedZeroCounts { neverHitRows().filter { it.routine == null && it.unreadShape == null } }
 
     /**
      * Every never-hit BRANCH probe that [neverHit] leaves out only because its outcome is routine,
@@ -893,7 +931,7 @@ public class OtherlodeTestCollector internal constructor(
      * routine.
      */
     public fun neverHitRoutineOutcomes(): List<ProbeRef> =
-        checked { neverHitRows().filter { it.routine != null && it.unreadShape == null } }
+        checkedZeroCounts { neverHitRows().filter { it.routine != null && it.unreadShape == null } }
 
     /**
      * Every never-hit METHOD or BRANCH probe that [neverHit] leaves out only because it is an unread
@@ -905,16 +943,17 @@ public class OtherlodeTestCollector internal constructor(
      * gives, is not listed here either. The probes of an unread method do not fold: that method is
      * no row of [neverHit], so nothing would carry them.
      */
-    public fun neverHitUnreadShapes(): List<ProbeRef> = checked { neverHitRows().filter { it.unreadShape != null } }
+    public fun neverHitUnreadShapes(): List<ProbeRef> = checkedZeroCounts { neverHitRows().filter { it.unreadShape != null } }
 
     /** Every [neverHit] row with routine outcomes still in. */
     private fun neverHitRows(): List<ProbeRef> {
         val judgement = judgeClasses()
         val locations = mergedLocations()
+        val unjudgeable = failedToInitializeNames() + classesWithInitializerRunning()
         val candidates =
             locations.filter {
                 it.key.kind != WireProbeKind.OPTIONAL_ARGUMENT && !it.inline && it.generatedBy == WireGeneratedBy.NONE && it.hits <= 0L &&
-                    isNeverHitRow(it, judgement)
+                    it.key.method.className !in unjudgeable && isNeverHitRow(it, judgement)
             }
         val folded = foldedSites(locations, candidates)
         return candidates
@@ -1142,8 +1181,21 @@ public class OtherlodeTestCollector internal constructor(
      *
      * Every method of such a class can only run through its initialiser, so [neverHit] and
      * [unreachedClusters] fold them into the class.
+     *
+     * A class that failed to initialise ([failedToInitialize]) is never listed, and neither is a
+     * class whose initialiser is still running in every instance that loaded it: a `<clinit>` that
+     * counted, with its returned and threw slots both present and neither counted, has not finished.
+     *
+     * Throws [IllegalStateException] while any instance's zero counts are not evidence: an instance
+     * any of whose manifests says the agent's hook on `VerifyError` was not installed, or which
+     * counts a `VerifyError` message in no read format. A class the verifier rejects fires no
+     * probe, so it would read as never initialised. The message names each such instance and why.
+     * [neverHit], [neverHitRoutineOutcomes], [neverHitUnreadShapes], [neverInstantiated],
+     * [unreachedClusters] and the dependency queries that rest on zero counts throw the same way;
+     * a query that reads no zero count, such as [hitCount], [failedToLoad] or [failedToInitialize],
+     * still answers.
      */
-    public fun neverInitialized(): List<ClassFindingRef> = checked { classFindingRefs(ClassFinding.NEVER_INITIALIZED) }
+    public fun neverInitialized(): List<ClassFindingRef> = checkedZeroCounts { classFindingRefs(ClassFinding.NEVER_INITIALIZED) }
 
     /**
      * Every class that some instance loaded, that is not never initialised, that has a judgeable
@@ -1155,8 +1207,10 @@ public class OtherlodeTestCollector internal constructor(
      * The constructors and instance methods of such a class can only run through an instance, so
      * [neverHit] and [unreachedClusters] fold them into the class. Its static methods can still run,
      * so they stay rows of their own.
+     *
+     * Left out and refused as [neverInitialized] is.
      */
-    public fun neverInstantiated(): List<ClassFindingRef> = checked { classFindingRefs(ClassFinding.NEVER_INSTANTIATED) }
+    public fun neverInstantiated(): List<ClassFindingRef> = checkedZeroCounts { classFindingRefs(ClassFinding.NEVER_INSTANTIATED) }
 
     /** The [ClassFindingRef] of each class [judgeClasses] gives [finding], sorted by class name. */
     private fun classFindingRefs(finding: ClassFinding): List<ClassFindingRef> =
@@ -1221,6 +1275,9 @@ public class OtherlodeTestCollector internal constructor(
      * Applies the class-finding rules to every loaded class, over [judgeableMethods]. A class
      * with a judgeable METHOD probe loaded, so none of these is never loaded.
      *
+     * A class that failed to initialise, or whose initialiser is still running in every instance that
+     * loaded it, gets no finding.
+     *
      * A class is never initialised when it has a `<clinit>` and that never ran. Otherwise it is never
      * instantiated when it has a `<init>`, none ran, and it has a method that is neither static nor
      * a constructor. A never-initialised class covers every never-hit method. A never-instantiated
@@ -1234,12 +1291,17 @@ public class OtherlodeTestCollector internal constructor(
         val findings = mutableMapOf<String, ClassFinding>()
         val covered = mutableMapOf<String, List<NodeKey>>()
         val constructed = mutableSetOf<String>()
+        val withheld = failedToInitializeNames() + classesWithInitializerRunning()
         for ((className, methods) in judgeable.values.groupBy { it.key.className }) {
             val initialisers = methods.filter { it.key.methodName == CLASS_INIT }
             val constructors = methods.filter { it.key.methodName == CONSTRUCTOR }
             if (constructors.any { it.hits > 0L }) constructed += className
             val finding =
                 when {
+                    className in withheld -> {
+                        continue
+                    }
+
                     initialisers.isNotEmpty() && initialisers.all { it.hits == 0L } -> {
                         ClassFinding.NEVER_INITIALIZED
                     }
@@ -1376,6 +1438,151 @@ public class OtherlodeTestCollector internal constructor(
     public fun failedToLoad(): List<String> = checked { failedClassNames.filter { it !in dynamicallyKnownClassNames }.sorted() }
 
     /**
+     * Class names that failed to initialise, sorted: a class some instance named in
+     * `classes_failed_to_initialize`, because its static initialiser threw or the JVM's verifier
+     * rejected it, and every confirmed class whose supertypes in an instance's class records reach
+     * a class that instance named, and that no instance initialised. A class is initialised in an
+     * instance when its returned slot counted, if that instance sent the class's returned and threw
+     * slots, since the entry probe and every method the initialiser calls count before a throw. When
+     * the instance sent no slots for the class, any hit on a probe of it means it initialised.
+     *
+     * A class that failed to initialise is a deployment to fix, never dead code, so [neverHit] and
+     * the class findings leave it out. The JVM defined it, which sets it apart from [failedToLoad].
+     * A name no instance confirmed, such as a library class the verifier rejected, is not listed,
+     * but its confirmed subtypes are.
+     */
+    public fun failedToInitialize(): List<String> = checked { failedToInitializeNames().sorted() }
+
+    /** The class names [failedToInitialize] lists. */
+    private fun failedToInitializeNames(): Set<String> {
+        if (initializationFailures.isEmpty()) return emptySet()
+        val initialized = initializedClassNames()
+        val failed = HashSet<String>()
+        val namedByInstance = initializationFailures.entries.groupBy { it.key.serviceInstanceId }
+        for ((instance, entries) in namedByInstance) {
+            val rejected = entries.filter { InitializationFailure.VERIFIER_REJECTED in it.value }.mapTo(HashSet()) { it.key.id }
+            val threw = entries.filter { InitializationFailure.STATIC_INITIALIZER_THREW in it.value }.mapTo(HashSet()) { it.key.id }
+            val supertypes = supertypesByInstance.filterKeys { it.serviceInstanceId == instance }.mapKeys { it.key.id }
+            val withDefaultMethods =
+                probesByKey.entries
+                    .filter { (key, probe) ->
+                        key.serviceInstanceId == instance && probe.kind == WireProbeKind.METHOD && !probe.static &&
+                            probe.methodName != CLASS_INIT && probe.methodName != CONSTRUCTOR
+                    }.mapTo(HashSet()) { it.value.className }
+            failed += rejected
+            failed += threw
+            for (className in supertypes.keys) {
+                if (className !in failed && carriesFailure(className, supertypes, rejected, threw, withDefaultMethods)) failed += className
+            }
+        }
+        return failed.filterTo(HashSet()) { it !in initialized && it in dynamicallyKnownClassNames }
+    }
+
+    /**
+     * Every class that initialised in some instance. In an instance whose manifest carries the
+     * returned and threw slots of the class, that is when its returned slot counted, since the
+     * entry probe and every method the initialiser calls count before a throw. In an instance with
+     * no slots for the class, any hit on a probe of it.
+     */
+    private fun initializedClassNames(): Set<String> {
+        class Evidence {
+            var hasSlots = false
+            var returned = false
+            var anyHit = false
+        }
+
+        val evidence = HashMap<InstanceKey<String>, Evidence>()
+        for ((key, probe) in probesByKey) {
+            val state = evidence.getOrPut(InstanceKey(key.serviceInstanceId, probe.className)) { Evidence() }
+            val hit = (hitsByKey[key] ?: 0L) > 0L
+            if (probe.kind.isInitializerSlot()) state.hasSlots = true
+            if (probe.kind == WireProbeKind.INITIALIZER_RETURNED && hit) state.returned = true
+            if (hit) state.anyHit = true
+        }
+        return evidence
+            .filterValues { if (it.hasSlots) it.returned else it.anyHit }
+            .keys
+            .mapTo(HashSet()) { it.id }
+    }
+
+    /**
+     * Whether [className] cannot initialise because a supertype failed, as the JVM decides (JVMS
+     * 5.4, 5.5 step 7). Linking a class links every supertype, so a supertype in [rejected]
+     * carries through any path. Initialising a class initialises its superclass and each
+     * superinterface that declares a non-abstract instance method, so a supertype in [threw] carries through the
+     * superclass chain and through an interface only when that interface is in
+     * [withDefaultMethods]. An interface cannot be told from a class on the wire, so a subinterface
+     * is read like a class that implements it, which can only withhold a claim.
+     */
+    private fun carriesFailure(
+        className: String,
+        supertypes: Map<String, SupertypesInfo>,
+        rejected: Set<String>,
+        threw: Set<String>,
+        withDefaultMethods: Set<String>,
+    ): Boolean {
+        val seen = HashSet<String>()
+        val pending = ArrayDeque<String>()
+        pending += className
+        while (pending.isNotEmpty()) {
+            val info = supertypes[pending.removeLast()] ?: continue
+            for (superclass in listOfNotNull(info.superClassName)) {
+                if (superclass in rejected || superclass in threw) return true
+                if (seen.add(superclass)) pending += superclass
+            }
+            for (superinterface in info.interfaceNames) {
+                if (superinterface in rejected || (superinterface in threw && superinterface in withDefaultMethods)) return true
+                if (seen.add(superinterface)) pending += superinterface
+            }
+        }
+        return false
+    }
+
+    /**
+     * Every class whose initialiser is still running in each instance that loaded it. In one
+     * instance that is a `<clinit>` whose entry counted and whose returned and threw slots both
+     * exist and neither counted: it has not finished. Such a class gets no class finding, and its
+     * methods are not never-hit rows or cluster members.
+     */
+    private fun classesWithInitializerRunning(): Set<String> {
+        class Initializer {
+            var entered = false
+            var returnedSlot = false
+            var threwSlot = false
+            var finished = false
+        }
+
+        val initializers = HashMap<InstanceKey<String>, Initializer>()
+        val loading = HashMap<String, MutableSet<String>>()
+        for ((key, probe) in probesByKey) {
+            val instanceClass = InstanceKey(key.serviceInstanceId, probe.className)
+            val hit = (hitsByKey[key] ?: 0L) > 0L
+            when {
+                probe.kind == WireProbeKind.METHOD -> {
+                    loading.getOrPut(probe.className) { HashSet() } += key.serviceInstanceId
+                    if (probe.methodName == CLASS_INIT) {
+                        val initializer = initializers.getOrPut(instanceClass) { Initializer() }
+                        if (hit) initializer.entered = true
+                    }
+                }
+
+                probe.kind.isInitializerSlot() -> {
+                    val initializer = initializers.getOrPut(instanceClass) { Initializer() }
+                    if (probe.kind == WireProbeKind.INITIALIZER_RETURNED) initializer.returnedSlot = true else initializer.threwSlot = true
+                    if (hit) initializer.finished = true
+                }
+            }
+        }
+        return loading
+            .filter { (className, instances) ->
+                instances.all { instance ->
+                    initializers[InstanceKey(instance, className)]?.let { it.entered && it.returnedSlot && it.threwSlot && !it.finished } ==
+                        true
+                }
+            }.keys
+    }
+
+    /**
      * What kind of class kotlinc says [className] is, from its manifest record or, for a class
      * that never loaded, a complete static baseline's declaration. [KotlinKind.NONE] for a class
      * with no `kotlin.Metadata`, such as a Java class. Null when no payload has named the class. A
@@ -1476,6 +1683,10 @@ public class OtherlodeTestCollector internal constructor(
      * class root whose cluster holds no method or class node besides the root gives no cluster,
      * since the root's own finding already says all there is.
      *
+     * A class that failed to initialise ([failedToInitialize]) is never a root or a member, though a
+     * method of it still counts as a caller, so what only it calls is neither a root nor a member
+     * either. Throws [IllegalStateException] as [neverInitialized] does.
+     *
      * Inline methods are never nodes, so an edge into one resolves to nothing. Edges are the union
      * of manifest and complete-baseline call edges. Resolution walks a callee's owner up through
      * [supertypesByClassName] and complete-baseline supertypes to the first type with a matching
@@ -1483,7 +1694,7 @@ public class OtherlodeTestCollector internal constructor(
      * with one, `<init>` and `<clinit>` excepted. See [computeCallGraph].
      */
     public fun unreachedClusters(): List<UnreachedCluster> {
-        return checked {
+        return checkedZeroCounts {
             val graph = computeCallGraph()
 
             fun isHit(key: NodeKey) = ((graph.nodes[key] ?: graph.hitGeneratedCallers[key])?.hits ?: 0L) > 0L
@@ -1499,17 +1710,21 @@ public class OtherlodeTestCollector internal constructor(
             val outcomes = buildOutcomeNodes(::isHit)
             val clusterGraph = buildClusterGraph(graph, outcomes, coveredBy)
 
+            val failedToInitialize = failedToInitializeNames() + classesWithInitializerRunning()
+
             fun isNeverHit(node: ClusterNode) =
                 when {
                     node.isClass -> node in classNodes
                     node.outcome != null -> node in outcomes
-                    else -> !isHit(node.method) && node.method !in coveredBy
+                    else -> !isHit(node.method) && node.method !in coveredBy && node.method.className !in failedToInitialize
                 }
 
             val neverHitNodes =
                 graph.nodes.keys
-                    .filter { !isHit(it) && it !in coveredBy && it.methodName != CLASS_INIT && it !in unjudged }
-                    .map { ClusterNode(it) } + outcomes.keys + classNodes.keys
+                    .filter {
+                        !isHit(it) && it !in coveredBy && it.methodName != CLASS_INIT && it !in unjudged &&
+                            it.className !in failedToInitialize
+                    }.map { ClusterNode(it) } + outcomes.keys + classNodes.keys
             return neverHitNodes
                 .mapNotNull { node ->
                     val callers = clusterGraph.callersOf[node].orEmpty()
@@ -1701,6 +1916,7 @@ public class OtherlodeTestCollector internal constructor(
                     { (_, probe) -> probe.branchSites },
                 ).mapValues { (_, lists) -> lists.flatten() }
         val locations = mergedLocations()
+        val unjudgeable = failedToInitializeNames() + classesWithInitializerRunning()
         val mergedIndex =
             locations
                 .filter { it.key.kind == WireProbeKind.BRANCH && it.key.outcome != null }
@@ -1715,7 +1931,8 @@ public class OtherlodeTestCollector internal constructor(
             .filter {
                 val outcome = it.key.outcome
                 it.key.kind == WireProbeKind.BRANCH && outcome != null && !it.inline && it.generatedBy == WireGeneratedBy.NONE &&
-                    it.unreadShape == WireUnreadShape.NONE && it.routine == WireRoutineKind.NONE && it.hits == 0L && isHit(it.key.method)
+                    it.unreadShape == WireUnreadShape.NONE && it.routine == WireRoutineKind.NONE && it.hits == 0L && isHit(it.key.method) &&
+                    it.key.method.className !in unjudgeable
             }.associate { location ->
                 val instance = location.newest.key.serviceInstanceId
                 val method = location.key.method
@@ -2110,13 +2327,18 @@ public class OtherlodeTestCollector internal constructor(
     /**
      * Every endpoint at least one instance reported, of any [EndpointDiscoverySource], whose
      * summed call count is zero, sorted by route template then verb. An endpoint discovered by
-     * dispatch was called, so it appears here only until its first count arrives.
+     * dispatch was called, so it appears here only until its first count arrives. An endpoint whose
+     * handler class failed to initialise ([failedToInitialize]) is left out, since nothing could
+     * dispatch to it. Throws [IllegalStateException] while an instance's zero counts are not
+     * evidence, as [neverHit] does.
      */
     public fun neverCalled(): List<EndpointRef> =
-        checked {
+        checkedZeroCounts {
+            val failedToInitialize = failedToInitializeNames()
             endpointRefsByIdentity
                 .filterKeys { identity -> (endpointKeysByIdentity[identity]?.sumOf { endpointHitsByKey[it] ?: 0L } ?: 0L) <= 0L }
                 .values
+                .filter { it.handlerClass !in failedToInitialize }
                 .sortedWith(compareBy({ it.routeTemplate }, { it.verb }))
         }
 
@@ -2192,7 +2414,8 @@ public class OtherlodeTestCollector internal constructor(
      * the identity.
      *
      * Throws [UnknownDependencyException] if no manifest has listed the dependency, naming the
-     * identities this collector does know.
+     * identities this collector does know. Throws [IllegalStateException] when the status it would
+     * return rests on a zero count and an instance's zero counts are not evidence, as [neverHit] does.
      */
     public fun dependency(
         groupId: String?,
@@ -2200,7 +2423,7 @@ public class OtherlodeTestCollector internal constructor(
     ): DependencyStatus {
         return checked {
             val wanted = groupId.orEmpty() to artifactId
-            val candidates = computeDependencyReport(dependencyViews(), failedToLoad().toSet()).findings.filter { wanted in it.identities }
+            val candidates = dependencyReport().findings.filter { wanted in it.identities }
             if (candidates.isEmpty()) throw unknownDependency(wanted)
             val finding =
                 candidates.singleOrNull()
@@ -2209,6 +2432,7 @@ public class OtherlodeTestCollector internal constructor(
                         "${wanted.first}:${wanted.second} is carried by ${candidates.size} dependencies: " +
                             candidates.joinToString(", ") { it.identityKey },
                     )
+            if (finding.status in STATUSES_RESTING_ON_ZERO_COUNTS && finding.sites.isNotEmpty()) checkZeroCountsAreEvidence()
             return toDependencyStatus(finding)
         }
     }
@@ -2285,7 +2509,8 @@ public class OtherlodeTestCollector internal constructor(
      * Every dependency the adopter's code references only from methods never hit or classes never
      * loaded, sorted by [DependencyStatus.identityKey], each with those sites in
      * [DependencyStatus.sites]. Throws [IllegalStateException] under the same conditions as
-     * [unreferencedDependencies].
+     * [unreferencedDependencies], and while an instance's zero counts are not evidence, as
+     * [neverHit] does.
      */
     public fun unreachedDependencies(): List<DependencyStatus> =
         checked {
@@ -2297,11 +2522,25 @@ public class OtherlodeTestCollector internal constructor(
      * load ([failedToLoad]), sorted by [DependencyStatus.identityKey], each with its sites in
      * [DependencyStatus.sites]. A failed site reads `Class#method (failed to load)`. This asks for
      * review and claims no removal. Throws [IllegalStateException] under the same conditions as
-     * [unreachedDependencies].
+     * [unreachedDependencies], the refusal for zero counts included.
      */
     public fun failedToLoadDependencies(): List<DependencyStatus> =
         checked {
             dependenciesWithStatus(DependencyUsage.FAILED_TO_LOAD, needsSplit = true)
+        }
+
+    /**
+     * Every loaded dependency with no live reference that is referenced from a class that failed to
+     * initialise ([failedToInitialize]) and from none that failed to load, sorted by
+     * [DependencyStatus.identityKey], each with its sites in [DependencyStatus.sites]. A failed site
+     * reads `Class#method (failed to initialise)`. A class that failed to initialise is loaded, so
+     * its references count as live only through a hit on a method. This asks for review and claims
+     * no removal. A dependency referenced from both kinds of failed class reads as failed to load.
+     * Throws [IllegalStateException] under the same conditions as [unreachedDependencies].
+     */
+    public fun failedToInitializeDependencies(): List<DependencyStatus> =
+        checked {
+            dependenciesWithStatus(DependencyUsage.FAILED_TO_INITIALIZE, needsSplit = true)
         }
 
     /**
@@ -2317,7 +2556,7 @@ public class OtherlodeTestCollector internal constructor(
     public fun absentReferences(): List<AbsentReference> {
         return checked {
             checkDependenciesListed()
-            val report = computeDependencyReport(dependencyViews(), failedToLoad().toSet())
+            val report = dependencyReport()
             check(!report.referencesUnavailable) {
                 "no instance sent references_recorded, so absent references are unknown: run the agent with includePackages set"
             }
@@ -2325,12 +2564,16 @@ public class OtherlodeTestCollector internal constructor(
         }
     }
 
+    private fun dependencyReport(): DependencyReport =
+        computeDependencyReport(dependencyViews(), failedToLoad().toSet(), failedToInitializeNames())
+
     private fun dependenciesWithStatus(
         status: DependencyUsage,
         needsSplit: Boolean,
     ): List<DependencyStatus> {
+        if (status in STATUSES_RESTING_ON_ZERO_COUNTS) checkZeroCountsAreEvidence()
         checkDependenciesListed()
-        val report = computeDependencyReport(dependencyViews(), failedToLoad().toSet())
+        val report = dependencyReport()
         if (needsSplit) {
             val unsplit = report.findings.filter { it.status == DependencyUsage.NO_LIVE_REFERENCE || it.status == DependencyUsage.LOADED }
             check(!report.referencesUnavailable && unsplit.isEmpty()) {
@@ -2571,6 +2814,8 @@ public class OtherlodeTestCollector internal constructor(
                 for (classLocation in manifest.classLocations) {
                     val className = classNamesByClassId[classLocation.classId] ?: continue
                     supertypesByClassName[className] = SupertypesInfo(classLocation.superClassName, classLocation.interfaceNames)
+                    supertypesByInstance[InstanceKey(instanceId, className)] =
+                        SupertypesInfo(classLocation.superClassName, classLocation.interfaceNames)
                     kotlinKindByClassName[className] = classLocation.kotlinKind
                 }
                 for (endpointLocation in manifest.endpoints) {
@@ -2598,10 +2843,21 @@ public class OtherlodeTestCollector internal constructor(
                     )
                 }
                 storeDependencyData(manifest)
+                storeVerifierFacts(manifest)
             }
         if (!applied) return
         respond(exchange, 200)
         signalAll()
+    }
+
+    /** Stores what one manifest says about classes that failed to initialise and what the agent could see of the verifier. */
+    private fun storeVerifierFacts(manifest: ProbeManifest) {
+        val instanceId = manifest.resource.serviceInstanceId
+        for (failed in manifest.classesFailedToInitialize) {
+            initializationFailures.merge(InstanceKey(instanceId, failed.className), setOf(failed.reason)) { known, added -> known + added }
+        }
+        if (!manifest.verifierRejectionsWatched) unwatchedInstances += instanceId
+        unplacedVerificationFailures.merge(instanceId, manifest.unplacedVerificationFailures, ::maxOf)
     }
 
     /** Stores what the dependency rules read from one manifest, keyed by its instance. */
@@ -2744,6 +3000,43 @@ public class OtherlodeTestCollector internal constructor(
     }
 
     /**
+     * Throws when any instance could not see every rejection of the JVM's verifier, naming each
+     * instance and why. A class the verifier rejects fires no probe, so while an instance is
+     * unwatched or has a `VerifyError` message in no read format, a zero count says nothing about
+     * whether code ran. Every query that reads a zero count calls this.
+     */
+    private fun checkZeroCountsAreEvidence() {
+        val reasons =
+            (unwatchedInstances + unplacedVerificationFailures.keys).sorted().mapNotNull { instance ->
+                val why =
+                    listOfNotNull(
+                        "the agent's hook on VerifyError was not installed".takeIf { instance in unwatchedInstances },
+                        unplacedVerificationFailures[instance]?.takeIf { it > 0L }?.let {
+                            if (it ==
+                                1L
+                            ) {
+                                "1 VerifyError message in no read format"
+                            } else {
+                                "$it VerifyError messages in no read format"
+                            }
+                        },
+                    )
+                if (why.isEmpty()) null else "$instance: ${why.joinToString("; ")}"
+            }
+        check(reasons.isEmpty()) {
+            "this query rests on zero counts, and a class the verifier rejects fires no probe, so the zero counts of these " +
+                "instances are not evidence that code never ran:\n" + reasons.joinToString("\n") { "  $it" }
+        }
+    }
+
+    /** Like [checked], and first refuses while [checkZeroCountsAreEvidence] fails. */
+    private inline fun <T> checkedZeroCounts(query: () -> T): T =
+        checked {
+            checkZeroCountsAreEvidence()
+            query()
+        }
+
+    /**
      * Runs [query] after [checkNoRejections], under [stateLock]'s read lock, so it never sees a
      * payload half applied.
      */
@@ -2863,6 +3156,14 @@ public class OtherlodeTestCollector internal constructor(
         private const val CLASS_INIT = "<clinit>"
 
         private const val CONSTRUCTOR = "<init>"
+
+        private val STATUSES_RESTING_ON_ZERO_COUNTS =
+            setOf(
+                DependencyUsage.UNREACHED,
+                DependencyUsage.NO_LIVE_REFERENCE,
+                DependencyUsage.FAILED_TO_LOAD,
+                DependencyUsage.FAILED_TO_INITIALIZE,
+            )
 
         /**
          * Starts a collector bound to `localhost`. [port] `0` (the default) picks any free port,

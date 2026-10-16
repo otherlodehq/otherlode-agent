@@ -314,7 +314,10 @@ class DependencyReportTest {
         )
         val lines = formatDependencyReport(report)
         assertTrue(
-            lines.any { it == "unloaded: 1, unreferenced: 1, unreached: 1, no live reference: 0, failed to load: 0, used: 1" },
+            lines.any {
+                it ==
+                    "unloaded: 1, unreferenced: 1, unreached: 1, no live reference: 0, failed to load: 0, failed to initialise: 0, not judged: 0, used: 1"
+            },
             lines.joinToString("\n"),
         )
         assertTrue(lines.any { it.contains("UNREACHED: org.example:gamma") }, lines.joinToString("\n"))
@@ -387,6 +390,71 @@ class DependencyReportTest {
         instances: List<InstanceDependencyView>,
         failedClassNames: Set<String>,
     ): DependencyStatus = computeDependencyReport(instances, failedClassNames).findings.single().status
+
+    private fun classLevel(className: String) =
+        HeldReferences(className, null, null, ReferenceOrigin.MANIFEST_CLASS, jsonMapper, inline = false, hits = 0)
+
+    @Test
+    fun `a class-level reference from a class that failed to initialise is not live, and its dependency reads failed to initialise`() {
+        val report =
+            computeDependencyReport(
+                listOf(instance(references = listOf(classLevel("demo.Broken")), loadedClassNames = setOf("demo.Broken"))),
+                failedToInitializeClassNames = setOf("demo.Broken"),
+            )
+
+        val finding = report.findings.single()
+        assertEquals(DependencyStatus.FAILED_TO_INITIALIZE, finding.status)
+        assertEquals("demo.Broken (class level) (failed to initialise)", finding.sites.single().toString())
+    }
+
+    @Test
+    fun `a dependency referenced from a class that failed to load and one that failed to initialise reads failed to load`() {
+        val references = listOf(baselineSite("demo.Legacy", "apply"), classLevel("demo.Broken"))
+        val report =
+            computeDependencyReport(
+                listOf(instance(references = references, loadedClassNames = setOf("demo.Broken"))),
+                failedClassNames = failedLegacy,
+                failedToInitializeClassNames = setOf("demo.Broken"),
+            )
+
+        assertEquals(DependencyStatus.FAILED_TO_LOAD, report.findings.single().status)
+    }
+
+    @Test
+    fun `a method of a class that failed to initialise that was hit still makes its dependency used`() {
+        val report =
+            computeDependencyReport(
+                listOf(instance(references = listOf(method("demo.Broken", "load", hits = 2)), loadedClassNames = setOf("demo.Broken"))),
+                failedToInitializeClassNames = setOf("demo.Broken"),
+            )
+
+        assertEquals(DependencyStatus.USED, report.findings.single().status)
+    }
+
+    @Test
+    fun `a dependency is not judged when a reference that is not live comes from an instance whose zero counts are not evidence`() {
+        val watched = instance(references = listOf(method("demo.OrderController", "legacy", hits = 0)))
+        val unwatched =
+            instance(
+                references = listOf(method("demo.Other", "old", hits = 0)),
+                instanceId = "instance-2",
+            ).copy(zeroCountsAreEvidence = false)
+
+        assertEquals(DependencyStatus.NOT_JUDGED, statusOf(watched, unwatched))
+        assertEquals(DependencyStatus.UNREACHED, statusOf(watched))
+    }
+
+    @Test
+    fun `a referenced dependency is not judged when no instance's zero counts are evidence, and an unreferenced one still is`() {
+        val unwatched =
+            instance(
+                references = listOf(method("demo.OrderController", "legacy", hits = 0)),
+            ).copy(zeroCountsAreEvidence = false)
+        val unreferenced = instance(references = emptyList()).copy(zeroCountsAreEvidence = false)
+
+        assertEquals(DependencyStatus.NOT_JUDGED, statusOf(unwatched))
+        assertEquals(DependencyStatus.UNREFERENCED, statusOf(unreferenced))
+    }
 
     private val failedLegacy = setOf("demo.Legacy")
 

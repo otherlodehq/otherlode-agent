@@ -26,7 +26,7 @@ public enum class DependencyUsage {
      */
     FAILED_TO_LOAD,
 
-    /** Referenced from a method with hits, or at class level by a class that loaded. */
+    /** Referenced from a method with hits, or at class level by a class that loaded and can run. */
     USED,
 
     /** Loaded, and no instance listing it records references (its include rules are unset), so nothing further is claimed. */
@@ -37,6 +37,13 @@ public enum class DependencyUsage {
      * a class loaded from it says nothing about whether it is used, so nothing is claimed.
      */
     RESOURCES_ONLY,
+
+    /**
+     * Loaded, with no live reference, and referenced from a class that failed to initialise, and
+     * from none that failed to load. A prompt to review, not a claim that it can go: the class
+     * was wanted and broke, and the dependency may be what it needs once it is fixed.
+     */
+    FAILED_TO_INITIALIZE,
 }
 
 /**
@@ -55,6 +62,8 @@ public data class DependencyIdentityRef internal constructor(
  * itself for a class-level reference ([methodName] null). [neverLoaded] is true for a site the
  * static baseline declared in a class no manifest from that instance ever named. [failedToLoad] is
  * true for a baseline site in a class that some instance failed to load and none loaded.
+ * [failedToInitialize] is true for a site in a class that failed to initialise, none of whose
+ * references is live.
  */
 @ConsistentCopyVisibility
 public data class DependencyReferenceSite internal constructor(
@@ -62,11 +71,13 @@ public data class DependencyReferenceSite internal constructor(
     val methodName: String?,
     val neverLoaded: Boolean,
     val failedToLoad: Boolean = false,
+    val failedToInitialize: Boolean = false,
 ) {
     override fun toString(): String {
         val where = methodName?.let { "$className#$it" } ?: "$className (class level)"
         return when {
             failedToLoad -> "$where (failed to load)"
+            failedToInitialize -> "$where (failed to initialise)"
             neverLoaded -> "$where (never loaded)"
             else -> where
         }

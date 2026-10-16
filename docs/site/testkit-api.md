@@ -79,6 +79,7 @@ A finding method takes no arguments and returns a list. It judges the merged hit
 | `neverInstantiated(): List<ClassFindingRef>` | Classes some instance loaded, that are not never initialised, with a constructor and an instance method, and none of whose constructors ran. A class with only static methods and an interface are never listed. |
 | `neverLoaded(): List<String>` | Class names a complete static baseline declared that no instance ever loaded. Throws `IllegalStateException` until a complete baseline has arrived, which needs the agent option `staticBaselineEnabled=true`. |
 | `failedToLoad(): List<String>` | Class names the agent wove that the JVM never defined in any instance. Each is a deployment problem to fix and never dead code. |
+| `failedToInitialize(): List<String>` | Class names that failed to initialise, sorted. See [Classes that failed to initialise](#classes-that-failed-to-initialise). Each is a deployment problem to fix and never dead code. |
 | `skippedClasses(): List<SkippedClass>` | Classes the include rules matched that the agent could not instrument, each with a reason. Sorted by class name. |
 | `unreachedClusters(): List<UnreachedCluster>` | Every unreached cluster in the call graph, largest first. See [call graph](call-graph) for the rules. |
 | `neverSupplied(): List<OptionalParameterRef>` | Optional parameters that every call left out, so the parameter can go. Never listed for an overridable function. |
@@ -91,10 +92,39 @@ A finding method takes no arguments and returns a list. It judges the merged hit
 - Optional-argument probes, which `neverSupplied` and `alwaysSupplied` cover.
 - A `<clinit>`, which is a class state. A constructor appears only as an unused overload, when another constructor of its class ran.
 - A method that can run only through a class that `neverInitialized` or `neverInstantiated` lists, and a lambda body whose every creator is such a method or a never-hit method listed.
+- A method of a class that failed to initialise, and of its subtypes. See below.
 - A branch inside code that never ran. It folds into the row for that code.
 - A routine outcome and an unread shape, listed by the two queries above.
 
 `neverHit` rows sort by class name, method name, line, then branch index. The class and cluster queries sort by class name, and `skippedClasses` by class name.
+
+#### Classes that failed to initialise
+
+A class the JVM defined can still never run in that JVM, because its static initialiser threw or the JVM's verifier rejected it. The agent names such a class in the manifest with the reason. `failedToInitialize()` lists a class when:
+
+- some instance named it, or it is a class some instance loaded whose superclass or interfaces, followed transitively through the class records that instance sent, reach a class that instance named; and
+- no instance initialised it. A class is initialised in an instance when its static initialiser's returned slot counted, if that instance sent the class's returned and threw slots. The entry probe and every method the initialiser calls count before it throws, so they are no evidence. When the instance sent no slots for the class, because it declares no static initialiser, any hit on a probe of it means it initialised.
+
+A name that no instance loaded, such as a library class the verifier rejected, is not listed, but its loaded subtypes are. A class one instance failed and another initialised is not listed: the run where it worked is the evidence about its methods.
+
+A subtype fails with it as the JVM decides: a class the verifier rejected stops every class that extends or implements it from linking, and a static initialiser that threw stops its subclasses, and the classes implementing it when it is an interface that declares a default or private instance method, from initialising. Such a class and those subtypes are left out of `neverHit`, `neverHitRoutineOutcomes`, `neverHitUnreadShapes`, `neverInitialized`, `neverInstantiated` and `unreachedClusters`. A method that only such a class calls is not a root of a cluster either. A class whose static initialiser has entered, with its returned and threw slots both present and neither counted, is still running. It gets no class finding from that instance, and its methods are not `neverHit` rows or cluster members. `neverCalled` leaves out an endpoint whose handler class failed to initialise, since nothing could dispatch to it.
+
+#### Queries that refuse
+
+A class the verifier rejects fires no probe, so while the agent could not see every rejection, a zero count says nothing. `neverHit`, `neverHitRoutineOutcomes`, `neverHitUnreadShapes`, `neverInitialized`, `neverInstantiated`, `neverCalled`, `alwaysSupplied`, `unreachedClusters`, `unreachedDependencies`, `failedToLoadDependencies` and `failedToInitializeDependencies` throw `IllegalStateException` while any instance heard from is in either of these states, and so does `dependency` when the status it would return rests on a zero count (`UNREACHED`, `NO_LIVE_REFERENCE`, `FAILED_TO_LOAD` or `FAILED_TO_INITIALIZE`):
+
+- Some manifest of the instance said the agent's hook on `VerifyError` was not installed. The collector rejects an agent of another version, so this means the hook failed to install, and the agent logged a `WARNING`.
+- The instance counted `VerifyError` messages in no format the agent reads.
+
+The message names each such instance and why:
+
+```text
+this query rests on zero counts, and a class the verifier rejects fires no probe, so the zero counts of these instances are not evidence that code never ran:
+  i-2: the agent's hook on VerifyError was not installed
+  i-3: 2 VerifyError messages in no read format
+```
+
+A query that reads no zero count keeps answering: `wasHit`, `hitCount`, `omissionCount`, `failedToLoad`, `failedToInitialize`, `neverLoaded`, `neverSupplied`, `unloadedDependencies`, `unreferencedDependencies` and `absentReferences`.
 
 ### Endpoint queries
 
@@ -104,7 +134,7 @@ A finding method takes no arguments and returns a list. It judges the merged hit
 |---|---|
 | `wasCalled(verb, routeTemplate): Boolean` | `true` if the summed call count is above zero. |
 | `callCount(verb, routeTemplate): Long` | The count summed over instances, each instance's highest delivered total. |
-| `neverCalled(): List<EndpointRef>` | Every endpoint with a summed count of zero, sorted by route template, then verb. |
+| `neverCalled(): List<EndpointRef>` | Every endpoint with a summed count of zero, sorted by route template, then verb, leaving out one whose handler class failed to initialise. Refuses while an instance's zero counts are not evidence. |
 | `endpoints(): List<EndpointRef>` | Every endpoint any instance reported, sorted the same way. |
 | `disabledEndpointModules(): List<DisabledEndpointModule>` | The endpoint modules that switched themselves off, such as on a framework version the agent does not support. Sorted by module name. |
 
@@ -121,13 +151,15 @@ Dependency queries apply the dependency rules within the one test JVM. See [depe
 | `unreferencedDependencies(): List<DependencyStatus>` | Loaded dependencies that nothing in your code references. |
 | `unreachedDependencies(): List<DependencyStatus>` | Dependencies referenced only from methods never hit or classes never loaded. |
 | `failedToLoadDependencies(): List<DependencyStatus>` | Loaded dependencies with no live reference that a class which failed to load references. The status asks for a review and does not say the dependency can go. |
+| `failedToInitializeDependencies(): List<DependencyStatus>` | Loaded dependencies with no live reference that a class which failed to initialise references, and that no class which failed to load references. A class that failed to initialise is loaded, so its references count as live only through a hit on a method. The status asks for a review and does not say the dependency can go. |
 | `absentReferences(): List<AbsentReference>` | Referenced classes that no class loader could find, such as code guarded by a check for an optional library. |
 
-The five list queries sort by `DependencyStatus.identityKey`, except `absentReferences`, which sorts by class name. They throw `IllegalStateException` in these cases:
+The six list queries sort by `DependencyStatus.identityKey`, except `absentReferences`, which sorts by class name. They throw `IllegalStateException` in these cases:
 
 - No instance has been heard from yet, or an instance has not finished listing its dependencies. Call `awaitDependenciesListed` first.
-- For `unreferencedDependencies`, `unreachedDependencies` and `failedToLoadDependencies`: no instance records references, which needs `includePackages`, or a loaded dependency cannot be split into unreferenced and unreached because an instance sent no complete static baseline (`staticBaselineEnabled=true`).
+- For `unreferencedDependencies`, `unreachedDependencies`, `failedToLoadDependencies` and `failedToInitializeDependencies`: no instance records references, which needs `includePackages`, or a loaded dependency cannot be split into unreferenced and unreached because an instance sent no complete static baseline (`staticBaselineEnabled=true`).
 - For `absentReferences`: no instance records references.
+- For `unreachedDependencies`, `failedToLoadDependencies` and `failedToInitializeDependencies`, and for `dependency` when its status rests on a zero count: an instance is unwatched or has an unplaced verification failure. See [Queries that refuse](#queries-that-refuse).
 
 `dependency` throws `IllegalStateException` when more than one dependency carries the identity and none has it alone. The message names each candidate's `identityKey`. It does not wait for the listing to finish. Call `awaitDependency`, and `awaitDependenciesListed` when a shaded jar may carry the identity. The hits and reference sites that separate used from unreached arrive like any probe data, so call `awaitSettled` before asking.
 
@@ -213,6 +245,7 @@ The message names the dependency and every dependency the collector knows. When 
 | The collector rejected a payload. | Every query and wait. |
 | The collector closed during a wait. | Every wait. |
 | No complete static baseline has arrived. | `neverLoaded` |
+| An instance's hook on `VerifyError` was not installed, or it counted a `VerifyError` message in no read format. | `neverHit`, `neverHitRoutineOutcomes`, `neverHitUnreadShapes`, `neverInitialized`, `neverInstantiated`, `unreachedClusters`, `unreachedDependencies`, `failedToLoadDependencies`, `failedToInitializeDependencies`, and `dependency` for a status that rests on a zero count |
 | Dependency listing is incomplete, references are not recorded, or no complete baseline exists. | The dependency list queries, `absentReferences` |
 | Several dependencies carry the identity. | `dependency` |
 | The extension could not start or the agent's first batch did not arrive. | `OtherlodeExtension` |
@@ -351,10 +384,11 @@ Returned by `neverSupplied` and `alwaysSupplied`. It names the function the para
 | | `methodName` | `String?` | The method, or null for a reference at class level. |
 | | `neverLoaded` | `Boolean` | `true` when the static baseline declared the site and its class never loaded. |
 | | `failedToLoad` | `Boolean` | `true` when the site's class failed to load in some instance and loaded in none. |
+| | `failedToInitialize` | `Boolean` | `true` when the site's class failed to initialise and no reference of the site is live. |
 | `AbsentReference` | `className` | `String` | The referenced class no loader could find. |
 | | `sites` | `List<DependencyReferenceSite>` | Every site that references it, sorted. |
 
-`DependencyReferenceSite.toString()` reads `Class#method`, `Class (class level)`, and appends `(never loaded)` or `(failed to load)` where those flags are set.
+`DependencyReferenceSite.toString()` reads `Class#method`, `Class (class level)`, and appends `(never loaded)`, `(failed to load)` or `(failed to initialise)` where those flags are set.
 
 ## Enums
 
@@ -480,9 +514,10 @@ What the dependency rules say about one dependency.
 | `UNREACHED` | Referenced only from methods never hit or classes never loaded, per a complete baseline. |
 | `NO_LIVE_REFERENCE` | Loaded, with no live reference, from an instance that sent no complete baseline. It is unreferenced or unreached, and the two cannot be told apart. |
 | `FAILED_TO_LOAD` | Loaded, with no live reference, and referenced from a class that failed to load. A prompt to review, not a claim that it can go. |
-| `USED` | Referenced from a method with hits, or at class level by a class that loaded. |
+| `USED` | Referenced from a method with hits, or at class level by a class that loaded and can run. |
 | `LOADED` | Loaded, and no instance that lists it records references, so nothing further is claimed. |
 | `RESOURCES_ONLY` | The listing counted no class in it, as with native libraries, web assets and message bundles. Nothing is claimed. |
+| `FAILED_TO_INITIALIZE` | Loaded, with no live reference, and referenced from a class that failed to initialise and from none that failed to load. A prompt to review, not a claim that it can go. A dependency referenced from both kinds of failed class reads as `FAILED_TO_LOAD`. |
 
 ## Compatibility
 

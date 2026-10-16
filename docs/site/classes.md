@@ -18,7 +18,7 @@ This page covers the whole class. For what the agent records inside a class that
 | Skipped | The class matched the rules and the agent could not instrument it. | A `WARNING` log line, `skippedClasses()`, and the manifest's skipped list. |
 | Loaded where no transformer saw it | The class loaded, but the JVM offered it to no transformer. | One `INFO` log line, and the manifest. |
 | Failed to load | The agent wove the class and the JVM never defined it. | A `WARNING` log line, `failedToLoad()`, and the manifest. |
-| Failed to initialise | The JVM defined the class and either its static initialiser threw or the JVM's verifier rejected it, so the class can never run in that JVM. | The manifest. |
+| Failed to initialise | The JVM defined the class and either its static initialiser threw or the JVM's verifier rejected it, so the class can never run in that JVM. | The manifest, and `failedToInitialize()`. |
 | Never loaded | A complete static baseline declared the class and no manifest ever mentioned it. | `neverLoaded()`, and the server's class findings. |
 | Nothing to probe | The class loaded and has no method, default-argument site or static initialiser the agent probes. | Nothing, except in the static baseline's unprobed list. |
 | Left out | The class is synthetic, or a framework generated it at runtime. | Nothing. |
@@ -131,7 +131,7 @@ The agent puts two more probes beside the entry probe of each static initialiser
 
 The first time the throwing probe counts, the agent names the class in the manifest's `classes_failed_to_initialize`, with the reason `STATIC_INITIALIZER_THREW` and the time. It sends the name once per class. The two probes travel with the other probes, so their counts arrive in the delta batches. See [what the agent sends](data-sent).
 
-A class that failed to initialise is a deployment to fix, never dead code. If some instance ran the class's initialiser to the end, the class is initialised, whatever another instance says. An initialiser that has entered and neither returned nor thrown is still running. The agent names nothing for it and sends the counts as they are.
+A class that failed to initialise is a deployment to fix, never dead code. If some instance ran the class's initialiser to the end, the class is initialised, whatever another instance says. An initialiser that has entered and neither returned nor thrown is still running. The agent names nothing for it and sends the counts as they are. The testkit's `failedToInitialize()` lists the classes that failed to initialise; see [the testkit API](testkit-api#classes-that-failed-to-initialise).
 
 ### Rejected by the verifier
 

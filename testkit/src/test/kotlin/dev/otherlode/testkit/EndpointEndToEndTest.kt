@@ -90,7 +90,8 @@ class EndpointEndToEndTest {
                     "serviceInstanceId=e2e-endpoint-1",
             )
         val exporter = HttpExporter(target.exportUrl)
-        val exportScheduler = ExportScheduler(config, TestResources.forConfig(config), ProbeRegistry(), registry, exporter)
+        val exportScheduler =
+            ExportScheduler(config, TestResources.forConfig(config), ProbeRegistry(), registry, exporter, verifierWatch = watchedVerifier())
         scheduler = exportScheduler
         exportScheduler.start()
 

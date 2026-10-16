@@ -79,6 +79,7 @@ internal data class InstanceDependencyView(
     val externalClasses: Map<String, ExternalClassView> = emptyMap(),
     val references: List<HeldReferences> = emptyList(),
     val loadedClassNames: Set<String> = emptySet(),
+    val zeroCountsAreEvidence: Boolean = true,
 )
 
 /** The statuses [computeDependencyReport] assigns, in the order the report prints them. */
@@ -92,6 +93,12 @@ internal enum class DependencyStatus(
 
     /** Loaded, with no live reference, and referenced from a class that failed to load. */
     FAILED_TO_LOAD("FAILED TO LOAD"),
+
+    /** Loaded, with no live reference, and referenced from a class that failed to initialise. */
+    FAILED_TO_INITIALIZE("FAILED TO INITIALISE"),
+
+    /** Its status would rest on zero counts, and no instance that judges it has zero counts that are evidence. */
+    NOT_JUDGED("NOT JUDGED"),
     USED("USED"),
 
     /** Loaded, and no instance that lists it records references, so nothing further can be said. */
@@ -107,11 +114,13 @@ internal data class ReferenceSite(
     val methodName: String?,
     val neverLoaded: Boolean,
     val failedToLoad: Boolean = false,
+    val failedToInitialize: Boolean = false,
 ) {
     override fun toString(): String {
         val where = methodName?.let { "$className#$it" } ?: "$className (class level)"
         return when {
             failedToLoad -> "$where (failed to load)"
+            failedToInitialize -> "$where (failed to initialise)"
             neverLoaded -> "$where (never loaded)"
             else -> where
         }
@@ -157,13 +166,18 @@ internal data class DependencyReport(
  * [failedClassNames] is a failed site when its instance's baseline is complete, since that is
  * the scan the server reads. A dependency with a failed site and no live reference is failed to
  * load. A class that any instance loaded is never failed,
- * even when it is in [failedClassNames]. With a complete baseline from every one of those
+ * even when it is in [failedClassNames]. A class in [failedToInitializeClassNames] holds no live
+ * class-level reference, only method references that were hit, and a dependency it alone
+ * references reads as failed to initialise. A dependency with references whose status would rest
+ * on zero counts is not judged when one of its references that is not live comes from an instance
+ * whose zero counts are not evidence: that reference's code may have been unable to run. With a complete baseline from every one of those
  * instances, no reference is unreferenced and no live one is unreached; otherwise the two merge
  * into no live reference, which is true either way.
  */
 internal fun computeDependencyReport(
     instances: List<InstanceDependencyView>,
     failedClassNames: Set<String> = emptySet(),
+    failedToInitializeClassNames: Set<String> = emptySet(),
 ): DependencyReport {
     val failed = failedClassNames - instances.flatMapTo(mutableSetOf()) { it.loadedClassNames }
     val recording = instances.filter { it.referencesRecorded }
@@ -175,6 +189,7 @@ internal fun computeDependencyReport(
             .mapValues { (_, held) -> held.sumOf { it.hits } }
 
     val referencesByDependency = mutableMapOf<String, MutableSet<Pair<ReferenceSite, Boolean>>>()
+    val unjudgedDependencies = mutableSetOf<String>()
     val absentSites = mutableMapOf<String, MutableSet<ReferenceSite>>()
     for (instance in recording) {
         val identityKeys = instance.dependencies.associate { it.dependencyId to it.identityKey }
@@ -188,7 +203,7 @@ internal fun computeDependencyReport(
                     }
 
                     ReferenceOrigin.MANIFEST_CLASS -> {
-                        held.className in instance.loadedClassNames
+                        held.className in instance.loadedClassNames && held.className !in failedToInitializeClassNames
                     }
 
                     ReferenceOrigin.BASELINE -> {
@@ -202,6 +217,7 @@ internal fun computeDependencyReport(
                     held.methodName,
                     neverLoaded = held.origin == ReferenceOrigin.BASELINE && !failedSite && held.className !in instance.loadedClassNames,
                     failedToLoad = failedSite,
+                    failedToInitialize = held.origin != ReferenceOrigin.BASELINE && held.className in failedToInitializeClassNames,
                 )
             for (referenced in held.referencedClasses) {
                 val mapping = instance.externalClasses[referenced] ?: continue
@@ -213,6 +229,7 @@ internal fun computeDependencyReport(
                 // and neither is a dependency.
                 val identityKey = mapping.dependencyId?.let(identityKeys::get) ?: continue
                 referencesByDependency.getOrPut(identityKey) { mutableSetOf() } += site to live
+                if (!live && !instance.zeroCountsAreEvidence) unjudgedDependencies += identityKey
             }
         }
     }
@@ -248,8 +265,16 @@ internal fun computeDependencyReport(
                             DependencyStatus.USED
                         }
 
+                        identityKey in unjudgedDependencies -> {
+                            DependencyStatus.NOT_JUDGED
+                        }
+
                         references.any { (site, _) -> site.failedToLoad } -> {
                             DependencyStatus.FAILED_TO_LOAD
+                        }
+
+                        references.any { (site, _) -> site.failedToInitialize } -> {
+                            DependencyStatus.FAILED_TO_INITIALIZE
                         }
 
                         !judging.all { it.baselineComplete } -> {
@@ -338,7 +363,14 @@ internal fun formatDependencyReport(report: DependencyReport): List<String> {
         val sources = finding.discoverySources.joinToString(", ") { it.name.lowercase().replace('_', ' ') }
         lines +=
             "  ${finding.status.label}: ${finding.identityKey} [$versionLabel] loaded ${finding.loadedClassesTotal} of $classCount classes ($sources)"
-        if (finding.status in setOf(DependencyStatus.UNREACHED, DependencyStatus.NO_LIVE_REFERENCE, DependencyStatus.FAILED_TO_LOAD)) {
+        if (finding.status in
+            setOf(
+                DependencyStatus.UNREACHED,
+                DependencyStatus.NO_LIVE_REFERENCE,
+                DependencyStatus.FAILED_TO_LOAD,
+                DependencyStatus.FAILED_TO_INITIALIZE,
+            )
+        ) {
             finding.sites.forEach { lines += "    referenced from $it" }
         }
     }

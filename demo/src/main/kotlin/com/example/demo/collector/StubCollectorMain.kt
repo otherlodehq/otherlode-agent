@@ -12,6 +12,7 @@ import dev.otherlode.proto.ConditionPartKind
 import dev.otherlode.proto.DeltaBatch
 import dev.otherlode.proto.EndpointDiscoverySource
 import dev.otherlode.proto.GeneratedBy
+import dev.otherlode.proto.InitializationFailure
 import dev.otherlode.proto.KotlinKind
 import dev.otherlode.proto.LineRange
 import dev.otherlode.proto.OutsideCaller
@@ -241,6 +242,15 @@ private val dynamicallyKnownClassNames = Collections.newSetFromMap(ConcurrentHas
 
 /** Every class name any manifest listed as failed to load. */
 private val failedToLoadClassNames = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
+
+/** The class names each run listed in `classes_failed_to_initialize`, with the reasons it gave. */
+private val failedToInitializeByRun = ConcurrentHashMap<Run, MutableMap<String, MutableSet<InitializationFailure>>>()
+
+/** Runs any of whose manifests said the agent's hook on `VerifyError` was not installed. */
+private val unwatchedRuns = Collections.newSetFromMap(ConcurrentHashMap<Run, Boolean>())
+
+/** The highest `unplaced_verification_failures` each run reported. */
+private val unplacedVerificationFailuresByRun = ConcurrentHashMap<Run, Long>()
 
 /** Every run any delta batch has ever arrived from, heartbeat included. */
 private val allRuns = Collections.newSetFromMap(ConcurrentHashMap<Run, Boolean>())
@@ -486,6 +496,7 @@ fun main(args: Array<String>) {
             printEndpointReport()
             printNeverLoadedReport()
             printFailedToLoadReport()
+            printFailedToInitialiseReport()
             printClassFindingReport()
             printUnreachedClusterReport()
             printDependencyReport()
@@ -628,6 +639,13 @@ private fun handleManifest(exchange: HttpExchange) {
         dynamicallyKnownClassNames += unreported.className
     }
     for (failed in manifest.failedClassesList) failedToLoadClassNames += failed.className
+    for (failed in manifest.classesFailedToInitializeList) {
+        failedToInitializeByRun
+            .computeIfAbsent(run) { ConcurrentHashMap() }
+            .computeIfAbsent(failed.className) { ConcurrentHashMap.newKeySet() } += failed.reason
+    }
+    if (!manifest.verifierRejectionsWatched) unwatchedRuns += run
+    unplacedVerificationFailuresByRun.merge(run, manifest.unplacedVerificationFailures, ::maxOf)
     // A class's location record is committed with its probes, so this manifest names its class.
     val classNamesById = manifest.probesList.associate { it.classId to it.className }
     for (classLocation in manifest.classLocationsList) {
@@ -808,16 +826,23 @@ private fun respondBadRequest(
  * method is not among the never-hit methods that fold sites. An unread outcome inside folded code
  * counts with that code.
  *
+ * A class that failed to initialise, and its subtypes, are not rows: [printFailedToInitialiseReport]
+ * reports them. A run whose zero counts are not evidence, because the agent's hook on `VerifyError`
+ * was not installed or it counted a `VerifyError` message in no read format, contributes only its
+ * hits, and the report says so.
+ *
  * `internal` so a test can capture what it prints.
  */
 internal fun printNeverHitReport() {
     // An optional-argument probe reading zero means its parameter is never omitted, which is
     // ALWAYS SUPPLIED, not dead code, so it is excluded here entirely and reported by
     // printOmissionReport instead. See ADR 0021.
+    val failedToInitialize = failedToInitializeClassNames() + classesWithInitializerRunning()
     val judgeableKeys =
         manifestProbes.keys.filter {
             val kind = manifestProbes[it]?.kind
-            kind != ProbeKind.OPTIONAL_ARGUMENT && kind != ProbeKind.INITIALIZER_RETURNED && kind != ProbeKind.INITIALIZER_THREW
+            kind != ProbeKind.OPTIONAL_ARGUMENT && kind != ProbeKind.INITIALIZER_RETURNED && kind != ProbeKind.INITIALIZER_THREW &&
+                manifestProbes[it]?.className !in failedToInitialize && (hasZeroCountEvidence(it.run) || it in everHit)
         }
     val neverHitKeys = judgeableKeys.filter { it !in everHit }
     val (inlineNeverHit, notInlineNeverHit) = neverHitKeys.partition { manifestProbes[it]?.inline == true }
@@ -858,6 +883,7 @@ internal fun printNeverHitReport() {
     println()
     println("=== otherlode demo: dead code report ===")
     println("runs that sent a final flush: ${runsThatEndedCleanly.size} of ${allRuns.size}")
+    printRunsWithoutZeroCountEvidence()
     println("known probes: ${manifestProbes.size}, ever hit: ${everHit.size}, never hit: ${judgeable.size}")
     if (judgeableTotal > 0) {
         println("dead: %.1f%%".format(100.0 * judgeable.size / judgeableTotal))
@@ -1098,13 +1124,18 @@ private val PRIMITIVE_NAMES =
  * constructor. A never-initialised class covers every never-hit method. A never-instantiated class
  * covers each never-hit constructor and each never-hit method that is not static. A never-hit
  * lambda body then folds with its creators; see [foldLambdaBodies]. Same rules as
- * `OtherlodeTestCollector.judgeClasses`.
+ * `OtherlodeTestCollector.judgeClasses`. A class that failed to initialise, or whose initialiser is
+ * still running in every run that loaded it, gets no finding, and a run whose zero counts are not
+ * evidence contributes only its hits.
  */
 private fun judgeClasses(): ClassJudgement {
+    val withheld = failedToInitializeClassNames() + classesWithInitializerRunning()
     val methods =
         manifestProbes.entries
-            .filter { (_, probe) -> probe.kind == ProbeKind.METHOD && !probe.inline && !probe.isLookedThrough() }
-            .groupBy { (_, probe) -> NodeKey(probe.className, probe.methodName, probe.methodDescriptor) }
+            .filter { (key, probe) ->
+                probe.kind == ProbeKind.METHOD && !probe.inline && !probe.isLookedThrough() &&
+                    (hasZeroCountEvidence(key.run) || key in everHit)
+            }.groupBy { (_, probe) -> NodeKey(probe.className, probe.methodName, probe.methodDescriptor) }
             .mapValues { (_, entries) ->
                 MethodFacts(
                     entries.sumOf { (key, _) -> latestHitsTotal[key] ?: 0L },
@@ -1121,6 +1152,10 @@ private fun judgeClasses(): ClassJudgement {
         if (constructors.any { it.value.hits > 0L }) constructed += className
         val finding =
             when {
+                className in withheld -> {
+                    continue
+                }
+
                 initialisers.isNotEmpty() && initialisers.all { it.value.hits == 0L } -> {
                     ClassFinding.NEVER_INITIALISED
                 }
@@ -1233,9 +1268,10 @@ private fun foldLambdaBodies(
  * entry per name, inline and generated ones included. Instances loading counts the instances that
  * sent a probe for the class.
  */
-private fun printClassFindingReport() {
+internal fun printClassFindingReport() {
     println()
     println("=== otherlode demo: class findings ===")
+    printRunsWithoutZeroCountEvidence()
     val findings = judgeClasses().findings
     println(
         "never initialised: ${findings.values.count { it == ClassFinding.NEVER_INITIALISED }}, " +
@@ -1371,7 +1407,7 @@ private fun renderRanges(ranges: List<LineRange>): String =
  * only for a non-overridable target, since an overridable target's omissions are spread across
  * whichever override actually ran.
  */
-private fun printOmissionReport() {
+internal fun printOmissionReport() {
     println()
     println("=== otherlode demo: optional argument report ===")
     val omissionGroups =
@@ -1403,7 +1439,7 @@ private fun printOmissionReport() {
         val omitted = members.sumOf { (key, _) -> latestHitsTotal[key] ?: 0L }
         val representative = members.first().value
         if (!representative.overridable && omitted == targetHits) neverSupplied += groupKey to representative
-        if (omitted == 0L) alwaysSupplied += groupKey to representative
+        if (omitted == 0L && hasZeroCountEvidence(groupKey.run)) alwaysSupplied += groupKey to representative
     }
     println("never supplied: ${neverSupplied.size}, always supplied: ${alwaysSupplied.size}")
     neverSupplied
@@ -1431,9 +1467,10 @@ private fun printOmissionReport() {
  * own (a lambda invoked through a hidden class, a handler in an excluded package), so this report
  * is the only one able to say `/promo` was never called.
  */
-private fun printEndpointReport() {
+internal fun printEndpointReport() {
     println()
     println("=== otherlode demo: endpoint report ===")
+    val failedToInitialize = failedToInitializeClassNames()
     val calledCount = manifestEndpoints.count { (key, _) -> (latestEndpointHitsTotal[key] ?: 0L) > 0L }
     println("known endpoints: ${manifestEndpoints.size}, called: $calledCount, never called: ${manifestEndpoints.size - calledCount}")
     manifestEndpoints.entries
@@ -1443,10 +1480,18 @@ private fun printEndpointReport() {
             val handlerSuffix =
                 info.handlerClass?.let { cls -> " handler=$cls${info.handlerMethod?.let { "#$it" } ?: ""}" } ?: ""
             val tag = "[${info.framework}, ${info.discoverySource}]"
-            if (hits > 0L) {
-                println("  CALLED: ${info.verb} ${info.routeTemplate} calls=$hits $tag$handlerSuffix")
-            } else {
-                println("  NEVER CALLED: ${info.verb} ${info.routeTemplate} $tag$handlerSuffix")
+            when {
+                hits > 0L -> {
+                    println("  CALLED: ${info.verb} ${info.routeTemplate} calls=$hits $tag$handlerSuffix")
+                }
+
+                !hasZeroCountEvidence(key.run) || info.handlerClass in failedToInitialize -> {
+                    println("  NOT JUDGED: ${info.verb} ${info.routeTemplate} $tag$handlerSuffix")
+                }
+
+                else -> {
+                    println("  NEVER CALLED: ${info.verb} ${info.routeTemplate} $tag$handlerSuffix")
+                }
             }
         }
     if (disabledEndpointModules.isNotEmpty()) {
@@ -1532,6 +1577,175 @@ internal fun printFailedToLoadReport() {
     println("======================================")
 }
 
+/** Whether [run]'s zero counts are evidence: its verifier hook was installed and it has no unplaced verification failure. */
+private fun hasZeroCountEvidence(run: Run): Boolean = run !in unwatchedRuns && (unplacedVerificationFailuresByRun[run] ?: 0L) <= 0L
+
+/** Prints, for each run whose zero counts are not evidence, that they are left out and why. */
+private fun printRunsWithoutZeroCountEvidence() {
+    (unwatchedRuns + unplacedVerificationFailuresByRun.filterValues { it > 0L }.keys)
+        .sortedWith(compareBy({ it.serviceInstanceId }, { it.runId }))
+        .forEach { run ->
+            val why =
+                listOfNotNull(
+                    "the agent's hook on VerifyError was not installed".takeIf { run in unwatchedRuns },
+                    unplacedVerificationFailuresByRun[run]?.takeIf { it > 0L }?.let {
+                        if (it ==
+                            1L
+                        ) {
+                            "1 VerifyError message in no read format"
+                        } else {
+                            "$it VerifyError messages in no read format"
+                        }
+                    },
+                )
+            println(
+                "zero counts are not evidence for instance ${run.serviceInstanceId} (run ${run.runId}), " +
+                    "so its zeros are left out: ${why.joinToString("; ")}",
+            )
+        }
+}
+
+/**
+ * Every class that failed to initialise: one some run named, or a loaded class whose supertypes in
+ * a run's class records reach a class that run named, that no run initialised. A class initialised in
+ * a run when its returned slot counted, if that run sent the class's slots, and otherwise when any
+ * probe of it was hit. Only a class some manifest confirmed is listed.
+ */
+private fun failedToInitializeClassNames(): Set<String> {
+    if (failedToInitializeByRun.isEmpty()) return emptySet()
+    val initialized = initializedClassNames()
+    val failed = HashSet<String>()
+    for ((run, named) in failedToInitializeByRun) {
+        val classNames = manifestProbes.entries.filter { it.key.run == run }.associate { it.key.classId to it.value.className }
+        val supertypes =
+            supertypesByClassId.entries
+                .filter { it.key.run == run }
+                .mapNotNull { (key, info) -> classNames[key.classId]?.let { it to info } }
+                .toMap()
+        val rejected = named.filterValues { InitializationFailure.VERIFIER_REJECTED in it }.keys
+        val threw = named.filterValues { InitializationFailure.STATIC_INITIALIZER_THREW in it }.keys
+        val withDefaultMethods =
+            manifestProbes.entries
+                .filter { (key, probe) ->
+                    key.run == run && probe.kind == ProbeKind.METHOD && !probe.static &&
+                        probe.methodName != CLASS_INIT && probe.methodName != CONSTRUCTOR
+                }.mapTo(HashSet()) { it.value.className }
+        failed += named.keys
+        for (className in supertypes.keys) {
+            if (className !in failed && carriesFailure(className, supertypes, rejected, threw, withDefaultMethods)) failed += className
+        }
+    }
+    return failed.filterTo(HashSet()) { it !in initialized && it in dynamicallyKnownClassNames }
+}
+
+private fun carriesFailure(
+    className: String,
+    supertypes: Map<String, SupertypesInfo>,
+    rejected: Set<String>,
+    threw: Set<String>,
+    withDefaultMethods: Set<String>,
+): Boolean {
+    val seen = HashSet<String>()
+    val pending = ArrayDeque<String>()
+    pending += className
+    while (pending.isNotEmpty()) {
+        val info = supertypes[pending.removeLast()] ?: continue
+        for (superclass in listOfNotNull(info.superClassName)) {
+            if (superclass in rejected || superclass in threw) return true
+            if (seen.add(superclass)) pending += superclass
+        }
+        for (superinterface in info.interfaceNames) {
+            if (superinterface in rejected || (superinterface in threw && superinterface in withDefaultMethods)) return true
+            if (seen.add(superinterface)) pending += superinterface
+        }
+    }
+    return false
+}
+
+private fun initializedClassNames(): Set<String> {
+    class Evidence {
+        var hasSlots = false
+        var returned = false
+        var anyHit = false
+    }
+
+    val evidence = HashMap<Pair<Run, String>, Evidence>()
+    for ((key, probe) in manifestProbes) {
+        val state = evidence.getOrPut(key.run to probe.className) { Evidence() }
+        val hit = key in everHit
+        if (probe.kind == ProbeKind.INITIALIZER_RETURNED || probe.kind == ProbeKind.INITIALIZER_THREW) state.hasSlots = true
+        if (probe.kind == ProbeKind.INITIALIZER_RETURNED && hit) state.returned = true
+        if (hit) state.anyHit = true
+    }
+    return evidence.filterValues { if (it.hasSlots) it.returned else it.anyHit }.keys.mapTo(HashSet()) { it.second }
+}
+
+/**
+ * Every class whose initialiser is still running in each run that loaded it: a `<clinit>` whose
+ * entry counted and whose returned and threw slots both exist and neither counted.
+ */
+private fun classesWithInitializerRunning(): Set<String> {
+    class Initializer {
+        var entered = false
+        var returnedSlot = false
+        var threwSlot = false
+        var finished = false
+    }
+
+    val initializers = HashMap<Pair<Run, String>, Initializer>()
+    val loading = HashMap<String, MutableSet<Run>>()
+    for ((key, probe) in manifestProbes) {
+        val slot = key.run to probe.className
+        val hit = key in everHit
+        when (probe.kind) {
+            ProbeKind.METHOD -> {
+                loading.getOrPut(probe.className) { HashSet() } += key.run
+                if (probe.methodName == CLASS_INIT) {
+                    val initializer = initializers.getOrPut(slot) { Initializer() }
+                    if (hit) initializer.entered = true
+                }
+            }
+
+            ProbeKind.INITIALIZER_RETURNED, ProbeKind.INITIALIZER_THREW -> {
+                val initializer = initializers.getOrPut(slot) { Initializer() }
+                if (probe.kind == ProbeKind.INITIALIZER_RETURNED) initializer.returnedSlot = true else initializer.threwSlot = true
+                if (hit) initializer.finished = true
+            }
+
+            else -> {}
+        }
+    }
+    return loading
+        .filter { (className, runs) ->
+            runs.all { run ->
+                initializers[run to className]?.let { it.entered && it.returnedSlot && it.threwSlot && !it.finished } == true
+            }
+        }.keys
+}
+
+/**
+ * Lists every class that failed to initialise (see [failedToInitializeClassNames]). Such a class is a
+ * deployment to fix, so it is never in [printNeverHitReport] or [printClassFindingReport]. A class a
+ * run named prints with its reasons, and a class that only inherits the failure says so.
+ */
+internal fun printFailedToInitialiseReport() {
+    println()
+    println("=== otherlode demo: failed to initialise ===")
+    val failed = failedToInitializeClassNames().sorted()
+    println("failed to initialise: ${failed.size}")
+    failed.forEach { className ->
+        val reasons =
+            failedToInitializeByRun.values
+                .flatMap { it[className].orEmpty() }
+                .map { it.name }
+                .distinct()
+                .sorted()
+        val why = if (reasons.isEmpty()) "subtype of a class that failed to initialise" else reasons.joinToString(", ")
+        println("  FAILED TO INITIALISE: ${classText(className)} ($why)")
+    }
+    println("============================================")
+}
+
 /** Orders a [ClusterMember] the way [printNeverHitReport] orders a probe: by class, then method, then descriptor. */
 private val clusterMemberComparator: Comparator<ClusterMember> = compareBy({ it.className }, { it.methodName }, { it.methodDescriptor })
 
@@ -1548,6 +1762,7 @@ private val clusterMemberComparator: Comparator<ClusterMember> = compareBy({ it.
 internal fun printUnreachedClusterReport() {
     println()
     println("=== otherlode demo: unreached clusters ===")
+    printRunsWithoutZeroCountEvidence()
     val clusters = computeUnreachedClusters()
     println("clusters: ${clusters.size}")
     val routesByHandler = routesByHandler()
@@ -1664,17 +1879,34 @@ private fun computeUnreachedClusters(): List<UnreachedClusterInfo> {
     val outcomes = buildOutcomeNodes(::isHit)
     val clusterGraph = buildClusterGraph(graph, outcomes, coveredBy)
 
+    val failedToInitialize = failedToInitializeClassNames() + classesWithInitializerRunning()
+    val evidenced =
+        manifestProbes.entries
+            .filter { (key, probe) -> probe.kind == ProbeKind.METHOD && hasZeroCountEvidence(key.run) }
+            .mapTo(HashSet()) { (_, probe) -> NodeKey(probe.className, probe.methodName, probe.methodDescriptor) }
+
     fun isNeverHit(node: ClusterNode) =
         when {
-            node.isClass -> node in classNodes
-            node.branchIndex != null -> node in outcomes
-            else -> !isHit(node.method) && node.method !in coveredBy
+            node.isClass -> {
+                node in classNodes
+            }
+
+            node.branchIndex != null -> {
+                node in outcomes
+            }
+
+            else -> {
+                !isHit(node.method) && node.method !in coveredBy && node.method.className !in failedToInitialize &&
+                    node.method in evidenced
+            }
         }
 
     val neverHitNodes =
         graph.nodes.keys
-            .filter { !isHit(it) && it !in coveredBy && it.methodName != CLASS_INIT && it !in unjudged }
-            .map { ClusterNode(it) } + outcomes.keys + classNodes.keys
+            .filter {
+                !isHit(it) && it !in coveredBy && it.methodName != CLASS_INIT && it !in unjudged &&
+                    it.className !in failedToInitialize && it in evidenced
+            }.map { ClusterNode(it) } + outcomes.keys + classNodes.keys
     return neverHitNodes
         .mapNotNull { node ->
             val callers = clusterGraph.callersOf[node].orEmpty()
@@ -1836,8 +2068,9 @@ private fun toClusterMember(
  *
  * A routine outcome and an unread-shape outcome are never nodes, so a call one guards starts at its method.
  */
-private fun buildOutcomeNodes(isHit: (NodeKey) -> Boolean): Map<ClusterNode, OutcomeNode> =
-    manifestProbes.entries
+private fun buildOutcomeNodes(isHit: (NodeKey) -> Boolean): Map<ClusterNode, OutcomeNode> {
+    val unjudgeable = failedToInitializeClassNames() + classesWithInitializerRunning()
+    return manifestProbes.entries
         .filter { (key, probe) ->
             probe.kind == ProbeKind.BRANCH &&
                 probe.branchIndex != null &&
@@ -1846,8 +2079,10 @@ private fun buildOutcomeNodes(isHit: (NodeKey) -> Boolean): Map<ClusterNode, Out
                 routineOf(key) == RoutineKind.ROUTINE_KIND_UNSPECIFIED &&
                 unreadOf(key) == UnreadShape.UNREAD_SHAPE_UNSPECIFIED
         }.groupBy { (_, probe) -> ClusterNode(NodeKey(probe.className, probe.methodName, probe.methodDescriptor), probe.branchIndex) }
-        .filter { (node, entries) -> isHit(node.method) && entries.sumOf { (key, _) -> latestHitsTotal[key] ?: 0L } == 0L }
-        .mapValues { (node, entries) ->
+        .filter { (node, entries) ->
+            isHit(node.method) && entries.sumOf { (key, _) -> latestHitsTotal[key] ?: 0L } == 0L &&
+                entries.any { (key, _) -> hasZeroCountEvidence(key.run) } && node.method.className !in unjudgeable
+        }.mapValues { (node, entries) ->
             val site =
                 entries.firstNotNullOfOrNull { (key, probe) ->
                     manifestBranchSites[InstanceMethodKey(key.run, key.classId, probe.methodName, probe.methodDescriptor)]
@@ -1855,6 +2090,7 @@ private fun buildOutcomeNodes(isHit: (NodeKey) -> Boolean): Map<ClusterNode, Out
                 }
             OutcomeNode(entries.first().value.line, site)
         }
+}
 
 /**
  * Links every resolved call and every outcome node into the cluster graph. A call whose guard
@@ -2110,9 +2346,9 @@ private fun widenToSubtypes(
  * find. The rules live in [computeDependencyReport]; this only gathers what each instance sent
  * into the shape that function reads.
  */
-private fun printDependencyReport() {
+internal fun printDependencyReport() {
     val failed = failedToLoadClassNames.filter { it !in dynamicallyKnownClassNames }.toSet()
-    formatDependencyReport(computeDependencyReport(dependencyViews(), failed)).forEach(::println)
+    formatDependencyReport(computeDependencyReport(dependencyViews(), failed, failedToInitializeClassNames())).forEach(::println)
 }
 
 /**
@@ -2166,6 +2402,7 @@ private fun dependencyViews(): List<InstanceDependencyView> {
             instanceId = run.serviceInstanceId,
             referencesRecorded = run in runsRecordingReferences,
             baselineComplete = runScans.isNotEmpty() && runScans.all { it.complete },
+            zeroCountsAreEvidence = hasZeroCountEvidence(run),
             dependenciesListed = run in runsWithDependenciesListed,
             dependencies = dependencyLocations.filterKeys { it.run == run }.values.toList(),
             loadedClassesTotal =

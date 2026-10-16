@@ -69,7 +69,15 @@ class OtherlodeTestCollectorEndToEndTest {
         fixtureClass.getMethod("exercised").invoke(fixture)
 
         val exporter = HttpExporter(target.exportUrl)
-        val exportScheduler = ExportScheduler(config, TestResources.forConfig(config), registry, EndpointRegistry(), exporter)
+        val exportScheduler =
+            ExportScheduler(
+                config,
+                TestResources.forConfig(config),
+                registry,
+                EndpointRegistry(),
+                exporter,
+                verifierWatch = watchedVerifier(),
+            )
         scheduler = exportScheduler
         exportScheduler.start()
 
@@ -105,7 +113,15 @@ class OtherlodeTestCollectorEndToEndTest {
         fixtureClass.getMethod("exercised").invoke(fixture)
 
         val exporter = HttpExporter(target.exportUrl)
-        val exportScheduler = ExportScheduler(config, TestResources.forConfig(config), registry, EndpointRegistry(), exporter)
+        val exportScheduler =
+            ExportScheduler(
+                config,
+                TestResources.forConfig(config),
+                registry,
+                EndpointRegistry(),
+                exporter,
+                verifierWatch = watchedVerifier(),
+            )
         scheduler = exportScheduler
         exportScheduler.start()
 
@@ -153,7 +169,15 @@ class OtherlodeTestCollectorEndToEndTest {
         Class.forName("com.example.testkittarget.LegacyFees", false, loader)
 
         val exporter = HttpExporter(target.exportUrl)
-        val exportScheduler = ExportScheduler(config, TestResources.forConfig(config), registry, EndpointRegistry(), exporter)
+        val exportScheduler =
+            ExportScheduler(
+                config,
+                TestResources.forConfig(config),
+                registry,
+                EndpointRegistry(),
+                exporter,
+                verifierWatch = watchedVerifier(),
+            )
         scheduler = exportScheduler
         exportScheduler.start()
 
@@ -229,7 +253,15 @@ class OtherlodeTestCollectorEndToEndTest {
         counters.getMethod("size").invoke(counters.getField("INSTANCE").get(null))
 
         val exporter = HttpExporter(target.exportUrl)
-        val exportScheduler = ExportScheduler(config, TestResources.forConfig(config), registry, EndpointRegistry(), exporter)
+        val exportScheduler =
+            ExportScheduler(
+                config,
+                TestResources.forConfig(config),
+                registry,
+                EndpointRegistry(),
+                exporter,
+                verifierWatch = watchedVerifier(),
+            )
         scheduler = exportScheduler
         exportScheduler.start()
 
@@ -339,7 +371,15 @@ class OtherlodeTestCollectorEndToEndTest {
         callerClass.getMethod("exercised").invoke(callerClass.getDeclaredConstructor().newInstance())
 
         val exporter = HttpExporter(target.exportUrl)
-        val exportScheduler = ExportScheduler(config, TestResources.forConfig(config), registry, EndpointRegistry(), exporter)
+        val exportScheduler =
+            ExportScheduler(
+                config,
+                TestResources.forConfig(config),
+                registry,
+                EndpointRegistry(),
+                exporter,
+                verifierWatch = watchedVerifier(),
+            )
         scheduler = exportScheduler
         exportScheduler.start()
 
@@ -403,7 +443,15 @@ class OtherlodeTestCollectorEndToEndTest {
         Class.forName(LONE_CONSTRUCTOR, true, foldsClass.classLoader)
 
         val exporter = HttpExporter(target.exportUrl)
-        val exportScheduler = ExportScheduler(config, TestResources.forConfig(config), registry, EndpointRegistry(), exporter)
+        val exportScheduler =
+            ExportScheduler(
+                config,
+                TestResources.forConfig(config),
+                registry,
+                EndpointRegistry(),
+                exporter,
+                verifierWatch = watchedVerifier(),
+            )
         scheduler = exportScheduler
         exportScheduler.start()
 

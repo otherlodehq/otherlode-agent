@@ -120,13 +120,17 @@ internal data class DependencyReport(
  * [failedClassNames] is a failed site when its instance's baseline is complete, since that is
  * the scan the server reads. A dependency with a failed site and no live reference is failed to
  * load. A class that any instance loaded is never failed,
- * even when it is in [failedClassNames]. With a complete baseline from every one of those
- * instances, a dependency with no reference is unreferenced and one with references but no live
+ * even when it is in [failedClassNames]. A class in [failedToInitializeClassNames] loaded but can
+ * never run: its class-level reference is not live, and a reference of its methods is live only
+ * through a hit. Such a site with no live reference is a failed-to-initialise site, and a
+ * dependency with one and no live reference, and no failed-to-load site, is failed to initialise.
+ * With a complete baseline from every one of those instances, a dependency with no reference is unreferenced and one with references but no live
  * one is unreached; otherwise the two merge into no live reference, which is true either way.
  */
 internal fun computeDependencyReport(
     instances: List<InstanceDependencyView>,
     failedClassNames: Set<String> = emptySet(),
+    failedToInitializeClassNames: Set<String> = emptySet(),
 ): DependencyReport {
     val failed = failedClassNames - instances.flatMapTo(mutableSetOf()) { it.loadedClassNames }
     val recording = instances.filter { it.referencesRecorded }
@@ -158,12 +162,15 @@ internal fun computeDependencyReport(
                     }
                 }
             val failedSite = held.origin == ReferenceOrigin.BASELINE && instance.baselineComplete && held.className in failed
+            val failedInitialization = held.className in failedToInitializeClassNames
+            val liveSite = live && !(failedInitialization && held.origin == ReferenceOrigin.MANIFEST_CLASS)
             val site =
                 DependencyReferenceSite(
                     held.className,
                     held.methodName,
                     neverLoaded = held.origin == ReferenceOrigin.BASELINE && !failedSite && held.className !in instance.loadedClassNames,
                     failedToLoad = failedSite,
+                    failedToInitialize = failedInitialization && !liveSite,
                 )
             for (referenced in held.referencedClasses) {
                 val mapping = instance.externalClasses[referenced] ?: continue
@@ -174,7 +181,7 @@ internal fun computeDependencyReport(
                 // A mapping to no known dependency is a jar of the adopter's own or an agent jar,
                 // and neither is a dependency.
                 val identityKey = mapping.dependencyId?.let(identityKeys::get) ?: continue
-                referencesByDependency.getOrPut(identityKey) { mutableSetOf() } += site to live
+                referencesByDependency.getOrPut(identityKey) { mutableSetOf() } += site to liveSite
             }
         }
     }
@@ -212,6 +219,10 @@ internal fun computeDependencyReport(
 
                         references.any { (site, _) -> site.failedToLoad } -> {
                             DependencyUsage.FAILED_TO_LOAD
+                        }
+
+                        references.any { (site, _) -> site.failedToInitialize } -> {
+                            DependencyUsage.FAILED_TO_INITIALIZE
                         }
 
                         !judging.all { it.baselineComplete } -> {

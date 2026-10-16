@@ -102,6 +102,8 @@ Class names are the dotted binary names. A Kotlin file's top-level functions liv
 
 Asking about a method the collector has never heard of throws `UnknownProbeException`, not `false`. The message says whether the class was skipped, declared but never loaded, or never mentioned. A route nobody registered throws `UnknownEndpointException` the same way. This keeps "never ran" apart from "the agent never saw it".
 
+A query that rests on a zero count has one more refusal. A class the JVM's verifier rejects fires no probe, so while an instance's agent could not install its hook on `VerifyError`, or counted a `VerifyError` message it could not read, `neverHit`, the class findings, `unreachedClusters` and the dependency verdicts that rest on a zero count throw `IllegalStateException` and name the instance and the reason. Queries that read no zero count, such as `wasHit` and `hitCount`, keep answering. See [the testkit API](testkit-api#queries-that-refuse).
+
 This Kotlin test checks a method, an endpoint and the full list of never-hit methods:
 
 ```kotlin

@@ -15,7 +15,6 @@ import dev.otherlode.export.HttpExporter
 import dev.otherlode.export.ProbeDelta
 import dev.otherlode.export.ProbeKind
 import dev.otherlode.export.ProbeLocation
-import dev.otherlode.export.ProbeManifest
 import dev.otherlode.export.ResourceAttributes
 import dev.otherlode.export.SkippedClass
 import dev.otherlode.export.StaticBaseline
@@ -85,7 +84,7 @@ class DependencyQueryTest {
         instanceId: String = "i-1",
     ) {
         exporter.exportManifest(
-            ProbeManifest(
+            watchedManifest(
                 resource = ResourceAttributes("svc", null, instanceId, null, "run-1"),
                 probes = probes,
                 dependencies = dependencies,
