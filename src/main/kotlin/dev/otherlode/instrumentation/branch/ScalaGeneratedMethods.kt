@@ -120,6 +120,9 @@ internal object ScalaGeneratedMethods {
     /** The descriptor of an enum companion's `fromOrdinal`: an `int` in, an object type out. */
     private val FROM_ORDINAL_DESCRIPTOR = Regex("\\(I\\)L[^;\\[]+;")
 
+    /** The descriptor shape of an enum companion's `valueOf`: a `String` in, an object type out. */
+    private val VALUE_OF_DESCRIPTOR = Regex("\\(L$STRING;\\)L[^;\\[]+;")
+
     private val WRITE_REPLACE = "writeReplace" to "()Ljava/lang/Object;"
     private val ORDINAL = "ordinal" to "()I"
     private val READ_RESOLVE = "readResolve" to "()Ljava/lang/Object;"
@@ -171,7 +174,8 @@ internal object ScalaGeneratedMethods {
      * let the adopter write ([isEnumCaseClass], [isRefusedInEnumCompanion]), and a case accessor only
      * scalac can give an enum's companion ([enumCaseAccessorKeys]), stay unread shapes on a read
      * release too: there they are scalac's in a shape the rules do not read, such as one with
-     * backticked case names. The companion of a local enum counts when [pairEnumCompanion] pairs it,
+     * backticked case names. So does every `valueOf(String)` of an enum's companion when none reads
+     * as scalac's, the adopter's beside it included ([companionCaseKeys]). The companion of a local enum counts when [pairEnumCompanion] pairs it,
      * even if a class the pairing needs cannot be read; an object the adopter wrote that only looks like
      * one is not held. [releaseOf] is asked, with the class's internal name, only when such a method
      * exists and the class is Scala 3's.
@@ -224,8 +228,11 @@ internal object ScalaGeneratedMethods {
     /**
      * Whether scalac refuses a hand-written method [key] in an enum's companion, so a method of that
      * name and descriptor there can only be its own: `values`, `valueOf`, `fromOrdinal`, `$new` and
-     * `ordinal(Object)`, a hand-written one being a double definition. A companion's `ordinal(E)`
-     * and `writeReplace` can be written by hand and are not held.
+     * `ordinal(Object)`, a hand-written one being a double definition. Only those in the outline are
+     * asked, and the outline lists `values`, `valueOf` and `$new` only for the enums scalac writes
+     * them for, and lists the adopter's methods the JVM knows as `valueOf(String)` only when none
+     * reads as scalac's ([companionCaseKeys]). A companion's `ordinal(E)` and `writeReplace` can be
+     * written by hand and are not held.
      */
     private fun isRefusedInEnumCompanion(key: Pair<String, String>): Boolean {
         val (name, descriptor) = key
@@ -361,7 +368,7 @@ internal object ScalaGeneratedMethods {
             for (key in keys) if (open[key]?.isStatic == static) result.putIfAbsent(key, family)
         }
         add(staticForwarderOutline(shape, open, lookup), UnreadShape.STATIC_FORWARDER, static = true)
-        add(enumOutline(shape, lookup), UnreadShape.SCALA_ENUM)
+        add(enumOutline(shape, lookup, generated), UnreadShape.SCALA_ENUM)
         caseClassOf(shape)?.let { add(caseClassOutline(it), UnreadShape.CASE_CLASS) }
         if (shape.internalName.endsWith("$") && open.any { (key, method) -> !method.isStatic && key.first in COMPANION_METHODS }) {
             readClass(partnerName(shape), lookup)?.let(::caseClassOf)?.takeIf { !it.isObject }?.let { partner ->
@@ -407,11 +414,13 @@ internal object ScalaGeneratedMethods {
      * Mirrors [enumPlumbing]: the methods of an enum class, its companion (the case accessors of an
      * instance companion included, and that of a local enum whether or not [pairEnumCompanion] could
      * read every class it needs), a singleton case and a parameterised case that the enum rules
-     * read, with the descriptors they read them with.
+     * read, with the descriptors they read them with. The companion's `valueOf` depends on what
+     * [generated] marks ([companionCaseKeys]).
      */
     private fun enumOutline(
         shape: ClassShape,
         lookup: (String) -> ByteArray?,
+        generated: Map<Pair<String, String>, GeneratedBy>,
     ): List<Pair<String, String>> {
         if (!shape.isScala || !shape.isScala3) return emptyList()
         val string = "L$STRING;"
@@ -427,14 +436,12 @@ internal object ScalaGeneratedMethods {
         if (shape.internalName.endsWith("$") && MIRROR_SUM in shape.interfaces) {
             val enumClass = pairEnumCompanion(shape, lookup)?.enumClass ?: return emptyList()
             val enumType = "L${enumClass.internalName};"
+            val cases = shape.enumCases(enumClass.internalName, lookup)
             return listOf(
-                "values" to "()[$enumType",
-                "valueOf" to "($string)$enumType",
                 "fromOrdinal" to "(I)$enumType",
-                "\$new" to "(I$string)$enumType",
                 "ordinal" to "($enumType)I",
                 "ordinal" to "($objectType)I",
-            ) + enumCaseAccessorKeys(shape, enumClass, lookup)
+            ) + companionCaseKeys(shape, enumClass, cases, generated) + enumCaseAccessorKeys(shape, enumClass, lookup)
         }
         val singleton = ENUM_VALUE in shape.interfaces && MIRROR_SINGLETON in shape.interfaces && shape.isFinal
         val enumClass = shape.superName?.let { readClass(it, lookup) }?.takeIf { it.isEnumClass() } ?: return emptyList()
@@ -458,6 +465,35 @@ internal object ScalaGeneratedMethods {
             "hashCode" to "()I",
         )
     }
+
+    /**
+     * The `values`, `valueOf` and `$new` of the companion [shape] of [enumClass] that scalac writes
+     * for [cases]: `values` and `valueOf` only when every case is a singleton, `$new` only when one
+     * is, and all three when the cases cannot be read, an empty list included, since every enum has a
+     * case (E145). scalac infers `valueOf`'s result, which a supertype's `valueOf(String)` can widen,
+     * and the adopter can write methods the JVM knows as `valueOf(String)` beside it, overrides and
+     * bridge targets among them. So `valueOf` is every [isCompanionValueOf] method when [generated]
+     * marks none of them, and none otherwise.
+     */
+    private fun companionCaseKeys(
+        shape: ClassShape,
+        enumClass: ClassShape,
+        cases: List<EnumCase>?,
+        generated: Map<Pair<String, String>, GeneratedBy>,
+    ): List<Pair<String, String>> {
+        val enumType = "L${enumClass.internalName};"
+        val unknown = cases.isNullOrEmpty()
+        val allSingleton = unknown || cases.all { it is EnumCase.Singleton }
+        val anySingleton = unknown || cases.any { it is EnumCase.Singleton }
+        val valueOf = shape.methods.keys.filter(::isCompanionValueOf)
+        return listOfNotNull(
+            ("values" to "()[$enumType").takeIf { allSingleton },
+            ("\$new" to "(IL$STRING;)$enumType").takeIf { anySingleton },
+        ) + if (allSingleton && valueOf.none { it in generated }) valueOf else emptyList()
+    }
+
+    /** Whether [key] could be the `valueOf(String)` scalac writes in an enum's companion, whatever object it returns. */
+    private fun isCompanionValueOf(key: Pair<String, String>): Boolean = key.first == "valueOf" && VALUE_OF_DESCRIPTOR.matches(key.second)
 
     /**
      * The members scalac writes for a case class, whatever their bodies: the Product and
@@ -1261,11 +1297,11 @@ internal object ScalaGeneratedMethods {
             }.mapTo(mutableSetOf()) { it.first }
 
     /**
-     * The companion's `values`, `valueOf`, `fromOrdinal`, `$new` and `ordinal` (with its bridge), each
-     * only when its body is the one scalac writes for this enum's cases. `writeReplace` is the object
-     * rule's. An enum with a parameterised case gets no `values`, `valueOf` or `$values`, a `$new`
-     * only when it has a singleton case, and a `fromOrdinal` that tests ordinals instead of indexing
-     * the array.
+     * The companion's `values`, `valueOf` (whatever object it returns), `fromOrdinal`, `$new` and
+     * `ordinal` (with its bridge), each only when its body is the one scalac writes for this enum's
+     * cases. `writeReplace` is the object rule's. An enum with a parameterised case gets no `values`,
+     * `valueOf` or `$values`, a `$new` only when it has a singleton case, and a `fromOrdinal` that
+     * tests ordinals instead of indexing the array.
      */
     private fun enumCompanionPlumbing(
         family: EnumFamily,
@@ -1283,7 +1319,7 @@ internal object ScalaGeneratedMethods {
                         matchesEnumValues(family, method)
                     }
 
-                    name == "valueOf" && descriptor == "(L$STRING;)$enumType" -> {
+                    isCompanionValueOf(key) -> {
                         matchesEnumValueOf(family, method)
                     }
 
