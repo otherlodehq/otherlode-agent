@@ -124,6 +124,12 @@ order:
    comments at `LoadedClassSweep.kt:19-23`, `otherlode.proto:604-605` and
    `Payloads.kt:514-516`, which name the verifier as a cause of failed to
    load.
+8. **ADRs name no decider.** Reword every "Decided on <date> with Luke"
+   and other mention of Luke in the ADRs of all four repos (agent 27 files,
+   server 19, collector 3, site 2, counted 2026-10-16) to "Decided on
+   <date>", and a fact that needs an owner, such as whose key signs
+   releases, to a role. The server's go on its branch; ask before the
+   collector's and the site's.
 
 ### HotSwap of a woven class with changed code: to grill
 
