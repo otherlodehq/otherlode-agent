@@ -23,6 +23,8 @@ import dev.otherlode.instrumentation.BootstrapInstallException
 import dev.otherlode.instrumentation.ClassFileByteCache
 import dev.otherlode.instrumentation.LoadedClassSweep
 import dev.otherlode.instrumentation.OtherlodeInstrumentation
+import dev.otherlode.instrumentation.OwnRetransformationFailures
+import dev.otherlode.instrumentation.VerifyErrorHook
 import dev.otherlode.instrumentation.branch.BranchDropCounts
 import dev.otherlode.instrumentation.branch.ConfiguredCallbackAnnotations
 import dev.otherlode.instrumentation.branch.UnreadShapeCounts
@@ -95,6 +97,8 @@ object Agent {
         val resource: ResourceAttributes,
         /** The thread the class listing runs on, or null when `classListingEnabled` is off. */
         val classListingWorker: Thread? = null,
+        /** The hook on `java.lang.VerifyError`; see [VerifyErrorHook]. */
+        val verifierHook: VerifyErrorHook = VerifyErrorHook(),
     ) {
         fun stop() {
             Runtime.getRuntime().removeShutdownHook(shutdownHook)
@@ -103,6 +107,7 @@ object Agent {
             if (endpointInstrumentation != null && endpointTransformer != null) {
                 endpointInstrumentation.uninstall(instrumentation, endpointTransformer)
             }
+            verifierHook.uninstall(instrumentation)
         }
     }
 
@@ -187,6 +192,7 @@ object Agent {
                 return null
             }
 
+        val ownRetransformationFailures = OwnRetransformationFailures()
         var endpointInstrumentation: EndpointInstrumentation? = null
         var endpointTransformer: ResettableClassFileTransformer? = null
         if (endpointModules != null) {
@@ -197,6 +203,7 @@ object Agent {
                         endpointModules,
                         handlerForwarders = handlerForwarders,
                         classFileCache = classFileCache,
+                        ownRetransformationFailures = ownRetransformationFailures,
                     )
                 endpointTransformer = instance.install(instrumentation)
                 endpointInstrumentation = instance
@@ -208,6 +215,9 @@ object Agent {
         } else if (!config.endpointsEnabled) {
             log.log(Level.INFO, "otherlode: endpointsEnabled=false, no framework's endpoints will be instrumented")
         }
+
+        val verifierHook = VerifyErrorHook(ownRetransformationFailures)
+        verifierHook.install(instrumentation)
 
         // Both transformers are installed. A failure from here on would leave classes woven while
         // nothing is ever exported, so it takes down everything set up so far before premain logs
@@ -265,6 +275,7 @@ object Agent {
                     classListingSender = classListingSender,
                     dependencyListing = dependencyListing,
                     releaseQuietCaches = otherlodeInstrumentation::releaseQuietCaches,
+                    verifierWatch = verifierHook.watch(),
                 )
             scheduler = started
             started.start()
@@ -304,6 +315,7 @@ object Agent {
                 dependencyRegistry,
                 resource,
                 listingWorker,
+                verifierHook,
             )
         } catch (e: Throwable) {
             // Each step is tried on its own, so one that fails neither stops the rest nor hides
@@ -315,6 +327,7 @@ object Agent {
             if (endpointInstrumentation != null && endpointTransformer != null) {
                 undo { endpointInstrumentation.uninstall(instrumentation, endpointTransformer) }
             }
+            undo { verifierHook.uninstall(instrumentation) }
             throw e
         }
     }

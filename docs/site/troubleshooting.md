@@ -237,7 +237,7 @@ otherlode: com.acme.shop.Plugin was woven and registered but the JVM never defin
 
 At shutdown the agent adds `otherlode: 3 classes were woven and registered but never confirmed defined`.
 
-The agent rewrote the class, and the JVM then never defined it, on two sweeps in a row. The usual cause is that the JVM rejected the class for a reason in your application: a missing class, or a verifier error. A transformer that runs after the agent and replaces the bytes also causes it. Run the application without the agent. If the class loads there, report the class and its loader.
+The agent rewrote the class, and the JVM then never defined it, on two sweeps in a row. The usual cause is that the JVM refused to define the class for a reason in your application, such as a supertype it cannot load. A class the verifier rejects is defined, so it is not this case; see [failed to initialise](classes#failed-to-initialise). A transformer that runs after the agent and replaces the bytes also causes it. Run the application without the agent. If the class loads there, report the class and its loader.
 
 The agent holds back the class's probes, so the report does not list it as dead code.
 

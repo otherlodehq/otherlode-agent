@@ -18,7 +18,7 @@ This page covers the whole class. For what the agent records inside a class that
 | Skipped | The class matched the rules and the agent could not instrument it. | A `WARNING` log line, `skippedClasses()`, and the manifest's skipped list. |
 | Loaded where no transformer saw it | The class loaded, but the JVM offered it to no transformer. | One `INFO` log line, and the manifest. |
 | Failed to load | The agent wove the class and the JVM never defined it. | A `WARNING` log line, `failedToLoad()`, and the manifest. |
-| Failed to initialise | The JVM defined the class and its static initialiser threw, so the class can never run in that JVM. | The manifest. |
+| Failed to initialise | The JVM defined the class and either its static initialiser threw or the JVM's verifier rejected it, so the class can never run in that JVM. | The manifest. |
 | Never loaded | A complete static baseline declared the class and no manifest ever mentioned it. | `neverLoaded()`, and the server's class findings. |
 | Nothing to probe | The class loaded and has no method, default-argument site or static initialiser the agent probes. | Nothing, except in the static baseline's unprobed list. |
 | Left out | The class is synthetic, or a framework generated it at runtime. | Nothing. |
@@ -133,6 +133,20 @@ The first time the throwing probe counts, the agent names the class in the manif
 
 A class that failed to initialise is a deployment to fix, never dead code. If some instance ran the class's initialiser to the end, the class is initialised, whatever another instance says. An initialiser that has entered and neither returned nor thrown is still running. The agent names nothing for it and sends the counts as they are.
 
+### Rejected by the verifier
+
+The JVM verifies a class when it links it, after it has defined it. A class the verifier rejects stays defined, throws a `VerifyError` on every later use, and fires no probe, so it would read as dead code too.
+
+The agent weaves the two constructors of `java.lang.VerifyError`. Each construction hands its message to a fixed-size queue and does nothing else. On each flush, the export thread reads the class name out of every message. It knows the message formats of JDK 17, 21 and 25, and of the older verifier, which checks classes below version 50 and version 50 classes the newer one rejects. The agent names the class in `classes_failed_to_initialize` with the reason `VERIFIER_REJECTED`, once per class. It sends every name it reads, whether or not the class is under your include rules, because a rejected supertype outside them stops the classes you own that extend it from linking. It leaves out a name when its own retransformation of that class failed, since that class keeps running.
+
+A message the agent cannot read is counted and never guessed at. `unplaced_verification_failures`, in every manifest, is the run's count of them. The JVM checks a rejected class again, and builds the same message again, each time something uses it, so the agent skips a message equal to one it kept recently. It holds 8,192 messages between flushes, and each message it had no room for counts there too. Once that count is above zero, the run makes no claim from a zero count, because any unread rejection may have been a class that now reads as dead.
+
+A run without the hook makes no such claim either. If the agent cannot install it, it logs one `WARNING` and every manifest of the run says `verifier_rejections_watched` is false.
+
+```text
+otherlode: classes the JVM's verifier rejects will not be named on this JVM, so a run's zero counts say nothing about them: <reason>
+```
+
 ## Never loaded
 
 A class that never loads sends nothing, so on the wire it looks the same as a class that does not exist, was renamed, or is outside `includePackages`. The **static baseline** closes that gap: an inventory of the classes under `includePackages`, read from the class files without loading them. A class the baseline declares and that no manifest from the same instance ever mentions is **never loaded**. No instance of the service ever loaded it.
@@ -238,6 +252,8 @@ Every line starts with `otherlode:`.
 | `WARNING` | `<class> was woven and registered but the JVM never defined it; its probes are withheld for good` | The class failed to load. |
 | `WARNING` | `<n> classes were woven and registered but never confirmed defined` | The shutdown total of classes that failed to load. |
 | `WARNING` | `the definition attempt of a woven class could not be read from its thread's stack; ...` | Some classes cannot be reported as failed to load. |
+| `WARNING` | `classes the JVM's verifier rejects will not be named on this JVM, so a run's zero counts say nothing about them: <reason>` | The hook on `VerifyError` did not install. |
+| `WARNING` | `reading the verifier's rejections failed, so this run's zero counts are no longer evidence` | Reading what the hook collected failed on one flush. The run counts one unplaced failure and makes no claim from a zero count. |
 | `WARNING` | `<class> registered dynamically but was not in the static baseline computed at startup ...` | The static scan has a blind spot in this deployment. |
 | `WARNING` | `failed to send static baseline chunk <i> of <n>; ...` | A chunk will be sent again. |
 | `WARNING` | `the collector refused static baseline chunk <i> of <n> with status <code>, ...` | The collector refused a chunk with a `400` or `422`. The agent does not resend the scan. |

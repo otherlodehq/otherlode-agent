@@ -4,6 +4,7 @@ import dev.otherlode.classlisting.ClassListingSender
 import dev.otherlode.config.AgentConfig
 import dev.otherlode.dependencies.DependencyListingRun
 import dev.otherlode.instrumentation.LoadedClassSweep
+import dev.otherlode.instrumentation.VerifierRejectionWatch
 import dev.otherlode.instrumentation.branch.BranchDropCounts
 import dev.otherlode.instrumentation.branch.BranchDropReason
 import dev.otherlode.instrumentation.branch.ConfiguredCallbackAnnotations
@@ -86,6 +87,11 @@ class ExportScheduler(
      * sends, the shutdown flush excepted. The default releases nothing.
      */
     private val releaseQuietCaches: () -> Unit = {},
+    /**
+     * What the run can see of the verifier's rejections, drained after the sweep on every flush and
+     * stamped on every manifest. The default sees none.
+     */
+    private val verifierWatch: VerifierRejectionWatch = VerifierRejectionWatch.NOT_WATCHED,
     /** Milliseconds since the epoch; read once per flush and once at construction. Injectable so a test controls it. */
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
@@ -103,7 +109,7 @@ class ExportScheduler(
     /** Set once a manifest carrying `dependenciesListed = true` was confirmed; see [sendDependenciesListedIfDue]. */
     private val dependenciesListedSent = AtomicBoolean(false)
     private var flushesSinceSweep = SWEEP_EVERY_N_FLUSHES
-    private val delivery = DeliveryState()
+    private val delivery = DeliveryState(verifierWatch.watched, registry::unplacedVerificationFailures)
 
     /** Runs the two sends of each flush side by side; see [flush]. Two threads, created once, not two per tick. */
     private val sendPool: ExecutorService =
@@ -208,6 +214,10 @@ class ExportScheduler(
      * included. The outer catch here covers what the sends cannot, such as
      * a rejected submission after [stop].
      *
+     * The run's verifier rejections are drained after the sweep and before the sends, the shutdown
+     * flush included. A manifest carrying a higher unplaced total than any confirmed one is sent
+     * after the main sends when nothing else carried it; see [sendUnplacedIfDue].
+     *
      * A flush that starts with pending counts sends an empty delta batch first, on its own, and a
      * flush that clears them ends with another; see [DeliveryState] and [sendDeltaBatch].
      *
@@ -225,6 +235,7 @@ class ExportScheduler(
             maybeLogReceivedBytesClasses()
             maybeLogUnseenCallbackAnnotations(final, flushStart)
             maybeSweep(final)
+            drainVerifierRejections()
             // Read after the sweep, so this flush's delta sends carry the counts of this generation.
             val generation = dependencyRegistry.countGeneration
             val deliveredBefore = dependencyRegistry.deliveredGeneration
@@ -237,6 +248,7 @@ class ExportScheduler(
                 dependencyRegistry.deliveredGeneration > deliveredBefore && dependencyRegistry.hasSendableUndelivered()
             if (released) allConfirmed = sendManifestDelta() && allConfirmed
             if (allConfirmed) {
+                sendUnplacedIfDue()
                 sendDependenciesListedIfDue()
                 // One chunk per sender per flush, and none from the shutdown flush, so a slow
                 // resend never holds up a heartbeat or spends the shutdown budget.
@@ -248,6 +260,25 @@ class ExportScheduler(
             if (!final) releaseCaches()
         } catch (t: Throwable) {
             log.log(Level.ERROR, "otherlode: flush failed outside its own send guards, will retry next flush", t)
+        }
+    }
+
+    /**
+     * Moves the verifier messages collected since the last flush into the registry, before this
+     * flush's sends, so what they name goes out on the same manifest. Guarded like the sweep: a
+     * failure may have lost what it drained, so it counts one unplaced failure, is logged, and the
+     * flush goes on.
+     */
+    private fun drainVerifierRejections() {
+        try {
+            verifierWatch.drainInto(registry, clock())
+        } catch (t: Throwable) {
+            registry.recordUnplacedVerificationFailures(1)
+            log.log(
+                Level.WARNING,
+                "otherlode: reading the verifier's rejections failed, so this run's zero counts are no longer evidence",
+                t,
+            )
         }
     }
 
@@ -457,10 +488,14 @@ class ExportScheduler(
      * payload's number and the state it carries must be drawn together: any payload numbered after
      * a change of the state then read the state after it.
      */
-    private class DeliveryState {
+    private class DeliveryState(
+        private val verifierRejectionsWatched: Boolean,
+        private val unplacedVerificationFailures: () -> Long,
+    ) {
         private val lock = Any()
         private var pendingSince = 0L
         private var nextSequence = 1L
+        private var unplacedDelivered = 0L
 
         fun isPending(): Boolean = synchronized(lock) { pendingSince != 0L }
 
@@ -476,15 +511,38 @@ class ExportScheduler(
         fun stamp(batch: DeltaBatch): DeltaBatch =
             synchronized(lock) { batch.copy(payloadSequence = nextSequence++, countsPendingSince = pendingSince) }
 
+        /**
+         * Stamps the sequence, the pending state, whether the run watches the verifier and the
+         * unplaced total, all read under the lock so one manifest carries one consistent view.
+         */
         fun stamp(manifest: ProbeManifest): ProbeManifest =
-            synchronized(lock) { manifest.copy(payloadSequence = nextSequence++, countsPendingSince = pendingSince) }
+            synchronized(lock) {
+                manifest.copy(
+                    payloadSequence = nextSequence++,
+                    countsPendingSince = pendingSince,
+                    unplacedVerificationFailures = unplacedVerificationFailures(),
+                    verifierRejectionsWatched = verifierRejectionsWatched,
+                )
+            }
+
+        /** Records that a manifest carrying [total] unplaced failures was confirmed. */
+        fun confirmUnplaced(total: Long) {
+            synchronized(lock) { if (total > unplacedDelivered) unplacedDelivered = total }
+        }
+
+        /** Whether the registry's unplaced total is above the highest one a confirmed manifest carried. */
+        fun unplacedAheadOfDelivered(): Boolean = synchronized(lock) { unplacedVerificationFailures() > unplacedDelivered }
     }
 
     /** The one place a delta batch reaches the exporter, so none skips [DeliveryState.stamp]. */
     private fun sendStamped(batch: DeltaBatch) = exporter.exportDeltaBatch(delivery.stamp(batch))
 
     /** The one place a manifest reaches the exporter, so none skips [DeliveryState.stamp]. */
-    private fun sendStamped(manifest: ProbeManifest) = exporter.exportManifest(delivery.stamp(manifest))
+    private fun sendStamped(manifest: ProbeManifest) {
+        val stamped = delivery.stamp(manifest)
+        exporter.exportManifest(stamped)
+        delivery.confirmUnplaced(stamped.unplacedVerificationFailures)
+    }
 
     private fun hasHits(batch: DeltaBatch): Boolean =
         batch.deltas.isNotEmpty() || batch.endpointDeltas.isNotEmpty() || batch.dependencyDeltas.isNotEmpty()
@@ -827,6 +885,23 @@ class ExportScheduler(
             dependenciesListedSent.set(true)
         } catch (t: Throwable) {
             log.log(Level.WARNING, "otherlode: sending dependenciesListed failed, will retry next flush", t)
+        }
+    }
+
+    /**
+     * Sends an empty manifest when the run's unplaced verification failures rose above the total
+     * any confirmed manifest carried and nothing else of this flush carried it. Every manifest
+     * stamps the current total, so a flush with class chunks to send needs no extra one. [flush]
+     * calls this only when every other send of the flush was confirmed. Guarded like the other sends.
+     */
+    private fun sendUnplacedIfDue() {
+        try {
+            if (!delivery.unplacedAheadOfDelivered()) return
+            val listed = dependenciesListed
+            sendStamped(emptyManifest(listed))
+            if (listed) dependenciesListedSent.set(true)
+        } catch (t: Throwable) {
+            log.log(Level.WARNING, "otherlode: sending the unplaced verification failure count failed, will retry next flush", t)
         }
     }
 

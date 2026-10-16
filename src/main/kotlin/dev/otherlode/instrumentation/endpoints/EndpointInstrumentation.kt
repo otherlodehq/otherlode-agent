@@ -3,6 +3,7 @@ package dev.otherlode.instrumentation.endpoints
 import dev.otherlode.bootstrap.OtherlodeEndpoints
 import dev.otherlode.instrumentation.BootstrapHolder
 import dev.otherlode.instrumentation.ClassFileByteCache
+import dev.otherlode.instrumentation.OwnRetransformationFailures
 import dev.otherlode.instrumentation.TypeMatchPolicy
 import dev.otherlode.instrumentation.endpoints.api.AdviceBinder
 import dev.otherlode.instrumentation.endpoints.api.EndpointModule
@@ -46,10 +47,12 @@ class EndpointInstrumentation(
     private val handlerForwarders: HandlerForwarders = HandlerForwarders(),
     /** The cache the JAX-RS supertype walk and every other class-file read of this tier goes through. */
     private val classFileCache: ClassFileByteCache = ClassFileByteCache(),
+    /** Where the lambda factory hook records a class it failed to retransform. */
+    ownRetransformationFailures: OwnRetransformationFailures = OwnRetransformationFailures(),
 ) {
     private val log = System.getLogger(EndpointInstrumentation::class.java.name)
     private val agentClassLoader = EndpointInstrumentation::class.java.classLoader
-    private val lambdaFactoryHook = LambdaFactoryHook(lambdaFactoryShape)
+    private val lambdaFactoryHook = LambdaFactoryHook(lambdaFactoryShape, ownRetransformationFailures)
 
     /** Endpoints a module declared during a transform, held until that transform produces bytes. */
     private val pendingDeclarations = PendingDeclarations()

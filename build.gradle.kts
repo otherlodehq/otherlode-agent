@@ -320,18 +320,20 @@ val verifyAgentJar by tasks.registering {
                 "agent jar is missing vendored third-party licence entries: $missingLicenses"
             }
 
-            // Endpoint advice classes are inlined into framework bytecode by ByteBuddy, never
+            // Advice classes are inlined into framework or JDK bytecode by ByteBuddy, never
             // loaded as ordinary agent classes. Only the annotated method's own bytecode is
             // copied; anything else the advice touches stays a reference the target's own
             // classloader has to resolve, and from a bootstrap-loaded target, or an isolating
             // container loader, that resolution fails with NoClassDefFoundError and the module
-            // disables itself at the first request. Each class under this package must therefore
-            // reference no agent class except itself and the bootstrap seam (with its nested
-            // classes, which load from the same bootstrap jar), call no method on
+            // disables itself at the first request. Each class under an advice package must
+            // therefore reference no agent class except itself and its bootstrap seam (with the
+            // seam's nested classes, which load from the same bootstrap jar), call no method on
             // itself (a private helper is a real call at the woven site), carry no synthetic
             // member (a lambda, a switch over an enum, or an assert compiles to one), and never
-            // mention the relocated Kotlin stdlib. Passes trivially while the package is empty.
-            val adviceClassNames = names.filter { it.startsWith("dev/otherlode/endpoints/") && it.endsWith(".class") }
+            // mention the relocated Kotlin stdlib. Passes trivially while the packages are empty.
+            val adviceSeams = listOf("dev/otherlode/bootstrap/OtherlodeEndpoints", "dev/otherlode/bootstrap/OtherlodeVerifierMessages")
+            val advicePackages = listOf("dev/otherlode/endpoints/", "dev/otherlode/verifier/")
+            val adviceClassNames = names.filter { name -> advicePackages.any { name.startsWith(it) } && name.endsWith(".class") }
             val adviceProblems =
                 adviceClassNames.flatMap { entryName ->
                     val shape = parseClassShape(zip.getInputStream(zip.getEntry(entryName)).use { it.readBytes() })
@@ -343,8 +345,7 @@ val verifyAgentJar by tasks.registering {
                         shape.referencedClasses.filter {
                             it.startsWith("dev/otherlode/") &&
                                 it != shape.name &&
-                                it != "dev/otherlode/bootstrap/OtherlodeEndpoints" &&
-                                !it.startsWith("dev/otherlode/bootstrap/OtherlodeEndpoints$") &&
+                                adviceSeams.none { seam -> it == seam || it.startsWith("$seam$") } &&
                                 !it.startsWith("dev/otherlode/shaded/bytebuddy/")
                         }
                     if (foreignAgentClasses.isNotEmpty()) problems += "references agent classes $foreignAgentClasses"
@@ -353,7 +354,7 @@ val verifyAgentJar by tasks.registering {
                     problems.map { "${shape.name}: $it" }
                 }
             check(adviceProblems.isEmpty()) {
-                "endpoint advice classes must be self-contained (see the comment in verifyAgentJar):\n  " +
+                "advice classes must be self-contained (see the comment in verifyAgentJar):\n  " +
                     adviceProblems.joinToString("\n  ")
             }
         }
@@ -738,6 +739,25 @@ val probeAllocationTest by tasks.registering(Test::class) {
 }
 tasks.test { filter { excludeTestsMatching("dev.otherlode.benchmark.ProbeAllocationTest") } }
 tasks.check { dependsOn(probeAllocationTest) }
+
+// The VerifyError hook weaves a boot class for the rest of the JVM, so each of its test classes
+// runs in a JVM of its own. `-XX:+BytecodeVerificationLocal` makes the JVM verify the woven boot
+// class, which it skips by default. Run it with `./gradlew verifierHookTest`; `test` leaves it out.
+val verifierHookTest by tasks.registering(Test::class) {
+    description = "Weaves java.lang.VerifyError in a JVM per test class and checks what the hook reads."
+    group = "verification"
+    testClassesDirs =
+        sourceSets.test
+            .get()
+            .output.classesDirs
+    classpath = sourceSets.test.get().runtimeClasspath
+    useJUnitPlatform()
+    forkEvery = 1
+    jvmArgs("-Djdk.attach.allowAttachSelf=true", "-XX:+UnlockDiagnosticVMOptions", "-XX:+BytecodeVerificationLocal")
+    filter { includeTestsMatching("dev.otherlode.instrumentation.VerifierHook*Test") }
+}
+tasks.test { filter { excludeTestsMatching("dev.otherlode.instrumentation.VerifierHook*Test") } }
+tasks.check { dependsOn(verifierHookTest) }
 
 // The hot-path suite weaves fixtures through the real transformer, which self-attaches, and reaches
 // the bootstrap seam classes the same way the test source set does.

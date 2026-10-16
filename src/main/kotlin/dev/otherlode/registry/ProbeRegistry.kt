@@ -263,6 +263,7 @@ open class ProbeRegistry(
     private val unreportedByClassName = ConcurrentHashMap<String, UnreportedEntry>()
     private val failedByClassName = ConcurrentHashMap<String, FailedEntry>()
     private val initializationFailures = ConcurrentHashMap<Pair<String, InitializationFailure>, InitializationFailureEntry>()
+    private val unplacedVerificationFailures = AtomicLong(0)
     private val nothingToProbeClassNames = ConcurrentHashMap.newKeySet<String>()
     private val nextClassId = AtomicInteger(0)
     private val nextSnapshotSequence = AtomicLong(0)
@@ -901,6 +902,28 @@ open class ProbeRegistry(
             }
         }
     }
+
+    /**
+     * Records that the JVM's verifier rejected [className] ([InitializationFailure.VERIFIER_REJECTED]),
+     * first seen at [observedAt] in milliseconds since the epoch. Every name is recorded, in scope or
+     * not, and sent once.
+     */
+    fun recordVerifierRejected(
+        className: String,
+        observedAt: Long,
+    ) {
+        initializationFailures.computeIfAbsent(className to InitializationFailure.VERIFIER_REJECTED) {
+            InitializationFailureEntry(observedAt)
+        }
+    }
+
+    /** Adds [count] verification failures whose class the agent could not name to the run's total. */
+    fun recordUnplacedVerificationFailures(count: Long) {
+        if (count > 0) unplacedVerificationFailures.addAndGet(count)
+    }
+
+    /** The run's total of verification failures that named no class the agent could read. */
+    fun unplacedVerificationFailures(): Long = unplacedVerificationFailures.get()
 
     private fun locationsOf(
         entry: ClassEntry,

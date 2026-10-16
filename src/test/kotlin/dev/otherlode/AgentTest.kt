@@ -1,12 +1,14 @@
 package dev.otherlode
 
 import com.sun.net.httpserver.HttpServer
+import dev.otherlode.bootstrap.OtherlodeVerifierMessages
 import dev.otherlode.dependencies.ListedDependency
 import dev.otherlode.export.ClassListing
 import dev.otherlode.export.DependencyDiscoverySource
 import dev.otherlode.export.DependencyIdentity
 import dev.otherlode.export.DependencyIdentitySource
 import dev.otherlode.export.IncludeRules
+import dev.otherlode.export.ProbeManifest
 import dev.otherlode.export.ProtoPayloadCodec
 import dev.otherlode.export.StaticBaseline
 import dev.otherlode.instrumentation.endpoints.api.AdviceBinder
@@ -27,6 +29,7 @@ import java.nio.file.Path
 import java.time.Duration
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlin.test.Test
@@ -415,6 +418,39 @@ class AgentTest {
             running?.stop()
             collector.stop(0)
         }
+    }
+
+    @Test
+    fun `a started agent watches the verifier on every manifest, and stop restores VerifyError`() {
+        val manifests = CopyOnWriteArrayList<ProbeManifest>()
+        val collector = HttpServer.create(InetSocketAddress("localhost", 0), 0)
+        collector.createContext("/") { exchange ->
+            val bytes = exchange.requestBody.readBytes()
+            if (exchange.requestURI.path == "/v1/otherlode/manifest") manifests += ProtoPayloadCodec.decodeProbeManifest(bytes)
+            exchange.sendResponseHeaders(200, -1)
+            exchange.close()
+        }
+        collector.start()
+        val running =
+            Agent.start(
+                "includePackages=dev.otherlode.neverloaded.fixture,flushIntervalSeconds=3600,endpointsEnabled=false," +
+                    "exportUrl=http://localhost:${collector.address.port}",
+                ByteBuddyAgent.install(),
+            )
+        try {
+            assertNotNull(running)
+            assertTrue(running.verifierHook.watch().watched)
+            running.scheduler.flush()
+            assertTrue(manifests.isNotEmpty())
+            assertTrue(manifests.all { it.verifierRejectionsWatched }, "$manifests")
+        } finally {
+            running?.stop()
+            collector.stop(0)
+        }
+
+        OtherlodeVerifierMessages.drain()
+        VerifyError("after stop")
+        assertTrue(OtherlodeVerifierMessages.drain().isEmpty(), "VerifyError keeps its weave after stop")
     }
 
     @Test

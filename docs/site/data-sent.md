@@ -114,7 +114,9 @@ The manifest says what each id in a delta batch names. It carries the resource a
 | `class_references` | Per class: names of classes it refers to outside any probed method |
 | `skipped_classes` | Class name, the reason as free text (usually an exception message), and the time |
 | `failed_classes` | Name of a class that was woven but never loaded, and the time |
-| `classes_failed_to_initialize` | Name of a class the JVM defined whose static initializer threw, the reason (`STATIC_INITIALIZER_THREW`), and the time the agent first saw it. A class is listed once. The two probes behind it, kinds initializer returned and initializer threw, count how often the static initializer returned and how often it threw |
+| `classes_failed_to_initialize` | Name of a class the JVM defined that can never run, the reason, and the time the agent first saw it. The reason is `STATIC_INITIALIZER_THREW` when its static initializer threw, or `VERIFIER_REJECTED` when the JVM's verifier rejected it. A class is listed once per reason. The two probes behind the first reason, kinds initializer returned and initializer threw, count how often the static initializer returned and how often it threw |
+| `unplaced_verification_failures` | How many `VerifyError` messages were in no format the agent reads, plus the messages the agent had no room to keep. Every manifest carries the run's total |
+| `verifier_rejections_watched` | True when the agent's hook on `VerifyError` is installed. Every manifest of a run agrees |
 | `unreported_classes` | Name of a class the agent found loaded that no transformer was offered, and the time |
 | `endpoints` | Per endpoint: `endpoint_id`, verb, route template, the framework's own spelling of the template, framework name, how it was discovered, and the handler class, method and descriptor when known |
 | `disabled_endpoint_modules` | Module name, the reason as free text, the time, and a kind naming why: a linkage error, an advice failure, a transform failure, a route walk failure, or a hook that matched no method |

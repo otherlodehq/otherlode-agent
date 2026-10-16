@@ -17,10 +17,10 @@ import java.lang.instrument.Instrumentation
  * read as never loaded next to a static baseline that declared it.
  *
  * The reverse direction ([confirm]) asks which classes the registry did hear about that the JVM
- * never actually defined: a class ByteBuddy wove and [ProbeRegistry.register] committed, where the
- * verifier then rejected the bytes or `defineClass` raised a `LinkageError` for a supertype absent
- * at load. Left alone, such a class sits in the manifest permanently at zero, which is what a
- * collector reads as dead code.
+ * never actually defined: a class ByteBuddy wove and [ProbeRegistry.register] committed, where
+ * `defineClass` raised a `ClassFormatError`, or a `LinkageError` for a supertype absent at load. A
+ * class the verifier rejects is defined, and a `VerifyError` hook names it instead. Left alone, such
+ * a class sits in the manifest permanently at zero, which is what a collector reads as dead code.
  *
  * Both directions read [Instrumentation.getAllLoadedClasses] once per [run] call and compare it
  * against the registry from opposite sides, so one sweep serves both rather than two independent

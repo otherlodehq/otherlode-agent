@@ -10,6 +10,8 @@ The agent and the testkit are compiled against the JDK 17 API and emit class-fil
 
 The build runs every module's tests on JDK 17, 21 and 25 (Temurin), each as its own CI job. The agent reads two fields of the JDK's lambda factory to name Java lambda handlers, so a JDK that renames them fails a test there. No other JDK version is tested.
 
+The agent weaves the two constructors of `java.lang.VerifyError` at startup to learn which classes the JVM's verifier rejects. On JDK 17 and 21, JFR also transforms `Error` and `Throwable` when it starts, and the two coexist. See [classes](classes#rejected-by-the-verifier).
+
 The agent attaches with `-javaagent` only. The jar has no `agentmain` entry point, so you cannot attach it to a running JVM. See [Attach the agent](attach).
 
 ## Class-file versions

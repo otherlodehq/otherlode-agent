@@ -3,6 +3,8 @@ package dev.otherlode.instrumentation.endpoints
 import dev.otherlode.bootstrap.OtherlodeEndpoints
 import dev.otherlode.endpoints.lambdafactory.SpinInnerClassAdvice
 import dev.otherlode.instrumentation.BootstrapHolder
+import dev.otherlode.instrumentation.OwnRetransformationFailures
+import dev.otherlode.instrumentation.RetransformationOutcome
 import net.bytebuddy.agent.builder.AgentBuilder
 import net.bytebuddy.agent.builder.ResettableClassFileTransformer
 import net.bytebuddy.asm.Advice
@@ -13,7 +15,6 @@ import net.bytebuddy.matcher.ElementMatchers.named
 import net.bytebuddy.matcher.ElementMatchers.none
 import net.bytebuddy.matcher.ElementMatchers.returns
 import net.bytebuddy.matcher.ElementMatchers.takesNoArguments
-import net.bytebuddy.utility.JavaModule
 import java.lang.System.Logger.Level
 import java.lang.instrument.Instrumentation
 import java.lang.invoke.MethodHandleInfo
@@ -98,6 +99,7 @@ data class LambdaFactoryShape(
  */
 class LambdaFactoryHook(
     private val shape: LambdaFactoryShape = LambdaFactoryShape.JDK,
+    private val ownFailures: OwnRetransformationFailures = OwnRetransformationFailures(),
 ) {
     private val log = System.getLogger(LambdaFactoryHook::class.java.name)
     private var transformer: ResettableClassFileTransformer? = null
@@ -116,7 +118,7 @@ class LambdaFactoryHook(
             switchedOff(problem)
             return false
         }
-        val listener = OutcomeListener()
+        val listener = RetransformationOutcome(shape.factoryClass, ownFailures)
         var installed: ResettableClassFileTransformer? = null
         try {
             addJavaBaseReadEdge(instrumentation)
@@ -145,7 +147,7 @@ class LambdaFactoryHook(
         undo(instrumentation, current)
     }
 
-    private fun builder(listener: OutcomeListener): AgentBuilder =
+    private fun builder(listener: RetransformationOutcome): AgentBuilder =
         AgentBuilder
             .Default()
             .with(AgentBuilder.TypeStrategy.Default.DECORATE)
@@ -184,71 +186,12 @@ class LambdaFactoryHook(
         try {
             installed.reset(instrumentation, AgentBuilder.RedefinitionStrategy.RETRANSFORMATION)
         } catch (t: Throwable) {
+            ownFailures.record(shape.factoryClass)
             log.log(Level.WARNING, "otherlode: could not restore the lambda factory: $t")
         }
     }
 
     private fun switchedOff(reason: String) {
         log.log(Level.WARNING, "otherlode: handler lambdas and method references will not be named on this JVM: $reason")
-    }
-
-    /**
-     * Collects what went wrong while the factory was retransformed. ByteBuddy reports a failed
-     * transform to [onError] and leaves the class as it was, and the JVM's own refusal arrives
-     * in [onComplete]. Either one means the hook is off.
-     */
-    private inner class OutcomeListener :
-        AgentBuilder.Listener.Adapter(),
-        AgentBuilder.RedefinitionStrategy.Listener {
-        private var transformed = false
-        private var error: String? = null
-
-        fun failure(): String? = error ?: if (transformed) null else "${shape.factoryClass} was not transformed"
-
-        override fun onTransformation(
-            typeDescription: TypeDescription,
-            classLoader: ClassLoader?,
-            module: JavaModule?,
-            loaded: Boolean,
-            dynamicType: DynamicType,
-        ) {
-            if (typeDescription.name == shape.factoryClass) transformed = true
-        }
-
-        override fun onError(
-            typeName: String,
-            classLoader: ClassLoader?,
-            module: JavaModule?,
-            loaded: Boolean,
-            throwable: Throwable,
-        ) {
-            if (error == null) error = "transforming $typeName failed: $throwable"
-        }
-
-        override fun onBatch(
-            index: Int,
-            batch: List<Class<*>>,
-            types: List<Class<*>>,
-        ) {}
-
-        override fun onError(
-            index: Int,
-            batch: List<Class<*>>,
-            throwable: Throwable,
-            types: List<Class<*>>,
-        ): Iterable<List<Class<*>>> {
-            if (error == null) error = "retransforming ${shape.factoryClass} failed: $throwable"
-            return emptyList()
-        }
-
-        override fun onComplete(
-            amount: Int,
-            types: List<Class<*>>,
-            failures: Map<List<Class<*>>, Throwable>,
-        ) {
-            if (error == null && failures.isNotEmpty()) {
-                error = "retransforming ${shape.factoryClass} failed: ${failures.values.first()}"
-            }
-        }
     }
 }

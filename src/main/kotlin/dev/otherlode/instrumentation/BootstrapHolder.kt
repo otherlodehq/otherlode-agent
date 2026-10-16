@@ -12,8 +12,8 @@ class BootstrapInstallException(
 ) : RuntimeException(message, cause)
 
 /**
- * Puts the `:bootstrap` module's classes, the probe-array holder and the endpoint seam, onto the
- * target JVM's bootstrap classloader.
+ * Puts the `:bootstrap` module's classes, the probe-array holder, the endpoint seam and the
+ * verifier message ring, onto the target JVM's bootstrap classloader.
  *
  * The holder jar ships embedded in the agent jar as a resource, under a name that does not end
  * in `.jar` because the shadow plugin would otherwise explode it into loose classes at build
@@ -26,6 +26,7 @@ object BootstrapHolder {
     const val DEFAULT_RESOURCE = "META-INF/otherlode/bootstrap-jar.bin"
     const val HOLDER_CLASS_NAME = "dev.otherlode.bootstrap.OtherlodeProbeArrays"
     const val ENDPOINTS_CLASS_NAME = "dev.otherlode.bootstrap.OtherlodeEndpoints"
+    const val VERIFIER_MESSAGES_CLASS_NAME = "dev.otherlode.bootstrap.OtherlodeVerifierMessages"
 
     /**
      * Idempotent: a JVM where the holder is already bootstrap-visible (a second install call, a
@@ -66,7 +67,10 @@ object BootstrapHolder {
      * otherwise pass this check and fail as a [NoClassDefFoundError] inside a framework class much
      * further downstream.
      */
-    fun isInstalled(): Boolean = isLoadableFromBootstrap(HOLDER_CLASS_NAME) && isLoadableFromBootstrap(ENDPOINTS_CLASS_NAME)
+    fun isInstalled(): Boolean =
+        isLoadableFromBootstrap(HOLDER_CLASS_NAME) &&
+            isLoadableFromBootstrap(ENDPOINTS_CLASS_NAME) &&
+            isLoadableFromBootstrap(VERIFIER_MESSAGES_CLASS_NAME)
 
     private fun isLoadableFromBootstrap(className: String): Boolean =
         try {
