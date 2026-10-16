@@ -10,7 +10,6 @@ import java.nio.file.Path
 import java.security.ProtectionDomain
 import java.util.WeakHashMap
 import java.util.jar.JarFile
-import java.util.zip.ZipInputStream
 
 /**
  * Finds the dependency a loaded class came from, by its [ProtectionDomain].
@@ -112,14 +111,14 @@ internal class DependencyResolver(
 
         fun readFlat(path: Path): JarContents = JarFile(path.toFile()).use(JarContents::of)
 
-        /** Streams [entryName] out of [outerJar], the way the startup listing reads a nested jar. */
+        /** Reads [entryName] out of [outerJar] with [NestedJarReader], as the startup listing does. */
         fun readNested(
             outerJar: Path,
             entryName: String,
         ): JarContents =
             JarFile(outerJar.toFile()).use { jar ->
                 val entry = jar.getJarEntry(entryName) ?: throw FileNotFoundException("$outerJar!/$entryName")
-                ZipInputStream(jar.getInputStream(entry)).use(JarContents::of)
+                NestedJarReader.read(jar, entry)
             }
     }
 }

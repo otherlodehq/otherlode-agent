@@ -3,7 +3,7 @@ package dev.otherlode.classlisting
 import dev.otherlode.dependencies.ClasspathVisitor
 import dev.otherlode.dependencies.ClasspathWalker
 import dev.otherlode.dependencies.JarClassifier
-import dev.otherlode.dependencies.JarContents
+import dev.otherlode.dependencies.NestedJarReader
 import dev.otherlode.dependencies.bootLibPrefixes
 import dev.otherlode.dependencies.nestedJarNames
 import dev.otherlode.instrumentation.TypeMatchPolicy
@@ -21,7 +21,6 @@ import java.nio.file.attribute.BasicFileAttributes
 import java.util.jar.Attributes
 import java.util.jar.JarFile
 import java.util.jar.Manifest
-import java.util.zip.ZipInputStream
 
 /**
  * Lists the classes the startup classpath holds under the include rules, by name, without reading
@@ -236,7 +235,7 @@ class ClassLister(
         for (entryName in nestedJarNames(jarFile, attributes)) {
             val entry = jarFile.getJarEntry(entryName) ?: continue
             try {
-                val contents = ZipInputStream(jarFile.getInputStream(entry)).use(JarContents::of)
+                val contents = NestedJarReader.read(jarFile, entry)
                 (contents.classNames + contents.versionedClassNames).filterTo(names) {
                     TypeMatchPolicy.isIncluded(it, includes, excludes)
                 }

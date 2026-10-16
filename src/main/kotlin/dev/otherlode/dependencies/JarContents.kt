@@ -12,7 +12,8 @@ import java.util.zip.ZipInputStream
 /**
  * What the dependency listing needs from one jar: the names of the classes it holds, its
  * `pom.properties` files and its manifest. Read in one pass over the jar's entries, from a
- * [JarFile] for a jar on disk or a [ZipInputStream] for a jar stored inside another.
+ * [JarFile] for a jar on disk. [NestedJarReader] reads a jar stored inside another from its central
+ * directory, and streams one the outer jar compresses through a [ZipInputStream].
  *
  * [classNames] are dotted, distinct, and counted by [isClassEntry], the same rule the static
  * baseline scan uses. [versionedClassNames] are the dotted names of the classes a multi-release
@@ -31,8 +32,8 @@ internal class JarContents(
     val versionedClassNames: Set<String> = emptySet(),
 ) {
     companion object {
-        private val POM_PROPERTIES = Regex("^META-INF/maven/[^/]+/[^/]+/pom\\.properties$")
-        private const val MANIFEST_ENTRY = "META-INF/MANIFEST.MF"
+        internal val POM_PROPERTIES = Regex("^META-INF/maven/[^/]+/[^/]+/pom\\.properties$")
+        internal const val MANIFEST_ENTRY = "META-INF/MANIFEST.MF"
 
         fun of(jarFile: JarFile): JarContents {
             val classNames = linkedSetOf<String>()
@@ -80,8 +81,8 @@ internal class JarContents(
             return JarContents(classNames, poms, manifest, versioned)
         }
 
-        private fun dottedName(entryName: String): String = entryName.removeSuffix(".class").replace('/', '.')
+        internal fun dottedName(entryName: String): String = entryName.removeSuffix(".class").replace('/', '.')
 
-        private fun loadProperties(bytes: ByteArray): Properties = Properties().apply { load(ByteArrayInputStream(bytes)) }
+        internal fun loadProperties(bytes: ByteArray): Properties = Properties().apply { load(ByteArrayInputStream(bytes)) }
     }
 }

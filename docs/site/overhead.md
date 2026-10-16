@@ -64,9 +64,9 @@ Startup is the cost to watch. In the run above, the narrow rules added 3.8 s to 
 
 Two pieces of work that would otherwise be startup cost run later:
 
-- The dependency listing, which reads every jar on the classpath to find its identity, starts at the top of the first flush on the export thread, not in `premain`. It reads each nested jar in a fat jar.
+- The dependency listing, which reads every jar on the classpath to find its identity, starts at the top of the first flush on the export thread, not in `premain`. It reads each nested jar in a fat jar from its central directory, and decompresses only the `pom.properties` files and manifest it needs.
 - The first full manifest goes out on the first flush, at a random point inside the first interval.
-- The class listing (on by default) runs on its own background thread, named `otherlode-class-listing`, started once at startup and not in `premain`. It reads the file names in each class folder and the central directory of each jar on the classpath. A jar nested in a Spring Boot fat jar has to be streamed and decompressed to read its entry names, as the dependency listing also does at startup. It parses no class file, and it runs once per process. A JVM started with no class path reads the working directory as its class path, and the listing then walks every folder under it, so start the application from its own folder or give it a class path. With `classListingEnabled=false` the thread does not start. See [classes](classes#the-class-listing).
+- The class listing (on by default) runs on its own background thread, named `otherlode-class-listing`, started once at startup and not in `premain`. It reads the file names in each class folder and the central directory of each jar on the classpath. It reads a jar nested in a Spring Boot fat jar the same way, from that jar's central directory, so it decompresses nothing to read entry names. It parses no class file, and it runs once per process. A JVM started with no class path reads the working directory as its class path, and the listing then walks every folder under it, so start the application from its own folder or give it a class path. With `classListingEnabled=false` the thread does not start. See [classes](classes#the-class-listing).
 
 ## The flush thread and the network
 

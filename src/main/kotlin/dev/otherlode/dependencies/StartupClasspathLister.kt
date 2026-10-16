@@ -9,7 +9,6 @@ import java.lang.System.Logger.Level
 import java.util.jar.Attributes
 import java.util.jar.JarFile
 import java.util.jar.Manifest
-import java.util.zip.ZipInputStream
 
 /**
  * One dependency the startup listing found, or the sweep found at load. [origin] is where its
@@ -170,7 +169,7 @@ class StartupClasspathLister(
             for (entryName in nestedJarNames(jarFile, attributes)) {
                 val entry = jarFile.getJarEntry(entryName) ?: continue
                 try {
-                    val contents = ZipInputStream(jarFile.getInputStream(entry)).use(JarContents::of)
+                    val contents = NestedJarReader.read(jarFile, entry)
                     val origin = DependencyOrigin.NestedJar(outer.toPath(), entryName)
                     val listed =
                         classifier.classifyNested(contents, entryName.substringAfterLast('/'), entryName, "$outer!/$entryName", origin)
