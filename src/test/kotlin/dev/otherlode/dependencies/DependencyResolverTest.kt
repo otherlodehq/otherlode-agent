@@ -112,7 +112,7 @@ class DependencyResolverTest {
     }
 
     @Test
-    fun `an unknown nested jar that is a dependency is streamed from its outer jar and registered as discovered by load`() {
+    fun `an unknown nested jar that is a dependency is read from its outer jar and registered as discovered by load`() {
         val nested = TestJars.bytes(listOf(pom("org.inner", "inner", "1.0"), classEntry("org.inner.A")))
         val outer = TestJars.write(dir.resolve("app.war"), listOf("WEB-INF/lib/inner-1.0.jar" to nested))
 
@@ -123,6 +123,24 @@ class DependencyResolverTest {
         assertEquals(DependencyDiscoverySource.LOAD, entry.discoverySource)
         assertEquals("WEB-INF/lib/inner-1.0.jar", entry.location)
         assertEquals(DependencyOrigin.NestedJar(outer, "WEB-INF/lib/inner-1.0.jar"), entry.origin)
+    }
+
+    @Test
+    fun `an unknown nested jar is read from its central directory, so junk between its entries hides no class`() {
+        val (pomName, pomBytes) = pom("org.inner", "inner", "1.0")
+        val nested =
+            RawZip.build(
+                listOf(
+                    RawZip.stored(pomName, pomBytes),
+                    RawZip.stored("org/inner/A.class", ByteArray(4)),
+                    RawZip.stored("org/inner/B.class", ByteArray(4), junkBefore = ByteArray(37) { 7 }),
+                ),
+            )
+        val outer = TestJars.write(dir.resolve("app.war"), listOf("WEB-INF/lib/inner-1.0.jar" to nested))
+
+        resolver().resolveLocation("jar:file:$outer!/WEB-INF/lib/inner-1.0.jar!/")
+
+        assertEquals(2, registry.entries().single().classCount)
     }
 
     @Test

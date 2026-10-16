@@ -1,5 +1,6 @@
 package dev.otherlode.classlisting
 
+import dev.otherlode.dependencies.RawZip
 import dev.otherlode.dependencies.TestJars
 import dev.otherlode.dependencies.TestJars.classEntry
 import org.junit.jupiter.api.io.TempDir
@@ -481,5 +482,46 @@ class ClassListerTest {
         )
 
         assertEquals(listOf("com.acme.Root", "com.acme.core.Core"), lister(classPath(app)).list())
+    }
+
+    private fun fatJarOf(nested: ByteArray): Path =
+        bootJar(
+            "app.jar",
+            listOf(
+                "BOOT-INF/classes/com/acme/App.class" to ByteArray(4),
+                "BOOT-INF/lib/lib-1.0.jar" to nested,
+            ),
+        )
+
+    @Test
+    fun `a nested jar with junk between its entries lists every class its central directory names`() {
+        val nested =
+            RawZip.build(
+                listOf(
+                    RawZip.stored("com/acme/One.class", ByteArray(4)),
+                    RawZip.stored("com/acme/Two.class", ByteArray(4), junkBefore = ByteArray(37) { 7 }),
+                ),
+            )
+
+        assertEquals(listOf("com.acme.App", "com.acme.One", "com.acme.Two"), lister(classPath(fatJarOf(nested))).list())
+    }
+
+    @Test
+    fun `a nested jar whose class entries hold corrupt compressed data still lists them by name`() {
+        val nested = RawZip.build(listOf(RawZip.corruptDeflated("com/acme/One.class"), RawZip.corruptDeflated("com/acme/Two.class")))
+
+        assertEquals(listOf("com.acme.App", "com.acme.One", "com.acme.Two"), lister(classPath(fatJarOf(nested))).list())
+    }
+
+    @Test
+    fun `a nested jar with a truncated central directory gives no listing and a WARNING naming it`() {
+        val nested = RawZip.build(listOf(RawZip.stored("com/acme/One.class", ByteArray(4))), centralBytesKept = 20)
+        var listed: List<String>? = listOf("unset")
+
+        val warnings = warningsFrom { listed = lister(classPath(fatJarOf(nested))).list() }
+
+        assertNull(listed)
+        assertEquals(1, warnings.size, warnings.toString())
+        assertTrue("BOOT-INF/lib/lib-1.0.jar" in warnings.single().message, warnings.single().message)
     }
 }

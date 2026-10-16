@@ -744,4 +744,51 @@ class StartupClasspathListerTest {
 
         assertEquals(emptyList(), artifacts(lister(classPath(agent, app)).list()))
     }
+
+    @Test
+    fun `a nested jar with junk between its entries lists every class its central directory names`() {
+        val nested =
+            RawZip.build(
+                listOf(
+                    RawZip.stored("org/lib/One.class", ByteArray(4)),
+                    RawZip.stored("org/lib/Two.class", ByteArray(4), junkBefore = ByteArray(37) { 7 }),
+                    RawZip.stored("org/lib/Three.class", ByteArray(4)),
+                ),
+            )
+        val fat =
+            TestJars.write(
+                dir.resolve("app.jar"),
+                listOf("BOOT-INF/lib/lib-1.0.jar" to nested),
+                mapOf("Spring-Boot-Lib" to "BOOT-INF/lib/"),
+            )
+
+        val listed = lister(classPath(fat)).list()
+
+        assertEquals(listOf("lib"), artifacts(listed))
+        assertEquals(3, listed.single().classCount)
+    }
+
+    @Test
+    fun `a nested jar whose class entries hold corrupt compressed data lists them by name and still reads its deflated pom properties`() {
+        val (pomName, pomBytes) = pom("org.lib", "lib", "9.1")
+        val nested =
+            RawZip.build(
+                listOf(
+                    RawZip.corruptDeflated("org/lib/One.class"),
+                    RawZip.corruptDeflated("org/lib/Two.class"),
+                    RawZip.deflated(pomName, pomBytes),
+                ),
+            )
+        val fat =
+            TestJars.write(
+                dir.resolve("app.jar"),
+                listOf("BOOT-INF/lib/lib-1.0.jar" to nested),
+                mapOf("Spring-Boot-Lib" to "BOOT-INF/lib/"),
+            )
+
+        val listed = lister(classPath(fat)).list()
+
+        assertEquals(listOf(DependencyIdentity("org.lib", "lib", "9.1")), listed.single().identities)
+        assertEquals(2, listed.single().classCount)
+    }
 }
