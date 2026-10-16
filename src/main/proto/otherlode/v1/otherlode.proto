@@ -731,6 +731,13 @@ message ProbeManifest {
   // counts are not evidence that code never ran, since any zero-hit class may be the one the
   // verifier rejected.
   int64 unplaced_verification_failures = 20;
+  // True when the agent's hook on the JVM's VerifyError is installed and so can see the verifier's
+  // rejections. Set on every manifest the run sends. The agent installs the hook before its first
+  // payload, so a run's manifests agree; a rejection before the hook would be lost for good, so a run
+  // any of whose manifests carries false is unwatched, and its zero counts are not evidence that code
+  // never ran, since a class the verifier rejected fires no probe. False from an agent that predates
+  // the field.
+  bool verifier_rejections_watched = 21;
 }
 
 // No line field, unlike ProbeLocation: the static scan records no line for a

@@ -450,6 +450,29 @@ class ProtoPayloadCodecTest {
     }
 
     @Test
+    fun `the verifier rejections watched flag round-trips through the manifest`() {
+        val manifest =
+            ProbeManifest(
+                ResourceAttributes("checkout", "1.0.0", "", null, "run-1"),
+                emptyList(),
+                verifierRejectionsWatched = true,
+            )
+
+        val wire = ProtoProbeManifest.parseFrom(ProtoPayloadCodec.encode(manifest))
+
+        assertTrue(wire.verifierRejectionsWatched)
+        assertEquals(manifest, ProtoPayloadCodec.decodeProbeManifest(ProtoPayloadCodec.encode(manifest)))
+    }
+
+    @Test
+    fun `the verifier rejections watched flag defaults to false`() {
+        val manifest = ProbeManifest(ResourceAttributes("checkout", "1.0.0", "", null, "run-1"), emptyList())
+
+        assertFalse(manifest.verifierRejectionsWatched)
+        assertFalse(ProtoPayloadCodec.decodeProbeManifest(ProtoPayloadCodec.encode(manifest)).verifierRejectionsWatched)
+    }
+
+    @Test
     fun `an unspecified initialization failure on the wire is rejected`() {
         val wire =
             ProtoProbeManifest

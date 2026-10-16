@@ -714,6 +714,12 @@ enum class BodyKind {
  * delta batch was confirmed, otherwise the start of the flush in which its unconfirmed hits began.
  * While the highest-sequence payload carries another value, the run's zero hit totals are not
  * evidence that code never ran. It is drawn together with [payloadSequence].
+ *
+ * [verifierRejectionsWatched] is true when the agent's hook on the JVM's `VerifyError` is installed
+ * and so can see the verifier's rejections. The agent sets it on every manifest it sends and installs
+ * the hook before its first payload, so a run's manifests agree. A run any of whose manifests carries
+ * false is unwatched: its zero counts are not evidence that code never ran, since a class the
+ * verifier rejected fires no probe. False from an agent that predates the field.
  */
 data class ProbeManifest(
     val resource: ResourceAttributes,
@@ -733,6 +739,7 @@ data class ProbeManifest(
     val countsPendingSince: Long = 0,
     val classesFailedToInitialize: List<ClassFailedToInitialize> = emptyList(),
     val unplacedVerificationFailures: Long = 0,
+    val verifierRejectionsWatched: Boolean = false,
 )
 
 /**

@@ -122,14 +122,27 @@ order:
    verifier), ignore null messages, the class-file API's formats and names
    the agent's own retransformation failed on, send every parsed name, count
    the rest and overflow as unplaced, and set `verifier_rejections_watched`.
-   A test pins coexistence with JFR on 17 and 21.
+   A test pins coexistence with JFR on 17 and 21. Install the hook in
+   `premain` before the scheduler's first send, and set the flag in
+   `ExportScheduler`'s `stamp`, which every manifest passes through (class
+   chunks, riders-only chunks and the dependencies-listed empty manifest);
+   a test asserts it on each. A change in the unplaced count alone must
+   send a manifest.
 6. **Testkit and demo collector.** Report classes that failed to
    initialise; the ABI dump grows again. Chunk 1 already keeps a slot out
-   of every judgement.
+   of every judgement. Read `verifier_rejections_watched` and
+   `unplaced_verification_failures` per run, as `referencesRecorded` and
+   `runsRecordingReferences` are read, and make zero-count queries refuse
+   or say so for an unwatched or unplaced run, never return a clean list.
+   Give the testkit's tests a manifest fixture that defaults to watched,
+   and pin the unwatched case.
 7. **Server**, on branch `failed-to-initialise` in a worktree: ingest and a
    migration, the hierarchy derivation, the class-finding and never-hit
    rules, the dependency status, the page beside "Failed to load". Merge
-   only on Luke's word, since a push to its master deploys.
+   once it is verified (Luke cleared server merges on 2026-10-16; a push to
+   its master deploys), and only after
+   step 5: with the server rule live and no agent sending
+   `verifier_rejections_watched`, every run reads as unwatched.
 8. **Docs**, copy pre-approved (pre-release item 4): the agent's `classes.md` and `data-sent.md:83` (probe
    kinds), the server's `findings.md` and UI copy, and the `ProbeLocation`
    field comments saying which fields a slot carries. With them,

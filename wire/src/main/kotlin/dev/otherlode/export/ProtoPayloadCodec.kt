@@ -162,6 +162,7 @@ object ProtoPayloadCodec {
             .setCountsPendingSince(manifest.countsPendingSince)
             .addAllClassesFailedToInitialize(manifest.classesFailedToInitialize.map { toProto(it) })
             .setUnplacedVerificationFailures(manifest.unplacedVerificationFailures)
+            .setVerifierRejectionsWatched(manifest.verifierRejectionsWatched)
             .build()
 
     private fun fromProto(manifest: ProtoProbeManifest): ProbeManifest =
@@ -183,6 +184,7 @@ object ProtoPayloadCodec {
             countsPendingSince = manifest.countsPendingSince,
             classesFailedToInitialize = manifest.classesFailedToInitializeList.map { fromProto(it) },
             unplacedVerificationFailures = manifest.unplacedVerificationFailures,
+            verifierRejectionsWatched = manifest.verifierRejectionsWatched,
         )
 
     private fun toProto(unreportedClass: UnreportedClass): ProtoUnreportedClass =
