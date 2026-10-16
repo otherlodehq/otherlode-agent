@@ -101,6 +101,7 @@ class Harness(
                     }
                 }
             }
+            if (failures.isEmpty()) failures += variantWarmthProblems(runs)
         } finally {
             writeResults(runs, collector)
             collector.stop()
@@ -188,50 +189,72 @@ class Harness(
         } catch (e: Exception) {
             runCatching { log = petclinic.logs }
             Files.writeString(dir.resolve("petclinic.log"), log)
-            throw if (e is InvalidRunException) e else InvalidRunException("${e::class.simpleName}: ${e.message}")
+            throw failed(e, metrics)
         } finally {
             runCatching { petclinic.stop() }
             runCatching { postgres.stop() }
         }
-        Files.writeString(dir.resolve("petclinic.log"), log)
-        val collectorLog = collector.logs.let { if (it.length >= collectorLogStart) it.substring(collectorLogStart) else it }
-        Files.writeString(dir.resolve("collector.log"), collectorLog)
+        return try {
+            Files.writeString(dir.resolve("petclinic.log"), log)
+            val collectorLog = collector.logs.let { if (it.length >= collectorLogStart) it.substring(collectorLogStart) else it }
+            Files.writeString(dir.resolve("collector.log"), collectorLog)
 
-        val problems = mutableListOf<String>()
-        if (LogScan.hasVerifyError(log)) problems += "PetClinic's log contains VerifyError"
-        agentErrors(log).takeIf { it.isNotEmpty() }?.let { problems += "the agent logged errors: ${it.joinToString(" | ")}" }
-        LogScan.bootProcessSeconds(log)?.let { metrics["bootProcessSeconds"] = it }
-            ?: problems.add("PetClinic's log has no Started PetClinicApplication line")
-        val metricsAfter = collectorMetrics(collector)
-        if (variant != Variant.NONE) {
-            problems += collectorProblems(metricsBefore, metricsAfter, expectBaseline = variant == Variant.AGENT_BASELINE)
-            val manifests = ManifestCounts.parse(collectorLog)
-            metrics["manifestProbes"] = manifests.probes.toDouble()
-            metrics["manifestEndpoints"] = manifests.endpoints.toDouble()
-            metrics["manifestSkippedClasses"] = manifests.skippedClasses.toDouble()
-            if (manifests.probes <= 0) problems += "the agent's manifests carried no probe: nothing was instrumented"
-            if (manifests.endpoints <= 0) problems += "the agent's manifests carried no endpoint"
-            if (manifests.disabledEndpointModules >
-                0
-            ) {
-                problems += "the agent disabled ${manifests.disabledEndpointModules} endpoint module(s)"
+            val problems = mutableListOf<String>()
+            if (LogScan.hasVerifyError(log)) problems += "PetClinic's log contains VerifyError"
+            agentErrors(log).takeIf { it.isNotEmpty() }?.let { problems += "the agent logged errors: ${it.joinToString(" | ")}" }
+            LogScan.bootProcessSeconds(log)?.let { metrics["bootProcessSeconds"] = it }
+                ?: problems.add("PetClinic's log has no Started PetClinicApplication line")
+            val metricsAfter = collectorMetrics(collector)
+            if (variant != Variant.NONE) {
+                problems += collectorProblems(metricsBefore, metricsAfter, expectBaseline = variant == Variant.AGENT_BASELINE)
+                val manifests = ManifestCounts.parse(collectorLog)
+                metrics["manifestProbes"] = manifests.probes.toDouble()
+                metrics["manifestEndpoints"] = manifests.endpoints.toDouble()
+                metrics["manifestSkippedClasses"] = manifests.skippedClasses.toDouble()
+                if (manifests.probes <= 0) problems += "the agent's manifests carried no probe: nothing was instrumented"
+                if (manifests.endpoints <= 0) problems += "the agent's manifests carried no endpoint"
+                if (manifests.disabledEndpointModules >
+                    0
+                ) {
+                    problems += "the agent disabled ${manifests.disabledEndpointModules} endpoint module(s)"
+                }
             }
+            metrics["collectorDeltasAccepted"] = (metricsAfter.accepted("deltas") - metricsBefore.accepted("deltas")).toDouble()
+            metrics["collectorManifestAccepted"] = (metricsAfter.accepted("manifest") - metricsBefore.accepted("manifest")).toDouble()
+            metrics["collectorBaselineAccepted"] =
+                (metricsAfter.accepted("static_baseline") - metricsBefore.accepted("static_baseline")).toDouble()
+            metrics += JfrMetrics.read(dir.resolve("measure.jfr"))
+            metrics += perRequest(metrics)
+
+            val checks = metrics["checksPassRate"] ?: 0.0
+            if (checks < 1.0) problems += "k6 checks pass rate was $checks, below 1.0"
+            warmthProblem(metrics)?.let { problems += it }
+            metrics["cpuCoresAvg"]?.let { saturationProblem(it, cpuSplit.petclinicCores)?.let { p -> problems += p } }
+            if (problems.isNotEmpty()) throw InvalidRunException(problems.joinToString("; "))
+
+            val skipped = if (variant == Variant.NONE) emptyList() else LogScan.skippedClasses(log)
+            RunRecord(settings.config, variant, repeat, metrics, skipped)
+        } catch (e: Exception) {
+            throw failed(e, metrics)
         }
-        metrics["collectorDeltasAccepted"] = (metricsAfter.accepted("deltas") - metricsBefore.accepted("deltas")).toDouble()
-        metrics["collectorManifestAccepted"] = (metricsAfter.accepted("manifest") - metricsBefore.accepted("manifest")).toDouble()
-        metrics["collectorBaselineAccepted"] =
-            (metricsAfter.accepted("static_baseline") - metricsBefore.accepted("static_baseline")).toDouble()
-        metrics += JfrMetrics.read(dir.resolve("measure.jfr"))
-        metrics += perRequest(metrics)
+    }
 
-        val checks = metrics["checksPassRate"] ?: 0.0
-        if (checks < 1.0) problems += "k6 checks pass rate was $checks, below 1.0"
-        warmthProblem(metrics)?.let { problems += it }
-        metrics["cpuCoresAvg"]?.let { saturationProblem(it, cpuSplit.petclinicCores)?.let { p -> problems += p } }
-        if (problems.isNotEmpty()) throw InvalidRunException(problems.joinToString("; "))
+    /**
+     * [e] as the run's failure, with the window's drift added when the window ran and its drift lay
+     * past [MAX_WINDOW_DRIFT].
+     */
+    private fun failed(
+        e: Exception,
+        metrics: MutableMap<String, Double>,
+    ): InvalidRunException {
+        val message = if (e is InvalidRunException) e.message else "${e::class.simpleName}: ${e.message}"
+        return InvalidRunException(listOfNotNull(message, driftNote(metrics)).joinToString("; "))
+    }
 
-        val skipped = if (variant == Variant.NONE) emptyList() else LogScan.skippedClasses(log)
-        return RunRecord(settings.config, variant, repeat, metrics, skipped)
+    /** What a failed run's window drift adds to its failure, when the window ran and its drift lay past [MAX_WINDOW_DRIFT]. */
+    private fun driftNote(metrics: MutableMap<String, Double>): String? {
+        if (warmthProblem(metrics) != null) return null
+        return metrics["warmupDrift"]?.let(::driftBeyondBound)?.let { "its window's last third also drifted $it from its first" }
     }
 
     private fun petclinicContainer(variant: Variant): Box {
@@ -289,7 +312,7 @@ class Harness(
      * recording runs through it: leaving the recording out of the warmup makes the measured one pay
      * for JFR's own first use (class loading and JIT of its event code) inside the window, and the
      * variants then disagree for reasons unrelated to the agent. Reaching the cap is not a failure
-     * here; the window's warmth rule judges the run.
+     * here; the variant's warmth rule judges its windows once the matrix has run.
      */
     private fun warmup(
         petclinic: Box,
@@ -414,7 +437,7 @@ class Harness(
         Files.writeString(dir.resolve("runs.csv"), runsCsv(runs))
         val summary = StringBuilder(summaryMarkdown(settings.config, runs))
         if (failures.isNotEmpty()) {
-            summary.append("\n### Invalid run\n\n").append(failures.joinToString("\n") { "- $it" }).append('\n')
+            summary.append("\n### Why the run is invalid\n\n").append(failures.joinToString("\n") { "- $it" }).append('\n')
         }
         Files.writeString(dir.resolve("summary.md"), summary.toString())
         runCatching { Files.writeString(dir.resolve("metadata.properties"), metadata(collector)) }
@@ -462,7 +485,12 @@ class Harness(
                 "agent.jar.sha256" to sha,
                 "agent.repo.commit" to git(settings.agentRepoDir, "rev-parse", "HEAD"),
                 // The jar may predate the commit: CI builds it fresh, a local run may not.
-                "agent.repo.dirty" to git(settings.agentRepoDir, "status", "--porcelain").isNotEmpty().toString(),
+                "agent.repo.dirty" to
+                    git(
+                        settings.agentRepoDir,
+                        *dirtyCheck(settings.agentRepoDir.toRealPath(), settings.collectorDir.toRealPath()).toTypedArray(),
+                    ).isNotEmpty()
+                        .toString(),
                 "agent.jar.modified" to Files.getLastModifiedTime(settings.agentJar).toString(),
                 "petclinic.commit" to PETCLINIC_SHA,
                 "collector.dir" to settings.collectorDir.toString(),

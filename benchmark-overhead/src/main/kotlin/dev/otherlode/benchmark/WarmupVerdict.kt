@@ -8,7 +8,7 @@ enum class WarmupVerdict {
     /** The last two slices each matched the one before within the drift bound, and the minimum has passed. */
     STEADY,
 
-    /** The cap was reached without the throughput settling. The window's own warmth rule judges the run. */
+    /** The cap was reached without the throughput settling. The variant's warmth rule judges its windows. */
     CAPPED,
 }
 

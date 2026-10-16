@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import java.nio.file.Paths
 
 class DerivedTest {
     @Test
@@ -71,6 +72,98 @@ class DerivedTest {
     fun `a window without the thirds' counts is reported, not passed`() {
         assertNotNull(warmthProblem(mutableMapOf("k6LastThirdRequests" to 1.0)))
         assertNotNull(warmthProblem(mutableMapOf("k6FirstThirdRequests" to 0.0, "k6LastThirdRequests" to 1.0)))
+    }
+
+    private fun drifted(
+        vararg drifts: Double,
+        steady: Double = 0.0,
+    ) = drifts.mapIndexed { i, d ->
+        RunRecord(Config.HEADLINE, Variant.AGENT, i + 1, mapOf("warmupDrift" to d, "warmupSteady" to steady), emptyList())
+    }
+
+    @Test
+    fun `a variant whose median drift is inside the bound passes although one repeat drifted far`() {
+        assertNull(variantWarmthProblem(Variant.AGENT, drifted(1.17, 1.02, 0.99, 1.04, 1.01)))
+    }
+
+    @Test
+    fun `a variant whose median drift is above the bound names the rise and the steady count`() {
+        val steady = variantWarmthProblem(Variant.AGENT, drifted(1.12, 1.15, 1.20, steady = 1.0))
+        assertNotNull(steady)
+        assertTrue("agent" in steady!! && "15.0% more" in steady && "3 of 3 warmups ended steady" in steady, steady)
+        val capped = variantWarmthProblem(Variant.AGENT, drifted(1.12, 1.15, 1.20))
+        assertNotNull(capped)
+        assertTrue("raise -PwarmupSeconds" in capped!!, capped)
+    }
+
+    @Test
+    fun `a variant whose median drift is below the bound names the degradation`() {
+        val problem = variantWarmthProblem(Variant.AGENT, drifted(0.85, 0.80, 1.00))
+        assertNotNull(problem)
+        assertTrue("15.0% fewer" in problem!! && "degraded" in problem, problem)
+    }
+
+    @Test
+    fun `a variant with an even count of repeats is judged by the mean of the middle two`() {
+        assertNull(variantWarmthProblem(Variant.AGENT, drifted(1.00, 1.04, 1.14, 1.30)))
+        assertNotNull(variantWarmthProblem(Variant.AGENT, drifted(1.00, 1.08, 1.14, 1.30)))
+    }
+
+    @Test
+    fun `with two repeats the median is their mean, so one drifted run can fail its variant`() {
+        assertNotNull(variantWarmthProblem(Variant.AGENT, drifted(1.00, 1.25)))
+        assertNull(variantWarmthProblem(Variant.AGENT, drifted(1.00, 1.25, 1.01)))
+    }
+
+    @Test
+    fun `the dirty check leaves out a collector checked out inside the agent repository`() {
+        val repo = Paths.get("/work/agent")
+        assertEquals(
+            listOf("status", "--porcelain", "--", ".", ":(exclude,literal)otherlode-collector"),
+            dirtyCheck(repo, repo.resolve("otherlode-collector")),
+        )
+        assertEquals(listOf("status", "--porcelain"), dirtyCheck(repo, Paths.get("/work/otherlode-collector")))
+    }
+
+    @Test
+    fun `a median exactly on the bound passes`() {
+        assertNull(variantWarmthProblem(Variant.AGENT, drifted(1.10)))
+        assertNull(variantWarmthProblem(Variant.AGENT, drifted(0.90)))
+    }
+
+    @Test
+    fun `a variant with no runs has no problem`() {
+        assertNull(variantWarmthProblem(Variant.AGENT, emptyList()))
+    }
+
+    @Test
+    fun `a run that recorded no drift is reported, not left out of the median`() {
+        val runs = drifted(1.0, 1.0) + RunRecord(Config.HEADLINE, Variant.AGENT, 3, emptyMap(), emptyList())
+        val problem = variantWarmthProblem(Variant.AGENT, runs)
+        assertNotNull(problem)
+        assertTrue("1 of 3 runs recorded no warmupDrift" in problem!!, problem)
+    }
+
+    @Test
+    fun `every variant with runs is judged, and only the unsteady ones are reported`() {
+        fun runs(
+            variant: Variant,
+            vararg drifts: Double,
+        ) = drifts.mapIndexed { i, d -> RunRecord(Config.HEADLINE, variant, i + 1, mapOf("warmupDrift" to d), emptyList()) }
+        val oneUnsteady = variantWarmthProblems(runs(Variant.NONE, 1.0, 1.01) + runs(Variant.AGENT, 1.2, 1.3))
+        assertEquals(1, oneUnsteady.size, oneUnsteady.toString())
+        assertTrue(oneUnsteady.single().startsWith("agent:"), oneUnsteady.toString())
+        val allUnsteady = variantWarmthProblems(runs(Variant.NONE, 0.8) + runs(Variant.AGENT, 1.2) + runs(Variant.AGENT_BASELINE, 1.3))
+        assertEquals(3, allUnsteady.size, allUnsteady.toString())
+        assertEquals(emptyList<String>(), variantWarmthProblems(emptyList()))
+    }
+
+    @Test
+    fun `a drift is shown only when it lies past the bound, to one decimal place`() {
+        assertEquals("+10.0%", driftBeyondBound(1.1004))
+        assertEquals("-10.0%", driftBeyondBound(0.8996))
+        assertNull(driftBeyondBound(1.10))
+        assertNull(driftBeyondBound(0.95))
     }
 
     @Test

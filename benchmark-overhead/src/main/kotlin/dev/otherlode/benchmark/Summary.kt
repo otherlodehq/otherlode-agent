@@ -172,6 +172,7 @@ fun summaryMarkdown(
         sb.append("\n\\* The median lies inside `none`'s own minimum to maximum: not told apart from run-to-run noise.\n")
     }
     sb.append(warmupSection(variants, byVariant))
+    sb.append(driftedRunsSection(runs))
     sb.append("\n### Classes the agent skipped\n\n")
     var any = false
     for (v in variants.filter { it != Variant.NONE }) {
@@ -205,4 +206,15 @@ private fun warmupSection(
         )
     }
     return if (sb.isEmpty()) "" else "\n### Warmup used\n\n$sb"
+}
+
+/** The runs whose own `warmupDrift` lay outside 1 plus or minus [MAX_WINDOW_DRIFT], or an empty string when none did. */
+fun driftedRunsSection(runs: List<RunRecord>): String {
+    val lines =
+        runs.mapNotNull { r ->
+            r.metrics["warmupDrift"]?.let(::driftBeyondBound)?.let { "- ${r.variant.id} repeat ${r.repeat}: $it\n" }
+        }
+    if (lines.isEmpty()) return ""
+    val heading = "### Runs whose window drifted more than ${Math.round(MAX_WINDOW_DRIFT * 100)}%"
+    return "\n$heading\n\n${lines.joinToString("")}"
 }

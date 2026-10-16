@@ -62,24 +62,36 @@ class WarmupTest {
         assertEquals(WarmupVerdict.CONTINUE, verdict(0.0, 0.0, 0.0))
     }
 
+    private fun windows(
+        drift: Double,
+        vararg steady: Double,
+    ) = steady.mapIndexed { i, st ->
+        RunRecord(Config.HEADLINE, Variant.AGENT, i + 1, mapOf("warmupDrift" to drift, "warmupSteady" to st), emptyList())
+    }
+
     @Test
-    fun `a warmup judged steady tells the reader to tighten the rule, not lengthen the cap`() {
-        val m = mutableMapOf("k6FirstThirdRequests" to 1000.0, "k6LastThirdRequests" to 1500.0, "warmupSteady" to 1.0)
-        val problem = warmthProblem(m)
+    fun `warmups judged steady tell the reader to tighten the rule, not lengthen the cap`() {
+        val problem = variantWarmthProblem(Variant.AGENT, windows(1.5, 1.0, 1.0))
         assertNotNull(problem)
-        assertTrue("judged steady" in problem!!, problem)
+        assertTrue("2 of 2 warmups ended steady" in problem!!, problem)
         assertTrue("-PwarmupSteadyDrift" in problem, problem)
         assertTrue("-PwarmupSeconds" !in problem, problem)
     }
 
     @Test
-    fun `a warmup that hit its cap tells the reader to raise the cap`() {
-        val capped = warmthProblem(mutableMapOf("k6FirstThirdRequests" to 1000.0, "k6LastThirdRequests" to 1500.0, "warmupSteady" to 0.0))
+    fun `steady and capped warmups together give both pieces of advice`() {
+        val problem = variantWarmthProblem(Variant.AGENT, windows(1.5, 1.0, 0.0, 0.0))
+        assertNotNull(problem)
+        assertTrue("2 of 3 warmups reached their cap, so raise -PwarmupSeconds" in problem!!, problem)
+        assertTrue("1 of 3 warmups ended steady, so lower -PwarmupSteadyDrift" in problem, problem)
+    }
+
+    @Test
+    fun `warmups that hit their cap tell the reader to raise the cap`() {
+        val capped = variantWarmthProblem(Variant.AGENT, windows(1.5, 0.0, 0.0))
         assertTrue("-PwarmupSeconds" in capped!!, capped)
         assertTrue("cap" in capped, capped)
-        val unrecorded = warmthProblem(mutableMapOf("k6FirstThirdRequests" to 1000.0, "k6LastThirdRequests" to 1500.0))
-        assertTrue("-PwarmupSeconds" in unrecorded!!, unrecorded)
-        assertNull(warmthProblem(mutableMapOf("k6FirstThirdRequests" to 1000.0, "k6LastThirdRequests" to 1000.0, "warmupSteady" to 1.0)))
+        assertNull(variantWarmthProblem(Variant.AGENT, windows(1.0, 1.0)))
     }
 
     @Test

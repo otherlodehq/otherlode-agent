@@ -151,8 +151,9 @@ activity, and the Actions tab re-enables it.
 
 ## What makes a run invalid
 
-An invalid run fails the build and stops the matrix. The results written so far, and the failed run's
-log, stay in the results directory.
+An invalid run fails the build and stops the matrix. The steadiness rule below is the exception: it
+is judged per variant once the matrix has run. The results written so far, and the failed run's log,
+stay in the results directory, and the summary lists why under "Why the run is invalid".
 
 - PetClinic exits early, never logs its "Started PetClinicApplication" line, or its log contains
   `VerifyError`, in any variant.
@@ -160,9 +161,16 @@ log, stay in the results directory.
 - PetClinic was not saturated: its container averaged under 90% of its pinned cores over the window
   (`cpuCoresAvg`), so the closed loop was limited by k6 or Postgres and its throughput would not
   describe PetClinic. CPU per request is still valid in such a run, but the run fails regardless.
-- The window was not steady: its last third served more than 10% more requests than its first,
-  so the JIT was still compiling when measurement began (raise `-PwarmupSeconds` if the warmup hit its cap; lower `-PwarmupSteadyDrift` or lengthen `-PwarmupSliceSeconds` if it was judged steady), or more than
-  10% fewer, so something degraded through it.
+- A variant's windows were not steady: the median over its repeats of the last third's request
+  count divided by the first third's lies above 1.10, so the JIT was still compiling when
+  measurement began (raise `-PwarmupSeconds` if the warmups hit their cap; lower
+  `-PwarmupSteadyDrift` or lengthen `-PwarmupSliceSeconds` if they were judged steady), or below
+  0.90, so something degraded through the window. A variant with a run that recorded no drift is
+  invalid too. A single run drifts with runner noise in either direction, so with three or more
+  repeats one run past 10% does not fail its variant; with one or two, the median is that run or
+  the mean of the two. The summary names each completed run that drifted past 10% on its own, and a
+  run that failed for another reason after its window names its drift in its failure when it lay
+  past 10%.
 - For an agent variant: the agent logged an error (`SEVERE: otherlode:` before Spring Boot sets up
   logging, a line at `ERROR` naming `otherlode:` after); the collector's `/metrics`
   did not show `otherlode_collector_ingest_accepted_total` rising for deltas and for the manifest
@@ -213,8 +221,6 @@ The startup target is the headline's time to first 200 within 25% of `none` on t
 target to watch, not a gate. The ceiling has none. Startup on one core is where the agent's
 transform work shows most, since class loading, the JIT and the agent share the core; the scripts in
 `profiling/` measure where it goes.
-`agent.repo.dirty` reads true in CI because the workflow checks the collector out inside the
-agent's working tree; the jar is built from the commit.
 
 ## Profiling startup and heap by hand
 

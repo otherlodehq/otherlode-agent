@@ -89,4 +89,33 @@ class SummaryTest {
         assertTrue(md.contains("- agent: 1 per run, from the manifests"), md)
         assertTrue(!md.contains("No class was skipped"), md)
     }
+
+    @Test
+    fun `runs whose own drift passed the bound are named and the rest are not`() {
+        fun drift(
+            variant: Variant,
+            repeat: Int,
+            d: Double,
+        ) = RunRecord(Config.HEADLINE, variant, repeat, mapOf("warmupDrift" to d), emptyList())
+        val section =
+            driftedRunsSection(
+                listOf(
+                    drift(Variant.AGENT, 1, 1.05),
+                    drift(Variant.AGENT, 4, 1.17),
+                    drift(Variant.NONE, 2, 0.88),
+                    drift(Variant.NONE, 3, 0.95),
+                ),
+            )
+        assertTrue("### Runs whose window drifted more than 10%" in section, section)
+        assertTrue("- agent repeat 4: +17.0%" in section, section)
+        assertTrue("- none repeat 2: -12.0%" in section, section)
+        assertTrue("repeat 1" !in section && "repeat 3" !in section, section)
+    }
+
+    @Test
+    fun `no drifted run leaves the section out of the summary`() {
+        val runs = listOf(RunRecord(Config.HEADLINE, Variant.NONE, 1, mapOf("warmupDrift" to 1.02), emptyList()))
+        assertEquals("", driftedRunsSection(runs))
+        assertTrue("drifted" !in summaryMarkdown(Config.HEADLINE, runs))
+    }
 }
