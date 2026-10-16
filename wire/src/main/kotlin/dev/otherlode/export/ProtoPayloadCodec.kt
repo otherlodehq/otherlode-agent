@@ -6,6 +6,7 @@ import dev.otherlode.proto.BranchRole as ProtoBranchRole
 import dev.otherlode.proto.BranchSite as ProtoBranchSite
 import dev.otherlode.proto.CallEdge as ProtoCallEdge
 import dev.otherlode.proto.CallEdgeKind as ProtoCallEdgeKind
+import dev.otherlode.proto.ClassFailedToInitialize as ProtoClassFailedToInitialize
 import dev.otherlode.proto.ClassListing as ProtoClassListing
 import dev.otherlode.proto.ClassLocation as ProtoClassLocation
 import dev.otherlode.proto.ClassReferences as ProtoClassReferences
@@ -28,6 +29,7 @@ import dev.otherlode.proto.ExternalClass as ProtoExternalClass
 import dev.otherlode.proto.FailedClass as ProtoFailedClass
 import dev.otherlode.proto.GeneratedBy as ProtoGeneratedBy
 import dev.otherlode.proto.IncludeRules as ProtoIncludeRules
+import dev.otherlode.proto.InitializationFailure as ProtoInitializationFailure
 import dev.otherlode.proto.KotlinKind as ProtoKotlinKind
 import dev.otherlode.proto.LineRange as ProtoLineRange
 import dev.otherlode.proto.OutsideCaller as ProtoOutsideCaller
@@ -158,6 +160,8 @@ object ProtoPayloadCodec {
             .addAllFailedClasses(manifest.failedClasses.map { toProto(it) })
             .setPayloadSequence(manifest.payloadSequence)
             .setCountsPendingSince(manifest.countsPendingSince)
+            .addAllClassesFailedToInitialize(manifest.classesFailedToInitialize.map { toProto(it) })
+            .setUnplacedVerificationFailures(manifest.unplacedVerificationFailures)
             .build()
 
     private fun fromProto(manifest: ProtoProbeManifest): ProbeManifest =
@@ -177,6 +181,8 @@ object ProtoPayloadCodec {
             failedClasses = manifest.failedClassesList.map { fromProto(it) },
             payloadSequence = manifest.payloadSequence,
             countsPendingSince = manifest.countsPendingSince,
+            classesFailedToInitialize = manifest.classesFailedToInitializeList.map { fromProto(it) },
+            unplacedVerificationFailures = manifest.unplacedVerificationFailures,
         )
 
     private fun toProto(unreportedClass: UnreportedClass): ProtoUnreportedClass =
@@ -204,6 +210,42 @@ object ProtoPayloadCodec {
             className = failedClass.className,
             withheldAt = failedClass.withheldAt,
         )
+
+    private fun toProto(failed: ClassFailedToInitialize): ProtoClassFailedToInitialize =
+        ProtoClassFailedToInitialize
+            .newBuilder()
+            .setClassName(failed.className)
+            .setReason(toProto(failed.reason))
+            .setObservedAt(failed.observedAt)
+            .build()
+
+    private fun fromProto(failed: ProtoClassFailedToInitialize): ClassFailedToInitialize =
+        ClassFailedToInitialize(
+            className = failed.className,
+            reason = fromProto(failed.reason),
+            observedAt = failed.observedAt,
+        )
+
+    private fun toProto(reason: InitializationFailure): ProtoInitializationFailure =
+        when (reason) {
+            InitializationFailure.STATIC_INITIALIZER_THREW -> ProtoInitializationFailure.STATIC_INITIALIZER_THREW
+            InitializationFailure.VERIFIER_REJECTED -> ProtoInitializationFailure.VERIFIER_REJECTED
+        }
+
+    private fun fromProto(reason: ProtoInitializationFailure): InitializationFailure =
+        when (reason) {
+            ProtoInitializationFailure.STATIC_INITIALIZER_THREW -> {
+                InitializationFailure.STATIC_INITIALIZER_THREW
+            }
+
+            ProtoInitializationFailure.VERIFIER_REJECTED -> {
+                InitializationFailure.VERIFIER_REJECTED
+            }
+
+            ProtoInitializationFailure.INITIALIZATION_FAILURE_UNSPECIFIED, ProtoInitializationFailure.UNRECOGNIZED -> {
+                throw IllegalArgumentException("unrecognized initialization failure on the wire: $reason")
+            }
+        }
 
     private fun toProto(skippedClass: SkippedClass): ProtoSkippedClass =
         ProtoSkippedClass
@@ -567,6 +609,8 @@ object ProtoPayloadCodec {
             ProbeKind.METHOD -> ProtoProbeKind.METHOD
             ProbeKind.BRANCH -> ProtoProbeKind.BRANCH
             ProbeKind.OPTIONAL_ARGUMENT -> ProtoProbeKind.OPTIONAL_ARGUMENT
+            ProbeKind.INITIALIZER_RETURNED -> ProtoProbeKind.INITIALIZER_RETURNED
+            ProbeKind.INITIALIZER_THREW -> ProtoProbeKind.INITIALIZER_THREW
         }
 
     private fun fromProto(kind: ProtoProbeKind): ProbeKind =
@@ -581,6 +625,14 @@ object ProtoPayloadCodec {
 
             ProtoProbeKind.OPTIONAL_ARGUMENT -> {
                 ProbeKind.OPTIONAL_ARGUMENT
+            }
+
+            ProtoProbeKind.INITIALIZER_RETURNED -> {
+                ProbeKind.INITIALIZER_RETURNED
+            }
+
+            ProtoProbeKind.INITIALIZER_THREW -> {
+                ProbeKind.INITIALIZER_THREW
             }
 
             ProtoProbeKind.PROBE_KIND_UNSPECIFIED, ProtoProbeKind.UNRECOGNIZED -> {

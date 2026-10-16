@@ -13,9 +13,13 @@ import dev.otherlode.export.UnreadShape as WireUnreadShape
 /**
  * What one probe counts. [METHOD] counts entries to a method, [BRANCH] one outcome of a
  * conditional or a switch, and [OPTIONAL_ARGUMENT] calls that leave out one optional parameter's
- * argument. Values may be added in a minor release, so a `when` over this enum needs an `else` branch.
+ * argument. [INITIALIZER_RETURNED] and [INITIALIZER_THREW] are slots of a `<clinit>` the class file
+ * declares: the first counts before each normal return of the initialiser, the second in one
+ * catch-all handler around its body that rethrows what it caught. A slot is never a probe to judge
+ * and never a row of a finding. Values may be added in a minor release, so a `when` over this enum
+ * needs an `else` branch.
  */
-public enum class ProbeKind { METHOD, BRANCH, OPTIONAL_ARGUMENT }
+public enum class ProbeKind { METHOD, BRANCH, OPTIONAL_ARGUMENT, INITIALIZER_RETURNED, INITIALIZER_THREW }
 
 /**
  * What compiled a method into existence rather than the adopter writing its body, read from
@@ -167,6 +171,8 @@ internal fun WireProbeKind.toTestkit(): ProbeKind =
         WireProbeKind.METHOD -> ProbeKind.METHOD
         WireProbeKind.BRANCH -> ProbeKind.BRANCH
         WireProbeKind.OPTIONAL_ARGUMENT -> ProbeKind.OPTIONAL_ARGUMENT
+        WireProbeKind.INITIALIZER_RETURNED -> ProbeKind.INITIALIZER_RETURNED
+        WireProbeKind.INITIALIZER_THREW -> ProbeKind.INITIALIZER_THREW
     }
 
 internal fun ProbeKind.toWire(): WireProbeKind =
@@ -174,6 +180,8 @@ internal fun ProbeKind.toWire(): WireProbeKind =
         ProbeKind.METHOD -> WireProbeKind.METHOD
         ProbeKind.BRANCH -> WireProbeKind.BRANCH
         ProbeKind.OPTIONAL_ARGUMENT -> WireProbeKind.OPTIONAL_ARGUMENT
+        ProbeKind.INITIALIZER_RETURNED -> WireProbeKind.INITIALIZER_RETURNED
+        ProbeKind.INITIALIZER_THREW -> WireProbeKind.INITIALIZER_THREW
     }
 
 internal fun WireOutsideCallerKind.toTestkit(): OutsideCallerKind =

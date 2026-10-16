@@ -11,6 +11,7 @@ import dev.otherlode.proto.BranchRole as ProtoBranchRole
 import dev.otherlode.proto.BranchSite as ProtoBranchSite
 import dev.otherlode.proto.CallEdge as ProtoCallEdge
 import dev.otherlode.proto.CallEdgeKind as ProtoCallEdgeKind
+import dev.otherlode.proto.ClassFailedToInitialize as ProtoClassFailedToInitialize
 import dev.otherlode.proto.ClassListing as ProtoClassListing
 import dev.otherlode.proto.ClassLocation as ProtoClassLocation
 import dev.otherlode.proto.ConditionPart as ProtoConditionPart
@@ -27,6 +28,7 @@ import dev.otherlode.proto.EndpointDiscoverySource as ProtoEndpointDiscoverySour
 import dev.otherlode.proto.EndpointLocation as ProtoEndpointLocation
 import dev.otherlode.proto.ExternalClass as ProtoExternalClass
 import dev.otherlode.proto.GeneratedBy as ProtoGeneratedBy
+import dev.otherlode.proto.InitializationFailure as ProtoInitializationFailure
 import dev.otherlode.proto.KotlinKind as ProtoKotlinKind
 import dev.otherlode.proto.OutsideCaller as ProtoOutsideCaller
 import dev.otherlode.proto.OutsideCallerKind as ProtoOutsideCallerKind
@@ -390,6 +392,90 @@ class ProtoPayloadCodecTest {
 
         assertEquals("run-1", ProtoDeltaBatch.parseFrom(ProtoPayloadCodec.encode(batch)).resource.runId)
         assertEquals("run-1", ProtoPayloadCodec.decodeDeltaBatch(ProtoPayloadCodec.encode(batch)).resource.runId)
+    }
+
+    @Test
+    fun `initializer slot kinds round-trip through the wire`() {
+        val manifest =
+            ProbeManifest(
+                resource = ResourceAttributes("checkout", "1.0.0", "", null, "run-1"),
+                probes =
+                    listOf(ProbeKind.METHOD, ProbeKind.INITIALIZER_RETURNED, ProbeKind.INITIALIZER_THREW).mapIndexed { index, kind ->
+                        ProbeLocation(0, index, kind, "com.example.Foo", "<clinit>", "()V", 1, null)
+                    },
+            )
+        val delta = DeltaBatch(manifest.resource, listOf(ProbeDelta(0, 2, ProbeKind.INITIALIZER_THREW, 5L, 1L)))
+
+        val wire = ProtoProbeManifest.parseFrom(ProtoPayloadCodec.encode(manifest))
+
+        assertEquals(
+            listOf(ProtoProbeKind.METHOD, ProtoProbeKind.INITIALIZER_RETURNED, ProtoProbeKind.INITIALIZER_THREW),
+            wire.probesList.map { it.kind },
+        )
+        assertEquals(manifest, ProtoPayloadCodec.decodeProbeManifest(ProtoPayloadCodec.encode(manifest)))
+        assertEquals(delta, ProtoPayloadCodec.decodeDeltaBatch(ProtoPayloadCodec.encode(delta)))
+    }
+
+    @Test
+    fun `classes failed to initialize and the unplaced verification count round-trip through the manifest`() {
+        val resource = ResourceAttributes("checkout", "1.0.0", "", null, "run-1")
+        val manifest =
+            ProbeManifest(
+                resource,
+                emptyList(),
+                classesFailedToInitialize =
+                    listOf(
+                        ClassFailedToInitialize("com.example.Boom", InitializationFailure.STATIC_INITIALIZER_THREW, 1_700_000_000_001L),
+                        ClassFailedToInitialize("com.example.Bad", InitializationFailure.VERIFIER_REJECTED, 1_700_000_000_002L),
+                    ),
+                unplacedVerificationFailures = 3L,
+            )
+
+        val wire = ProtoProbeManifest.parseFrom(ProtoPayloadCodec.encode(manifest))
+
+        assertEquals(
+            listOf(ProtoInitializationFailure.STATIC_INITIALIZER_THREW, ProtoInitializationFailure.VERIFIER_REJECTED),
+            wire.classesFailedToInitializeList.map { it.reason },
+        )
+        assertEquals(3L, wire.unplacedVerificationFailures)
+        assertEquals(manifest, ProtoPayloadCodec.decodeProbeManifest(ProtoPayloadCodec.encode(manifest)))
+    }
+
+    @Test
+    fun `classes failed to initialize and the unplaced verification count default to none`() {
+        val manifest = ProbeManifest(ResourceAttributes("checkout", "1.0.0", "", null, "run-1"), emptyList())
+
+        assertEquals(emptyList(), manifest.classesFailedToInitialize)
+        assertEquals(0L, manifest.unplacedVerificationFailures)
+    }
+
+    @Test
+    fun `an unspecified initialization failure on the wire is rejected`() {
+        val wire =
+            ProtoProbeManifest
+                .newBuilder()
+                .setResource(ProtoResourceAttributes.newBuilder().setServiceName("checkout").setRunId("run-1"))
+                .addClassesFailedToInitialize(
+                    ProtoClassFailedToInitialize
+                        .newBuilder()
+                        .setClassName("com.example.Boom")
+                        .setReason(ProtoInitializationFailure.INITIALIZATION_FAILURE_UNSPECIFIED),
+                ).build()
+
+        assertFailsWith<IllegalArgumentException> { ProtoPayloadCodec.decodeProbeManifest(wire.toByteArray()) }
+    }
+
+    @Test
+    fun `an unrecognized initialization failure on the wire is rejected`() {
+        val wire =
+            ProtoProbeManifest
+                .newBuilder()
+                .setResource(ProtoResourceAttributes.newBuilder().setServiceName("checkout").setRunId("run-1"))
+                .addClassesFailedToInitialize(
+                    ProtoClassFailedToInitialize.newBuilder().setClassName("com.example.Boom").setReasonValue(99),
+                ).build()
+
+        assertFailsWith<IllegalArgumentException> { ProtoPayloadCodec.decodeProbeManifest(wire.toByteArray()) }
     }
 
     @Test

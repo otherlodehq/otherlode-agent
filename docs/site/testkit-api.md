@@ -369,6 +369,8 @@ What one probe counts.
 | `METHOD` | Entries to a method. |
 | `BRANCH` | One outcome of a conditional or a switch. |
 | `OPTIONAL_ARGUMENT` | Calls that leave out one optional parameter's argument. |
+| `INITIALIZER_RETURNED` | Normal returns of a static initialiser the class file declares. A slot of that initialiser, not a probe: no query returns it and no finding lists it. |
+| `INITIALIZER_THREW` | Exceptions that left a static initialiser the class file declares. A slot of that initialiser, not a probe: no query returns it and no finding lists it. |
 
 ### GeneratedBy
 

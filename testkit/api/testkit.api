@@ -262,6 +262,8 @@ public final class dev/otherlode/testkit/OutsideCallerKind : java/lang/Enum {
 
 public final class dev/otherlode/testkit/ProbeKind : java/lang/Enum {
 	public static final field BRANCH Ldev/otherlode/testkit/ProbeKind;
+	public static final field INITIALIZER_RETURNED Ldev/otherlode/testkit/ProbeKind;
+	public static final field INITIALIZER_THREW Ldev/otherlode/testkit/ProbeKind;
 	public static final field METHOD Ldev/otherlode/testkit/ProbeKind;
 	public static final field OPTIONAL_ARGUMENT Ldev/otherlode/testkit/ProbeKind;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;

@@ -35,7 +35,11 @@ multi-tenant backend.
    jobs use v4 of every action, several majors behind.
 3. **The quickstart** in otherlode.dev's `start/` (that repo's ADR 0001).
    The agent's and collector's pages and the overview are written.
-4. **Before the first customer:** the server STATUS's "Go-live
+4. **Review the copy written under pre-approval.** On 2026-10-16 Luke
+   pre-approved copy edits for review before release. Each one, by commit:
+   `docs/site/testkit-api.md` (the `ProbeKind` slot rows, chunk 1 of
+   "A class that failed to initialise"). Add each later one here.
+5. **Before the first customer:** the server STATUS's "Go-live
    checklist" (the company, the privacy policy, the site, the front door,
    one snapshot refresh measured on db-f1-micro). No collector can be given
    an ingest URL until the front door exists. None of it blocks publishing
@@ -99,10 +103,12 @@ Known so far:
 Settled on 2026-10-16 (ADR 0071, server ADR 0069, `CONTEXT.md`). Landing
 order:
 
-1. **Wire.** `ProbeManifest.classes_failed_to_initialise` (class name,
-   reason `INITIALISER_THREW` or `VERIFICATION_REJECTED`, observed at), the
-   run's unplaced verification failure count, and probe location kinds for
-   the `<clinit>` *returned* and *threw* slots.
+1. **Wire.** `ProbeManifest.classes_failed_to_initialize` (class name,
+   reason `STATIC_INITIALIZER_THREW` or `VERIFIER_REJECTED`, observed at),
+   `unplaced_verification_failures`, and the probe kinds
+   `INITIALIZER_RETURNED` and `INITIALIZER_THREW`. Chunk 4 must send a
+   manifest when only the unplaced count changed, and stamp the count on
+   every manifest chunk, as `countsPendingSince` is.
 2. **Collector.** Bump the bindings.
 3. **Agent, `<clinit>`.** The *returned* and *threw* slots in every
    declared `<clinit>`, at both probe array forms, and the list entry when
@@ -114,16 +120,18 @@ order:
    the read formats (17, 21, 25, the old verifier), count unplaced ones.
    A test pins coexistence with JFR on 17 and 21.
 5. **Testkit and demo collector.** Report classes that failed to
-   initialise; the ABI dump grows.
+   initialise; the ABI dump grows again. Chunk 1 already keeps a slot out
+   of every judgement.
 6. **Server**, on branch `failed-to-initialise` in a worktree: ingest and a
    migration, the hierarchy derivation, the class-finding and never-hit
    rules, the dependency status, the page beside "Failed to load". Merge
    only on Luke's word, since a push to its master deploys.
-7. **Docs**, shown to Luke first: the agent's `classes.md`, the server's
-   `findings.md` and UI copy. With them, `troubleshooting.md:240` and the
-   comments at `LoadedClassSweep.kt:19-23`, `otherlode.proto:604-605` and
-   `Payloads.kt:514-516`, which name the verifier as a cause of failed to
-   load.
+7. **Docs**, copy pre-approved on 2026-10-16 and listed under the copy
+   review in pre-release item 4: the agent's `classes.md` and `data-sent.md:83` (probe
+   kinds), the server's `findings.md` and UI copy, and the `ProbeLocation`
+   field comments saying which fields a slot carries. With them,
+   `troubleshooting.md:240` and the KDoc at `LoadedClassSweep.kt:19-23`,
+   which name the verifier as a cause of failed to load.
 8. **ADRs name no decider.** Reword every "Decided on <date> with Luke"
    and other mention of Luke in the ADRs of all four repos (agent 27 files,
    server 19, collector 3, site 2, counted 2026-10-16) to "Decided on

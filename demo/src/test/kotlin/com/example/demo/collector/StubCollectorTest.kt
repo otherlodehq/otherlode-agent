@@ -132,6 +132,54 @@ class StubCollectorTest {
     }
 
     @Test
+    fun `an initialiser slot is never a never-hit row`() {
+        val run = resource("run-slots")
+
+        fun probe(
+            index: Int,
+            kind: ProbeKind,
+            method: String,
+        ) = ProbeLocation
+            .newBuilder()
+            .setClassId(0)
+            .setProbeIndex(index)
+            .setKind(kind)
+            .setClassName("com.acme.slots.Slots")
+            .setMethodName(method)
+            .setMethodDescriptor("()V")
+
+        assertEquals(
+            200,
+            post(
+                "manifest",
+                ProbeManifest
+                    .newBuilder()
+                    .setResource(run)
+                    .addProbes(probe(0, ProbeKind.METHOD, "check"))
+                    .addProbes(probe(1, ProbeKind.METHOD, "<clinit>"))
+                    .addProbes(probe(2, ProbeKind.INITIALIZER_RETURNED, "<clinit>"))
+                    .addProbes(probe(3, ProbeKind.INITIALIZER_THREW, "<clinit>"))
+                    .build(),
+            ),
+        )
+        assertEquals(
+            200,
+            post(
+                "deltas",
+                DeltaBatch
+                    .newBuilder()
+                    .setResource(run)
+                    .setFinalFlush(true)
+                    .build(),
+            ),
+        )
+
+        val report = neverHitReport()
+        assertTrue("in class findings (reported by class): 2" in report, report.joinToString("\n"))
+        assertTrue(report.none { it.contains("INITIALIZER_") }, report.joinToString("\n"))
+    }
+
+    @Test
     fun `a test run's payloads are answered 200 and left out of the reports`() {
         val testRun = resource("run-test").toBuilder().setTestRun(true).build()
         val probe =

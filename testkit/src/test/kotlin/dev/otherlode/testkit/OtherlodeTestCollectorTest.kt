@@ -3121,6 +3121,33 @@ class OtherlodeTestCollectorTest {
         assertEquals(listOf("Twice#<clinit>/1"), target.neverHit().filter { it.className == "com.acme.Twice" }.map { it.id() })
     }
 
+    @Test
+    fun `an initialiser slot at zero is no probe to judge and gives no finding`() {
+        val target = startCollector()
+        collect(
+            target,
+            listOf(
+                methodProbe(1, 0, "com.acme.Slotted", "<clinit>", "()V", 1),
+                initializerSlot(1, 1, "com.acme.Slotted", ProbeKind.INITIALIZER_RETURNED),
+                initializerSlot(1, 2, "com.acme.Slotted", ProbeKind.INITIALIZER_THREW),
+                methodProbe(1, 3, "com.acme.Slotted", "run", "()V", 5),
+            ),
+            1 to 0,
+            1 to 3,
+        )
+
+        assertEquals(emptyList(), target.neverHit())
+        assertEquals(emptyList(), target.neverInitialized())
+        assertEquals(emptyList(), target.neverInstantiated())
+    }
+
+    private fun initializerSlot(
+        classId: Int,
+        probeIndex: Int,
+        className: String,
+        kind: ProbeKind,
+    ) = ProbeLocation(classId, probeIndex, kind, className, "<clinit>", "()V", 1, null)
+
     private fun ProbeRef.id() =
         "${className.removePrefix("com.acme.")}#$methodName${if (kind == RefProbeKind.BRANCH) "/$branchIndex" else ""}"
 

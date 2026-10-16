@@ -5,8 +5,16 @@ package dev.otherlode.export
  * conditional or a switch, and [OPTIONAL_ARGUMENT] calls that leave out one optional parameter's
  * argument: counted in Kotlin's `$default` method rather than the target function itself, or in a
  * Scala default getter's own slot, which reports under the target it fills a default for.
+ *
+ * [INITIALIZER_RETURNED] and [INITIALIZER_THREW] are slots of a `<clinit>` the class file declares,
+ * not probes to judge. [INITIALIZER_RETURNED] counts before each normal return of the initialiser.
+ * [INITIALIZER_THREW] counts in one catch-all handler around the original body, last in the
+ * exception table, that rethrows what it caught. Both sit beside that `<clinit>`'s [METHOD] probe
+ * and carry its method name and descriptor. When a class sends both slots for its `<clinit>`, a
+ * [METHOD] probe that counted with neither slot counted means the initialiser has not finished. A
+ * class that sends no slots says nothing about it.
  */
-enum class ProbeKind { METHOD, BRANCH, OPTIONAL_ARGUMENT }
+enum class ProbeKind { METHOD, BRANCH, OPTIONAL_ARGUMENT, INITIALIZER_RETURNED, INITIALIZER_THREW }
 
 /**
  * What compiled a method into existence rather than the adopter writing its body, from bytecode
@@ -512,15 +520,37 @@ data class UnreportedClass(
 
 /**
  * A class the agent wove and withheld for good because the JVM never defined it. The agent cannot
- * see why the JVM refused it, since the `LinkageError` or `VerifyError` is thrown after its
- * transformer returns. A collector reads it as failed to load, never as never loaded. A class any
- * in-scope run loaded is loaded, whatever another run says.
+ * see why the JVM refused it, since a definition failure, such as a `LinkageError` for a supertype
+ * the loader cannot load, is thrown after its transformer returns. A verifier rejection happens at
+ * linking, after the class is defined, so such a class is never here; see
+ * [ClassFailedToInitialize]. A collector reads it as failed to load, never as never loaded. A class
+ * any in-scope run loaded is loaded, whatever another run says.
  *
  * [withheldAt] is when the agent withheld it, in milliseconds since the epoch.
  */
 data class FailedClass(
     val className: String,
     val withheldAt: Long,
+)
+
+/**
+ * Why a class the JVM defined can never run in this JVM. [STATIC_INITIALIZER_THREW] is read from
+ * the class's own [ProbeKind.INITIALIZER_THREW] slot. [VERIFIER_REJECTED] is read from a
+ * `VerifyError` whose message named the class in a format the agent has read.
+ */
+enum class InitializationFailure { STATIC_INITIALIZER_THREW, VERIFIER_REJECTED }
+
+/**
+ * A class the JVM defined that can never run in this JVM, because its verification or its static
+ * initializer failed. A collector reads it as failed to initialize, never as dead code. A run in
+ * which the class initialized wins over a run that failed it. Sent once per class and reason.
+ *
+ * [observedAt] is when the agent first saw the evidence, in milliseconds since the epoch.
+ */
+data class ClassFailedToInitialize(
+    val className: String,
+    val reason: InitializationFailure,
+    val observedAt: Long,
 )
 
 /** A class the agent matched but could not instrument. It never gets a classId or any probes. */
@@ -701,6 +731,8 @@ data class ProbeManifest(
     val failedClasses: List<FailedClass> = emptyList(),
     val payloadSequence: Long = 0,
     val countsPendingSince: Long = 0,
+    val classesFailedToInitialize: List<ClassFailedToInitialize> = emptyList(),
+    val unplacedVerificationFailures: Long = 0,
 )
 
 /**

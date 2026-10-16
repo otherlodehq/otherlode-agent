@@ -16,6 +16,26 @@ enum ProbeKind {
   // Counts one omission of an optional parameter's argument: in Kotlin's $default method rather
   // than the target function itself, or in a Scala default getter's own slot.
   OPTIONAL_ARGUMENT = 3;
+  // A slot of a <clinit> the class file declares. Counts before each normal return of the
+  // initialiser. Sits beside that <clinit>'s METHOD probe and carries its method name and
+  // descriptor. When a class sends both slots for its <clinit>, a METHOD probe that counted with
+  // neither slot counted means the initialiser has not finished. A class that sends no slots says
+  // nothing about it.
+  INITIALIZER_RETURNED = 4;
+  // A slot of a <clinit> the class file declares. Counts in one catch-all handler around the
+  // original body, last in the exception table, that rethrows what it caught. Sits beside that
+  // <clinit>'s METHOD probe and carries its method name and descriptor.
+  INITIALIZER_THREW = 5;
+}
+
+// Why a class the JVM defined can never run in this JVM. Never written as
+// INITIALIZATION_FAILURE_UNSPECIFIED; a consumer reads it as unset. STATIC_INITIALIZER_THREW is
+// read from the class's own INITIALIZER_THREW slot. VERIFIER_REJECTED is read from a VerifyError
+// whose message named the class in a format the agent has read.
+enum InitializationFailure {
+  INITIALIZATION_FAILURE_UNSPECIFIED = 0;
+  STATIC_INITIALIZER_THREW = 1;
+  VERIFIER_REJECTED = 2;
 }
 
 // What compiled a method into existence rather than the adopter writing its body: an enum's
@@ -602,15 +622,29 @@ message UnreportedClass {
 }
 
 // A class the agent wove and withheld for good because the JVM never defined it. The agent cannot
-// see why the JVM refused it: the LinkageError or VerifyError is thrown after the transformer
-// returns. The server reads it as failed to load, never as never loaded. A class any in-scope run
-// loaded is loaded, whatever another run says. Sent once, and delivered incrementally like
-// unreported_classes.
+// see why the JVM refused it: a definition failure such as a LinkageError for a supertype the
+// loader cannot load is thrown after the transformer returns. A verifier rejection happens at
+// linking, after the class is defined, so such a class is never here; see
+// ClassFailedToInitialize. The server reads it as failed to load, never as never loaded. A class
+// any in-scope run loaded is loaded, whatever another run says. Sent once, and delivered
+// incrementally like unreported_classes.
 //
 // withheld_at is when the agent withheld it, in milliseconds since the epoch.
 message FailedClass {
   string class_name = 1;
   int64 withheld_at = 2;
+}
+
+// A class the JVM defined that can never run in this JVM, because its verification or its static
+// initializer failed. The server reads it as failed to initialize, never as dead code. A run in
+// which the class initialized wins over a run that failed it. Sent once per class and reason, and
+// delivered incrementally like failed_classes.
+//
+// observed_at is when the agent first saw the evidence, in milliseconds since the epoch.
+message ClassFailedToInitialize {
+  string class_name = 1;
+  InitializationFailure reason = 2;
+  int64 observed_at = 3;
 }
 
 // A class the agent matched but could not instrument (e.g. bytecode
@@ -688,6 +722,15 @@ message ProbeManifest {
   // reached the collector, so its zero hit totals are not evidence that code never ran. A run is
   // judged that way only once a delta batch from it has arrived.
   int64 counts_pending_since = 18;
+  // Classes the JVM defined that can never run in this JVM because their verification or static
+  // initializer failed. Each is sent once per class and reason and delivered incrementally like
+  // failed_classes. See ClassFailedToInitialize.
+  repeated ClassFailedToInitialize classes_failed_to_initialize = 19;
+  // The number of VerifyErrors this run has seen whose message named no class in a format the
+  // agent has read. A running total, set on every manifest. While it is above 0 the run's zero
+  // counts are not evidence that code never ran, since any zero-hit class may be the one the
+  // verifier rejected.
+  int64 unplaced_verification_failures = 20;
 }
 
 // No line field, unlike ProbeLocation: the static scan records no line for a

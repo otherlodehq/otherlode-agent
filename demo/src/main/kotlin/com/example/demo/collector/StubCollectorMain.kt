@@ -814,7 +814,11 @@ internal fun printNeverHitReport() {
     // An optional-argument probe reading zero means its parameter is never omitted, which is
     // ALWAYS SUPPLIED, not dead code, so it is excluded here entirely and reported by
     // printOmissionReport instead. See ADR 0021.
-    val judgeableKeys = manifestProbes.keys.filter { manifestProbes[it]?.kind != ProbeKind.OPTIONAL_ARGUMENT }
+    val judgeableKeys =
+        manifestProbes.keys.filter {
+            val kind = manifestProbes[it]?.kind
+            kind != ProbeKind.OPTIONAL_ARGUMENT && kind != ProbeKind.INITIALIZER_RETURNED && kind != ProbeKind.INITIALIZER_THREW
+        }
     val neverHitKeys = judgeableKeys.filter { it !in everHit }
     val (inlineNeverHit, notInlineNeverHit) = neverHitKeys.partition { manifestProbes[it]?.inline == true }
     // A generated probe, such as a data class's copy or an enum's values, is kept and counted,

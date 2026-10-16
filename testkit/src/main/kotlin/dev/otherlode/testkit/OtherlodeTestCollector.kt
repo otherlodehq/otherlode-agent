@@ -977,6 +977,9 @@ public class OtherlodeTestCollector internal constructor(
     private fun outcomeIdOf(probe: StoredProbe): OutcomeId =
         probe.branchKey?.let { OutcomeId(it, null) } ?: OutcomeId(null, probe.branchIndex)
 
+    private fun WireProbeKind.isInitializerSlot(): Boolean =
+        this == WireProbeKind.INITIALIZER_RETURNED || this == WireProbeKind.INITIALIZER_THREW
+
     /**
      * Every probe merged by [LocationKey], each location's copies ordered newest instance first,
      * then by class id and probe index.
@@ -990,6 +993,7 @@ public class OtherlodeTestCollector internal constructor(
                 .thenBy { it.key.classId }
                 .thenBy { it.key.probeIndex }
         return probesByKey.entries
+            .filter { !it.value.kind.isInitializerSlot() }
             .groupBy { (_, probe) ->
                 LocationKey(
                     NodeKey(probe.className, probe.methodName, probe.methodDescriptor),
