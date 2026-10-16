@@ -54,17 +54,17 @@ class DerivedTest {
     }
 
     @Test
-    fun `a window whose last third serves far more than its first is not warm`() {
-        val problem = warmthProblem(mutableMapOf("k6FirstThirdRequests" to 1000.0, "k6LastThirdRequests" to 1500.0))
-        assertNotNull(problem)
-        assertTrue("50%" in problem!!, problem)
+    fun `a single run whose last third serves far more than its first is not a problem and records its drift`() {
+        val m = mutableMapOf("k6FirstThirdRequests" to 1000.0, "k6LastThirdRequests" to 1500.0)
+        assertNull(warmthProblem(m))
+        assertEquals(1.5, m["warmupDrift"]!!, 1e-9)
     }
 
     @Test
-    fun `a window whose last third serves far fewer than its first is not steady`() {
-        val problem = warmthProblem(mutableMapOf("k6FirstThirdRequests" to 1000.0, "k6LastThirdRequests" to 800.0))
-        assertNotNull(problem)
-        assertTrue("20% fewer" in problem!!, problem)
+    fun `a single run whose last third serves far fewer than its first is not a problem and records its drift`() {
+        val m = mutableMapOf("k6FirstThirdRequests" to 1000.0, "k6LastThirdRequests" to 800.0)
+        assertNull(warmthProblem(m))
+        assertEquals(0.8, m["warmupDrift"]!!, 1e-9)
     }
 
     @Test
