@@ -11,6 +11,15 @@ Each run starts a fresh Postgres, starts PetClinic in a container pinned to its 
 agent exports to a real `otherlode-collector` container, logging only, so the flush's encoding and
 send are the real ones and their cost is in the numbers.
 
+Before the matrix, the harness measures the agent's class listing once. In a container from the PetClinic
+image, on PetClinic's cpuset, `javac` compiles `src/main/resources/ListingCost.java` against the agent jar,
+and a separate JVM runs it, so the listing meets the cold JVM a starting application gives it. It calls `ClassLister.list()` five times in one JVM against `/app/petclinic.jar`, using the
+config's `includePackages` and no excludes, and times each call with the thread's CPU time and the wall clock.
+The first call is the cold one a starting JVM pays on the agent's listing thread; the agent builds
+the lister in `premain`, so the timed call covers `list()` alone. The harness records its CPU and wall milliseconds, the median
+CPU milliseconds of the four calls after it, and the number of classes listed. A null listing fails the run
+before any variant starts.
+
 Per run it records:
 
 - **Startup:** milliseconds from just before the container is created to the first 200 from
@@ -155,6 +164,7 @@ An invalid run fails the build and stops the matrix. The steadiness rule below i
 is judged per variant once the matrix has run. The results written so far, and the failed run's log,
 stay in the results directory, and the summary lists why under "Why the run is invalid".
 
+- The class listing returns null or its program fails, in which case the matrix never starts.
 - PetClinic exits early, never logs its "Started PetClinicApplication" line, or its log contains
   `VerifyError`, in any variant.
 - The k6 checks pass rate is below 1.0. The script checks every response's status.
@@ -190,10 +200,11 @@ Under `benchmark-overhead/build/results/<config>/`:
 
 - `runs.csv`: one row per run with every metric.
 - `summary.md`: per variant, each metric's median with its minimum and maximum, and the median's
-  change against `none`; then the skipped classes.
+  change against `none`; then the skipped classes and the class listing's cost.
 - `metadata.properties`: the runner's OS and CPU count, the PetClinic image's `java -version`, the
   agent jar's SHA-256 and modification time, the agent repository's commit and whether its tree was
-  dirty (a local jar can predate the commit), the PetClinic commit, the collector
+  dirty (a local jar can predate the commit), the class listing's `classListingColdCpuMs`,
+  `classListingColdWallMs`, `classListingWarmCpuMs` and `classListingClasses`, the PetClinic commit, the collector
   directory's commit, resolved image digests, and the repeats, window and warmup settings used.
 - `runs/<variant>-r<N>/`: the raw k6 JSON and log, the JFR file, PetClinic's log, and the
   collector's log lines from the run.

@@ -218,3 +218,18 @@ fun driftedRunsSection(runs: List<RunRecord>): String {
     val heading = "### Runs whose window drifted more than ${Math.round(MAX_WINDOW_DRIFT * 100)}%"
     return "\n$heading\n\n${lines.joinToString("")}"
 }
+
+/**
+ * The class listing's cost on PetClinic's pinned cores [cpuset], as a Markdown section, or an
+ * empty string when it was not measured.
+ */
+fun classListingSection(
+    cost: ClassListingCost?,
+    cpuset: () -> String,
+): String {
+    if (cost == null) return ""
+    return "\n### Class listing\n\n" +
+        "Cold: ${num(cost.coldCpuMs)} ms CPU (${num(cost.coldWallMs)} ms wall) on PetClinic's pinned core(s) ${cpuset()}, " +
+        "listing ${cost.classes} classes under the config's rules. " +
+        "Warm median of four more: ${num(cost.warmCpuMs)} ms CPU.\n"
+}

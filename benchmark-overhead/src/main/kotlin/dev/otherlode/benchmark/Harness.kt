@@ -64,15 +64,17 @@ class Harness(
      * `FROM --platform=$BUILDPLATFORM`, and only BuildKit sets that variable. Testcontainers
      * builds through the classic builder, which leaves it empty and rejects the build.
      */
-    private val collectorImage: String by lazy {
-        println("Building the collector image from ${settings.collectorDir}...")
-        val image = "otherlode-bench-collector:latest"
-        val build = ProcessBuilder("docker", "build", "-t", image, settings.collectorDir.toString()).inheritIO()
-        build.environment()["DOCKER_BUILDKIT"] = "1"
-        val exit = build.start().waitFor()
-        check(exit == 0) { "docker build of the collector exited with $exit" }
-        image
-    }
+    private val collectorImageBuild =
+        lazy {
+            println("Building the collector image from ${settings.collectorDir}...")
+            val image = "otherlode-bench-collector:latest"
+            val build = ProcessBuilder("docker", "build", "-t", image, settings.collectorDir.toString()).inheritIO()
+            build.environment()["DOCKER_BUILDKIT"] = "1"
+            val exit = build.start().waitFor()
+            check(exit == 0) { "docker build of the collector exited with $exit" }
+            image
+        }
+    private val collectorImage: String by collectorImageBuild
 
     private val cpuSplit: CpuSplit by lazy {
         CpuSplit.of(
@@ -80,6 +82,7 @@ class Harness(
         )
     }
     private var javaVersion: String = "unknown"
+    private var listingCost: ClassListingCost? = null
     private val failures = mutableListOf<String>()
 
     /** Runs the whole matrix, writes the results, and throws if any run was invalid. */
@@ -88,6 +91,13 @@ class Harness(
         settings.configDir.toFile().deleteRecursively()
         Files.createDirectories(settings.configDir)
         val runs = mutableListOf<RunRecord>()
+        try {
+            listingCost = measureClassListing()
+        } catch (e: Exception) {
+            failures += "class listing: ${e.message ?: e::class.simpleName}"
+            writeResults(runs)
+            throw InvalidRunException("The overhead run is invalid:\n" + failures.joinToString("\n") { " - $it" })
+        }
         val collector = startCollector()
         try {
             outer@ for (repeat in 1..settings.repeats) {
@@ -103,12 +113,38 @@ class Harness(
             }
             if (failures.isEmpty()) failures += variantWarmthProblems(runs)
         } finally {
-            writeResults(runs, collector)
+            writeResults(runs)
             collector.stop()
             network.close()
         }
         if (failures.isNotEmpty()) {
             throw InvalidRunException("The overhead run is invalid:\n" + failures.joinToString("\n") { " - $it" })
+        }
+    }
+
+    /**
+     * Runs the agent's class listing five times in one JVM in a container from the PetClinic image,
+     * on PetClinic's cores, and reads its cost from the program's output.
+     */
+    private fun measureClassListing(): ClassListingCost {
+        println("Measuring the class listing...")
+        val container =
+            Box(petclinicImage)
+                .withCopyFileToContainer(MountableFile.forClasspathResource("ListingCost.java"), "/app/ListingCost.java")
+                .withCopyFileToContainer(MountableFile.forHostPath(settings.agentJar), "/app/otherlode-agent.jar")
+                .withCreateContainerCmdModifier { it.hostConfig!!.withCpusetCpus(cpuSplit.petclinic) }
+                .withCommand(*listingCostCommand(settings.config).toTypedArray())
+                .withStartupCheckStrategy(OneShotStartupCheckStrategy().withTimeout(Duration.ofMinutes(5)))
+                .waitingFor(NoWait())
+        try {
+            try {
+                container.start()
+            } catch (e: Exception) {
+                throw InvalidRunException("the class listing program failed: ${container.logs.trim().ifEmpty { e.message }}")
+            }
+            return ClassListingCost.parse(container.logs)
+        } finally {
+            runCatching { container.stop() }
         }
     }
 
@@ -429,22 +465,20 @@ class Harness(
         }
     }
 
-    private fun writeResults(
-        runs: List<RunRecord>,
-        collector: Box,
-    ) {
+    private fun writeResults(runs: List<RunRecord>) {
         val dir = settings.configDir
         Files.writeString(dir.resolve("runs.csv"), runsCsv(runs))
         val summary = StringBuilder(summaryMarkdown(settings.config, runs))
+        summary.append(classListingSection(listingCost) { cpuSplit.petclinic })
         if (failures.isNotEmpty()) {
             summary.append("\n### Why the run is invalid\n\n").append(failures.joinToString("\n") { "- $it" }).append('\n')
         }
         Files.writeString(dir.resolve("summary.md"), summary.toString())
-        runCatching { Files.writeString(dir.resolve("metadata.properties"), metadata(collector)) }
+        runCatching { Files.writeString(dir.resolve("metadata.properties"), metadata()) }
             .onFailure { println("Could not write metadata: $it") }
     }
 
-    private fun metadata(collector: Box): String {
+    private fun metadata(): String {
         val info = dockerClient.infoCmd().exec()
 
         fun digest(image: String): String =
@@ -497,7 +531,7 @@ class Harness(
                 "collector.commit" to git(settings.collectorDir, "rev-parse", "HEAD"),
                 "image.petclinic.base" to digest("eclipse-temurin:21-jdk"),
                 "image.petclinic" to digest(petclinicImage),
-                "image.collector" to digest(collectorImage),
+                "image.collector" to if (collectorImageBuild.isInitialized()) digest(collectorImage) else "not built",
                 "image.postgres" to digest("postgres:16.3"),
                 "image.k6" to digest(K6_IMAGE),
                 "config" to settings.config.id,
@@ -509,6 +543,7 @@ class Harness(
                 "warmupSteadyDrift" to settings.warmupSteadyDrift.toString(),
                 "windowSeconds" to settings.windowSeconds.toString(),
             )
+        listingCost?.let { props += it.properties() }
         return props.entries.joinToString("\n", postfix = "\n") { "${it.key}=${it.value}" }
     }
 
