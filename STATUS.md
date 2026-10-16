@@ -13,17 +13,16 @@ the collector as open source. `otherlode-server` stays closed source and
 hosted (server ADR 0001), so every adopter's collector forwards to one
 multi-tenant backend.
 
-1. **Measure the overhead on the release candidate.** The `DECORATE` round
-   (`b1dec7d` to `a3c4330`) landed after the runner numbers that
-   `docs/site/overhead.md` and `benchmark-overhead/README.md` quote
-   (`8139271`), so startup there is likely overstated. The overhead runs on
-   `master`, nightly and by hand, have measured it since 2026-10-07 (the
-   latest passing run is 38537477681, on 2026-10-14), but nobody has read
-   their numbers. Start with the ceiling's one-core startup. At `8139271` it
-   improved far less on the runner, from 64.0 s to 58.2 s with the agent
-   (15.2 s and 18.2 s without), than pinned locally in Docker (21.5 s over
-   6.8 s on one CPU), and nobody has looked into why. Then re-run on the
-   commit to be tagged and update both pages.
+1. **Measure the overhead on the release candidate.** `docs/site/overhead.md`
+   and `benchmark-overhead/README.md` quote the runner numbers from `8139271`.
+   Run 38944648115, on `1332f3f`, measures the head with the nested-jar
+   reader. Read its summaries and update both pages' tables, then re-run on
+   the commit to be tagged. The narrow startup had moved past the README's
+   25% target (+33% to +38% in the nightlies on `5ded4b5` to `dc6eafa`,
+   against +17% to +24% before); confirm `1332f3f` brings it back. The
+   one-core startup gap between the runner and local Docker is the runner's
+   slower core: both give about 3.2 times `none` at `8139271` (58.2 s over
+   18.2 s, 21.5 s over 6.8 s).
 2. **Cut the releases** (ADRs 0062 and 0063, collector ADR 0006). Cutting
    is Luke's call. Collector `v0.1.0` goes first, since the agent's
    `release.sh` refuses a release until it exists. The agent's needs its
@@ -48,15 +47,16 @@ deferrals, gzip, a collector config file, and agent-level redaction
 
 ## TODO
 
-### The class listing's cost is not measured
+### The class listing's cost on demo-spring and a large classpath
 
-The class listing (ADR 0070) has landed in the agent and the collector.
-Measure its cost on demo-spring and on a large classpath.
+The class listing (ADR 0070) reads nested jars from their central directory
+(`1332f3f`). On PetClinic's fat jar that reads 107 nested jars in under
+50 ms of CPU on a laptop; the overhead page states the runner's cost once
+run 38944648115 is read (pre-release item 1). Measure it still on
+demo-spring and on a large classpath.
 
 Known gaps in what it lists, all rare, all listing less than the JVM loads:
 
-- A nested jar with junk between its entries: `ZipInputStream` stops at the
-  junk with no error, while Boot reads the central directory.
 - JDK 17's `META-INF/INDEX.LIST`, which can name jars outside `Class-Path`
   (JDK 18 dropped it).
 - Boot `PropertiesLauncher` `loader.path` folders (documented as a blind
