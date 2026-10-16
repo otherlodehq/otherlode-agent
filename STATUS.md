@@ -114,23 +114,28 @@ order:
    *threw* first counts. Fixture tests weave a class whose initialiser
    throws, one that returns, and one that blocks, and assert the slots and
    that each fails or runs as it does unwoven.
-4. **Agent, verifier.** Weave `java.lang.VerifyError`'s constructors
-   through the bootstrap helper, parse the message on the export thread by
-   the read formats (17, 21, 25, the old verifier), count unplaced ones.
+4. **Wire and collector, again.** `ProbeManifest.verifier_rejections_watched`
+   (ADR 0071 amendment), then the collector's bindings.
+5. **Agent, verifier.** Weave `java.lang.VerifyError`'s constructors
+   through the bootstrap helper into a ring of 8,192 message references,
+   parse on the export thread by the read formats (17, 21, 25, the old
+   verifier), ignore null messages, the class-file API's formats and names
+   the agent's own retransformation failed on, send every parsed name, count
+   the rest and overflow as unplaced, and set `verifier_rejections_watched`.
    A test pins coexistence with JFR on 17 and 21.
-5. **Testkit and demo collector.** Report classes that failed to
+6. **Testkit and demo collector.** Report classes that failed to
    initialise; the ABI dump grows again. Chunk 1 already keeps a slot out
    of every judgement.
-6. **Server**, on branch `failed-to-initialise` in a worktree: ingest and a
+7. **Server**, on branch `failed-to-initialise` in a worktree: ingest and a
    migration, the hierarchy derivation, the class-finding and never-hit
    rules, the dependency status, the page beside "Failed to load". Merge
    only on Luke's word, since a push to its master deploys.
-7. **Docs**, copy pre-approved (pre-release item 4): the agent's `classes.md` and `data-sent.md:83` (probe
+8. **Docs**, copy pre-approved (pre-release item 4): the agent's `classes.md` and `data-sent.md:83` (probe
    kinds), the server's `findings.md` and UI copy, and the `ProbeLocation`
    field comments saying which fields a slot carries. With them,
    `troubleshooting.md:240` and the KDoc at `LoadedClassSweep.kt:19-23`,
    which name the verifier as a cause of failed to load.
-8. **ADRs name no decider.** Reword every "Decided on <date> with Luke"
+9. **ADRs name no decider.** Reword every "Decided on <date> with Luke"
    and other mention of Luke in the ADRs of all four repos (agent 27 files,
    server 19, collector 3, site 2, counted 2026-10-16) to "Decided on
    <date>", and a fact that needs an owner, such as whose key signs

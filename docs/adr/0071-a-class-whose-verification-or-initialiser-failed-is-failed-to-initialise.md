@@ -32,3 +32,14 @@ The server decides, in its ADR 0069: a run in which the class initialised is evi
 - A new HotSpot release whose verifier message format differs reads as unplaced until its format is read, which withholds claims for that run's zero counts.
 - The wire additions are additive under `buf breaking`. The collector's bindings must be bumped first, since its redaction strips a field it does not know.
 - The testkit reports classes that failed to initialise, and its public API only grows.
+
+## Amended on 2026-10-16: what the verifier hook reads
+
+Decided while mapping the hook. HotSpot builds every link-time `VerifyError` through `VerifyError(String)` with a message that names the class, and so does a redefinition or retransformation that fails verification, for a class that keeps running; the instrumentation library then builds a second one with a null message.
+
+- **A null message is ignored**, not counted as unplaced: HotSpot never links with one.
+- **A name the agent's own retransformation failed on is dropped.** A class in use that another redefinition failed on has hits or a returned initialiser, which win in the server. What is left, a redefinition with invalid bytes of an unused class with no static initialiser, happens only in development.
+- **Every parsed name is sent, in scope or not.** A supertype outside the include rules that fails verification stops its in-scope subtypes from linking, and the server can carry the failure to them only from its name.
+- **`ProbeManifest.verifier_rejections_watched`** is true once the hook is installed. While it is false the server makes no claim from the run's zero counts, as for an unplaced failure, and the agent logs one WARNING.
+- **The hook keeps up to 8,192 messages between flushes**; each one lost to overflow counts as unplaced.
+- **The class-file API's own formats are ignored.** On JDK 25 `ClassFile.verify` builds `VerifyError`s without any class failing; its read formats are recognised and skipped, as HotSpot's are recognised by release. Any other message counts as unplaced.
