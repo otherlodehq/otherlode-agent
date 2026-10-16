@@ -23,3 +23,7 @@ The guarantee is this: when the agent names a class, the attempt to define it in
 
 - One stack walk per woven class at registration. At a sweep, one stack read for each class still unconfirmed, normally none.
 - ADRs 0028 and 0065 named a verifier rejection as a cause. That was wrong. The JVM verifies a class after it defines it, so a class the verifier rejects is defined, is confirmed by name and is never named failed. Its methods can never run, so they read as never hit. `STATUS.md` records that as a follow-up.
+
+## Amended on 2026-10-16: the verifier's rejects
+
+ADR 0071 names a class the verifier rejects, and one whose static initialiser threw, as a class that failed to initialise, apart from `failed_classes`.

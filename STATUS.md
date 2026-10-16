@@ -94,17 +94,36 @@ Known so far:
 - To inventory: the GitHub and Buf tokens CI uses, the WorkOS and GCP credentials behind the hosted server, and the
   `otherlode.dev` domain registration.
 
-### A class the verifier rejects reads as never-hit code: to decide
+### A class that failed to initialise: to build
 
-Found on 2026-10-06 while making failed classes certain (ADR 0066). The
-JVM verifies a class after it defines it, so a class the verifier rejects
-is defined and in `getAllLoadedClasses()`. It is confirmed by name, never
-named failed, and its methods can never run, so they read as never hit.
-That is a dead-code claim about code whose deployment is broken. Raised
-with Luke and recorded as a follow-up. A fix needs a signal that a class
-failed to link or initialise without loading anything, such as a probe in
-`<clinit>` that never fires beside a `NoClassDefFoundError` the agent
-cannot see, so it wants its own grill.
+Settled on 2026-10-16 (ADR 0071, server ADR 0069, `CONTEXT.md`). Landing
+order:
+
+1. **Wire.** `ProbeManifest.classes_failed_to_initialise` (class name,
+   reason `INITIALISER_THREW` or `VERIFICATION_REJECTED`, observed at), the
+   run's unplaced verification failure count, and probe location kinds for
+   the `<clinit>` *returned* and *threw* slots.
+2. **Collector.** Bump the bindings.
+3. **Agent, `<clinit>`.** The *returned* and *threw* slots in every
+   declared `<clinit>`, at both probe array forms, and the list entry when
+   *threw* first counts. Fixture tests weave a class whose initialiser
+   throws, one that returns, and one that blocks, and assert the slots and
+   that each fails or runs as it does unwoven.
+4. **Agent, verifier.** Weave `java.lang.VerifyError`'s constructors
+   through the bootstrap helper, parse the message on the export thread by
+   the read formats (17, 21, 25, the old verifier), count unplaced ones.
+   A test pins coexistence with JFR on 17 and 21.
+5. **Testkit and demo collector.** Report classes that failed to
+   initialise; the ABI dump grows.
+6. **Server**, on branch `failed-to-initialise` in a worktree: ingest and a
+   migration, the hierarchy derivation, the class-finding and never-hit
+   rules, the dependency status, the page beside "Failed to load". Merge
+   only on Luke's word, since a push to its master deploys.
+7. **Docs**, shown to Luke first: the agent's `classes.md`, the server's
+   `findings.md` and UI copy. With them, `troubleshooting.md:240` and the
+   comments at `LoadedClassSweep.kt:19-23`, `otherlode.proto:604-605` and
+   `Payloads.kt:514-516`, which name the verifier as a cause of failed to
+   load.
 
 ### HotSwap of a woven class with changed code: to grill
 
