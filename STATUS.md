@@ -445,7 +445,10 @@ otherwise. ADRs 0054 and 0055 hold the rule.
   amended). A local enum declared in a static context, a constructor
   argument (`class Sub extends Base({ enum E ... })`) or a `@static` method
   at 3.10.0, has a singleton `readResolve` calling the host's lazy accessor
-  with `invokestatic`, which reads as an unread shape.
+  with `invokestatic`, which reads as an unread shape. When a companion's
+  `valueOf` reads as an unread shape, so does every other method there
+  the JVM knows as `valueOf(String)`, the adopter's included, since which
+  one is scalac's is not certain (ADR 0054, amended 2026-10-16).
 - Unread shapes are recorded at transform time, before ADR 0007's commit
   point, so a transform that then fails is still counted in the first-flush
   summary, as are outcome counts and the received-bytes count. Classes
