@@ -35,10 +35,9 @@ multi-tenant backend.
    jobs use v4 of every action, several majors behind.
 3. **The quickstart** in otherlode.dev's `start/` (that repo's ADR 0001).
    The agent's and collector's pages and the overview are written.
-4. **Review the copy written under pre-approval.** On 2026-10-16 Luke
-   pre-approved copy edits for review before release. Each one, by commit:
-   `docs/site/testkit-api.md` (the `ProbeKind` slot rows, chunk 1 of
-   "A class that failed to initialise"). Add each later one here.
+4. **Review all customer copy.** Copy edits are pre-approved until
+   release (2026-10-16), and the whole corpus is reviewed once before it:
+   `docs/site`, the README, and the server's UI and docs.
 5. **Before the first customer:** the server STATUS's "Go-live
    checklist" (the company, the privacy policy, the site, the front door,
    one snapshot refresh measured on db-f1-micro). No collector can be given
@@ -126,8 +125,7 @@ order:
    migration, the hierarchy derivation, the class-finding and never-hit
    rules, the dependency status, the page beside "Failed to load". Merge
    only on Luke's word, since a push to its master deploys.
-7. **Docs**, copy pre-approved on 2026-10-16 and listed under the copy
-   review in pre-release item 4: the agent's `classes.md` and `data-sent.md:83` (probe
+7. **Docs**, copy pre-approved (pre-release item 4): the agent's `classes.md` and `data-sent.md:83` (probe
    kinds), the server's `findings.md` and UI copy, and the `ProbeLocation`
    field comments saying which fields a slot carries. With them,
    `troubleshooting.md:240` and the KDoc at `LoadedClassSweep.kt:19-23`,
