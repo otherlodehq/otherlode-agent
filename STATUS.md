@@ -92,63 +92,37 @@ Known so far:
 - To inventory: the GitHub and Buf tokens CI uses, the WorkOS and GCP credentials behind the hosted server, and the
   `otherlode.dev` domain registration.
 
-### A class that failed to initialise: to build
+### A class that failed to initialise: the server, then the rest
 
-Settled on 2026-10-16 (ADR 0071, server ADR 0069, `CONTEXT.md`). Landing
-order:
+Settled on 2026-10-16 (agent ADR 0071, server ADR 0069, both with
+amendments; `CONTEXT.md`). The agent, wire, collector, testkit and demo
+collector are done (`2a012d4` to `b26f77a`). Left, in order:
 
-1. **Wire.** `ProbeManifest.classes_failed_to_initialize` (class name,
-   reason `STATIC_INITIALIZER_THREW` or `VERIFIER_REJECTED`, observed at),
-   `unplaced_verification_failures`, and the probe kinds
-   `INITIALIZER_RETURNED` and `INITIALIZER_THREW`. Chunk 4 must send a
-   manifest when only the unplaced count changed, and stamp the count on
-   every manifest chunk, as `countsPendingSince` is.
-2. **Collector.** Bump the bindings.
-3. **Agent, `<clinit>`.** The *returned* and *threw* slots in every
-   declared `<clinit>`, at both probe array forms, and the list entry when
-   *threw* first counts. Fixture tests weave a class whose initialiser
-   throws, one that returns, and one that blocks, and assert the slots and
-   that each fails or runs as it does unwoven.
-4. **Wire and collector, again.** `ProbeManifest.verifier_rejections_watched`
-   (ADR 0071 amendment), then the collector's bindings.
-5. **Agent, verifier.** Weave `java.lang.VerifyError`'s constructors
-   through the bootstrap helper into a ring of 8,192 message references,
-   parse on the export thread by the read formats (17, 21, 25, the old
-   verifier), ignore null messages, the class-file API's formats and names
-   the agent's own retransformation failed on, send every parsed name, count
-   the rest and overflow as unplaced, and set `verifier_rejections_watched`.
-   A test pins coexistence with JFR on 17 and 21. Install the hook in
-   `premain` before the scheduler's first send, and set the flag in
-   `ExportScheduler`'s `stamp`, which every manifest passes through (class
-   chunks, riders-only chunks and the dependencies-listed empty manifest);
-   a test asserts it on each. A change in the unplaced count alone must
-   send a manifest.
-6. **Testkit and demo collector.** Report classes that failed to
-   initialise; the ABI dump grows again. Chunk 1 already keeps a slot out
-   of every judgement. Read `verifier_rejections_watched` and
-   `unplaced_verification_failures` per run, as `referencesRecorded` and
-   `runsRecordingReferences` are read, and make zero-count queries refuse
-   or say so for an unwatched or unplaced run, never return a clean list.
-   Give the testkit's tests a manifest fixture that defaults to watched,
-   and pin the unwatched case.
-7. **Server**, on branch `failed-to-initialise` in a worktree: ingest and a
-   migration, the hierarchy derivation, the class-finding and never-hit
-   rules, the dependency status, the page beside "Failed to load". Merge
-   once it is verified (Luke cleared server merges on 2026-10-16; a push to
-   its master deploys), and only after
-   step 5: with the server rule live and no agent sending
-   `verifier_rejections_watched`, every run reads as unwatched.
-8. **Docs**, copy pre-approved (pre-release item 4): the agent's `classes.md` and `data-sent.md:83` (probe
-   kinds), the server's `findings.md` and UI copy, and the `ProbeLocation`
-   field comments saying which fields a slot carries. With them,
-   `troubleshooting.md:240` and the KDoc at `LoadedClassSweep.kt:19-23`,
-   which name the verifier as a cause of failed to load.
-9. **ADRs name no decider.** Reword every "Decided on <date> with Luke"
+1. **Server, part a**, on branch `failed-to-initialise` in the worktree
+   `~/Documents/otherlode-server-failed-to-initialise`: bindings, slots out
+   of `/probes`, migration 0006, ingest, the per-run Go loader (initialised,
+   failed with the JVM carry rule, still running, evidence), the `bool_or`
+   evidence through every zero-count claim, the report figures, the
+   dependency status, snapshot format 9, and test fixtures that default to
+   watched. The brief is ready.
+2. **Server, part b**: the `/failed-to-initialize` listing, the page,
+   navigation and overview count, and the server's docs (`findings.md`,
+   `how-it-works.md`, `troubleshooting.md`, `api.md`). Then merge to the
+   server's master (cleared on 2026-10-16; a push deploys). Master took ADR
+   number 0069 for the database ADR (`6fb404f`), so the branch's ADR takes
+   the next free number at merge, and agent ADR 0071 and this entry follow
+   it.
+3. **The `ProbeLocation` field comments** in the proto, saying which fields
+   a `<clinit>` slot carries.
+4. **ADRs name no decider.** Reword every "Decided on <date> with Luke"
    and other mention of Luke in the ADRs of all four repos (agent 27 files,
    server 19, collector 3, site 2, counted 2026-10-16) to "Decided on
    <date>", and a fact that needs an owner, such as whose key signs
    releases, to a role. The server's go on its branch; ask before the
    collector's and the site's.
+
+Follow-up, outside this work: the testkit's `JavaApiCompileCheck.java`
+does not call `failedToLoad()` or `failedToLoadDependencies()`.
 
 ### HotSwap of a woven class with changed code: to grill
 
