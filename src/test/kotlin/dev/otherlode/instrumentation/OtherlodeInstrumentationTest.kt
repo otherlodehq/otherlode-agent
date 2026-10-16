@@ -426,7 +426,10 @@ class OtherlodeInstrumentationTest {
 
         val manifest = registry.manifest(ResourceAttributes("test", null, "instance-1", null, "run-1"))
         val clinitProbe =
-            manifest.probes.single { it.className == "com.example.target.StaticInitTarget" && it.methodName == "<clinit>" }
+            manifest.probes.single {
+                it.className == "com.example.target.StaticInitTarget" && it.methodName == "<clinit>" &&
+                    it.kind == ProbeKind.METHOD
+            }
         assertEquals(ProbeKind.METHOD, clinitProbe.kind)
         assertEquals("()V", clinitProbe.methodDescriptor)
         assertTrue(clinitProbe.line > 0, "expected a real line, got ${clinitProbe.line}")
@@ -514,7 +517,10 @@ class OtherlodeInstrumentationTest {
 
         val manifest = registry.manifest(ResourceAttributes("test", null, "instance-1", null, "run-1"))
         val clinitProbe =
-            manifest.probes.single { it.className == "com.example.target.StaticInitTarget" && it.methodName == "<clinit>" }
+            manifest.probes.single {
+                it.className == "com.example.target.StaticInitTarget" && it.methodName == "<clinit>" &&
+                    it.kind == ProbeKind.METHOD
+            }
         val deltas = registry.computeDeltaBatch(ResourceAttributes("test", null, "i-1", null, "run-1")).batch.deltas
         assertTrue(
             deltas.none { it.probeIndex == clinitProbe.probeIndex },

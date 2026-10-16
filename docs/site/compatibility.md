@@ -68,6 +68,8 @@ A redefinition that leaves the class file unchanged is accepted. That is the sha
 
 To use HotSwap, restart without the agent or leave it off the task you debug with.
 
+A debugger that breaks on uncaught exceptions sees an exception leaving a static initialiser as caught. The agent wraps each static initialiser the class file declares in a handler that counts the exception and throws it again, so the debugger also reports a second throw from that handler. The class fails as it would without the agent.
+
 ## The CDS warning
 
 The agent appends a small jar to the bootstrap class path at startup. HotSpot then prints a one-line warning once, which reads in part:

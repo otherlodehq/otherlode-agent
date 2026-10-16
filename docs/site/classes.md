@@ -18,6 +18,7 @@ This page covers the whole class. For what the agent records inside a class that
 | Skipped | The class matched the rules and the agent could not instrument it. | A `WARNING` log line, `skippedClasses()`, and the manifest's skipped list. |
 | Loaded where no transformer saw it | The class loaded, but the JVM offered it to no transformer. | One `INFO` log line, and the manifest. |
 | Failed to load | The agent wove the class and the JVM never defined it. | A `WARNING` log line, `failedToLoad()`, and the manifest. |
+| Failed to initialise | The JVM defined the class and its static initialiser threw, so the class can never run in that JVM. | The manifest. |
 | Never loaded | A complete static baseline declared the class and no manifest ever mentioned it. | `neverLoaded()`, and the server's class findings. |
 | Nothing to probe | The class loaded and has no method, default-argument site or static initialiser the agent probes. | Nothing, except in the static baseline's unprobed list. |
 | Left out | The class is synthetic, or a framework generated it at runtime. | Nothing. |
@@ -121,6 +122,16 @@ otherlode: the definition attempt of a woven class could not be read from its th
 ```
 
 A class that failed to load is a deployment to fix, never dead code. The server reads it that way even where a complete baseline declared the class. If some instance loaded the class, the class is loaded, whatever another instance says. `failedToLoad()` lists the classes some manifest named and no instance loaded, and `neverLoaded()` leaves them out.
+
+## Failed to initialise
+
+A class whose static initialiser throws is defined, and it still never runs. The JVM does not run the initialiser again, and every later use of the class throws `NoClassDefFoundError`. Such a class would read as dead code: its static initialiser's entry probe counted, and every method the initialiser did not reach sits at zero.
+
+The agent puts two more probes beside the entry probe of each static initialiser the class file declares. One counts each time the initialiser returns, and one counts each time it throws. The throwing probe sits in a handler that wraps the initialiser's body and rethrows the same exception, so the class fails exactly as it does without the agent. An initialiser the agent adds itself, to a class below Java 11 that has none, gets neither probe.
+
+The first time the throwing probe counts, the agent names the class in the manifest's `classes_failed_to_initialize`, with the reason `STATIC_INITIALIZER_THREW` and the time. It sends the name once per class. The two probes travel with the other probes, so their counts arrive in the delta batches. See [what the agent sends](data-sent).
+
+A class that failed to initialise is a deployment to fix, never dead code. If some instance ran the class's initialiser to the end, the class is initialised, whatever another instance says. An initialiser that has entered and neither returned nor thrown is still running. The agent names nothing for it and sends the counts as they are.
 
 ## Never loaded
 

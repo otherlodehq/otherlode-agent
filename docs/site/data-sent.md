@@ -80,7 +80,7 @@ A delta batch carries the resource attributes plus these lists. Each entry is a 
 
 | Field | Content |
 |---|---|
-| `deltas` | For each probe whose count changed: `class_id`, `probe_index`, `kind` (method, branch or optional argument), `first_seen_at` and `hits_total` |
+| `deltas` | For each probe whose count changed: `class_id`, `probe_index`, `kind` (method, branch, optional argument, initializer returned or initializer threw), `first_seen_at` and `hits_total` |
 | `endpoint_deltas` | For each endpoint whose count changed: `endpoint_id`, `first_seen_at`, `hits_total` |
 | `dependency_deltas` | For each dependency: `dependency_id`, `first_loaded_at`, `loaded_classes_total` |
 | `final_flush` | True only on the shutdown flush |
@@ -114,6 +114,7 @@ The manifest says what each id in a delta batch names. It carries the resource a
 | `class_references` | Per class: names of classes it refers to outside any probed method |
 | `skipped_classes` | Class name, the reason as free text (usually an exception message), and the time |
 | `failed_classes` | Name of a class that was woven but never loaded, and the time |
+| `classes_failed_to_initialize` | Name of a class the JVM defined whose static initializer threw, the reason (`STATIC_INITIALIZER_THREW`), and the time the agent first saw it. A class is listed once. The two probes behind it, kinds initializer returned and initializer threw, count how often the static initializer returned and how often it threw |
 | `unreported_classes` | Name of a class the agent found loaded that no transformer was offered, and the time |
 | `endpoints` | Per endpoint: `endpoint_id`, verb, route template, the framework's own spelling of the template, framework name, how it was discovered, and the handler class, method and descriptor when known |
 | `disabled_endpoint_modules` | Module name, the reason as free text, the time, and a kind naming why: a linkage error, an advice failure, a transform failure, a route walk failure, or a hook that matched no method |

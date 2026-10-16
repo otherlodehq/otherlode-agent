@@ -35,6 +35,8 @@ internal class WeavePlan private constructor(
     val probeCount: Int,
     val majorVersion: Int,
     private val typeInitializerSlot: Int,
+    private val initializerReturnedSlot: Int,
+    private val initializerThrewSlot: Int,
     val branchWrapper: Boolean,
     val branchBase: Int,
     val branchSlotCapacity: Int,
@@ -47,6 +49,12 @@ internal class WeavePlan private constructor(
 
     /** The `<clinit>` probe's slot, or null when the class has no type initializer probe. */
     val typeInitializerProbeIndex: Int? get() = typeInitializerSlot.takeIf { it >= 0 }
+
+    /** The slot counting each normal return of the `<clinit>`, or null when the class has no type initializer probe. */
+    val initializerReturnedProbeIndex: Int? get() = initializerReturnedSlot.takeIf { it >= 0 }
+
+    /** The slot counting the `<clinit>` leaving by a throw, or null when the class has no type initializer probe. */
+    val initializerThrewProbeIndex: Int? get() = initializerThrewSlot.takeIf { it >= 0 }
 
     /** Whether this is the first time [kind] is logged for this class; later calls return false. */
     fun firstLog(kind: Int): Boolean =
@@ -129,6 +137,8 @@ internal class WeavePlan private constructor(
         private val probeCount: Int,
         private val majorVersion: Int,
         private val typeInitializerProbeIndex: Int?,
+        private val initializerReturnedProbeIndex: Int?,
+        private val initializerThrewProbeIndex: Int?,
         private val branchWrapper: Boolean,
         private val branchBase: Int,
         private val branchSlotCapacity: Int,
@@ -220,6 +230,8 @@ internal class WeavePlan private constructor(
                 probeCount,
                 majorVersion,
                 typeInitializerProbeIndex ?: -1,
+                initializerReturnedProbeIndex ?: -1,
+                initializerThrewProbeIndex ?: -1,
                 branchWrapper,
                 branchBase,
                 branchSlotCapacity,

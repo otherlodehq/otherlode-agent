@@ -721,25 +721,30 @@ class OtherlodeInstrumentation(
                 slots
             }
         logUnprobedDefaults(typeDescription, defaultSites, analysis)
-        // The type initializer's own probe, when the class declares one, is appended after every
-        // other slot category (method, branch, omission). Where the class has a prelude, the prelude
-        // increments it right after it fills the counts field; otherwise the entry probe on the
-        // <clinit> does. Placement past the last other slot is a convenience, not a constraint.
-        val typeInitializerProbe =
+        // The type initializer's probes, when the class declares one, are appended after every
+        // other slot category (method, branch, omission): its entry probe, then the returned and
+        // threw slots. Where the class has a prelude, the prelude increments the entry probe right
+        // after it fills the counts field; otherwise the entry probe on the <clinit> does.
+        val typeInitializerProbes =
             if (analysis.hasTypeInitializer) {
-                ProbeMeta(
-                    ProbeKind.METHOD,
-                    "<clinit>",
-                    "()V",
-                    line = analysis.firstLineOf("<clinit>", "()V"),
-                    calls = analysis.callsOf("<clinit>", "()V").rightSized(),
-                    referencedClasses = references.keep(analysis.referencesOf("<clinit>", "()V")),
+                val line = analysis.firstLineOf("<clinit>", "()V")
+                listOf(
+                    ProbeMeta(
+                        ProbeKind.METHOD,
+                        "<clinit>",
+                        "()V",
+                        line = line,
+                        calls = analysis.callsOf("<clinit>", "()V").rightSized(),
+                        referencedClasses = references.keep(analysis.referencesOf("<clinit>", "()V")),
+                    ),
+                    ProbeMeta(ProbeKind.INITIALIZER_RETURNED, "<clinit>", "()V", line = line),
+                    ProbeMeta(ProbeKind.INITIALIZER_THREW, "<clinit>", "()V", line = line),
                 )
             } else {
-                null
+                emptyList()
             }
-        val probes = methodProbes + branchProbes + omissionProbes + listOfNotNull(typeInitializerProbe)
-        val typeInitializerProbeIndex = if (typeInitializerProbe != null) probes.size - 1 else null
+        val probes = methodProbes + branchProbes + omissionProbes + typeInitializerProbes
+        val typeInitializerProbeIndex = if (typeInitializerProbes.isNotEmpty()) probes.size - typeInitializerProbes.size else null
 
         val layoutHash =
             ProbeLayoutHash.of(
@@ -748,7 +753,7 @@ class OtherlodeInstrumentation(
                         .filter { it.dropReason == null }
                         .map { "${it.methodName}${it.methodDescriptor}#branch${it.siteIndex}x${it.probedOutcomeCount}" } +
                     defaultSites.map { "${it.defaultName}${it.defaultDescriptor}#optional${it.optionalBits}" } +
-                    (if (analysis.hasTypeInitializer) listOf("<clinit>()V#typeinit") else emptyList()),
+                    (if (analysis.hasTypeInitializer) listOf(ProbeLayoutHash.TYPE_INITIALIZER_ENTRY) else emptyList()),
             )
         val plan =
             WeavePlan.Builder(
@@ -757,6 +762,8 @@ class OtherlodeInstrumentation(
                 probeCount = probes.size,
                 majorVersion = ProbeArrayForm.majorVersionOf(source.received ?: analysedBytes),
                 typeInitializerProbeIndex = typeInitializerProbeIndex,
+                initializerReturnedProbeIndex = typeInitializerProbeIndex?.plus(1),
+                initializerThrewProbeIndex = typeInitializerProbeIndex?.plus(2),
                 branchWrapper = branchSites.isNotEmpty(),
                 branchBase = methodProbes.size,
                 branchSlotCapacity = branchProbes.size,
@@ -1078,6 +1085,15 @@ class OtherlodeInstrumentation(
                 view.entrySlots
             }
         instrumented = instrumented.visit(MethodProbes.entry(form, slotBySignature))
+
+        val returnedSlot = plan.initializerReturnedProbeIndex
+        val threwSlot = plan.initializerThrewProbeIndex
+        if (returnedSlot != null && threwSlot != null) {
+            instrumented =
+                instrumented.visit(
+                    InitializerProbes.wrapper(form, returnedSlot, threwSlot, BranchProbeAsmVisitorWrapper.carriesFrames(receivedBytes)),
+                )
+        }
 
         if (plan.branchWrapper) {
             val eligible =

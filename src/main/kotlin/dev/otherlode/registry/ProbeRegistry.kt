@@ -1,10 +1,12 @@
 package dev.otherlode.registry
 
 import dev.otherlode.export.BodyKind
+import dev.otherlode.export.ClassFailedToInitialize
 import dev.otherlode.export.ClassLocation
 import dev.otherlode.export.ClassReferences
 import dev.otherlode.export.DeltaBatch
 import dev.otherlode.export.FailedClass
+import dev.otherlode.export.InitializationFailure
 import dev.otherlode.export.KotlinKind
 import dev.otherlode.export.ProbeDelta
 import dev.otherlode.export.ProbeKind
@@ -141,6 +143,12 @@ open class ProbeRegistry(
         @Volatile
         var manifestData: ManifestData? = manifestData
 
+        /**
+         * The index of the [ProbeKind.INITIALIZER_THREW] slot, or -1 when the class has none. Kept
+         * apart from [manifestData] because a `<clinit>` can throw after the manifest was delivered.
+         */
+        val threwIndex: Int = kinds.indexOf(ProbeKind.INITIALIZER_THREW.ordinal.toByte())
+
         /** The last cumulative count successfully delivered to the collector, per probe. */
         var lastSent: LongArray = LongArray(counts.size)
 
@@ -217,6 +225,13 @@ open class ProbeRegistry(
         var staged: Boolean = false
     }
 
+    private class InitializationFailureEntry(
+        val observedAt: Long,
+    ) {
+        @Volatile
+        var manifestIncluded: Boolean = false
+    }
+
     /**
      * One computed delta batch, together with the exact per-class snapshots it was built from.
      *
@@ -240,12 +255,14 @@ open class ProbeRegistry(
         internal val stagedSkipped: List<Any>,
         internal val stagedUnreported: List<Any>,
         internal val stagedFailed: List<Any> = emptyList(),
+        internal val stagedInitializationFailures: List<Any> = emptyList(),
     )
 
     private val entriesByKey = ConcurrentHashMap<RegistryKey, ClassEntry>()
     private val skippedByClassName = ConcurrentHashMap<String, SkippedEntry>()
     private val unreportedByClassName = ConcurrentHashMap<String, UnreportedEntry>()
     private val failedByClassName = ConcurrentHashMap<String, FailedEntry>()
+    private val initializationFailures = ConcurrentHashMap<Pair<String, InitializationFailure>, InitializationFailureEntry>()
     private val nothingToProbeClassNames = ConcurrentHashMap.newKeySet<String>()
     private val nextClassId = AtomicInteger(0)
     private val nextSnapshotSequence = AtomicLong(0)
@@ -857,6 +874,7 @@ open class ProbeRegistry(
             failedByClassName.map { (className, entry) ->
                 FailedClass(className, entry.withheldAt)
             }
+        recordInitializationFailures()
         return ProbeManifest(
             resource,
             locations,
@@ -865,7 +883,23 @@ open class ProbeRegistry(
             unreportedClasses = unreported,
             classReferences = classReferences,
             failedClasses = failed,
+            classesFailedToInitialize =
+                initializationFailures.map { (key, entry) -> ClassFailedToInitialize(key.first, key.second, entry.observedAt) },
         )
+    }
+
+    /**
+     * Adds a [ClassFailedToInitialize] for each class whose [ProbeKind.INITIALIZER_THREW] slot
+     * counts above zero for the first time, keyed by class name and reason. The slot is read, never
+     * written, so the probe path stays one increment.
+     */
+    private fun recordInitializationFailures() {
+        for (entry in entriesByKey.values) {
+            if (entry.threwIndex < 0 || entry.counts[entry.threwIndex] <= 0L) continue
+            initializationFailures.computeIfAbsent(entry.className to InitializationFailure.STATIC_INITIALIZER_THREW) {
+                InitializationFailureEntry(System.currentTimeMillis())
+            }
+        }
     }
 
     private fun locationsOf(
@@ -947,7 +981,7 @@ open class ProbeRegistry(
 
     /**
      * Like [computeManifestDelta], but splits the not-yet-sent classes into chunks of at most
-     * [maxEntriesPerChunk] entries each. A skipped, unreported or failed class counts as one entry. A
+     * [maxEntriesPerChunk] entries each. A skipped, unreported, failed or failed-to-initialise class counts as one entry. A
      * registered class counts as its probe locations, plus its probes' call edges, referenced
      * classes and branch-site weight, plus one for its own [ClassLocation] record, plus the names in
      * its [ClassReferences] record, since all of it is staged and committed together. The first
@@ -967,6 +1001,7 @@ open class ProbeRegistry(
         maxEntriesPerChunk: Int,
     ): Sequence<ManifestSnapshot> =
         sequence {
+            recordInitializationFailures()
             var locations = mutableListOf<ProbeLocation>()
             var skipped = mutableListOf<SkippedClass>()
             var classLocations = mutableListOf<ClassLocation>()
@@ -977,6 +1012,8 @@ open class ProbeRegistry(
             var stagedUnreported = mutableListOf<Any>()
             var failed = mutableListOf<FailedClass>()
             var stagedFailed = mutableListOf<Any>()
+            var initializationFailed = mutableListOf<ClassFailedToInitialize>()
+            var stagedInitializationFailed = mutableListOf<Any>()
 
             // The running chunk weight is tracked explicitly rather than derived from the staged
             // lists' sizes: a class's call edges add to its weight but never become list entries of
@@ -996,11 +1033,13 @@ open class ProbeRegistry(
                             unreportedClasses = unreported,
                             classReferences = classReferences,
                             failedClasses = failed,
+                            classesFailedToInitialize = initializationFailed,
                         ),
                         stagedEntries,
                         stagedSkipped,
                         stagedUnreported,
                         stagedFailed,
+                        stagedInitializationFailed,
                     )
                 locations = mutableListOf()
                 skipped = mutableListOf()
@@ -1012,6 +1051,8 @@ open class ProbeRegistry(
                 stagedUnreported = mutableListOf()
                 failed = mutableListOf()
                 stagedFailed = mutableListOf()
+                initializationFailed = mutableListOf()
+                stagedInitializationFailed = mutableListOf()
                 chunkWeight = 0
                 return chunk
             }
@@ -1069,6 +1110,16 @@ open class ProbeRegistry(
                 failed += FailedClass(className, entry.withheldAt)
                 chunkWeight += 1
             }
+            for ((key, entry) in initializationFailures) {
+                if (entry.manifestIncluded) continue
+                if (chunkWeight > 0 && chunkWeight + 1 > maxEntriesPerChunk) {
+                    yield(takeChunk())
+                    if (entry.manifestIncluded) continue
+                }
+                stagedInitializationFailed += entry
+                initializationFailed += ClassFailedToInitialize(key.first, key.second, entry.observedAt)
+                chunkWeight += 1
+            }
             if (chunkWeight > 0) yield(takeChunk())
         }
 
@@ -1092,6 +1143,7 @@ open class ProbeRegistry(
         for (entry in snapshot.stagedSkipped) (entry as SkippedEntry).manifestIncluded = true
         for (entry in snapshot.stagedUnreported) (entry as UnreportedEntry).manifestIncluded = true
         for (entry in snapshot.stagedFailed) (entry as FailedEntry).manifestIncluded = true
+        for (entry in snapshot.stagedInitializationFailures) (entry as InitializationFailureEntry).manifestIncluded = true
     }
 
     /** How many registered classes still hold their manifest metadata; for tests. */

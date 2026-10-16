@@ -60,4 +60,17 @@ class ProbeLayoutHashTest {
 
         assertNotEquals(ProbeLayoutHash.of(before), ProbeLayoutHash.of(after))
     }
+
+    @Test
+    fun `the type initializer entry names its outcome slots`() {
+        // A layout that carries the returned and threw slots must never share a hash with one that
+        // carries only the entry probe.
+        val base = listOf("bar()V")
+
+        assertEquals("<clinit>()V#typeinit+outcomes", ProbeLayoutHash.TYPE_INITIALIZER_ENTRY)
+        assertNotEquals(
+            ProbeLayoutHash.of(base + "<clinit>()V#typeinit"),
+            ProbeLayoutHash.of(base + ProbeLayoutHash.TYPE_INITIALIZER_ENTRY),
+        )
+    }
 }

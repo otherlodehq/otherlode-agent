@@ -502,7 +502,7 @@ class CodeSizeLimitsTest {
             classes[name.removeSuffix(".class")]?.let { ByteArrayInputStream(it) } ?: super.getResourceAsStream(name)
     }
 
-    private companion object {
+    internal companion object {
         const val HUGE_METHOD_LIMIT = 8000
         const val FREQ_INLINE_SIZE = 325
         const val MIN_WOVEN_SHARE = 0.9

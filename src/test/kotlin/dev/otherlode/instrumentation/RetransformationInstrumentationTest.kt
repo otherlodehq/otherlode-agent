@@ -226,7 +226,7 @@ class RetransformationInstrumentationTest {
             "-1 takes javac's IFLE, and 5 three times",
         )
         val typeInitializer =
-            after.probes.single { it.className == "$TARGET.StaticInitTarget" && it.methodName == "<clinit>" }
+            after.probes.single { it.className == "$TARGET.StaticInitTarget" && it.methodName == "<clinit>" && it.kind == ProbeKind.METHOD }
         assertEquals(1L, hitsOf(registry, typeInitializer), "the type initializer does not run again")
 
         if (laterAgent != null) {

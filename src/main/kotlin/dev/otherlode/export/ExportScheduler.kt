@@ -846,7 +846,8 @@ class ExportScheduler(
                 } +
                 manifest.skippedClasses.size + manifest.endpoints.size + manifest.disabledEndpointModules.size +
                 manifest.classLocations.size + manifest.classReferences.sumOf { it.referencedClasses.size } +
-                manifest.unreportedClasses.size + manifest.failedClasses.size + manifest.dependencies.size +
+                manifest.unreportedClasses.size + manifest.failedClasses.size + manifest.classesFailedToInitialize.size +
+                manifest.dependencies.size +
                 manifest.externalClasses.size
         val riders = mutableListOf<Rider<ProbeManifest>>()
     }

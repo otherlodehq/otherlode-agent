@@ -18,6 +18,9 @@ object ProbeLayoutHash {
     private const val OFFSET_BASIS = -3750763034362895579L // FNV-1a 64-bit offset basis
     private const val PRIME = 1099511628211L // FNV-1a 64-bit prime
 
+    /** The layout entry of a class that declares a `<clinit>`: its entry probe and its returned and threw slots. */
+    const val TYPE_INITIALIZER_ENTRY = "<clinit>()V#typeinit+outcomes"
+
     fun of(signatures: List<String>): Long {
         var hash = OFFSET_BASIS
         for (signature in signatures) {
