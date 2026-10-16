@@ -1595,6 +1595,169 @@ class ScalaGeneratedMethodsAnalyzerTest {
         }
     }
 
+    /** The companions of `EnumsWidenedValueOf.scala` with the trait's `valueOf`, and the top-level class that holds each. */
+    private val widenedCompanions =
+        listOf(
+            "WideTop\$" to "WideTop",
+            "WideObjectHost\$WideIn\$" to "WideObjectHost",
+            "WideClassHost\$WideCls\$" to "WideClassHost",
+            "WideLocalHost\$WideLoc\$3\$" to "WideLocalHost",
+            "WideOver\$" to "WideOver",
+        )
+
+    private val widenedValueOf = "valueOf" to "(Ljava/lang/String;)Ljava/lang/Object;"
+
+    @Test
+    fun `scala 3 - the valueOf of an enum companion extending a trait with a wider result is read exactly`() {
+        for (version in listOf("3.3.4") + scala3Versions) {
+            for ((companion, _) in widenedCompanions) assertEnumReadExactly(version, companion, listOf(widenedValueOf))
+        }
+    }
+
+    @Test
+    fun `scala 3 - a widened valueOf with an unread body stays an unread shape on a read release`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        for ((companion, host) in widenedCompanions) {
+            val analysis = analyzeWith(withNop(build.classBytes(companion), setOf("valueOf")), build.lookup, tastyOf(host, "Scala 3.3.4"))
+
+            assertEquals(GeneratedBy.NONE, analysis.generatedBy(widenedValueOf.first, widenedValueOf.second), companion)
+            assertEquals(UnreadShape.SCALA_ENUM, analysis.unreadShape(widenedValueOf.first, widenedValueOf.second), companion)
+            assertNull(analysis.unreadRelease, companion)
+        }
+    }
+
+    @Test
+    fun `scala 3 - a widened valueOf beside a method the JVM knows as valueOf, and a Java-compatible one, read exactly`() {
+        for (version in listOf("3.3.4") + scala3Versions) {
+            for (companion in listOf("WideNamed\$", "WideJava\$")) {
+                assertEnumReadExactly(version, companion, listOf("valueOf" to "(Ljava/lang/String;)Ljava/lang/Object;"))
+            }
+        }
+    }
+
+    @Test
+    fun `scala 3 - a values, valueOf or new that scalac does not write for the enum is the adopter's on a read release`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val adopters =
+            listOf(
+                Triple("WideShape", "valueOf", "(Ljava/lang/String;)Ljava/lang/Object;"),
+                Triple("WideShape", "values", "()[L$PACKAGE/WideShape;"),
+                Triple("WideOnly", "\$new", "(ILjava/lang/String;)L$PACKAGE/WideOnly;"),
+                Triple("WideTwin", "valueOf", "(Ljava/lang/String;)Ljava/lang/String;"),
+                Triple("WideTwin", "valueOf", "(Ljava/lang/String;)Ljava/lang/Object;"),
+                Triple("WideNamed", "valueOf", "(Ljava/lang/String;)Ljava/lang/String;"),
+            )
+        for ((enumName, name, descriptor) in adopters) {
+            val companion = build.classBytes("$enumName\$")
+            val tasty = tastyOf(enumName, "Scala 3.3.4")
+            val scalacWritesNone = enumName == "WideShape" || enumName == "WideOnly"
+            val variants = if (scalacWritesNone) listOf(companion, withNop(companion, setOf(name))) else listOf(companion)
+            for (bytes in variants) {
+                val analysis = analyzeWith(bytes, build.lookup, tasty)
+
+                assertEquals(GeneratedBy.NONE, analysis.generatedBy(name, descriptor), "$enumName.$name$descriptor")
+                assertEquals(UnreadShape.NONE, analysis.unreadShape(name, descriptor), "$enumName.$name$descriptor")
+            }
+        }
+        val twin = analyzeWith(build.classBytes("WideTwin\$"), build.lookup, tastyOf("WideTwin", "Scala 3.3.4"))
+        assertEquals(GeneratedBy.ENUM, twin.generatedBy("valueOf", "(Ljava/lang/String;)L$PACKAGE/WideTwin;"))
+        val named = analyzeWith(build.classBytes("WideNamed\$"), build.lookup, tastyOf("WideNamed", "Scala 3.3.4"))
+        assertEquals(GeneratedBy.ENUM, named.generatedBy("valueOf", "(Ljava/lang/String;)Ljava/lang/Object;"))
+    }
+
+    @Test
+    fun `scala 3 - a valueOf a bridge forwards to, from a generic trait at a supertype of the enum, reads exactly`() {
+        for (version in listOf("3.3.4") + scala3Versions) {
+            assertEnumReadExactly(version, "WideGen\$", listOf("valueOf" to "(Ljava/lang/String;)Lscala/Product;"))
+        }
+    }
+
+    @Test
+    fun `scala 3 - beside a widened valueOf, the adopter's valueOf erasing to the enum type is the adopter's`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val companion = build.classBytes("WideBound\$")
+        val adopters = "valueOf" to "(Ljava/lang/String;)L$PACKAGE/WideBound;"
+        val tasty = tastyOf("WideBound", "Scala 3.3.4")
+
+        val analysis = analyzeWith(companion, build.lookup, tasty)
+
+        assertEquals(GeneratedBy.NONE, analysis.generatedBy(adopters.first, adopters.second))
+        assertEquals(UnreadShape.NONE, analysis.unreadShape(adopters.first, adopters.second))
+        assertEquals(GeneratedBy.ENUM, analysis.generatedBy("valueOf", "(Ljava/lang/String;)Ljava/lang/Object;"))
+    }
+
+    @Test
+    fun `scala 3 - every valueOf in an enum companion is held on a read release when none reads as scalac's`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val held =
+            listOf(
+                "WideNamed" to listOf("(Ljava/lang/String;)Ljava/lang/Object;", "(Ljava/lang/String;)Ljava/lang/String;"),
+                "WidePoly" to listOf("(Ljava/lang/String;)L$PACKAGE/WidePoly;", "(Ljava/lang/String;)Lscala/Product;"),
+            )
+        for ((enumName, descriptors) in held) {
+            val companion = withNop(build.classBytes("$enumName\$"), setOf("valueOf"))
+            val analysis = analyzeWith(companion, build.lookup, tastyOf(enumName, "Scala 3.3.4"))
+
+            for (descriptor in descriptors) {
+                assertEquals(UnreadShape.SCALA_ENUM, analysis.unreadShape("valueOf", descriptor), "$enumName.valueOf$descriptor")
+            }
+        }
+    }
+
+    @Test
+    fun `scala 3 - a widened valueOf reads exactly when the type declaring it cannot be read`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val lookup = { name: String -> if (name == "$PACKAGE/WideLookup") null else build.lookup(name) }
+
+        val analysis = analyzeWith(build.classBytes("WideTop\$"), lookup, tastyOf("WideTop", "Scala 3.3.4"))
+
+        assertEquals(GeneratedBy.ENUM, analysis.generatedBy("valueOf", "(Ljava/lang/String;)Ljava/lang/Object;"))
+    }
+
+    /** Companions holding scalac's `valueOf` beside a method of the adopter's the JVM knows as `valueOf`, with each one's descriptor. */
+    private val valueOfBesideAdopters =
+        listOf(
+            Triple("WidePoly", "(Ljava/lang/String;)L$PACKAGE/WidePoly;", "(Ljava/lang/String;)Lscala/Product;"),
+            Triple("WideRenamed", "(Ljava/lang/String;)L$PACKAGE/WideRenamed;", "(Ljava/lang/String;)Ljava/lang/Object;"),
+            Triple("WideMixed", "(Ljava/lang/String;)L$PACKAGE/WideMixed;", "(Ljava/lang/String;)Ljava/lang/Object;"),
+            Triple("WideBoth", "(Ljava/lang/String;)Lscala/Product;", "(Ljava/lang/String;)Ljava/lang/Object;"),
+        )
+
+    @Test
+    fun `scala 3 - scalac's valueOf beside an override or forwarder the JVM knows as valueOf reads exactly`() {
+        for (version in listOf("3.3.4") + scala3Versions) {
+            for ((enumName, scalac, _) in valueOfBesideAdopters) assertEnumReadExactly(version, "$enumName\$", listOf("valueOf" to scalac))
+        }
+    }
+
+    @Test
+    fun `scala 3 - an override or forwarder the JVM knows as valueOf, beside scalac's valueOf, is the adopter's on a read release`() {
+        for (version in listOf("3.3.4") + scala3Versions) {
+            val build = if (version == "3.3.4") CompilerFixtures.scalaBaseline(version) else CompilerFixtures.scalac(version)
+            for ((enumName, _, adopters) in valueOfBesideAdopters) {
+                val analysis = analyzeWith(build.classBytes("$enumName\$"), build.lookup, tastyOf(enumName, "Scala $version"))
+                val label = "scalac $version $enumName.valueOf$adopters"
+
+                assertEquals(GeneratedBy.NONE, analysis.generatedBy("valueOf", adopters), label)
+                assertEquals(UnreadShape.NONE, analysis.unreadShape("valueOf", adopters), label)
+                assertNull(analysis.unreadRelease, label)
+            }
+        }
+    }
+
+    @Test
+    fun `scala 3 - a hand-written valueOf overload in an enum companion extending a trait with a wider result is the adopter's`() {
+        val build = CompilerFixtures.scalaBaseline("3.3.4")
+        val overload = "valueOf" to "(Ljava/lang/String;I)Ljava/lang/Object;"
+
+        for (bytes in listOf(build.classBytes("WideOver\$"), withNop(build.classBytes("WideOver\$"), setOf("valueOf")))) {
+            val analysis = analyzeWith(bytes, build.lookup, tastyOf("WideOver", "Scala 3.3.4"))
+
+            assertEquals(GeneratedBy.NONE, analysis.generatedBy(overload.first, overload.second))
+            assertEquals(UnreadShape.NONE, analysis.unreadShape(overload.first, overload.second))
+        }
+    }
+
     @Test
     fun `scala 3 - a singleton case of a local enum whose companion cannot be paired is held on a read release and marks nothing`() {
         val build = CompilerFixtures.scalaBaseline("3.3.4")

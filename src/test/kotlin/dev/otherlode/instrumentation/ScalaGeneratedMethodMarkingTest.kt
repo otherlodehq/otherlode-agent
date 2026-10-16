@@ -855,6 +855,28 @@ class ScalaGeneratedMethodMarkingTest {
     }
 
     @Test
+    fun `scala 3 - the valueOf of an enum companion extending a trait with a wider result is marked ENUM`() {
+        val companions =
+            listOf(
+                "WideTop\$",
+                "WideObjectHost\$WideIn\$",
+                "WideClassHost\$WideCls\$",
+                "WideLocalHost\$WideLoc\$3\$",
+                "WideOver\$",
+            )
+        val probes = probesAfterLoading("scala3", *companions.toTypedArray())
+
+        for (companion in companions) {
+            assertEquals(
+                GeneratedBy.ENUM,
+                probes.method(companion, "valueOf", "(Ljava/lang/String;)Ljava/lang/Object;").generatedBy,
+                companion,
+            )
+        }
+        assertEquals(GeneratedBy.NONE, probes.method("WideOver\$", "valueOf", "(Ljava/lang/String;I)Ljava/lang/Object;").generatedBy)
+    }
+
+    @Test
     fun `scala 3 - the plumbing of an enum declared inside a class is marked ENUM and what the adopter wrote is not`() {
         val singletonCase =
             setOf(
