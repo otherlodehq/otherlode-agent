@@ -13,16 +13,11 @@ the collector as open source. `otherlode-server` stays closed source and
 hosted (server ADR 0001), so every adopter's collector forwards to one
 multi-tenant backend.
 
-1. **Measure the overhead on the release candidate.** `docs/site/overhead.md`
-   and `benchmark-overhead/README.md` quote the runner numbers from `8139271`.
-   Run 38944648115, on `1332f3f`, measures the head with the nested-jar
-   reader. Read its summaries and update both pages' tables, then re-run on
-   the commit to be tagged. The narrow startup had moved past the README's
-   25% target (+33% to +38% in the nightlies on `5ded4b5` to `dc6eafa`,
-   against +17% to +24% before); confirm `1332f3f` brings it back. The
-   one-core startup gap between the runner and local Docker is the runner's
-   slower core: both give about 3.2 times `none` at `8139271` (58.2 s over
-   18.2 s, 21.5 s over 6.8 s).
+1. **Re-run the overhead on the commit to be tagged.** `docs/site/overhead.md`
+   and `benchmark-overhead/README.md` quote run 38944648115 on `1332f3f`
+   (2026-10-16), with narrow startup at +21.7%, inside the README's 25%
+   target. Re-run on the tagged commit and update both pages if a figure
+   moves.
 2. **Cut the releases** (ADRs 0062 and 0063, collector ADR 0006). Cutting
    is Luke's call. Collector `v0.1.0` goes first, since the agent's
    `release.sh` refuses a release until it exists. The agent's needs its
@@ -52,11 +47,11 @@ deferrals, gzip, a collector config file, and agent-level redaction
 
 ### The class listing's cost on demo-spring and a large classpath
 
-The class listing (ADR 0070) reads nested jars from their central directory
-(`1332f3f`). On PetClinic's fat jar that reads 107 nested jars in under
-50 ms of CPU on a laptop; the overhead page states the runner's cost once
-run 38944648115 is read (pre-release item 1). Measure it still on
-demo-spring and on a large classpath.
+The overhead page states the listing's cost on PetClinic's jar from run
+38949019169: a first call measured in a JVM of its own on one runner core
+took about 100 ms of CPU with the narrow rules and 210 ms with
+`org.springframework`. The harness measures it on every run. Measure it
+still on demo-spring and on a large classpath.
 
 Known gaps in what it lists, all rare, all listing less than the JVM loads:
 

@@ -14,19 +14,19 @@ Almost all of it scales with one number: how many classes `includePackages` matc
 
 The numbers below come from the project's overhead benchmark, which runs `spring-petclinic-rest` against Postgres under k6, with and without the agent. The agent exports to a real collector, so encoding and sending are in the numbers.
 
-The run used GitHub's `ubuntu-latest` runner (4 vCPU) with PetClinic pinned to one core, 6 repeats per variant, and the JVM heap fixed at 1 GiB. The agent skipped no class in either configuration. Each figure is the median of the agent variant against the median of the variant with no agent. A change marked "noise" lies inside the no-agent variant's own spread.
+The run used GitHub's `ubuntu-latest` runner (4 vCPU) with PetClinic pinned to one core, 6 repeats per variant, and the JVM heap fixed at 1 GiB, on commit `1332f3f`. The agent skipped no class in either configuration. Each figure is the median of the agent variant against the median of the variant with no agent. A change marked "noise" lies inside the no-agent variant's own spread.
 
 | | Narrow rules (`org.springframework.samples.petclinic`) | Broad rules (`org.springframework`) |
 |---|---|---|
-| Probes | 1,489 | 99,085 |
-| Throughput | +1.0% | -3.5% |
-| CPU per request | -0.9% | +3.6% |
-| p95 / p99 latency | -1.4% / -1.2% (noise) | +2.8% / +3.5% |
-| GC pause per 1000 requests | +3.7% (noise) | +24.3% |
-| Resident set size | +66 MiB (+6.4%) | +266 MiB (+25.7%) |
-| Minimum heap used | +9 MiB | +93 MiB |
-| Metaspace | +19 MiB | +24 MiB |
-| Startup, time to first 200 | 16.9 s to 20.7 s (+22.4%) | 18.2 s to 58.2 s |
+| Probes | 1,489 | 99,685 |
+| Throughput | -0.8% (noise) | -7.1% |
+| CPU per request | +1.0% (noise) | +8.3% |
+| p95 / p99 latency | +0.8% / +0.5% (noise) | +6.5% / +7.4% |
+| GC pause per 1000 requests | +6.5% | +30.9% |
+| Resident set size | +76 MiB (+7.4%) | +303 MiB (+29.5%) |
+| Minimum heap used | +10 MiB | +122 MiB |
+| Metaspace | +19 MiB | +23 MiB |
+| Startup, time to first 200 | 17.0 s to 20.7 s (+21.7%) | 13.5 s to 36.0 s (+166%) |
 
 Read the table as a bound, not a prediction. PetClinic is one application on one core. The narrow column matches how you should configure the agent, with rules that cover your own code. The broad column shows what you pay for a package like `org.springframework`, which instruments a framework's classes, not only yours.
 
@@ -52,21 +52,21 @@ When the JVM loads a class that matches `includePackages`, the agent reads its b
 
 Three things drive that cost up:
 
-- **More matched classes.** The cost is roughly linear in matched classes. The broad run above wove about 4,200 classes and 99,085 probes. The narrow run wove about 100 classes and 1,489 probes.
+- **More matched classes.** The cost is roughly linear in matched classes. The broad run above wove about 4,200 classes and 99,685 probes. The narrow run wove about 100 classes and 1,489 probes.
 - **Locating class files.** The agent reads each class's file from its own loader, and the supertypes it needs. Inside a Spring Boot fat jar that goes through the nested-jar loader. The agent caches these reads (up to 16 MB, evicting the least recently used) and releases per-loader caches when a loader goes quiet.
-- **One core.** On one core, class loading, the JIT, and the weave share a CPU. The broad rules took startup from 18.2 s to 58.2 s on the one-core runner, a larger relative cost than any other row of the table.
+- **One core.** On one core, class loading, the JIT, and the weave share a CPU. The broad rules took startup from 13.5 s to 36.0 s on the one-core runner, a larger relative cost than any throughput, CPU or latency row of the table.
 
-Heap follows the same shape. The broad run's minimum heap used was +93 MiB, and its resident set size +266 MiB. Once a class's manifest is delivered, the agent releases that class's locations and keeps only what the next flush needs.
+Heap follows the same shape. The broad run's minimum heap used was +122 MiB, and its resident set size +303 MiB. Once a class's manifest is delivered, the agent releases that class's locations and keeps only what the next flush needs.
 
 ## Startup
 
-Startup is the cost to watch. In the run above, the narrow rules added 3.8 s to a 16.9 s startup on one core (+22.4%). With more cores the cost shrinks, since class loading, the JIT and the weave no longer share one CPU. Startup grows with how many classes your application loads, because the agent checks each loaded class against its rules.
+Startup is the cost to watch. In the run above, the narrow rules added 3.7 s to a 17.0 s startup on one core (+21.7%). With more cores the cost shrinks, since class loading, the JIT and the weave no longer share one CPU. Startup grows with how many classes your application loads, because the agent checks each loaded class against its rules.
 
 Two pieces of work that would otherwise be startup cost run later:
 
 - The dependency listing, which reads every jar on the classpath to find its identity, starts at the top of the first flush on the export thread, not in `premain`. It reads each nested jar in a fat jar from its central directory, and decompresses only the `pom.properties` files and manifest it needs.
 - The first full manifest goes out on the first flush, at a random point inside the first interval.
-- The class listing (on by default) runs on its own background thread, named `otherlode-class-listing`, started once at startup and not in `premain`. It reads the file names in each class folder and the central directory of each jar on the classpath. It reads a jar nested in a Spring Boot fat jar the same way, from that jar's central directory, so it decompresses nothing to read entry names. It parses no class file, and it runs once per process. A JVM started with no class path reads the working directory as its class path, and the listing then walks every folder under it, so start the application from its own folder or give it a class path. With `classListingEnabled=false` the thread does not start. See [classes](classes#the-class-listing).
+- The class listing (on by default) runs on its own background thread, named `otherlode-class-listing`, started once at startup and not in `premain`. It reads the file names in each class folder and the central directory of each jar on the classpath. It reads a jar nested in a Spring Boot fat jar the same way, from that jar's central directory, so it decompresses nothing to read entry names. On the benchmark's PetClinic jar, which holds 126 classes of its own and 38,391 in 107 nested jars, a first call to the listing, measured in a JVM of its own on one core of the benchmark runner, took about 100 ms of CPU with the narrow rules and about 210 ms with `org.springframework`, one sample each. It parses no class file, and it runs once per process. A JVM started with no class path reads the working directory as its class path, and the listing then walks every folder under it, so start the application from its own folder or give it a class path. With `classListingEnabled=false` the thread does not start. See [classes](classes#the-class-listing).
 
 ## The flush thread and the network
 

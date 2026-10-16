@@ -211,22 +211,23 @@ Under `benchmark-overhead/build/results/<config>/`:
 
 ## Latest numbers
 
-Workflow run 37330002272 on 2026-10-05, agent at `8139271`, GitHub's `ubuntu-latest` (4 vCPU), so
-PetClinic on one pinned core with four k6 users. Six repeats per variant, every run valid and
-steady, no class skipped in either config. Medians, agent against `none`; a change marked "noise"
+Workflow run 38944648115 on 2026-10-16, agent at `1332f3f`, GitHub's `ubuntu-latest` (4 vCPU), so
+PetClinic on one pinned core with four k6 users. Six repeats per variant, every run valid, 35
+of 36 warmups judged steady (the other reached its cap with a steady window), no class skipped in
+either config. Medians, agent against `none`; a change marked "noise"
 lies inside `none`'s own spread.
 
 | | headline (`org.springframework.samples.petclinic`) | ceiling (`org.springframework`) |
 |---|---|---|
-| probes | 1,489 | 99,085 |
-| throughput | +1.0% | -3.5% |
-| CPU per request | -0.9% | +3.6% |
-| p95 / p99 latency | -1.4% / -1.2% (noise) | +2.8% / +3.5% |
-| GC pause per 1000 requests | +3.7% (noise) | +24.3% |
-| RSS | +66 MiB (+6.4%) | +266 MiB (+25.7%) |
-| minimum heap used | +9 MiB | +93 MiB |
-| metaspace | +19 MiB | +24 MiB |
-| startup | 16.9 s to 20.7 s (+22.4%) | 18.2 s to 58.2 s |
+| probes | 1,489 | 99,685 |
+| throughput | -0.8% (noise) | -7.1% |
+| CPU per request | +1.0% (noise) | +8.3% |
+| p95 / p99 latency | +0.8% / +0.5% (noise) | +6.5% / +7.4% |
+| GC pause per 1000 requests | +6.5% | +30.9% |
+| RSS | +76 MiB (+7.4%) | +303 MiB (+29.5%) |
+| minimum heap used | +10 MiB | +122 MiB |
+| metaspace | +19 MiB | +23 MiB |
+| startup | 17.0 s to 20.7 s (+21.7%) | 13.5 s to 36.0 s (+166%) |
 
 The startup target is the headline's time to first 200 within 25% of `none` on this runner; it is a
 target to watch, not a gate. The ceiling has none. Startup on one core is where the agent's
