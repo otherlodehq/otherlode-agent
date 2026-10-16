@@ -96,6 +96,10 @@ _Avoid_: withheld class, undefined class, failed class (a skipped class is the o
 An unconfirmed class that never confirmed: the agent wove it and the JVM never defined it, such as when a supertype is missing at load. The agent names it only once the JVM's attempt to define it has ended. It is a deployment to fix, never dead code, and a class some in-scope run loaded is loaded whatever another run says.
 _Avoid_: failed class (a skipped class is the one that failed), never loaded (a status for code nothing used, and this class may have been used)
 
+**Class that failed to initialise**:
+A class the JVM defined that can never run in that JVM, because its verification or its static initialiser failed. The agent names it only from evidence it is certain of: its own static initialiser threw, or the JVM's verifier rejected it by name. It is a deployment to fix, never dead code, and a run in which the class initialised is evidence about its methods whatever another run says.
+_Avoid_: failed to load (the JVM defined this class), broken class, unrunnable class
+
 **Class file**:
 A class's bytes as the compiler wrote them, read through the class's own loader. Everything the agent reads from a body's shape comes from it, so an instance with another agent ahead of this one reports the same marks, conditions and keys as one without.
 _Avoid_: on-disk bytes (it may be a jar entry), original bytes, captured bytes
