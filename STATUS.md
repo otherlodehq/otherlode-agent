@@ -136,13 +136,27 @@ wanted, is `PendingDeclarations.begin()` taking the declaring class name and
 hold the same string for JAX-RS but is a display label: nullable, and set at
 dispatch for the other modules.
 
-### Endpoint follow-ups not started
+### Per-module endpoint switch: to build, before 0.1.0
 
-- Static analysis of registration call sites, to declare an endpoint whose
-  registration the agent never sees at runtime.
-- Per-framework disable flags. One `endpointsEnabled` switch and the
-  self-disabling modules cover everything known so far; this is only worth
-  building if an adopter needs to turn one module off by hand.
+Settled on 2026-10-17 (ADR 0017's amendment of that date). Landing order:
+
+1. Agent: `disabledEndpointModules`, the `CONFIGURED_OFF` kind, and a
+   report of every module the configuration keeps from installing,
+   `endpointsEnabled=false` included. `configuration.md`, `endpoints.md`
+   and `troubleshooting.md` change with it.
+2. Collector: bump the bindings once Buf CI has published the schema, so
+   redaction keeps the kind.
+3. Server: a label and notice wording for the kind, as the adopter's
+   choice rather than a failure.
+
+### Endpoints for a framework with no module: in grill
+
+Started on 2026-10-17. Scoped to WebFlux, Micronaut, Javalin and Vert.x,
+where the route bridge only discovers, so "never called" cannot be
+computed. Code that never registers a route is out of scope: the method
+tier and the class listing (ADR 0070) already report it. Open: static
+analysis of registration call sites (set aside in ADR 0017) or a runtime
+module per framework, and which frameworks come before 0.1.0.
 
 ## Parked
 
