@@ -161,6 +161,17 @@ Chunk 2 also makes a request count once (ADR 0017's amendment): Spring
 Security 6.1.6 to 6.5 counted every Spring MVC request twice, and async
 redispatches counted again.
 
+### Micronaut on a serverless runtime: to grill, before 0.1.0
+
+Found on 2026-10-17 reviewing `micronaut-3`. micronaut-aws 3.x builds its
+own `RouteExecutor` and never reaches `RoutingInBoundHandler` or
+`ServletHttpHandler`, so on Lambda every route is declared at
+`DefaultRouter`'s constructor and none is ever counted: every endpoint
+would read as never called. Micronaut 4's Lambda, Azure and GCP paths are
+being checked. To settle: declare a router's routes only once a counted
+dispatch point has run (as Vert.x does, ADR 0073), add a hook per
+serverless runtime, or report the runtime as not covered.
+
 ### A servlet module: to grill, before 0.1.0
 
 A plain servlet application reads as having no endpoints, and no marker

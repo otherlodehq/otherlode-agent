@@ -35,6 +35,7 @@ jobs:
           :endpoints-ktor-3:check
           :endpoints-javalin-6:check
           :endpoints-javalin-7:check
+          :endpoints-micronaut-3:check
           :endpoints-micronaut:check
           :endpoints-jaxrs:check
           :endpoints-otel-bridge:check

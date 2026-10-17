@@ -29,6 +29,7 @@ val micronaut3 =
 
 dependencies {
     implementation(project(":endpoints-api"))
+    implementation(project(":endpoints-micronaut-common"))
 
     compileOnly(project(":bootstrap"))
     compileOnly("net.bytebuddy:byte-buddy:$byteBuddyVersion")

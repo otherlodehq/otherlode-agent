@@ -14,7 +14,7 @@ README covers building and developing the agent.
 
 - Method-level probes (ASM, woven through ByteBuddy's `AgentBuilder`) catch
   unused methods and classes.
-- Endpoint modules for Spring MVC, Spring WebFlux, Javalin, Micronaut, Ktor, JAX-RS and the JDK's `HttpServer`
+- Endpoint modules for Spring MVC, Spring WebFlux, Javalin, Micronaut 3 to 5, Ktor, JAX-RS and the JDK's `HttpServer`
   count each endpoint where the framework matches a request to it, and list
   the endpoints it registered, so one never called shows up.
 - Branch-level probes (ASM, woven in the same transform pass) catch

@@ -51,7 +51,9 @@ val jdk17Projects =
         ":endpoints-jdk-httpserver",
         ":endpoints-ktor-2",
         ":endpoints-ktor-3",
+        ":endpoints-micronaut-common",
         ":endpoints-micronaut",
+        ":endpoints-micronaut-3",
         ":endpoints-otel-bridge",
         ":endpoints-spring-common",
         ":endpoints-spring-webmvc",
@@ -143,6 +145,12 @@ dependencies {
     // Endpoint modules for Javalin 6 and 7.
     implementation(project(":endpoints-javalin-6"))
     implementation(project(":endpoints-javalin-7"))
+
+    // The class-file handler join the Micronaut endpoint modules share.
+    implementation(project(":endpoints-micronaut-common"))
+
+    // Endpoint module for Micronaut 3.
+    implementation(project(":endpoints-micronaut-3"))
 
     // Endpoint module for Micronaut 4.0 to 5.x.
     implementation(project(":endpoints-micronaut"))
