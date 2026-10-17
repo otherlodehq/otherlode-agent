@@ -181,6 +181,10 @@ servlets another module owns. Needs its own research and grill.
 - A handler from Spring's Kotlin DSLs (`router {}`, `coRouter {}`) gets no
   join. Unwrapping to the adopter's lambda waits on reading its compiled
   shape.
+- JAX-RS on Quarkus REST: an abstract `@Path` class with two or more
+  subclasses declares endpoints Quarkus never serves (ADR 0020's
+  amendment). Reading Quarkus's runtime resource table at
+  `RuntimeDeploymentManager.deploy` would be exact; it needs its own grill.
 - Vert.x Web: a router mounted both at a literal path and at a parameterised
   path that matches the same request (`/u/1/*` and `/u/:id/*`) counts it
   against the literal one, since only the parent context's mount route,
