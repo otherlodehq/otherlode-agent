@@ -1591,6 +1591,26 @@ class OtherlodeTestCollectorTest {
     }
 
     @Test
+    fun `a module the configuration kept off surfaces as CONFIGURED_OFF`() {
+        val target = startCollector()
+        val exporter = exporterFor(target)
+        exporter.exportManifest(
+            watchedManifest(
+                ResourceAttributes("svc", null, "i-1", null, "run-1"),
+                emptyList(),
+                disabledEndpointModules =
+                    listOf(
+                        DisabledEndpointModule("ktor-3", "disabledEndpointModules names it", 1L, DisabledEndpointModuleKind.CONFIGURED_OFF),
+                    ),
+            ),
+        )
+
+        val module = target.disabledEndpointModules().single()
+        assertEquals(dev.otherlode.testkit.DisabledEndpointModuleKind.CONFIGURED_OFF, module.kind)
+        assertEquals("disabledEndpointModules names it", module.reason)
+    }
+
+    @Test
     fun `a disabled module with no kind is answered 400, since an agent of this testkit's version always sends one`() {
         val target = startCollector()
         val manifest =

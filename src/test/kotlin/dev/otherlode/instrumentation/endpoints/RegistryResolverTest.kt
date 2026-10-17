@@ -246,9 +246,9 @@ class RegistryResolverTest {
             )
         assertEquals(expected, expected.keys.associateWith { disabledKindOf(it) })
         assertEquals(
-            DisabledEndpointModuleKind.entries.toSet(),
+            DisabledEndpointModuleKind.entries.toSet() - DisabledEndpointModuleKind.CONFIGURED_OFF,
             expected.values.toSet(),
-            "every wire kind has a seam constant",
+            "every wire kind but CONFIGURED_OFF, which the agent records itself, has a seam constant",
         )
     }
 }

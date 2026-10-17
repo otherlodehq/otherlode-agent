@@ -926,7 +926,7 @@ message EndpointLocation {
   string route_template = 3;
   // The framework's own spelling, kept for display only.
   string verbatim_template = 4;
-  // Module name, e.g. "spring-webmvc-6", "ktor-3", "jdk-httpserver".
+  // Module name, e.g. "spring-webmvc", "ktor-3", "jdk-httpserver".
   string framework = 5;
   EndpointDiscoverySource discovery_source = 6;
   // Handler join, set when the framework exposes one. All three are set for
@@ -946,13 +946,15 @@ message EndpointDelta {
   int64 hits_total = 3;
 }
 
-// An endpoint module that switched itself off, because it could no longer vouch for the
-// endpoints it declares and counts. Reported so the server can tell "no endpoints" from
-// "endpoints not instrumented", the same reason SkippedClass exists for classes. A module is
-// switched off whole and once; its endpoints declared before that stop being counted.
+// An endpoint module that is not instrumenting: it switched itself off because it could no
+// longer vouch for the endpoints it declares and counts, or the adopter's configuration kept it
+// from installing. Reported so the server can tell "no endpoints" from "endpoints not
+// instrumented", the same reason SkippedClass exists for classes. A module is switched off
+// whole and once; its endpoints declared before that stop being counted.
 message DisabledEndpointModule {
   string module = 1;
-  // Free text for a person: the failure, or for HOOK_UNMATCHED the hooked method and its class.
+  // Free text for a person: the failure, for HOOK_UNMATCHED the hooked method and its class, or
+  // for CONFIGURED_OFF the setting that kept the module off.
   string reason = 2;
   int64 disabled_at = 3;
   DisabledEndpointModuleKind kind = 4;
@@ -974,6 +976,9 @@ enum DisabledEndpointModuleKind {
   // A hook matched no method on the framework class it hooks: the framework release renamed the
   // method or changed its parameters.
   HOOK_UNMATCHED = 5;
+  // The adopter's configuration kept the module from installing: `disabledEndpointModules`
+  // named it, or `endpointsEnabled` is false.
+  CONFIGURED_OFF = 6;
 }
 
 // How the agent learned of a dependency.

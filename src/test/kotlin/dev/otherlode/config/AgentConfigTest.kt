@@ -633,6 +633,45 @@ class AgentConfigTest {
         assertEquals(emptyList(), warnings)
     }
 
+    @Test
+    fun `disabledEndpointModules is empty by default`() {
+        assertEquals(emptyList(), parseQuietly("serviceName=checkout").disabledEndpointModules)
+    }
+
+    @Test
+    fun `disabledEndpointModules resolves from agent args, then the system property, then the environment variable`() {
+        val property = mapOf("otherlode.disabled.endpoint.modules" to "ktor-2")
+        val env = mapOf("OTHERLODE_DISABLED_ENDPOINT_MODULES" to "jaxrs")
+
+        val all =
+            AgentConfig.parse(
+                "disabledEndpointModules=spring-webmvc",
+                env = env::get,
+                systemProperties = property::get,
+                detectServiceName = { null },
+            )
+        val propertyAndEnv = AgentConfig.parse(null, env = env::get, systemProperties = property::get, detectServiceName = { null })
+        val envOnly = AgentConfig.parse(null, env = env::get, systemProperties = { null }, detectServiceName = { null })
+
+        assertEquals(listOf("spring-webmvc"), all.disabledEndpointModules)
+        assertEquals(listOf("ktor-2"), propertyAndEnv.disabledEndpointModules)
+        assertEquals(listOf("jaxrs"), envOnly.disabledEndpointModules)
+    }
+
+    @Test
+    fun `disabledEndpointModules splits on semicolons, trims entries and drops blanks, with no warning`() {
+        var config: AgentConfig? = null
+        val warnings = warningsFrom { config = parseQuietly("disabledEndpointModules= ktor-2 ;; jaxrs ; ;otel") }
+
+        assertEquals(listOf("ktor-2", "jaxrs", "otel"), config!!.disabledEndpointModules)
+        assertEquals(emptyList(), warnings)
+    }
+
+    @Test
+    fun `a blank disabledEndpointModules value means none`() {
+        assertEquals(emptyList(), parseQuietly("disabledEndpointModules= ; ;").disabledEndpointModules)
+    }
+
     /** Parses [agentArgs] with no environment or system properties unless given, so the JVM running the tests cannot change the result. */
     private fun parseQuietly(
         agentArgs: String,

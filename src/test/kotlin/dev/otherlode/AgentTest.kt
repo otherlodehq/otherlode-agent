@@ -7,10 +7,12 @@ import dev.otherlode.export.ClassListing
 import dev.otherlode.export.DependencyDiscoverySource
 import dev.otherlode.export.DependencyIdentity
 import dev.otherlode.export.DependencyIdentitySource
+import dev.otherlode.export.DisabledEndpointModuleKind
 import dev.otherlode.export.IncludeRules
 import dev.otherlode.export.ProbeManifest
 import dev.otherlode.export.ProtoPayloadCodec
 import dev.otherlode.export.StaticBaseline
+import dev.otherlode.instrumentation.endpoints.EndpointInstrumentation
 import dev.otherlode.instrumentation.endpoints.api.AdviceBinder
 import dev.otherlode.instrumentation.endpoints.api.EndpointModule
 import dev.otherlode.registry.DependencyOrigin
@@ -622,12 +624,232 @@ class AgentTest {
 
         assertEquals(modules, Agent.filterEndpointModules(modules, otelBridgeEnabled = false))
     }
+
+    @Test
+    fun `a module named in disabledEndpointModules is not installed and is reported CONFIGURED_OFF, and an unnamed one installs`() {
+        val ktor = fakeEndpointModule("ktor-3")
+        val jdk = fakeEndpointModule("jdk-httpserver")
+
+        val selection =
+            Agent.selectEndpointModules(
+                listOf(jdk, ktor),
+                endpointsEnabled = true,
+                otelBridgeEnabled = false,
+                disabledNames = listOf("ktor-3"),
+            )
+
+        assertEquals(listOf(jdk), selection.installed)
+        assertEquals(listOf("ktor-3"), selection.keptOff.map { it.name })
+        assertEquals("disabledEndpointModules names it", selection.keptOff.single().reason)
+    }
+
+    @Test
+    fun `otel named in disabledEndpointModules with the bridge off is neither installed nor reported`() {
+        val jdk = fakeEndpointModule("jdk-httpserver")
+        val otel = fakeEndpointModule("otel")
+
+        val selection =
+            Agent.selectEndpointModules(
+                listOf(jdk, otel),
+                endpointsEnabled = true,
+                otelBridgeEnabled = false,
+                disabledNames = listOf("otel"),
+            )
+
+        assertEquals(listOf(jdk), selection.installed)
+        assertEquals(emptyList(), selection.keptOff)
+    }
+
+    @Test
+    fun `otel named in disabledEndpointModules with the bridge on is not installed and is reported`() {
+        val jdk = fakeEndpointModule("jdk-httpserver")
+        val otel = fakeEndpointModule("otel")
+
+        val selection =
+            Agent.selectEndpointModules(
+                listOf(jdk, otel),
+                endpointsEnabled = true,
+                otelBridgeEnabled = true,
+                disabledNames = listOf("otel"),
+            )
+
+        assertEquals(listOf(jdk), selection.installed)
+        assertEquals(listOf("otel"), selection.keptOff.map { it.name })
+    }
+
+    @Test
+    fun `an unknown disabledEndpointModules entry logs one WARNING naming it and the known modules, and changes nothing else`() {
+        val jdk = fakeEndpointModule("jdk-httpserver")
+        val ktor = fakeEndpointModule("ktor-3")
+        lateinit var selection: Agent.EndpointModuleSelection
+
+        val warnings =
+            agentWarningsFrom {
+                selection =
+                    Agent.selectEndpointModules(
+                        listOf(jdk, ktor),
+                        endpointsEnabled = true,
+                        otelBridgeEnabled = false,
+                        disabledNames = listOf("ktor-9", "ktor-3"),
+                    )
+            }
+
+        assertEquals(listOf(jdk), selection.installed)
+        assertEquals(listOf("ktor-3"), selection.keptOff.map { it.name })
+        val warning = warnings.single()
+        assertTrue(warning.contains("'ktor-9'"), warning)
+        assertTrue(warning.contains("jdk-httpserver") && warning.contains("ktor-3"), warning)
+    }
+
+    @Test
+    fun `endpointsEnabled=false installs no module and reports every module that would have installed, the bridge only when enabled`() {
+        val modules = listOf(fakeEndpointModule("jdk-httpserver"), fakeEndpointModule("ktor-3"), fakeEndpointModule("otel"))
+
+        val bridgeOff =
+            Agent.selectEndpointModules(
+                modules,
+                endpointsEnabled = false,
+                otelBridgeEnabled = false,
+                disabledNames = emptyList(),
+            )
+        val bridgeOn = Agent.selectEndpointModules(modules, endpointsEnabled = false, otelBridgeEnabled = true, disabledNames = emptyList())
+
+        assertEquals(emptyList(), bridgeOff.installed)
+        assertEquals(listOf("jdk-httpserver", "ktor-3"), bridgeOff.keptOff.map { it.name })
+        assertTrue(bridgeOff.keptOff.all { it.reason == "endpointsEnabled=false" })
+        assertEquals(emptyList(), bridgeOn.installed)
+        assertEquals(listOf("jdk-httpserver", "ktor-3", "otel"), bridgeOn.keptOff.map { it.name })
+    }
+
+    @Test
+    fun `a module kept off contributes no handler interfaces`() {
+        val kept = fakeEndpointModule("ktor-3", handlerInterfaces = setOf("io.ktor.Handler"))
+        val installed = fakeEndpointModule("jdk-httpserver", handlerInterfaces = setOf("com.sun.net.httpserver.HttpHandler"))
+
+        val selection =
+            Agent.selectEndpointModules(
+                listOf(installed, kept),
+                endpointsEnabled = true,
+                otelBridgeEnabled = false,
+                disabledNames = listOf("ktor-3"),
+            )
+
+        assertEquals(setOf("com.sun.net.httpserver.HttpHandler"), selection.installed.flatMapTo(sortedSetOf()) { it.handlerInterfaces })
+    }
+
+    @Test
+    fun `an agent run with a module kept off sends it on the manifest as CONFIGURED_OFF`() {
+        val manifests = CopyOnWriteArrayList<ProbeManifest>()
+        val collector = HttpServer.create(InetSocketAddress("localhost", 0), 0)
+        collector.createContext("/") { exchange ->
+            val bytes = exchange.requestBody.readBytes()
+            if (exchange.requestURI.path == "/v1/otherlode/manifest") manifests += ProtoPayloadCodec.decodeProbeManifest(bytes)
+            exchange.sendResponseHeaders(200, -1)
+            exchange.close()
+        }
+        collector.start()
+        var running: Agent.Running? = null
+        val installLines =
+            logMessagesFrom(EndpointInstrumentation::class.java.name, java.util.logging.Level.INFO) {
+                running =
+                    Agent.start(
+                        "includePackages=dev.otherlode.neverloaded.fixture,flushIntervalSeconds=3600," +
+                            "disabledEndpointModules=jdk-httpserver,exportUrl=http://localhost:${collector.address.port}",
+                        ByteBuddyAgent.install(),
+                    )
+            }
+        try {
+            assertNotNull(running)
+            val installing = installLines.single { it.startsWith("otherlode: installing endpoint modules:") }
+            assertFalse(installing.contains("jdk-httpserver"), installing)
+            running!!.scheduler.flush()
+            val disabled = manifests.flatMap { it.disabledEndpointModules }.single()
+            assertEquals("jdk-httpserver", disabled.module)
+            assertEquals(DisabledEndpointModuleKind.CONFIGURED_OFF, disabled.kind)
+            assertEquals("disabledEndpointModules names it", disabled.reason)
+        } finally {
+            running?.stop()
+            collector.stop(0)
+        }
+    }
+
+    @Test
+    fun `endpointsEnabled=false sends every discovered module on the manifest as CONFIGURED_OFF`() {
+        val manifests = CopyOnWriteArrayList<ProbeManifest>()
+        val collector = HttpServer.create(InetSocketAddress("localhost", 0), 0)
+        collector.createContext("/") { exchange ->
+            val bytes = exchange.requestBody.readBytes()
+            if (exchange.requestURI.path == "/v1/otherlode/manifest") manifests += ProtoPayloadCodec.decodeProbeManifest(bytes)
+            exchange.sendResponseHeaders(200, -1)
+            exchange.close()
+        }
+        collector.start()
+        val running =
+            Agent.start(
+                "includePackages=dev.otherlode.neverloaded.fixture,flushIntervalSeconds=3600,endpointsEnabled=false," +
+                    "exportUrl=http://localhost:${collector.address.port}",
+                ByteBuddyAgent.install(),
+            )
+        try {
+            assertNotNull(running)
+            assertNull(running.endpointTransformer)
+            running.scheduler.flush()
+            val disabled = manifests.flatMap { it.disabledEndpointModules }
+            assertTrue(disabled.any { it.module == "jdk-httpserver" }, "$disabled")
+            assertTrue(disabled.none { it.module == "otel" }, "$disabled")
+            assertTrue(
+                disabled.all { it.kind == DisabledEndpointModuleKind.CONFIGURED_OFF && it.reason == "endpointsEnabled=false" },
+                "$disabled",
+            )
+        } finally {
+            running?.stop()
+            collector.stop(0)
+        }
+    }
+
+    private fun agentWarningsFrom(block: () -> Unit): List<String> =
+        logMessagesFrom(Agent::class.java.name, java.util.logging.Level.WARNING, block)
+
+    private fun logMessagesFrom(
+        loggerName: String,
+        level: java.util.logging.Level,
+        block: () -> Unit,
+    ): List<String> {
+        val records = mutableListOf<java.util.logging.LogRecord>()
+        val handler =
+            object : java.util.logging.Handler() {
+                override fun publish(record: java.util.logging.LogRecord) {
+                    records.add(record)
+                }
+
+                override fun flush() {}
+
+                override fun close() {}
+            }
+        val julLogger =
+            java.util.logging.Logger
+                .getLogger(loggerName)
+        val originalLevel = julLogger.level
+        julLogger.addHandler(handler)
+        julLogger.level = java.util.logging.Level.ALL
+        try {
+            block()
+        } finally {
+            julLogger.removeHandler(handler)
+            julLogger.level = originalLevel
+        }
+        return records.filter { it.level == level }.mapNotNull { it.message }
+    }
 }
 
 /** A minimal [EndpointModule] whose only meaningful behaviour is its [EndpointModule.name]. */
-private fun fakeEndpointModule(moduleName: String): EndpointModule =
+private fun fakeEndpointModule(
+    moduleName: String,
+    handlerInterfaces: Set<String> = emptySet(),
+): EndpointModule =
     object : EndpointModule {
         override val name: String = moduleName
+        override val handlerInterfaces: Set<String> = handlerInterfaces
 
         override fun typeMatcher(): ElementMatcher<in TypeDescription> = ElementMatchers.any()
 

@@ -940,9 +940,10 @@ data class EndpointDelta(
 )
 
 /**
- * An endpoint module that switched itself off, typically on a linkage failure against an
- * unexpected framework version. Reported so a collector can tell "no endpoints" from "endpoints
- * not instrumented", the same reason [SkippedClass] exists for classes.
+ * An endpoint module that is not instrumenting: it switched itself off, typically on a linkage
+ * failure against an unexpected framework version, or the configuration kept it from installing.
+ * Reported so a collector can tell "no endpoints" from "endpoints not instrumented", the same
+ * reason [SkippedClass] exists for classes.
  */
 data class DisabledEndpointModule(
     val module: String,
@@ -970,6 +971,9 @@ enum class DisabledEndpointModuleKind {
 
     /** A hook matched no method on the framework class it hooks. */
     HOOK_UNMATCHED,
+
+    /** The adopter's configuration kept the module from installing. */
+    CONFIGURED_OFF,
 }
 
 /** How the agent learned of a dependency. */

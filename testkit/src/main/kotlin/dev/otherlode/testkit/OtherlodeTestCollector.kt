@@ -2381,7 +2381,7 @@ public class OtherlodeTestCollector internal constructor(
             val listed = disabled.joinToString(", ") { "${it.module}: ${it.reason}" }
             return UnknownEndpointException(
                 "${identity.verb} ${identity.routeTemplate}: never mentioned by any manifest; " +
-                    "an endpoint module reported itself disabled and may be why: $listed",
+                    "an endpoint module is disabled and may be why: $listed",
             )
         }
         return UnknownEndpointException("${identity.verb} ${identity.routeTemplate}: never mentioned by any manifest")
@@ -3479,7 +3479,7 @@ public data class EndpointRef internal constructor(
  * instead of reading as "confirmed never called". The message names one of two cases, checked in
  * this order:
  *
- * 1. At least one endpoint module reported itself disabled. The message names every disabled
+ * 1. At least one endpoint module is disabled. The message names every disabled
  *    module and its reason, since the unmentioned endpoint may belong to one of them.
  * 2. No manifest, from any instance, ever mentioned this endpoint.
  */

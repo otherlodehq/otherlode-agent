@@ -137,7 +137,7 @@ public data class SkippedClass internal constructor(
     val reason: String,
 )
 
-/** An endpoint module that switched itself off, and [kind], what switched it off. */
+/** An endpoint module that is not instrumenting, and [kind], what switched it off or kept it off. */
 @ConsistentCopyVisibility
 public data class DisabledEndpointModule internal constructor(
     val module: String,
@@ -164,6 +164,9 @@ public enum class DisabledEndpointModuleKind {
 
     /** A hook matched no method on the framework class it hooks. */
     HOOK_UNMATCHED,
+
+    /** The adopter's configuration kept the module from installing. */
+    CONFIGURED_OFF,
 }
 
 internal fun WireProbeKind.toTestkit(): ProbeKind =
@@ -316,6 +319,10 @@ internal fun WireDisabledEndpointModuleKind.toTestkit(): DisabledEndpointModuleK
         WireDisabledEndpointModuleKind.HOOK_UNMATCHED -> {
             DisabledEndpointModuleKind.HOOK_UNMATCHED
         }
+
+        WireDisabledEndpointModuleKind.CONFIGURED_OFF -> {
+            DisabledEndpointModuleKind.CONFIGURED_OFF
+        }
     }
 
 internal fun DisabledEndpointModuleKind.toWire(): WireDisabledEndpointModuleKind =
@@ -325,4 +332,5 @@ internal fun DisabledEndpointModuleKind.toWire(): WireDisabledEndpointModuleKind
         DisabledEndpointModuleKind.TRANSFORM_FAILED -> WireDisabledEndpointModuleKind.TRANSFORM_FAILED
         DisabledEndpointModuleKind.ROUTE_WALK_FAILED -> WireDisabledEndpointModuleKind.ROUTE_WALK_FAILED
         DisabledEndpointModuleKind.HOOK_UNMATCHED -> WireDisabledEndpointModuleKind.HOOK_UNMATCHED
+        DisabledEndpointModuleKind.CONFIGURED_OFF -> WireDisabledEndpointModuleKind.CONFIGURED_OFF
     }

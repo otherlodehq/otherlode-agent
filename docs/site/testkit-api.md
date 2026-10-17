@@ -136,7 +136,7 @@ A query that reads no zero count keeps answering: `wasHit`, `hitCount`, `omissio
 | `callCount(verb, routeTemplate): Long` | The count summed over instances, each instance's highest delivered total. |
 | `neverCalled(): List<EndpointRef>` | Every endpoint with a summed count of zero, sorted by route template, then verb, leaving out one whose handler class failed to initialise. Refuses while an instance's zero counts are not evidence. |
 | `endpoints(): List<EndpointRef>` | Every endpoint any instance reported, sorted the same way. |
-| `disabledEndpointModules(): List<DisabledEndpointModule>` | The endpoint modules that switched themselves off, such as on a framework version the agent does not support. Sorted by module name. |
+| `disabledEndpointModules(): List<DisabledEndpointModule>` | The endpoint modules that are not instrumenting: those that switched themselves off, such as on a framework version the agent does not support, and those the agent's configuration kept off. Sorted by module name. |
 
 `wasCalled` and `callCount` throw `UnknownEndpointException` for an endpoint no manifest has named.
 
@@ -231,7 +231,7 @@ Cases 3 and 5 can clear on their own as the application runs. Wait for the class
 
 ### UnknownEndpointException
 
-1. At least one endpoint module reported itself disabled. The message lists every disabled module and its reason, because the endpoint may belong to one of them.
+1. At least one endpoint module is disabled. The message lists every disabled module and its reason, because the endpoint may belong to one of them.
 2. No manifest from any instance named the endpoint.
 
 ### UnknownDependencyException
@@ -502,6 +502,7 @@ What switched an endpoint module off.
 | `TRANSFORM_FAILED` | The module's own transform threw, or a framework class it hooks failed to weave. |
 | `ROUTE_WALK_FAILED` | Walking a framework's route objects threw. |
 | `HOOK_UNMATCHED` | A hook matched no method on the framework class it hooks: a framework release renamed or changed the method. |
+| `CONFIGURED_OFF` | The agent's configuration kept the module from installing: `disabledEndpointModules` named it, or `endpointsEnabled` is false. |
 
 ### DependencyUsage
 

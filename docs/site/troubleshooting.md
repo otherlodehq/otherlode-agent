@@ -94,7 +94,7 @@ The `enabled` option is `false`, often through `OTHERLODE_ENABLED=false` in the 
 otherlode: endpoint instrumentation failed to install, continuing without endpoint tracking
 ```
 
-The method and branch tiers work. The endpoint tier did not install, and the instance reports no endpoints. A variant, `otherlode: endpoint module discovery failed, continuing without endpoint tracking`, means the agent could not load its list of endpoint modules. The stack trace names the cause. If you do not need endpoints, set `endpointsEnabled=false`, which logs `otherlode: endpointsEnabled=false, no framework's endpoints will be instrumented` instead of the error. Otherwise report the trace.
+The method and branch tiers work. The endpoint tier did not install, and the instance reports no endpoints. A variant, `otherlode: endpoint module discovery failed, continuing without endpoint tracking`, means the agent could not load its list of endpoint modules. The stack trace names the cause. The agent still loads that list with `endpointsEnabled=false`, so it can report each module as kept off, and the discovery error appears with the option off too. In that case no module is reported, so the server cannot tell this instance's endpoints were not instrumented. Report the trace.
 
 ## An option is ignored
 
@@ -112,6 +112,7 @@ These warnings each mean the agent kept running with a default instead of your v
 | `otherlode: ignoring all of OTEL_RESOURCE_ATTRIBUTES, since its entry 'x' is not key=value; no service name, namespace, version or environment is read from it` | One malformed entry discards the whole list, as the OpenTelemetry specification says. Fix the entry. |
 | `otherlode: ignoring '..' from <source>, since no URL path can name a service or namespace '..'` | A service name or namespace of `.` or `..` is refused. |
 | `otherlode: callbackAnnotations entry '@com.acme.Handles' is not a fully qualified annotation type name and is ignored: write the dotted name with its package and no wildcard, such as 'com.acme.Handles'` | An entry in [`callbackAnnotations`](configuration#callbackannotations) has a leading `@`, a `/`, a `*`, a trailing `.class`, no package, or a part that is not a Java identifier. The agent drops that entry and keeps the others. Write the annotation's name as you would import it. |
+| `otherlode: disabledEndpointModules entry 'ktor-9' names no endpoint module and is ignored: the modules are ...` | An entry in [`disabledEndpointModules`](configuration#disabledendpointmodules) is not a module name. The agent skips it, so the module you meant stays on, and keeps the other entries. The line lists the module names. |
 
 [Configuration options](configuration) lists every option and where its value comes from.
 
@@ -329,9 +330,11 @@ This is the JVM's line, not the agent's, and it is harmless. See [the CDS warnin
 otherlode: endpoint module spring-webmvc disabled itself: java.lang.NoSuchMethodError: ...
 ```
 
-An endpoint module found a framework class that does not match the version it supports and switched itself off for the rest of the process. That happens when its advice throws, when one of its hooks matches no method on the framework class (a framework release renamed or changed the method), or when a framework class it hooks fails to weave. The log line names the cause, and for an unmatched hook it names the hook and the class. The module name is one of `jaxrs`, `jdk-httpserver`, `ktor-2`, `ktor-3`, `spring-webmvc`, or `otel`. The other modules and the method and branch tiers keep working. The instance reports the module as disabled, with a kind naming why (linkage error, advice failure, transform failure, route walk failure or an unmatched hook), so a collector can tell "no endpoints" from "endpoints not instrumented". The testkit lists it with `collector.disabledEndpointModules()`.
+An endpoint module found a framework class that does not match the version it supports and switched itself off for the rest of the process. That happens when its advice throws, when one of its hooks matches no method on the framework class (a framework release renamed or changed the method), or when a framework class it hooks fails to weave. The log line names the cause, and for an unmatched hook it names the hook and the class. The module name is one of `jaxrs`, `jdk-httpserver`, `ktor-2`, `ktor-3`, `spring-webmvc`, or `otel`. The other modules and the method and branch tiers keep working. The instance reports the module as disabled, with a kind naming why (linkage error, advice failure, transform failure, route walk failure, an unmatched hook, or `CONFIGURED_OFF`), so a collector can tell "no endpoints" from "endpoints not instrumented". The testkit lists it with `collector.disabledEndpointModules()`.
 
-Check your framework version against [the supported versions](endpoints) and [compatibility](compatibility). Upgrade or downgrade the framework, or set `endpointsEnabled=false` to turn the endpoint tier off. A module that disabled itself after declaring some routes leaves those routes in the report with no counting, so they read as never called. Treat that module's endpoints as unknown.
+A module with the kind `CONFIGURED_OFF` is not a fault. `disabledEndpointModules` or `endpointsEnabled=false` kept it from installing, and it logs no WARNING.
+
+Check your framework version against [the supported versions](endpoints) and [compatibility](compatibility). Upgrade or downgrade the framework, name the module in `disabledEndpointModules`, or set `endpointsEnabled=false` to turn the endpoint tier off. A module that disabled itself after declaring some routes leaves those routes in the report with no counting, so they read as never called. Treat that module's endpoints as unknown.
 
 Related lines:
 

@@ -13,6 +13,7 @@ import dev.otherlode.dependencies.ListedDependency
 import dev.otherlode.dependencies.LoadedDependencyCounter
 import dev.otherlode.dependencies.StartupClasspathLister
 import dev.otherlode.export.DependencyDiscoverySource
+import dev.otherlode.export.DisabledEndpointModuleKind
 import dev.otherlode.export.ExportScheduler
 import dev.otherlode.export.Exporter
 import dev.otherlode.export.HttpExporter
@@ -166,7 +167,11 @@ object Agent {
 
         // Found before the method tier installs: its analysis writes the forwarder table, and only
         // for the handler interfaces these modules name (ADR 0035).
-        val endpointModules = if (config.endpointsEnabled) discoverEndpointModules(config) else null
+        val endpointSelection = discoverEndpointModules(config)
+        endpointSelection?.keptOff?.forEach {
+            endpointRegistry.recordDisabledModule(it.name, it.reason, DisabledEndpointModuleKind.CONFIGURED_OFF)
+        }
+        val endpointModules = endpointSelection?.installed?.takeIf { it.isNotEmpty() }
         val handlerForwarders = HandlerForwarders(endpointModules.orEmpty().flatMapTo(sortedSetOf()) { it.handlerInterfaces })
 
         val classFileCache = ClassFileByteCache()
@@ -214,6 +219,8 @@ object Agent {
             }
         } else if (!config.endpointsEnabled) {
             log.log(Level.INFO, "otherlode: endpointsEnabled=false, no framework's endpoints will be instrumented")
+        } else if (endpointSelection != null && endpointSelection.keptOff.isEmpty()) {
+            log.log(Level.INFO, "otherlode: no endpoint modules were discovered, no framework's endpoints will be instrumented")
         }
 
         val verifierHook = VerifyErrorHook(ownRetransformationFailures)
@@ -333,16 +340,71 @@ object Agent {
     }
 
     /**
-     * The endpoint modules this JVM runs, or null when discovery failed. A failure here is logged at
-     * ERROR, as a failed endpoint install is, and the method tier still installs.
+     * The modules this JVM installs and the ones the configuration keeps off, or null when discovery
+     * failed. A failure here is logged at ERROR, as a failed endpoint install is, and the method
+     * tier still installs.
      */
-    private fun discoverEndpointModules(config: AgentConfig): List<EndpointModule>? =
+    private fun discoverEndpointModules(config: AgentConfig): EndpointModuleSelection? =
         try {
-            filterEndpointModules(EndpointModules.discover(), config.otelBridgeEnabled)
+            selectEndpointModules(
+                EndpointModules.discover(),
+                config.endpointsEnabled,
+                config.otelBridgeEnabled,
+                config.disabledEndpointModules,
+            )
         } catch (e: Throwable) {
             log.log(Level.ERROR, "otherlode: endpoint module discovery failed, continuing without endpoint tracking", e)
             null
         }
+
+    /** An endpoint module the configuration kept from installing, and the setting that did it. */
+    internal class KeptOffModule(
+        val name: String,
+        val reason: String,
+    )
+
+    /** The modules to install and the modules the configuration kept off, each of which is reported as disabled. */
+    internal class EndpointModuleSelection(
+        val installed: List<EndpointModule>,
+        val keptOff: List<KeptOffModule>,
+    )
+
+    /**
+     * Splits the [discovered] modules into those to install and those the configuration keeps off.
+     * The modules that would install are [discovered] without the route bridge unless
+     * [otelBridgeEnabled]. With [endpointsEnabled] false none installs and each is kept off; otherwise
+     * each one named in [disabledNames] is. A name matching no discovered module logs one WARNING and
+     * is skipped.
+     *
+     * `internal` so a test can pin the rules against fake [EndpointModule] instances.
+     */
+    internal fun selectEndpointModules(
+        discovered: List<EndpointModule>,
+        endpointsEnabled: Boolean,
+        otelBridgeEnabled: Boolean,
+        disabledNames: List<String>,
+    ): EndpointModuleSelection {
+        val knownNames = discovered.map { it.name }
+        disabledNames.filter { it !in knownNames }.distinct().forEach { unknown ->
+            log.log(
+                Level.WARNING,
+                "otherlode: disabledEndpointModules entry '$unknown' names no endpoint module and is ignored: " +
+                    "the modules are ${knownNames.joinToString(", ")}",
+            )
+        }
+        val candidates = filterEndpointModules(discovered, otelBridgeEnabled)
+        if (!endpointsEnabled) {
+            return EndpointModuleSelection(emptyList(), candidates.map { KeptOffModule(it.name, "endpointsEnabled=false") })
+        }
+        val (keptOff, installed) = candidates.partition { it.name in disabledNames }
+        if (keptOff.isNotEmpty()) {
+            log.log(
+                Level.INFO,
+                "otherlode: disabledEndpointModules keeps these endpoint modules off: ${keptOff.joinToString(", ") { it.name }}",
+            )
+        }
+        return EndpointModuleSelection(installed, keptOff.map { KeptOffModule(it.name, "disabledEndpointModules names it") })
+    }
 
     /**
      * Drops the route bridge module, named `"otel"`, from [modules] unless [otelBridgeEnabled]

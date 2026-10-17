@@ -84,9 +84,11 @@ data class AgentConfig(
     val enabled: Boolean,
     /**
      * On by default. One switch for every endpoint module (Spring, Ktor, `jdk.httpserver`,
-     * JAX-RS) and the OpenTelemetry route bridge, with no per-framework flags. A module matches only when its framework is present,
-     * and one whose advice or transform throws, a `LinkageError` against an unsupported version
-     * included, switches itself off and is reported in `disabled_endpoint_modules`.
+     * JAX-RS) and the OpenTelemetry route bridge; [disabledEndpointModules] keeps single modules off.
+     * A module matches only when its framework is present, and one whose advice or transform throws,
+     * a `LinkageError` against an unsupported version included, switches itself off and is reported
+     * in `disabled_endpoint_modules`. When false, every module that would have installed is reported
+     * there as kept off by configuration.
      */
     val endpointsEnabled: Boolean,
     /**
@@ -109,6 +111,12 @@ data class AgentConfig(
      * entry that is not a well-formed type name is dropped with a WARNING.
      */
     val callbackAnnotations: List<CallbackAnnotationName>,
+    /**
+     * Endpoint module names the adopter keeps from installing, in the order written, trimmed and
+     * without blanks. Empty unless `disabledEndpointModules` is set. The names are not checked here:
+     * only the discovered modules say which names are real.
+     */
+    val disabledEndpointModules: List<String>,
 ) {
     companion object {
         /** OpenTelemetry's name for a Java service that names none. */
@@ -144,6 +152,7 @@ data class AgentConfig(
                 "otelBridgeEnabled",
                 "testRun",
                 "callbackAnnotations",
+                "disabledEndpointModules",
             )
 
         /**
@@ -217,6 +226,7 @@ data class AgentConfig(
                 otelBridgeEnabled = parseBoolean("otelBridgeEnabled", resolve("otelBridgeEnabled"), default = false),
                 testRun = testRun,
                 callbackAnnotations = parseCallbackAnnotations(resolve("callbackAnnotations")),
+                disabledEndpointModules = parseNameList(resolve("disabledEndpointModules")),
             )
         }
 
@@ -313,6 +323,13 @@ data class AgentConfig(
             }
             return usable
         }
+
+        private fun parseNameList(raw: String?): List<String> =
+            raw
+                ?.split(";")
+                ?.map { it.trim() }
+                ?.filter { it.isNotEmpty() }
+                .orEmpty()
 
         /**
          * Splits a `;`-separated list of annotation type names. An entry is kept when it has a package

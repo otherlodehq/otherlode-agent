@@ -1828,6 +1828,21 @@ class ProtoPayloadCodecTest {
     }
 
     @Test
+    fun `a configured-off module encodes as the CONFIGURED_OFF wire kind`() {
+        val bytes =
+            ProtoPayloadCodec.encode(
+                ProbeManifest(
+                    resource = ResourceAttributes("svc", null, "i-1", null, "run-1"),
+                    probes = emptyList(),
+                    disabledEndpointModules =
+                        listOf(DisabledEndpointModule("ktor-3", "endpointsEnabled=false", 1L, DisabledEndpointModuleKind.CONFIGURED_OFF)),
+                ),
+            )
+        val proto = ProtoProbeManifest.parseFrom(bytes)
+        assertEquals(ProtoDisabledEndpointModuleKind.CONFIGURED_OFF, proto.disabledEndpointModulesList.single().kind)
+    }
+
+    @Test
     fun `every disabled endpoint module kind survives a round trip`() {
         for (kind in DisabledEndpointModuleKind.entries) {
             val manifest =

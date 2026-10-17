@@ -24,7 +24,7 @@ Each framework has its own module. A module does nothing on a JVM where its fram
 | JDK `com.sun.net.httpserver.HttpServer` | `jdk-httpserver` | JDK 21, the test toolchain | Once the server found the context, before the handler runs |
 | Any framework OpenTelemetry instruments | `otel` | `opentelemetry-instrumentation-api` 2.31.1, and the OpenTelemetry Java agent 2.31.1's relocated copy. It compiles against 2.0.0 | Span end, after the handler ran. Off by default |
 
-The module name is what the agent logs, what the server shows as the endpoint's framework, and what appears in the list of [disabled modules](#modules-that-switch-themselves-off).
+The module name is what the agent logs, what the server shows as the endpoint's framework, and what appears in the list of [disabled modules](#modules-that-switch-themselves-off). It is also the name [`disabledEndpointModules`](configuration#disabledendpointmodules) takes to keep a module off.
 
 One Spring module covers Spring Framework 5.3 through 7 and both the `javax` and `jakarta` servlet namespaces. The project's demo runs it inside a Spring Boot 4.1.1 fat jar. The Ktor modules are separate because Ktor 3 replaced `Route` with `RoutingNode`. The JAX-RS module reads annotations from either namespace.
 
@@ -182,7 +182,9 @@ A lost registration hook would leave endpoints undeclared. A lost dispatch hook 
 otherlode: endpoint module ktor-3 disabled itself: <reason>
 ```
 
-The agent sends the module's name, the reason and a kind naming why to the collector with the next manifest. The kind separates a linkage error, any other advice failure, a transform failure (the module's own transform threw, or a framework class it hooks failed to weave), a route walk failure, and a hook that matched no method (`HOOK_UNMATCHED`). The server can then tell "this service has no endpoints" from "this service's endpoints were not instrumented". The testkit exposes it as `disabledEndpointModules()`, and its endpoint queries mention a disabled module in the error they throw for an unknown endpoint.
+The agent sends the module's name, the reason and a kind naming why to the collector with the next manifest. The kind separates a linkage error, any other advice failure, a transform failure (the module's own transform threw, or a framework class it hooks failed to weave), a route walk failure, a hook that matched no method (`HOOK_UNMATCHED`), and a module your configuration kept off (`CONFIGURED_OFF`). The server can then tell "this service has no endpoints" from "this service's endpoints were not instrumented". The testkit exposes it as `disabledEndpointModules()`, and its endpoint queries mention a disabled module in the error they throw for an unknown endpoint.
+
+A module that [`disabledEndpointModules`](configuration#disabledendpointmodules) or `endpointsEnabled=false` keeps from installing is reported the same way, with the kind `CONFIGURED_OFF`, whether or not its framework is present. It is a choice, not a fault, and it logs no WARNING.
 
 A module that switches off stops counting but does not retract. The endpoints it already declared stay in the list, and their counts stop, so they read as never called. The disabled-modules list is the only signal for that. Treat any endpoint finding from a service with a disabled module as unreliable for that framework.
 
@@ -194,10 +196,11 @@ A framework class that was renamed is not caught. The module never matches it, w
 
 | Option | Default | Effect |
 |---|---|---|
-| `endpointsEnabled` | `true` | Turns every framework module, and the route bridge with them, off at once when `false`. The agent logs `endpointsEnabled=false, no framework's endpoints will be instrumented` at INFO. The method and branch probes are unaffected. |
+| `endpointsEnabled` | `true` | Turns every framework module, and the route bridge with them, off at once when `false`. The agent logs `endpointsEnabled=false, no framework's endpoints will be instrumented` at INFO, and reports each module it would have installed as disabled with the kind `CONFIGURED_OFF`. The method and branch probes are unaffected. |
+| `disabledEndpointModules` | None | Module names, separated by `;`. The agent installs none of them and reports each as disabled with the kind `CONFIGURED_OFF`, except `otel` while `otelBridgeEnabled` is off, which was not going to install. |
 | `otelBridgeEnabled` | `false` | Turns the OpenTelemetry route bridge on. |
 
-There are no per-framework switches. The [configuration options](configuration) page gives the system property and environment variable names for both.
+The [configuration options](configuration) page gives the system property and environment variable names for all three.
 
 ## What is not covered
 

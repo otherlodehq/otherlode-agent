@@ -35,6 +35,7 @@ The system property and environment variable names come from the option name. Th
 | `classListingEnabled` | `otherlode.class.listing.enabled` | `OTHERLODE_CLASS_LISTING_ENABLED` |
 | `enabled` | `otherlode.enabled` | `OTHERLODE_ENABLED` |
 | `endpointsEnabled` | `otherlode.endpoints.enabled` | `OTHERLODE_ENDPOINTS_ENABLED` |
+| `disabledEndpointModules` | `otherlode.disabled.endpoint.modules` | `OTHERLODE_DISABLED_ENDPOINT_MODULES` |
 | `otelBridgeEnabled` | `otherlode.otel.bridge.enabled` | `OTHERLODE_OTEL_BRIDGE_ENABLED` |
 | `testRun` | `otherlode.test.run` | `OTHERLODE_TEST_RUN` |
 
@@ -57,6 +58,7 @@ The system property and environment variable names come from the option name. Th
 | `classListingEnabled` | `true` | `true` or `false`, in any letter case | Warning, and the default is used |
 | `enabled` | `true` | `true` or `false`, in any letter case | Warning, and the default is used |
 | `endpointsEnabled` | `true` | `true` or `false`, in any letter case | Warning, and the default is used |
+| `disabledEndpointModules` | None | Endpoint module names, separated by `;` | A name that matches no module is skipped with a warning |
 | `otelBridgeEnabled` | `false` | `true` or `false`, in any letter case | Warning, and the default is used |
 | `testRun` | `false` | `true` or `false`, in any letter case | Warning, and the default is used |
 
@@ -99,7 +101,7 @@ A `-D` flag is as visible as the argument string, since anyone who can list proc
 | Option | When it is on |
 |---|---|
 | `enabled` | The agent runs. When it is `false`, the agent logs one INFO line and does nothing else: it installs no transformer, starts no thread and sends nothing. The agent checks this option before `includePackages`. Set `OTHERLODE_ENABLED=false` to switch off an agent that an image already attaches, without rebuilding the image. |
-| `endpointsEnabled` | The agent installs its framework endpoint modules. One switch covers all of them, and there are no per-framework flags. A module activates only when its framework is on the application's classpath. With the option off, the agent logs one INFO line and reports no endpoints, and `otelBridgeEnabled` has no effect. The endpoint modules ignore `includePackages` and `excludePackages`. See [endpoints](endpoints). |
+| `endpointsEnabled` | The agent installs its framework endpoint modules. One switch covers all of them; [disabledEndpointModules](#disabledendpointmodules) keeps single modules off. A module activates only when its framework is on the application's classpath. With the option off, the agent logs one INFO line and reports no endpoints. Each module it would otherwise have installed is reported as disabled, with the kind `CONFIGURED_OFF`, so `otel` is reported only when `otelBridgeEnabled` is on. The endpoint modules ignore `includePackages` and `excludePackages`. See [endpoints](endpoints). |
 | `otelBridgeEnabled` | The agent also counts the route that OpenTelemetry's own HTTP server instrumentation resolved, for a framework no endpoint module covers. It needs `endpointsEnabled`. See [endpoints](endpoints). |
 | `staticBaselineEnabled` | The agent scans the classpath once, on a background thread, for classes under `includePackages` that never load. Off by default because the cost of the scan grows with the size of the classpath. See [classes](classes). |
 | `classListingEnabled` | The agent lists the names of the classes the classpath holds under `includePackages`, once, on a background thread, and sends the list. It reads the central directories of jars and class folders and parses no class file. On by default. With it off, the server cannot tell a class you removed from one that has not loaded yet. See [classes](classes). |
@@ -166,6 +168,21 @@ otherlode: callbackAnnotations names 1 annotation not yet seen on any method: co
 ```
 
 A correctly spelled name appears in that line too when none of the classes that use it has loaded yet.
+
+## disabledEndpointModules
+
+`disabledEndpointModules` keeps single [endpoint modules](endpoints#supported-frameworks) from installing. Use it when one framework's counting misbehaves without throwing, or costs more than you want, and the other frameworks should keep reporting.
+
+```text
+disabledEndpointModules=jaxrs;ktor-2
+```
+
+- **Names are the module names.** They are `jaxrs`, `jdk-httpserver`, `ktor-2`, `ktor-3`, `spring-webmvc` and `otel`, as the [supported frameworks](endpoints#supported-frameworks) table lists them.
+- **A kept-off module does nothing.** It matches no class and counts nothing, whether or not its framework is on the classpath.
+- **The agent reports it.** Each module the option keeps off is sent as a disabled module with the kind `CONFIGURED_OFF` and a reason that names the option. A framework left uninstrumented then never reads as one with no endpoints. A module kept off by configuration is your choice, not a fault.
+- **`otel` is reported only when the bridge would have run.** With `otelBridgeEnabled` off, naming `otel` changes nothing.
+
+The agent logs one INFO line listing the modules the option keeps off. A name that matches no module is skipped with one WARNING that lists the known names.
 
 ## exportUrl
 

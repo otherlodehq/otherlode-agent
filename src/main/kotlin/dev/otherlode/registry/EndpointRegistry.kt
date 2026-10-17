@@ -421,9 +421,10 @@ class EndpointRegistry {
     }
 
     /**
-     * Records an endpoint module (one framework's registration/dispatch hooks) that switched
-     * itself off, typically on a linkage failure against an unexpected framework version.
-     * [kind] names what switched it off. Idempotent per module name: a repeat call keeps the first
+     * Records an endpoint module (one framework's registration/dispatch hooks) that is not
+     * instrumenting: one that switched itself off, typically on a linkage failure against an
+     * unexpected framework version, or one the configuration kept off. [kind] names which.
+     * Idempotent per module name: a repeat call keeps the first
      * kind, reason and timestamp, the same as [ProbeRegistry.recordSkipped].
      */
     fun recordDisabledModule(
