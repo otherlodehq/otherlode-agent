@@ -18,6 +18,8 @@ Each framework has its own module. A module does nothing on a JVM where its fram
 | Spring MVC, URL-mapped handlers | `spring-webmvc` | same | Once the mapping matched the request, before the handler runs |
 | Spring MVC, functional routes | `spring-webmvc` | same | Once the router function matched the request, before the handler runs |
 | Spring WebFlux | `spring-webflux` | Spring Framework 5.3.39, 6.2.19, 7.0.9 | Once the mapping matched the request, before the handler runs |
+| Javalin 6 | `javalin-6` | 6.1.0, 6.7.0 | Once the request reached its handler, after before-handlers |
+| Javalin 7 | `javalin-7` | 7.0.0, 7.2.3 | Once the request reached its handler, after before-handlers |
 | Ktor 2 | `ktor-2` | 2.3.13 | Once Ktor chose the route, before its handlers run |
 | Ktor 3 | `ktor-3` | 3.0.3, 3.5.2 | Once Ktor chose the route, before its handlers run |
 | JAX-RS, `javax.ws.rs` | `jaxrs` | Jersey 2.48 with `javax.ws.rs-api` 2.1.1 | Entry of the resource method |
@@ -27,9 +29,9 @@ Each framework has its own module. A module does nothing on a JVM where its fram
 
 The module name is what the agent logs, what the server shows as the endpoint's framework, and what appears in the list of [disabled modules](#modules-that-switch-themselves-off). It is also the name [`disabledEndpointModules`](configuration#disabledendpointmodules) takes to keep a module off.
 
-One Spring MVC module covers Spring Framework 5.3 through 7 and both the `javax` and `jakarta` servlet namespaces. The project's demo runs it inside a Spring Boot 4.1.1 fat jar. Spring WebFlux has a module of its own, so a failure in one never switches off the other, and it covers Spring Framework 5.3 through 7 too. The Ktor modules are separate because Ktor 3 replaced `Route` with `RoutingNode`. The JAX-RS module reads annotations from either namespace.
+One Spring MVC module covers Spring Framework 5.3 through 7 and both the `javax` and `jakarta` servlet namespaces. The project's demo runs it inside a Spring Boot 4.1.1 fat jar. Spring WebFlux has a module of its own, so a failure in one never switches off the other, and it covers Spring Framework 5.3 through 7 too. The Ktor modules are separate because Ktor 3 replaced `Route` with `RoutingNode`. The Javalin modules are separate because Javalin 7 changed how `ParsedEndpoint` exposes its endpoint, and each module only acts on its own release. The JAX-RS module reads annotations from either namespace.
 
-Javalin, Vert.x and Micronaut have no module. See [what is not covered](#what-is-not-covered).
+Javalin 5, Vert.x and Micronaut have no module. See [what is not covered](#what-is-not-covered).
 
 ## How an endpoint is named
 
@@ -115,6 +117,21 @@ Ktor routes are declared when the routing tree is built. Each `get`, `post` or `
 
 The agent builds the template by walking from the route up to the root. Constant segments, parameters (with any prefix or suffix text), optional parameters, tailcards and wildcards each add a segment. The verb comes from the nearest HTTP method selector, or is `*` when the route has none. Other selectors add nothing to the template, such as headers, content type, query parameters and host. Routes that differ only by those selectors merge into one endpoint.
 
+## Javalin
+
+Javalin routes are declared when Javalin registers them. That covers every verb method on the app or its config, `ApiBuilder` routes with their prefixes, `CrudHandler` routes, and the routes Javalin and its plugins add for themselves. `HttpAllowedMethodsPlugin`'s `OPTIONS` routes are declared and counted like any other. Only HTTP routes are endpoints. `before`, `after`, `beforeMatched` and `afterMatched` handlers are not, and neither are `ws` routes, whose upgrade never reaches the point where the agent counts.
+
+A request is counted once it reached the handler of the route Javalin matched, after the before-handlers ran. Javalin's own match is compiled into its request lifecycle and cannot be hooked, so the count comes from the call into the matched route. These requests count nothing:
+
+- A request a before-handler rejects by throwing, redirects, or ends with `skipRemainingHandlers()`. A Javalin hit means the request reached its handler.
+- A request no route matches, such as the 404 for an unknown path.
+- A `HEAD` request to a path that has a `GET` route and no `HEAD` route. Javalin answers it without running the `GET` handler. An explicit `head()` route is its own endpoint and counts as `HEAD`.
+- A CORS preflight to a path with no `OPTIONS` route. `CorsPlugin` writes its headers in a before-handler and turns the 404 that follows into a 200. A preflight to a path that has an `OPTIONS` route, such as one `HttpAllowedMethodsPlugin` adds, reaches that route and counts as `OPTIONS`, never as the verb it asks about.
+
+The template is the path as registered, after `ApiBuilder` composed its prefixes. A `{id}` parameter keeps its name, a segment that is only `<path>` becomes `*`, and a trailing slash is dropped. Javalin's context path is not part of the template.
+
+`javalin-6` covers Javalin 6.1 and later. Javalin 6.0.0 and 6.0.1 keep a method the module reads internal, so on those releases the module switches itself off at the first registration, with the kind `LINKAGE_ERROR`. Each module accepts only its own release, so an application of either major is counted by exactly one of them. Javalin 5 has no module.
+
 ## JAX-RS
 
 JAX-RS has no registration call, so the agent reads the annotations when a resource class loads and declares the routes then. A request is counted when the resource method is entered, which a JAX-RS server does after it matches the request. A call made directly from your own code also counts.
@@ -167,6 +184,10 @@ An endpoint names the method that serves it where the framework lets the agent f
 | Spring, annotated | The class that declares the method (the user class, not a CGLIB proxy), the method and its descriptor. A mapping inherited from a base controller names the base class. |
 | Spring, URL-mapped | The handler's class only, with no method. |
 | Spring, functional | `handle` and the class that declares it. |
+| Javalin, named handler class | `handle` and the class that declares it. |
+| Javalin, lambda or method reference | The method the lambda calls, or the method the reference names. |
+| Javalin, `CrudHandler` | The handler's method for the route: `getOne`, `getAll`, `create`, `update` or `delete`, with the class that declares it. |
+| Javalin, `SseHandler`, `VueComponent` and any `VueHandler` that does not override `handle` | Nothing. Javalin's own wrapper runs the handler. |
 | Ktor | The handler body's class and `invokeSuspend`. A handler class with no `invokeSuspend` names the class alone. |
 | JAX-RS | The concrete class, the method and its descriptor. |
 | JDK `HttpServer` | `handle` and the class that declares it. |
@@ -180,7 +201,7 @@ A functional route written in Spring's Kotlin DSL, `router { ... }` or `coRouter
 
 ### Lambdas and method references
 
-A Java or Kotlin lambda or method reference passed as a handler becomes a hidden class with no stable name, so its class name joins to nothing. For the handler types the modules take, the agent instead names the method the lambda calls. These are `HttpHandler` for the JDK `HttpServer` and `HandlerFunction` for Spring functional routes. It does this by watching the JDK's lambda factory as it creates each such class, then reading the answer back when the framework hands the lambda over.
+A Java or Kotlin lambda or method reference passed as a handler becomes a hidden class with no stable name, so its class name joins to nothing. For the handler types the modules take, the agent instead names the method the lambda calls. These are `HttpHandler` for the JDK `HttpServer`, `HandlerFunction` for Spring functional routes and `Handler` for Javalin. It does this by watching the JDK's lambda factory as it creates each such class, then reading the answer back when the framework hands the lambda over.
 
 The reported method is the one the lambda calls, with its real descriptor. Values the lambda captured come first in that descriptor.
 
@@ -232,7 +253,7 @@ The [configuration options](configuration) page gives the system property and en
 
 ## What is not covered
 
-- Javalin, Vert.x and Micronaut have no module. Counting their endpoints needs a module per framework. For them, `otelBridgeEnabled` counts what OpenTelemetry resolves, discovered at dispatch only, so "never called" cannot be computed.
+- Javalin 5, Vert.x and Micronaut have no module. Counting their endpoints needs a module per framework. For them, `otelBridgeEnabled` counts what OpenTelemetry resolves, discovered at dispatch only, so "never called" cannot be computed.
 - A Spring WebFlux router run through `RouterFunctions.toHttpHandler` or `toWebHandler`, with no `DispatcherHandler`, is not declared, and only its `resources(pattern, location)` routes are counted, found at dispatch.
 - Requests that never reach the hooked framework are not counted. A servlet, filter or Tomcat valve that answers first is invisible to the Spring module, for example.
 - The agent reads no OpenAPI document and does no static analysis of call sites to find endpoints.

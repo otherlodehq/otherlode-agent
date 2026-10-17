@@ -404,6 +404,38 @@ class OtherlodeEndpointsSeamTest {
         assertTrue(OtherlodeEndpoints.takeResourceServed(exchange))
     }
 
+    @Test
+    @Order(17)
+    fun `a registration scope is visible on its own thread until it is exited and nests`() {
+        val outer = Any()
+        val inner = Any()
+
+        assertNull(OtherlodeEndpoints.registrationScope())
+        OtherlodeEndpoints.enterRegistrationScope(outer, "/items/{id}", "/items/")
+        OtherlodeEndpoints.enterRegistrationScope(inner, "/inner/{id}", "/inner/")
+
+        val innermost = OtherlodeEndpoints.registrationScope()!!
+        assertSame(inner, innermost.owner)
+        assertEquals("/inner/{id}", innermost.itemPath)
+        assertEquals("/inner/", innermost.collectionPath)
+        var seenElsewhere: OtherlodeEndpoints.RegistrationScope? = innermost
+        Thread { seenElsewhere = OtherlodeEndpoints.registrationScope() }.also { it.start() }.join()
+        assertNull(seenElsewhere, "a scope belongs to the thread that entered it")
+
+        OtherlodeEndpoints.exitRegistrationScope()
+        assertSame(outer, OtherlodeEndpoints.registrationScope()!!.owner)
+        OtherlodeEndpoints.exitRegistrationScope()
+        assertNull(OtherlodeEndpoints.registrationScope())
+    }
+
+    @Test
+    @Order(18)
+    fun `exiting a registration scope with none open does nothing`() {
+        OtherlodeEndpoints.exitRegistrationScope()
+
+        assertNull(OtherlodeEndpoints.registrationScope())
+    }
+
     private companion object {
         val MODULE_SEQUENCE = AtomicLong()
 

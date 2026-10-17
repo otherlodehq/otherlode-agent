@@ -18,7 +18,9 @@ import net.bytebuddy.dynamic.DynamicType
 import net.bytebuddy.implementation.Implementation
 import net.bytebuddy.jar.asm.ClassVisitor
 import net.bytebuddy.matcher.ElementMatcher
+import net.bytebuddy.matcher.ElementMatchers.isConstructor
 import net.bytebuddy.matcher.ElementMatchers.named
+import net.bytebuddy.matcher.ElementMatchers.takesArguments
 import net.bytebuddy.pool.TypePool
 import java.io.File
 import java.lang.instrument.ClassFileTransformer
@@ -340,6 +342,39 @@ class EndpointInstrumentationTest {
         dev.otherlode.bootstrap.OtherlodeEndpoints
             .register(hooking.name, "late", "GET", "/late", null, null, null, null)
         assertTrue(registry.endpoints().isEmpty(), "a registration through the disabled module registers nothing")
+    }
+
+    @Test
+    fun `a hook on a constructor that matches one is counted as matched and runs`() {
+        val registry = EndpointRegistry()
+        val hooking =
+            HookingModule(
+                "com.example.framework.FakeRouter",
+                isConstructor<MethodDescription>().and(takesArguments(0)),
+                "dev.otherlode.endpoints.fake.FakeRouterConstructedAdvice",
+            )
+
+        install(registry, listOf(hooking), "com.example.framework.FakeRouter")
+
+        assertTrue(registry.disabledModules().isEmpty(), "${registry.disabledModules()}")
+        assertTrue(registry.endpoints().any { it.verbatimTemplate == "/constructed" }, "the constructor's exit advice ran")
+    }
+
+    @Test
+    fun `a hook on a constructor that matches none switches its module off as HOOK_UNMATCHED`() {
+        val registry = EndpointRegistry()
+        val hooking =
+            HookingModule(
+                "com.example.framework.FakeRouter",
+                isConstructor<MethodDescription>().and(takesArguments(2)),
+                "dev.otherlode.endpoints.fake.FakeRouterConstructedAdvice",
+            )
+
+        install(registry, listOf(hooking), "com.example.framework.FakeRouter")
+
+        val disabled = registry.disabledModules().single { it.module == hooking.name }
+        assertEquals(DisabledEndpointModuleKind.HOOK_UNMATCHED, disabled.kind)
+        assertTrue("FakeRouterConstructedAdvice" in disabled.reason, disabled.reason)
     }
 
     @Test

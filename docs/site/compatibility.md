@@ -44,7 +44,7 @@ On the first flush that finds an unread shape, the agent logs one WARNING that c
 
 ## Frameworks
 
-The agent counts HTTP endpoints for Spring MVC and Spring WebFlux, each with its functional routes, Ktor 2 and 3, JAX-RS (`javax` and `jakarta`) and the JDK `HttpServer`. The versions of each are on [endpoints](endpoints).
+The agent counts HTTP endpoints for Spring MVC and Spring WebFlux, each with its functional routes, Javalin 6 and 7, Ktor 2 and 3, JAX-RS (`javax` and `jakarta`) and the JDK `HttpServer`. The versions of each are on [endpoints](endpoints).
 
 ## Other agents in the same JVM
 

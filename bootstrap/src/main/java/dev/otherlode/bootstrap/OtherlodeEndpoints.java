@@ -463,6 +463,65 @@ public final class OtherlodeEndpoints {
         }
     }
 
+    /**
+     * What a framework call that registers several endpoints in one go tells the registrations it
+     * makes: the object that owns their handlers, and the two paths they are made under.
+     */
+    public static final class RegistrationScope {
+        /** The object whose methods the registered handlers call. */
+        public final Object owner;
+
+        /** The path of the endpoints that address one item of a resource. */
+        public final String itemPath;
+
+        /** The path of the endpoints that address the resource as a whole. */
+        public final String collectionPath;
+
+        RegistrationScope(Object owner, String itemPath, String collectionPath) {
+            this.owner = owner;
+            this.itemPath = itemPath;
+            this.collectionPath = collectionPath;
+        }
+    }
+
+    private static final ThreadLocal<Deque<RegistrationScope>> REGISTRATION_SCOPES = new ThreadLocal<>();
+
+    /**
+     * Opens a scope on this thread, for the registrations a framework call makes before it returns.
+     * Every call is paired with {@link #exitRegistrationScope}, which the caller runs even when the
+     * framework call throws. This never throws.
+     */
+    public static void enterRegistrationScope(Object owner, String itemPath, String collectionPath) {
+        try {
+            Deque<RegistrationScope> scopes = REGISTRATION_SCOPES.get();
+            if (scopes == null) {
+                scopes = new ArrayDeque<>();
+                REGISTRATION_SCOPES.set(scopes);
+            }
+            scopes.push(new RegistrationScope(owner, itemPath, collectionPath));
+        } catch (Throwable t) {
+            logDelegateFailure(null, "enterRegistrationScope", t);
+        }
+    }
+
+    /** Closes the scope {@link #enterRegistrationScope} opened last on this thread. A no-op with none open. */
+    public static void exitRegistrationScope() {
+        try {
+            Deque<RegistrationScope> scopes = REGISTRATION_SCOPES.get();
+            if (scopes == null) return;
+            scopes.poll();
+            if (scopes.isEmpty()) REGISTRATION_SCOPES.remove();
+        } catch (Throwable t) {
+            logDelegateFailure(null, "exitRegistrationScope", t);
+        }
+    }
+
+    /** The innermost scope open on this thread, or null when none is. */
+    public static RegistrationScope registrationScope() {
+        Deque<RegistrationScope> scopes = REGISTRATION_SCOPES.get();
+        return scopes == null ? null : scopes.peek();
+    }
+
     /** Attaches a handler class/method/descriptor to an already-resolved entry. A no-op for a null entry or a disabled module. */
     public static void attachHandler(String module, Object entry, String handlerClass, String handlerMethod, String handlerDescriptor) {
         if (entry == null || isDisabledFast(module)) return;

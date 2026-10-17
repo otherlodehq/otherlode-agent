@@ -45,6 +45,8 @@ val jdk17Projects =
         ":wire",
         ":endpoints-api",
         ":endpoints-jaxrs",
+        ":endpoints-javalin-6",
+        ":endpoints-javalin-7",
         ":endpoints-jdk-httpserver",
         ":endpoints-ktor-2",
         ":endpoints-ktor-3",
@@ -135,6 +137,10 @@ dependencies {
 
     // Endpoint module for Spring WebFlux, covering Spring Framework 5.3, 6.x and 7.x with one module.
     implementation(project(":endpoints-spring-webflux"))
+
+    // Endpoint modules for Javalin 6 and 7.
+    implementation(project(":endpoints-javalin-6"))
+    implementation(project(":endpoints-javalin-7"))
 
     // Endpoint modules for Ktor. Route became the interface RoutingNode between 2.x and 3.x, so
     // the two major versions need their own module rather than one shared one.
