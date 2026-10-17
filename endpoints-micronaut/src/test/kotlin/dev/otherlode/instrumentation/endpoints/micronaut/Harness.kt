@@ -38,6 +38,7 @@ fun <T> serve(
     properties: Map<String, Any> = emptyMap(),
     block: (Int) -> T,
 ): T {
+    client = newClient()
     val defaults = mapOf<String, Any>("micronaut.server.port" to -1, "endpoints.all.enabled" to false)
     val server = ApplicationContext.run(EmbeddedServer::class.java, defaults + properties)
     try {
@@ -47,9 +48,16 @@ fun <T> serve(
     }
 }
 
-private val client = HttpClient.newHttpClient()
+@Volatile
+private var client = newClient()
 
-/** Sends one request to a server on [port] and returns the status code. */
+private fun newClient(): HttpClient = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()
+
+/**
+ * Sends one request to a server on [port] and returns the status code. [serve] replaces the client,
+ * so a server on a port an earlier test used is never sent a request on a connection that server
+ * closed.
+ */
 fun send(
     port: Int,
     method: String,

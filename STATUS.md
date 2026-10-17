@@ -199,9 +199,6 @@ servlets another module owns. Needs its own research and grill.
   values.
 - Vert.x Web 4.5.0's "a parameterised mount replaced by another" test failed
   once with no hits at all (1 run in 12, not reproduced since).
-- Javalin 6.1's CORS-preflight test failed once with an `EOFException` from
-  the JDK HTTP client and passed on rerun; the Vert.x tests had the same
-  connection-reuse flake and fixed it with HTTP/1.1 and a client per run.
 - Spring MVC `resources(...)`: a lookup the adopter composes over Spring's
   path lookup that turns a found resource into none leaves the request
   marked, so the route that then serves it is not counted. A filtered nest

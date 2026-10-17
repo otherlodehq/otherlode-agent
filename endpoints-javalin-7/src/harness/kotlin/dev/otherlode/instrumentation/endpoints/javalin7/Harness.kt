@@ -20,6 +20,7 @@ fun <T> withModules(
     expectNoneDisabled: Boolean = true,
     block: (EndpointRegistry) -> T,
 ): T {
+    client = newClient()
     val instrumentation = ByteBuddyAgent.install()
     val registry = EndpointRegistry()
     val endpointInstrumentation = EndpointInstrumentation(registry, listOf(Javalin7Module(), Javalin6Module()))
@@ -33,9 +34,16 @@ fun <T> withModules(
     }
 }
 
-private val client = HttpClient.newHttpClient()
+@Volatile
+private var client = newClient()
 
-/** Sends one request to a server on [port] and returns the status code. */
+private fun newClient(): HttpClient = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()
+
+/**
+ * Sends one request to a server on [port] and returns the status code. [withModules] replaces the client,
+ * so a server on a port an earlier test used is never sent a request on a connection that server
+ * closed.
+ */
 fun send(
     port: Int,
     method: String,
