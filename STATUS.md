@@ -154,23 +154,16 @@ one commit per chunk, each with its `docs/site` pages:
    collector's bindings, then the server.
 8. `vertx-web`, and the route bridge converting Vert.x colon parameters.
 9. JAX-RS: the class-level `@Path` gate opens for RESTEasy Reactive.
+9b. Micronaut: the micronaut-aws 3.x hook, and declaration only once a
+    counted dispatch point exists, with a new disabled kind for a router
+    no dispatch point arms (ADR 0017's last amendment), then the
+    collector's bindings and the server's label.
 10. Wire: framework markers, each proved by a three-JVM fixture, then the
     collector's bindings, then the server.
 
 Chunk 2 also makes a request count once (ADR 0017's amendment): Spring
 Security 6.1.6 to 6.5 counted every Spring MVC request twice, and async
 redispatches counted again.
-
-### Micronaut on a serverless runtime: to grill, before 0.1.0
-
-Found on 2026-10-17 reviewing `micronaut-3`. micronaut-aws 3.x builds its
-own `RouteExecutor` and never reaches `RoutingInBoundHandler` or
-`ServletHttpHandler`, so on Lambda every route is declared at
-`DefaultRouter`'s constructor and none is ever counted: every endpoint
-would read as never called. Micronaut 4's Lambda, Azure and GCP paths are
-being checked. To settle: declare a router's routes only once a counted
-dispatch point has run (as Vert.x does, ADR 0073), add a hook per
-serverless runtime, or report the runtime as not covered.
 
 ### A servlet module: to grill, before 0.1.0
 

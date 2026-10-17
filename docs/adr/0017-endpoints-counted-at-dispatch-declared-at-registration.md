@@ -91,3 +91,13 @@ Per framework:
 - **Vert.x Web** has its own record, ADR 0073.
 
 The shared normaliser gains Micronaut's `{/x}` as `/{x?}`, `{x:?}` as `{x?}`, a whole-segment `{+x}` as `*`, and Javalin's whole-segment `<x>` as `*`. A form whose meaning would be a guess (`{.x}`, `{;x}`, `{a,b}`) stays as written, and `{x:.*}` loses its constraint as any regex does. Vert.x's `:name` is converted by its module, since a colon rule in the shared normaliser would break Spring's literal colons (`{name}:cancel`).
+
+## Amended on 2026-10-17: routes are declared only where a counted dispatch point exists
+
+Decided in a grill after the `micronaut-3` review. micronaut-aws 3.x builds its own `RouteExecutor` and reaches neither Netty's `RoutingInBoundHandler` nor micronaut-servlet's `ServletHttpHandler`, so on Lambda every route was declared at `DefaultRouter`'s constructor and none could be counted: every endpoint would read as never called. Every other Micronaut serverless runtime checked (AWS 4 and 5, Azure, GCP, Oracle Cloud, POJA) builds on `ServletHttpHandler` and is counted.
+
+- **`micronaut-3` counts on micronaut-aws 3.x** at the entry of `MicronautLambdaContainerHandler.handleRequest(MicronautAwsProxyRequest, MicronautAwsProxyResponse, Context)`, from the route match the request carries (same descriptor from 3.0.0 to 3.18.0), never its synthetic bridge, which would count twice.
+- **A Micronaut module declares a router's routes only once one of its counted dispatch points has been constructed in the process**: Netty's `RoutingInBoundHandler`, `ServletHttpHandler`, `MicronautLambdaContainerHandler`, or 4.x's `RouteExecutor`, in either order. A router no dispatch point ever arms declares nothing, and the module is reported with a disabled kind saying its routes are not counted on this runtime, so the server shows that rather than "no endpoints". A hand-kept list of supported runtimes would fail silently on the next runtime nobody listed.
+
+Considered: gating on a dispatch class being on the classpath. Rejected: a Lambda application that also ships Netty for local runs would still declare what it cannot count.
+
