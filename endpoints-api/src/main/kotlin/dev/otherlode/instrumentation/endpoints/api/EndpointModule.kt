@@ -19,9 +19,11 @@ interface EndpointModule {
     val name: String
 
     /**
-     * Boot-layer JDK module names this module instruments classes of, for example `"jdk.httpserver"`.
-     * Each one is given a read edge to the endpoint seam's own module at install time: a named
+     * Boot-layer module names this module instruments classes of, for example `"jdk.httpserver"`
+     * or a framework that may be on the module path such as `"io.vertx.web"`. Each one the boot
+     * layer has is given a read edge to the endpoint seam's own module at install time: a named
      * module cannot otherwise read the seam, which lives on the bootstrap loader's unnamed module.
+     * A name the boot layer lacks is skipped.
      */
     val bootModulesNeedingSeamRead: Set<String> get() = emptySet()
 

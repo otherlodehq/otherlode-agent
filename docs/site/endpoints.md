@@ -22,6 +22,7 @@ Each framework has its own module. A module does nothing on a JVM where its fram
 | Javalin 7 | `javalin-7` | 7.0.0, 7.2.3 | Once the request reached its handler, after before-handlers |
 | Micronaut 3 | `micronaut-3` | 3.0.0, 3.10.15 on Netty. micronaut-servlet 3.0.0 and 3.3.8 on Jetty | Once Micronaut matched the route, before the filters and argument binding |
 | Micronaut 4 and 5 | `micronaut` | 4.0.0, 4.10.32, 5.2.16 | Once Micronaut matched the route, before argument binding |
+| Vert.x Web | `vertx-web` | 4.5.0, 4.5.35, 5.0.12, 5.2.1 | When a route matched, before its handler runs; each route a request passes through |
 | Ktor 2 | `ktor-2` | 2.3.13 | Once Ktor chose the route, before its handlers run |
 | Ktor 3 | `ktor-3` | 3.0.3, 3.5.2 | Once Ktor chose the route, before its handlers run |
 | JAX-RS, `javax.ws.rs` | `jaxrs` | Jersey 2.48 with `javax.ws.rs-api` 2.1.1 | Entry of the resource method |
@@ -31,9 +32,9 @@ Each framework has its own module. A module does nothing on a JVM where its fram
 
 The module name is what the agent logs, what the server shows as the endpoint's framework, and what appears in the list of [disabled modules](#modules-that-switch-themselves-off). It is also the name [`disabledEndpointModules`](configuration#disabledendpointmodules) takes to keep a module off.
 
-One Spring MVC module covers Spring Framework 5.3 through 7 and both the `javax` and `jakarta` servlet namespaces. The project's demo runs it inside a Spring Boot 4.1.1 fat jar. Spring WebFlux has a module of its own, so a failure in one never switches off the other, and it covers Spring Framework 5.3 through 7 too. The Ktor modules are separate because Ktor 3 replaced `Route` with `RoutingNode`. The Javalin modules are separate because Javalin 7 changed how `ParsedEndpoint` exposes its endpoint, and each module only acts on its own release. One Micronaut module covers Micronaut 4.0 through 5.x, and Micronaut 3 has a module of its own, because its router lists `UriRoute` where Micronaut 4 lists `UriRouteInfo`. Each only acts on its own release, so an application of either is counted by exactly one of them. Micronaut 5 needs JDK 25 or later. The JAX-RS module reads annotations from either namespace.
+One Spring MVC module covers Spring Framework 5.3 through 7 and both the `javax` and `jakarta` servlet namespaces. The project's demo runs it inside a Spring Boot 4.1.1 fat jar. Spring WebFlux has a module of its own, so a failure in one never switches off the other, and it covers Spring Framework 5.3 through 7 too. The Ktor modules are separate because Ktor 3 replaced `Route` with `RoutingNode`. The Javalin modules are separate because Javalin 7 changed how `ParsedEndpoint` exposes its endpoint, and each module only acts on its own release. One Micronaut module covers Micronaut 4.0 through 5.x, and Micronaut 3 has a module of its own, because its router lists `UriRoute` where Micronaut 4 lists `UriRouteInfo`. Each only acts on its own release, so an application of either is counted by exactly one of them. Micronaut 5 needs JDK 25 or later. One Vert.x Web module covers 4.5 through 5.x, since the classes it hooks are the same in all of them. Vert.x Web 4.0 to 4.4 are not tested. The JAX-RS module reads annotations from either namespace.
 
-Javalin 5 and Vert.x have no module. See [what is not covered](#what-is-not-covered).
+Javalin 5 has no module. See [what is not covered](#what-is-not-covered).
 
 ## How an endpoint is named
 
@@ -51,6 +52,7 @@ The agent rewrites the framework's own spelling of the template into one form, s
 | A segment that is only Micronaut's reserved expansion or Javalin's slash-accepting parameter becomes `*` | `/files/{+path}`, `/files/<path>` | `/files/*` |
 | Micronaut's optional parameter becomes the optional marker | `/books/{id:?}` | `/books/{id?}` |
 | Micronaut's optional segment becomes a segment of its own | `/books{/id}` | `/books/{id?}` |
+| Vert.x's `:name` and `:name::type` become a brace parameter | `/users/:id`, `/users/:id::integer` | `/users/{id}` |
 | Ktor's optional marker stays | `/{id?}` | `/{id?}` |
 | A `*` inside a segment stays | `/files/*.txt` | `/files/*.txt` |
 | Case is kept | `/Orders` | `/Orders` |
@@ -160,6 +162,30 @@ The template is the path as Micronaut matches it, without any query variables. `
 
 Micronaut 3 does not turn a `default` method of an interface into a route, so a `@Get` on one is neither declared nor served. The servlet support is tested on Jetty; Tomcat and Undertow run the same handler class.
 
+## Vert.x Web
+
+Vert.x Web routes are declared when a router receives its first request, not when a route is built. A route enters a router when its first handler is set, but its path, its verbs and its handlers can change afterwards, a sub-router mount looks like any other route until `subRouter` marks it, and Vert.x never says routing is complete. So the agent follows the routers as the application builds them. When a root router, the one handed to the server, receives its first request, the agent declares every route reachable from it through mounts, before the request is matched. When a router reachable from that root changes later, by a route added, removed or changed, or a router mounted, the root declares again at its next request. An instance whose routers never receive a request declares nothing.
+
+An endpoint is a route with a context handler that is not a sub-router mount. A route with only a failure handler is not an endpoint. A route with no path is declared as `/*` under its mount. A route with no verb has the verb `*`, and a route that lists several verbs is one endpoint for each.
+
+The template is the mount path of each sub-router the route sits in, followed by the route's path. `:name` becomes `{name}`, and Vert.x Web 5.2's `:name::type` becomes `{name}` too, in a route's path and in a mount's. The name pattern is the one Vert.x reads its own paths with, including the `io.vertx.web.route.param.extended-pattern` system property. A path that ends in `*` keeps it.
+
+A route matched by a regular expression (`routeWithRegex`, `pathRegex` and the verb forms such as `getWithRegex`) is declared and counted under its regex source exactly as written, and marked as a regex. Under a mount, the template is the mount's path followed by the regex source. The name a route is given is never the template, although vertx-web-openapi 4.x names a regex route after its OpenAPI path.
+
+A router used in more than one place, as a root or mounted, declares one endpoint for each place, and a request counts against the one it came through. A parameterised mount gives the routes under it its matched values as their mount point, so a request through it is told apart from the router's other places, but two parameterised mounts of one router cannot be told apart from each other. The agent does not guess: such a router switches the module off with the kind `ROUTE_WALK_FAILED`. A route that is being mounted is not declared until the mount is complete. One case is counted against the wrong place: a router mounted both at a literal path and at a parameterised path that matches the same request, such as `/u/1/*` and `/u/:id/*`, counts that request against the literal one.
+
+A request is counted each time a route matches it, before the handler runs, so a request that passes through several routes counts each of them. These count nothing:
+
+- A request that matches no route, or one a route rejects for its verb, its content type or its `Accept` header.
+- The failure pass after a handler calls `fail()`.
+- A sub-router mount, which is no endpoint.
+
+A handler that calls `next()` sends the request on to the next matching route, and that route counts too. A `reroute()` restarts routing, so the routes it passes through count again. A route with no path, such as a body handler or a logger, is an endpoint with the verb `*` and the template `/*` that every request reaches. It is never a false "called", but it is noise. Several routes with one verb and template are one endpoint, and its count is the number of times a request matched any of them.
+
+Quarkus serves its REST resources through a Vert.x Web router, and registers its deployment path and that path with `/*` as routes in front of them. Each REST request therefore also counts against those two. They are routes the framework serves, and the collector can filter them by handler class.
+
+A route that is removed or cleared is not retracted. It stays declared and reads as never called, which is true.
+
 ## JAX-RS
 
 JAX-RS has no registration call, so the agent reads the annotations when a resource class loads and declares the routes then. A request is counted when the resource method is entered, which a JAX-RS server does after it matches the request. A call made directly from your own code also counts.
@@ -199,6 +225,8 @@ Set `otelBridgeEnabled=true` to also count the route OpenTelemetry's HTTP server
 
 The bridge works with the OpenTelemetry Java agent and with the `opentelemetry-instrumentation-api` library in your application. It counts at span end, because OpenTelemetry settles a request's route only then. So it counts after the handler ran, and a request that threw still counts. The route is OpenTelemetry's `http.route`, and the verb is the request method. A span with no route counts nothing.
 
+A route OpenTelemetry reports in Vert.x's spelling, `/users/:id`, is read as `/users/{id}` first, where a segment is only `:name` or `:name::type`. Any other colon stays. A request the `vertx-web` module counted under the same template is therefore not counted again. That holds for a route at a static path. OpenTelemetry drops a trailing `/`, so `/files/*` reaches the bridge as `/files`; it reports a parameterised mount with its matched values, so each value becomes a bridge endpoint of its own; and a colon inside a segment, `/:from-:to`, stays. Each of those is counted by both.
+
 The bridge never discovers an endpoint another module owns. It skips a route when a framework module already holds the same identity, when a framework holds the same template with the verb `*`, and when a `HEAD` request names a template whose `GET` endpoint a framework holds. Otherwise a request that a framework module counted would count twice. If the owning module is switched off, those requests go uncounted.
 
 Two cases differ from the framework modules. OpenTelemetry's route includes the servlet context path, so a servlet application can report `/shop/orders` where the framework module reports `/orders`, and the two read as separate endpoints. A servlet-only application reports whatever OpenTelemetry reports, which may be a servlet mapping such as `/api/*`.
@@ -217,6 +245,7 @@ An endpoint names the method that serves it where the framework lets the agent f
 | Javalin, `CrudHandler` | The handler's method for the route: `getOne`, `getAll`, `create`, `update` or `delete`, with the class that declares it. |
 | Javalin, `SseHandler`, `VueComponent` and any `VueHandler` that does not override `handle` | Nothing. Javalin's own wrapper runs the handler. |
 | Micronaut 3, 4 and 5 | The class that declares the method Micronaut runs, the method and its descriptor, as the class file has them. A method a controller inherits from a base class or an interface names that base class or interface, a controller with AOP advice names the controller and not Micronaut's generated subclass, and a Kotlin `suspend` function has the continuation as its last parameter and `Object` as its return type. |
+| Vert.x Web | The route's last context handler that is not one of Vert.x Web's priority handlers (platform, security policy, body, multi-tenant, authentication, input trust and authorization): `handle` and the class that declares it, or the method a lambda or method reference calls. A `blockingHandler` names the handler it wraps. Nothing for a `respond(...)` route, for a handler that is a class of Vert.x Web's own, such as `StaticHandler`, or for one a library wraps before Vert.x sees it: the RxJava and Mutiny APIs, and the OpenTelemetry Java agent when it is attached after this agent. |
 | Ktor | The handler body's class and `invokeSuspend`. A handler class with no `invokeSuspend` names the class alone. |
 | JAX-RS | The concrete class, the method and its descriptor. |
 | JDK `HttpServer` | `handle` and the class that declares it. |
@@ -230,7 +259,7 @@ A functional route written in Spring's Kotlin DSL, `router { ... }` or `coRouter
 
 ### Lambdas and method references
 
-A Java or Kotlin lambda or method reference passed as a handler becomes a hidden class with no stable name, so its class name joins to nothing. For the handler types the modules take, the agent instead names the method the lambda calls. These are `HttpHandler` for the JDK `HttpServer`, `HandlerFunction` for Spring functional routes and `Handler` for Javalin. It does this by watching the JDK's lambda factory as it creates each such class, then reading the answer back when the framework hands the lambda over.
+A Java or Kotlin lambda or method reference passed as a handler becomes a hidden class with no stable name, so its class name joins to nothing. For the handler types the modules take, the agent instead names the method the lambda calls. These are `HttpHandler` for the JDK `HttpServer`, `HandlerFunction` for Spring functional routes, `Handler` for Javalin and `Handler` for Vert.x Web. It does this by watching the JDK's lambda factory as it creates each such class, then reading the answer back when the framework hands the lambda over.
 
 The reported method is the one the lambda calls, with its real descriptor. Values the lambda captured come first in that descriptor.
 
@@ -282,7 +311,7 @@ The [configuration options](configuration) page gives the system property and en
 
 ## What is not covered
 
-- Javalin 5 and Vert.x have no module. Counting their endpoints needs a module per framework. For them, `otelBridgeEnabled` counts what OpenTelemetry resolves, discovered at dispatch only, so "never called" cannot be computed.
+- Javalin 5 has no module. Counting its endpoints needs one. For it, `otelBridgeEnabled` counts what OpenTelemetry resolves, discovered at dispatch only, so "never called" cannot be computed.
 - A Spring WebFlux router run through `RouterFunctions.toHttpHandler` or `toWebHandler`, with no `DispatcherHandler`, is not declared, and only its `resources(pattern, location)` routes are counted, found at dispatch.
 - Requests that never reach the hooked framework are not counted. A servlet, filter or Tomcat valve that answers first is invisible to the Spring module, for example.
 - The agent reads no OpenAPI document and does no static analysis of call sites to find endpoints.

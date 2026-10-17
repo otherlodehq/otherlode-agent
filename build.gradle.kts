@@ -54,6 +54,7 @@ val jdk17Projects =
         ":endpoints-micronaut-common",
         ":endpoints-micronaut",
         ":endpoints-micronaut-3",
+        ":endpoints-vertx-web",
         ":endpoints-otel-bridge",
         ":endpoints-spring-common",
         ":endpoints-spring-webmvc",
@@ -164,6 +165,9 @@ dependencies {
     // one module. JAX-RS has no registration hook to advise, so its declared list comes from
     // reading annotations at transform time instead; see the module's own KDoc.
     implementation(project(":endpoints-jaxrs"))
+
+    // Endpoint module for Vert.x Web, covering 4.5 to 5.x with one module.
+    implementation(project(":endpoints-vertx-web"))
 
     // Route bridge endpoint module: counts the route OpenTelemetry's own HTTP server
     // instrumentation resolved, for a framework none of the modules above cover. Off by default

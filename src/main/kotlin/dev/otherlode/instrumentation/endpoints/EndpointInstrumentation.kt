@@ -280,8 +280,8 @@ class EndpointInstrumentation(
      * descriptor still gates what it is allowed to read, so `jdk.httpserver`'s own classes cannot
      * call into the seam without this edge.
      *
-     * A boot module name this JDK does not have is logged at INFO and skipped: that framework's
-     * advice never matches anything on this JVM.
+     * A name the boot layer does not have is logged at DEBUG and skipped: a framework on the class
+     * path, or a JDK module this runtime image left out, needs no edge.
      */
     private fun addSeamReadEdges(instrumentation: Instrumentation) {
         val bootModuleNames = modules.flatMapTo(sortedSetOf()) { it.bootModulesNeedingSeamRead }
@@ -290,10 +290,7 @@ class EndpointInstrumentation(
         for (name in bootModuleNames) {
             val bootModule = ModuleLayer.boot().findModule(name).orElse(null)
             if (bootModule == null) {
-                log.log(
-                    Level.INFO,
-                    "otherlode: boot module '$name' is not present in this JDK, its endpoint module will not match anything",
-                )
+                log.log(Level.DEBUG, "otherlode: module '$name' is not in the boot layer, so it gets no read edge to the endpoint seam")
                 continue
             }
             instrumentation.redefineModule(bootModule, setOf(seamModule), emptyMap(), emptyMap(), emptySet(), emptyMap())

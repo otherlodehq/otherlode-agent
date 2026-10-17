@@ -89,6 +89,7 @@ class OtelBridgeModuleIntegrationTest {
         // A framework module already owns this identity; the bridge must never touch it.
         val ownedKey = Any()
         registry.register(key = ownedKey, framework = "fake", verb = "GET", verbatimTemplate = "/legacy/{id}")
+        registry.register(key = Any(), framework = "vertx-web", verb = "GET", verbatimTemplate = "/owned/{id}")
 
         val endpointInstrumentation = EndpointInstrumentation(registry, listOf(OtelBridgeModule()))
         val transformer = endpointInstrumentation.install(instrumentation)
@@ -123,9 +124,30 @@ class OtelBridgeModuleIntegrationTest {
             serve("POST", "/users/{id}")
             serve("GET", null)
             serve("GET", "/legacy/{id}")
+            serve("GET", "/colon/:id")
+            serve("GET", "/colon/:id")
+            serve("GET", "/typed/:id::integer")
+            serve("GET", "/nested/:org/members/:member")
+            serve("GET", "/owned/:id")
+            serve("GET", "/mixed/:from-:to")
+            serve("GET", "/literal:colon")
 
             val endpointsByIdentity = registry.endpoints().associateBy { "${it.verb} ${it.routeTemplate}" }
-            assertEquals(setOf("GET /users/{id}", "POST /users/{id}", "GET /legacy/{id}"), endpointsByIdentity.keys)
+            assertEquals(
+                setOf(
+                    "GET /users/{id}",
+                    "POST /users/{id}",
+                    "GET /legacy/{id}",
+                    "GET /owned/{id}",
+                    "GET /colon/{id}",
+                    "GET /typed/{id}",
+                    "GET /nested/{org}/members/{member}",
+                    "GET /mixed/:from-:to",
+                    "GET /literal:colon",
+                ),
+                endpointsByIdentity.keys,
+                "a segment that is a Vert.x colon parameter reads as a brace parameter, and any other colon stays",
+            )
 
             val getEndpoint = endpointsByIdentity.getValue("GET /users/{id}")
             assertEquals("otel", getEndpoint.framework)
@@ -142,6 +164,12 @@ class OtelBridgeModuleIntegrationTest {
 
             // Dedup: the identity another framework already owns stays owned, and unhit, by that
             // framework. The bridge's own read of it produced no second entry and no count.
+            val ownedByVertx = endpointsByIdentity.getValue("GET /owned/{id}")
+            assertEquals("vertx-web", ownedByVertx.framework)
+            assertTrue(ownedByVertx.endpointId !in deltasById, "a request the vertx-web module counts is not counted again as /owned/:id")
+            assertEquals(2L, deltasById.getValue(endpointsByIdentity.getValue("GET /colon/{id}").endpointId).hitsTotal)
+            assertEquals(1L, deltasById.getValue(endpointsByIdentity.getValue("GET /typed/{id}").endpointId).hitsTotal)
+
             val legacyEndpoint = endpointsByIdentity.getValue("GET /legacy/{id}")
             assertEquals("fake", legacyEndpoint.framework)
             assertTrue(legacyEndpoint.endpointId !in deltasById, "an owned-but-never-hit endpoint must not appear in the delta batch")

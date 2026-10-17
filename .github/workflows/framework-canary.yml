@@ -37,6 +37,7 @@ jobs:
           :endpoints-javalin-7:check
           :endpoints-micronaut-3:check
           :endpoints-micronaut:check
+          :endpoints-vertx-web:check
           :endpoints-jaxrs:check
           :endpoints-otel-bridge:check
           :endpoints-jdk-httpserver:check

@@ -22,6 +22,12 @@ import net.bytebuddy.asm.Advice;
  * class's bytecode rewritten to that agent's {@code io/opentelemetry/javaagent/shaded/...} prefix
  * before binding, so one advice class serves both deployments.
  *
+ * <p>A Vert.x Web route reaches OpenTelemetry spelled {@code /users/:id}. A segment that is
+ * {@code :name}, or {@code :name::type} as Vert.x Web 5.2 writes a typed parameter, becomes
+ * {@code {name}} before anything is looked up, so a request the {@code vertx-web} module counted
+ * under {@code /users/{id}} is not counted again. A colon anywhere else in a segment stays. The name
+ * pattern follows Vert.x's {@code io.vertx.web.route.param.extended-pattern} property.
+ *
  * <p>A route this bridge reads for an identity another endpoint module already owns is left
  * alone: {@link OtherlodeEndpoints#lookup} misses for a key no framework module ever bound, and {@link
  * OtherlodeEndpoints#recordDispatchIfUnowned} then refuses to bind it either, since an entry for that
@@ -43,6 +49,44 @@ public class OnEndAdvice {
             if (state == null) return;
             String route = state.getRoute();
             if (route == null) return;
+            if (route.indexOf("/:") >= 0) {
+                boolean extended = Boolean.getBoolean("io.vertx.web.route.param.extended-pattern");
+                StringBuilder converted = new StringBuilder(route.length() + 4);
+                int length = route.length();
+                int start = 0;
+                while (start <= length) {
+                    int end = route.indexOf('/', start);
+                    if (end < 0) end = length;
+                    String segment = route.substring(start, end);
+                    String name = null;
+                    if (segment.length() > 1 && segment.charAt(0) == ':') {
+                        int nameEnd = 1;
+                        while (nameEnd < segment.length()) {
+                            char c = segment.charAt(nameEnd);
+                            boolean nameChar = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+                                    || c == '_' || (extended && (c == '$' || c == '-'));
+                            if (!nameChar) break;
+                            nameEnd++;
+                        }
+                        boolean typed = segment.startsWith("::", nameEnd);
+                        int typeEnd = typed ? nameEnd + 2 : nameEnd;
+                        while (typed && typeEnd < segment.length()) {
+                            char c = segment.charAt(typeEnd);
+                            boolean nameChar = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+                                    || c == '_' || (extended && (c == '$' || c == '-'));
+                            if (!nameChar) break;
+                            typeEnd++;
+                        }
+                        if (nameEnd > 1 && typeEnd == segment.length() && (!typed || typeEnd > nameEnd + 2)) {
+                            name = segment.substring(1, nameEnd);
+                        }
+                    }
+                    converted.append(name != null ? "{" + name + "}" : segment);
+                    if (end < length) converted.append('/');
+                    start = end + 1;
+                }
+                route = converted.toString();
+            }
             String method = state.getMethod();
             String verb = method == null ? "*" : method;
             List<String> key = List.of(verb, route);
