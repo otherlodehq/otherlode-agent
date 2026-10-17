@@ -92,19 +92,14 @@ Known so far:
 - To inventory: the GitHub and Buf tokens CI uses, the WorkOS and GCP credentials behind the hosted server, and the
   `otherlode.dev` domain registration.
 
-### A class that failed to initialise: deploy, then the last ADRs
+### A class that failed to initialise: the server deploy
 
 Settled on 2026-10-16 (agent ADR 0071, server ADR 0070, both with
 amendments; `CONTEXT.md`). Built in every repo; the server's side is on
-its master at `133a73b`. Left:
-
-1. **The server deploy.** GitHub Actions started no job for `133a73b` (nor
-   for `80fb450` before it): the organisation's billing refused them. Once
-   billing is fixed, re-run the CI workflow for master's head; it migrates
-   (0006) and deploys.
-2. **ADRs name no decider** in the collector (3 files) and the site (2
-   files). The agent's and the server's are done. The session's permission
-   check refused edits to those two repos on 2026-10-17.
+its master at `133a73b`. GitHub Actions started no job for it (nor for
+`80fb450` before it): the organisation's billing refused them. Once
+billing is fixed, re-run the CI workflow for master's head; it migrates
+(0006), deploys and syncs the server docs to otherlode.dev.
 
 ### HotSwap of a woven class with changed code: to grill
 
