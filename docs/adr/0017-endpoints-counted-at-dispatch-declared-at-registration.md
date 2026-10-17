@@ -65,3 +65,28 @@ Considered:
 - Reporting a module only once its framework is seen, by keeping it installed but inert. Rejected: its type matching keeps running, which may be the cost the adopter switched it off to avoid (JAX-RS's annotation reading, in the 2026-10-05 amendment above).
 - A field on `ResourceAttributes` listing the modules switched off. Rejected: `DisabledEndpointModule` already tells the server "endpoints not instrumented", and the server joins it to endpoints by module name.
 - One boolean per module in OpenTelemetry's shape. Rejected: every other option has a fixed key whose property and variable names derive from it (`OptionNames`), and module names hold dashes an environment variable cannot.
+
+## Amended on 2026-10-17: modules for WebFlux, Javalin, Micronaut and Vert.x, never static analysis
+
+Decided in the same grill. The frameworks with no module (Spring WebFlux, Javalin, Micronaut, Vert.x Web) get runtime modules before 0.1.0. Static analysis of registration call sites stays rejected, now with evidence. Every agent-side declared route list found reads the framework's own route table at runtime, at the point where the framework has finished building it: Datadog's tracer for Spring MVC (`AppSecDispatcherServletInstrumentation`, at `DispatcherServlet.onRefresh`), Spring Boot's `/mappings`, Micronaut's `/routes`, Javalin's route overview and springdoc, whose "build-time" plugins start the application. Static extractors live in source scanners, and where their source is readable they show the weaknesses this record named: OWASP Noir's Vert.x analyser drops a computed path and approximates a sub-router mounted in another file (`vertx.cr:630`, 128-135), and none sees a runtime prefix (`PathMatchConfigurer.addPathPrefix`) or a `${...}` placeholder. All four frameworks expose their route table at runtime.
+
+Each module compiles against its oldest supported release, as the options above say: a module compiled against the newest can use an API an older supported release lacks and fail on it.
+
+Rules every module follows, and the Spring MVC module is brought to:
+
+- **A CORS preflight is no call** of the route it asks about, on every route kind, not only functional routes.
+- **Functional routes are declared at `RouterFunctionMapping.afterPropertiesSet`**, read from its `routerFunction` field on exit, so a mapping constructed with a router function, as Spring Boot's WebFlux welcome page is, is declared too.
+- **A top-level `resources(...)` route is declared and counted**, its pattern read from the resource lookup function by exact class shape, rather than left undeclared and uncounted.
+- **An API version is not part of identity** (Spring 7.0), like a header predicate. A request rejected for its version after the route matched counts, since a hit means matched.
+- **A handler that resolves to Spring's Kotlin DSL classes** (`RouterFunctionDsl`, `CoRouterFunctionDsl`) gets no join: ADR 0035's rule that a name joining to nothing is worse than none.
+- **WebSocket routes are not declared**, since an upgrade never reaches a dispatch hook and every one would read as never called.
+- **Endpoints a framework adds for itself are declared and counted**, as Actuator's are: Javalin's `HttpAllowedMethodsPlugin` OPTIONS routes and route overview, Micronaut's management endpoints.
+
+Per framework:
+
+- **Spring WebFlux** is a module of its own, `spring-webflux`, so its failure never switches off MVC counting and the option and wire label can name one stack. The two share the functional-route walk, parameterised by package. Hooks are identical in 5.3.39, 6.2.19 and 7.0.9. Reactive URL-mapped handlers count at `AbstractUrlHandlerMapping.lookupHandler` on a non-null return, since the reactive side has no `buildPathExposingHandler` and no root or default fallback. A router run through `RouterFunctions.toHttpHandler` or `toWebHandler`, with no `DispatcherHandler`, is reported by a framework marker (ADR 0072).
+- **Javalin** gets `javalin-6` (6.1 and later) and `javalin-7`, each matching `ParsedEndpoint` only by its own release's shape, since the hooked descriptors are the same in both and a module matching by name would weave the other release and fail. Javalin 6.0.x reports a `LINKAGE_ERROR`; Javalin 5 is reported by a framework marker. The true match point is inlined or compiler-generated, so a Javalin endpoint counts at `ParsedEndpoint.handle`, after the before-handlers: a request a before-handler rejects, redirects or skips is not counted, and a Javalin hit means the request reached its handler. A `CrudHandler`'s five endpoints join to its methods by verb and path shape, from a hook on `ApiBuilder.crud` that runs before the inner registrations.
+- **Micronaut** gets one module for 4.0 to 5.x, declaring at the exit of `DefaultRouter`'s constructor and counting at `RouteExecutor.findRouteMatch`. A HEAD route Micronaut adds beside each `@Get` is not declared, and a HEAD request that matches one counts against the GET endpoint; an explicit `@Head` is its own endpoint. `micronaut.server.context-path` stays in the template, beside the JDK `HttpServer` as an exception, since it is part of the path Micronaut matches and is in annotated routes only.
+- **Vert.x Web** has its own record, ADR 0073.
+
+The shared normaliser gains Micronaut's `{/x}` as `/{x?}`, `{x:?}` as `{x?}`, a whole-segment `{+x}` as `*`, and Javalin's whole-segment `<x>` as `*`. A form whose meaning would be a guess (`{x:.*}`, `{.x}`, `{;x}`, `{a,b}`) stays as written. Vert.x's `:name` is converted by its module, since a colon rule in the shared normaliser would break Spring's literal colons (`{name}:cancel`).

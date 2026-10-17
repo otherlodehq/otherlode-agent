@@ -136,37 +136,47 @@ wanted, is `PendingDeclarations.begin()` taking the declaring class name and
 hold the same string for JAX-RS but is a display label: nullable, and set at
 dispatch for the other modules.
 
-### Per-module endpoint switch: to build, before 0.1.0
+### Endpoint modules and framework markers: building, before 0.1.0
 
-Settled on 2026-10-17 (ADR 0017's amendment of that date). Landing order:
+Settled on 2026-10-17: ADR 0017's second amendment of that date, ADRs
+0072 and 0073, ADR 0020's amendment, and server ADR 0071. Landing order,
+one commit per chunk, each with its `docs/site` pages:
 
-1. Agent: `disabledEndpointModules`, the `CONFIGURED_OFF` kind, and a
-   report of every module the configuration keeps from installing,
-   `endpointsEnabled=false` included. `configuration.md`, `endpoints.md`
-   and `troubleshooting.md` change with it.
-2. Collector: bump the bindings once Buf CI has published the schema, so
-   redaction keeps the kind.
-3. Server: a label and notice wording for the kind, as the adopter's
-   choice rather than a failure.
+1. Normaliser rules for Micronaut's and Javalin's template forms.
+2. Spring MVC: declare functional routes at `afterPropertiesSet`, no
+   count for any CORS preflight, declare and count top-level
+   `resources(...)` routes.
+3. The functional-route walk moved to a helper both Spring modules share.
+4. `spring-webflux`.
+5. `javalin-6` and `javalin-7`, with the `CrudHandler` join.
+6. `micronaut` (4.0 to 5.x; 3.x too if its hooks match, else a marker).
+7. Wire: the regex template field on `EndpointLocation`, then the
+   collector's bindings, then the server.
+8. `vertx-web`, and the route bridge converting Vert.x colon parameters.
+9. JAX-RS: the class-level `@Path` gate opens for RESTEasy Reactive.
+10. Wire: framework markers, each proved by a three-JVM fixture, then the
+    collector's bindings, then the server.
 
-### Endpoints for a framework with no module: in grill
+Open facts that only change chunks 2 and 6: whether Spring Security's
+`HandlerMappingIntrospector` makes the Spring MVC module count one request
+twice, and whether Micronaut 3.x has the 4.x hooks.
 
-Started on 2026-10-17. Settled so far:
+### A servlet module: to grill, before 0.1.0
 
-- A runtime module per framework, never static analysis of registration
-  call sites. Every agent-side declared route list found reads the
-  framework's own route table at runtime; static extractors drop computed
-  paths and never see runtime prefixes. To record in ADR 0017.
-- Modules for Spring WebFlux, Micronaut, Javalin and Vert.x Web, all
-  before 0.1.0. Vert.x needs its own questions settled first: routes can be
-  added at any time, one request can pass through several routes, and 4.x
-  exposes no sub-router prefix.
-- The agent reports a known HTTP framework that no module covers, by a
-  marker class that loads only when that framework serves HTTP. Each
-  marker's certainty is proved before it is listed. A wire change.
+A plain servlet application reads as having no endpoints, and no marker
+class can tell it apart from Spring's `DispatcherServlet` or Jersey
+(ADR 0072). The candidate is one module on the standard Servlet API:
+declare from the registered servlet mappings once a context starts, count
+against the request's matched mapping (Servlet 4.0+), and leave out
+servlets another module owns. Needs its own research and grill.
 
-Open: the per-module design (versions, hooks, template rules, handler
-join), the marker list, and the wire shape for an uncovered framework.
+### Endpoint follow-ups
+
+- `endpoints-ktor-3` compiles against Ktor 3.5.2, its newest supported
+  release; ADR 0017 says the oldest.
+- A handler from Spring's Kotlin DSLs (`router {}`, `coRouter {}`) gets no
+  join. Unwrapping to the adopter's lambda waits on reading its compiled
+  shape.
 
 ## Parked
 
@@ -342,8 +352,6 @@ Endpoints:
   does not.
 - The OTel bridge records OpenTelemetry's `HTTP` verb for an unknown method
   as an endpoint of its own.
-- Spring's annotation-mapped side counts a CORS preflight as a hit of the
-  `GET` it asks about, since its dispatch advice sees no request.
 - An unclosed brace in a route template swallows the slashes after it, and
   a regex holding `}` (`{p:[^}]+}`) closes early.
 - Weld's proxies are not recognised as runtime-generated, since their

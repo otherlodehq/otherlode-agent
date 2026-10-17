@@ -172,12 +172,16 @@ _Avoid_: backend, server, ingest
 ### Endpoints
 
 **Endpoint**:
-One HTTP verb and route template a framework serves, as registered with that framework. Identity is the pair; nothing about the server, port, or handler is part of it.
+One HTTP verb and route template a framework serves, as registered with that framework. Identity is the pair, with whether the template is a regex template; nothing about the server, port, or handler is part of it.
 _Avoid_: route (the template is the route; the endpoint is verb plus template), mapping, handler
 
 **Route template**:
-The normalised path pattern of an endpoint: leading slash, no trailing slash, `{name}` for a path parameter with any regex dropped, `*` for any wildcard or tail. The framework's own spelling is kept beside it for display only.
+The normalised path pattern of an endpoint: leading slash, no trailing slash, `{name}` for a path parameter with any regex dropped, `*` for any wildcard or tail. The framework's own spelling is kept beside it for display only. A route the framework matches by a regular expression alone has a regex template instead.
 _Avoid_: path, pattern, URL
+
+**Regex template**:
+The template of an endpoint a framework matches by a regular expression with no path: the expression exactly as written, marked as a regex so no reader takes it for a path.
+_Avoid_: regex route (the route is the endpoint; this is its template), raw path
 
 **Endpoint probe**:
 The counter for one endpoint, incremented when the framework matches a request to it, before the handler runs.
@@ -207,6 +211,10 @@ _Avoid_: unused endpoint (the product phrase, not the observation), dead
 **Route bridge**:
 An endpoint module that counts the route another instrumentation already resolved for a request, rather than hooking the framework itself. It only ever discovers endpoints by dispatch and never declares one.
 _Avoid_: OTel module, adapter
+
+**Framework marker**:
+A class, or a set of classes, that loads only once one framework's own routing is set up to serve, with the narrow claim it supports. The agent reports a marker it saw load; the server decides whether that routing is covered.
+_Avoid_: framework detection, uncovered framework (that is the server's verdict, not the observation)
 
 **Inherited annotation**:
 A JAX-RS annotation a resource method takes from the method it overrides or implements because it carries none of its own. Only a method the concrete class declares can inherit.
