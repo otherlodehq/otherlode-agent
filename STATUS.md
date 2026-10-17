@@ -151,12 +151,22 @@ Settled on 2026-10-17 (ADR 0017's amendment of that date). Landing order:
 
 ### Endpoints for a framework with no module: in grill
 
-Started on 2026-10-17. Scoped to WebFlux, Micronaut, Javalin and Vert.x,
-where the route bridge only discovers, so "never called" cannot be
-computed. Code that never registers a route is out of scope: the method
-tier and the class listing (ADR 0070) already report it. Open: static
-analysis of registration call sites (set aside in ADR 0017) or a runtime
-module per framework, and which frameworks come before 0.1.0.
+Started on 2026-10-17. Settled so far:
+
+- A runtime module per framework, never static analysis of registration
+  call sites. Every agent-side declared route list found reads the
+  framework's own route table at runtime; static extractors drop computed
+  paths and never see runtime prefixes. To record in ADR 0017.
+- Modules for Spring WebFlux, Micronaut, Javalin and Vert.x Web, all
+  before 0.1.0. Vert.x needs its own questions settled first: routes can be
+  added at any time, one request can pass through several routes, and 4.x
+  exposes no sub-router prefix.
+- The agent reports a known HTTP framework that no module covers, by a
+  marker class that loads only when that framework serves HTTP. Each
+  marker's certainty is proved before it is listed. A wire change.
+
+Open: the per-module design (versions, hooks, template rules, handler
+join), the marker list, and the wire shape for an uncovered framework.
 
 ## Parked
 
