@@ -198,7 +198,7 @@ _Avoid_: alias table, handler map
 How the agent learned of an endpoint: registration (the framework declared it) or dispatch (a request matched an endpoint no registration had declared).
 
 **Endpoint module**:
-The per-framework unit that hooks one framework's registration and dispatch. A module that cannot vouch for what it counts (a linkage failure, a throw in its advice or its transform, a framework class it hooks that failed to weave, a failed route walk, or a hook that matched no method) disables itself once, whole, and is reported as disabled with what kind of failure it was.
+The per-framework unit that hooks one framework's registration and dispatch. A module that cannot vouch for what it counts (a linkage failure, a throw in its advice or its transform, a framework class it hooks that failed to weave, a failed route walk, or a hook that matched no method) disables itself once, whole, and is reported as disabled with what kind of failure it was. A module the adopter switches off by configuration is reported as disabled too, with that as its kind, so a framework left uninstrumented never reads as one with no endpoints.
 
 **Never called**:
 An endpoint that at least one instance registered and whose hit total has stayed at zero across every instance in scope. The framework would serve it; no request ever matched it.
