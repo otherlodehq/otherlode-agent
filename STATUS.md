@@ -94,32 +94,23 @@ Known so far:
 
 ### A class that failed to initialise: the server, then the rest
 
-Settled on 2026-10-16 (agent ADR 0071, server ADR 0069, both with
+Settled on 2026-10-16 (agent ADR 0071, server ADR 0070, both with
 amendments; `CONTEXT.md`). The agent, wire, collector, testkit and demo
 collector are done (`2a012d4` to `b26f77a`). Left, in order:
 
-1. **Server, part a**, on branch `failed-to-initialise` in the worktree
-   `~/Documents/otherlode-server-failed-to-initialise`: bindings, slots out
-   of `/probes`, migration 0006, ingest, the per-run Go loader (initialised,
-   failed with the JVM carry rule, still running, evidence), the `bool_or`
-   evidence through every zero-count claim, the report figures, the
-   dependency status, snapshot format 9, and test fixtures that default to
-   watched. The brief is ready.
-2. **Server, part b**: the `/failed-to-initialize` listing, the page,
-   navigation and overview count, and the server's docs (`findings.md`,
-   `how-it-works.md`, `troubleshooting.md`, `api.md`). Then merge to the
-   server's master (cleared on 2026-10-16; a push deploys). Master took ADR
-   number 0069 for the database ADR (`6fb404f`), so the branch's ADR takes
-   the next free number at merge, and agent ADR 0071 and this entry follow
-   it.
-3. **The `ProbeLocation` field comments** in the proto, saying which fields
+1. **Server, part b**, on branch `failed-to-initialise` in the worktree
+   `~/Documents/otherlode-server-failed-to-initialise` (part a, the
+   storage, ingest and rules, is `301172b` there; master is merged in and
+   the branch's ADR is 0070): the `/failed-to-initialize` listing, the
+   page, navigation and overview count, the UI for the `without-evidence`
+   statuses and flags, and the server's docs. Then merge to the server's
+   master (cleared on 2026-10-16; a push deploys).
+2. **The `ProbeLocation` field comments** in the proto, saying which fields
    a `<clinit>` slot carries.
-4. **ADRs name no decider.** Reword every "Decided on <date> with Luke"
-   and other mention of Luke in the ADRs of all four repos (agent 27 files,
-   server 19, collector 3, site 2, counted 2026-10-16) to "Decided on
-   <date>", and a fact that needs an owner, such as whose key signs
-   releases, to a role. The server's go on its branch; ask before the
-   collector's and the site's.
+3. **ADRs name no decider** in the collector (3 files) and the site (2
+   files). The agent's are done (`9362a06`) and the server's are on the
+   branch. Editing the collector and site repos was refused by the session's
+   permission check on 2026-10-17, so they wait for a maintainer.
 
 Follow-up, outside this work: the testkit's `JavaApiCompileCheck.java`
 does not call `failedToLoad()` or `failedToLoadDependencies()`.
