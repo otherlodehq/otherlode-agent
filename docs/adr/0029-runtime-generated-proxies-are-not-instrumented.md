@@ -144,3 +144,4 @@ fire. `demo-spring`'s `PricingConfiguration` is fully hit with the rule in place
 - An adopter who genuinely wants a generated class instrumented has no way to ask for it. Nobody has
   wanted one.
 - The endpoint pipeline ignores the same classes. A proxy of a JAX-RS resource inherits its annotations' meaning and calls the real method through `super`, so weaving both counted every call twice. Added 2026-10-03 in a review.
+- The JAX-RS endpoint module also turns away a synthetic class, as the method tier does. Quarkus ArC's `<Bean>_Subclass` and `<Bean>_ClientProxy` extend the resource class and carry `ACC_SYNTHETIC` (Gizmo's default, which ArC never clears), so once ADR 0020's gate opened for Quarkus REST they could be read as resources of their own, a resource's own methods woven in the proxy too, and each request counted two or three times. No ArC name is needed in the list above. Added 2026-10-18 in a review.

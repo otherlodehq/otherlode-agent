@@ -17,6 +17,7 @@ import net.bytebuddy.matcher.ElementMatchers.not
 import java.lang.System.Logger.Level
 import java.util.Collections
 import java.util.WeakHashMap
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
 private const val MODULE = "jaxrs"
@@ -26,6 +27,8 @@ private const val SUPERTYPE_CACHE_SIZE = 8192
 private val API_MARKER_RESOURCES = listOf("jakarta/ws/rs/Path.class", "javax/ws/rs/Path.class")
 private val PLATFORM_LOADER: ClassLoader = ClassLoader.getPlatformClassLoader()
 private const val JERSEY_MARKER_RESOURCE = "org/glassfish/jersey/server/model/Resource.class"
+private const val RESTEASY_REACTIVE_MARKER_RESOURCE = "org/jboss/resteasy/reactive/server/core/ResteasyReactiveRequestContext.class"
+private const val IGNORED_CLASS_PATH_LOG_LIMIT = 16
 
 private val NAMESPACES = listOf("javax.ws.rs", "jakarta.ws.rs")
 private val VERBS = listOf("GET", "POST", "PUT", "DELETE", "HEAD", "OPTIONS", "PATCH")
@@ -64,27 +67,28 @@ private val ELIGIBLE_METHOD: ElementMatcher.Junction<MethodDescription> =
  * Method-level annotations are inherited by the specification's own rule: a method the concrete
  * class declares with no JAX-RS annotation of its own inherits the annotations of the method it
  * overrides or implements. Class-level `@Path` is not inherited per the specification, but Jersey
- * honours one declared on a superclass or interface, so this module does too, only when Jersey is
- * present on the resource class's own loader. See [resolveAnnotationSource] and
+ * honours one declared on a superclass or interface, as does Quarkus REST (RESTEasy Reactive), so
+ * this module does too, only when one of them is present on the resource class's own loader. See [resolveAnnotationSource] and
  * [resolveClassPath].
  *
- * [jerseyPresent] answers whether Jersey is on a resource class's own loader; the default reads a
- * marker resource off that loader without loading any class. A test supplies its own function to
- * force either branch without adding a second JAX-RS runtime to the build. The constructor is
- * `@JvmOverloads` so [java.util.ServiceLoader], which needs a genuine no-argument constructor at
+ * [jerseyPresent] and [restEasyReactivePresent] answer whether Jersey, or RESTEasy Reactive's server
+ * classes, are on a resource class's own loader; each default reads a marker resource off that
+ * loader without loading any class, once per loader. A test supplies its own function to force
+ * either branch. The constructor is `@JvmOverloads` so [java.util.ServiceLoader], which needs a genuine no-argument constructor at
  * the bytecode level, can still instantiate this class.
  */
 class JaxRsModule
     @JvmOverloads
     constructor(
         private val jerseyPresent: (ClassLoader?) -> Boolean = ::isJerseyPresent,
+        private val restEasyReactivePresent: (ClassLoader?) -> Boolean = ::isRestEasyReactivePresent,
     ) : EndpointModule {
         override val name: String = MODULE
 
         override val weaveFailureLeavesNothingPartial: Boolean = true
 
         private val log = System.getLogger(JaxRsModule::class.java.name)
-        private val classPathIgnoredWarned = AtomicBoolean(false)
+        private val classPathIgnoredWarned = ConcurrentHashMap.newKeySet<String>()
         private val interfaceConflictWarned = AtomicBoolean(false)
         private val supertypeCaches = SupertypeCaches()
         private val loaderGate = JaxRsLoaderGate()
@@ -119,6 +123,7 @@ class JaxRsModule
             val cache = supertypeCaches.cacheFor(classLoader)
             return not(isInterface<TypeDescription>())
                 .and(not(isAbstract()))
+                .and(not(isSynthetic()))
                 .and(ElementMatcher<TypeDescription> { type -> declaresOwnPathOrVerb(type) || hasInheritedPathOrVerb(type, cache) })
         }
 
@@ -262,28 +267,30 @@ class JaxRsModule
         ): Boolean = sameSignature(candidate, target) && hasOwnJaxRsAnnotation(candidate)
 
         /**
-         * The class-level route prefix for [type]: its own `@Path` when it has one, otherwise, only
-         * when [jerseyPresent] says Jersey is on [classLoader], the nearest superclass or first
-         * interface carrying one, in the order Jersey's own `ModelHelper.getAnnotatedResourceClass`
-         * resolves it.
+         * The class-level route prefix for [type]: its own `@Path` when it has one, otherwise a
+         * supertype's, in Jersey's order ([findInheritedClassPath]) when [jerseyPresent] says Jersey
+         * is on [classLoader], or in Quarkus REST's ([findQuarkusInheritedClassPath]) when only
+         * [restEasyReactivePresent] says RESTEasy Reactive is.
          *
-         * A supertype `@Path` found while Jersey is absent is not used, since neither RESTEasy nor
-         * the specification inherits a class-level annotation; this logs an INFO line once for the
-         * life of this module the first time that happens, naming the class, so an adopter running
-         * a non-Jersey runtime can see why it declares no endpoints. Null when nothing applies.
+         * A supertype `@Path` found while neither is present is not used, since neither classic
+         * RESTEasy nor the specification inherits a class-level annotation; this logs an INFO line once per
+         * class, for at most [IGNORED_CLASS_PATH_LOG_LIMIT] classes over the life of this module,
+         * naming the class, so an adopter running another runtime can see why it declares no
+         * endpoints. Null when nothing applies.
          */
         private fun resolveClassPath(
             type: TypeDescription,
             classLoader: ClassLoader?,
         ): String? {
             pathValue(type)?.let { return it }
-            val inherited = findInheritedClassPath(type) ?: return null
-            if (jerseyPresent(classLoader)) return inherited
-            if (classPathIgnoredWarned.compareAndSet(false, true)) {
+            if (jerseyPresent(classLoader)) return findInheritedClassPath(type)
+            if (restEasyReactivePresent(classLoader)) return findQuarkusInheritedClassPath(type)
+            if (findInheritedClassPath(type) == null) return null
+            if (classPathIgnoredWarned.size < IGNORED_CLASS_PATH_LOG_LIMIT && classPathIgnoredWarned.add(type.name)) {
                 log.log(
                     Level.INFO,
                     "otherlode: jaxrs: class-level @Path on a supertype of ${type.name} is ignored, so it declares no " +
-                        "endpoints: RESTEasy and the JAX-RS specification do not inherit it",
+                        "endpoints: classic RESTEasy and the JAX-RS specification do not inherit it",
                 )
             }
             return null
@@ -304,6 +311,23 @@ class JaxRsModule
                 current = superErasure(current)
             }
             return foundInterfacePath
+        }
+
+        /**
+         * Quarkus REST's resolution (`ResteasyReactiveScanner`): a class-level `@Path` on a direct
+         * abstract superclass, or failing that on an interface the class or a superclass implements
+         * directly. A concrete superclass's `@Path` is the superclass's own and is not inherited.
+         * Quarkus promotes the abstract class's subclass only when it is the only one, which this
+         * class-at-a-time reading cannot know (ADR 0020).
+         */
+        private fun findQuarkusInheritedClassPath(type: TypeDescription): String? {
+            superErasure(type)?.takeIf { it.isAbstract }?.let { superclass -> pathValue(superclass)?.let { return it } }
+            var current: TypeDescription? = type
+            while (current != null) {
+                interfaceErasures(current).firstNotNullOfOrNull { pathValue(it) }?.let { return it }
+                current = superErasure(current)
+            }
+            return null
         }
 
         /** The verb for [source], or null if it carries neither a standard verb annotation nor a custom one. */
@@ -475,6 +499,26 @@ private fun interfaceErasures(type: TypeDescription): List<TypeDescription> =
 /** The erasure of [generic], or null if it cannot be resolved from a [net.bytebuddy.pool.TypePool]-backed description. */
 private fun resolveErasure(generic: TypeDescription.Generic): TypeDescription? = runCatching { generic.asErasure() }.getOrNull()
 
-/** Whether Jersey is present on [classLoader] (the system loader when null), checked as a resource lookup, never a class load. */
-private fun isJerseyPresent(classLoader: ClassLoader?): Boolean =
-    (classLoader ?: ClassLoader.getSystemClassLoader()).getResource(JERSEY_MARKER_RESOURCE) != null
+/** Whether a marker resource is visible on a loader, looked up once per loader and never loading a class. */
+private class MarkerPresence(
+    private val marker: String,
+) {
+    private val answers = Collections.synchronizedMap(WeakHashMap<ClassLoader, Boolean>())
+
+    fun isPresentOn(classLoader: ClassLoader?): Boolean {
+        val loader = classLoader ?: ClassLoader.getSystemClassLoader()
+        answers[loader]?.let { return it }
+        val seen = loader.getResource(marker) != null
+        answers[loader] = seen
+        return seen
+    }
+}
+
+private val JERSEY_PRESENCE = MarkerPresence(JERSEY_MARKER_RESOURCE)
+private val RESTEASY_REACTIVE_PRESENCE = MarkerPresence(RESTEASY_REACTIVE_MARKER_RESOURCE)
+
+/** Whether Jersey is present on [classLoader] (the system loader when null). */
+private fun isJerseyPresent(classLoader: ClassLoader?): Boolean = JERSEY_PRESENCE.isPresentOn(classLoader)
+
+/** Whether RESTEasy Reactive's server classes are present on [classLoader] (the system loader when null). */
+private fun isRestEasyReactivePresent(classLoader: ClassLoader?): Boolean = RESTEASY_REACTIVE_PRESENCE.isPresentOn(classLoader)

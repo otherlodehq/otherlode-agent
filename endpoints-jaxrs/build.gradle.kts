@@ -17,7 +17,15 @@ val jersey3Version = providers.gradleProperty("otherlode.framework.jersey3").get
 val jersey4Version = providers.gradleProperty("otherlode.framework.jersey4").getOrElse("4.0.3")
 val jersey2Version = providers.gradleProperty("otherlode.framework.jersey2").getOrElse("2.48")
 
+val resteasyReactiveVersion = providers.gradleProperty("otherlode.framework.resteasyReactive").getOrElse("3.40.1")
+
+val resteasyReactiveServer by configurations.creating { isTransitive = false }
+val resteasyReactiveCommon by configurations.creating { isTransitive = false }
+
 dependencies {
+    resteasyReactiveServer("io.quarkus.resteasy.reactive:resteasy-reactive:$resteasyReactiveVersion")
+    resteasyReactiveCommon("io.quarkus.resteasy.reactive:resteasy-reactive-common:$resteasyReactiveVersion")
+
     // EndpointModule, AdviceBinder, and the ByteBuddy-facing types this module is written
     // against. No JAX-RS artifact is a dependency anywhere in main: JaxRsModule reads annotation
     // names off ByteBuddy descriptions instead of matching against loaded JAX-RS types, and
@@ -83,9 +91,20 @@ val jaxRsTestAgentJar =
         }
     }
 
+// On a test classpath the RESTEasy Reactive server jar would open the inheritance gate for every
+// test that sets jerseyPresent to false, so its jars reach the tests only as a test loader's contents.
+val resteasyReactiveJarProperties =
+    CommandLineArgumentProvider {
+        listOf(
+            "-Dotherlode.test.resteasyReactiveServerJar=${resteasyReactiveServer.singleFile.absolutePath}",
+            "-Dotherlode.test.resteasyReactiveCommonJar=${resteasyReactiveCommon.singleFile.absolutePath}",
+        )
+    }
+
 tasks.test {
     dependsOn(jaxRsTestAgentJar)
     useJUnitPlatform()
+    jvmArgumentProviders.add(resteasyReactiveJarProperties)
     jvmArgumentProviders.add(
         CommandLineArgumentProvider {
             listOf("-javaagent:${jaxRsTestAgentJar.get().archiveFile.get().asFile.absolutePath}")
@@ -192,6 +211,7 @@ testing.suites.named<JvmTestSuite>("jersey4Test") {
         all {
             testTask.configure {
                 dependsOn(jersey4TestAgentJar)
+                jvmArgumentProviders.add(resteasyReactiveJarProperties)
                 jvmArgumentProviders.add(
                     CommandLineArgumentProvider {
                         listOf("-javaagent:${jersey4TestAgentJar.get().archiveFile.get().asFile.absolutePath}")

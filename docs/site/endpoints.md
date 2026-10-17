@@ -202,16 +202,17 @@ The template is the class-level `@Path` joined to the method's `@Path`. A class 
 
 ### Inheritance
 
-The agent follows the JAX-RS annotation-inheritance rules for methods and adds one Jersey behaviour for classes.
+The agent follows the JAX-RS annotation-inheritance rules for methods and adds one behaviour for classes, which Jersey and Quarkus REST share.
 
 - A method with no JAX-RS annotation of its own inherits the annotations of the method it overrides or implements. The search tries the superclass chain first, then the interfaces in declaration order. Any JAX-RS annotation on the method itself, even `@Produces`, turns inheritance off for that method.
 - Only methods the concrete class declares are read. A method body inherited from a superclass without an override is not declared on the subclass.
-- A class-level `@Path` on a superclass or interface is used only when Jersey is on the resource class's class loader. The specification does not inherit it and RESTEasy does not either. Without Jersey, the class declares nothing, and the agent logs once at INFO: `class-level @Path on a supertype of <class> is ignored, so it declares no endpoints`. The agent detects Jersey by the presence of `org/glassfish/jersey/server/model/Resource.class` on that loader. When Jersey resolves the class path, a superclass's `@Path` wins over an interface's.
+- A class-level `@Path` on a superclass or interface is used only when Jersey or Quarkus REST (RESTEasy Reactive) is on the resource class's class loader. The specification does not inherit it and classic RESTEasy does not either. Without either, the class declares nothing, and the agent logs at INFO, once for each such class and for at most 16 classes: `class-level @Path on a supertype of <class> is ignored, so it declares no endpoints`. The agent detects Jersey by the presence of `org/glassfish/jersey/server/model/Resource.class` on that loader, and Quarkus REST by `org/jboss/resteasy/reactive/server/core/ResteasyReactiveRequestContext.class`, a class of its server artifact and not of its client. With Jersey present, the agent follows Jersey: a superclass's `@Path` wins over an interface's. With Quarkus REST alone, it follows Quarkus: a direct abstract superclass's `@Path`, else an interface's, and never a concrete superclass's.
+- Quarkus REST serves a class that implements an interface carrying the class-level `@Path`. It serves a concrete subclass of an abstract `@Path` class only when the abstract class has exactly one subclass of any kind, abstract ones and subclasses of subclasses included. The agent sees one class at a time and cannot count subclasses, so it declares each direct concrete subclass anyway. Quarkus serves none of them when there are two or more, and Quarkus 3.0 to 3.7 serve no subclass of an abstract class at all, so on those the endpoints read as never called. An interface that inherits its `@Path` from another interface is not followed.
 - When two interfaces give a method different verbs or paths, the first in declaration order wins and the agent logs a WARNING once.
 
-Only Jersey is tested. A resource served by RESTEasy, Apache CXF or another runtime is declared by the same annotation rules, which the specification defines. No test runs it.
+Only Jersey is tested for serving. Quarkus REST's server classes are tested only as the marker that lets the agent inherit a class-level `@Path`. A resource served by RESTEasy, Apache CXF or another runtime is declared by the same annotation rules, which the specification defines. No test runs it.
 
-A runtime-generated proxy of a resource class, such as a Spring CGLIB proxy, is skipped. The proxy calls the real method, so the real class counts.
+A generated proxy of a resource class, such as a Spring CGLIB proxy or the subclass and client proxy Quarkus ArC generates, is skipped. The proxy calls the real method, so the real class counts.
 
 ## JDK HttpServer
 

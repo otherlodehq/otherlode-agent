@@ -20,6 +20,7 @@ import java.lang.reflect.Proxy
 import java.net.URLClassLoader
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotNull
 
 /**
  * Drives [JaxRsModule.transform] directly, bypassing [JaxRsModule.typeMatcher] and the real
@@ -253,10 +254,127 @@ class JaxRsModuleAnnotationInheritanceTest {
         return declared
     }
 
+    @Test
+    fun `an interface's class-level Path is carried when RESTEasy Reactive's server classes are on the loader`() {
+        assertEquals(
+            setOf("GET" to "/api/orders/{id}", "POST" to "/api/orders"),
+            declaredBy(ApiOrdersResource::class.java, jerseyPresent = false, loader = restEasyReactiveLoader()),
+        )
+    }
+
+    @Test
+    fun `a concrete subclass of an abstract Path class is declared when RESTEasy Reactive's server classes are on the loader`() {
+        assertEquals(
+            setOf("GET" to "/legacy/{id}"),
+            declaredBy(LegacyResource::class.java, jerseyPresent = false, loader = restEasyReactiveLoader()),
+        )
+    }
+
+    @Test
+    fun `neither inherited class-level Path is declared without Jersey or RESTEasy Reactive`() {
+        val bare = URLClassLoader(arrayOf(), null)
+
+        assertEquals(emptySet(), declaredBy(ApiOrdersResource::class.java, jerseyPresent = false, loader = bare))
+        assertEquals(emptySet(), declaredBy(LegacyResource::class.java, jerseyPresent = false, loader = bare))
+    }
+
+    @Test
+    fun `RESTEasy Reactive's common classes alone do not open the gate`() {
+        val commonOnly = URLClassLoader(arrayOf(requiredJar(RESTEASY_REACTIVE_COMMON_JAR)), null)
+
+        assertEquals(emptySet(), declaredBy(ApiOrdersResource::class.java, jerseyPresent = false, loader = commonOnly))
+    }
+
+    @Test
+    fun `Jersey alone still opens the gate with RESTEasy Reactive absent`() {
+        assertEquals(
+            setOf("GET" to "/api/orders/{id}", "POST" to "/api/orders"),
+            declaredBy(ApiOrdersResource::class.java, jerseyPresent = true, loader = URLClassLoader(arrayOf(), null)),
+        )
+    }
+
+    @Test
+    fun `under RESTEasy Reactive alone a concrete superclass's Path is not inherited and an interface's is`() {
+        assertEquals(
+            setOf("GET" to "/from-iface/child"),
+            declaredBy(ConcreteBaseChildResource::class.java, jerseyPresent = false, loader = restEasyReactiveLoader()),
+        )
+        assertEquals(
+            setOf("GET" to "/concrete-base/child"),
+            declaredBy(ConcreteBaseChildResource::class.java, jerseyPresent = true, loader = restEasyReactiveLoader()),
+        )
+    }
+
+    @Test
+    fun `under RESTEasy Reactive alone an interface on a superclass is inherited and an abstract Path two levels up is not`() {
+        val loader = restEasyReactiveLoader()
+
+        assertEquals(
+            setOf("GET" to "/from-iface/mid"),
+            declaredBy(MidInterfaceResource::class.java, jerseyPresent = false, loader = loader),
+        )
+        assertEquals(emptySet(), declaredBy(DeepLeafResource::class.java, jerseyPresent = false, loader = loader))
+    }
+
+    @Test
+    fun `under RESTEasy Reactive alone only the direct subclass of an abstract Path class is declared`() {
+        val loader = restEasyReactiveLoader()
+
+        assertEquals(setOf("GET" to "/between/mid"), declaredBy(BetweenMidResource::class.java, jerseyPresent = false, loader = loader))
+        assertEquals(emptySet(), declaredBy(BetweenLeafResource::class.java, jerseyPresent = false, loader = loader))
+    }
+
+    @Test
+    fun `a synthetic subclass of a resource, as Quarkus ArC generates, is not matched`() {
+        val generated =
+            ByteBuddy()
+                .subclass(OwnPathResource::class.java)
+                .name(OwnPathResource::class.java.name + "_Subclass")
+                .modifiers(
+                    net.bytebuddy.description.modifier.Visibility.PUBLIC,
+                    net.bytebuddy.description.modifier.SyntheticState.SYNTHETIC,
+                ).make()
+                .typeDescription
+
+        val matcher = JaxRsModule(jerseyPresent = { false }, restEasyReactivePresent = { true }).typeMatcher(restEasyReactiveLoader())
+        assertEquals(true, matcher.matches(TypeDescription.ForLoadedType.of(OwnPathResource::class.java)))
+        assertEquals(false, matcher.matches(generated))
+    }
+
+    @Test
+    fun `the detection class is in the RESTEasy Reactive server jar`() {
+        assertNotNull(restEasyReactiveLoader().getResource("org/jboss/resteasy/reactive/server/core/ResteasyReactiveRequestContext.class"))
+    }
+
+    @Test
+    fun `the RESTEasy Reactive check is one lookup per loader`() {
+        val lookups = mutableListOf<String>()
+        val loader =
+            object : ClassLoader(null) {
+                override fun getResource(name: String): java.net.URL? {
+                    lookups += name
+                    return java.net.URI("file:/$name").toURL()
+                }
+            }
+
+        repeat(3) { declaredBy(ApiOrdersResource::class.java, jerseyPresent = false, loader = loader) }
+
+        assertEquals(listOf("org/jboss/resteasy/reactive/server/core/ResteasyReactiveRequestContext.class"), lookups)
+    }
+
+    private fun requiredJar(property: String): java.net.URL =
+        java.io
+            .File(requireNotNull(System.getProperty(property)) { "$property is not set" })
+            .toURI()
+            .toURL()
+
+    private fun restEasyReactiveLoader(): ClassLoader = URLClassLoader(arrayOf(requiredJar(RESTEASY_REACTIVE_SERVER_JAR)), null)
+
     /** Every `(verb, template)` [JaxRsModule.transform] declares for [type]. */
     private fun declaredBy(
         type: Class<*>,
         jerseyPresent: Boolean,
+        loader: ClassLoader? = type.classLoader,
     ): Set<Pair<String, String>> {
         lateinit var declared: Set<Pair<String, String>>
         withRecordingResolver { calls ->
@@ -264,7 +382,7 @@ class JaxRsModuleAnnotationInheritanceTest {
                 ByteBuddy().decorate(type),
                 TypeDescription.ForLoadedType.of(type),
                 advice,
-                type.classLoader,
+                loader,
             )
             declared = calls.map { it.verb to it.template }.toSet()
         }
@@ -286,6 +404,9 @@ class JaxRsModuleAnnotationInheritanceTest {
         }
     }
 }
+
+private const val RESTEASY_REACTIVE_SERVER_JAR = "otherlode.test.resteasyReactiveServerJar"
+private const val RESTEASY_REACTIVE_COMMON_JAR = "otherlode.test.resteasyReactiveCommonJar"
 
 private data class RegisterCall(
     val verb: String,
@@ -479,6 +600,42 @@ private class MidInterfaceResource : MidWithInterface() {
     @GET
     @Path("/mid")
     fun mid(): String = "mid"
+}
+
+@Path("/concrete-base")
+private open class ConcretePathBase
+
+/** Extends a concrete class carrying `@Path` and implements an interface carrying one: Jersey takes the class's, Quarkus the interface's. */
+private class ConcreteBaseChildResource :
+    ConcretePathBase(),
+    PathBearingInterface {
+    @GET
+    @Path("/child")
+    fun child(): String = "child"
+}
+
+@Path("/between")
+private abstract class BetweenTop
+
+/** The direct concrete subclass of an abstract `@Path` class. */
+private open class BetweenMidResource : BetweenTop() {
+    @GET
+    @Path("/mid")
+    open fun mid(): String = "mid"
+}
+
+/** A subclass of [BetweenMidResource], whose `@Path` comes from a concrete superclass. */
+private class BetweenLeafResource : BetweenMidResource() {
+    @GET
+    @Path("/leaf")
+    fun leaf(): String = "leaf"
+}
+
+/** Carries its own class-level `@Path`, the shape Quarkus ArC subclasses for an intercepted bean. */
+@Path("/own")
+open class OwnPathResource {
+    @GET
+    open fun get(): String = "own"
 }
 
 /** No JAX-RS annotation on the class, its supertypes, or the method: not an endpoint at all. */

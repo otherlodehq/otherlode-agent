@@ -181,6 +181,10 @@ servlets another module owns. Needs its own research and grill.
 - A handler from Spring's Kotlin DSLs (`router {}`, `coRouter {}`) gets no
   join. Unwrapping to the adopter's lambda waits on reading its compiled
   shape.
+- JAX-RS: an interface that inherits its class-level `@Path` from another
+  interface is not followed, and a method inherited through a superclass's
+  interface with no annotation of its own is not declared; Quarkus serves
+  both, Jersey the second. Predates the Quarkus REST gate.
 - JAX-RS on Quarkus REST: an abstract `@Path` class with two or more
   subclasses declares endpoints Quarkus never serves (ADR 0020's
   amendment). Reading Quarkus's runtime resource table at
