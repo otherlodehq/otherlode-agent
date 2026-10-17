@@ -57,13 +57,26 @@ public final class OtherlodeEndpoints {
                 String contextPath,
                 String handlerClass,
                 String handlerMethod,
-                String handlerDescriptor);
+                String handlerDescriptor,
+                boolean regex);
 
         Object recordDispatch(
-                Object key, String framework, String verb, String verbatimTemplate, String contextPath, String handlerClass);
+                Object key,
+                String framework,
+                String verb,
+                String verbatimTemplate,
+                String contextPath,
+                String handlerClass,
+                boolean regex);
 
         Object recordDispatchIfUnowned(
-                Object key, String framework, String verb, String verbatimTemplate, String contextPath, String handlerClass);
+                Object key,
+                String framework,
+                String verb,
+                String verbatimTemplate,
+                String contextPath,
+                String handlerClass,
+                boolean regex);
 
         void declare(String module, Object frameworkObject);
 
@@ -113,6 +126,7 @@ public final class OtherlodeEndpoints {
         final String reason;
         final int disableKind;
         final Object frameworkObject;
+        final boolean regex;
 
         private BufferedRecord(
                 RecordKind kind,
@@ -126,7 +140,8 @@ public final class OtherlodeEndpoints {
                 String handlerDescriptor,
                 String reason,
                 int disableKind,
-                Object frameworkObject) {
+                Object frameworkObject,
+                boolean regex) {
             this.kind = kind;
             this.module = module;
             this.key = key;
@@ -139,6 +154,7 @@ public final class OtherlodeEndpoints {
             this.reason = reason;
             this.disableKind = disableKind;
             this.frameworkObject = frameworkObject;
+            this.regex = regex;
         }
 
         static BufferedRecord forRegister(
@@ -149,7 +165,8 @@ public final class OtherlodeEndpoints {
                 String contextPath,
                 String handlerClass,
                 String handlerMethod,
-                String handlerDescriptor) {
+                String handlerDescriptor,
+                boolean regex) {
             return new BufferedRecord(
                     RecordKind.REGISTER,
                     module,
@@ -162,17 +179,42 @@ public final class OtherlodeEndpoints {
                     handlerDescriptor,
                     null,
                     0,
-                    null);
+                    null,
+                    regex);
         }
 
         static BufferedRecord forDispatch(
-                String module, Object key, String verb, String verbatimTemplate, String contextPath, String handlerClass) {
+                String module,
+                Object key,
+                String verb,
+                String verbatimTemplate,
+                String contextPath,
+                String handlerClass,
+                boolean regex) {
             return new BufferedRecord(
-                    RecordKind.DISPATCH, module, key, verb, verbatimTemplate, contextPath, handlerClass, null, null, null, 0, null);
+                    RecordKind.DISPATCH,
+                    module,
+                    key,
+                    verb,
+                    verbatimTemplate,
+                    contextPath,
+                    handlerClass,
+                    null,
+                    null,
+                    null,
+                    0,
+                    null,
+                    regex);
         }
 
         static BufferedRecord forDispatchIfUnowned(
-                String module, Object key, String verb, String verbatimTemplate, String contextPath, String handlerClass) {
+                String module,
+                Object key,
+                String verb,
+                String verbatimTemplate,
+                String contextPath,
+                String handlerClass,
+                boolean regex) {
             return new BufferedRecord(
                     RecordKind.DISPATCH_IF_UNOWNED,
                     module,
@@ -185,15 +227,18 @@ public final class OtherlodeEndpoints {
                     null,
                     null,
                     0,
-                    null);
+                    null,
+                    regex);
         }
 
         static BufferedRecord forDeclare(String module, Object frameworkObject) {
-            return new BufferedRecord(RecordKind.DECLARE, module, null, null, null, null, null, null, null, null, 0, frameworkObject);
+            return new BufferedRecord(
+                    RecordKind.DECLARE, module, null, null, null, null, null, null, null, null, 0, frameworkObject, false);
         }
 
         static BufferedRecord forFailure(String module, int kind, String reason) {
-            return new BufferedRecord(RecordKind.FAILURE, module, null, null, null, null, null, null, null, reason, kind, null);
+            return new BufferedRecord(
+                    RecordKind.FAILURE, module, null, null, null, null, null, null, null, reason, kind, null, false);
         }
     }
 
@@ -274,6 +319,25 @@ public final class OtherlodeEndpoints {
             String handlerClass,
             String handlerMethod,
             String handlerDescriptor) {
+        return register(module, key, verb, verbatimTemplate, contextPath, handlerClass, handlerMethod, handlerDescriptor, false);
+    }
+
+    /**
+     * Like {@link #register(String, Object, String, String, String, String, String, String)}, and
+     * {@code regex} says {@code verbatimTemplate} is the regular expression a framework matches by
+     * rather than a path. A regex template is kept exactly as written, never merged with a path
+     * template that reads the same, and {@code contextPath} is not folded into it.
+     */
+    public static Object register(
+            String module,
+            Object key,
+            String verb,
+            String verbatimTemplate,
+            String contextPath,
+            String handlerClass,
+            String handlerMethod,
+            String handlerDescriptor,
+            boolean regex) {
         if (isDisabledFast(module)) return null;
         Resolver current = ready;
         if (current == null) {
@@ -282,13 +346,22 @@ public final class OtherlodeEndpoints {
                 if (current == null) {
                     buffer(
                             BufferedRecord.forRegister(
-                                    module, key, verb, verbatimTemplate, contextPath, handlerClass, handlerMethod, handlerDescriptor));
+                                    module,
+                                    key,
+                                    verb,
+                                    verbatimTemplate,
+                                    contextPath,
+                                    handlerClass,
+                                    handlerMethod,
+                                    handlerDescriptor,
+                                    regex));
                     return null;
                 }
             }
         }
         try {
-            return current.register(key, module, verb, verbatimTemplate, contextPath, handlerClass, handlerMethod, handlerDescriptor);
+            return current.register(
+                    key, module, verb, verbatimTemplate, contextPath, handlerClass, handlerMethod, handlerDescriptor, regex);
         } catch (Throwable t) {
             logDelegateFailure(module, "register", t);
             return null;
@@ -298,19 +371,31 @@ public final class OtherlodeEndpoints {
     /** Records an endpoint the moment a request dispatches to it. Buffers before a resolver is installed. */
     public static Object recordDispatch(
             String module, Object key, String verb, String verbatimTemplate, String contextPath, String handlerClass) {
+        return recordDispatch(module, key, verb, verbatimTemplate, contextPath, handlerClass, false);
+    }
+
+    /** Like {@link #recordDispatch(String, Object, String, String, String, String)}, for a regex template; see {@link #register(String, Object, String, String, String, String, String, String, boolean)}. */
+    public static Object recordDispatch(
+            String module,
+            Object key,
+            String verb,
+            String verbatimTemplate,
+            String contextPath,
+            String handlerClass,
+            boolean regex) {
         if (isDisabledFast(module)) return null;
         Resolver current = ready;
         if (current == null) {
             synchronized (BUFFER_LOCK) {
                 current = resolver;
                 if (current == null) {
-                    buffer(BufferedRecord.forDispatch(module, key, verb, verbatimTemplate, contextPath, handlerClass));
+                    buffer(BufferedRecord.forDispatch(module, key, verb, verbatimTemplate, contextPath, handlerClass, regex));
                     return null;
                 }
             }
         }
         try {
-            return current.recordDispatch(key, module, verb, verbatimTemplate, contextPath, handlerClass);
+            return current.recordDispatch(key, module, verb, verbatimTemplate, contextPath, handlerClass, regex);
         } catch (Throwable t) {
             logDelegateFailure(module, "recordDispatch", t);
             return null;
@@ -326,19 +411,33 @@ public final class OtherlodeEndpoints {
      */
     public static Object recordDispatchIfUnowned(
             String module, Object key, String verb, String verbatimTemplate, String contextPath, String handlerClass) {
+        return recordDispatchIfUnowned(module, key, verb, verbatimTemplate, contextPath, handlerClass, false);
+    }
+
+    /** Like {@link #recordDispatchIfUnowned(String, Object, String, String, String, String)}, for a regex template. */
+    public static Object recordDispatchIfUnowned(
+            String module,
+            Object key,
+            String verb,
+            String verbatimTemplate,
+            String contextPath,
+            String handlerClass,
+            boolean regex) {
         if (isDisabledFast(module)) return null;
         Resolver current = ready;
         if (current == null) {
             synchronized (BUFFER_LOCK) {
                 current = resolver;
                 if (current == null) {
-                    buffer(BufferedRecord.forDispatchIfUnowned(module, key, verb, verbatimTemplate, contextPath, handlerClass));
+                    buffer(
+                            BufferedRecord.forDispatchIfUnowned(
+                                    module, key, verb, verbatimTemplate, contextPath, handlerClass, regex));
                     return null;
                 }
             }
         }
         try {
-            return current.recordDispatchIfUnowned(key, module, verb, verbatimTemplate, contextPath, handlerClass);
+            return current.recordDispatchIfUnowned(key, module, verb, verbatimTemplate, contextPath, handlerClass, regex);
         } catch (Throwable t) {
             logDelegateFailure(module, "recordDispatchIfUnowned", t);
             return null;
@@ -697,12 +796,19 @@ public final class OtherlodeEndpoints {
                             record.contextPath,
                             record.handlerClass,
                             record.handlerMethod,
-                            record.handlerDescriptor);
+                            record.handlerDescriptor,
+                            record.regex);
                     break;
                 case DISPATCH:
                     Object entry =
                             target.recordDispatch(
-                                    record.key, record.module, record.verb, record.verbatimTemplate, record.contextPath, record.handlerClass);
+                                    record.key,
+                                    record.module,
+                                    record.verb,
+                                    record.verbatimTemplate,
+                                    record.contextPath,
+                                    record.handlerClass,
+                                    record.regex);
                     if (entry != null) {
                         target.hit(entry);
                     }
@@ -710,7 +816,13 @@ public final class OtherlodeEndpoints {
                 case DISPATCH_IF_UNOWNED:
                     Object unownedEntry =
                             target.recordDispatchIfUnowned(
-                                    record.key, record.module, record.verb, record.verbatimTemplate, record.contextPath, record.handlerClass);
+                                    record.key,
+                                    record.module,
+                                    record.verb,
+                                    record.verbatimTemplate,
+                                    record.contextPath,
+                                    record.handlerClass,
+                                    record.regex);
                     if (unownedEntry != null) {
                         target.hit(unownedEntry);
                     }

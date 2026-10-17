@@ -911,9 +911,20 @@ enum EndpointDiscoverySource {
   DISPATCH = 2;
 }
 
+// What an endpoint's route_template and verbatim_template are.
+enum EndpointTemplateKind {
+  // Sent by an agent that predates the field. Read as PATH.
+  ENDPOINT_TEMPLATE_KIND_UNSPECIFIED = 0;
+  // A path, normalised into route_template.
+  PATH = 1;
+  // The regular expression a framework matches the route by, exactly as written. Both templates
+  // hold the same text, never normalised. No path exists to derive a template from.
+  REGEX = 2;
+}
+
 // One endpoint the framework serves. endpoint_id is per instance, like
-// class_id: cross-instance identity is (verb, route_template), never
-// endpoint_id.
+// class_id: cross-instance identity is (verb, route_template, template_kind
+// is REGEX), never endpoint_id.
 //
 // A record may be re-sent when a field learned later (the handler join)
 // changes; the server upserts by (service_instance_id, run_id, endpoint_id).
@@ -935,6 +946,9 @@ message EndpointLocation {
   optional string handler_class = 7;
   optional string handler_method = 8;
   optional string handler_descriptor = 9;
+  // Whether route_template is a path or a regex. UNSPECIFIED from an agent that predates the
+  // field, which sends only paths.
+  EndpointTemplateKind template_kind = 10;
 }
 
 // hits_total has the same cumulative, max()-merged semantics as

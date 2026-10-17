@@ -26,6 +26,7 @@ import dev.otherlode.proto.DependencyLocation as ProtoDependencyLocation
 import dev.otherlode.proto.DisabledEndpointModuleKind as ProtoDisabledEndpointModuleKind
 import dev.otherlode.proto.EndpointDiscoverySource as ProtoEndpointDiscoverySource
 import dev.otherlode.proto.EndpointLocation as ProtoEndpointLocation
+import dev.otherlode.proto.EndpointTemplateKind as ProtoEndpointTemplateKind
 import dev.otherlode.proto.ExternalClass as ProtoExternalClass
 import dev.otherlode.proto.GeneratedBy as ProtoGeneratedBy
 import dev.otherlode.proto.InitializationFailure as ProtoInitializationFailure
@@ -1769,6 +1770,52 @@ class ProtoPayloadCodecTest {
         val decoded = ProtoPayloadCodec.decodeProbeManifest(ProtoPayloadCodec.encode(manifest))
 
         assertEquals(manifest, decoded)
+    }
+
+    @Test
+    fun `encodes and decodes a regex endpoint and a path endpoint with their template kinds`() {
+        val manifest =
+            ProbeManifest(
+                resource = ResourceAttributes("checkout", "1.0.0", "", null, "run-1"),
+                probes = emptyList(),
+                endpoints =
+                    listOf(
+                        EndpointLocation(0, "GET", "/a//b/{2,3}/", "/a//b/{2,3}/", "vertx-web", EndpointDiscoverySource.REGISTRATION)
+                            .copy(templateKind = EndpointTemplateKind.REGEX),
+                        EndpointLocation(1, "GET", "/a", "/a", "vertx-web", EndpointDiscoverySource.REGISTRATION),
+                    ),
+            )
+
+        val bytes = ProtoPayloadCodec.encode(manifest)
+
+        assertEquals(manifest, ProtoPayloadCodec.decodeProbeManifest(bytes))
+        assertEquals(
+            listOf(ProtoEndpointTemplateKind.REGEX, ProtoEndpointTemplateKind.PATH),
+            ProtoProbeManifest.parseFrom(bytes).endpointsList.map { it.templateKind },
+        )
+    }
+
+    @Test
+    fun `an endpoint from an agent that predates the template kind decodes as a path`() {
+        val manifest =
+            ProtoProbeManifest
+                .newBuilder()
+                .setResource(ProtoResourceAttributes.newBuilder().setServiceName("checkout").setRunId("run-1"))
+                .addEndpoints(
+                    ProtoEndpointLocation
+                        .newBuilder()
+                        .setEndpointId(0)
+                        .setVerb("GET")
+                        .setRouteTemplate("/a")
+                        .setVerbatimTemplate("/a")
+                        .setFramework("jdk-httpserver")
+                        .setDiscoverySource(ProtoEndpointDiscoverySource.REGISTRATION),
+                ).build()
+
+        val decoded = ProtoPayloadCodec.decodeProbeManifest(manifest.toByteArray())
+
+        assertEquals(ProtoEndpointTemplateKind.ENDPOINT_TEMPLATE_KIND_UNSPECIFIED, manifest.endpointsList.single().templateKind)
+        assertEquals(EndpointTemplateKind.PATH, decoded.endpoints.single().templateKind)
     }
 
     @Test

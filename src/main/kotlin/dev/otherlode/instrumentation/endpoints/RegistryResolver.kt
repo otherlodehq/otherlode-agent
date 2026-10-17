@@ -52,6 +52,7 @@ class RegistryResolver(
         handlerClass: String?,
         handlerMethod: String?,
         handlerDescriptor: String?,
+        regex: Boolean,
     ): Any? {
         val declare = {
             registry.register(
@@ -61,6 +62,7 @@ class RegistryResolver(
                 verbatimTemplate = verbatimTemplate,
                 contextPath = contextPath,
                 handler = handlerRef(handlerClass, handlerMethod, handlerDescriptor),
+                regex = regex,
             )
             Unit
         }
@@ -72,6 +74,7 @@ class RegistryResolver(
             verbatimTemplate = verbatimTemplate,
             contextPath = contextPath,
             handler = handlerRef(handlerClass, handlerMethod, handlerDescriptor),
+            regex = regex,
         )
     }
 
@@ -88,7 +91,8 @@ class RegistryResolver(
         verbatimTemplate: String,
         contextPath: String?,
         handlerClass: String?,
-    ): Any = registry.recordDispatch(key, framework, verb, verbatimTemplate, contextPath, handlerClass)
+        regex: Boolean,
+    ): Any = registry.recordDispatch(key, framework, verb, verbatimTemplate, contextPath, handlerClass, regex)
 
     override fun recordDispatchIfUnowned(
         key: Any,
@@ -97,7 +101,8 @@ class RegistryResolver(
         verbatimTemplate: String,
         contextPath: String?,
         handlerClass: String?,
-    ): Any? = registry.recordDispatchIfUnowned(key, framework, verb, verbatimTemplate, contextPath, handlerClass)
+        regex: Boolean,
+    ): Any? = registry.recordDispatchIfUnowned(key, framework, verb, verbatimTemplate, contextPath, handlerClass, regex)
 
     /**
      * Routes [frameworkObject] to the [EndpointModule] named [module], which walks it and

@@ -5,6 +5,7 @@ import dev.otherlode.export.DisabledEndpointModuleKind
 import dev.otherlode.export.EndpointDelta
 import dev.otherlode.export.EndpointDiscoverySource
 import dev.otherlode.export.EndpointLocation
+import dev.otherlode.export.EndpointTemplateKind
 import java.lang.System.Logger.Level
 import java.lang.ref.ReferenceQueue
 import java.lang.ref.WeakReference
@@ -32,9 +33,12 @@ private val ANCHOR = Any()
  * "GET /promo was never served", since a handler can back two endpoints, be a lambda the framework
  * invokes through a hidden class, or live outside `includePackages`.
  *
- * Identity is `(verb, normalised route template)`, computed by [RouteTemplateNormalizer]. Two
- * registrations that normalise to the same identity, even from different framework objects, are
- * one endpoint with one [EndpointEntry.endpointId] and one count.
+ * Identity is `(verb, route template, is-regex)`, the template normalised by [RouteTemplateNormalizer]
+ * unless it is a regex.
+ * Two registrations that normalise to the same identity, even from different framework objects,
+ * are one endpoint with one [EndpointEntry.endpointId] and one count. A regex template bypasses the
+ * normaliser and is kept exactly as given, so it never merges with a path template that reads the
+ * same.
  *
  * A framework module also supplies one or more dispatch keys that identify the framework's own
  * route (a Ktor route node, a JDK `HttpContext`, a list of a Spring pattern and verb). [lookup]
@@ -64,6 +68,7 @@ class EndpointRegistry {
     private data class Identity(
         val verb: String,
         val routeTemplate: String,
+        val regex: Boolean,
     )
 
     /**
@@ -78,6 +83,7 @@ class EndpointRegistry {
         val verbatimTemplate: String,
         val framework: String,
         discoverySource: EndpointDiscoverySource,
+        val templateKind: EndpointTemplateKind = EndpointTemplateKind.PATH,
     ) {
         @Volatile
         var discoverySource: EndpointDiscoverySource = discoverySource
@@ -267,7 +273,8 @@ class EndpointRegistry {
     /**
      * Records an endpoint from a framework's own registration hook (Spring's handler-method
      * mapping, Ktor's `handle`, `HttpServer.createContext`). Normalises [verb] and
-     * [verbatimTemplate] (with [contextPath] folded in first) into an identity, finds or creates
+     * [verbatimTemplate] (with [contextPath] folded in first) into an identity, or, when [regex],
+     * keeps [verbatimTemplate] as given and ignores [contextPath], finds or creates
      * the entry for that identity, binds [key] to it, and marks it discovered by registration.
      *
      * An entry already discovered by registration is left alone: nothing changed, so there is
@@ -283,8 +290,9 @@ class EndpointRegistry {
         verbatimTemplate: String,
         contextPath: String? = null,
         handler: HandlerRef? = null,
+        regex: Boolean = false,
     ): EndpointEntry {
-        val entry = findOrCreate(framework, verb, verbatimTemplate, contextPath, EndpointDiscoverySource.REGISTRATION)
+        val entry = findOrCreate(framework, verb, verbatimTemplate, contextPath, EndpointDiscoverySource.REGISTRATION, regex)
         bind(key, entry)
         upgradeDiscoverySource(entry, EndpointDiscoverySource.REGISTRATION)
         if (handler != null) attachHandler(entry, handler)
@@ -309,8 +317,9 @@ class EndpointRegistry {
         verbatimTemplate: String,
         contextPath: String? = null,
         handlerClass: String? = null,
+        regex: Boolean = false,
     ): EndpointEntry {
-        val entry = findOrCreate(framework, verb, verbatimTemplate, contextPath, EndpointDiscoverySource.DISPATCH)
+        val entry = findOrCreate(framework, verb, verbatimTemplate, contextPath, EndpointDiscoverySource.DISPATCH, regex)
         bind(key, entry)
         if (handlerClass != null) attachHandler(entry, HandlerRef(handlerClass))
         return entry
@@ -343,22 +352,25 @@ class EndpointRegistry {
         verbatimTemplate: String,
         contextPath: String? = null,
         handlerClass: String? = null,
+        regex: Boolean = false,
     ): EndpointEntry? {
-        val identity = identityOf(verb, verbatimTemplate, contextPath)
+        val identity = identityOf(verb, verbatimTemplate, contextPath, regex)
         val owners = mutableListOf(identity, identity.copy(verb = "*"))
         if (identity.verb == "HEAD") owners += identity.copy(verb = "GET")
         if (owners.any { entriesByIdentity[it]?.framework.let { owner -> owner != null && owner != framework } }) return null
-        return recordDispatch(key, framework, verb, verbatimTemplate, contextPath, handlerClass)
+        return recordDispatch(key, framework, verb, verbatimTemplate, contextPath, handlerClass, regex)
     }
 
     private fun identityOf(
         verb: String?,
         verbatimTemplate: String,
         contextPath: String?,
+        regex: Boolean,
     ): Identity =
         Identity(
             RouteTemplateNormalizer.normalizeVerb(verb),
-            RouteTemplateNormalizer.normalize(verbatimTemplate, contextPath),
+            if (regex) verbatimTemplate else RouteTemplateNormalizer.normalize(verbatimTemplate, contextPath),
+            regex,
         )
 
     private fun findOrCreate(
@@ -367,8 +379,9 @@ class EndpointRegistry {
         verbatimTemplate: String,
         contextPath: String?,
         initialSource: EndpointDiscoverySource,
+        regex: Boolean,
     ): EndpointEntry {
-        val identity = identityOf(verb, verbatimTemplate, contextPath)
+        val identity = identityOf(verb, verbatimTemplate, contextPath, regex)
         return entriesByIdentity.computeIfAbsent(identity) {
             EndpointEntry(
                 endpointId = nextEndpointId.getAndIncrement(),
@@ -377,6 +390,7 @@ class EndpointRegistry {
                 verbatimTemplate = verbatimTemplate,
                 framework = framework,
                 discoverySource = initialSource,
+                templateKind = if (regex) EndpointTemplateKind.REGEX else EndpointTemplateKind.PATH,
             )
         }
     }
@@ -596,5 +610,6 @@ class EndpointRegistry {
             handlerClass = handlerClass,
             handlerMethod = handlerMethod,
             handlerDescriptor = handlerDescriptor,
+            templateKind = templateKind,
         )
 }

@@ -63,7 +63,9 @@ The servlet context path is not part of the template. Spring reports the applica
 
 A framework mapping that lists several paths or verbs gives one endpoint per combination. `@RequestMapping(path = ["/a", "/b"], method = [GET, POST])` is four endpoints.
 
-Two registrations that name the same verb and template are one endpoint with one count, even from two servers in the same JVM or from two frameworks. The numeric endpoint id the agent assigns is only meaningful inside one run, so the server identifies an endpoint across instances by its verb and template. The framework recorded for the endpoint is the one that registered it first. Two routes that differ only in a part the agent does not read merge for the same reason. Each module below says what it does not read.
+Two registrations that name the same verb and template are one endpoint with one count, even from two servers in the same JVM or from two frameworks. The numeric endpoint id the agent assigns is only meaningful inside one run, so the server identifies an endpoint across instances by its verb, its template and whether the template is a regex. The framework recorded for the endpoint is the one that registered it first. Two routes that differ only in a part the agent does not read merge for the same reason. Each module below says what it does not read.
+
+A framework can match a route by a regular expression, with no path to read a template from. The agent keeps that expression exactly as written, with no normalisation, as both the template and its display spelling, and marks the endpoint as a regex. A regex endpoint never merges with a path endpoint whose template reads the same, so its identity is the verb, the template and whether the template is a regex.
 
 ## Declared and discovered
 

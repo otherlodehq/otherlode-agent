@@ -2,8 +2,10 @@ package dev.otherlode.registry
 
 import dev.otherlode.export.DisabledEndpointModuleKind
 import dev.otherlode.export.EndpointDiscoverySource
+import dev.otherlode.export.EndpointTemplateKind
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
@@ -33,6 +35,70 @@ class EndpointRegistryTest {
         assertEquals(entryA.endpointId, entryB.endpointId)
         entryA.hit()
         assertEquals(entryA.count, entryB.count)
+    }
+
+    @Test
+    fun `a regex endpoint and a path endpoint with the same verb and template stay apart`() {
+        val registry = EndpointRegistry()
+
+        val path = registry.register(key = Any(), framework = "vertx-web", verb = "GET", verbatimTemplate = "/users/list")
+        val regex = registry.register(key = Any(), framework = "vertx-web", verb = "GET", verbatimTemplate = "/users/list", regex = true)
+
+        assertNotEquals(path.endpointId, regex.endpointId)
+        assertEquals(EndpointTemplateKind.PATH, path.templateKind)
+        assertEquals(EndpointTemplateKind.REGEX, regex.templateKind)
+        regex.hit()
+        assertEquals(0L, path.count)
+        assertEquals(
+            listOf(EndpointTemplateKind.PATH, EndpointTemplateKind.REGEX),
+            registry.endpoints().map { it.templateKind },
+        )
+    }
+
+    @Test
+    fun `a regex template is stored and sent exactly as given`() {
+        val registry = EndpointRegistry()
+
+        val entry =
+            registry.register(
+                key = Any(),
+                framework = "vertx-web",
+                verb = "get",
+                verbatimTemplate = "/a//b/\\d{2,3}/",
+                contextPath = "/ctx",
+                regex = true,
+            )
+
+        assertEquals("GET", entry.verb)
+        assertEquals("/a//b/\\d{2,3}/", entry.routeTemplate)
+        assertEquals("/a//b/\\d{2,3}/", entry.verbatimTemplate)
+        val sent =
+            registry
+                .computeManifestEntries(maxPerChunk = 10)
+                .single()
+                .endpoints
+                .single()
+        assertEquals("/a//b/\\d{2,3}/", sent.routeTemplate)
+        assertEquals("/a//b/\\d{2,3}/", sent.verbatimTemplate)
+        assertEquals(EndpointTemplateKind.REGEX, sent.templateKind)
+    }
+
+    @Test
+    fun `a regex dispatch is not owned by a path endpoint of the same text`() {
+        val registry = EndpointRegistry()
+        registry.register(key = Any(), framework = "spring-webmvc", verb = "GET", verbatimTemplate = "/x")
+
+        val regexEntry =
+            registry.recordDispatchIfUnowned(
+                key = Any(),
+                framework = "otel",
+                verb = "GET",
+                verbatimTemplate = "/x",
+                regex = true,
+            )
+
+        assertEquals(EndpointTemplateKind.REGEX, regexEntry?.templateKind)
+        assertNull(registry.recordDispatchIfUnowned(key = Any(), framework = "otel", verb = "GET", verbatimTemplate = "/x"))
     }
 
     @Test

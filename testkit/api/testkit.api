@@ -143,6 +143,7 @@ public final class dev/otherlode/testkit/EndpointRef {
 	public final fun component6 ()Ljava/lang/String;
 	public final fun component7 ()Ljava/lang/String;
 	public final fun component8 ()Ljava/lang/String;
+	public final fun component9 ()Z
 	public fun equals (Ljava/lang/Object;)Z
 	public final fun getDiscoverySource ()Ldev/otherlode/testkit/EndpointDiscoverySource;
 	public final fun getFramework ()Ljava/lang/String;
@@ -153,6 +154,7 @@ public final class dev/otherlode/testkit/EndpointRef {
 	public final fun getVerb ()Ljava/lang/String;
 	public final fun getVerbatimTemplate ()Ljava/lang/String;
 	public fun hashCode ()I
+	public final fun isRegexTemplate ()Z
 	public fun toString ()Ljava/lang/String;
 }
 

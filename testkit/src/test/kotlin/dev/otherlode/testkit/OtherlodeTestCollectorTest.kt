@@ -18,6 +18,7 @@ import dev.otherlode.export.DisabledEndpointModuleKind
 import dev.otherlode.export.EndpointDelta
 import dev.otherlode.export.EndpointDiscoverySource
 import dev.otherlode.export.EndpointLocation
+import dev.otherlode.export.EndpointTemplateKind
 import dev.otherlode.export.FailedClass
 import dev.otherlode.export.GeneratedBy
 import dev.otherlode.export.HttpExporter
@@ -181,6 +182,7 @@ class OtherlodeTestCollectorTest {
         routeTemplate: String,
         handlerClass: String? = null,
         handlerMethod: String? = null,
+        templateKind: EndpointTemplateKind = EndpointTemplateKind.PATH,
     ) = EndpointLocation(
         endpointId = endpointId,
         verb = verb,
@@ -191,6 +193,7 @@ class OtherlodeTestCollectorTest {
         handlerClass = handlerClass,
         handlerMethod = handlerMethod,
         handlerDescriptor = if (handlerMethod != null) "()V" else null,
+        templateKind = templateKind,
     )
 
     @Test
@@ -1376,6 +1379,43 @@ class OtherlodeTestCollectorTest {
         assertEquals(0L, target.callCount("GET", "/promo"))
         assertEquals(listOf("GET"), target.neverCalled().map { it.verb })
         assertEquals(listOf("/promo"), target.neverCalled().map { it.routeTemplate })
+    }
+
+    @Test
+    fun `the template queries ignore a regex endpoint of the same text, and endpoints lists it with the mark`() {
+        val target = startCollector()
+        val exporter = exporterFor(target)
+        exporter.exportManifest(
+            watchedManifest(
+                ResourceAttributes("svc", null, "i-1", null, "run-1"),
+                emptyList(),
+                endpoints =
+                    listOf(
+                        endpoint(0, "GET", "/users/list"),
+                        endpoint(1, "GET", "/users/list", templateKind = EndpointTemplateKind.REGEX),
+                        endpoint(2, "GET", "/only/regex/{2,3}/", templateKind = EndpointTemplateKind.REGEX),
+                    ),
+            ),
+        )
+        exporter.exportDeltaBatch(
+            DeltaBatch(
+                ResourceAttributes("svc", null, "i-1", null, "run-1"),
+                emptyList(),
+                endpointDeltas = listOf(EndpointDelta(1, 1L, 5L)),
+            ),
+        )
+
+        assertFalse(target.wasCalled("GET", "/users/list"))
+        assertEquals(0L, target.callCount("GET", "/users/list"))
+        assertFailsWith<UnknownEndpointException> { target.callCount("GET", "/only/regex/{2,3}/") }
+        assertEquals(
+            listOf("/only/regex/{2,3}/" to true, "/users/list" to false, "/users/list" to true),
+            target.endpoints().map { it.routeTemplate to it.isRegexTemplate },
+        )
+        assertEquals(
+            listOf("/only/regex/{2,3}/" to true, "/users/list" to false),
+            target.neverCalled().map { it.routeTemplate to it.isRegexTemplate },
+        )
     }
 
     @Test

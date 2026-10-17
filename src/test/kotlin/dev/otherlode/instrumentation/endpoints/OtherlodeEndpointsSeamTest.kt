@@ -1,6 +1,7 @@
 package dev.otherlode.instrumentation.endpoints
 
 import dev.otherlode.bootstrap.OtherlodeEndpoints
+import dev.otherlode.export.EndpointTemplateKind
 import dev.otherlode.instrumentation.BootstrapHolder
 import dev.otherlode.registry.EndpointRegistry
 import dev.otherlode.registry.HandlerRef
@@ -71,7 +72,19 @@ class OtherlodeEndpointsSeamTest {
             OtherlodeEndpoints.register(registerModule, "key-0", "GET", "/cap-test/register/0", null, null, null, null)
         assertNull(firstRegisterReturn, "register must return null before a resolver is installed")
         for (i in 1 until 4088) {
-            assertNull(OtherlodeEndpoints.register(registerModule, "key-$i", "GET", "/cap-test/register/$i", null, null, null, null))
+            assertNull(
+                OtherlodeEndpoints.register(
+                    registerModule,
+                    "key-$i",
+                    "GET",
+                    "/cap-test/register/$i",
+                    null,
+                    null,
+                    null,
+                    null,
+                    i == 4087,
+                ),
+            )
         }
 
         val firstDispatchReturn =
@@ -85,11 +98,21 @@ class OtherlodeEndpointsSeamTest {
             )
         assertNull(firstDispatchReturn, "recordDispatch must return null before a resolver is installed")
         for (i in 1 until 5) {
-            assertNull(OtherlodeEndpoints.recordDispatch(dispatchModule, "dispatch-key-$i", "GET", "/cap-test/dispatch/$i", null, null))
+            assertNull(
+                OtherlodeEndpoints.recordDispatch(dispatchModule, "dispatch-key-$i", "GET", "/cap-test/dispatch/$i", null, null, i == 4),
+            )
         }
 
         val firstDispatchIfUnownedReturn =
-            OtherlodeEndpoints.recordDispatchIfUnowned(dispatchIfUnownedModule, "unowned-key-0", "GET", "/cap-test/unowned/0", null, null)
+            OtherlodeEndpoints.recordDispatchIfUnowned(
+                dispatchIfUnownedModule,
+                "unowned-key-0",
+                "GET",
+                "/cap-test/unowned/0",
+                null,
+                null,
+                true,
+            )
         assertNull(firstDispatchIfUnownedReturn, "recordDispatchIfUnowned must return null before a resolver is installed")
 
         // 1 declare + 4088 register + 5 dispatch + 1 dispatchIfUnowned + 1 failure records exactly fill the 4096-record cap.
@@ -112,7 +135,10 @@ class OtherlodeEndpointsSeamTest {
         assertEquals("/cap-test/register/4087", resolver.registerCalls.last().verbatimTemplate)
         assertTrue(resolver.registerCalls.none { it.verbatimTemplate == "/cap-test/register/4088" }, "overflow records must not replay")
 
+        assertEquals(listOf("/cap-test/register/4087"), resolver.registerCalls.filter { it.regex }.map { it.verbatimTemplate })
         assertEquals(5, resolver.dispatchCalls.size)
+        assertEquals(listOf("/cap-test/dispatch/4"), resolver.dispatchCalls.filter { it.regex }.map { it.verbatimTemplate })
+        assertTrue(resolver.dispatchIfUnownedCalls.single().regex, "a regex mark buffered before install survives replay")
         assertEquals(1, resolver.dispatchIfUnownedCalls.size)
         assertEquals("/cap-test/unowned/0", resolver.dispatchIfUnownedCalls.single().verbatimTemplate)
         assertEquals(6, resolver.hitCalls.size, "each replayed dispatch and dispatchIfUnowned must be followed by exactly one hit")
@@ -223,6 +249,24 @@ class OtherlodeEndpointsSeamTest {
                 .deltas
                 .single()
         assertEquals(1L, delta.hitsTotal)
+    }
+
+    @Test
+    @Order(6)
+    fun `a regex register through the seam is kept apart from a path endpoint of the same text`() {
+        val module = uniqueModule("regex-registry")
+        val registry = EndpointRegistry()
+        OtherlodeEndpoints.install(endpointRegistryResolver(registry) as OtherlodeEndpoints.Resolver)
+
+        OtherlodeEndpoints.register(module, "path-key", "GET", "/users/{2,3}", null, null, null, null)
+        val regexEntry = OtherlodeEndpoints.register(module, "regex-key", "GET", "/users//{2,3}/", null, null, null, null, true)
+        val dispatched = OtherlodeEndpoints.recordDispatch(module, "regex-dispatch-key", "GET", "/users//{2,3}/", null, null, true)
+
+        assertSame(regexEntry, dispatched)
+        assertEquals(2, registry.endpoints().size)
+        val regex = registry.endpoints().single { it.templateKind == EndpointTemplateKind.REGEX }
+        assertEquals("/users//{2,3}/", regex.routeTemplate)
+        assertEquals("/users//{2,3}/", regex.verbatimTemplate)
     }
 
     @Test
@@ -468,18 +512,21 @@ private class RecordingResolver {
         val key: Any,
         val framework: String,
         val verbatimTemplate: String,
+        val regex: Boolean,
     )
 
     data class DispatchCall(
         val key: Any,
         val framework: String,
         val verbatimTemplate: String,
+        val regex: Boolean,
     )
 
     data class DispatchIfUnownedCall(
         val key: Any,
         val framework: String,
         val verbatimTemplate: String,
+        val regex: Boolean,
     )
 
     data class DisableCall(
@@ -512,17 +559,17 @@ private class RecordingResolver {
                 }
 
                 "register" -> {
-                    registerCalls += RegisterCall(args[0]!!, args[1] as String, args[3] as String)
+                    registerCalls += RegisterCall(args[0]!!, args[1] as String, args[3] as String, args[8] as Boolean)
                     "entry-${nextEntryId++}"
                 }
 
                 "recordDispatch" -> {
-                    dispatchCalls += DispatchCall(args[0]!!, args[1] as String, args[3] as String)
+                    dispatchCalls += DispatchCall(args[0]!!, args[1] as String, args[3] as String, args[6] as Boolean)
                     "entry-${nextEntryId++}"
                 }
 
                 "recordDispatchIfUnowned" -> {
-                    dispatchIfUnownedCalls += DispatchIfUnownedCall(args[0]!!, args[1] as String, args[3] as String)
+                    dispatchIfUnownedCalls += DispatchIfUnownedCall(args[0]!!, args[1] as String, args[3] as String, args[6] as Boolean)
                     "entry-${nextEntryId++}"
                 }
 
@@ -592,6 +639,7 @@ private fun endpointRegistryResolver(registry: EndpointRegistry): Any =
                     verbatimTemplate = args[3] as String,
                     contextPath = args[4] as String?,
                     handler = (args[5] as String?)?.let { HandlerRef(it, args[6] as String?, args[7] as String?) },
+                    regex = args[8] as Boolean,
                 )
             }
 
@@ -603,6 +651,7 @@ private fun endpointRegistryResolver(registry: EndpointRegistry): Any =
                     verbatimTemplate = args[3] as String,
                     contextPath = args[4] as String?,
                     handlerClass = args[5] as String?,
+                    regex = args[6] as Boolean,
                 )
             }
 
@@ -614,6 +663,7 @@ private fun endpointRegistryResolver(registry: EndpointRegistry): Any =
                     verbatimTemplate = args[3] as String,
                     contextPath = args[4] as String?,
                     handlerClass = args[5] as String?,
+                    regex = args[6] as Boolean,
                 )
             }
 

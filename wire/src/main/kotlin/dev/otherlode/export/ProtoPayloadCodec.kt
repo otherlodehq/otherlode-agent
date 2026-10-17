@@ -25,6 +25,7 @@ import dev.otherlode.proto.DisabledEndpointModuleKind as ProtoDisabledEndpointMo
 import dev.otherlode.proto.EndpointDelta as ProtoEndpointDelta
 import dev.otherlode.proto.EndpointDiscoverySource as ProtoEndpointDiscoverySource
 import dev.otherlode.proto.EndpointLocation as ProtoEndpointLocation
+import dev.otherlode.proto.EndpointTemplateKind as ProtoEndpointTemplateKind
 import dev.otherlode.proto.ExternalClass as ProtoExternalClass
 import dev.otherlode.proto.FailedClass as ProtoFailedClass
 import dev.otherlode.proto.GeneratedBy as ProtoGeneratedBy
@@ -871,6 +872,7 @@ object ProtoPayloadCodec {
                 .setVerbatimTemplate(location.verbatimTemplate)
                 .setFramework(location.framework)
                 .setDiscoverySource(toProto(location.discoverySource))
+                .setTemplateKind(toProto(location.templateKind))
         location.handlerClass?.let { builder.handlerClass = it }
         location.handlerMethod?.let { builder.handlerMethod = it }
         location.handlerDescriptor?.let { builder.handlerDescriptor = it }
@@ -888,7 +890,29 @@ object ProtoPayloadCodec {
             handlerClass = if (location.hasHandlerClass()) location.handlerClass else null,
             handlerMethod = if (location.hasHandlerMethod()) location.handlerMethod else null,
             handlerDescriptor = if (location.hasHandlerDescriptor()) location.handlerDescriptor else null,
+            templateKind = fromProto(location.templateKind),
         )
+
+    private fun toProto(kind: EndpointTemplateKind): ProtoEndpointTemplateKind =
+        when (kind) {
+            EndpointTemplateKind.PATH -> ProtoEndpointTemplateKind.PATH
+            EndpointTemplateKind.REGEX -> ProtoEndpointTemplateKind.REGEX
+        }
+
+    private fun fromProto(kind: ProtoEndpointTemplateKind): EndpointTemplateKind =
+        when (kind) {
+            ProtoEndpointTemplateKind.REGEX -> {
+                EndpointTemplateKind.REGEX
+            }
+
+            ProtoEndpointTemplateKind.PATH, ProtoEndpointTemplateKind.ENDPOINT_TEMPLATE_KIND_UNSPECIFIED -> {
+                EndpointTemplateKind.PATH
+            }
+
+            ProtoEndpointTemplateKind.UNRECOGNIZED -> {
+                throw IllegalArgumentException("unrecognized endpoint template kind on the wire: $kind")
+            }
+        }
 
     private fun toProto(source: EndpointDiscoverySource): ProtoEndpointDiscoverySource =
         when (source) {
