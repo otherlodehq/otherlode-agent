@@ -149,7 +149,7 @@ one commit per chunk, each with its `docs/site` pages:
 3. The functional-route walk moved to a helper both Spring modules share.
 4. `spring-webflux`.
 5. `javalin-6` and `javalin-7`, with the `CrudHandler` join.
-6. `micronaut` (4.0 to 5.x; 3.x too if its hooks match, else a marker).
+6. `micronaut` (4.0 to 5.x), then `micronaut-3` (Netty and servlet).
 7. Wire: the regex template field on `EndpointLocation`, then the
    collector's bindings, then the server.
 8. `vertx-web`, and the route bridge converting Vert.x colon parameters.
@@ -159,10 +159,7 @@ one commit per chunk, each with its `docs/site` pages:
 
 Chunk 2 also makes a request count once (ADR 0017's amendment): Spring
 Security 6.1.6 to 6.5 counted every Spring MVC request twice, and async
-redispatches counted again. Micronaut 3.x registers as 4.x does but has no
-`RouteExecutor.findRouteMatch`; its dispatch is the Netty
-`RoutingInBoundHandler.handleRouteMatch`, and micronaut-servlet needs its
-own hook. Module or marker for 3.x: to ask.
+redispatches counted again.
 
 ### A servlet module: to grill, before 0.1.0
 
