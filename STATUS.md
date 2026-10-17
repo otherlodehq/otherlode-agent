@@ -110,9 +110,6 @@ collector are done (`2a012d4` to `b26f77a`). Left, in order:
    branch. Editing the collector and site repos was refused by the session's
    permission check on 2026-10-17, so they wait for a maintainer.
 
-Follow-up, outside this work: the testkit's `JavaApiCompileCheck.java`
-does not call `failedToLoad()` or `failedToLoadDependencies()`.
-
 ### HotSwap of a woven class with changed code: to grill
 
 Raised 2026-10-04 while landing ADR 0060. A woven class whose class file

@@ -54,6 +54,8 @@ final class JavaApiCompileCheck {
             DependencyStatus dependency = collector.dependency(null, "lib");
             List<DependencyStatus> unloaded = collector.unloadedDependencies();
             List<DependencyStatus> unreferenced = collector.unreferencedDependencies();
+            List<String> failedToLoad = collector.failedToLoad();
+            List<DependencyStatus> failedToLoadDependencies = collector.failedToLoadDependencies();
             List<String> failedToInitialize = collector.failedToInitialize();
             List<DependencyStatus> failedToInitializeDependencies = collector.failedToInitializeDependencies();
             List<DependencyStatus> unreached = collector.unreachedDependencies();
