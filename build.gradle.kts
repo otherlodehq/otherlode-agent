@@ -29,7 +29,8 @@ repositories {
 // `-Potherlode.testJdk=25` runs every project's tests on that JDK. Compilation keeps the JDK 21
 // toolchain; only the JVM that runs the tests changes. CI sets it so a JDK that renames an
 // internal the agent reads, such as the lambda factory's `interfaceClass` and `implInfo` fields,
-// fails a test.
+// fails a test. Micronaut 5's suite is the exception: its class files need JDK 25, so it runs
+// there whatever this says.
 val testJdk = providers.gradleProperty("otherlode.testJdk")
 
 // The shipped modules and the modules whose tests run on the test JVM compile against the JDK 17
@@ -50,6 +51,7 @@ val jdk17Projects =
         ":endpoints-jdk-httpserver",
         ":endpoints-ktor-2",
         ":endpoints-ktor-3",
+        ":endpoints-micronaut",
         ":endpoints-otel-bridge",
         ":endpoints-spring-common",
         ":endpoints-spring-webmvc",
@@ -80,7 +82,7 @@ val jacocoVersion = "0.8.13"
 allprojects {
     plugins.withType<JavaBasePlugin> {
         val toolchains = extensions.getByType<JavaToolchainService>()
-        tasks.withType<Test>().configureEach {
+        tasks.withType<Test>().matching { it.name != "micronaut5Test" }.configureEach {
             if (testJdk.isPresent) {
                 javaLauncher.set(toolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(testJdk.get())) })
             }
@@ -141,6 +143,9 @@ dependencies {
     // Endpoint modules for Javalin 6 and 7.
     implementation(project(":endpoints-javalin-6"))
     implementation(project(":endpoints-javalin-7"))
+
+    // Endpoint module for Micronaut 4.0 to 5.x.
+    implementation(project(":endpoints-micronaut"))
 
     // Endpoint modules for Ktor. Route became the interface RoutingNode between 2.x and 3.x, so
     // the two major versions need their own module rather than one shared one.

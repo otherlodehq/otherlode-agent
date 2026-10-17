@@ -20,6 +20,7 @@ Each framework has its own module. A module does nothing on a JVM where its fram
 | Spring WebFlux | `spring-webflux` | Spring Framework 5.3.39, 6.2.19, 7.0.9 | Once the mapping matched the request, before the handler runs |
 | Javalin 6 | `javalin-6` | 6.1.0, 6.7.0 | Once the request reached its handler, after before-handlers |
 | Javalin 7 | `javalin-7` | 7.0.0, 7.2.3 | Once the request reached its handler, after before-handlers |
+| Micronaut 4 and 5 | `micronaut` | 4.0.0, 4.10.32, 5.2.16 | Once Micronaut matched the route, before argument binding |
 | Ktor 2 | `ktor-2` | 2.3.13 | Once Ktor chose the route, before its handlers run |
 | Ktor 3 | `ktor-3` | 3.0.3, 3.5.2 | Once Ktor chose the route, before its handlers run |
 | JAX-RS, `javax.ws.rs` | `jaxrs` | Jersey 2.48 with `javax.ws.rs-api` 2.1.1 | Entry of the resource method |
@@ -29,9 +30,9 @@ Each framework has its own module. A module does nothing on a JVM where its fram
 
 The module name is what the agent logs, what the server shows as the endpoint's framework, and what appears in the list of [disabled modules](#modules-that-switch-themselves-off). It is also the name [`disabledEndpointModules`](configuration#disabledendpointmodules) takes to keep a module off.
 
-One Spring MVC module covers Spring Framework 5.3 through 7 and both the `javax` and `jakarta` servlet namespaces. The project's demo runs it inside a Spring Boot 4.1.1 fat jar. Spring WebFlux has a module of its own, so a failure in one never switches off the other, and it covers Spring Framework 5.3 through 7 too. The Ktor modules are separate because Ktor 3 replaced `Route` with `RoutingNode`. The Javalin modules are separate because Javalin 7 changed how `ParsedEndpoint` exposes its endpoint, and each module only acts on its own release. The JAX-RS module reads annotations from either namespace.
+One Spring MVC module covers Spring Framework 5.3 through 7 and both the `javax` and `jakarta` servlet namespaces. The project's demo runs it inside a Spring Boot 4.1.1 fat jar. Spring WebFlux has a module of its own, so a failure in one never switches off the other, and it covers Spring Framework 5.3 through 7 too. The Ktor modules are separate because Ktor 3 replaced `Route` with `RoutingNode`. The Javalin modules are separate because Javalin 7 changed how `ParsedEndpoint` exposes its endpoint, and each module only acts on its own release. One Micronaut module covers Micronaut 4.0 through 5.x. Micronaut 5 needs JDK 25 or later. The JAX-RS module reads annotations from either namespace.
 
-Javalin 5, Vert.x and Micronaut have no module. See [what is not covered](#what-is-not-covered).
+Javalin 5, Micronaut 3 and Vert.x have no module. See [what is not covered](#what-is-not-covered).
 
 ## How an endpoint is named
 
@@ -57,7 +58,7 @@ A form whose meaning would be a guess stays as written: `{.x}`, `{;x}`, `{x*}`, 
 
 The verb is upper case. An endpoint with no verb constraint has the verb `*`. The framework's own spelling travels beside the template for display. The testkit calls it `verbatimTemplate`.
 
-The servlet context path is not part of the template. Spring reports the application-relative template, so a Spring Boot application with `server.servlet.context-path=/shop` still reports `/orders`. Spring WebFlux's `spring.webflux.base-path` is left out the same way. JAX-RS leaves out `@ApplicationPath`. The JDK `HttpServer` is the one exception, because a context path is its whole template.
+The servlet context path is not part of the template. Spring reports the application-relative template, so a Spring Boot application with `server.servlet.context-path=/shop` still reports `/orders`. Spring WebFlux's `spring.webflux.base-path` is left out the same way. JAX-RS leaves out `@ApplicationPath`. The JDK `HttpServer` is an exception, because a context path is its whole template. Micronaut is the other: [`micronaut.server.context-path`](#micronaut) stays in the template of an annotated route.
 
 A framework mapping that lists several paths or verbs gives one endpoint per combination. `@RequestMapping(path = ["/a", "/b"], method = [GET, POST])` is four endpoints.
 
@@ -132,6 +133,24 @@ The template is the path as registered, after `ApiBuilder` composed its prefixes
 
 `javalin-6` covers Javalin 6.1 and later. Javalin 6.0.0 and 6.0.1 keep a method the module reads internal, so on those releases the module switches itself off at the first registration, with the kind `LINKAGE_ERROR`. Each module accepts only its own release, so an application of either major is counted by exactly one of them. Javalin 5 has no module.
 
+## Micronaut
+
+Micronaut routes are declared when Micronaut builds its router. That covers annotated controller methods, routes a `RouteBuilder` adds, and the endpoints Micronaut adds for itself, such as its management endpoints. Only routes that serve a URI are endpoints. `@Error` and status routes and filters are not.
+
+A request is counted once Micronaut matched it to a route, after the pre-matching filters and before argument binding. A hit means matched: a filter that rejects the request afterwards, as Micronaut Security does, still counts, and so does a handler that throws. These requests count nothing:
+
+- A CORS preflight that Micronaut's CORS filter answers (4.6 and later), and an `OPTIONS` request the server answers itself. Before 4.6 a preflight to a path with no `OPTIONS` route matches nothing.
+- A request no route matches (404), one whose verb no route accepts (405), one the route's `@Consumes` or `@Produces` refuses (415, 406), and one that matches several routes equally.
+- A request that a pre-matching filter answers.
+
+Micronaut adds a `HEAD` route beside every `@Get` unless the annotation sets `headRoute = false`. That route is not declared, and a `HEAD` request that matches it counts against the `GET` endpoint of the same template. An explicit `@Head` method and a `HEAD` route a `RouteBuilder` adds are endpoints of their own, counted as `HEAD`.
+
+A `@ServerWebSocket` route is not an endpoint, because the upgrade never reaches the point where the agent counts. A plain `GET` to a WebSocket path counts nothing either.
+
+`micronaut.server.context-path` is part of an annotated route's template, because Micronaut matches it as part of the path: with `/shop` set, a controller at `/orders` reports `/shop/orders`. A route a `RouteBuilder` registers does not carry the context path, so it reports the path it was given.
+
+The template is the path as Micronaut matches it, without any query variables. `{id:?}` and `{/id}` read as an optional parameter, and a segment that is only `{+path}` reads as `*`; the [naming rules](#how-an-endpoint-is-named) give the forms. Routes that differ only by what they produce or consume, an API version or a port merge into one endpoint, since the agent reads none of them.
+
 ## JAX-RS
 
 JAX-RS has no registration call, so the agent reads the annotations when a resource class loads and declares the routes then. A request is counted when the resource method is entered, which a JAX-RS server does after it matches the request. A call made directly from your own code also counts.
@@ -188,6 +207,7 @@ An endpoint names the method that serves it where the framework lets the agent f
 | Javalin, lambda or method reference | The method the lambda calls, or the method the reference names. |
 | Javalin, `CrudHandler` | The handler's method for the route: `getOne`, `getAll`, `create`, `update` or `delete`, with the class that declares it. |
 | Javalin, `SseHandler`, `VueComponent` and any `VueHandler` that does not override `handle` | Nothing. Javalin's own wrapper runs the handler. |
+| Micronaut | The class that declares the method Micronaut runs, the method and its descriptor, as the class file has them. A method a controller inherits from a base class or an interface names that base class or interface, a controller with AOP advice names the controller and not Micronaut's generated subclass, and a Kotlin `suspend` function has the continuation as its last parameter and `Object` as its return type. |
 | Ktor | The handler body's class and `invokeSuspend`. A handler class with no `invokeSuspend` names the class alone. |
 | JAX-RS | The concrete class, the method and its descriptor. |
 | JDK `HttpServer` | `handle` and the class that declares it. |
@@ -253,7 +273,7 @@ The [configuration options](configuration) page gives the system property and en
 
 ## What is not covered
 
-- Javalin 5, Vert.x and Micronaut have no module. Counting their endpoints needs a module per framework. For them, `otelBridgeEnabled` counts what OpenTelemetry resolves, discovered at dispatch only, so "never called" cannot be computed.
+- Javalin 5, Micronaut 3 and Vert.x have no module. Counting their endpoints needs a module per framework. For them, `otelBridgeEnabled` counts what OpenTelemetry resolves, discovered at dispatch only, so "never called" cannot be computed.
 - A Spring WebFlux router run through `RouterFunctions.toHttpHandler` or `toWebHandler`, with no `DispatcherHandler`, is not declared, and only its `resources(pattern, location)` routes are counted, found at dispatch.
 - Requests that never reach the hooked framework are not counted. A servlet, filter or Tomcat valve that answers first is invisible to the Spring module, for example.
 - The agent reads no OpenAPI document and does no static analysis of call sites to find endpoints.
