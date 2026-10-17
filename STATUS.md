@@ -92,23 +92,19 @@ Known so far:
 - To inventory: the GitHub and Buf tokens CI uses, the WorkOS and GCP credentials behind the hosted server, and the
   `otherlode.dev` domain registration.
 
-### A class that failed to initialise: the server, then the rest
+### A class that failed to initialise: deploy, then the last ADRs
 
 Settled on 2026-10-16 (agent ADR 0071, server ADR 0070, both with
-amendments; `CONTEXT.md`). The agent, wire, collector, testkit and demo
-collector are done (`2a012d4` to `b26f77a`). Left, in order:
+amendments; `CONTEXT.md`). Built in every repo; the server's side is on
+its master at `133a73b`. Left:
 
-1. **Server, part b**, on branch `failed-to-initialise` in the worktree
-   `~/Documents/otherlode-server-failed-to-initialise` (part a, the
-   storage, ingest and rules, is `301172b` there; master is merged in and
-   the branch's ADR is 0070): the `/failed-to-initialize` listing, the
-   page, navigation and overview count, the UI for the `without-evidence`
-   statuses and flags, and the server's docs. Then merge to the server's
-   master (cleared on 2026-10-16; a push deploys).
+1. **The server deploy.** GitHub Actions started no job for `133a73b` (nor
+   for `80fb450` before it): the organisation's billing refused them. Once
+   billing is fixed, re-run the CI workflow for master's head; it migrates
+   (0006) and deploys.
 2. **ADRs name no decider** in the collector (3 files) and the site (2
-   files). The agent's are done (`9362a06`) and the server's are on the
-   branch. Editing the collector and site repos was refused by the session's
-   permission check on 2026-10-17, so they wait for a maintainer.
+   files). The agent's and the server's are done. The session's permission
+   check refused edits to those two repos on 2026-10-17.
 
 ### HotSwap of a woven class with changed code: to grill
 
