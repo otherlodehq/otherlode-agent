@@ -75,6 +75,7 @@ Each module compiles against its oldest supported release, as the options above 
 Rules every module follows, and the Spring MVC module is brought to:
 
 - **A CORS preflight is no call** of the route it asks about, on every route kind, not only functional routes.
+- **A request counts once.** A lookup Spring's `HandlerMappingIntrospector` makes for Spring Security or CORS is no call: it reaches `handleMatch` and `setAttributes` with the request wrapped in the introspector's own `AttributesPreservingRequest`, and under Spring Security 6.1.6 to 6.5 it counted every request twice and counted a request Security rejected before the handler (measured on Spring Boot 3.5.16). An async redispatch is no second call either. The URL-mapped count moves to `AbstractUrlHandlerMapping$PathExposingHandlerInterceptor.preHandle`, which only the `DispatcherServlet` runs, since `buildPathExposingHandler` sees no request to tell the two apart.
 - **Functional routes are declared at `RouterFunctionMapping.afterPropertiesSet`**, read from its `routerFunction` field on exit, so a mapping constructed with a router function, as Spring Boot's WebFlux welcome page is, is declared too.
 - **A top-level `resources(...)` route is declared and counted**, its pattern read from the resource lookup function by exact class shape, rather than left undeclared and uncounted.
 - **An API version is not part of identity** (Spring 7.0), like a header predicate. A request rejected for its version after the route matched counts, since a hit means matched.

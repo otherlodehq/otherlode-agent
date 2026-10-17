@@ -157,9 +157,12 @@ one commit per chunk, each with its `docs/site` pages:
 10. Wire: framework markers, each proved by a three-JVM fixture, then the
     collector's bindings, then the server.
 
-Open facts that only change chunks 2 and 6: whether Spring Security's
-`HandlerMappingIntrospector` makes the Spring MVC module count one request
-twice, and whether Micronaut 3.x has the 4.x hooks.
+Chunk 2 also makes a request count once (ADR 0017's amendment): Spring
+Security 6.1.6 to 6.5 counted every Spring MVC request twice, and async
+redispatches counted again. Micronaut 3.x registers as 4.x does but has no
+`RouteExecutor.findRouteMatch`; its dispatch is the Netty
+`RoutingInBoundHandler.handleRouteMatch`, and micronaut-servlet needs its
+own hook. Module or marker for 3.x: to ask.
 
 ### A servlet module: to grill, before 0.1.0
 
