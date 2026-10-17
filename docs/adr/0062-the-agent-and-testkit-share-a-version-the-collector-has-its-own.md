@@ -4,7 +4,7 @@ status: accepted
 
 # The agent and the testkit share a version; the collector has its own
 
-Decided on 2026-10-05 in a grilling session with Luke, as `STATUS.md`'s pre-release checklist item 6, after research into what actually couples the three. This supersedes ADR 0057, whose namespace, artifacts, `0.x` start and in-tree version stand and are restated here.
+Decided on 2026-10-05 in a grilling session, as `STATUS.md`'s pre-release checklist item 6, after research into what actually couples the three. This supersedes ADR 0057, whose namespace, artifacts, `0.x` start and in-tree version stand and are restated here.
 
 Two artifacts go to Maven Central under `dev.otherlode`, verified by a TXT record on the apex `otherlode.dev`: `otherlode-agent`, the shaded `-javaagent` jar, and `otherlode-testkit`. Wire, bootstrap and the endpoint modules ride inside the agent jar and are not published. The agent and the testkit share one version and are released together from one build, since the testkit refuses a payload whose `agent_version` is not its own (ADR 0056) and its shaded codec rejects an enum value it does not know. The collector, a GHCR image and a Go module, is versioned on its own, starting at `v0.1.0` cut just before the agent's `0.1.0`, and released when its code or its bindings change. Its support rule is "run the latest collector". Each repository declares its version in its tree (`gradle.properties` here) and a release is a matching `vX.Y.Z` tag.
 

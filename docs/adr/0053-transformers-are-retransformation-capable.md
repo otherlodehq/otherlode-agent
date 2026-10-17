@@ -4,7 +4,7 @@ status: accepted
 
 # Both tiers register as retransformation-capable, so they run after every other agent's transformer
 
-Decided on 2026-10-03 in a grilling session with Luke, alongside ADR 0052.
+Decided on 2026-10-03 in a grilling session, alongside ADR 0052.
 
 The method tier and the endpoint tier registered their transformers as not retransformation-capable, which puts them in the same group as JaCoCo's, AspectJ's and Spring's load-time weaver's, where the `-javaagent` order on the command line decides who runs first. With this agent first, JaCoCo receives woven bytes: it identifies a class by a CRC64 of the bytes it receives (`Instrumenter.java:75`, 0.8.13) and its report hashes the class file (`Analyzer.java:106`), so every woven class reads "Execution data for class X does not match" with zero coverage. The endpoint tier counts too, since the JAX-RS module weaves the adopter's resource classes. And this agent first is Gradle's default: `Test.jvmArgs` is copied ahead of the `jacoco` plugin's argument provider (`DefaultJavaForkOptions.copyTo`, 8.14), so an adopter following the testkit's setup loses their coverage report.
 

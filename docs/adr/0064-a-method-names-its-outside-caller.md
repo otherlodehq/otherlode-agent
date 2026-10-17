@@ -4,7 +4,7 @@ status: accepted
 
 # A method names its outside caller, from its supertypes and a list of callback annotations
 
-Decided on 2026-10-06 in a grilling session with Luke, as the first open bullet under `STATUS.md`'s pre-release checklist item 2. It closes the gap ADR 0024's consequences left: a call that leaves scope and comes back in shows as no edge, so a framework calling an adopter's method made a never-hit method an uncalled root.
+Decided on 2026-10-06 in a grilling session, as the first open bullet under `STATUS.md`'s pre-release checklist item 2. It closes the gap ADR 0024's consequences left: a call that leaves scope and comes back in shows as no edge, so a framework calling an adopter's method made a never-hit method an uncalled root.
 
 The agent tells the collector why code outside scope may call a method. `ProbeLocation` carries an `OutsideCaller` on a METHOD probe, with a kind and a type:
 
@@ -37,7 +37,7 @@ The callback annotations are agent data, a list of type names checked against cu
 
 ## Amended on 2026-10-10: an adopter names its own callback annotations
 
-Settled in a grilling session with Luke. The deferred option above is built before 0.1.0 rather than on its trigger. A framework the built-in list does not cover, such as Axon's `@CommandHandler` or an in-house dispatcher, makes every never-hit handler an *uncalled* root on an adopter's first report, and the only way out was `excludePackages`, which drops the code from scope. The option changes a label and no count, carries no wire field, and needs no collector or server change.
+Settled in a grilling session. The deferred option above is built before 0.1.0 rather than on its trigger. A framework the built-in list does not cover, such as Axon's `@CommandHandler` or an in-house dispatcher, makes every never-hit handler an *uncalled* root on an adopter's first report, and the only way out was `excludePackages`, which drops the code from scope. The option changes a label and no count, carries no wire field, and needs no collector or server change.
 
 - **`callbackAnnotations`** (`otherlode.callback.annotations`, `OTHERLODE_CALLBACK_ANNOTATIONS`) takes fully qualified annotation type names separated by `;`. A named annotation counts as a callback annotation on a method exactly as a listed one does, directly or through meta-annotations at any depth, and the outside caller names the annotation as written on the method. The option adds to the built-in list and cannot remove a name from it.
 - **Exact names, not prefixes.** Adopters keep validation and nullability annotations in their own packages, and a prefix would bring back, on a smaller scale, the rule rejected above that any out-of-scope annotation counts.

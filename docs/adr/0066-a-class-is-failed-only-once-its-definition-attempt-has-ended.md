@@ -4,7 +4,7 @@ status: accepted
 
 # A class is failed only once its definition attempt has ended
 
-Decided on 2026-10-06 with Luke, before the server builds a finding on `failed_classes` (server ADR 0057). Luke's condition was certainty: the agent must never name a class the JVM defined. ADRs 0028 and 0065 inferred failure from absence. A class missing from `getAllLoadedClasses()` on two sweeps was withheld for good and named. Research found three ways a defined class could still be named, each reproduced or traced in source:
+Decided on 2026-10-06, before the server builds a finding on `failed_classes` (server ADR 0057). The condition was certainty: the agent must never name a class the JVM defined. ADRs 0028 and 0065 inferred failure from absence. A class missing from `getAllLoadedClasses()` on two sweeps was withheld for good and named. Research found three ways a defined class could still be named, each reproduced or traced in source:
 
 - The agent registers a class when its transformer runs. The JVM then still resolves the class's supertypes before the class counts as loaded, and a stall there can outlast two sweeps. Causes include a slow loader, a debugger breakpoint, two sweeps close together at shutdown, and a process frozen or starved of CPU, after which missed sweeps run back to back. A class registered between a sweep's snapshot and its walk also took its first miss for free.
 - A definition that failed and then succeeded on a retry in the same loader kept its entry withheld for good, so the name stayed failed.

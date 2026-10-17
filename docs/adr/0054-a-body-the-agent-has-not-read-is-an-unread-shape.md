@@ -4,7 +4,7 @@ status: accepted
 
 # A body the agent has not read is an unread shape, never the adopter's code
 
-Decided on 2026-10-03 in a grilling session with Luke, after ADRs 0052 and 0053 removed JaCoCo as a cause of the symptom.
+Decided on 2026-10-03 in a grilling session, after ADRs 0052 and 0053 removed JaCoCo as a cause of the symptom.
 
 Every exact-body rule fell back to "the adopter's code" when it could not recognise a body, and the adopter's code that never ran is a never-hit row. For generated plumbing that is the silent, confident, wrong finding ADR 0007 rules out, and it was already in the field. The agent's real matcher, run over scalac output from 2.12.18 to 3.10.0-RC3, showed ordinary patch releases changing the bodies ADR 0048 reads. From 2.13.17, 3.3.7 and 3.7.1, every case class's `hashCode` reads as dead code. 3.9.0, the new LTS line, keeps 609 of the 819 marks 3.3.4 gets. Every change comes from the compiler, not the library: a 2.13.16 compiler against the 2.13.17 library writes 2.13.16 bodies. ADR 0048's "a body from another version stays unmarked" was a treadmill that patch releases turn.
 
@@ -33,7 +33,7 @@ So there is a third answer besides "generated" and "the adopter's". An **unread 
 - **Version-blind everywhere.** Rejected: where the class names its compiler, a mismatch on a read release is known to be hand-written, and calling it unread throws that away.
 - **Telling Scala 2 hand-written methods from generated ones by line table.** Rejected: it is the rule ADR 0048 dropped after four review rounds, because placement follows the adopter's layout.
 - **The library's `library.properties` as a stand-in for the Scala 2 compiler.** Rejected: the bodies come from the compiler, Scala 3.3 to 3.7 ship a 2.13 library unrelated to the compiler, and a newer runtime library would mislabel the code.
-- **Two independent fields, or `GeneratedBy` plus an `unread` bool.** Rejected once Luke set correctness over compatibility, since there are no consumers yet: both can represent a probe that is generated and unread at once. A single `Origin { kind, family }` was rejected too: recognised coroutine machinery has no probe, so `COROUTINE_MACHINERY` is never valid with kind generated, trading one invariant for another.
+- **Two independent fields, or `GeneratedBy` plus an `unread` bool.** Rejected once correctness was set over compatibility, since there are no consumers yet: both can represent a probe that is generated and unread at once. A single `Origin { kind, family }` was rejected too: recognised coroutine machinery has no probe, so `COROUTINE_MACHINERY` is never valid with kind generated, trading one invariant for another.
 - **A compiler field on `ClassLocation`.** Rejected for now: only Scala 3 could fill it, and the family plus `agent_version` tell the adopter what to do. The agent's WARNING names the release. Adding it later is additive.
 - **A class-level flag for a class analysed from its received bytes** (ADR 0052's no-class-file case). Rejected: it would abstain on every class defined from memory, including the common one with no earlier transformer, for a case that needs three rare things together. The agent logs an INFO count of such classes on the first flush instead.
 
@@ -57,7 +57,7 @@ So there is a third answer besides "generated" and "the adopter's". An **unread 
 
 ## Amended on 2026-10-04: the wire surfaces, reviewed before release
 
-Reviewed as `STATUS.md`'s pre-release checklist item 4, with Luke.
+Reviewed as `STATUS.md`'s pre-release checklist item 4.
 
 - **A zero value inside an `origin` oneof is never written.** A oneof member set to `0` is still present, so "the adopter's code" had two encodings: the oneof unset, or set to `GENERATED_BY_NONE`, `UNREAD_SHAPE_NONE` or `ROUTINE_KIND_NONE`. The three zero values are renamed `_UNSPECIFIED`, documented as never written and read as unset. `KotlinKind` and `BodyKind` keep their `NONE`, which means something outside any oneof.
 - **`UNREAD_SHAPE_SWITCH_LOWERING` is `UNREAD_SHAPE_STRING_SWITCH`**, keeping number 7. Its outline is a switch on `String.hashCode()`, and an unread enum-switch lowering would need a value of its own.
@@ -72,7 +72,7 @@ A case's outline is drawn from its own class and its enum class alone. When the 
 
 ## Amended on 2026-10-15: Java-compatible, class-extending, class-nested and local enums are read
 
-Decided with Luke after a review found that four kinds of enum fell outside every outline, so their plumbing read as the adopter's code and an unused method as never hit. This withdraws two things the 2026-10-04 amendment accepted: that a local enum gets no outline at all, and that an enum declared inside a class reports its scalac-written `ordinal(E)` as the adopter's. Each kind below was compiled with every Scala 3 release on the read list and read in `javap`.
+Decided after a review found that four kinds of enum fell outside every outline, so their plumbing read as the adopter's code and an unused method as never hit. This withdraws two things the 2026-10-04 amendment accepted: that a local enum gets no outline at all, and that an enum declared inside a class reports its scalac-written `ordinal(E)` as the adopter's. Each kind below was compiled with every Scala 3 release on the read list and read in `javap`.
 
 - **A Java-compatible enum** (`enum E extends java.lang.Enum[E]`) is an enum class whose superclass is `java.lang.Enum`. Its companion's bodies and its Product forwarders are the plain enum's, instruction for instruction. Its singleton case has no `toString`, `ordinal`, `hashCode` or `readResolve`, and its `productPrefix` is `aload_0; invokevirtual <case class>.name()String; areturn`, which is read and marked. scalac refuses one with a parameterised case or outside a static scope (`Checking.scala`), so it is never local and never inside a class.
 - **An enum extending a class of the adopter's** (`enum E extends Base(x)`) has the plain enum's companion, Product forwarders and cases. So an enum class is any class that is `ACC_ENUM`, abstract and a `scala.reflect.Enum`, whatever it extends: scalac sets `ACC_ENUM` only on an enum and its cases (`BCodeUtils`), and a Java enum, which javac can make a `scala.reflect.Enum`, never reaches these rules, since no Scala class can extend one (E173) and the rules read an enum class only through its Scala cases and companion. The class of an enum case is a class whose superclass is an enum class. That replaces the first 2026-10-15 amendment's second form, a class implementing `scala.runtime.EnumValue` whose superclass implements `scala.reflect.Enum`, which an adopter can write by hand.

@@ -16,7 +16,7 @@ An option's name is a compatibility surface beyond the agent-args key: renaming 
 
 ## Amended on 2026-10-04: names reviewed before release
 
-Reviewed as `STATUS.md`'s pre-release checklist item 4, with Luke, since this record makes every name permanent.
+Reviewed as `STATUS.md`'s pre-release checklist item 4, since this record makes every name permanent.
 
 - **`endpoint` is `exportUrl`** (`otherlode.export.url`, `OTHERLODE_EXPORT_URL`). `CONTEXT.md` keeps *endpoint* for a verb and route template, which `endpointsEnabled` already uses, and the agent can post to a backend as well as a collector. A query string or a fragment in the URL is rejected with a WARNING and the default, as a malformed URL is: the exporter appends its paths to the whole string, and nothing reads a query parameter.
 - **No option begins with `testkit` or `collector`**, so a derived name never lands in the testkit's `otherlode.testkit.*` properties or the collector's `OTHERLODE_COLLECTOR_*` settings.

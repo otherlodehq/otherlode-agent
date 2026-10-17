@@ -4,7 +4,7 @@ status: accepted
 
 # Woven methods keep their original frames
 
-Decided on 2026-10-05 in a grilling session with Luke, who took the main session's recommendations for the questions settled after the research. Amends 0006, 0052 and 0058.
+Decided on 2026-10-05 in a grilling session, which took the recommended answers for the questions settled after the research. Amends 0006, 0052 and 0058.
 
 The branch tier made ASM recompute every stack map frame of a class it rewrote (`COMPUTE_FRAMES`). A recomputed frame can differ from the class file's in what the verifier must load: spring-core's `PropagationContextElement$ReactorDelegate` types a local `ContextView`, so without Reactor it fails verification with `NoClassDefFoundError`, while ASM types the local `Context`, the check goes, and the woven class defined and initialised. A framework probing an optional integration by catching `NoClassDefFoundError` would read it as present. And a frame merge asks the type pool for a common superclass, which a type the pool cannot see widens to `Object`.
 

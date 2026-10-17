@@ -4,7 +4,7 @@ status: accepted, amended by 0061 and on 2026-10-05; the size rules moved to 006
 
 # Bytecode shape is read from the class file, and probes are woven into the received bytes
 
-Decided on 2026-10-03 in a grilling session with Luke, after the deep review of that day found 64 tests failing only with JaCoCo's agent on the test JVM.
+Decided on 2026-10-03 in a grilling session, after the deep review of that day found 64 tests failing only with JaCoCo's agent on the test JVM.
 
 Every result this agent reads from a body's shape (ADR 0025's inlined copies and coroutine machinery, ADR 0026's and ADR 0048's generated methods, ADR 0037's conditions and guards, ADR 0038's switch lowering, ADR 0046's routine kinds, branch keys, the layout hash) was read from the bytes that reached its transformer. When an earlier transformer has rewritten the class, those are the earlier transformer's output, not the compiler's. JaCoCo puts a probe between a `finally` handler's `aload` and `athrow`, a `bastore` on a null-default path, and a probe between scalac's `hashCode` and its `lookupswitch`, so every exact-body rule falls back to plain code: generated plumbing reads as never-hit adopter code, and an instance with JaCoCo reports different branch keys from one without. That is the silent, confident, wrong failure ADR 0007 rules out, and the realistic place for it is an adopter's test task running the testkit beside Gradle's `jacoco` plugin.
 

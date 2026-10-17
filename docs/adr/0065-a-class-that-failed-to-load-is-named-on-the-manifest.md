@@ -4,7 +4,7 @@ status: accepted
 
 # A class that failed to load is named on the manifest
 
-Decided on 2026-10-06 in a grilling session with Luke, as the last open bullet under `STATUS.md`'s pre-release checklist item 2. This amends ADR 0028, which withheld such a class and put the bucket off until a real report showed one.
+Decided on 2026-10-06 in a grilling session, as the last open bullet under `STATUS.md`'s pre-release checklist item 2. This amends ADR 0028, which withheld such a class and put the bucket off until a real report showed one.
 
 When an unconfirmed class is withheld for good, at the moment the agent logs its WARNING, the agent also names it in `ProbeManifest.failed_classes`, sent once and delivered incrementally like `unreported_classes`. The entry is the class name alone. The agent cannot see why the JVM refused the class: the `LinkageError` is thrown after its transformer returns. A collector reads such a class as *failed to load*, a deployment to fix, never as never loaded or any other dead-code claim. A class any in-scope run loaded is loaded, whatever another run says. A class no run loaded that some run names as failed to load reads as failed to load, even where a complete baseline declares it.
 

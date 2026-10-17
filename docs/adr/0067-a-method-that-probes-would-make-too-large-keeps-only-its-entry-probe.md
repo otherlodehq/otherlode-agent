@@ -4,7 +4,7 @@ status: accepted
 
 # A method that branch probes would make too large keeps only its entry probe
 
-Decided on 2026-10-04 in the runtime-overhead grill with Luke, settled in review when built on 2026-10-05, and first recorded as an amendment to ADR 0052. This record takes that amendment over.
+Decided on 2026-10-04 in the runtime-overhead grill, settled in review when built on 2026-10-05, and first recorded as an amendment to ADR 0052. This record takes that amendment over.
 
 Probes add bytes, and two limits bound a method's code. HotSpot's `HugeMethodLimit` is 8000 bytes: it never compiles a method over it, so a method the probes push past 8000 runs interpreted for the life of the process. A class file holds at most 65535 bytes of code per method: a method the probes push past it fails the rewrite, and the whole class is skipped and loses every probe for the sake of one method.
 

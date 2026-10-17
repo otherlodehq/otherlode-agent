@@ -4,7 +4,7 @@ status: accepted
 
 # A test run is marked by a flag on the run
 
-Decided on 2026-10-01 in a grilling session with Luke, with server ADR 0047. It adds a last step to the environment's resolution order in ADR 0045.
+Decided on 2026-10-01 in a grilling session, with server ADR 0047. It adds a last step to the environment's resolution order in ADR 0045.
 
 A collector can name the tests that call production code only if it can tell a test run's call edges from production's. The agent already reads call edges from every class under the include rules. In a test JVM that includes the adopter's test classes, and with the static baseline on, it reads edges from test classes that never load too. So the agent needs no new reader. It only has to say that the run is a test run.
 

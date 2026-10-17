@@ -4,7 +4,7 @@ status: accepted
 
 # The testkit's public API is a compatibility surface, owned by the testkit
 
-Decided on 2026-10-04 in a grilling session with Luke, as `STATUS.md`'s pre-release checklist item 4.
+Decided on 2026-10-04 in a grilling session, as `STATUS.md`'s pre-release checklist item 4.
 
 Publishing `otherlode-testkit` freezes everything public in it. As built, it froze more than anyone had chosen: its result types named the wire module's Kotlin models (`ProbeKind`, `GeneratedBy`, `RoutineKind`, `UnreadShape`, `KotlinKind`, `CallEdge`, `BranchSite`, `SkippedClass` and others) through an `implementation` dependency, so an adopter would have compiled against classes they were never given, with protobuf-java 3.25.5 on their test classpath beside whatever protobuf the application uses. Every result type was a public data class that had gained fields one at a time, each a binary break. And the testkit judged findings instance by instance where the server merges every in-scope instance, so the two could disagree about the same data.
 

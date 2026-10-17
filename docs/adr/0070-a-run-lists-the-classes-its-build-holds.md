@@ -4,7 +4,7 @@ status: accepted
 
 # A run lists the classes its build holds
 
-Decided on 2026-10-14 with Luke, in a grilling session that spanned the agent, the collector and the server. Server ADR 0066 records how the server uses what this record sends.
+Decided on 2026-10-14 in a grilling session that spanned the agent, the collector and the server. Server ADR 0066 records how the server uses what this record sends.
 
 A customer who deletes a class that Otherlode called dead expects it to leave the findings once the new build runs. Nothing on the wire says what a build holds. A probe manifest names only the classes that loaded, so a class that is missing from a new run's manifest may be deleted, or it may simply not have loaded yet. The static baseline names every class, but it parses each class file, its cost grows with the classpath, and it is off by default (ADR 0014). `serviceVersion` is optional, and two builds can share one version.
 

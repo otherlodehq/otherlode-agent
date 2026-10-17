@@ -4,7 +4,7 @@ status: accepted
 
 # Probes reach their array through a dynamic constant, or an accessor below Java 11
 
-Decided on 2026-10-04 in a grilling session with Luke. Amends 0004.
+Decided on 2026-10-04 in a grilling session. Amends 0004.
 
 A woven class kept its counts in a `public static final long[]` the `<clinit>` prelude filled, and every probe read that field. Initialising a class initialises its superclass first, and its superinterfaces that declare default methods (JVMS 5.5), and that supertype's `<clinit>` may construct the class or call its static methods before the class's own `<clinit>` has run. The probe then read null and threw `NullPointerException` inside the adopter's code, leaving the class erroneous for the life of the JVM. Reproduced with the agent jar on 2026-10-04: a Java superclass constant holding a subclass instance (`static final Money ZERO = new Usd(0)`, with `Usd` used first), an interface constant holding an anonymous implementation, a Kotlin sealed class or sealed interface whose companion holds a subtype instance, and an enum constant body initialised by reflection. Entry probes, branch probes and the omission advice were all exposed; the `<clinit>` probe, which runs after the prelude, was not.
 

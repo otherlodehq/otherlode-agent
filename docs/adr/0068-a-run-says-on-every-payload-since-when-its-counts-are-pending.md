@@ -4,7 +4,7 @@ status: accepted
 
 # A run says on every payload since when its counts are pending
 
-Decided on 2026-10-07 with Luke, in the grill on the customer docs round's follow-ups.
+Decided on 2026-10-07 in the grill on the customer docs round's follow-ups.
 
 A flush sends its manifest and its delta batches side by side, and a collector, or a proxy in front of it, can refuse one and accept the other. ADR 0009 offers an unconfirmed delta again on the next flush, recomputed from the current totals against the same confirmed baseline, so no hit is lost; but until one is confirmed the hits it carries are missing upstream. A run whose manifest arrived and whose deltas did not then reads as a full inventory at zero hits: a false "never hit" for every probe no other instance covers. A batch with hits to carry is never empty, and below 20000 entries a flush sends one batch, with endpoint and dependency deltas riding on it. So once that batch is refused, no delta batch arrives at all, and nothing tells the collector the run is behind.
 
