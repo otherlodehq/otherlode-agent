@@ -12,6 +12,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Consumer;
 
 /**
  * The one seam inlined framework advice calls to record and count HTTP endpoints.
@@ -407,6 +408,59 @@ public final class OtherlodeEndpoints {
         if (mark == null) return false;
         RESOURCE_SERVED.remove();
         return mark.get() == request;
+    }
+
+    /**
+     * Returns the consumer a reactive {@code resources(pattern, location)} route runs on each
+     * resource its lookup emits. Advice cannot define a class or a lambda, so the consumer is built
+     * here. It takes no Reactor type: the advice passes it to {@code Mono.doOnNext}.
+     *
+     * <p>When the resource arrives the consumer marks {@code exchange} through {@link
+     * #resourceServed}, so the route mapping's own dispatch hook, which runs next on the same
+     * thread for the same request, does not count it under its nest's path. It then counts the
+     * endpoint, unless {@code key} is null, which stands for a request that is no call: a preflight
+     * or a verb the resource handler refuses. {@code entry} is the endpoint the advice resolved for
+     * {@code key}, or null when it is not declared; the consumer then looks {@code key} up again and
+     * records a discovered endpoint under {@code verb} and {@code template} only when a resource was
+     * served, so a lookup that finds nothing never creates one.
+     *
+     * <p>The consumer never throws, since it runs inside the application's reactive chain.
+     */
+    public static Consumer<Object> resourceEmitted(
+            String module, Object exchange, Object entry, Object key, String verb, String template) {
+        return new ResourceEmitted(module, exchange, entry, key, verb, template);
+    }
+
+    private static final class ResourceEmitted implements Consumer<Object> {
+        private final String module;
+        private final Object exchange;
+        private final Object entry;
+        private final Object key;
+        private final String verb;
+        private final String template;
+
+        ResourceEmitted(String module, Object exchange, Object entry, Object key, String verb, String template) {
+            this.module = module;
+            this.exchange = exchange;
+            this.entry = entry;
+            this.key = key;
+            this.verb = verb;
+            this.template = template;
+        }
+
+        @Override
+        public void accept(Object resource) {
+            try {
+                resourceServed(exchange);
+                if (key == null) return;
+                Object target = entry;
+                if (target == null) target = lookup(module, key);
+                if (target == null) target = recordDispatch(module, key, verb, template, null, null);
+                hit(target);
+            } catch (Throwable t) {
+                logDelegateFailure(module, "resourceEmitted", t);
+            }
+        }
     }
 
     /** Attaches a handler class/method/descriptor to an already-resolved entry. A no-op for a null entry or a disabled module. */

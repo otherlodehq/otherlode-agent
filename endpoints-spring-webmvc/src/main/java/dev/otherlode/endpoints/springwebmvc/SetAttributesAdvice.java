@@ -44,7 +44,8 @@ import org.springframework.web.util.pattern.PathPattern;
  * Kotlin lambda or method reference through {@code invokedynamic}, has no stable name across runs.
  * For one of those, the join names the method the lambda calls, as {@link
  * OtherlodeEndpoints#lambdaImplementation} recorded it when the JDK spun the class. When nothing
- * was recorded, the class, method, and descriptor are all null. A route the declare walk
+ * was recorded, the class, method, and descriptor are all null. A handler that resolves to Spring's
+ * own Kotlin DSL class, {@code RouterFunctionDsl}, gets no join either. A route the declare walk
  * registered already carries this join from registration, so the reflection here runs only for a
  * route discovered at dispatch, never on the per-request path, which stays one attribute read and
  * a lookup.
@@ -67,6 +68,7 @@ public class SetAttributesAdvice {
     private static final String INTROSPECTOR_REQUEST =
             "org.springframework.web.servlet.handler.HandlerMappingIntrospector$AttributesPreservingRequest";
     private static final String RESOURCE_HANDLER_FUNCTION = "org.springframework.web.servlet.function.ResourceHandlerFunction";
+    private static final String ROUTER_DSL = "org.springframework.web.servlet.function.RouterFunctionDsl";
     private static final String HANDLE_DESCRIPTOR =
             "(Lorg/springframework/web/servlet/function/ServerRequest;)Lorg/springframework/web/servlet/function/ServerResponse;";
 
@@ -130,6 +132,11 @@ public class SetAttributesAdvice {
                     } catch (NoSuchMethodException e) {
                         handlerClass = handlerType.getName();
                     }
+                }
+                if (handlerClass != null && handlerClass.startsWith(ROUTER_DSL)) {
+                    handlerClass = null;
+                    handlerMethod = null;
+                    handlerDescriptor = null;
                 }
                 entry = OtherlodeEndpoints.recordDispatch(MODULE, key, verb, pattern, null, handlerClass);
                 if (entry != null) {

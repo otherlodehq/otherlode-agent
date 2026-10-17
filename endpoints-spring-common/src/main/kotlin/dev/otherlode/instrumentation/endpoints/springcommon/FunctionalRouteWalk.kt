@@ -49,6 +49,8 @@ private const val FUNCTIONAL_KEY = "fn"
  * @property predicateResourceLookupFunctionClass `PredicateResourceLookupFunction`.
  * @property handleDescriptor `HandlerFunction.handle`'s descriptor.
  * @property paramLeaf the `RequestPredicates.Visitor` method that reports a request-parameter predicate.
+ * @property dslClassPrefixes the class-name prefixes of Spring's own Kotlin DSL classes. A handler
+ * that resolves to a class under one of them is inside Spring, so the route has no handler.
  */
 class FunctionalRouteStack(
     val moduleName: String,
@@ -63,6 +65,7 @@ class FunctionalRouteStack(
     val predicateResourceLookupFunctionClass: String,
     val handleDescriptor: String,
     val paramLeaf: String,
+    val dslClassPrefixes: List<String>,
 )
 
 /**
@@ -309,22 +312,27 @@ class FunctionalRouteWalk(
      * joins to the probe on that base. A hidden class, spun for a lambda or a method reference,
      * joins to the method the lambda calls, as [OtherlodeEndpoints.lambdaImplementation] recorded it.
      * When nothing was recorded it gets no join. A class the reflection cannot see
-     * `handle` on is reported by name alone. `ServerRequest` is resolved through the handler's own
-     * loader rather than named here, so this module never links against Spring.
+     * `handle` on is reported by name alone. A handler that resolves to one of Spring's own Kotlin
+     * DSL classes gets no join, since a name inside Spring joins to nothing the application wrote.
+     * `ServerRequest` is resolved through the handler's own loader rather than named here, so this
+     * module never links against Spring.
      */
     private fun handlerJoin(handlerFunction: Any): HandlerJoin? {
         val type = handlerFunction.javaClass
-        if (type.isHidden) {
-            val implementation = OtherlodeEndpoints.lambdaImplementation(type) ?: return null
-            return HandlerJoin(implementation.className, implementation.methodName, implementation.descriptor)
-        }
-        return try {
-            val serverRequest = Class.forName(spec.serverRequestClass, false, type.classLoader)
-            val handle = type.getMethod("handle", serverRequest)
-            HandlerJoin(handle.declaringClass.name, "handle", spec.handleDescriptor)
-        } catch (_: ReflectiveOperationException) {
-            HandlerJoin(type.name, null, null)
-        }
+        val join =
+            if (type.isHidden) {
+                val implementation = OtherlodeEndpoints.lambdaImplementation(type) ?: return null
+                HandlerJoin(implementation.className, implementation.methodName, implementation.descriptor)
+            } else {
+                try {
+                    val serverRequest = Class.forName(spec.serverRequestClass, false, type.classLoader)
+                    val handle = type.getMethod("handle", serverRequest)
+                    HandlerJoin(handle.declaringClass.name, "handle", spec.handleDescriptor)
+                } catch (_: ReflectiveOperationException) {
+                    HandlerJoin(type.name, null, null)
+                }
+            }
+        return if (spec.dslClassPrefixes.any { join.className.startsWith(it) }) null else join
     }
 }
 

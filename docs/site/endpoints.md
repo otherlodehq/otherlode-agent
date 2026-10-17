@@ -17,6 +17,7 @@ Each framework has its own module. A module does nothing on a JVM where its fram
 | Spring MVC, annotated controllers | `spring-webmvc` | Spring Framework 5.3.39, 6.2.19, 7.0.9 | Once the mapping matched the request, before the handler runs |
 | Spring MVC, URL-mapped handlers | `spring-webmvc` | same | Once the mapping matched the request, before the handler runs |
 | Spring MVC, functional routes | `spring-webmvc` | same | Once the router function matched the request, before the handler runs |
+| Spring WebFlux | `spring-webflux` | Spring Framework 5.3.39, 6.2.19, 7.0.9 | Once the mapping matched the request, before the handler runs |
 | Ktor 2 | `ktor-2` | 2.3.13 | Once Ktor chose the route, before its handlers run |
 | Ktor 3 | `ktor-3` | 3.0.3, 3.5.2 | Once Ktor chose the route, before its handlers run |
 | JAX-RS, `javax.ws.rs` | `jaxrs` | Jersey 2.48 with `javax.ws.rs-api` 2.1.1 | Entry of the resource method |
@@ -26,9 +27,9 @@ Each framework has its own module. A module does nothing on a JVM where its fram
 
 The module name is what the agent logs, what the server shows as the endpoint's framework, and what appears in the list of [disabled modules](#modules-that-switch-themselves-off). It is also the name [`disabledEndpointModules`](configuration#disabledendpointmodules) takes to keep a module off.
 
-One Spring module covers Spring Framework 5.3 through 7 and both the `javax` and `jakarta` servlet namespaces. The project's demo runs it inside a Spring Boot 4.1.1 fat jar. The Ktor modules are separate because Ktor 3 replaced `Route` with `RoutingNode`. The JAX-RS module reads annotations from either namespace.
+One Spring MVC module covers Spring Framework 5.3 through 7 and both the `javax` and `jakarta` servlet namespaces. The project's demo runs it inside a Spring Boot 4.1.1 fat jar. Spring WebFlux has a module of its own, so a failure in one never switches off the other, and it covers Spring Framework 5.3 through 7 too. The Ktor modules are separate because Ktor 3 replaced `Route` with `RoutingNode`. The JAX-RS module reads annotations from either namespace.
 
-Spring WebFlux, Javalin, Vert.x and Micronaut have no module. See [what is not covered](#what-is-not-covered).
+Javalin, Vert.x and Micronaut have no module. See [what is not covered](#what-is-not-covered).
 
 ## How an endpoint is named
 
@@ -54,7 +55,7 @@ A form whose meaning would be a guess stays as written: `{.x}`, `{;x}`, `{x*}`, 
 
 The verb is upper case. An endpoint with no verb constraint has the verb `*`. The framework's own spelling travels beside the template for display. The testkit calls it `verbatimTemplate`.
 
-The servlet context path is not part of the template. Spring reports the application-relative template, so a Spring Boot application with `server.servlet.context-path=/shop` still reports `/orders`. JAX-RS leaves out `@ApplicationPath`. The JDK `HttpServer` is the one exception, because a context path is its whole template.
+The servlet context path is not part of the template. Spring reports the application-relative template, so a Spring Boot application with `server.servlet.context-path=/shop` still reports `/orders`. Spring WebFlux's `spring.webflux.base-path` is left out the same way. JAX-RS leaves out `@ApplicationPath`. The JDK `HttpServer` is the one exception, because a context path is its whole template.
 
 A framework mapping that lists several paths or verbs gives one endpoint per combination. `@RequestMapping(path = ["/a", "/b"], method = [GET, POST])` is four endpoints.
 
@@ -95,6 +96,18 @@ Functional routes are declared by walking the router function once, when the `Ro
 Header, parameter, path-extension and `version` predicates narrow nothing, and neither does a negated predicate, so routes that differ only by those merge into one endpoint. A route the walk cannot resolve to a path is not declared, and the agent logs this once at INFO: `a spring-webmvc functional route had no path predicate this walk could resolve; it is counted only if a path predicate matched on the way to it`. Such a route is counted at dispatch when a path predicate matched on the way to it. A route with no path predicate anywhere is not tracked at all.
 
 A top-level or nested `RouterFunctions.resources(pattern, location)` route is declared with the verbs its handler answers, `GET`, `HEAD` and `OPTIONS`, under each prefix its nests give it. It is counted under the prefix the request came through, when the request finds a resource it serves. A request for a resource that does not exist counts nothing, and neither does a verb the handler refuses. A `resources(predicate, resource)` route (Spring 6.1.4 and later) is declared from its predicate's paths and verbs, under its nest's prefix. One whose predicate has no path the walk can resolve is not declared or counted, and the agent logs this once at INFO. A `resources` route over a lookup function of your own is not read, so it is not declared, and the agent logs this once at INFO: `a spring-webmvc resources route had a lookup function this walk could not read; it is not declared, and is counted only when it delegates to Spring's own path lookup`.
+
+## Spring WebFlux
+
+Annotated controllers are declared when Spring builds its handler-method table, and when code registers a mapping directly with `registerMapping`. Actuator registers every operation that way. A request is counted against the pattern and verb Spring matched, using its best match when more than one pattern fits. A mapping with no verb is `*`, and a mapping with no path is `/`.
+
+A request counts once. A CORS preflight is no call, on every route kind: an `OPTIONS` request that carries both `Origin` and `Access-Control-Request-Method`. An `OPTIONS` request without them to a route that maps `OPTIONS` counts. WebFlux has no lookup made on Spring Security's behalf and no second dispatch for an asynchronous result, so neither needs a rule.
+
+URL-mapped handlers are `SimpleUrlHandlerMapping` and Spring Boot's static-resource and webjars mappings. Their endpoints always have the verb `*`. A request is counted against the registered pattern that matched it. WebFlux has no root handler and no default handler, so a request that no registered pattern matches counts nothing. A WebSocket handler mapped by URL is declared like any other and counted when a request upgrades to it.
+
+Functional routes are declared by walking the router function once, when the `RouterFunctionMapping` is initialised, and the walk reads the same predicates as Spring MVC's: `method(...)`, `path(...)`, `and`, `or` and a nest's prefix. Header, `queryParam`, path-extension and `version` predicates narrow nothing, and neither does a negated predicate, so routes that differ only by those merge into one endpoint. A route the walk cannot resolve to a path is not declared, and the agent logs this once at INFO: `a spring-webflux functional route had no path predicate this walk could resolve; it is counted only if a path predicate matched on the way to it`. A mapping built with a router function, as Spring Boot's welcome page mapping is, is declared too.
+
+A top-level or nested `RouterFunctions.resources(pattern, location)` route is declared with the verbs its handler answers, `GET`, `HEAD` and `OPTIONS`, under each prefix its nests give it. It is counted under the prefix the request came through, when the lookup finds a resource and so emits it. A request for a resource that does not exist counts nothing, and neither does a verb the handler refuses. A `resources(predicate, resource)` route (Spring 6.1.4 and later) is declared from its predicate's paths and verbs. A `resources` route over a lookup function of your own is not read, so it is not declared, and the agent logs this once at INFO: `a spring-webflux resources route had a lookup function this walk could not read; it is not declared, and is counted only when it delegates to Spring's own path lookup`.
 
 ## Ktor
 
@@ -163,6 +176,8 @@ The agent skips the join rather than guess. A Spring mapping registered under a 
 
 Once an endpoint names a method, a later registration for the same identity does not replace it. If two handlers register the same verb and template, the first one with a method wins. An endpoint that names only a class gains a method when one is learned.
 
+A functional route written in Spring's Kotlin DSL, `router { ... }` or `coRouter { ... }`, names no handler. Kotlin compiles its handler into one of Spring's own classes, and a name inside Spring joins to nothing your code wrote. The route is still declared and counted.
+
 ### Lambdas and method references
 
 A Java or Kotlin lambda or method reference passed as a handler becomes a hidden class with no stable name, so its class name joins to nothing. For the handler types the modules take, the agent instead names the method the lambda calls. These are `HttpHandler` for the JDK `HttpServer` and `HandlerFunction` for Spring functional routes. It does this by watching the JDK's lambda factory as it creates each such class, then reading the answer back when the framework hands the lambda over.
@@ -217,7 +232,8 @@ The [configuration options](configuration) page gives the system property and en
 
 ## What is not covered
 
-- Spring WebFlux, Javalin, Vert.x and Micronaut have no module. Counting their endpoints needs a module per framework. For them, `otelBridgeEnabled` counts what OpenTelemetry resolves, discovered at dispatch only, so "never called" cannot be computed.
+- Javalin, Vert.x and Micronaut have no module. Counting their endpoints needs a module per framework. For them, `otelBridgeEnabled` counts what OpenTelemetry resolves, discovered at dispatch only, so "never called" cannot be computed.
+- A Spring WebFlux router run through `RouterFunctions.toHttpHandler` or `toWebHandler`, with no `DispatcherHandler`, is not declared, and only its `resources(pattern, location)` routes are counted, found at dispatch.
 - Requests that never reach the hooked framework are not counted. A servlet, filter or Tomcat valve that answers first is invisible to the Spring module, for example.
 - The agent reads no OpenAPI document and does no static analysis of call sites to find endpoints.
 - A route that a router builds at runtime by any means other than the registration points above is found only when a request reaches it.

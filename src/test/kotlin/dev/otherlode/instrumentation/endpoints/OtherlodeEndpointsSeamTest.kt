@@ -349,6 +349,61 @@ class OtherlodeEndpointsSeamTest {
         assertTrue("first" in call.reason)
     }
 
+    @Test
+    @Order(14)
+    fun `the consumer a resource route gets marks the exchange and records a dispatch only when a resource arrives`() {
+        val resolver = RecordingResolver()
+        OtherlodeEndpoints.install(resolver.asResolver() as OtherlodeEndpoints.Resolver)
+        val module = uniqueModule("resource-emitted")
+        val exchange = Any()
+        val consumer = OtherlodeEndpoints.resourceEmitted(module, exchange, null, "resource-key", "GET", "/assets/*")
+
+        assertTrue(resolver.dispatchCalls.isEmpty(), "building the consumer records nothing")
+        assertFalse(OtherlodeEndpoints.takeResourceServed(exchange))
+
+        consumer.accept(Any())
+
+        val dispatch = resolver.dispatchCalls.single()
+        assertEquals("resource-key", dispatch.key)
+        assertEquals("/assets/*", dispatch.verbatimTemplate)
+        assertEquals(1, resolver.hitCalls.size)
+        assertTrue(OtherlodeEndpoints.takeResourceServed(exchange))
+        assertFalse(OtherlodeEndpoints.takeResourceServed(exchange), "the mark is cleared once taken")
+    }
+
+    @Test
+    @Order(15)
+    fun `the consumer hits the endpoint it was given and a null key only marks`() {
+        val resolver = RecordingResolver()
+        OtherlodeEndpoints.install(resolver.asResolver() as OtherlodeEndpoints.Resolver)
+        val module = uniqueModule("resource-emitted-entry")
+        val counted = Any()
+        val refused = Any()
+        val entry = "an-entry"
+
+        OtherlodeEndpoints.resourceEmitted(module, counted, entry, "resource-key", "GET", null).accept(Any())
+        assertTrue(OtherlodeEndpoints.takeResourceServed(counted))
+        OtherlodeEndpoints.resourceEmitted(module, refused, null, null, null, null).accept(Any())
+        assertTrue(OtherlodeEndpoints.takeResourceServed(refused), "a request that is no call is still marked")
+
+        assertTrue(resolver.dispatchCalls.isEmpty(), "a given entry is never recorded again")
+        assertEquals(listOf<Any>(entry), resolver.hitCalls, "a request that is no call is never hit")
+    }
+
+    @Test
+    @Order(16)
+    fun `the consumer never throws when the resolver does`() {
+        val module = uniqueModule("resource-emitted-throws")
+        val exchange = Any()
+        OtherlodeEndpoints.install(
+            resolverProxy { _, _ -> throw IllegalStateException("resolver boom") } as OtherlodeEndpoints.Resolver,
+        )
+
+        OtherlodeEndpoints.resourceEmitted(module, exchange, null, "resource-key", "GET", "/x").accept(Any())
+
+        assertTrue(OtherlodeEndpoints.takeResourceServed(exchange))
+    }
+
     private companion object {
         val MODULE_SEQUENCE = AtomicLong()
 

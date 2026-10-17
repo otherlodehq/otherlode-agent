@@ -40,6 +40,7 @@ private val FUNCTIONAL_ROUTE_STACK =
         predicateResourceLookupFunctionClass = "$FUNCTION_PACKAGE.PredicateResourceLookupFunction",
         handleDescriptor = HANDLE_DESCRIPTOR,
         paramLeaf = "param",
+        dslClassPrefixes = listOf("$FUNCTION_PACKAGE.RouterFunctionDsl"),
     )
 
 private const val ADVICE_PACKAGE = "dev.otherlode.endpoints.springwebmvc"

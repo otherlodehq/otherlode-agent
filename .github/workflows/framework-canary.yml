@@ -30,6 +30,7 @@ jobs:
         run: >-
           ./gradlew
           :endpoints-spring-webmvc:check
+          :endpoints-spring-webflux:check
           :endpoints-ktor-2:check
           :endpoints-ktor-3:check
           :endpoints-jaxrs:check

@@ -80,7 +80,7 @@ Rules every module follows, and the Spring MVC module is brought to:
 - **A top-level `resources(...)` route is declared and counted**, its pattern read from the resource lookup function by exact class shape, rather than left undeclared and uncounted.
 - **An API version is not part of identity** (Spring 7.0), like a header predicate. A request rejected for its version after the route matched counts, since a hit means matched.
 - **A handler that resolves to Spring's Kotlin DSL classes** (`RouterFunctionDsl`, `CoRouterFunctionDsl`) gets no join: ADR 0035's rule that a name joining to nothing is worse than none.
-- **WebSocket routes are not declared**, since an upgrade never reaches a dispatch hook and every one would read as never called.
+- **A WebSocket route whose upgrade never reaches a dispatch hook is not declared**, since every one would read as never called (Micronaut, Javalin). A Spring WebFlux WebSocket handler is mapped by URL and its upgrade passes through `AbstractUrlHandlerMapping.lookupHandler`, so it is declared and counted like any URL-mapped handler.
 - **Endpoints a framework adds for itself are declared and counted**, as Actuator's are: Javalin's `HttpAllowedMethodsPlugin` OPTIONS routes and route overview, Micronaut's management endpoints.
 
 Per framework:

@@ -51,6 +51,7 @@ val jdk17Projects =
         ":endpoints-otel-bridge",
         ":endpoints-spring-common",
         ":endpoints-spring-webmvc",
+        ":endpoints-spring-webflux",
         ":testkit",
         ":demo",
         ":demo-spring",
@@ -131,6 +132,9 @@ dependencies {
 
     // Endpoint module for Spring MVC, covering Spring Framework 5.3, 6.x and 7.x with one module.
     implementation(project(":endpoints-spring-webmvc"))
+
+    // Endpoint module for Spring WebFlux, covering Spring Framework 5.3, 6.x and 7.x with one module.
+    implementation(project(":endpoints-spring-webflux"))
 
     // Endpoint modules for Ktor. Route became the interface RoutingNode between 2.x and 3.x, so
     // the two major versions need their own module rather than one shared one.
