@@ -90,6 +90,70 @@ class RouteTemplateNormalizerTest {
     }
 
     @Test
+    fun `a Micronaut optional parameter becomes the optional marker`() {
+        assertEquals("/books/{id?}", RouteTemplateNormalizer.normalize("/books/{id:?}"))
+        assertEquals("/books/{id?}", RouteTemplateNormalizer.normalize("/books/{ id : ? }"))
+    }
+
+    @Test
+    fun `a Micronaut length or regex constraint is dropped`() {
+        assertEquals("/books/{id}", RouteTemplateNormalizer.normalize("/books/{id:2}"))
+        assertEquals("/books/{id}", RouteTemplateNormalizer.normalize("/books/{id:\\d+}"))
+        assertEquals("/a/{x}", RouteTemplateNormalizer.normalize("/a/{x:.*}"))
+    }
+
+    @Test
+    fun `a Micronaut optional segment becomes a segment of its own`() {
+        assertEquals("/books/{id?}", RouteTemplateNormalizer.normalize("/books{/id}"))
+        assertEquals("/books/{id?}", RouteTemplateNormalizer.normalize("/books{/id:2}"))
+        assertEquals("/{id?}", RouteTemplateNormalizer.normalize("/{/id}"))
+    }
+
+    @Test
+    fun `a Micronaut optional segment list is kept as written`() {
+        assertEquals("/books{/a,b}", RouteTemplateNormalizer.normalize("/books{/a,b}"))
+    }
+
+    @Test
+    fun `a whole-segment reserved expansion collapses to a star segment`() {
+        assertEquals("/files/*", RouteTemplateNormalizer.normalize("/files/{+path}"))
+    }
+
+    @Test
+    fun `a reserved expansion inside a segment is kept as written`() {
+        assertEquals("/files/a{+x}", RouteTemplateNormalizer.normalize("/files/a{+x}"))
+    }
+
+    @Test
+    fun `a Javalin whole-segment angle parameter collapses to a star segment`() {
+        assertEquals("/files/*", RouteTemplateNormalizer.normalize("/files/<path>"))
+        assertEquals("/x/*/meta", RouteTemplateNormalizer.normalize("/x/<p>/meta"))
+    }
+
+    @Test
+    fun `a Javalin angle parameter sharing its segment with text is kept as written`() {
+        assertEquals("/x/a<p>", RouteTemplateNormalizer.normalize("/x/a<p>"))
+        assertEquals("/x/<p>.txt", RouteTemplateNormalizer.normalize("/x/<p>.txt"))
+        assertEquals("/x/<a<b>", RouteTemplateNormalizer.normalize("/x/<a<b>"))
+        assertEquals("/x/< >", RouteTemplateNormalizer.normalize("/x/< >"))
+        assertEquals("/x/<>", RouteTemplateNormalizer.normalize("/x/<>"))
+        assertEquals("/x/<{y}>", RouteTemplateNormalizer.normalize("/x/<{y}>"))
+    }
+
+    @Test
+    fun `a Micronaut form whose meaning would be a guess is kept as written`() {
+        assertEquals("/a/{.x}", RouteTemplateNormalizer.normalize("/a/{.x}"))
+        assertEquals("/a/{;x}", RouteTemplateNormalizer.normalize("/a/{;x}"))
+        assertEquals("/a/{x*}", RouteTemplateNormalizer.normalize("/a/{x*}"))
+        assertEquals("/a/{a,b}", RouteTemplateNormalizer.normalize("/a/{a,b}"))
+        assertEquals("/a/{?q}", RouteTemplateNormalizer.normalize("/a/{?q}"))
+        assertEquals("/a/{&q}", RouteTemplateNormalizer.normalize("/a/{&q}"))
+        assertEquals("/a/{#f}", RouteTemplateNormalizer.normalize("/a/{#f}"))
+        assertEquals("/a/{+.x}", RouteTemplateNormalizer.normalize("/a/{+.x}"))
+        assertEquals("/a{/.x}", RouteTemplateNormalizer.normalize("/a{/.x}"))
+    }
+
+    @Test
     fun `a star embedded inside a segment is left as written`() {
         assertEquals("/files/*.txt", RouteTemplateNormalizer.normalize("/files/*.txt"))
     }

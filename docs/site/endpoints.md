@@ -43,9 +43,14 @@ The agent rewrites the framework's own spelling of the template into one form, s
 | The root is `/` | an empty path | `/` |
 | A path parameter keeps its name and loses its regex | `/orders/{id: \d+}`, `/v{version:\d+}/items` | `/orders/{id}`, `/v{version}/items` |
 | A segment that is only a wildcard or a tail becomes `*` | `/files/**`, `/files/{*path}`, `/files/{path...}`, `/{...}` | `/files/*`, `/*` |
+| A segment that is only Micronaut's reserved expansion or Javalin's slash-accepting parameter becomes `*` | `/files/{+path}`, `/files/<path>` | `/files/*` |
+| Micronaut's optional parameter becomes the optional marker | `/books/{id:?}` | `/books/{id?}` |
+| Micronaut's optional segment becomes a segment of its own | `/books{/id}` | `/books/{id?}` |
 | Ktor's optional marker stays | `/{id?}` | `/{id?}` |
 | A `*` inside a segment stays | `/files/*.txt` | `/files/*.txt` |
 | Case is kept | `/Orders` | `/Orders` |
+
+A form whose meaning would be a guess stays as written: `{.x}`, `{;x}`, `{x*}`, `{a,b}`, `{?q}`, `{&q}`, `{#f}`, `{/a,b}`, a `{+x}` or `<x>` that shares its segment with other text.
 
 The verb is upper case. An endpoint with no verb constraint has the verb `*`. The framework's own spelling travels beside the template for display. The testkit calls it `verbatimTemplate`.
 
