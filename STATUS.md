@@ -105,9 +105,7 @@ collector are done (`2a012d4` to `b26f77a`). Left, in order:
    page, navigation and overview count, the UI for the `without-evidence`
    statuses and flags, and the server's docs. Then merge to the server's
    master (cleared on 2026-10-16; a push deploys).
-2. **The `ProbeLocation` field comments** in the proto, saying which fields
-   a `<clinit>` slot carries.
-3. **ADRs name no decider** in the collector (3 files) and the site (2
+2. **ADRs name no decider** in the collector (3 files) and the site (2
    files). The agent's are done (`9362a06`) and the server's are on the
    branch. Editing the collector and site repos was refused by the session's
    permission check on 2026-10-17, so they wait for a maintainer.

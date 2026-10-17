@@ -4,6 +4,7 @@ import dev.otherlode.ClassFileSupport
 import dev.otherlode.benchmark.CodeSizeLimitsTest.Companion.codeLengths
 import dev.otherlode.benchmark.HotPathWeaver
 import dev.otherlode.export.ProbeKind
+import dev.otherlode.export.ProbeLocation
 import dev.otherlode.export.ResourceAttributes
 import dev.otherlode.instrumentation.branch.BranchProbeAsmVisitorWrapper
 import dev.otherlode.registry.ProbeRegistry
@@ -507,6 +508,24 @@ class InitializerSlotsTest {
         val run = weave(Shape(52, Body.RETURNS))
 
         assertEquals(listOf(ProbeKind.METHOD, ProbeKind.INITIALIZER_RETURNED, ProbeKind.INITIALIZER_THREW), slotsDeclared(run))
+    }
+
+    @Test
+    fun `a slot carries only its position, its initialiser's name and its line`() {
+        val run = weave(Shape(52, Body.THROWS_RUNTIME))
+        val probes =
+            run.registry
+                .manifest(resource)
+                .probes
+                .filter { it.className == run.name && it.methodName == "<clinit>" }
+        val entry = probes.single { it.kind == ProbeKind.METHOD }
+
+        for (slot in probes.filter { it.kind != ProbeKind.METHOD }) {
+            assertEquals(
+                ProbeLocation(slot.classId, slot.probeIndex, slot.kind, run.name, "<clinit>", "()V", entry.line, branchIndex = null),
+                slot,
+            )
+        }
     }
 
     private companion object {
