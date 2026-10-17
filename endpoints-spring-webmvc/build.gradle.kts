@@ -21,6 +21,7 @@ val spring7Version = providers.gradleProperty("otherlode.framework.spring7").get
 
 dependencies {
     implementation(project(":endpoints-api"))
+    implementation(project(":endpoints-spring-common"))
 
     // Compile-time only: at runtime OtherlodeEndpoints comes from the target JVM's bootstrap
     // classloader, where BootstrapHolder appends the embedded jar (see the root project's

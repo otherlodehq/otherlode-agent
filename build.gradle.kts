@@ -49,6 +49,7 @@ val jdk17Projects =
         ":endpoints-ktor-2",
         ":endpoints-ktor-3",
         ":endpoints-otel-bridge",
+        ":endpoints-spring-common",
         ":endpoints-spring-webmvc",
         ":testkit",
         ":demo",
@@ -124,6 +125,9 @@ dependencies {
 
     // The first real endpoint module: the JDK's own com.sun.net.httpserver.HttpServer.
     implementation(project(":endpoints-jdk-httpserver"))
+
+    // The functional-route walk the Spring endpoint modules share.
+    implementation(project(":endpoints-spring-common"))
 
     // Endpoint module for Spring MVC, covering Spring Framework 5.3, 6.x and 7.x with one module.
     implementation(project(":endpoints-spring-webmvc"))
