@@ -40,9 +40,7 @@ dependencies {
     // module builds against its floor version and disables itself on a LinkageError against a
     // newer or older one it does not actually match. Never `implementation`: Spring must never be
     // shaded into the agent jar, since it belongs to the target application, not to this agent.
-    // javax.servlet-api is needed only so javac can resolve method signatures Spring's own API
-    // mentions (HttpServletRequest on `handleMatch`); no advice class in this module names a
-    // servlet type itself.
+    // The dispatch advice is rebound to jakarta.servlet where Spring takes jakarta types.
     compileOnly("org.springframework:spring-webmvc:5.3.39")
     compileOnly("javax.servlet:javax.servlet-api:4.0.1")
 

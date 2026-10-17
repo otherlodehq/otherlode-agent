@@ -40,7 +40,7 @@ import kotlin.test.assertTrue
  * `visitor.unknown(this)` and whose `HttpMethodPredicate` carries that assertion.
  *
  * [SpringWebMvcModule.declare] is called directly rather than through the woven
- * `initRouterFunctions` advice on purpose. Weaving needs `RouterFunctionMapping` to load after
+ * `afterPropertiesSet` advice on purpose. Weaving needs `RouterFunctionMapping` to load after
  * `EndpointInstrumentation.install`, which can happen only once per JVM, and
  * [SpringWebMvcModuleTest] already spends that one chance; nothing here loads a handler-mapping
  * class at all. The registry still receives every route through the real seam, since
@@ -225,10 +225,20 @@ class SpringFunctionalRouteWalkTest {
     }
 
     @Test
-    fun `a resources route declares nothing, since its pattern belongs to the nest around it`() {
-        val declared = declaredIdentities(RouterFunctions.resources("/static/**", ClassPathResource("static/")))
+    fun `a resources route declares its pattern with the verbs its handler answers`() {
+        val declared = declaredIdentities { RouterFunctions.resources("/static/**", ClassPathResource("static/")) }
 
-        assertEquals(emptySet(), declared)
+        assertEquals(setOf("GET /static/*", "HEAD /static/*", "OPTIONS /static/*"), declared)
+    }
+
+    @Test
+    fun `a resources route inside a nest is declared under the nest prefix`() {
+        val declared =
+            declaredIdentities {
+                RouterFunctions.route().path("/assets") { builder -> builder.resources("/**", ClassPathResource("static/")) }.build()
+            }
+
+        assertEquals(setOf("GET /assets/*", "HEAD /assets/*", "OPTIONS /assets/*"), declared)
     }
 
     @Test
@@ -264,7 +274,7 @@ class SpringFunctionalRouteWalkTest {
         // Any object whose loader can see `RouterFunction`, so the walk gets as far as its own
         // type guard. The guard sits after that `Class.forName`, so an object from a loader with
         // no Spring at all (a `String`, on the bootstrap loader) raises `ClassNotFoundException`
-        // instead of returning quietly. Unreachable through `InitRouterFunctionsAdvice`, whose
+        // instead of returning quietly. Unreachable through `DeclareRouterFunctionsAdvice`, whose
         // only argument is `RouterFunctionMapping`'s own `routerFunction` field.
         val declared = declaredIdentities(ServerResponse.ok().build())
 
@@ -294,13 +304,19 @@ class SpringFunctionalRouteWalkTest {
      * Every `"<verb> <template>"` a fresh [SpringWebMvcModule] declares for [frameworkObject],
      * through a registry of its own so one test's routes are never another's.
      */
-    private fun declaredIdentities(frameworkObject: Any): Set<String> {
+    private fun declaredIdentities(frameworkObject: Any): Set<String> = declaredIdentities { frameworkObject }
+
+    /**
+     * As above, with [frameworkObject] built once the module is installed, for a router function
+     * whose own classes the module weaves as they load.
+     */
+    private fun declaredIdentities(frameworkObject: () -> Any): Set<String> {
         val instrumentation = ByteBuddyAgent.install()
         val registry = EndpointRegistry()
         val endpointInstrumentation = EndpointInstrumentation(registry, listOf(SpringWebMvcModule()))
         val transformer = endpointInstrumentation.install(instrumentation)
         try {
-            SpringWebMvcModule().declare(frameworkObject)
+            SpringWebMvcModule().declare(frameworkObject())
             val endpoints = registry.endpoints()
             assertTrue(
                 endpoints.all { it.framework == "spring-webmvc" },

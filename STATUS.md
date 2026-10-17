@@ -177,6 +177,11 @@ servlets another module owns. Needs its own research and grill.
 - A handler from Spring's Kotlin DSLs (`router {}`, `coRouter {}`) gets no
   join. Unwrapping to the adopter's lambda waits on reading its compiled
   shape.
+- Spring MVC `resources(...)`: a lookup the adopter composes over Spring's
+  path lookup that turns a found resource into none leaves the request
+  marked, so the route that then serves it is not counted. A filtered nest
+  whose composed resource lookup falls back to a resource counts against a
+  route declared at the nest's own path. Both are rare.
 
 ## Parked
 

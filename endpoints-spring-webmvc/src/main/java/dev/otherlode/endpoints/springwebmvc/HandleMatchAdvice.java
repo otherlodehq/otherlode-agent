@@ -3,6 +3,8 @@ package dev.otherlode.endpoints.springwebmvc;
 import dev.otherlode.bootstrap.OtherlodeEndpoints;
 import java.util.Iterator;
 import java.util.List;
+import javax.servlet.DispatcherType;
+import javax.servlet.http.HttpServletRequest;
 import net.bytebuddy.asm.Advice;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.servlet.mvc.condition.PathPatternsRequestCondition;
@@ -13,9 +15,14 @@ import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
  * Woven onto {@code RequestMappingInfoHandlerMapping.handleMatch(RequestMappingInfo, String,
  * HttpServletRequest)}, Spring MVC's dispatch point. It runs once per matched request, with the
  * winning {@link RequestMappingInfo} narrowed to the patterns that matched, best match first, and
- * the matched verb, before the handler runs. Binding only {@link Advice.Argument} 0 keeps this class free of any {@code
- * javax}/{@code jakarta} servlet type, so one module covers every Spring Framework major version
- * this agent supports.
+ * the matched verb, before the handler runs.
+ *
+ * <p>This advice is written against the {@code javax} servlet types and bound to the {@code
+ * jakarta} ones, by prefix, when the woven method takes them, so one class covers every Spring
+ * Framework major version this agent supports. A lookup {@code HandlerMappingIntrospector} makes
+ * for Spring Security or CORS arrives with the request wrapped in its own request class, an async
+ * redispatch has the dispatcher type {@code ASYNC}, and a CORS preflight is answered by Spring's
+ * preflight handler. None of the three is a call of the route it matches.
  *
  * <p>The {@link RequestMappingInfo} handed to this method is a new object built per request by
  * {@code getMatchingCondition}, never the one {@link RegisterHandlerMethodAdvice} saw at
@@ -30,10 +37,22 @@ import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
  */
 public class HandleMatchAdvice {
     private static final String MODULE = "spring-webmvc";
+    private static final String INTROSPECTOR_REQUEST =
+            "org.springframework.web.servlet.handler.HandlerMappingIntrospector$AttributesPreservingRequest";
 
     @Advice.OnMethodEnter(suppress = Throwable.class)
-    public static void onEnter(@Advice.Argument(0) RequestMappingInfo info) {
+    public static void onEnter(
+            @Advice.Argument(0) RequestMappingInfo info,
+            @Advice.Argument(2) HttpServletRequest request) {
         try {
+            if (INTROSPECTOR_REQUEST.equals(request.getClass().getName())
+                    || request.getDispatcherType() == DispatcherType.ASYNC
+                    || ("OPTIONS".equals(request.getMethod())
+                            && request.getHeader("Origin") != null
+                            && request.getHeader("Access-Control-Request-Method") != null)) {
+                return;
+            }
+
             // The best match comes first in the condition's own sorted set. getPatternValues()
             // copies the parsed patterns into a HashSet, which loses that order.
             String pattern;

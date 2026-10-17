@@ -2,6 +2,7 @@ package dev.otherlode.bootstrap;
 
 import java.lang.System.Logger.Level;
 import java.lang.invoke.MethodHandleInfo;
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Modifier;
 import java.util.ArrayDeque;
 import java.util.Collections;
@@ -384,6 +385,28 @@ public final class OtherlodeEndpoints {
         } catch (Throwable t) {
             logDelegateFailure(null, "hit", t);
         }
+    }
+
+    private static final ThreadLocal<WeakReference<Object>> RESOURCE_SERVED = new ThreadLocal<>();
+
+    /**
+     * Marks {@code request} as one a functional resources route matched on this thread, so the
+     * route mapping's own dispatch hook, which runs next for the same request, does not count it
+     * again under its enclosing nest's path.
+     */
+    public static void resourceServed(Object request) {
+        RESOURCE_SERVED.set(new WeakReference<>(request));
+    }
+
+    /**
+     * Whether {@link #resourceServed} marked {@code request} on this thread. The mark is cleared
+     * either way, so it never outlives the request it was set for.
+     */
+    public static boolean takeResourceServed(Object request) {
+        WeakReference<Object> mark = RESOURCE_SERVED.get();
+        if (mark == null) return false;
+        RESOURCE_SERVED.remove();
+        return mark.get() == request;
     }
 
     /** Attaches a handler class/method/descriptor to an already-resolved entry. A no-op for a null entry or a disabled module. */

@@ -6,7 +6,6 @@ import org.springframework.web.context.WebApplicationContext
 import org.springframework.web.context.support.GenericWebApplicationContext
 import org.springframework.web.servlet.config.annotation.DelegatingWebMvcConfiguration
 import org.springframework.web.servlet.function.RouterFunction
-import org.springframework.web.servlet.function.ServerResponse
 import java.util.function.Supplier
 
 /**
@@ -22,7 +21,7 @@ import java.util.function.Supplier
  * this module's advice does target directly and which must not load before
  * `EndpointInstrumentation.install` has run.
  */
-fun buildFunctionalWebApplicationContext(routerFunction: RouterFunction<ServerResponse>): WebApplicationContext {
+fun buildFunctionalWebApplicationContext(routerFunction: RouterFunction<*>): WebApplicationContext {
     val context = GenericWebApplicationContext()
     context.servletContext = MockServletContext()
     AnnotatedBeanDefinitionReader(context).register(DelegatingWebMvcConfiguration::class.java)

@@ -7,8 +7,10 @@ import net.bytebuddy.description.method.MethodDescription
 import net.bytebuddy.description.type.TypeDescription
 import net.bytebuddy.dynamic.DynamicType
 import net.bytebuddy.matcher.ElementMatcher
+import net.bytebuddy.matcher.ElementMatchers.isBridge
 import net.bytebuddy.matcher.ElementMatchers.named
 import net.bytebuddy.matcher.ElementMatchers.namedOneOf
+import net.bytebuddy.matcher.ElementMatchers.not
 import net.bytebuddy.matcher.ElementMatchers.takesArguments
 import java.lang.System.Logger.Level
 import java.lang.reflect.InvocationHandler
@@ -18,6 +20,9 @@ import java.util.concurrent.atomic.AtomicBoolean
 private const val HANDLER_METHOD_MAPPING = "org.springframework.web.servlet.handler.AbstractHandlerMethodMapping"
 private const val REQUEST_MAPPING_HANDLER_MAPPING = "org.springframework.web.servlet.mvc.method.RequestMappingInfoHandlerMapping"
 private const val URL_HANDLER_MAPPING = "org.springframework.web.servlet.handler.AbstractUrlHandlerMapping"
+private const val PATH_EXPOSING_INTERCEPTOR = "$URL_HANDLER_MAPPING\$PathExposingHandlerInterceptor"
+private const val PATH_RESOURCE_LOOKUP_FUNCTION = "org.springframework.web.servlet.function.PathResourceLookupFunction"
+private const val PREDICATE_RESOURCE_LOOKUP_FUNCTION = "org.springframework.web.servlet.function.PredicateResourceLookupFunction"
 private const val ROUTER_FUNCTION_MAPPING = "org.springframework.web.servlet.function.support.RouterFunctionMapping"
 private const val ROUTER_FUNCTION = "org.springframework.web.servlet.function.RouterFunction"
 private const val REQUEST_PREDICATE = "org.springframework.web.servlet.function.RequestPredicate"
@@ -29,8 +34,29 @@ private const val HANDLER_FUNCTION = "org.springframework.web.servlet.function.H
 /** `HandlerFunction.handle`'s descriptor, the same on every supported Spring version. */
 private const val HANDLE_DESCRIPTOR =
     "(Lorg/springframework/web/servlet/function/ServerRequest;)Lorg/springframework/web/servlet/function/ServerResponse;"
+
+/** A `ResourceHandlerFunction` answers these verbs in Spring 5.3, 6.2 and 7.0, and 405 for any other. */
+private val RESOURCE_VERBS = listOf("GET", "HEAD", "OPTIONS")
+
+/**
+ * Leads a `resources(pattern, location)` route's dispatch key, `[RESOURCE_KEY, lookupFunction,
+ * nestPath, verb]`. The lookup function is the one object that is the same for every request,
+ * since Spring builds a new handler function per request, and it is held weakly. The nest path
+ * tells apart the templates one lookup function serves under several nests.
+ */
+private const val RESOURCE_KEY = "fnres"
+
+/**
+ * Leads a `resources(predicate, resource)` route's dispatch key, `[PREDICATE_RESOURCE_KEY,
+ * template, verb]`, apart from an ordinary route's, so a resource handler is never counted as the
+ * route that shares its nest's path.
+ */
+private const val PREDICATE_RESOURCE_KEY = "fnrespred"
 private const val ADVICE_PACKAGE = "dev.otherlode.endpoints.springwebmvc"
 private const val MODULE_NAME = "spring-webmvc"
+
+private const val SERVLET_PREFIX = "javax/servlet/"
+private const val JAKARTA_SERVLET_PREFIX = "jakarta/servlet/"
 
 /**
  * Leads a functional route's dispatch key, `[FUNCTIONAL_KEY, template, verb]`, so it never equals
@@ -41,37 +67,46 @@ private const val FUNCTIONAL_KEY = "fn"
 
 /**
  * Endpoint module for Spring MVC (`spring-webmvc`), covering Spring Framework 5.3, 6.x and 7.x
- * with one module. Every advice class binds only framework types Spring itself already passes
- * between its own methods, never a `javax`/`jakarta` servlet type, so nothing here needs a
- * per-major-version variant.
+ * with one module. A dispatch advice reads the servlet request, whose package is `javax` in
+ * Spring 5.3 and `jakarta` from 6.0. Each is written once against `javax` and, when the woven
+ * method takes `jakarta` types, bound with the `javax/servlet/` prefix rewritten to
+ * `jakarta/servlet/` (see [servletRemap]), so a hook never weaves where its types do not exist.
  *
  * `AbstractHandlerMethodMapping.registerHandlerMethod` is the registration hook: it runs once per
  * handler method as Spring builds its route table. `registerMapping` is the second one, for a
  * handler method registered in code. `RequestMappingInfoHandlerMapping.handleMatch`
  * is the dispatch point: it runs once per matched request, before the handler runs, with the
- * winning `RequestMappingInfo` already narrowed to the matched pattern and verb.
+ * winning `RequestMappingInfo` already narrowed to the matched pattern and verb. A lookup Spring's
+ * `HandlerMappingIntrospector` makes, an async redispatch and a CORS preflight reach every
+ * dispatch point and are no call.
  *
  * A Spring Boot Actuator endpoint registers through `registerMapping` on a
  * `RequestMappingInfoHandlerMapping` subclass, so it is declared there and counted by
  * `handleMatch`. `AbstractUrlHandlerMapping` covers the URL-mapped side instead:
  * `SimpleUrlHandlerMapping`, `BeanNameUrlHandlerMapping`, and Spring Boot's static-resource and
- * webjars mappings all extend it, and its `registerHandler`/`buildPathExposingHandler` pair is
- * that hierarchy's own registration hook and dispatch point.
+ * webjars mappings all extend it. Its `registerHandler` and `setRootHandler` are that hierarchy's
+ * registration hooks. Its dispatch point is `PathExposingHandlerInterceptor.preHandle`, which only
+ * `DispatcherServlet` runs.
  *
  * `RouterFunctionMapping` covers Spring's functional routing style. Its routes are declared as a
  * `RouterFunction` object built once and revealed only to a visitor, never through a registration
- * hook's own arguments, so this side uses the second seam call, [declare], instead: advice on
- * `initRouterFunctions` hands the built `RouterFunction` to [declare], which walks it with a
+ * hook's own arguments, so this side uses the second seam call, [declare], instead: advice on the
+ * exit of `afterPropertiesSet` hands the `RouterFunction` the mapping holds to [declare], which walks it with a
  * [Proxy] implementing `RouterFunctions.Visitor` (and, for each route's predicate, a second
  * [Proxy] implementing `RequestPredicates.Visitor`), since neither visitor type is on this
  * module's own classloader. `setAttributes` is this style's dispatch point: it runs once per
  * matched request, after functional routing has already resolved the winning pattern and handler.
+ * A `resources(pattern, location)` route has no pattern attribute of its own and a new handler
+ * per request, so it is counted at the exit of its `PathResourceLookupFunction.apply`; a
+ * `resources(predicate, resource)` route is counted at `setAttributes` under its own key.
  */
 class SpringWebMvcModule : EndpointModule {
     override val name: String = MODULE_NAME
 
     private val log = System.getLogger(SpringWebMvcModule::class.java.name)
     private val noPathPredicateLogged = AtomicBoolean(false)
+    private val resourcesUnreadLogged = AtomicBoolean(false)
+    private val resourcesPathlessLogged = AtomicBoolean(false)
 
     /**
      * A functional route's handler passed as a lambda or a method reference is a `HandlerFunction`
@@ -80,7 +115,14 @@ class SpringWebMvcModule : EndpointModule {
     override val handlerInterfaces: Set<String> = setOf(HANDLER_FUNCTION)
 
     override fun typeMatcher(): ElementMatcher<in TypeDescription> =
-        namedOneOf(HANDLER_METHOD_MAPPING, REQUEST_MAPPING_HANDLER_MAPPING, URL_HANDLER_MAPPING, ROUTER_FUNCTION_MAPPING)
+        namedOneOf(
+            HANDLER_METHOD_MAPPING,
+            REQUEST_MAPPING_HANDLER_MAPPING,
+            URL_HANDLER_MAPPING,
+            PATH_EXPOSING_INTERCEPTOR,
+            ROUTER_FUNCTION_MAPPING,
+            PATH_RESOURCE_LOOKUP_FUNCTION,
+        )
 
     override fun transform(
         builder: DynamicType.Builder<*>,
@@ -106,7 +148,11 @@ class SpringWebMvcModule : EndpointModule {
 
             REQUEST_MAPPING_HANDLER_MAPPING -> {
                 builder.visit(
-                    advice.hook("$ADVICE_PACKAGE.HandleMatchAdvice", named<MethodDescription>("handleMatch").and(takesArguments(3))),
+                    advice.hook(
+                        "$ADVICE_PACKAGE.HandleMatchAdvice",
+                        named<MethodDescription>("handleMatch").and(takesArguments(3)),
+                        servletRemap(typeDescription, "handleMatch", 3) { it.parameters[2].type },
+                    ),
                 )
             }
 
@@ -119,25 +165,46 @@ class SpringWebMvcModule : EndpointModule {
                         ),
                     ).visit(
                         advice.hook(
-                            "$ADVICE_PACKAGE.BuildPathExposingHandlerAdvice",
-                            named<MethodDescription>("buildPathExposingHandler").and(takesArguments(4)),
+                            "$ADVICE_PACKAGE.RegisterRootHandlerAdvice",
+                            named<MethodDescription>("setRootHandler").and(takesArguments(Any::class.java)),
                         ),
                     )
+            }
+
+            PATH_EXPOSING_INTERCEPTOR -> {
+                builder.visit(
+                    advice.hook(
+                        "$ADVICE_PACKAGE.PathExposingPreHandleAdvice",
+                        named<MethodDescription>("preHandle").and(takesArguments(3)),
+                        servletRemap(typeDescription, "preHandle", 3) { it.parameters[0].type },
+                    ),
+                )
             }
 
             ROUTER_FUNCTION_MAPPING -> {
                 builder
                     .visit(
                         advice.hook(
-                            "$ADVICE_PACKAGE.InitRouterFunctionsAdvice",
-                            named<MethodDescription>("initRouterFunctions").and(takesArguments(0)),
+                            "$ADVICE_PACKAGE.DeclareRouterFunctionsAdvice",
+                            named<MethodDescription>("afterPropertiesSet").and(takesArguments(0)),
                         ),
                     ).visit(
                         advice.hook(
                             "$ADVICE_PACKAGE.SetAttributesAdvice",
                             named<MethodDescription>("setAttributes").and(takesArguments(3)),
+                            servletRemap(typeDescription, "setAttributes", 3) { it.parameters[0].type },
                         ),
                     )
+            }
+
+            PATH_RESOURCE_LOOKUP_FUNCTION -> {
+                builder.visit(
+                    advice.hook(
+                        "$ADVICE_PACKAGE.ResourceLookupAdvice",
+                        named<MethodDescription>("apply").and(takesArguments(1)).and(not(isBridge())),
+                        servletRemap(typeDescription, "apply", 1) { servletRequestType(it.parameters[0].type) },
+                    ),
+                )
             }
 
             else -> {
@@ -192,10 +259,13 @@ class SpringWebMvcModule : EndpointModule {
                         registerRoute(predicateResult, currentPrefixes(), args[1]!!)
                     }
 
-                    "resources", "attributes", "unknown" -> {
-                        // Not declared: a `resources` route's pattern lives inside its enclosing
-                        // nest and is discovered at dispatch; `attributes` carries no path; a
-                        // whole `unknown` router subtree is never visited any deeper than this.
+                    "resources" -> {
+                        registerResources(args[0]!!, currentPrefixes(), requestPredicateClass, requestPredicatesVisitorClass, loader)
+                    }
+
+                    "attributes", "unknown" -> {
+                        // Not declared: `attributes` carries no path; a whole `unknown` router
+                        // subtree is never visited any deeper than this.
                     }
 
                     "toString" -> {
@@ -261,6 +331,108 @@ class SpringWebMvcModule : EndpointModule {
             }
         }
     }
+
+    /**
+     * Registers a `resources(lookupFunction)` route under every prefix, once per verb its handler
+     * answers. Spring's `PathResourceLookupFunction` is read through its `pattern` field and keyed
+     * by the lookup function and the prefix, since its dispatch hook is the lookup itself.
+     * `PredicateResourceLookupFunction` (`resources(predicate, resource)`, Spring 6.1.4 and later)
+     * is read through its `predicate` field and keyed by template, since its predicate sets the
+     * matching pattern the route mapping's dispatch hook reads; one whose predicate gives no path
+     * is not declared. Any other lookup function is an unread shape, logged once at INFO and not
+     * declared.
+     */
+    private fun registerResources(
+        lookupFunction: Any,
+        prefixes: Set<String>,
+        requestPredicateClass: Class<*>,
+        requestPredicatesVisitorClass: Class<*>,
+        loader: ClassLoader?,
+    ) {
+        val read =
+            when (lookupFunction.javaClass.name) {
+                PATH_RESOURCE_LOOKUP_FUNCTION -> {
+                    declaredField(lookupFunction, "pattern")?.toString()?.let { pattern ->
+                        for (prefix in prefixes) {
+                            val template = joinPaths(prefix, pattern)
+                            for (verb in RESOURCE_VERBS) {
+                                OtherlodeEndpoints.register(
+                                    MODULE_NAME,
+                                    listOf(RESOURCE_KEY, lookupFunction, prefix, verb),
+                                    verb,
+                                    template,
+                                    null,
+                                    null,
+                                    null,
+                                    null,
+                                )
+                            }
+                        }
+                    }
+                }
+
+                PREDICATE_RESOURCE_LOOKUP_FUNCTION -> {
+                    declaredField(lookupFunction, "predicate")?.let { predicate ->
+                        val result = walkPredicate(predicate, requestPredicateClass, requestPredicatesVisitorClass, loader)
+                        if (result.unknown || result.alternatives.none { it.path != null }) {
+                            if (resourcesPathlessLogged.compareAndSet(false, true)) {
+                                log.log(
+                                    Level.INFO,
+                                    "otherlode: a $MODULE_NAME resources route's predicate had no path this walk could resolve; " +
+                                        "it is not declared or counted",
+                                )
+                            }
+                            return@let Unit
+                        }
+                        for (alternative in result.alternatives) {
+                            val path = alternative.path ?: continue
+                            val verbs = alternative.verb?.let { verb -> listOf(verb).filter { it in RESOURCE_VERBS } } ?: RESOURCE_VERBS
+                            for (prefix in prefixes) {
+                                val template = joinPaths(prefix, path)
+                                for (verb in verbs) {
+                                    OtherlodeEndpoints.register(
+                                        MODULE_NAME,
+                                        listOf(PREDICATE_RESOURCE_KEY, template, verb),
+                                        verb,
+                                        template,
+                                        null,
+                                        null,
+                                        null,
+                                        null,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                else -> {
+                    null
+                }
+            }
+        if (read == null && resourcesUnreadLogged.compareAndSet(false, true)) {
+            log.log(
+                Level.INFO,
+                "otherlode: a $MODULE_NAME resources route had a lookup function this walk could not read; " +
+                    "it is not declared, and is counted only when it delegates to Spring's own path lookup",
+            )
+        }
+    }
+
+    private fun declaredField(
+        target: Any,
+        name: String,
+    ): Any? =
+        try {
+            target.javaClass
+                .getDeclaredField(name)
+                .apply { isAccessible = true }
+                .get(target)
+        } catch (_: ReflectiveOperationException) {
+            null
+        } catch (_: RuntimeException) {
+            null
+        }
 
     /** The class, method and descriptor an endpoint record names as its handler. */
     private class HandlerJoin(
@@ -430,3 +602,36 @@ private fun crossJoinPaths(
     outer: Set<String>,
     inner: Set<String>,
 ): Set<String> = outer.flatMap { o -> inner.map { i -> joinPaths(o, i) } }.toSet()
+
+/**
+ * The prefix rewrite that turns an advice class written against `javax.servlet` into one bound to
+ * `jakarta.servlet`, or none when the woven method takes `javax` types or the shape is not found.
+ * [type] picks the type to inspect from the declared method of [typeDescription] named [method]
+ * with [arguments] parameters, so the answer comes from the woven method's own signature and a
+ * class loader that sees both packages cannot mislead it. A method that is not found gets no
+ * rewrite, and its hook then matches nothing, which the pipeline reports as `HOOK_UNMATCHED`.
+ */
+private fun servletRemap(
+    typeDescription: TypeDescription,
+    method: String,
+    arguments: Int,
+    type: (MethodDescription) -> TypeDescription.Generic?,
+): Map<String, String> {
+    val servletType =
+        typeDescription.declaredMethods
+            .filter { it.internalName == method && it.parameters.size == arguments && !it.isBridge }
+            .firstNotNullOfOrNull { runCatching { type(it) }.getOrNull() }
+    return if (servletType != null && servletType.asErasure().name.startsWith("jakarta.servlet.")) {
+        mapOf(SERVLET_PREFIX to JAKARTA_SERVLET_PREFIX)
+    } else {
+        emptyMap()
+    }
+}
+
+/** The return type of `ServerRequest.servletRequest()`, which is the servlet request class of the Spring in use. */
+private fun servletRequestType(serverRequest: TypeDescription.Generic): TypeDescription.Generic? =
+    serverRequest
+        .asErasure()
+        .declaredMethods
+        .firstOrNull { it.internalName == "servletRequest" && it.parameters.isEmpty() }
+        ?.returnType

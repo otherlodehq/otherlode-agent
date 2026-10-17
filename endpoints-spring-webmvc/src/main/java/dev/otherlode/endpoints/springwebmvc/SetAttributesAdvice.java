@@ -3,6 +3,8 @@ package dev.otherlode.endpoints.springwebmvc;
 import dev.otherlode.bootstrap.OtherlodeEndpoints;
 import java.lang.reflect.Method;
 import java.util.List;
+import javax.servlet.DispatcherType;
+import javax.servlet.http.HttpServletRequest;
 import net.bytebuddy.asm.Advice;
 import org.springframework.http.HttpMethod;
 import org.springframework.web.servlet.function.RouterFunctions;
@@ -14,6 +16,19 @@ import org.springframework.web.util.pattern.PathPattern;
  * HandlerFunction)}, the point functional routing has already matched a request to a route and is
  * about to hand it to the winning handler. It runs once per matched request, before the handler
  * runs.
+ *
+ * <p>This advice is written against the {@code javax} servlet types and bound to the {@code
+ * jakarta} ones, by prefix, when the woven method takes them. A lookup {@code
+ * HandlerMappingIntrospector} makes for Spring Security or CORS arrives with the request wrapped
+ * in its own request class, an async redispatch has the dispatcher type {@code ASYNC}, and a CORS
+ * preflight is answered by Spring's preflight handler. None of the three is a call. A request a
+ * {@code resources(pattern, location)} route matched is counted by {@link ResourceLookupAdvice},
+ * which marks it: inside a nest its matching pattern is the nest's own path, and a filter wraps its
+ * handler, so neither would say which route served it. A resource handler this module did not
+ * declare, behind a lookup function the walk could not read, is not discovered here either. A
+ * {@code resources(predicate, resource)} route is counted here, under its own key, since its
+ * predicate sets the matching pattern; a resource handler is never counted as an ordinary route
+ * that shares its nest's path.
  *
  * <p>The matched pattern lives under {@link RouterFunctions#MATCHING_PATTERN_ATTRIBUTE} in {@code
  * request.attributes()} at this point; {@code setAttributes} itself only removes that attribute
@@ -48,16 +63,29 @@ import org.springframework.web.util.pattern.PathPattern;
 public class SetAttributesAdvice {
     private static final String MODULE = "spring-webmvc";
     private static final String FUNCTIONAL_KEY = "fn";
+    private static final String PREDICATE_RESOURCE_KEY = "fnrespred";
+    private static final String INTROSPECTOR_REQUEST =
+            "org.springframework.web.servlet.handler.HandlerMappingIntrospector$AttributesPreservingRequest";
+    private static final String RESOURCE_HANDLER_FUNCTION = "org.springframework.web.servlet.function.ResourceHandlerFunction";
     private static final String HANDLE_DESCRIPTOR =
             "(Lorg/springframework/web/servlet/function/ServerRequest;)Lorg/springframework/web/servlet/function/ServerResponse;";
 
     @Advice.OnMethodEnter(suppress = Throwable.class)
     public static void onEnter(
+            @Advice.Argument(0) HttpServletRequest servletRequest,
             @Advice.Argument(1) ServerRequest request,
             @Advice.Argument(2) Object handlerFunction) {
         try {
+            boolean resourceServed = OtherlodeEndpoints.takeResourceServed(servletRequest);
             // Spring passes a null handler when no route matched.
-            if (handlerFunction == null) return;
+            if (handlerFunction == null || resourceServed) return;
+            if (INTROSPECTOR_REQUEST.equals(servletRequest.getClass().getName())
+                    || servletRequest.getDispatcherType() == DispatcherType.ASYNC
+                    || ("OPTIONS".equals(servletRequest.getMethod())
+                            && servletRequest.getHeader("Origin") != null
+                            && servletRequest.getHeader("Access-Control-Request-Method") != null)) {
+                return;
+            }
             Object patternValue = request.attributes().get(RouterFunctions.MATCHING_PATTERN_ATTRIBUTE);
             if (patternValue == null) return;
             String pattern =
@@ -69,11 +97,10 @@ public class SetAttributesAdvice {
             // only a route with no method predicate can serve, so it is looked up as "*".
             HttpMethod httpMethod = request.method();
             String verb = httpMethod == null ? "*" : httpMethod.name();
-            // A CORS preflight matches the route it asks about, and Spring answers it with its own
-            // preflight handler instead of this one, so it is no call of the endpoint.
-            if ("OPTIONS".equals(verb)
-                    && request.headers().firstHeader("Origin") != null
-                    && request.headers().firstHeader("Access-Control-Request-Method") != null) {
+
+            if (RESOURCE_HANDLER_FUNCTION.equals(handlerFunction.getClass().getName())) {
+                Object resource = OtherlodeEndpoints.lookup(MODULE, List.of(PREDICATE_RESOURCE_KEY, pattern, verb));
+                if (resource != null) OtherlodeEndpoints.hit(resource);
                 return;
             }
 

@@ -4,10 +4,10 @@ import dev.otherlode.bootstrap.OtherlodeEndpoints;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto {@code RouterFunctionMapping.initRouterFunctions()}, the private method that fills
- * the private {@code routerFunction} field from every {@code RouterFunction} bean in the
- * application context. It runs once, the first time Spring needs the mapping's route table,
- * before any request is dispatched.
+ * Woven onto the exit of {@code RouterFunctionMapping.afterPropertiesSet()}, which fills the
+ * private {@code routerFunction} field from every {@code RouterFunction} bean in the application
+ * context, unless the mapping was built with a router function, which leaves it as given. Either
+ * way the field is set when this method returns, before any request is dispatched.
  *
  * <p>{@code routerFunction} is bound as a plain {@code Object}, never as {@code RouterFunction}:
  * this class carries no symbolic reference to that type at all. The object is handed unopened to
@@ -20,7 +20,7 @@ import net.bytebuddy.asm.Advice;
  * <p>This method is deliberately one flat body with no private helper method of its own; see
  * {@link RegisterHandlerMethodAdvice}'s Javadoc for why.
  */
-public class InitRouterFunctionsAdvice {
+public class DeclareRouterFunctionsAdvice {
     private static final String MODULE = "spring-webmvc";
 
     @Advice.OnMethodExit(suppress = Throwable.class)

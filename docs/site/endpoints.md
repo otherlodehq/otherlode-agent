@@ -76,9 +76,15 @@ The route bridge only ever discovers. OpenTelemetry learns a route when a reques
 
 Annotated controllers are declared when Spring builds its handler-method table, and when code registers a mapping directly with `registerMapping`. Actuator registers every operation that way. A request is counted against the pattern and verb Spring matched, using its best match when more than one pattern fits. A mapping with no verb is `*`.
 
-URL-mapped handlers are `SimpleUrlHandlerMapping`, `BeanNameUrlHandlerMapping` and Spring Boot's static-resource and webjars mappings. Their endpoints always have the verb `*`. Spring falls back to the root handler or a `/*` handler when no registered path matches, and the agent counts that fallback against `/` or `/*`. It does not create an endpoint per requested URL.
+A request counts once. These are no call, on every route kind below:
 
-Functional routes (`RouterFunction` beans) are declared by walking the router function once, when Spring first builds its route table. The walk reads these predicates:
+- A lookup Spring makes for itself through `HandlerMappingIntrospector`, which Spring Security and CORS handling use to match the request.
+- The second dispatch of a request that completes asynchronously, such as a `Callable` or `DeferredResult` result.
+- A CORS preflight, an `OPTIONS` request that carries both `Origin` and `Access-Control-Request-Method`. An `OPTIONS` request without them to a route that maps `OPTIONS` counts.
+
+URL-mapped handlers are `SimpleUrlHandlerMapping`, `BeanNameUrlHandlerMapping` and Spring Boot's static-resource and webjars mappings. Their endpoints always have the verb `*`. Spring falls back to the root handler or a `/*` handler when no registered path matches, and the agent counts that fallback against `/` or `/*`. It does not create an endpoint per requested URL. A root handler a mapping sets itself, as Spring Boot's welcome page mapping does, is declared as `/`. A URL-mapped request that Spring answers before its interceptors run is not counted: a `304 Not Modified` from a `Last-Modified` handler on Spring 5.3 and 6, and a CORS request Spring refuses.
+
+Functional routes are declared by walking the router function once, when the `RouterFunctionMapping` is initialised. That covers `RouterFunction` beans and a mapping built with a router function. The walk reads these predicates:
 
 - `method(...)` gives the verb.
 - `path(...)` gives the template.
@@ -86,7 +92,9 @@ Functional routes (`RouterFunction` beans) are declared by walking the router fu
 - `or` declares each alternative.
 - A nest's path is a prefix for every route inside it.
 
-Header, parameter, path-extension and `version` predicates narrow nothing, and neither does a negated predicate, so routes that differ only by those merge into one endpoint. A route the walk cannot resolve to a path is not declared, and the agent logs this once at INFO: `a spring-webmvc functional route had no path predicate this walk could resolve; it is counted only if a path predicate matched on the way to it`. Such a route is counted at dispatch when a path predicate matched on the way to it. A route with no path predicate anywhere is not tracked at all. A `resources` route is found at dispatch, not declared. A CORS preflight request is not counted.
+Header, parameter, path-extension and `version` predicates narrow nothing, and neither does a negated predicate, so routes that differ only by those merge into one endpoint. A route the walk cannot resolve to a path is not declared, and the agent logs this once at INFO: `a spring-webmvc functional route had no path predicate this walk could resolve; it is counted only if a path predicate matched on the way to it`. Such a route is counted at dispatch when a path predicate matched on the way to it. A route with no path predicate anywhere is not tracked at all.
+
+A top-level or nested `RouterFunctions.resources(pattern, location)` route is declared with the verbs its handler answers, `GET`, `HEAD` and `OPTIONS`, under each prefix its nests give it. It is counted under the prefix the request came through, when the request finds a resource it serves. A request for a resource that does not exist counts nothing, and neither does a verb the handler refuses. A `resources(predicate, resource)` route (Spring 6.1.4 and later) is declared from its predicate's paths and verbs, under its nest's prefix. One whose predicate has no path the walk can resolve is not declared or counted, and the agent logs this once at INFO. A `resources` route over a lookup function of your own is not read, so it is not declared, and the agent logs this once at INFO: `a spring-webmvc resources route had a lookup function this walk could not read; it is not declared, and is counted only when it delegates to Spring's own path lookup`.
 
 ## Ktor
 
