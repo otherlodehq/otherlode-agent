@@ -35,6 +35,7 @@ val micronaut3FloorJars =
         "io.micronaut:micronaut-router:$micronaut3FloorVersion",
         "io.micronaut:micronaut-http-server-netty:$micronaut3FloorVersion",
         "io.micronaut.servlet:micronaut-servlet-core:3.0.0",
+        "io.micronaut.aws:micronaut-function-aws-api-proxy:3.0.0",
     )
 val micronaut4FloorJars =
     jarsOnly(
@@ -72,13 +73,17 @@ kotlin {
 // annotation processor at the release they run on, so each set compiles the shared sources again
 // with its own. `test` runs the newest tested 3.x on Netty, micronaut30Test the 3.0.0 floor on
 // Netty, servletTest micronaut-servlet's Jetty server on the newest and servlet30Test on the floor,
-// each servlet set aligned to its core release by the Micronaut BOM.
+// each servlet set aligned to its core release by the Micronaut BOM. lambdaTest drives micronaut-aws
+// 3.17's Lambda handler on the Micronaut release that aws release was built against, lambda30Test
+// the 3.0.0 floor of both.
 fun registerMicronautTests(
     setName: String,
     micronautVersion: String,
     servletVersion: String? = null,
+    lambdaVersion: String? = null,
 ) {
     val servlet = servletVersion != null
+    val lambda = lambdaVersion != null
     val sourceSet =
         if (setName == "test") {
             sourceSets.getByName("test")
@@ -89,6 +94,10 @@ fun registerMicronautTests(
                 if (servlet) {
                     kotlin.srcDir("src/servletTest/kotlin")
                     kotlin.exclude("**/Micronaut3ModuleTest.kt", "**/Micronaut3ModuleMatcherTest.kt")
+                }
+                if (lambda) {
+                    kotlin.srcDir("src/lambdaTest/kotlin")
+                    kotlin.exclude("**/Micronaut3ModuleTest.kt", "**/Micronaut3ModuleMatcherTest.kt", "**/DispatchPointGateTest.kt")
                 }
                 compileClasspath += sourceSets.main.get().output
                 runtimeClasspath += sourceSets.main.get().output
@@ -109,6 +118,9 @@ fun registerMicronautTests(
         if (servlet) {
             add(implementation.name, "io.micronaut.servlet:micronaut-http-server-jetty:$servletVersion")
             add(implementation.name, platform("io.micronaut:micronaut-bom:$micronautVersion"))
+        } else if (lambda) {
+            add(implementation.name, "io.micronaut.aws:micronaut-function-aws-api-proxy:$lambdaVersion")
+            add(implementation.name, "io.micronaut:micronaut-http-client:$micronautVersion")
         } else {
             add(implementation.name, "io.micronaut:micronaut-http-server-netty:$micronautVersion")
         }
@@ -130,7 +142,7 @@ fun registerMicronautTests(
         } else {
             tasks.register<Test>(setName) {
                 description =
-                    "Runs the tests against Micronaut $micronautVersion${if (servletVersion != null) " on micronaut-servlet $servletVersion" else ""}."
+                    "Runs the tests against Micronaut $micronautVersion${if (servletVersion != null) " on micronaut-servlet $servletVersion" else ""}${if (lambdaVersion != null) " on micronaut-aws $lambdaVersion" else ""}."
                 group = "verification"
                 testClassesDirs = sourceSet.output.classesDirs
                 classpath = sourceSet.runtimeClasspath
@@ -157,3 +169,5 @@ registerMicronautTests("test", micronaut3Version)
 registerMicronautTests("micronaut30Test", micronaut3FloorVersion)
 registerMicronautTests("servletTest", micronaut3Version, newestServletVersion)
 registerMicronautTests("servlet30Test", micronaut3FloorVersion, "3.0.0")
+registerMicronautTests("lambdaTest", "3.8.8", lambdaVersion = "3.17.0")
+registerMicronautTests("lambda30Test", micronaut3FloorVersion, lambdaVersion = "3.0.0")

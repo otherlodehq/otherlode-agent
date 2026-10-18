@@ -99,5 +99,7 @@ Decided in a grill after the `micronaut-3` review. micronaut-aws 3.x builds its 
 - **`micronaut-3` counts on micronaut-aws 3.x** at the entry of `MicronautLambdaContainerHandler.handleRequest(MicronautAwsProxyRequest, MicronautAwsProxyResponse, Context)`, from the route match the request carries (same descriptor from 3.0.0 to 3.18.0), never its synthetic bridge, which would count twice.
 - **A Micronaut module declares a router's routes only once one of its counted dispatch points has been constructed in the process**: Netty's `RoutingInBoundHandler`, `ServletHttpHandler`, `MicronautLambdaContainerHandler`, or 4.x's `RouteExecutor`, in either order. A router no dispatch point ever arms declares nothing, and the module is reported with a disabled kind saying its routes are not counted on this runtime, so the server shows that rather than "no endpoints". A hand-kept list of supported runtimes would fail silently on the next runtime nobody listed.
 
+A router waits for its dispatch point for one flush interval, or until the agent's final flush, before the module is reported off. Every start-up builds the router a few milliseconds before its dispatch point, and a review measured that window at up to 57 ms on a cold JVM: deciding at whichever manifest came first switched a fully counted Netty or servlet application off for the whole run. Settled on 2026-10-18.
+
 Considered: gating on a dispatch class being on the classpath. Rejected: a Lambda application that also ships Netty for local runs would still declare what it cannot count.
 

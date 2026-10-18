@@ -223,6 +223,7 @@ object Agent {
             log.log(Level.INFO, "otherlode: no endpoint modules were discovered, no framework's endpoints will be instrumented")
         }
 
+        val instrumentedEndpoints = endpointInstrumentation
         val verifierHook = VerifyErrorHook(ownRetransformationFailures)
         verifierHook.install(instrumentation)
 
@@ -283,6 +284,7 @@ object Agent {
                     dependencyListing = dependencyListing,
                     releaseQuietCaches = otherlodeInstrumentation::releaseQuietCaches,
                     verifierWatch = verifierHook.watch(),
+                    beforeManifest = { graceMillis, finalFlush -> instrumentedEndpoints?.beforeManifest(graceMillis, finalFlush) },
                 )
             scheduler = started
             started.start()

@@ -260,6 +260,7 @@ class RegistryResolverTest {
                 OtherlodeEndpoints.KIND_TRANSFORM_FAILED to DisabledEndpointModuleKind.TRANSFORM_FAILED,
                 OtherlodeEndpoints.KIND_ROUTE_WALK_FAILED to DisabledEndpointModuleKind.ROUTE_WALK_FAILED,
                 OtherlodeEndpoints.KIND_HOOK_UNMATCHED to DisabledEndpointModuleKind.HOOK_UNMATCHED,
+                OtherlodeEndpoints.KIND_ROUTES_NOT_COUNTED to DisabledEndpointModuleKind.ROUTES_NOT_COUNTED,
                 99 to DisabledEndpointModuleKind.UNSPECIFIED,
             )
         assertEquals(expected, expected.keys.associateWith { disabledKindOf(it) })

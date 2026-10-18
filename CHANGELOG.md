@@ -21,3 +21,5 @@ the section being read.
 - A Spring functional route written in the Kotlin DSL (`router { }`, `coRouter { }`) names no handler, on Spring MVC and Spring WebFlux.
 - `disabledEndpointModules` keeps single endpoint modules from installing, by name, separated by `;`.
 - A module the configuration keeps off, by `disabledEndpointModules` or by `endpointsEnabled=false`, is reported as disabled with the kind `CONFIGURED_OFF`, in the wire format and in the testkit.
+- Endpoint counting for micronaut-aws 3.x on Lambda, as part of `micronaut-3`, at the entry of `MicronautLambdaContainerHandler.handleRequest` from the route match the request carries.
+- The Micronaut modules declare a router's routes only once a dispatch point they count at has been constructed: Netty's `RoutingInBoundHandler`, micronaut-servlet's `ServletHttpHandler`, micronaut-aws's `MicronautLambdaContainerHandler`, or `RouteExecutor` on Micronaut 4 and 5. A router that waits one flush interval with none constructed, or is still waiting at the final flush, reports the module as disabled with the new kind `ROUTES_NOT_COUNTED`, in the wire format and in the testkit, and the module declares nothing.

@@ -983,6 +983,9 @@ enum class DisabledEndpointModuleKind {
 
     /** The adopter's configuration kept the module from installing. */
     CONFIGURED_OFF,
+
+    /** The module has no dispatch point on this runtime to count its routes at, so it declares none. */
+    ROUTES_NOT_COUNTED,
 }
 
 /** How the agent learned of a dependency. */

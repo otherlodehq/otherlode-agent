@@ -167,6 +167,9 @@ public enum class DisabledEndpointModuleKind {
 
     /** The adopter's configuration kept the module from installing. */
     CONFIGURED_OFF,
+
+    /** The module has no dispatch point on this runtime to count its routes at, so it declares none. */
+    ROUTES_NOT_COUNTED,
 }
 
 internal fun WireProbeKind.toTestkit(): ProbeKind =
@@ -323,6 +326,10 @@ internal fun WireDisabledEndpointModuleKind.toTestkit(): DisabledEndpointModuleK
         WireDisabledEndpointModuleKind.CONFIGURED_OFF -> {
             DisabledEndpointModuleKind.CONFIGURED_OFF
         }
+
+        WireDisabledEndpointModuleKind.ROUTES_NOT_COUNTED -> {
+            DisabledEndpointModuleKind.ROUTES_NOT_COUNTED
+        }
     }
 
 internal fun DisabledEndpointModuleKind.toWire(): WireDisabledEndpointModuleKind =
@@ -333,4 +340,5 @@ internal fun DisabledEndpointModuleKind.toWire(): WireDisabledEndpointModuleKind
         DisabledEndpointModuleKind.ROUTE_WALK_FAILED -> WireDisabledEndpointModuleKind.ROUTE_WALK_FAILED
         DisabledEndpointModuleKind.HOOK_UNMATCHED -> WireDisabledEndpointModuleKind.HOOK_UNMATCHED
         DisabledEndpointModuleKind.CONFIGURED_OFF -> WireDisabledEndpointModuleKind.CONFIGURED_OFF
+        DisabledEndpointModuleKind.ROUTES_NOT_COUNTED -> WireDisabledEndpointModuleKind.ROUTES_NOT_COUNTED
     }

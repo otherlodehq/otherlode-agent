@@ -20,6 +20,7 @@ import net.bytebuddy.jar.asm.ClassVisitor
 import net.bytebuddy.matcher.ElementMatcher
 import net.bytebuddy.matcher.ElementMatchers.isConstructor
 import net.bytebuddy.matcher.ElementMatchers.named
+import net.bytebuddy.matcher.ElementMatchers.none
 import net.bytebuddy.matcher.ElementMatchers.takesArguments
 import net.bytebuddy.pool.TypePool
 import java.io.File
@@ -159,6 +160,23 @@ class EndpointInstrumentationTest {
         dispatch.invoke(broken, "GET", "/broken")
 
         assertEquals(1, registry.disabledModules().count { it.module == "broken-router" })
+    }
+
+    @Test
+    fun `beforeManifest reaches every module, and one that throws is disabled without stopping the others`() {
+        val registry = EndpointRegistry()
+        val calls = AtomicInteger()
+        val failing = ManifestHookModule("manifest-hook-failing-${System.nanoTime()}") { throw IllegalStateException("hook gave up") }
+        val counting = ManifestHookModule("manifest-hook-counting-${System.nanoTime()}") { calls.incrementAndGet() }
+        install(registry, listOf(failing, counting), "com.example.framework.FakeRouter")
+
+        installedEndpointInstrumentation!!.beforeManifest(graceMillis = 0, finalFlush = false)
+
+        assertEquals(1, calls.get())
+        val disabled = registry.disabledModules().single { it.module == failing.name }
+        assertEquals(DisabledEndpointModuleKind.ADVICE_FAILED, disabled.kind)
+        assertTrue("hook gave up" in disabled.reason)
+        assertEquals(1, registry.disabledModules().size)
     }
 
     @Test
@@ -769,6 +787,26 @@ private class DeclaringModule(
     }
 
     override fun declare(frameworkObject: Any) = Unit
+}
+
+/** Matches nothing and runs [onBeforeManifest] where a manifest is about to be built. */
+private class ManifestHookModule(
+    override val name: String,
+    private val onBeforeManifest: () -> Unit,
+) : EndpointModule {
+    override fun typeMatcher(): ElementMatcher<in TypeDescription> = none()
+
+    override fun transform(
+        builder: DynamicType.Builder<*>,
+        typeDescription: TypeDescription,
+        advice: AdviceBinder,
+        classLoader: ClassLoader?,
+    ): DynamicType.Builder<*> = builder
+
+    override fun beforeManifest(
+        graceMillis: Long,
+        finalFlush: Boolean,
+    ) = onBeforeManifest()
 }
 
 /** Fails inside ByteBuddy's `make()`, after the transform callback has already returned. */

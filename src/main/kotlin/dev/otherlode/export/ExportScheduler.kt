@@ -92,6 +92,12 @@ class ExportScheduler(
      * stamped on every manifest. The default sees none.
      */
     private val verifierWatch: VerifierRejectionWatch = VerifierRejectionWatch.NOT_WATCHED,
+    /**
+     * Run before each manifest's disabled endpoint modules and endpoints are read, with the flush
+     * interval and whether this is the final flush, so a module that settles what it declares does
+     * so before that manifest is built. The default does nothing.
+     */
+    private val beforeManifest: (graceMillis: Long, finalFlush: Boolean) -> Unit = { _, _ -> },
     /** Milliseconds since the epoch; read once per flush and once at construction. Injectable so a test controls it. */
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
@@ -105,6 +111,7 @@ class ExportScheduler(
     /** When this scheduler was built, which is at agent start; see [maybeLogUnseenCallbackAnnotations]. */
     private val startedAt = clock()
     private val cacheReleaseFailureLogged = AtomicBoolean(false)
+    private val beforeManifestFailureLogged = AtomicBoolean(false)
 
     /** Set once a manifest carrying `dependenciesListed = true` was confirmed; see [sendDependenciesListedIfDue]. */
     private val dependenciesListedSent = AtomicBoolean(false)
@@ -239,14 +246,14 @@ class ExportScheduler(
             // Read after the sweep, so this flush's delta sends carry the counts of this generation.
             val generation = dependencyRegistry.countGeneration
             val deliveredBefore = dependencyRegistry.deliveredGeneration
-            val manifestSend = sendPool.submit<Boolean>(::sendManifestDelta)
+            val manifestSend = sendPool.submit<Boolean> { sendManifestDelta(final) }
             val deltaSend = sendPool.submit<Boolean> { sendDeltaBatch(final, generation, flushStart) }
             val manifestConfirmed = manifestSend.get()
             val deltaConfirmed = deltaSend.get()
             var allConfirmed = manifestConfirmed && deltaConfirmed
             val released =
                 dependencyRegistry.deliveredGeneration > deliveredBefore && dependencyRegistry.hasSendableUndelivered()
-            if (released) allConfirmed = sendManifestDelta() && allConfirmed
+            if (released) allConfirmed = sendManifestDelta(final) && allConfirmed
             if (allConfirmed) {
                 sendUnplacedIfDue()
                 sendDependenciesListedIfDue()
@@ -279,6 +286,17 @@ class ExportScheduler(
                 "otherlode: reading the verifier's rejections failed, so this run's zero counts are no longer evidence",
                 t,
             )
+        }
+    }
+
+    /** Calls [beforeManifest]; a failure is logged once and never reaches the flush. */
+    private fun runBeforeManifest(final: Boolean) {
+        try {
+            beforeManifest(config.flushInterval.toMillis(), final)
+        } catch (t: Throwable) {
+            if (beforeManifestFailureLogged.compareAndSet(false, true)) {
+                log.log(Level.WARNING, "otherlode: the hook that runs before a manifest is built failed", t)
+            }
         }
     }
 
@@ -738,7 +756,8 @@ class ExportScheduler(
      * Returns whether every send in the loop was confirmed. A call with
      * nothing to send returns true.
      */
-    private fun sendManifestDelta(): Boolean {
+    private fun sendManifestDelta(final: Boolean): Boolean {
+        runBeforeManifest(final)
         try {
             endpointRegistry.computeDisabledModules()?.let { snapshot ->
                 val listed = dependenciesListed

@@ -1,7 +1,9 @@
 package dev.otherlode.instrumentation.endpoints.micronaut
 
+import dev.otherlode.bootstrap.OtherlodeEndpoints
 import dev.otherlode.instrumentation.endpoints.api.AdviceBinder
 import dev.otherlode.instrumentation.endpoints.api.EndpointModule
+import dev.otherlode.instrumentation.endpoints.micronautcommon.DispatchGate
 import net.bytebuddy.description.method.MethodDescription
 import net.bytebuddy.description.type.TypeDescription
 import net.bytebuddy.dynamic.ClassFileLocator
@@ -18,6 +20,7 @@ private const val DEFAULT_ROUTER = "io.micronaut.web.router.DefaultRouter"
 private const val ROUTE_EXECUTOR = "io.micronaut.http.server.RouteExecutor"
 private const val URI_ROUTE_INFO = "io.micronaut.web.router.UriRouteInfo"
 private const val ADVICE_PACKAGE = "dev.otherlode.endpoints.micronaut"
+private const val ROUTE_EXECUTOR_CONSTRUCTOR_ARGUMENTS = 6
 
 /** Whether [method] returns a `Stream` of `UriRouteInfo`, which Micronaut 3's `uriRoutes()` (a stream of `UriRoute`) does not. */
 private val RETURNS_URI_ROUTE_INFOS: ElementMatcher<MethodDescription> =
@@ -46,10 +49,15 @@ private fun routerIsMicronaut4(classLoader: ClassLoader): Boolean =
 /**
  * Endpoint module for Micronaut (`micronaut`), covering the 4.0 to 5.x lines, compiled against 4.0.0.
  *
- * The exit of the `DefaultRouter(Collection)` constructor declares every route. The router has
- * then built all its `UriRouteInfo` objects, and [declare] reads them through `Router.uriRoutes()`,
- * keyed by the `UriRouteInfo` instance that dispatch returns. The exit of the package-private
- * `RouteExecutor.findRouteMatch` counts the `UriRouteInfo` of a non-null match. Micronaut's request
+ * The exit of the `DefaultRouter(Collection)` constructor hands the router to the module, which
+ * holds it weakly. The exit of the `RouteExecutor` constructor arms the module, and a router is then
+ * declared, in either order: [DispatchGate] reads its `UriRouteInfo` objects through
+ * `Router.uriRoutes()`, keyed by the `UriRouteInfo` instance that dispatch returns. Every runtime
+ * of Micronaut 4 and 5 finds a route through `RouteExecutor`, which `RequestLifecycle` uses: Netty,
+ * micronaut-servlet and each serverless runtime built on either. A router no `RouteExecutor` is
+ * constructed for declares nothing, since nothing could count its routes, and [beforeManifest]
+ * reports the module off with `ROUTES_NOT_COUNTED` once the router has waited a flush interval. The exit of the
+ * package-private `RouteExecutor.findRouteMatch` counts the `UriRouteInfo` of a non-null match. Micronaut's request
  * lifecycle calls it once per request, after the pre-matching filters and before argument binding:
  * a CORS preflight a filter answers, an `OPTIONS` request, a 404, a 405 and an ambiguous match
  * return no match and count nothing, and a filter that rejects the request after the match still
@@ -68,6 +76,18 @@ class MicronautModule : EndpointModule {
     override val name: String = MODULE_NAME
 
     private val walk = RouterWalk()
+
+    private val gate =
+        DispatchGate(
+            declareRoutes = walk::declare,
+            notCounted = {
+                OtherlodeEndpoints.moduleDisabled(
+                    MODULE_NAME,
+                    OtherlodeEndpoints.KIND_ROUTES_NOT_COUNTED,
+                    "a router was built but no $ROUTE_EXECUTOR was constructed, so no dispatch point this module counts at exists on this runtime",
+                )
+            },
+        )
 
     override fun typeMatcher(): ElementMatcher<in TypeDescription> = named<TypeDescription>(DEFAULT_ROUTER).and(ROUTER_SHAPE)
 
@@ -101,12 +121,18 @@ class MicronautModule : EndpointModule {
             }
 
             ROUTE_EXECUTOR -> {
-                builder.visit(
-                    advice.hook(
-                        "$ADVICE_PACKAGE.DispatchAdvice",
-                        named<MethodDescription>("findRouteMatch").and(takesArguments(1)),
-                    ),
-                )
+                builder
+                    .visit(
+                        advice.hook(
+                            "$ADVICE_PACKAGE.ArmAdvice",
+                            isConstructor<MethodDescription>().and(takesArguments(ROUTE_EXECUTOR_CONSTRUCTOR_ARGUMENTS)),
+                        ),
+                    ).visit(
+                        advice.hook(
+                            "$ADVICE_PACKAGE.DispatchAdvice",
+                            named<MethodDescription>("findRouteMatch").and(takesArguments(1)),
+                        ),
+                    )
             }
 
             else -> {
@@ -114,5 +140,10 @@ class MicronautModule : EndpointModule {
             }
         }
 
-    override fun declare(frameworkObject: Any) = walk.declare(frameworkObject)
+    override fun declare(frameworkObject: Any) = gate.accept(frameworkObject)
+
+    override fun beforeManifest(
+        graceMillis: Long,
+        finalFlush: Boolean,
+    ) = gate.beforeManifest(graceMillis, finalFlush)
 }

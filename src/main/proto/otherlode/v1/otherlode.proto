@@ -967,8 +967,9 @@ message EndpointDelta {
 // whole and once; its endpoints declared before that stop being counted.
 message DisabledEndpointModule {
   string module = 1;
-  // Free text for a person: the failure, for HOOK_UNMATCHED the hooked method and its class, or
-  // for CONFIGURED_OFF the setting that kept the module off.
+  // Free text for a person: the failure, for HOOK_UNMATCHED the hooked method and its class,
+  // for CONFIGURED_OFF the setting that kept the module off, or for ROUTES_NOT_COUNTED what the
+  // runtime lacks.
   string reason = 2;
   int64 disabled_at = 3;
   DisabledEndpointModuleKind kind = 4;
@@ -993,6 +994,9 @@ enum DisabledEndpointModuleKind {
   // The adopter's configuration kept the module from installing: `disabledEndpointModules`
   // named it, or `endpointsEnabled` is false.
   CONFIGURED_OFF = 6;
+  // The framework declares routes on a runtime where the module has no dispatch point to count
+  // them at, so every one would read as never called. The module declares none of them.
+  ROUTES_NOT_COUNTED = 7;
 }
 
 // How the agent learned of a dependency.

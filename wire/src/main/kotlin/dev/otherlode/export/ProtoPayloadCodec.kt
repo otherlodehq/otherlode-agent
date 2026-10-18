@@ -976,6 +976,7 @@ object ProtoPayloadCodec {
             DisabledEndpointModuleKind.ROUTE_WALK_FAILED -> ProtoDisabledEndpointModuleKind.ROUTE_WALK_FAILED
             DisabledEndpointModuleKind.HOOK_UNMATCHED -> ProtoDisabledEndpointModuleKind.HOOK_UNMATCHED
             DisabledEndpointModuleKind.CONFIGURED_OFF -> ProtoDisabledEndpointModuleKind.CONFIGURED_OFF
+            DisabledEndpointModuleKind.ROUTES_NOT_COUNTED -> ProtoDisabledEndpointModuleKind.ROUTES_NOT_COUNTED
         }
 
     private fun fromProto(kind: ProtoDisabledEndpointModuleKind): DisabledEndpointModuleKind =
@@ -1006,6 +1007,10 @@ object ProtoPayloadCodec {
 
             ProtoDisabledEndpointModuleKind.CONFIGURED_OFF -> {
                 DisabledEndpointModuleKind.CONFIGURED_OFF
+            }
+
+            ProtoDisabledEndpointModuleKind.ROUTES_NOT_COUNTED -> {
+                DisabledEndpointModuleKind.ROUTES_NOT_COUNTED
             }
 
             ProtoDisabledEndpointModuleKind.UNRECOGNIZED -> {

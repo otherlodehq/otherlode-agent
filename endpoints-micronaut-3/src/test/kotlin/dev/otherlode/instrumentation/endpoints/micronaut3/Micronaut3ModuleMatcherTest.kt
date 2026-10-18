@@ -17,6 +17,7 @@ import kotlin.test.assertTrue
 private const val DEFAULT_ROUTER = "io.micronaut.web.router.DefaultRouter"
 private const val NETTY_HANDLER = "io.micronaut.http.server.netty.RoutingInBoundHandler"
 private const val SERVLET_HANDLER = "io.micronaut.servlet.http.ServletHttpHandler"
+private const val LAMBDA_HANDLER = "io.micronaut.function.aws.proxy.MicronautLambdaContainerHandler"
 
 /**
  * Pins which classes [Micronaut3Module] accepts: the Micronaut 3 shapes, and nothing of a Micronaut 4
@@ -40,7 +41,7 @@ class Micronaut3ModuleMatcherTest {
         val (pool, loader) = classesOf("otherlode.micronaut3Floor.jars")
         val matcher = module.typeMatcher(loader)
 
-        listOf(DEFAULT_ROUTER, NETTY_HANDLER, SERVLET_HANDLER).forEach { name ->
+        listOf(DEFAULT_ROUTER, NETTY_HANDLER, SERVLET_HANDLER, LAMBDA_HANDLER).forEach { name ->
             val type = pool.describe(name)
             assertTrue(type.isResolved, "$name is on the matcher test's class path")
             assertTrue(matcher.matches(type.resolve()), name)
@@ -70,7 +71,7 @@ class Micronaut3ModuleMatcherTest {
 
     @Test
     fun `a handler is accepted by name only on a loader whose router lists UriRoute`() {
-        listOf(NETTY_HANDLER, SERVLET_HANDLER).forEach { name ->
+        listOf(NETTY_HANDLER, SERVLET_HANDLER, LAMBDA_HANDLER).forEach { name ->
             assertTrue(module.typeMatcher(javaClass.classLoader).matches(handler(name)), name)
             assertFalse(module.typeMatcher(null).matches(handler(name)), name)
             assertFalse(module.typeMatcher().matches(handler(name)), name)

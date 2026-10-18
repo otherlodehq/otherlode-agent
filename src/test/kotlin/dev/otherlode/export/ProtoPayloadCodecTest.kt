@@ -1890,6 +1890,29 @@ class ProtoPayloadCodecTest {
     }
 
     @Test
+    fun `a module whose routes are not counted encodes as the ROUTES_NOT_COUNTED wire kind`() {
+        val bytes =
+            ProtoPayloadCodec.encode(
+                ProbeManifest(
+                    resource = ResourceAttributes("svc", null, "i-1", null, "run-1"),
+                    probes = emptyList(),
+                    disabledEndpointModules =
+                        listOf(
+                            DisabledEndpointModule(
+                                "micronaut",
+                                "no dispatch point was constructed",
+                                1L,
+                                DisabledEndpointModuleKind.ROUTES_NOT_COUNTED,
+                            ),
+                        ),
+                ),
+            )
+        val proto = ProtoProbeManifest.parseFrom(bytes)
+        assertEquals(ProtoDisabledEndpointModuleKind.ROUTES_NOT_COUNTED, proto.disabledEndpointModulesList.single().kind)
+        assertEquals(7, ProtoDisabledEndpointModuleKind.ROUTES_NOT_COUNTED.number)
+    }
+
+    @Test
     fun `every disabled endpoint module kind survives a round trip`() {
         for (kind in DisabledEndpointModuleKind.entries) {
             val manifest =

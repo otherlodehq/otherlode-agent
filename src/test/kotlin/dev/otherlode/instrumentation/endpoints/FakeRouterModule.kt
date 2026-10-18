@@ -32,6 +32,14 @@ class FakeRouterModule : EndpointModule {
             .visit(advice.hook("dev.otherlode.endpoints.fake.FakeRouterInvokeAdvice", named("invoke")))
             .visit(advice.hook("dev.otherlode.endpoints.fake.FakeRouterPublishAdvice", named("publishRoutes")))
 
+    /** Records each call, so a test can see the agent's export path reach this module before a manifest. */
+    override fun beforeManifest(
+        graceMillis: Long,
+        finalFlush: Boolean,
+    ) {
+        beforeManifestCalls += graceMillis to finalFlush
+    }
+
     /**
      * Walks [frameworkObject] (a [com.example.framework.FakeRouter]) reflectively, since its own
      * type is not visible from this module's classloader, and registers every route it holds
@@ -50,5 +58,10 @@ class FakeRouterModule : EndpointModule {
             val handler = routeClass.getField("handler").get(route)
             OtherlodeEndpoints.register("fake-router", "$verb $path", verb, path, null, handler.javaClass.name, null, null)
         }
+    }
+
+    companion object {
+        /** The grace period and final flag of every [beforeManifest] call any instance received. */
+        val beforeManifestCalls: MutableList<Pair<Long, Boolean>> = java.util.concurrent.CopyOnWriteArrayList()
     }
 }

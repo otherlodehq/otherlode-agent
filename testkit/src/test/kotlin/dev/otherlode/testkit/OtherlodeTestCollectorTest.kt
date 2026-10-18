@@ -1651,6 +1651,31 @@ class OtherlodeTestCollectorTest {
     }
 
     @Test
+    fun `a module whose routes are not counted surfaces as ROUTES_NOT_COUNTED`() {
+        val target = startCollector()
+        val exporter = exporterFor(target)
+        exporter.exportManifest(
+            watchedManifest(
+                ResourceAttributes("svc", null, "i-1", null, "run-1"),
+                emptyList(),
+                disabledEndpointModules =
+                    listOf(
+                        DisabledEndpointModule(
+                            "micronaut",
+                            "no dispatch point was constructed",
+                            1L,
+                            DisabledEndpointModuleKind.ROUTES_NOT_COUNTED,
+                        ),
+                    ),
+            ),
+        )
+
+        val module = target.disabledEndpointModules().single()
+        assertEquals(dev.otherlode.testkit.DisabledEndpointModuleKind.ROUTES_NOT_COUNTED, module.kind)
+        assertEquals("no dispatch point was constructed", module.reason)
+    }
+
+    @Test
     fun `a disabled module with no kind is answered 400, since an agent of this testkit's version always sends one`() {
         val target = startCollector()
         val manifest =

@@ -20,7 +20,7 @@ Each framework has its own module. A module does nothing on a JVM where its fram
 | Spring WebFlux | `spring-webflux` | Spring Framework 5.3.39, 6.2.19, 7.0.9 | Once the mapping matched the request, before the handler runs |
 | Javalin 6 | `javalin-6` | 6.1.0, 6.7.0 | Once the request reached its handler, after before-handlers |
 | Javalin 7 | `javalin-7` | 7.0.0, 7.2.3 | Once the request reached its handler, after before-handlers |
-| Micronaut 3 | `micronaut-3` | 3.0.0, 3.10.15 on Netty. micronaut-servlet 3.0.0 and 3.3.8 on Jetty | Once Micronaut matched the route, before the filters and argument binding |
+| Micronaut 3 | `micronaut-3` | 3.0.0, 3.10.15 on Netty. micronaut-servlet 3.0.0 and 3.3.8 on Jetty. micronaut-aws 3.0.0 and 3.17.0 on Lambda | Once Micronaut matched the route, before the filters and argument binding |
 | Micronaut 4 and 5 | `micronaut` | 4.0.0, 4.10.32, 5.2.16 | Once Micronaut matched the route, before argument binding |
 | Vert.x Web | `vertx-web` | 4.5.0, 4.5.35, 5.0.12, 5.2.1 | When a route matched, before its handler runs; each route a request passes through |
 | Ktor 2 | `ktor-2` | 2.3.13 | Once Ktor chose the route, before its handlers run |
@@ -140,7 +140,9 @@ The template is the path as registered, after `ApiBuilder` composed its prefixes
 
 ## Micronaut
 
-Micronaut routes are declared when Micronaut builds its router. That covers annotated controller methods, routes a `RouteBuilder` adds, and the endpoints Micronaut adds for itself, such as its management endpoints. Only routes that serve a URI are endpoints. `@Error` and status routes and filters are not.
+Micronaut routes are declared once Micronaut has built its router and the runtime has constructed a dispatch point the module counts at, in either order. That covers annotated controller methods, routes a `RouteBuilder` adds, and the endpoints Micronaut adds for itself, such as its management endpoints. Only routes that serve a URI are endpoints. `@Error` and status routes and filters are not.
+
+The wait is what keeps the report honest. A router that no counted dispatch point is ever built for would declare endpoints nothing can count, and each would read as never called. Micronaut 4 and 5 count at `RouteExecutor`, which every runtime built on Micronaut's request lifecycle constructs: Netty, micronaut-servlet and the serverless runtimes on top of either. A router that has waited one flush interval with no counted dispatch point constructed, or that is still waiting at the agent's final flush, reports the module as disabled with the kind `ROUTES_NOT_COUNTED`, and the module declares nothing from then on. Every start-up builds the router a few milliseconds before its dispatch point, which the wait covers. The report cannot be taken back once sent, so the module stays off for the rest of the process even if a dispatch point is constructed later.
 
 A request is counted once Micronaut matched it to a route, after the pre-matching filters and before argument binding. A hit means matched: a filter that rejects the request afterwards, as Micronaut Security does, still counts, and so does a handler that throws. These requests count nothing:
 
@@ -158,9 +160,9 @@ The template is the path as Micronaut matches it, without any query variables. `
 
 ### Micronaut 3
 
-`micronaut-3` declares and names routes as `micronaut` does, and counts a request when the server hands the matched route on: Netty's `RoutingInBoundHandler` for a URI route, and micronaut-servlet's `ServletHttpHandler` on the servlet containers. That is after the route is matched and before the filters and the handler, so a filter that rejects the request afterwards still counts. A 404, a 405, a 415, a 406, an `@Error` or status route and a CORS preflight count nothing. A preflight to a path with no `OPTIONS` route reaches no route on Netty. micronaut-servlet 3.3 and later dispatches it to a route of another verb, which the agent does not count, and earlier releases answer it with a 405.
+`micronaut-3` declares and names routes as `micronaut` does, and counts a request when the server hands the matched route on: Netty's `RoutingInBoundHandler` for a URI route, micronaut-servlet's `ServletHttpHandler` on the servlet containers, and micronaut-aws's `MicronautLambdaContainerHandler` on Lambda, which builds its own route executor and reaches neither. Each counts after the route is matched and before the filters and the handler, so a filter that rejects the request afterwards still counts. Its routes are declared once one of those three has been constructed, and a runtime that constructs none is reported with the kind `ROUTES_NOT_COUNTED` as `micronaut` is. A 404, a 405, a 415, a 406, an `@Error` or status route and a CORS preflight count nothing. A preflight to a path with no `OPTIONS` route reaches no route on Netty or Lambda. micronaut-servlet 3.3 and later dispatches it to a route of another verb, which the agent does not count, and earlier releases answer it with a 405.
 
-Micronaut 3 does not turn a `default` method of an interface into a route, so a `@Get` on one is neither declared nor served. The servlet support is tested on Jetty; Tomcat and Undertow run the same handler class.
+Micronaut 3 does not turn a `default` method of an interface into a route, so a `@Get` on one is neither declared nor served. The servlet support is tested on Jetty; Tomcat and Undertow run the same handler class. The Lambda support is tested by driving `MicronautLambdaHandler` for micronaut-aws 3.x.
 
 ## Vert.x Web
 
@@ -290,9 +292,11 @@ A lost registration hook would leave endpoints undeclared. A lost dispatch hook 
 otherlode: endpoint module ktor-3 disabled itself: <reason>
 ```
 
-The agent sends the module's name, the reason and a kind naming why to the collector with the next manifest. The kind separates a linkage error, any other advice failure, a transform failure (the module's own transform threw, or a framework class it hooks failed to weave), a route walk failure, a hook that matched no method (`HOOK_UNMATCHED`), and a module your configuration kept off (`CONFIGURED_OFF`). The server can then tell "this service has no endpoints" from "this service's endpoints were not instrumented". The testkit exposes it as `disabledEndpointModules()`, and its endpoint queries mention a disabled module in the error they throw for an unknown endpoint.
+The agent sends the module's name, the reason and a kind naming why to the collector with the next manifest. The kind separates a linkage error, any other advice failure, a transform failure (the module's own transform threw, or a framework class it hooks failed to weave), a route walk failure, a hook that matched no method (`HOOK_UNMATCHED`), a module your configuration kept off (`CONFIGURED_OFF`), and a Micronaut module whose runtime constructs no dispatch point it counts at (`ROUTES_NOT_COUNTED`). The server can then tell "this service has no endpoints" from "this service's endpoints were not instrumented". The testkit exposes it as `disabledEndpointModules()`, and its endpoint queries mention a disabled module in the error they throw for an unknown endpoint.
 
 A module that [`disabledEndpointModules`](configuration#disabledendpointmodules) or `endpointsEnabled=false` keeps from installing is reported the same way, with the kind `CONFIGURED_OFF`, whether or not its framework is present. It is a choice, not a fault, and it logs no WARNING.
+
+A Micronaut module with the kind `ROUTES_NOT_COUNTED` has declared no endpoint, so the service's Micronaut routes are absent rather than read as never called. It is reported once a router has waited one flush interval with no dispatch point, or at the final flush, and logs the WARNING above.
 
 A module that switches off stops counting but does not retract. The endpoints it already declared stay in the list, and their counts stop, so they read as never called. The disabled-modules list is the only signal for that. Treat any endpoint finding from a service with a disabled module as unreliable for that framework.
 

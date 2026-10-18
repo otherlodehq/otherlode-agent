@@ -504,6 +504,7 @@ What switched an endpoint module off.
 | `ROUTE_WALK_FAILED` | Walking a framework's route objects threw. |
 | `HOOK_UNMATCHED` | A hook matched no method on the framework class it hooks: a framework release renamed or changed the method. |
 | `CONFIGURED_OFF` | The agent's configuration kept the module from installing: `disabledEndpointModules` named it, or `endpointsEnabled` is false. |
+| `ROUTES_NOT_COUNTED` | The runtime constructed no dispatch point the module counts at within one flush interval of building a router, so the module declares no routes. Micronaut only. |
 
 ### DependencyUsage
 

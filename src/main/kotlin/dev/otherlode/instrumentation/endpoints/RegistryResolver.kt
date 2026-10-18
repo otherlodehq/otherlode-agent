@@ -169,5 +169,6 @@ internal fun disabledKindOf(kind: Int): DisabledEndpointModuleKind =
         OtherlodeEndpoints.KIND_TRANSFORM_FAILED -> DisabledEndpointModuleKind.TRANSFORM_FAILED
         OtherlodeEndpoints.KIND_ROUTE_WALK_FAILED -> DisabledEndpointModuleKind.ROUTE_WALK_FAILED
         OtherlodeEndpoints.KIND_HOOK_UNMATCHED -> DisabledEndpointModuleKind.HOOK_UNMATCHED
+        OtherlodeEndpoints.KIND_ROUTES_NOT_COUNTED -> DisabledEndpointModuleKind.ROUTES_NOT_COUNTED
         else -> DisabledEndpointModuleKind.UNSPECIFIED
     }

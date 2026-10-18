@@ -103,4 +103,16 @@ interface EndpointModule {
      * routes only to a visitor implemented in real code, something advice itself cannot define.
      */
     fun declare(frameworkObject: Any) {}
+
+    /**
+     * Called before the agent builds a manifest, on the export thread. A module that declares routes
+     * only once a condition holds, and must report that it never did, settles the matter here once
+     * the condition has had [graceMillis], the flush interval, to come true, or at once on the
+     * [finalFlush] before the agent stops. It switches itself off through
+     * `OtherlodeEndpoints.moduleDisabled`, which the wire cannot take back. The default does nothing.
+     */
+    fun beforeManifest(
+        graceMillis: Long,
+        finalFlush: Boolean,
+    ) {}
 }

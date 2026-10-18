@@ -2932,6 +2932,51 @@ class ExportSchedulerTest {
     }
 
     @Test
+    fun `the manifest hook runs before the disabled modules and endpoints of a flush are read`() {
+        val endpointRegistry = EndpointRegistry()
+        val exporter = RecordingExporter()
+        val scheduler =
+            ExportScheduler(
+                config,
+                resource,
+                ProbeRegistry(),
+                endpointRegistry,
+                exporter,
+                beforeManifest = { _, _ ->
+                    endpointRegistry.recordDisabledModule(
+                        "micronaut",
+                        "no dispatch point",
+                        DisabledEndpointModuleKind.ROUTES_NOT_COUNTED,
+                    )
+                },
+            )
+
+        scheduler.flush()
+
+        val disabled = exporter.manifests.flatMap { it.disabledEndpointModules }.single()
+        assertEquals("micronaut", disabled.module)
+        assertEquals(DisabledEndpointModuleKind.ROUTES_NOT_COUNTED, disabled.kind)
+    }
+
+    @Test
+    fun `a manifest hook that throws does not stop the flush from sending its delta batch`() {
+        val exporter = RecordingExporter()
+        val scheduler =
+            ExportScheduler(
+                config,
+                resource,
+                ProbeRegistry(),
+                EndpointRegistry(),
+                exporter,
+                beforeManifest = { _, _ -> throw IllegalStateException("hook failed") },
+            )
+
+        scheduler.flush()
+
+        assertEquals(1, exporter.deltaBatches.size)
+    }
+
+    @Test
     fun `a quiet cache release that throws does not stop the flush from sending its delta batch`() {
         val exporter = RecordingExporter()
         val scheduler =

@@ -651,6 +651,9 @@ public final class OtherlodeEndpoints {
     /** A hook matched no method on the framework class it hooks. */
     public static final int KIND_HOOK_UNMATCHED = 5;
 
+    /** A module built a router on a runtime where it has no dispatch point to count its routes at, so it declares none. */
+    public static final int KIND_ROUTES_NOT_COUNTED = 7;
+
     /**
      * Disables a module after its advice threw: {@link #KIND_LINKAGE_ERROR} for a {@link
      * LinkageError}, else {@link #KIND_ADVICE_FAILED}. This is the form every advice class calls.

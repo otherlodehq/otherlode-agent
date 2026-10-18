@@ -1,7 +1,9 @@
 package dev.otherlode.instrumentation.endpoints.micronaut3
 
+import dev.otherlode.bootstrap.OtherlodeEndpoints
 import dev.otherlode.instrumentation.endpoints.api.AdviceBinder
 import dev.otherlode.instrumentation.endpoints.api.EndpointModule
+import dev.otherlode.instrumentation.endpoints.micronautcommon.DispatchGate
 import net.bytebuddy.description.method.MethodDescription
 import net.bytebuddy.description.type.TypeDescription
 import net.bytebuddy.dynamic.ClassFileLocator
@@ -10,6 +12,7 @@ import net.bytebuddy.matcher.ElementMatcher
 import net.bytebuddy.matcher.ElementMatchers.declaresMethod
 import net.bytebuddy.matcher.ElementMatchers.isConstructor
 import net.bytebuddy.matcher.ElementMatchers.named
+import net.bytebuddy.matcher.ElementMatchers.takesArgument
 import net.bytebuddy.matcher.ElementMatchers.takesArguments
 import net.bytebuddy.pool.TypePool
 import java.lang.ref.WeakReference
@@ -17,6 +20,10 @@ import java.lang.ref.WeakReference
 private const val DEFAULT_ROUTER = "io.micronaut.web.router.DefaultRouter"
 private const val ROUTING_IN_BOUND_HANDLER = "io.micronaut.http.server.netty.RoutingInBoundHandler"
 private const val SERVLET_HTTP_HANDLER = "io.micronaut.servlet.http.ServletHttpHandler"
+private const val LAMBDA_CONTAINER_HANDLER = "io.micronaut.function.aws.proxy.MicronautLambdaContainerHandler"
+private const val AWS_PROXY_REQUEST = "io.micronaut.function.aws.proxy.MicronautAwsProxyRequest"
+private const val LAMBDA_CONSTRUCTOR_ARGUMENTS = 3
+private const val LAMBDA_HANDLE_REQUEST_ARGUMENTS = 3
 private const val URI_ROUTE = "io.micronaut.web.router.UriRoute"
 private const val ADVICE_PACKAGE = "dev.otherlode.endpoints.micronaut3"
 
@@ -47,9 +54,15 @@ private fun routerIsMicronaut3(classLoader: ClassLoader): Boolean =
 /**
  * Endpoint module for Micronaut 3 (`micronaut-3`), compiled against 3.0.0.
  *
- * The exit of the `DefaultRouter(Collection)` constructor declares every route. The router has
- * then built all its `UriRoute` objects, and [declare] reads them through `Router.uriRoutes()`,
- * keyed by the `UriRoute` instance that `UriRouteMatch.getRoute()` returns at dispatch.
+ * The exit of the `DefaultRouter(Collection)` constructor hands the router to the module, which
+ * holds it weakly. The exit of the constructor of a dispatch point this module counts at arms the
+ * module, and a router is then declared, in either order: [DispatchGate] reads its `UriRoute`
+ * objects through `Router.uriRoutes()`, keyed by the `UriRoute` instance that
+ * `UriRouteMatch.getRoute()` returns at dispatch. The dispatch points are Netty's
+ * `RoutingInBoundHandler`, micronaut-servlet's `ServletHttpHandler` and micronaut-aws's
+ * `MicronautLambdaContainerHandler`. A router none of them is constructed for declares nothing,
+ * since nothing could count its routes, and [beforeManifest] reports the module off with
+ * `ROUTES_NOT_COUNTED` once the router has waited a flush interval.
  *
  * A request counts at the entry of the Netty server's private `RoutingInBoundHandler.handleRouteMatch`
  * when the route it matched is a `UriRouteMatch`, which runs once per request before the filters
@@ -57,11 +70,14 @@ private fun routerIsMicronaut3(classLoader: ClassLoader): Boolean =
  * itself reach no `UriRouteMatch`, a status route is not one, and a filter that rejects the request
  * after the match still counts it. micronaut-servlet's private `ServletHttpHandler.invokeRouteMatch`
  * is hooked the same way, and counts a route only when its verb is the request's, since the handler
- * dispatches a preflight to a route of another verb.
+ * dispatches a preflight to a route of another verb. micronaut-aws 3.x builds its own
+ * `RouteExecutor`, so it counts at the entry of `MicronautLambdaContainerHandler.handleRequest`
+ * for the `MicronautAwsProxyRequest`, from the `UriRouteMatch` the request already carries.
  *
  * Micronaut 4 lists `UriRouteInfo` where this lists `UriRoute`. `DefaultRouter` is accepted only
- * with the `uriRoutes()` that returns `UriRoute`, and the Netty and servlet handlers by name on a
- * class loader whose `DefaultRouter` has that shape, so their hooks are checked like any other.
+ * with the `uriRoutes()` that returns `UriRoute`. `RoutingInBoundHandler`, `ServletHttpHandler`
+ * and `MicronautLambdaContainerHandler` are accepted by name on a class loader whose
+ * `DefaultRouter` has that shape, so their hooks are checked like any other.
  * This module matches nothing on a Micronaut 4 or 5 application.
  *
  * A HEAD route Micronaut adds beside each `@Get` is not declared, and a HEAD request that matches
@@ -74,6 +90,19 @@ class Micronaut3Module : EndpointModule {
 
     private val walk = RouterWalk()
 
+    private val gate =
+        DispatchGate(
+            declareRoutes = walk::declare,
+            notCounted = {
+                OtherlodeEndpoints.moduleDisabled(
+                    MODULE_NAME,
+                    OtherlodeEndpoints.KIND_ROUTES_NOT_COUNTED,
+                    "a router was built but none of $ROUTING_IN_BOUND_HANDLER, $SERVLET_HTTP_HANDLER or " +
+                        "$LAMBDA_CONTAINER_HANDLER was constructed, so no dispatch point this module counts at exists on this runtime",
+                )
+            },
+        )
+
     override fun typeMatcher(): ElementMatcher<in TypeDescription> = named<TypeDescription>(DEFAULT_ROUTER).and(ROUTER_SHAPE)
 
     override fun typeMatcher(classLoader: ClassLoader?): ElementMatcher<in TypeDescription> {
@@ -83,7 +112,7 @@ class Micronaut3Module : EndpointModule {
         return ElementMatcher { type ->
             when (type.name) {
                 DEFAULT_ROUTER -> router.matches(type)
-                ROUTING_IN_BOUND_HANDLER, SERVLET_HTTP_HANDLER -> routerIsMicronaut3.value
+                ROUTING_IN_BOUND_HANDLER, SERVLET_HTTP_HANDLER, LAMBDA_CONTAINER_HANDLER -> routerIsMicronaut3.value
                 else -> false
             }
         }
@@ -106,21 +135,42 @@ class Micronaut3Module : EndpointModule {
             }
 
             ROUTING_IN_BOUND_HANDLER -> {
-                builder.visit(
-                    advice.hook(
-                        "$ADVICE_PACKAGE.DispatchAdvice",
-                        named<MethodDescription>("handleRouteMatch").and(takesArguments(3)),
-                    ),
-                )
+                builder
+                    .visit(advice.hook("$ADVICE_PACKAGE.ArmAdvice", isConstructor<MethodDescription>()))
+                    .visit(
+                        advice.hook(
+                            "$ADVICE_PACKAGE.DispatchAdvice",
+                            named<MethodDescription>("handleRouteMatch").and(takesArguments(3)),
+                        ),
+                    )
             }
 
             SERVLET_HTTP_HANDLER -> {
-                builder.visit(
-                    advice.hook(
-                        "$ADVICE_PACKAGE.ServletDispatchAdvice",
-                        named<MethodDescription>("invokeRouteMatch").and(takesArguments(6)),
-                    ),
-                )
+                builder
+                    .visit(advice.hook("$ADVICE_PACKAGE.ArmAdvice", isConstructor<MethodDescription>()))
+                    .visit(
+                        advice.hook(
+                            "$ADVICE_PACKAGE.ServletDispatchAdvice",
+                            named<MethodDescription>("invokeRouteMatch").and(takesArguments(6)),
+                        ),
+                    )
+            }
+
+            LAMBDA_CONTAINER_HANDLER -> {
+                builder
+                    .visit(
+                        advice.hook(
+                            "$ADVICE_PACKAGE.ArmAdvice",
+                            isConstructor<MethodDescription>().and(takesArguments(LAMBDA_CONSTRUCTOR_ARGUMENTS)),
+                        ),
+                    ).visit(
+                        advice.hook(
+                            "$ADVICE_PACKAGE.LambdaDispatchAdvice",
+                            named<MethodDescription>("handleRequest")
+                                .and(takesArguments(LAMBDA_HANDLE_REQUEST_ARGUMENTS))
+                                .and(takesArgument(0, named<TypeDescription>(AWS_PROXY_REQUEST))),
+                        ),
+                    )
             }
 
             else -> {
@@ -128,5 +178,10 @@ class Micronaut3Module : EndpointModule {
             }
         }
 
-    override fun declare(frameworkObject: Any) = walk.declare(frameworkObject)
+    override fun declare(frameworkObject: Any) = gate.accept(frameworkObject)
+
+    override fun beforeManifest(
+        graceMillis: Long,
+        finalFlush: Boolean,
+    ) = gate.beforeManifest(graceMillis, finalFlush)
 }

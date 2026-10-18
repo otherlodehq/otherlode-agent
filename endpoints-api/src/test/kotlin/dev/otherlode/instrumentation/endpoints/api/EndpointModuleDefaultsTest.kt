@@ -18,7 +18,8 @@ import kotlin.test.assertFailsWith
  * `handlerInterfaces` returning an empty set is what keeps the lambda factory hook out of a JVM
  * whose modules never take a handler lambda, and
  * `declare` doing nothing is what lets every framework whose routes are readable from a
- * registration hook's own arguments ignore the seam's declare path entirely. A default that
+ * registration hook's own arguments ignore the seam's declare path entirely, and
+ * `beforeManifest` doing nothing is what leaves every module that needs no deadline untouched by it. A default that
  * silently changed to something else would be a behaviour change in every module that leans on it,
  * so they are asserted here rather than left to the modules that happen to inherit them.
  */
@@ -45,6 +46,11 @@ class EndpointModuleDefaultsTest {
     @Test
     fun `a module that names no handler interface asks for no lambda to be recorded`() {
         assertEquals(emptySet(), MinimalModule().handlerInterfaces)
+    }
+
+    @Test
+    fun `a module that needs nothing before a manifest is built does nothing there`() {
+        MinimalModule().beforeManifest(graceMillis = 0, finalFlush = true)
     }
 
     @Test

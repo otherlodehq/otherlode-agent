@@ -24,12 +24,36 @@ fun <T> withModule(
     val registry = EndpointRegistry()
     val endpointInstrumentation = EndpointInstrumentation(registry, listOf(Micronaut3Module()))
     val transformer = endpointInstrumentation.install(instrumentation)
+    installed = endpointInstrumentation
     try {
         val result = block(registry)
         if (expectNoneDisabled) assertTrue(registry.disabledModules().isEmpty(), "disabled: ${registry.disabledModules()}")
         return result
     } finally {
+        installed = null
         endpointInstrumentation.uninstall(instrumentation, transformer)
+    }
+}
+
+@Volatile
+private var installed: EndpointInstrumentation? = null
+
+/** Runs what the agent runs before it builds a manifest, on the instrumentation [withModule] installed. */
+fun beforeManifest(
+    graceMillis: Long = 0,
+    finalFlush: Boolean = false,
+) = checkNotNull(installed) { "no module is installed" }.beforeManifest(graceMillis, finalFlush)
+
+/**
+ * Forgets that the seam switched [module] off. The seam keeps that for the life of the JVM, and
+ * the tests of one module share a JVM.
+ */
+fun forgetDisabled(module: String) {
+    val seam = Class.forName("dev.otherlode.bootstrap.OtherlodeEndpoints")
+    listOf("DISABLED_MODULES", "FAILURE_LOGGED").forEach { field ->
+        @Suppress("UNCHECKED_CAST")
+        val names = seam.getDeclaredField(field).apply { isAccessible = true }.get(null) as MutableSet<String>
+        names.remove(module)
     }
 }
 

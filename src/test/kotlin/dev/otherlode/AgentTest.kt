@@ -774,6 +774,37 @@ class AgentTest {
     }
 
     @Test
+    fun `a started agent calls every endpoint module before each manifest with the flush interval as the grace period`() {
+        dev.otherlode.instrumentation.endpoints.FakeRouterModule.beforeManifestCalls
+            .clear()
+        val collector = HttpServer.create(InetSocketAddress("localhost", 0), 0)
+        collector.createContext("/") { exchange ->
+            exchange.requestBody.readBytes()
+            exchange.sendResponseHeaders(200, -1)
+            exchange.close()
+        }
+        collector.start()
+        val running =
+            Agent.start(
+                "includePackages=dev.otherlode.neverloaded.fixture,flushIntervalSeconds=3600," +
+                    "exportUrl=http://localhost:${collector.address.port}",
+                ByteBuddyAgent.install(),
+            )
+        try {
+            assertNotNull(running)
+            running.scheduler.flush()
+
+            assertTrue(
+                (3_600_000L to false) in dev.otherlode.instrumentation.endpoints.FakeRouterModule.beforeManifestCalls,
+                "${dev.otherlode.instrumentation.endpoints.FakeRouterModule.beforeManifestCalls}",
+            )
+        } finally {
+            running?.stop()
+            collector.stop(0)
+        }
+    }
+
+    @Test
     fun `endpointsEnabled=false sends every discovered module on the manifest as CONFIGURED_OFF`() {
         val manifests = CopyOnWriteArrayList<ProbeManifest>()
         val collector = HttpServer.create(InetSocketAddress("localhost", 0), 0)

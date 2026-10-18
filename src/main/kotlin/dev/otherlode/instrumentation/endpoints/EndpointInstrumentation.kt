@@ -263,6 +263,24 @@ class EndpointInstrumentation(
             pendingDeclarations.rollbackTo(mark)
         }
 
+    /**
+     * Calls [EndpointModule.beforeManifest] on every module. A module that throws is switched off as
+     * a module whose advice threw is, and the others still run, so this never fails the export.
+     */
+    fun beforeManifest(
+        graceMillis: Long,
+        finalFlush: Boolean,
+    ) {
+        for (module in modules) {
+            try {
+                module.beforeManifest(graceMillis, finalFlush)
+            } catch (t: Throwable) {
+                log.log(Level.WARNING, "otherlode: endpoint module ${module.name} failed before a manifest was built", t)
+                OtherlodeEndpoints.moduleFailed(module.name, t)
+            }
+        }
+    }
+
     /** Removes the endpoint advice transformer, and the lambda factory hook if this instance installed one. */
     fun uninstall(
         instrumentation: Instrumentation,
