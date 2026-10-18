@@ -30,7 +30,8 @@ repositories {
 // toolchain; only the JVM that runs the tests changes. CI sets it so a JDK that renames an
 // internal the agent reads, such as the lambda factory's `interfaceClass` and `implInfo` fields,
 // fails a test. Micronaut 5's suite is the exception: its class files need JDK 25, so it runs
-// there whatever this says.
+// there whatever this says. The framework marker fixtures run on the JDK 21 toolchain whatever this
+// says: their forked JVMs use the test JVM's JDK, and Helidon 4 needs 21.
 val testJdk = providers.gradleProperty("otherlode.testJdk")
 
 // The shipped modules and the modules whose tests run on the test JVM compile against the JDK 17
@@ -85,7 +86,7 @@ val jacocoVersion = "0.8.13"
 allprojects {
     plugins.withType<JavaBasePlugin> {
         val toolchains = extensions.getByType<JavaToolchainService>()
-        tasks.withType<Test>().matching { it.name != "micronaut5Test" }.configureEach {
+        tasks.withType<Test>().matching { it.name != "micronaut5Test" && it.project.path != ":framework-markers" }.configureEach {
             if (testJdk.isPresent) {
                 javaLauncher.set(toolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(testJdk.get())) })
             }
