@@ -913,16 +913,17 @@ data class ClassListing(
 enum class EndpointDiscoverySource { REGISTRATION, DISPATCH }
 
 /**
- * What an endpoint's templates are: a path the agent normalised, or the regular expression a
- * framework matches by, kept exactly as written.
+ * What an endpoint's templates are: a path the agent normalised, the regular expression a
+ * framework matches by, or a servlet extension or default mapping. The last two are kept exactly
+ * as written.
  */
-enum class EndpointTemplateKind { PATH, REGEX }
+enum class EndpointTemplateKind { PATH, REGEX, SERVLET_PATTERN }
 
 /**
  * One endpoint the framework serves. [endpointId] is per instance, like `classId`; cross-instance
- * identity is ([verb], [routeTemplate], whether [templateKind] is [EndpointTemplateKind.REGEX]),
- * never [endpointId]. A [EndpointTemplateKind.REGEX] endpoint's [routeTemplate] and
- * [verbatimTemplate] are the same text, never normalised.
+ * identity is ([verb], [routeTemplate], [templateKind]), never [endpointId]. A
+ * [EndpointTemplateKind.REGEX] or [EndpointTemplateKind.SERVLET_PATTERN] endpoint's [routeTemplate]
+ * and [verbatimTemplate] are the same text, never normalised.
  *
  * A record may be re-sent when [handlerClass]/[handlerMethod]/[handlerDescriptor] are learned or
  * change after the endpoint was first reported; a collector upserts by (service instance, run,

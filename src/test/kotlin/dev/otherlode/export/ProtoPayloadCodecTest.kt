@@ -1796,6 +1796,28 @@ class ProtoPayloadCodecTest {
     }
 
     @Test
+    fun `encodes and decodes a servlet pattern endpoint with its template kind`() {
+        val manifest =
+            ProbeManifest(
+                resource = ResourceAttributes("checkout", "1.0.0", "", null, "run-1"),
+                probes = emptyList(),
+                endpoints =
+                    listOf(
+                        EndpointLocation(0, "GET", "*.do", "*.do", "servlet", EndpointDiscoverySource.REGISTRATION)
+                            .copy(templateKind = EndpointTemplateKind.SERVLET_PATTERN),
+                    ),
+            )
+
+        val bytes = ProtoPayloadCodec.encode(manifest)
+
+        assertEquals(manifest, ProtoPayloadCodec.decodeProbeManifest(bytes))
+        assertEquals(
+            listOf(ProtoEndpointTemplateKind.SERVLET_PATTERN),
+            ProtoProbeManifest.parseFrom(bytes).endpointsList.map { it.templateKind },
+        )
+    }
+
+    @Test
     fun `an endpoint from an agent that predates the template kind decodes as a path`() {
         val manifest =
             ProtoProbeManifest

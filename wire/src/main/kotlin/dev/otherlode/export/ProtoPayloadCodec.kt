@@ -900,12 +900,17 @@ object ProtoPayloadCodec {
         when (kind) {
             EndpointTemplateKind.PATH -> ProtoEndpointTemplateKind.PATH
             EndpointTemplateKind.REGEX -> ProtoEndpointTemplateKind.REGEX
+            EndpointTemplateKind.SERVLET_PATTERN -> ProtoEndpointTemplateKind.SERVLET_PATTERN
         }
 
     private fun fromProto(kind: ProtoEndpointTemplateKind): EndpointTemplateKind =
         when (kind) {
             ProtoEndpointTemplateKind.REGEX -> {
                 EndpointTemplateKind.REGEX
+            }
+
+            ProtoEndpointTemplateKind.SERVLET_PATTERN -> {
+                EndpointTemplateKind.SERVLET_PATTERN
             }
 
             ProtoEndpointTemplateKind.PATH, ProtoEndpointTemplateKind.ENDPOINT_TEMPLATE_KIND_UNSPECIFIED -> {

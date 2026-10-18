@@ -939,11 +939,15 @@ enum EndpointTemplateKind {
   // The regular expression a framework matches the route by, exactly as written. Both templates
   // hold the same text, never normalised. No path exists to derive a template from.
   REGEX = 2;
+  // A servlet extension mapping (*.do) or the default mapping (/), exactly as written. Both
+  // templates hold the same text. No path template matches at any depth, or matches only what no
+  // other mapping did.
+  SERVLET_PATTERN = 3;
 }
 
 // One endpoint the framework serves. endpoint_id is per instance, like
-// class_id: cross-instance identity is (verb, route_template, template_kind
-// is REGEX), never endpoint_id.
+// class_id: cross-instance identity is (verb, route_template, template_kind),
+// never endpoint_id.
 //
 // A record may be re-sent when a field learned later (the handler join)
 // changes; the server upserts by (service_instance_id, run_id, endpoint_id).
