@@ -22,3 +22,9 @@ Before 0.1.0 the list holds the markers the research rated certain and a fixture
 - **A coverage verdict on the wire.** Rejected: whether a framework is covered depends on the agent version and the modules installed, both already on the wire, and a verdict sent today cannot be withdrawn when a module ships.
 - **A marker for plain servlet applications.** Rejected: every servlet container class that loads for a bare servlet also loads for Spring's `DispatcherServlet` and Jersey's `ServletContainer`, so no class tells them apart. Servlets get a module of their own instead, settled in a grill of its own.
 - **Markers for Quarkus REST.** Rejected: the JAX-RS module counts its resources, and the inheritance cases it missed are fixed in that module (ADR 0020's 2026-10-17 amendment).
+
+## Amended on 2026-10-18: markers are seen by the loaded-class sweep alone
+
+The agent looks for markers in the array `Instrumentation.getAllLoadedClasses()` returns, which the loaded-class sweep already reads, rather than matching names in its transformer and confirming them later. A class in that array is defined, so a marker seen there is confirmed by construction, and reading its name loads nothing, so both rules above hold with no extra transformer in the chain. The sweep looks on every flush while a marker is unseen. Looking only on the sweep's forward pass, every tenth flush, left a gRPC-only service reading as having no endpoints for its first ten minutes, and a process that ended without a final flush in that time never reported its marker, the misreading this record exists to prevent.
+
+Javalin 5's marker is two classes: the anonymous handler class Javalin's own Jetty server creates at start, which Javalin 4 also has under the same name, and `io.javalin.http.servlet.JavalinServlet`, which Javalin 4 keeps in another package. Javalin 4 itself gets no marker; it is not on the list above.

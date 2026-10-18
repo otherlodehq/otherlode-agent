@@ -148,6 +148,13 @@ repos. One chunk remains, with its `docs/site` pages:
 10. Wire: framework markers, each proved by a three-JVM fixture, then the
     collector's bindings, then the server.
 
+### The loaded-class sweep's forward pass waits ten flushes after a failure
+
+`ExportScheduler.maybeSweep` resets the forward-pass counter before it runs the sweep, so a forward pass
+that throws runs next ten flushes later, while its log line says it "will retry on a later flush". Seen in
+chunk 10a's review; markers no longer depend on the forward pass. Reset the counter only after a forward
+pass completes, with a test.
+
 ### A servlet module: to grill, before 0.1.0
 
 A plain servlet application reads as having no endpoints, and no marker
