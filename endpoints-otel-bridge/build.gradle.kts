@@ -1,5 +1,8 @@
+import org.gradle.process.CommandLineArgumentProvider
+
 plugins {
     kotlin("jvm") version "2.2.21"
+    `jvm-test-suite`
 }
 
 group = "dev.otherlode"
@@ -71,4 +74,127 @@ kotlin {
 tasks.test {
     useJUnitPlatform()
     jvmArgs("-Djdk.attach.allowAttachSelf=true")
+}
+
+val tomcatVersion = providers.gradleProperty("otherlode.framework.tomcat10").getOrElse("10.1.61")
+val springVersion = providers.gradleProperty("otherlode.framework.spring6").getOrElse("6.2.19")
+val jerseyVersion = providers.gradleProperty("otherlode.framework.jersey3").getOrElse("3.1.12")
+
+val otelJavaagent by configurations.creating {
+    isTransitive = false
+    isCanBeConsumed = false
+}
+
+dependencies {
+    otelJavaagent("io.opentelemetry.javaagent:opentelemetry-javaagent:$openTelemetryInstrumentationApiTestVersion")
+}
+
+// The two suites below run a real servlet container with OpenTelemetry's own instrumentation, in a
+// JVM of their own per test class, since the endpoint registry is one per JVM. PrefixTestAgent is
+// the agent on that command line. The jar packages the suite's compiled output; everything its
+// premain references resolves off the test JVM's ordinary classpath.
+fun prefixTestAgentJar(
+    name: String,
+    output: Provider<out FileCollection>,
+) = tasks.register<Jar>("${name}AgentJar") {
+    archiveBaseName.set("otel-bridge-$name-agent")
+    destinationDirectory.set(layout.buildDirectory.dir("test-agent"))
+    from(output)
+    manifest {
+        attributes["Premain-Class"] = "dev.otherlode.instrumentation.endpoints.otelbridge.PrefixTestAgent"
+        attributes["Can-Retransform-Classes"] = "true"
+    }
+}
+
+testing {
+    suites {
+        register<JvmTestSuite>("otelAgentTest") {
+            useJUnitJupiter()
+            sources {
+                kotlin.srcDir("src/prefixTestShared/kotlin")
+            }
+            dependencies {
+                implementation(project())
+                implementation(project(":"))
+                implementation(project(":endpoints-api"))
+                compileOnly(project(":bootstrap"))
+                implementation("org.jetbrains.kotlin:kotlin-test-junit5:2.2.21")
+                implementation("net.bytebuddy:byte-buddy:1.18.12")
+                implementation("org.apache.tomcat.embed:tomcat-embed-core:$tomcatVersion")
+                implementation("org.springframework:spring-webmvc:$springVersion")
+                implementation("org.glassfish.jersey.containers:jersey-container-servlet:$jerseyVersion")
+                implementation("org.glassfish.jersey.inject:jersey-hk2:$jerseyVersion")
+                implementation("jakarta.ws.rs:jakarta.ws.rs-api:3.1.0")
+            }
+        }
+
+        register<JvmTestSuite>("otelLibraryTest") {
+            useJUnitJupiter()
+            sources {
+                kotlin.srcDir("src/prefixTestShared/kotlin")
+            }
+            dependencies {
+                implementation(project())
+                implementation(project(":"))
+                implementation(project(":endpoints-api"))
+                compileOnly(project(":bootstrap"))
+                implementation("org.jetbrains.kotlin:kotlin-test-junit5:2.2.21")
+                implementation("net.bytebuddy:byte-buddy:1.18.12")
+                implementation("org.apache.tomcat.embed:tomcat-embed-core:$tomcatVersion")
+                implementation("org.springframework:spring-webmvc:$springVersion")
+                implementation("io.opentelemetry.instrumentation:opentelemetry-spring-webmvc-6.0:$openTelemetryInstrumentationApiTestVersion-alpha")
+                implementation("io.opentelemetry:opentelemetry-sdk:$openTelemetrySdkVersion")
+            }
+        }
+    }
+}
+
+val otelAgentTestAgentJar =
+    prefixTestAgentJar("agent", provider { testing.suites.named<JvmTestSuite>("otelAgentTest").get().sources.output })
+val otelLibraryTestAgentJar =
+    prefixTestAgentJar("library", provider { testing.suites.named<JvmTestSuite>("otelLibraryTest").get().sources.output })
+
+testing.suites.named<JvmTestSuite>("otelAgentTest") {
+    targets {
+        all {
+            testTask.configure {
+                dependsOn(otelAgentTestAgentJar)
+                include("**/*Test.class")
+                forkEvery = 1
+                jvmArgumentProviders.add(
+                    CommandLineArgumentProvider {
+                        listOf(
+                            "-javaagent:${otelAgentTestAgentJar.get().archiveFile.get().asFile.absolutePath}",
+                            "-javaagent:${otelJavaagent.singleFile.absolutePath}",
+                            "-Dotel.traces.exporter=none",
+                            "-Dotel.metrics.exporter=none",
+                            "-Dotel.logs.exporter=none",
+                        )
+                    },
+                )
+            }
+        }
+    }
+}
+
+testing.suites.named<JvmTestSuite>("otelLibraryTest") {
+    targets {
+        all {
+            testTask.configure {
+                dependsOn(otelLibraryTestAgentJar)
+                include("**/*Test.class")
+                forkEvery = 1
+                jvmArgumentProviders.add(
+                    CommandLineArgumentProvider {
+                        listOf("-javaagent:${otelLibraryTestAgentJar.get().archiveFile.get().asFile.absolutePath}")
+                    },
+                )
+            }
+        }
+    }
+}
+
+tasks.check {
+    dependsOn(testing.suites.named("otelAgentTest"))
+    dependsOn(testing.suites.named("otelLibraryTest"))
 }

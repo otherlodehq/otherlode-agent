@@ -485,6 +485,81 @@ public final class OtherlodeEndpoints {
         }
     }
 
+    /**
+     * What OpenTelemetry's route prefixers did to a route: each recorded pair maps a route a
+     * prefixer returned to the route it was given. The route bridge reads the final route at span
+     * end and resolves it back through this table, so a route the bridge reports matches the one a
+     * framework module declared.
+     *
+     * <p>Routes are low-cardinality, so the table holds at most {@code capacity} entries. A full
+     * table adds nothing more and keeps what it has, so a translation is never replaced by another
+     * route's. A prefixed route that two different routes were given for is ambiguous: it stays in
+     * the table as such and resolves to itself. A call is a map read once its pair is known, and
+     * never throws.
+     */
+    public static final class RoutePrefixTable {
+        private static final int MAX_STEPS = 8;
+        private static final String AMBIGUOUS = new String("ambiguous");
+
+        private final int capacity;
+        private final ConcurrentHashMap<String, String> unprefixedByPrefixed = new ConcurrentHashMap<>();
+
+        public RoutePrefixTable(int capacity) {
+            this.capacity = capacity;
+        }
+
+        /** Records that a prefixer turned {@code unprefixed} into {@code prefixed}. A null, empty or unchanged route records nothing. */
+        public void record(String prefixed, String unprefixed) {
+            if (prefixed == null || unprefixed == null || unprefixed.isEmpty() || prefixed.equals(unprefixed)) return;
+            String known = unprefixedByPrefixed.get(prefixed);
+            if (known == null) {
+                if (unprefixedByPrefixed.size() >= capacity) return;
+                known = unprefixedByPrefixed.putIfAbsent(prefixed, unprefixed);
+                if (known == null) return;
+            }
+            if (known != AMBIGUOUS && !known.equals(unprefixed)) {
+                unprefixedByPrefixed.put(prefixed, AMBIGUOUS);
+            }
+        }
+
+        /**
+         * Follows {@code route} back through every prefixer that built it. A route the table does
+         * not hold, an ambiguous step or a chain that does not end returns {@code route} as given.
+         */
+        public String resolve(String route) {
+            if (route == null) return null;
+            String current = route;
+            for (int step = 0; step < MAX_STEPS; step++) {
+                String next = unprefixedByPrefixed.get(current);
+                if (next == null) return current;
+                if (next == AMBIGUOUS) return route;
+                current = next;
+            }
+            return route;
+        }
+    }
+
+    private static final RoutePrefixTable ROUTE_PREFIXES = new RoutePrefixTable(8192);
+
+    /** Records that one of OpenTelemetry's route prefixers turned {@code unprefixed} into {@code prefixed}. Never throws. */
+    public static void recordRoutePrefix(String prefixed, String unprefixed) {
+        try {
+            ROUTE_PREFIXES.record(prefixed, unprefixed);
+        } catch (Throwable t) {
+            logDelegateFailure(null, "recordRoutePrefix", t);
+        }
+    }
+
+    /** The route {@code route} was built from through the prefixers recorded so far, or {@code route} itself. Never throws. */
+    public static String resolveRoutePrefix(String route) {
+        try {
+            return ROUTE_PREFIXES.resolve(route);
+        } catch (Throwable t) {
+            logDelegateFailure(null, "resolveRoutePrefix", t);
+            return route;
+        }
+    }
+
     /** Increments an endpoint's hit count. A no-op for a null entry, which is what every other method above returns on failure. */
     public static void hit(Object entry) {
         if (entry == null) return;

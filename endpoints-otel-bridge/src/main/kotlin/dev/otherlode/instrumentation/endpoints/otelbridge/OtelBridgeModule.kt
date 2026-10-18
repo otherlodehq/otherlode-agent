@@ -6,6 +6,7 @@ import net.bytebuddy.description.method.MethodDescription
 import net.bytebuddy.description.type.TypeDescription
 import net.bytebuddy.dynamic.DynamicType
 import net.bytebuddy.matcher.ElementMatcher
+import net.bytebuddy.matcher.ElementMatchers.isStatic
 import net.bytebuddy.matcher.ElementMatchers.named
 import net.bytebuddy.matcher.ElementMatchers.namedOneOf
 import net.bytebuddy.matcher.ElementMatchers.takesArguments
@@ -18,6 +19,22 @@ internal const val SHADED_EXTRACTOR_NAME =
     "io.opentelemetry.javaagent.shaded.instrumentation.api.semconv.http.HttpServerAttributesExtractor"
 
 private const val ADVICE_CLASS = "dev.otherlode.endpoints.otelbridge.OnEndAdvice"
+private const val PREFIX_ADVICE_CLASS = "dev.otherlode.endpoints.otelbridge.RoutePrefixAdvice"
+
+private const val SPRING_ROUTE_SUPPORT_SIMPLE_NAME = "HttpRouteSupport"
+
+/**
+ * The classes holding OpenTelemetry's route prefixers: the Java agent's servlet and JAX-RS
+ * bootstrap helpers, and the Spring MVC library instrumentation's route support for each servlet
+ * namespace. A deployment loads some of them, so a class that never loads is simply not woven.
+ */
+internal val PREFIXER_NAMES: List<String> =
+    listOf(
+        "io.opentelemetry.javaagent.bootstrap.servlet.ServletContextPath",
+        "io.opentelemetry.javaagent.bootstrap.jaxrs.JaxrsContextPath",
+        "io.opentelemetry.instrumentation.spring.webmvc.v5_3.HttpRouteSupport",
+        "io.opentelemetry.instrumentation.spring.webmvc.v6_0.HttpRouteSupport",
+    )
 
 /**
  * Route bridge endpoint module. Counts the route OpenTelemetry's own HTTP server instrumentation
@@ -32,13 +49,21 @@ private const val ADVICE_CLASS = "dev.otherlode.endpoints.otelbridge.OnEndAdvice
  * reference in its bytecode to the agent's `io/opentelemetry/javaagent/shaded/...` prefix before
  * binding, so one advice class serves both deployments.
  *
+ * It also weaves [RoutePrefixAdvice] onto the exit of each of OpenTelemetry's route prefixers it
+ * finds loaded, which records the unprefixed route a prefixed one was built from. [OnEndAdvice]
+ * resolves the final route back through that table, so the application root and servlet path
+ * OpenTelemetry adds do not make a second endpoint of a route a framework module already counts.
+ * A deployment without a prefixer, or with one this module has not read, is unaffected: the route
+ * stays as OpenTelemetry reported it.
+ *
  * Off by default. It is always discovered, and [dev.otherlode.Agent] drops it unless
  * [dev.otherlode.config.AgentConfig.otelBridgeEnabled] is set.
  */
 class OtelBridgeModule : EndpointModule {
     override val name: String = "otel"
 
-    override fun typeMatcher(): ElementMatcher<in TypeDescription> = namedOneOf(UNSHADED_EXTRACTOR_NAME, SHADED_EXTRACTOR_NAME)
+    override fun typeMatcher(): ElementMatcher<in TypeDescription> =
+        namedOneOf(UNSHADED_EXTRACTOR_NAME, SHADED_EXTRACTOR_NAME, *PREFIXER_NAMES.toTypedArray())
 
     override fun transform(
         builder: DynamicType.Builder<*>,
@@ -46,6 +71,11 @@ class OtelBridgeModule : EndpointModule {
         advice: AdviceBinder,
         classLoader: ClassLoader?,
     ): DynamicType.Builder<*> {
+        if (typeDescription.name in PREFIXER_NAMES) {
+            val prefixer = if (typeDescription.simpleName == SPRING_ROUTE_SUPPORT_SIMPLE_NAME) "prependContextPath" else "prepend"
+            val method = named<MethodDescription>(prefixer).and(takesArguments(2)).and(isStatic())
+            return builder.visit(advice.hook(PREFIX_ADVICE_CLASS, method))
+        }
         val onEnd = named<MethodDescription>("onEnd").and(takesArguments(5))
         return builder.visit(advice.hook(ADVICE_CLASS, onEnd, remapPrefixesFor(typeDescription.name)))
     }

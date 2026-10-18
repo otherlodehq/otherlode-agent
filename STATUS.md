@@ -151,7 +151,7 @@ ADR 0074. In order:
    request counted by two modules. The ADR names Tomcat 9 as accepting a late
    `ServletRegistration.addMapping`; 9.0.123 and 10.1.61 refuse it, so the late
    mapping test adds one through Tomcat's own `Context`.
-3. The route bridge removes the prefix OpenTelemetry added (ADR 0019's
+3. Done: the route bridge removes the prefix OpenTelemetry added (ADR 0019's
    2026-10-18 amendment), tested with the servlet module present so
    OpenTelemetry's `/shop/api/*` lands on the module's `/api/*`.
 
@@ -358,6 +358,15 @@ Endpoints:
 - The OTel bridge duplicates a route under a Spring WebFlux base path with
   OpenTelemetry's library instrumentation, which adds the base path where the
   bridge cannot see the unprefixed route (ADR 0019's 2026-10-18 amendment).
+- With OpenTelemetry's agent listed before this one, OpenTelemetry has
+  rewritten servlet and Tomcat classes to carry its virtual-field interfaces,
+  which live in its own class loader. The JAX-RS matcher's supertype walk
+  cannot resolve them, so a class's weave fails, and a module that matched
+  that class (`spring-webmvc` on `DispatcherServlet`) is switched off. The bridge's tests
+  list OpenTelemetry's agent after this one, where it does not happen.
+- The Spring MVC module counts each request twice beside OpenTelemetry's Spring
+  MVC library instrumentation, which asks the handler mappings for the match a
+  second time to learn the route.
 - JSP pages are not counted: each runs inside the container's one JSP
   servlet, which the servlet module leaves out (ADR 0074). Counting a page
   needs a hook in the JSP engine.

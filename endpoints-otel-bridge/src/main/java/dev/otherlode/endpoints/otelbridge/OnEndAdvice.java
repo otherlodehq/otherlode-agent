@@ -22,6 +22,11 @@ import net.bytebuddy.asm.Advice;
  * class's bytecode rewritten to that agent's {@code io/opentelemetry/javaagent/shaded/...} prefix
  * before binding, so one advice class serves both deployments.
  *
+ * <p>The route is first resolved through the table {@link RoutePrefixAdvice} fills, which takes
+ * off the application root and servlet path OpenTelemetry put in front of it, so a request a
+ * framework module counted under its own template is not counted again under the prefixed one. A
+ * route no recorded prefixer built is used as it is.
+ *
  * <p>A Vert.x Web route reaches OpenTelemetry spelled {@code /users/:id}. A segment that is
  * {@code :name}, or {@code :name::type} as Vert.x Web 5.2 writes a typed parameter, becomes
  * {@code {name}} before anything is looked up, so a request the {@code vertx-web} module counted
@@ -49,6 +54,7 @@ public class OnEndAdvice {
             if (state == null) return;
             String route = state.getRoute();
             if (route == null) return;
+            route = OtherlodeEndpoints.resolveRoutePrefix(route);
             if (route.indexOf("/:") >= 0) {
                 boolean extended = Boolean.getBoolean("io.vertx.web.route.param.extended-pattern");
                 StringBuilder converted = new StringBuilder(route.length() + 4);

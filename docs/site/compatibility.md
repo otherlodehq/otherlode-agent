@@ -54,11 +54,11 @@ The JVM calls every class transformer that is not retransformation-capable befor
 |---|---|
 | JaCoCo, listed before or after | Nothing. JaCoCo identifies each class by the checksum of its class file, and that still matches, because the agent weaves after JaCoCo. The agent's manifest equals a run without JaCoCo. Gradle's `jacoco` plugin can stay applied to the test task that carries the agent. |
 | AspectJ's weaver, Spring's load-time weaver | The agent sees the weaver's output as the bytes it receives. A method whose conditional jumps the weaver added, removed or reordered keeps its entry probe and gets no branch probes. The agent logs one INFO line per class. The method's branches are left out of the report instead of reported at zero. |
-| OpenTelemetry's agent | OpenTelemetry's agent is retransformation-capable too, as is the agent's, so the two share the same ordering group. No test runs them together. With `otelBridgeEnabled`, the agent can also read OpenTelemetry's HTTP route. See [endpoints](endpoints). |
+| OpenTelemetry's agent | OpenTelemetry's agent is retransformation-capable too, as is the agent's, so the two share the same ordering group. The route bridge's tests run them together, with OpenTelemetry's agent listed after this one. With `otelBridgeEnabled`, the agent can also read OpenTelemetry's HTTP route. See [endpoints](endpoints). |
 | An APM agent that retransforms woven classes | The agent weaves the class again from the plan it stored at first load, so the other agent's retransformation succeeds and the probes keep counting. If the other agent changes a method body, the agent keeps that change. A method whose jumps no longer pair with the class file keeps its entry probe, and its branch counts stay where they were. |
 | An agent that calls `redefineClasses` | Handled like a retransformation. A redefinition is refused only when the class file on disk changed. |
 
-Tests launch a JVM with JaCoCo's agent in both orders, and tests retransform and redefine woven classes with another transformer. No test launches AspectJ's weaver or OpenTelemetry's agent. Those rows follow from the same ordering rule and shape check.
+Tests launch a JVM with JaCoCo's agent in both orders, and tests retransform and redefine woven classes with another transformer. No test launches AspectJ's weaver, and OpenTelemetry's agent is launched only by the route bridge's tests. The other rows follow from the same ordering rule and shape check.
 
 ## HotSwap and IDE redefinition
 

@@ -25,6 +25,21 @@ class OtelBridgeModuleTest {
     }
 
     @Test
+    fun `type matcher matches each route prefixer the bridge reads`() {
+        val matcher = OtelBridgeModule().typeMatcher()
+
+        assertEquals(
+            listOf(
+                "io.opentelemetry.javaagent.bootstrap.servlet.ServletContextPath",
+                "io.opentelemetry.javaagent.bootstrap.jaxrs.JaxrsContextPath",
+                "io.opentelemetry.instrumentation.spring.webmvc.v5_3.HttpRouteSupport",
+                "io.opentelemetry.instrumentation.spring.webmvc.v6_0.HttpRouteSupport",
+            ),
+            PREFIXER_NAMES.filter { matcher.matches(latentType(it)) },
+        )
+    }
+
+    @Test
     fun `remapPrefixesFor is empty for the unshaded name`() {
         assertEquals(emptyMap(), remapPrefixesFor(UNSHADED_EXTRACTOR_NAME))
     }
