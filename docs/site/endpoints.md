@@ -92,6 +92,7 @@ Annotated controllers are declared when Spring builds its handler-method table, 
 A request counts once. These are no call, on every route kind below:
 
 - A lookup Spring makes for itself through `HandlerMappingIntrospector`, which Spring Security and CORS handling use to match the request.
+- A second lookup of an annotated controller's mapping on a request that already matched one, as the OpenTelemetry Spring MVC library instrumentation makes after the request to learn its route. A forward or an include still counts.
 - The second dispatch of a request that completes asynchronously, such as a `Callable` or `DeferredResult` result.
 - A CORS preflight, an `OPTIONS` request that carries both `Origin` and `Access-Control-Request-Method`. An `OPTIONS` request without them to a route that maps `OPTIONS` counts.
 

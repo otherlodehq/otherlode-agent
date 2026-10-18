@@ -7,6 +7,7 @@ import javax.servlet.DispatcherType;
 import javax.servlet.http.HttpServletRequest;
 import net.bytebuddy.asm.Advice;
 import org.springframework.web.bind.annotation.RequestMethod;
+import org.springframework.web.servlet.HandlerMapping;
 import org.springframework.web.servlet.mvc.condition.PathPatternsRequestCondition;
 import org.springframework.web.servlet.mvc.condition.PatternsRequestCondition;
 import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
@@ -22,7 +23,12 @@ import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
  * Framework major version this agent supports. A lookup {@code HandlerMappingIntrospector} makes
  * for Spring Security or CORS arrives with the request wrapped in its own request class, an async
  * redispatch has the dispatcher type {@code ASYNC}, and a CORS preflight is answered by Spring's
- * preflight handler. None of the three is a call of the route it matches.
+ * preflight handler. None of the three is a call of the route it matches. Neither is a second
+ * lookup on a request that is still a {@code REQUEST} dispatch but already carries {@code
+ * HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE}, which only the first lookup sets. OpenTelemetry's
+ * Spring MVC library instrumentation makes that lookup from its filter, after the dispatch, on the
+ * container's request, to learn the route. A forward or an include has its own dispatcher type and
+ * counts.
  *
  * <p>The {@link RequestMappingInfo} handed to this method is a new object built per request by
  * {@code getMatchingCondition}, never the one {@link RegisterHandlerMethodAdvice} saw at
@@ -47,6 +53,8 @@ public class HandleMatchAdvice {
         try {
             if (INTROSPECTOR_REQUEST.equals(request.getClass().getName())
                     || request.getDispatcherType() == DispatcherType.ASYNC
+                    || (request.getDispatcherType() == DispatcherType.REQUEST
+                            && request.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE) != null)
                     || ("OPTIONS".equals(request.getMethod())
                             && request.getHeader("Origin") != null
                             && request.getHeader("Access-Control-Request-Method") != null)) {

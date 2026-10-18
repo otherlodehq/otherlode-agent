@@ -160,9 +160,6 @@ ADR 0074. In order:
   that class (`spring-webmvc` on `DispatcherServlet`) is switched off. The
   bridge's tests list OpenTelemetry's agent after this one, where it does not
   happen.
-- The Spring MVC module counts each request twice beside OpenTelemetry's
-  Spring MVC library instrumentation, which asks the handler mappings for the
-  match a second time to learn the route.
 
 ### Endpoint follow-ups
 

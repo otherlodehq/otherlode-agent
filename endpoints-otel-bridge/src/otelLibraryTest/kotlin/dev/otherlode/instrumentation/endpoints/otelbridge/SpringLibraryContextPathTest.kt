@@ -12,8 +12,8 @@ import kotlin.test.assertTrue
  * Spring MVC served from a context path with OpenTelemetry's Spring MVC library instrumentation
  * and no Java agent. The library puts the request's context path in front of the route, so it
  * reports `/shop/orders` where the Spring MVC module counts `/orders`. The library asks the handler
- * mappings for the match a second time to learn the route, so the Spring MVC module counts each
- * request twice here, and the test does not pin the count.
+ * mappings for the match a second time to learn the route, after the dispatch, and that lookup is
+ * no call.
  */
 class SpringLibraryContextPathTest {
     @Test
@@ -28,7 +28,11 @@ class SpringLibraryContextPathTest {
 
         val observed = observedEndpoints()
 
-        assertTrue(observed.any { it.framework == "spring-webmvc" && it.template == "/orders" && it.hits > 0 }, "$observed")
+        assertEquals(
+            2L,
+            observed.singleOrNull { it.framework == "spring-webmvc" && it.template == "/orders" }?.hits,
+            "$observed",
+        )
         assertTrue(observed.none { it.framework == "otel" }, "the bridge recorded an endpoint: $observed")
         assertEquals("/orders", OtherlodeEndpoints.resolveRoutePrefix("/shop/orders"))
     }
