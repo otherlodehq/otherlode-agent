@@ -64,12 +64,27 @@ fun <T> serve(
 ): T {
     client = newClient()
     val defaults = mapOf<String, Any>("micronaut.server.port" to -1, "endpoints.all.enabled" to false)
-    val server = ApplicationContext.run(EmbeddedServer::class.java, defaults + properties)
+    val server = startOnFreePort(defaults + properties)
     try {
         return block(server.port)
     } finally {
         server.stop()
     }
+}
+
+/**
+ * Starts the server, again when it lost the port Micronaut picked for it to another process before
+ * it could bind, up to three attempts.
+ */
+private fun startOnFreePort(properties: Map<String, Any>): EmbeddedServer {
+    repeat(2) {
+        try {
+            return ApplicationContext.run(EmbeddedServer::class.java, properties)
+        } catch (e: RuntimeException) {
+            if (generateSequence<Throwable>(e) { it.cause }.none { it is java.net.BindException }) throw e
+        }
+    }
+    return ApplicationContext.run(EmbeddedServer::class.java, properties)
 }
 
 @Volatile
