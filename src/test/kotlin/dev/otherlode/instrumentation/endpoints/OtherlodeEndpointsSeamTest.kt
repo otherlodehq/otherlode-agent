@@ -82,7 +82,7 @@ class OtherlodeEndpointsSeamTest {
                     null,
                     null,
                     null,
-                    i == 4087,
+                    kindOf(i == 4087),
                 ),
             )
         }
@@ -99,7 +99,15 @@ class OtherlodeEndpointsSeamTest {
         assertNull(firstDispatchReturn, "recordDispatch must return null before a resolver is installed")
         for (i in 1 until 5) {
             assertNull(
-                OtherlodeEndpoints.recordDispatch(dispatchModule, "dispatch-key-$i", "GET", "/cap-test/dispatch/$i", null, null, i == 4),
+                OtherlodeEndpoints.recordDispatch(
+                    dispatchModule,
+                    "dispatch-key-$i",
+                    "GET",
+                    "/cap-test/dispatch/$i",
+                    null,
+                    null,
+                    kindOf(i == 4),
+                ),
             )
         }
 
@@ -111,7 +119,7 @@ class OtherlodeEndpointsSeamTest {
                 "/cap-test/unowned/0",
                 null,
                 null,
-                true,
+                OtherlodeEndpoints.TEMPLATE_SERVLET_PATTERN,
             )
         assertNull(firstDispatchIfUnownedReturn, "recordDispatchIfUnowned must return null before a resolver is installed")
 
@@ -135,10 +143,26 @@ class OtherlodeEndpointsSeamTest {
         assertEquals("/cap-test/register/4087", resolver.registerCalls.last().verbatimTemplate)
         assertTrue(resolver.registerCalls.none { it.verbatimTemplate == "/cap-test/register/4088" }, "overflow records must not replay")
 
-        assertEquals(listOf("/cap-test/register/4087"), resolver.registerCalls.filter { it.regex }.map { it.verbatimTemplate })
+        assertEquals(
+            listOf("/cap-test/register/4087"),
+            resolver.registerCalls
+                .filter {
+                    it.templateKind == OtherlodeEndpoints.TEMPLATE_REGEX
+                }.map { it.verbatimTemplate },
+        )
         assertEquals(5, resolver.dispatchCalls.size)
-        assertEquals(listOf("/cap-test/dispatch/4"), resolver.dispatchCalls.filter { it.regex }.map { it.verbatimTemplate })
-        assertTrue(resolver.dispatchIfUnownedCalls.single().regex, "a regex mark buffered before install survives replay")
+        assertEquals(
+            listOf("/cap-test/dispatch/4"),
+            resolver.dispatchCalls
+                .filter {
+                    it.templateKind == OtherlodeEndpoints.TEMPLATE_REGEX
+                }.map { it.verbatimTemplate },
+        )
+        assertEquals(
+            OtherlodeEndpoints.TEMPLATE_SERVLET_PATTERN,
+            resolver.dispatchIfUnownedCalls.single().templateKind,
+            "a template kind buffered before install survives replay",
+        )
         assertEquals(1, resolver.dispatchIfUnownedCalls.size)
         assertEquals("/cap-test/unowned/0", resolver.dispatchIfUnownedCalls.single().verbatimTemplate)
         assertEquals(6, resolver.hitCalls.size, "each replayed dispatch and dispatchIfUnowned must be followed by exactly one hit")
@@ -259,14 +283,57 @@ class OtherlodeEndpointsSeamTest {
         OtherlodeEndpoints.install(endpointRegistryResolver(registry) as OtherlodeEndpoints.Resolver)
 
         OtherlodeEndpoints.register(module, "path-key", "GET", "/users/{2,3}", null, null, null, null)
-        val regexEntry = OtherlodeEndpoints.register(module, "regex-key", "GET", "/users//{2,3}/", null, null, null, null, true)
-        val dispatched = OtherlodeEndpoints.recordDispatch(module, "regex-dispatch-key", "GET", "/users//{2,3}/", null, null, true)
+        val regexEntry =
+            OtherlodeEndpoints.register(
+                module,
+                "regex-key",
+                "GET",
+                "/users//{2,3}/",
+                null,
+                null,
+                null,
+                null,
+                OtherlodeEndpoints.TEMPLATE_REGEX,
+            )
+        val dispatched =
+            OtherlodeEndpoints.recordDispatch(
+                module,
+                "regex-dispatch-key",
+                "GET",
+                "/users//{2,3}/",
+                null,
+                null,
+                OtherlodeEndpoints.TEMPLATE_REGEX,
+            )
 
         assertSame(regexEntry, dispatched)
         assertEquals(2, registry.endpoints().size)
         val regex = registry.endpoints().single { it.templateKind == EndpointTemplateKind.REGEX }
         assertEquals("/users//{2,3}/", regex.routeTemplate)
         assertEquals("/users//{2,3}/", regex.verbatimTemplate)
+    }
+
+    @Test
+    @Order(6)
+    fun `a servlet pattern through the seam is kept apart from a path and a regex endpoint of the same text`() {
+        val module = uniqueModule("servlet-pattern-registry")
+        val registry = EndpointRegistry()
+        OtherlodeEndpoints.install(endpointRegistryResolver(registry) as OtherlodeEndpoints.Resolver)
+        val servlet = OtherlodeEndpoints.TEMPLATE_SERVLET_PATTERN
+
+        OtherlodeEndpoints.register(module, "path-key", "GET", "/", null, null, null, null)
+        OtherlodeEndpoints.register(module, "regex-key", "GET", "/", null, null, null, null, OtherlodeEndpoints.TEMPLATE_REGEX)
+        val registered = OtherlodeEndpoints.register(module, "servlet-key", "GET", "*.do", "/ctx", null, null, null, servlet)
+        val dispatched = OtherlodeEndpoints.recordDispatch(module, "servlet-dispatch-key", "GET", "*.do", "/ctx", null, servlet)
+        val unowned = OtherlodeEndpoints.recordDispatchIfUnowned(module, "servlet-unowned-key", "GET", "/", null, null, servlet)
+
+        assertSame(registered, dispatched)
+        assertEquals(4, registry.endpoints().size)
+        assertEquals("*.do", registry.endpoints().single { it.verbatimTemplate == "*.do" }.routeTemplate)
+        assertEquals(
+            EndpointTemplateKind.SERVLET_PATTERN,
+            (unowned as EndpointRegistry.EndpointEntry).templateKind,
+        )
     }
 
     @Test
@@ -512,21 +579,21 @@ private class RecordingResolver {
         val key: Any,
         val framework: String,
         val verbatimTemplate: String,
-        val regex: Boolean,
+        val templateKind: Int,
     )
 
     data class DispatchCall(
         val key: Any,
         val framework: String,
         val verbatimTemplate: String,
-        val regex: Boolean,
+        val templateKind: Int,
     )
 
     data class DispatchIfUnownedCall(
         val key: Any,
         val framework: String,
         val verbatimTemplate: String,
-        val regex: Boolean,
+        val templateKind: Int,
     )
 
     data class DisableCall(
@@ -559,17 +626,17 @@ private class RecordingResolver {
                 }
 
                 "register" -> {
-                    registerCalls += RegisterCall(args[0]!!, args[1] as String, args[3] as String, args[8] as Boolean)
+                    registerCalls += RegisterCall(args[0]!!, args[1] as String, args[3] as String, args[8] as Int)
                     "entry-${nextEntryId++}"
                 }
 
                 "recordDispatch" -> {
-                    dispatchCalls += DispatchCall(args[0]!!, args[1] as String, args[3] as String, args[6] as Boolean)
+                    dispatchCalls += DispatchCall(args[0]!!, args[1] as String, args[3] as String, args[6] as Int)
                     "entry-${nextEntryId++}"
                 }
 
                 "recordDispatchIfUnowned" -> {
-                    dispatchIfUnownedCalls += DispatchIfUnownedCall(args[0]!!, args[1] as String, args[3] as String, args[6] as Boolean)
+                    dispatchIfUnownedCalls += DispatchIfUnownedCall(args[0]!!, args[1] as String, args[3] as String, args[6] as Int)
                     "entry-${nextEntryId++}"
                 }
 
@@ -639,7 +706,7 @@ private fun endpointRegistryResolver(registry: EndpointRegistry): Any =
                     verbatimTemplate = args[3] as String,
                     contextPath = args[4] as String?,
                     handler = (args[5] as String?)?.let { HandlerRef(it, args[6] as String?, args[7] as String?) },
-                    regex = args[8] as Boolean,
+                    templateKind = EndpointTemplateKind.entries[args[8] as Int],
                 )
             }
 
@@ -651,7 +718,7 @@ private fun endpointRegistryResolver(registry: EndpointRegistry): Any =
                     verbatimTemplate = args[3] as String,
                     contextPath = args[4] as String?,
                     handlerClass = args[5] as String?,
-                    regex = args[6] as Boolean,
+                    templateKind = EndpointTemplateKind.entries[args[6] as Int],
                 )
             }
 
@@ -663,7 +730,7 @@ private fun endpointRegistryResolver(registry: EndpointRegistry): Any =
                     verbatimTemplate = args[3] as String,
                     contextPath = args[4] as String?,
                     handlerClass = args[5] as String?,
-                    regex = args[6] as Boolean,
+                    templateKind = EndpointTemplateKind.entries[args[6] as Int],
                 )
             }
 
@@ -705,3 +772,5 @@ private fun endpointRegistryResolver(registry: EndpointRegistry): Any =
             }
         }
     }
+
+private fun kindOf(regex: Boolean): Int = if (regex) OtherlodeEndpoints.TEMPLATE_REGEX else OtherlodeEndpoints.TEMPLATE_PATH

@@ -2,6 +2,7 @@ package dev.otherlode.instrumentation.endpoints
 
 import dev.otherlode.bootstrap.OtherlodeEndpoints
 import dev.otherlode.export.DisabledEndpointModuleKind
+import dev.otherlode.export.EndpointTemplateKind
 import dev.otherlode.instrumentation.endpoints.api.EndpointModule
 import dev.otherlode.registry.EndpointRegistry
 import dev.otherlode.registry.HandlerRef
@@ -52,7 +53,7 @@ class RegistryResolver(
         handlerClass: String?,
         handlerMethod: String?,
         handlerDescriptor: String?,
-        regex: Boolean,
+        templateKind: Int,
     ): Any? {
         val declare = {
             registry.register(
@@ -62,7 +63,7 @@ class RegistryResolver(
                 verbatimTemplate = verbatimTemplate,
                 contextPath = contextPath,
                 handler = handlerRef(handlerClass, handlerMethod, handlerDescriptor),
-                regex = regex,
+                templateKind = kindOf(templateKind),
             )
             Unit
         }
@@ -74,9 +75,17 @@ class RegistryResolver(
             verbatimTemplate = verbatimTemplate,
             contextPath = contextPath,
             handler = handlerRef(handlerClass, handlerMethod, handlerDescriptor),
-            regex = regex,
+            templateKind = kindOf(templateKind),
         )
     }
+
+    private fun kindOf(templateKind: Int): EndpointTemplateKind =
+        when (templateKind) {
+            OtherlodeEndpoints.TEMPLATE_PATH -> EndpointTemplateKind.PATH
+            OtherlodeEndpoints.TEMPLATE_REGEX -> EndpointTemplateKind.REGEX
+            OtherlodeEndpoints.TEMPLATE_SERVLET_PATTERN -> EndpointTemplateKind.SERVLET_PATTERN
+            else -> throw IllegalArgumentException("unknown endpoint template kind $templateKind")
+        }
 
     private fun handlerRef(
         handlerClass: String?,
@@ -91,8 +100,8 @@ class RegistryResolver(
         verbatimTemplate: String,
         contextPath: String?,
         handlerClass: String?,
-        regex: Boolean,
-    ): Any = registry.recordDispatch(key, framework, verb, verbatimTemplate, contextPath, handlerClass, regex)
+        templateKind: Int,
+    ): Any = registry.recordDispatch(key, framework, verb, verbatimTemplate, contextPath, handlerClass, kindOf(templateKind))
 
     override fun recordDispatchIfUnowned(
         key: Any,
@@ -101,8 +110,8 @@ class RegistryResolver(
         verbatimTemplate: String,
         contextPath: String?,
         handlerClass: String?,
-        regex: Boolean,
-    ): Any? = registry.recordDispatchIfUnowned(key, framework, verb, verbatimTemplate, contextPath, handlerClass, regex)
+        templateKind: Int,
+    ): Any? = registry.recordDispatchIfUnowned(key, framework, verb, verbatimTemplate, contextPath, handlerClass, kindOf(templateKind))
 
     /**
      * Routes [frameworkObject] to the [EndpointModule] named [module], which walks it and

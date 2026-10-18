@@ -207,7 +207,7 @@ internal class RouterWalk(
                     join?.className,
                     join?.method,
                     join?.descriptor,
-                    regexRoute,
+                    if (regexRoute) OtherlodeEndpoints.TEMPLATE_REGEX else OtherlodeEndpoints.TEMPLATE_PATH,
                 )
             }
         }

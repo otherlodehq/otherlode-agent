@@ -45,6 +45,15 @@ import java.util.function.Consumer;
  */
 public final class OtherlodeEndpoints {
 
+    /** The template is a path: normalised, with any context path folded in. */
+    public static final int TEMPLATE_PATH = 0;
+
+    /** The template is the regular expression a framework matches a route by, kept exactly as written. */
+    public static final int TEMPLATE_REGEX = 1;
+
+    /** The template is a servlet mapping no path can express, such as {@code *.do} or the default mapping {@code /}, kept exactly as written. */
+    public static final int TEMPLATE_SERVLET_PATTERN = 2;
+
     /** Implemented by the agent; backs every entry point below with the real endpoint registry. */
     public interface Resolver {
         Object lookup(Object key);
@@ -58,7 +67,7 @@ public final class OtherlodeEndpoints {
                 String handlerClass,
                 String handlerMethod,
                 String handlerDescriptor,
-                boolean regex);
+                int templateKind);
 
         Object recordDispatch(
                 Object key,
@@ -67,7 +76,7 @@ public final class OtherlodeEndpoints {
                 String verbatimTemplate,
                 String contextPath,
                 String handlerClass,
-                boolean regex);
+                int templateKind);
 
         Object recordDispatchIfUnowned(
                 Object key,
@@ -76,7 +85,7 @@ public final class OtherlodeEndpoints {
                 String verbatimTemplate,
                 String contextPath,
                 String handlerClass,
-                boolean regex);
+                int templateKind);
 
         void declare(String module, Object frameworkObject);
 
@@ -126,7 +135,7 @@ public final class OtherlodeEndpoints {
         final String reason;
         final int disableKind;
         final Object frameworkObject;
-        final boolean regex;
+        final int templateKind;
 
         private BufferedRecord(
                 RecordKind kind,
@@ -141,7 +150,7 @@ public final class OtherlodeEndpoints {
                 String reason,
                 int disableKind,
                 Object frameworkObject,
-                boolean regex) {
+                int templateKind) {
             this.kind = kind;
             this.module = module;
             this.key = key;
@@ -154,7 +163,7 @@ public final class OtherlodeEndpoints {
             this.reason = reason;
             this.disableKind = disableKind;
             this.frameworkObject = frameworkObject;
-            this.regex = regex;
+            this.templateKind = templateKind;
         }
 
         static BufferedRecord forRegister(
@@ -166,7 +175,7 @@ public final class OtherlodeEndpoints {
                 String handlerClass,
                 String handlerMethod,
                 String handlerDescriptor,
-                boolean regex) {
+                int templateKind) {
             return new BufferedRecord(
                     RecordKind.REGISTER,
                     module,
@@ -180,7 +189,7 @@ public final class OtherlodeEndpoints {
                     null,
                     0,
                     null,
-                    regex);
+                    templateKind);
         }
 
         static BufferedRecord forDispatch(
@@ -190,7 +199,7 @@ public final class OtherlodeEndpoints {
                 String verbatimTemplate,
                 String contextPath,
                 String handlerClass,
-                boolean regex) {
+                int templateKind) {
             return new BufferedRecord(
                     RecordKind.DISPATCH,
                     module,
@@ -204,7 +213,7 @@ public final class OtherlodeEndpoints {
                     null,
                     0,
                     null,
-                    regex);
+                    templateKind);
         }
 
         static BufferedRecord forDispatchIfUnowned(
@@ -214,7 +223,7 @@ public final class OtherlodeEndpoints {
                 String verbatimTemplate,
                 String contextPath,
                 String handlerClass,
-                boolean regex) {
+                int templateKind) {
             return new BufferedRecord(
                     RecordKind.DISPATCH_IF_UNOWNED,
                     module,
@@ -228,17 +237,17 @@ public final class OtherlodeEndpoints {
                     null,
                     0,
                     null,
-                    regex);
+                    templateKind);
         }
 
         static BufferedRecord forDeclare(String module, Object frameworkObject) {
             return new BufferedRecord(
-                    RecordKind.DECLARE, module, null, null, null, null, null, null, null, null, 0, frameworkObject, false);
+                    RecordKind.DECLARE, module, null, null, null, null, null, null, null, null, 0, frameworkObject, TEMPLATE_PATH);
         }
 
         static BufferedRecord forFailure(String module, int kind, String reason) {
             return new BufferedRecord(
-                    RecordKind.FAILURE, module, null, null, null, null, null, null, null, reason, kind, null, false);
+                    RecordKind.FAILURE, module, null, null, null, null, null, null, null, reason, kind, null, TEMPLATE_PATH);
         }
     }
 
@@ -319,14 +328,15 @@ public final class OtherlodeEndpoints {
             String handlerClass,
             String handlerMethod,
             String handlerDescriptor) {
-        return register(module, key, verb, verbatimTemplate, contextPath, handlerClass, handlerMethod, handlerDescriptor, false);
+        return register(module, key, verb, verbatimTemplate, contextPath, handlerClass, handlerMethod, handlerDescriptor, TEMPLATE_PATH);
     }
 
     /**
      * Like {@link #register(String, Object, String, String, String, String, String, String)}, and
-     * {@code regex} says {@code verbatimTemplate} is the regular expression a framework matches by
-     * rather than a path. A regex template is kept exactly as written, never merged with a path
-     * template that reads the same, and {@code contextPath} is not folded into it.
+     * {@code templateKind} is one of {@link #TEMPLATE_PATH}, {@link #TEMPLATE_REGEX} and {@link
+     * #TEMPLATE_SERVLET_PATTERN}, saying what {@code verbatimTemplate} is. A regex or servlet
+     * pattern template is kept exactly as written, never merged with a template of another kind
+     * that reads the same, and {@code contextPath} is not folded into it.
      */
     public static Object register(
             String module,
@@ -337,7 +347,7 @@ public final class OtherlodeEndpoints {
             String handlerClass,
             String handlerMethod,
             String handlerDescriptor,
-            boolean regex) {
+            int templateKind) {
         if (isDisabledFast(module)) return null;
         Resolver current = ready;
         if (current == null) {
@@ -354,14 +364,14 @@ public final class OtherlodeEndpoints {
                                     handlerClass,
                                     handlerMethod,
                                     handlerDescriptor,
-                                    regex));
+                                    templateKind));
                     return null;
                 }
             }
         }
         try {
             return current.register(
-                    key, module, verb, verbatimTemplate, contextPath, handlerClass, handlerMethod, handlerDescriptor, regex);
+                    key, module, verb, verbatimTemplate, contextPath, handlerClass, handlerMethod, handlerDescriptor, templateKind);
         } catch (Throwable t) {
             logDelegateFailure(module, "register", t);
             return null;
@@ -371,10 +381,10 @@ public final class OtherlodeEndpoints {
     /** Records an endpoint the moment a request dispatches to it. Buffers before a resolver is installed. */
     public static Object recordDispatch(
             String module, Object key, String verb, String verbatimTemplate, String contextPath, String handlerClass) {
-        return recordDispatch(module, key, verb, verbatimTemplate, contextPath, handlerClass, false);
+        return recordDispatch(module, key, verb, verbatimTemplate, contextPath, handlerClass, TEMPLATE_PATH);
     }
 
-    /** Like {@link #recordDispatch(String, Object, String, String, String, String)}, for a regex template; see {@link #register(String, Object, String, String, String, String, String, String, boolean)}. */
+    /** Like {@link #recordDispatch(String, Object, String, String, String, String)}, for a template of the given kind; see {@link #register(String, Object, String, String, String, String, String, String, int)}. */
     public static Object recordDispatch(
             String module,
             Object key,
@@ -382,20 +392,20 @@ public final class OtherlodeEndpoints {
             String verbatimTemplate,
             String contextPath,
             String handlerClass,
-            boolean regex) {
+            int templateKind) {
         if (isDisabledFast(module)) return null;
         Resolver current = ready;
         if (current == null) {
             synchronized (BUFFER_LOCK) {
                 current = resolver;
                 if (current == null) {
-                    buffer(BufferedRecord.forDispatch(module, key, verb, verbatimTemplate, contextPath, handlerClass, regex));
+                    buffer(BufferedRecord.forDispatch(module, key, verb, verbatimTemplate, contextPath, handlerClass, templateKind));
                     return null;
                 }
             }
         }
         try {
-            return current.recordDispatch(key, module, verb, verbatimTemplate, contextPath, handlerClass, regex);
+            return current.recordDispatch(key, module, verb, verbatimTemplate, contextPath, handlerClass, templateKind);
         } catch (Throwable t) {
             logDelegateFailure(module, "recordDispatch", t);
             return null;
@@ -411,10 +421,10 @@ public final class OtherlodeEndpoints {
      */
     public static Object recordDispatchIfUnowned(
             String module, Object key, String verb, String verbatimTemplate, String contextPath, String handlerClass) {
-        return recordDispatchIfUnowned(module, key, verb, verbatimTemplate, contextPath, handlerClass, false);
+        return recordDispatchIfUnowned(module, key, verb, verbatimTemplate, contextPath, handlerClass, TEMPLATE_PATH);
     }
 
-    /** Like {@link #recordDispatchIfUnowned(String, Object, String, String, String, String)}, for a regex template. */
+    /** Like {@link #recordDispatchIfUnowned(String, Object, String, String, String, String)}, for a template of the given kind. */
     public static Object recordDispatchIfUnowned(
             String module,
             Object key,
@@ -422,7 +432,7 @@ public final class OtherlodeEndpoints {
             String verbatimTemplate,
             String contextPath,
             String handlerClass,
-            boolean regex) {
+            int templateKind) {
         if (isDisabledFast(module)) return null;
         Resolver current = ready;
         if (current == null) {
@@ -431,13 +441,13 @@ public final class OtherlodeEndpoints {
                 if (current == null) {
                     buffer(
                             BufferedRecord.forDispatchIfUnowned(
-                                    module, key, verb, verbatimTemplate, contextPath, handlerClass, regex));
+                                    module, key, verb, verbatimTemplate, contextPath, handlerClass, templateKind));
                     return null;
                 }
             }
         }
         try {
-            return current.recordDispatchIfUnowned(key, module, verb, verbatimTemplate, contextPath, handlerClass, regex);
+            return current.recordDispatchIfUnowned(key, module, verb, verbatimTemplate, contextPath, handlerClass, templateKind);
         } catch (Throwable t) {
             logDelegateFailure(module, "recordDispatchIfUnowned", t);
             return null;
@@ -800,7 +810,7 @@ public final class OtherlodeEndpoints {
                             record.handlerClass,
                             record.handlerMethod,
                             record.handlerDescriptor,
-                            record.regex);
+                            record.templateKind);
                     break;
                 case DISPATCH:
                     Object entry =
@@ -811,7 +821,7 @@ public final class OtherlodeEndpoints {
                                     record.verbatimTemplate,
                                     record.contextPath,
                                     record.handlerClass,
-                                    record.regex);
+                                    record.templateKind);
                     if (entry != null) {
                         target.hit(entry);
                     }
@@ -825,7 +835,7 @@ public final class OtherlodeEndpoints {
                                     record.verbatimTemplate,
                                     record.contextPath,
                                     record.handlerClass,
-                                    record.regex);
+                                    record.templateKind);
                     if (unownedEntry != null) {
                         target.hit(unownedEntry);
                     }

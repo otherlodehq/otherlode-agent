@@ -1419,6 +1419,48 @@ class OtherlodeTestCollectorTest {
     }
 
     @Test
+    fun `a servlet pattern endpoint is its own identity, apart from a path and a regex of the same text`() {
+        val target = startCollector()
+        val exporter = exporterFor(target)
+        exporter.exportManifest(
+            watchedManifest(
+                ResourceAttributes("svc", null, "i-1", null, "run-1"),
+                emptyList(),
+                endpoints =
+                    listOf(
+                        endpoint(0, "GET", "/"),
+                        endpoint(1, "GET", "/", templateKind = EndpointTemplateKind.SERVLET_PATTERN),
+                        endpoint(2, "GET", "/", templateKind = EndpointTemplateKind.REGEX),
+                        endpoint(3, "GET", "*.do", templateKind = EndpointTemplateKind.SERVLET_PATTERN),
+                    ),
+            ),
+        )
+        exporter.exportDeltaBatch(
+            DeltaBatch(
+                ResourceAttributes("svc", null, "i-1", null, "run-1"),
+                emptyList(),
+                endpointDeltas = listOf(EndpointDelta(1, 1L, 5L)),
+            ),
+        )
+
+        assertFalse(target.wasCalled("GET", "/"))
+        assertFailsWith<UnknownEndpointException> { target.callCount("GET", "*.do") }
+        assertEquals(
+            listOf(
+                Triple("*.do", false, true),
+                Triple("/", false, false),
+                Triple("/", true, false),
+                Triple("/", false, true),
+            ),
+            target.endpoints().map { Triple(it.routeTemplate, it.isRegexTemplate, it.isServletPatternTemplate) },
+        )
+        assertEquals(
+            listOf(Triple("*.do", false, true), Triple("/", false, false), Triple("/", true, false)),
+            target.neverCalled().map { Triple(it.routeTemplate, it.isRegexTemplate, it.isServletPatternTemplate) },
+        )
+    }
+
+    @Test
     fun `two instances registering the same endpoint sum into one EndpointRef with a combined call count`() {
         val target = startCollector()
         val exporter = exporterFor(target)

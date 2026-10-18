@@ -137,6 +137,7 @@ public final class dev/otherlode/testkit/EndpointDiscoverySource : java/lang/Enu
 
 public final class dev/otherlode/testkit/EndpointRef {
 	public final fun component1 ()Ljava/lang/String;
+	public final fun component10 ()Z
 	public final fun component2 ()Ljava/lang/String;
 	public final fun component3 ()Ljava/lang/String;
 	public final fun component4 ()Ljava/lang/String;
@@ -156,6 +157,7 @@ public final class dev/otherlode/testkit/EndpointRef {
 	public final fun getVerbatimTemplate ()Ljava/lang/String;
 	public fun hashCode ()I
 	public final fun isRegexTemplate ()Z
+	public final fun isServletPatternTemplate ()Z
 	public fun toString ()Ljava/lang/String;
 }
 

@@ -42,7 +42,14 @@ class EndpointRegistryTest {
         val registry = EndpointRegistry()
 
         val path = registry.register(key = Any(), framework = "vertx-web", verb = "GET", verbatimTemplate = "/users/list")
-        val regex = registry.register(key = Any(), framework = "vertx-web", verb = "GET", verbatimTemplate = "/users/list", regex = true)
+        val regex =
+            registry.register(
+                key = Any(),
+                framework = "vertx-web",
+                verb = "GET",
+                verbatimTemplate = "/users/list",
+                templateKind = EndpointTemplateKind.REGEX,
+            )
 
         assertNotEquals(path.endpointId, regex.endpointId)
         assertEquals(EndpointTemplateKind.PATH, path.templateKind)
@@ -66,7 +73,7 @@ class EndpointRegistryTest {
                 verb = "get",
                 verbatimTemplate = "/a//b/\\d{2,3}/",
                 contextPath = "/ctx",
-                regex = true,
+                templateKind = EndpointTemplateKind.REGEX,
             )
 
         assertEquals("GET", entry.verb)
@@ -94,11 +101,86 @@ class EndpointRegistryTest {
                 framework = "otel",
                 verb = "GET",
                 verbatimTemplate = "/x",
-                regex = true,
+                templateKind = EndpointTemplateKind.REGEX,
             )
 
         assertEquals(EndpointTemplateKind.REGEX, regexEntry?.templateKind)
         assertNull(registry.recordDispatchIfUnowned(key = Any(), framework = "otel", verb = "GET", verbatimTemplate = "/x"))
+    }
+
+    @Test
+    fun `a servlet pattern slash and a path slash are two endpoints`() {
+        val registry = EndpointRegistry()
+
+        val path = registry.register(key = Any(), framework = "servlet", verb = "GET", verbatimTemplate = "/")
+        val servlet =
+            registry.register(
+                key = Any(),
+                framework = "servlet",
+                verb = "GET",
+                verbatimTemplate = "/",
+                templateKind = EndpointTemplateKind.SERVLET_PATTERN,
+            )
+        val regex =
+            registry.register(
+                key = Any(),
+                framework = "servlet",
+                verb = "GET",
+                verbatimTemplate = "/",
+                templateKind = EndpointTemplateKind.REGEX,
+            )
+
+        assertEquals(3, setOf(path.endpointId, servlet.endpointId, regex.endpointId).size)
+        assertEquals(EndpointTemplateKind.SERVLET_PATTERN, servlet.templateKind)
+        servlet.hit()
+        assertEquals(0L, path.count)
+        assertEquals(0L, regex.count)
+    }
+
+    @Test
+    fun `a servlet pattern template is kept verbatim and gets no context path`() {
+        val registry = EndpointRegistry()
+
+        val entry =
+            registry.register(
+                key = Any(),
+                framework = "servlet",
+                verb = "get",
+                verbatimTemplate = "*.do/",
+                contextPath = "/ctx",
+                templateKind = EndpointTemplateKind.SERVLET_PATTERN,
+            )
+
+        assertEquals("GET", entry.verb)
+        assertEquals("*.do/", entry.routeTemplate)
+        assertEquals("*.do/", entry.verbatimTemplate)
+        val sent =
+            registry
+                .computeManifestEntries(maxPerChunk = 10)
+                .single()
+                .endpoints
+                .single()
+        assertEquals("*.do/", sent.routeTemplate)
+        assertEquals(EndpointTemplateKind.SERVLET_PATTERN, sent.templateKind)
+    }
+
+    @Test
+    fun `ownership applies per kind for a servlet pattern`() {
+        val registry = EndpointRegistry()
+        registry.register(key = Any(), framework = "spring-webmvc", verb = "GET", verbatimTemplate = "/")
+        val servlet = EndpointTemplateKind.SERVLET_PATTERN
+
+        val first = registry.recordDispatchIfUnowned(Any(), "servlet", "GET", "/", templateKind = servlet)
+        assertEquals(servlet, first?.templateKind)
+        assertNull(registry.recordDispatchIfUnowned(Any(), "otel", "GET", "/", templateKind = servlet))
+        assertNull(registry.recordDispatchIfUnowned(Any(), "otel", "HEAD", "/", templateKind = servlet))
+
+        registry.register(key = Any(), framework = "servlet", verb = "*", verbatimTemplate = "*.do", templateKind = servlet)
+        assertNull(registry.recordDispatchIfUnowned(Any(), "otel", "POST", "*.do", templateKind = servlet))
+        assertEquals(
+            EndpointTemplateKind.REGEX,
+            registry.recordDispatchIfUnowned(Any(), "otel", "POST", "*.do", templateKind = EndpointTemplateKind.REGEX)?.templateKind,
+        )
     }
 
     @Test

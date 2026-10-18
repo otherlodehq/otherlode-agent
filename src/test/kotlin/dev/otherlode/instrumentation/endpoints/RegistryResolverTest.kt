@@ -16,6 +16,7 @@ import net.bytebuddy.matcher.ElementMatcher
 import net.bytebuddy.matcher.ElementMatchers.none
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
@@ -43,11 +44,20 @@ class RegistryResolverTest {
         val resolver = RegistryResolver(registry, emptyList(), PendingDeclarations(), forwardersToHandleOrder())
         val target = HandlerRef("com.example.HandlersKt", "handleOrder", HANDLE)
 
-        resolver.register("k1", "fake", "GET", "/registered", null, "com.example.Ref", "handle", HANDLE, false)
-        val attached = resolver.register("k2", "fake", "GET", "/attached", null, null, null, null, false)!!
+        resolver.register("k1", "fake", "GET", "/registered", null, "com.example.Ref", "handle", HANDLE, OtherlodeEndpoints.TEMPLATE_PATH)
+        val attached = resolver.register("k2", "fake", "GET", "/attached", null, null, null, null, OtherlodeEndpoints.TEMPLATE_PATH)!!
         resolver.attachHandler(attached, "com.example.Ref", "handle", HANDLE)
         // The dispatch path hands over the class first and the method after, as FindContextAdvice does.
-        val dispatched = resolver.recordDispatch("k3", "fake", "GET", "/dispatched", null, "com.example.Ref", false)
+        val dispatched =
+            resolver.recordDispatch(
+                "k3",
+                "fake",
+                "GET",
+                "/dispatched",
+                null,
+                "com.example.Ref",
+                OtherlodeEndpoints.TEMPLATE_PATH,
+            )
         resolver.attachHandler(dispatched, "com.example.Ref", "handle", HANDLE)
 
         assertEquals(target, joinOf(registry, "/registered"))
@@ -61,9 +71,9 @@ class RegistryResolverTest {
         val pending = PendingDeclarations()
         val resolver = RegistryResolver(registry, emptyList(), pending)
 
-        resolver.register("direct", "fake", "GET", "/a//b/", null, null, null, null, true)
+        resolver.register("direct", "fake", "GET", "/a//b/", null, null, null, null, OtherlodeEndpoints.TEMPLATE_REGEX)
         pending.begin()
-        resolver.register("staged", "fake", "GET", "/c//d/", null, null, null, null, true)
+        resolver.register("staged", "fake", "GET", "/c//d/", null, null, null, null, OtherlodeEndpoints.TEMPLATE_REGEX)
         pending.commit()
 
         assertEquals(
@@ -73,13 +83,38 @@ class RegistryResolverTest {
     }
 
     @Test
+    fun `a servlet pattern registration keeps its kind on the direct path and the staged path`() {
+        val registry = EndpointRegistry()
+        val pending = PendingDeclarations()
+        val resolver = RegistryResolver(registry, emptyList(), pending)
+        val servlet = OtherlodeEndpoints.TEMPLATE_SERVLET_PATTERN
+
+        resolver.register("direct", "fake", "GET", "*.do", "/ctx", null, null, null, servlet)
+        pending.begin()
+        resolver.register("staged", "fake", "GET", "/", null, null, null, null, servlet)
+        pending.commit()
+
+        assertEquals(
+            mapOf("*.do" to EndpointTemplateKind.SERVLET_PATTERN, "/" to EndpointTemplateKind.SERVLET_PATTERN),
+            registry.endpoints().associate { it.routeTemplate to it.templateKind },
+        )
+    }
+
+    @Test
+    fun `an unknown template kind is refused`() {
+        val resolver = RegistryResolver(EndpointRegistry(), emptyList(), PendingDeclarations())
+
+        assertFailsWith<IllegalArgumentException> { resolver.recordDispatch("k", "fake", "GET", "/x", null, null, 99) }
+    }
+
+    @Test
     fun `a staged registration is collapsed too`() {
         val registry = EndpointRegistry()
         val pending = PendingDeclarations()
         val resolver = RegistryResolver(registry, emptyList(), pending, forwardersToHandleOrder())
 
         pending.begin()
-        resolver.register("k1", "fake", "GET", "/staged", null, "com.example.Ref", "handle", HANDLE, false)
+        resolver.register("k1", "fake", "GET", "/staged", null, "com.example.Ref", "handle", HANDLE, OtherlodeEndpoints.TEMPLATE_PATH)
         pending.commit()
 
         assertEquals(HandlerRef("com.example.HandlersKt", "handleOrder", HANDLE), joinOf(registry, "/staged"))
@@ -90,9 +125,9 @@ class RegistryResolverTest {
         val registry = EndpointRegistry()
         val resolver = RegistryResolver(registry, emptyList(), PendingDeclarations(), forwardersToHandleOrder())
 
-        resolver.register("k1", "fake", "GET", "/other", null, "com.example.Other", "handle", HANDLE, false)
-        resolver.register("k2", "fake", "GET", "/no-descriptor", null, "com.example.Ref", "handle", null, false)
-        resolver.recordDispatch("k3", "fake", "GET", "/class-only", null, "com.example.Ref", false)
+        resolver.register("k1", "fake", "GET", "/other", null, "com.example.Other", "handle", HANDLE, OtherlodeEndpoints.TEMPLATE_PATH)
+        resolver.register("k2", "fake", "GET", "/no-descriptor", null, "com.example.Ref", "handle", null, OtherlodeEndpoints.TEMPLATE_PATH)
+        resolver.recordDispatch("k3", "fake", "GET", "/class-only", null, "com.example.Ref", OtherlodeEndpoints.TEMPLATE_PATH)
 
         assertEquals(HandlerRef("com.example.Other", "handle", HANDLE), joinOf(registry, "/other"))
         assertEquals(HandlerRef("com.example.Ref", "handle", null), joinOf(registry, "/no-descriptor"))
@@ -187,7 +222,17 @@ class RegistryResolverTest {
 
         pending.begin()
         assertNull(
-            resolver.register("key-1", "fake", "GET", "/staged", null, "com.example.Handler", "handle", "()V", false),
+            resolver.register(
+                "key-1",
+                "fake",
+                "GET",
+                "/staged",
+                null,
+                "com.example.Handler",
+                "handle",
+                "()V",
+                OtherlodeEndpoints.TEMPLATE_PATH,
+            ),
             "a staged declaration answers null rather than an entry",
         )
         assertEquals(0, registry.computeManifestEntries(100).sumOf { it.endpoints.size }, "nothing is declared while staged")
@@ -205,7 +250,7 @@ class RegistryResolverTest {
         val resolver = RegistryResolver(registry, emptyList(), pending)
 
         pending.begin()
-        resolver.register("key-1", "fake", "GET", "/dropped", null, null, null, null, false)
+        resolver.register("key-1", "fake", "GET", "/dropped", null, null, null, null, OtherlodeEndpoints.TEMPLATE_PATH)
         // What onComplete does for a transform that failed: the class runs without advice, so an
         // endpoint declared for it would sit at zero dispatches and read as never called.
         pending.discard()
@@ -220,7 +265,7 @@ class RegistryResolverTest {
         val resolver = RegistryResolver(registry, emptyList(), PendingDeclarations())
 
         // The runtime path: a module walking a framework object once the application built it.
-        assertNotNull(resolver.register("key-1", "fake", "GET", "/live", null, null, null, null, false))
+        assertNotNull(resolver.register("key-1", "fake", "GET", "/live", null, null, null, null, OtherlodeEndpoints.TEMPLATE_PATH))
         assertEquals(1, registry.computeManifestEntries(100).sumOf { it.endpoints.size })
     }
 

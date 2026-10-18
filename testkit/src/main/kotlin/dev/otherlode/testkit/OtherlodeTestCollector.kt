@@ -338,7 +338,7 @@ public class OtherlodeTestCollector internal constructor(
     private data class EndpointIdentity(
         val verb: String,
         val routeTemplate: String,
-        val regex: Boolean = false,
+        val templateKind: EndpointTemplateKind = EndpointTemplateKind.PATH,
     )
 
     private data class InstanceEndpointKey(
@@ -2299,8 +2299,9 @@ public class OtherlodeTestCollector internal constructor(
      * [RouteTemplateNormalizer.normalize] before lookup, so `wasCalled("get", "/checkout/")` finds
      * the same endpoint a manifest reported as `GET /checkout`.
      *
-     * Addresses path endpoints only: a regex endpoint (see [EndpointRef.isRegexTemplate]) of the
-     * same text is another endpoint and never answers this.
+     * Addresses path endpoints only: a regex endpoint (see [EndpointRef.isRegexTemplate]) or a
+     * servlet pattern endpoint (see [EndpointRef.isServletPatternTemplate]) of the same text is
+     * another endpoint and never answers this.
      *
      * Throws [UnknownEndpointException] if no manifest ever mentioned this endpoint.
      */
@@ -2331,7 +2332,7 @@ public class OtherlodeTestCollector internal constructor(
 
     /**
      * Every endpoint at least one instance reported, of any [EndpointDiscoverySource], whose
-     * summed call count is zero, sorted by route template, then verb, then path before regex. An endpoint discovered by
+     * summed call count is zero, sorted by route template, then verb, then path, regex and servlet pattern in that order. An endpoint discovered by
      * dispatch was called, so it appears here only until its first count arrives. An endpoint whose
      * handler class failed to initialise ([failedToInitialize]) is left out, since nothing could
      * dispatch to it. Throws [IllegalStateException] while an instance's zero counts are not
@@ -2344,13 +2345,17 @@ public class OtherlodeTestCollector internal constructor(
                 .filterKeys { identity -> (endpointKeysByIdentity[identity]?.sumOf { endpointHitsByKey[it] ?: 0L } ?: 0L) <= 0L }
                 .values
                 .filter { it.handlerClass !in failedToInitialize }
-                .sortedWith(compareBy({ it.routeTemplate }, { it.verb }, { it.isRegexTemplate }))
+                .sortedWith(compareBy({ it.routeTemplate }, { it.verb }, { it.isServletPatternTemplate }, { it.isRegexTemplate }))
         }
 
-    /** Every endpoint any instance ever reported, sorted by route template, then verb, then path before regex. */
+    /** Every endpoint any instance ever reported, sorted by route template, then verb, then path, regex and servlet pattern in that order. */
     public fun endpoints(): List<EndpointRef> =
         checked {
-            endpointRefsByIdentity.values.sortedWith(compareBy({ it.routeTemplate }, { it.verb }, { it.isRegexTemplate }))
+            endpointRefsByIdentity.values.sortedWith(
+                compareBy({
+                    it.routeTemplate
+                }, { it.verb }, { it.isServletPatternTemplate }, { it.isRegexTemplate }),
+            )
         }
 
     /** Every endpoint module reported as disabled by any instance, distinct by module name, sorted by module name. */
@@ -2389,10 +2394,11 @@ public class OtherlodeTestCollector internal constructor(
                     "an endpoint module is disabled and may be why: $listed",
             )
         }
-        if (endpointKeysByIdentity.containsKey(identity.copy(regex = true))) {
+        val otherKind = NON_PATH_KINDS.firstOrNull { endpointKeysByIdentity.containsKey(identity.copy(templateKind = it.first)) }
+        if (otherKind != null) {
             return UnknownEndpointException(
                 "${identity.verb} ${identity.routeTemplate}: no path endpoint has this template; " +
-                    "a regex endpoint does, which this query does not address: read it from endpoints() or neverCalled()",
+                    "${otherKind.second} does, which this query does not address: read it from endpoints() or neverCalled()",
             )
         }
         return UnknownEndpointException("${identity.verb} ${identity.routeTemplate}: never mentioned by any manifest")
@@ -2834,7 +2840,7 @@ public class OtherlodeTestCollector internal constructor(
                         EndpointIdentity(
                             endpointLocation.verb,
                             endpointLocation.routeTemplate,
-                            endpointLocation.templateKind == EndpointTemplateKind.REGEX,
+                            endpointLocation.templateKind,
                         )
                     val key = InstanceEndpointKey(instanceId, endpointLocation.endpointId)
                     endpointKeysByIdentity.computeIfAbsent(identity) { ConcurrentHashMap.newKeySet() }.add(key)
@@ -2850,7 +2856,8 @@ public class OtherlodeTestCollector internal constructor(
                             handlerClass = endpointLocation.handlerClass,
                             handlerMethod = endpointLocation.handlerMethod,
                             handlerDescriptor = endpointLocation.handlerDescriptor,
-                            isRegexTemplate = identity.regex,
+                            isRegexTemplate = identity.templateKind == EndpointTemplateKind.REGEX,
+                            isServletPatternTemplate = identity.templateKind == EndpointTemplateKind.SERVLET_PATTERN,
                         )
                 }
                 for (module in manifest.disabledEndpointModules) {
@@ -3472,6 +3479,12 @@ public class UnknownProbeException internal constructor(
     message: String,
 ) : RuntimeException(message)
 
+private val NON_PATH_KINDS =
+    listOf(
+        EndpointTemplateKind.REGEX to "a regex endpoint",
+        EndpointTemplateKind.SERVLET_PATTERN to "a servlet pattern endpoint",
+    )
+
 /**
  * One endpoint's identity and display fields, as reported by a manifest. [verb] and
  * [routeTemplate] are the normalised identity; [verbatimTemplate] keeps the framework's own
@@ -3481,9 +3494,16 @@ public class UnknownProbeException internal constructor(
  *
  * [isRegexTemplate] is true for an endpoint a framework matches by a regular expression with no
  * path. Its [routeTemplate] and [verbatimTemplate] are that expression exactly as written, and it
- * is a different endpoint from a path endpoint whose template reads the same. The `(verb, route
- * template)` queries ([OtherlodeTestCollector.wasCalled], [OtherlodeTestCollector.callCount],
- * [OtherlodeTestCollector.awaitEndpoint]) address path endpoints only.
+ * is a different endpoint from a path endpoint whose template reads the same.
+ *
+ * [isServletPatternTemplate] is true for an endpoint whose template is a servlet mapping no path
+ * can express: an extension mapping such as `*.do`, or the default mapping `/`. The pattern is
+ * kept exactly as written, and the endpoint is different from a path endpoint or a regex endpoint
+ * whose template reads the same.
+ *
+ * The `(verb, route template)` queries ([OtherlodeTestCollector.wasCalled],
+ * [OtherlodeTestCollector.callCount], [OtherlodeTestCollector.awaitEndpoint]) address path
+ * endpoints only.
  */
 @ConsistentCopyVisibility
 public data class EndpointRef internal constructor(
@@ -3496,6 +3516,7 @@ public data class EndpointRef internal constructor(
     val handlerMethod: String?,
     val handlerDescriptor: String?,
     val isRegexTemplate: Boolean,
+    val isServletPatternTemplate: Boolean,
 )
 
 /**

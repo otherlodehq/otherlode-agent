@@ -128,13 +128,13 @@ A query that reads no zero count keeps answering: `wasHit`, `hitCount`, `omissio
 
 ### Endpoint queries
 
-`wasCalled`, `callCount` and `awaitEndpoint` normalise `verb` and `routeTemplate` before lookup, so `wasCalled("get", "/checkout/")` finds the endpoint the agent reports as `GET /checkout`. An endpoint is identified by that normalised pair alone, apart from a regex endpoint (see `EndpointRef.isRegexTemplate`), which is another endpoint even when its template reads the same. These queries address path endpoints only, so a regex endpoint never answers one written for a path. `endpoints()` and `neverCalled()` list regex endpoints. Several instances that serve one endpoint merge into one.
+`wasCalled`, `callCount` and `awaitEndpoint` normalise `verb` and `routeTemplate` before lookup, so `wasCalled("get", "/checkout/")` finds the endpoint the agent reports as `GET /checkout`. An endpoint is identified by that normalised pair alone, apart from a regex endpoint (see `EndpointRef.isRegexTemplate`) or a servlet pattern endpoint (see `EndpointRef.isServletPatternTemplate`), each of which is another endpoint even when its template reads the same. These queries address path endpoints only, so a regex or servlet pattern endpoint never answers one written for a path. `endpoints()` and `neverCalled()` list them. Several instances that serve one endpoint merge into one.
 
 | Query | Returns |
 |---|---|
 | `wasCalled(verb, routeTemplate): Boolean` | `true` if the summed call count is above zero. |
 | `callCount(verb, routeTemplate): Long` | The count summed over instances, each instance's highest delivered total. |
-| `neverCalled(): List<EndpointRef>` | Every endpoint with a summed count of zero, sorted by route template, then verb, then path before regex, leaving out one whose handler class failed to initialise. Refuses while an instance's zero counts are not evidence. |
+| `neverCalled(): List<EndpointRef>` | Every endpoint with a summed count of zero, sorted by route template, then verb, then path, regex and servlet pattern in that order, leaving out one whose handler class failed to initialise. Refuses while an instance's zero counts are not evidence. |
 | `endpoints(): List<EndpointRef>` | Every endpoint any instance reported, sorted the same way. |
 | `disabledEndpointModules(): List<DisabledEndpointModule>` | The endpoint modules that are not instrumenting: those that switched themselves off, such as on a framework version the agent does not support, and those the agent's configuration kept off. Sorted by module name. |
 
@@ -354,6 +354,7 @@ Returned by `neverSupplied` and `alwaysSupplied`. It names the function the para
 | `handlerMethod` | `String?` | The handler's method, where the framework exposes one. |
 | `handlerDescriptor` | `String?` | The handler method's descriptor. |
 | `isRegexTemplate` | `Boolean` | `true` when the framework matches the route by a regular expression. `routeTemplate` and `verbatimTemplate` are then that expression exactly as written, and the endpoint is not the path endpoint whose template reads the same. |
+| `isServletPatternTemplate` | `Boolean` | `true` when the template is a servlet mapping no path can express: an extension mapping such as `*.do`, or the default mapping `/`. `routeTemplate` and `verbatimTemplate` are then that pattern exactly as written, and the endpoint is neither the path endpoint nor the regex endpoint whose template reads the same. |
 
 ### DisabledEndpointModule and SkippedClass
 
