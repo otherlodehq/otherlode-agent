@@ -720,6 +720,9 @@ enum class BodyKind {
  * the hook before its first payload, so a run's manifests agree. A run any of whose manifests carries
  * false is unwatched: its zero counts are not evidence that code never ran, since a class the
  * verifier rejected fires no probe. False from an agent that predates the field.
+ *
+ * [frameworkMarkers] are the frameworks whose routing loaded in this JVM, each delivered once; see
+ * [FrameworkMarker]. Empty from an agent that predates the field.
  */
 data class ProbeManifest(
     val resource: ResourceAttributes,
@@ -740,6 +743,7 @@ data class ProbeManifest(
     val classesFailedToInitialize: List<ClassFailedToInitialize> = emptyList(),
     val unplacedVerificationFailures: Long = 0,
     val verifierRejectionsWatched: Boolean = false,
+    val frameworkMarkers: List<FrameworkMarker> = emptyList(),
 )
 
 /**
@@ -959,6 +963,20 @@ data class DisabledEndpointModule(
     val reason: String,
     val disabledAt: Long,
     val kind: DisabledEndpointModuleKind,
+)
+
+/**
+ * Evidence that a framework's own routing loaded in this JVM: every class in [classes], one of the
+ * marker's class sets, was defined when the loaded-class sweep ran at [seenAt]. The agent reports
+ * what loaded; whether a module covers that framework is the server's to say.
+ *
+ * [id] is the marker's id from the agent's fixed list, kebab-case and stable. [classes] are fully
+ * qualified binary names. [seenAt] is in milliseconds since the epoch.
+ */
+data class FrameworkMarker(
+    val id: String,
+    val classes: List<String>,
+    val seenAt: Long,
 )
 
 /** What switched an endpoint module off. */

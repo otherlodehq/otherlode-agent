@@ -14,6 +14,7 @@ import dev.otherlode.instrumentation.staticscan.StaticBaselineSender
 import dev.otherlode.registry.DependencyRegistry
 import dev.otherlode.registry.EndpointRegistry
 import dev.otherlode.registry.ExternalClassRegistry
+import dev.otherlode.registry.FrameworkMarkerRegistry
 import dev.otherlode.registry.ProbeRegistry
 import java.lang.System.Logger.Level
 import java.time.Duration
@@ -67,6 +68,8 @@ class ExportScheduler(
     private val dependencyRegistry: DependencyRegistry = DependencyRegistry(),
     /** Referenced out-of-scope classes, resolved to dependencies and delivered on the manifest. */
     private val externalClassRegistry: ExternalClassRegistry = ExternalClassRegistry(),
+    /** Framework markers the sweep saw, delivered on the manifest. */
+    private val frameworkMarkers: FrameworkMarkerRegistry = FrameworkMarkerRegistry(),
     /**
      * Static baseline chunks the collector has not confirmed yet, sent again, one per flush, after
      * a flush whose own sends it confirmed. Null when the static baseline is off.
@@ -324,8 +327,9 @@ class ExportScheduler(
      *
      * Before the dependency listing completes, the walk is skipped entirely, with no call into the
      * sweep at all, when there is nothing for either direction to do: no class awaiting
-     * confirmation and the forward direction not due. `getAllLoadedClasses` allocates an array of
-     * every class the JVM holds, and on a settled process there is usually nothing to confirm.
+     * confirmation, every framework marker seen, and the forward direction not due.
+     * `getAllLoadedClasses` allocates an array of every class the JVM holds. A process that loads
+     * no marker leaves one unseen for good, so with the shipped list the walk runs on every flush.
      * Once the listing completes the walk runs on every flush, since the sweep counts the classes
      * loaded from each dependency from the same array; the two directions keep the cadences above.
      *
@@ -337,7 +341,7 @@ class ExportScheduler(
         val forwardPassDue = final || --flushesSinceSweep <= 0
         if (forwardPassDue) flushesSinceSweep = SWEEP_EVERY_N_FLUSHES
         val countsDependencies = dependencyRegistry.isListingComplete
-        if (!forwardPassDue && !countsDependencies && registry.unconfirmedClassCount() == 0) return
+        if (!forwardPassDue && !countsDependencies && registry.unconfirmedClassCount() == 0 && !frameworkMarkers.hasUnseen()) return
         try {
             sweep.run(runForwardPass = forwardPassDue, final = final)
         } catch (t: Throwable) {
@@ -718,8 +722,8 @@ class ExportScheduler(
     }
 
     /**
-     * One outgoing [ProbeManifest], together with the probe snapshot and the endpoint and
-     * dependency chunks it carries. A confirmed send advances exactly these, and nothing else.
+     * One outgoing [ProbeManifest], together with the probe snapshot and the riders (endpoint,
+     * dependency, external-class and framework-marker chunks) it carries. A confirmed send advances exactly these, and nothing else.
      */
     private class ManifestSend(
         val manifest: ProbeManifest,
@@ -728,8 +732,8 @@ class ExportScheduler(
     )
 
     /**
-     * Sends only the probes, endpoints, dependencies and external classes not yet included in a
-     * successfully delivered manifest.
+     * Sends only the probes, endpoints, dependencies, external classes and framework markers not yet
+     * included in a successfully delivered manifest.
      *
      * This runs on the first flush, not at agent startup. By the first
      * flush, classes have actually started loading, so there are probes to
@@ -773,7 +777,8 @@ class ExportScheduler(
             val riders =
                 endpointRegistry.computeManifestEntries(maxManifestEntriesPerChunk).map(::endpointManifestRider) +
                     dependencyRegistry.computeManifestEntries(maxManifestEntriesPerChunk).map(::dependencyManifestRider) +
-                    externalClassRegistry.computeManifestEntries(maxManifestEntriesPerChunk).map(::externalClassManifestRider)
+                    externalClassRegistry.computeManifestEntries(maxManifestEntriesPerChunk).map(::externalClassManifestRider) +
+                    listOfNotNull(frameworkMarkers.computeManifestEntries()).map(::frameworkMarkerRider)
             val listed = dependenciesListed
             for (send in manifestSends(classChunks, riders, listed)) {
                 sendStamped(send.manifest)
@@ -793,6 +798,13 @@ class ExportScheduler(
             size = chunk.endpoints.size,
             attach = { it.copy(endpoints = it.endpoints + chunk.endpoints) },
             advance = { endpointRegistry.advanceManifest(chunk) },
+        )
+
+    private fun frameworkMarkerRider(snapshot: FrameworkMarkerRegistry.ManifestSnapshot): Rider<ProbeManifest> =
+        Rider(
+            size = snapshot.markers.size,
+            attach = { it.copy(frameworkMarkers = it.frameworkMarkers + snapshot.markers) },
+            advance = { frameworkMarkers.advanceManifest(snapshot) },
         )
 
     private fun disabledModulesRider(snapshot: EndpointRegistry.DisabledModulesSnapshot): Rider<ProbeManifest> =
@@ -817,7 +829,7 @@ class ExportScheduler(
         )
 
     /**
-     * Packs endpoint, dependency and external-class chunks onto class manifest chunks, in [riders] order. Each
+     * Packs endpoint, dependency, external-class and framework-marker chunks onto class manifest chunks, in [riders] order. Each
      * rider goes on the first manifest with room for it, room being [maxManifestEntriesPerChunk]
      * minus that manifest's weight so far. A rider that fits nowhere, including when there are no
      * class chunks at all, becomes its own [ProbeManifest] with no probes, which a later rider may
@@ -942,7 +954,8 @@ class ExportScheduler(
                 manifest.classLocations.size + manifest.classReferences.sumOf { it.referencedClasses.size } +
                 manifest.unreportedClasses.size + manifest.failedClasses.size + manifest.classesFailedToInitialize.size +
                 manifest.dependencies.size +
-                manifest.externalClasses.size
+                manifest.externalClasses.size +
+                manifest.frameworkMarkers.size
         val riders = mutableListOf<Rider<ProbeManifest>>()
     }
 

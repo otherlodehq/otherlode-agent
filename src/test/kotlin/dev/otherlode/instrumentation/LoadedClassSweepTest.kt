@@ -2,9 +2,12 @@ package dev.otherlode.instrumentation
 
 import dev.otherlode.config.AgentConfig
 import dev.otherlode.dependencies.LoadedDependencyCounter
+import dev.otherlode.export.FrameworkMarker
 import dev.otherlode.export.ProbeKind
 import dev.otherlode.export.ResourceAttributes
 import dev.otherlode.registry.DependencyRegistry
+import dev.otherlode.registry.FrameworkMarkerDefinition
+import dev.otherlode.registry.FrameworkMarkerRegistry
 import dev.otherlode.registry.ProbeMeta
 import dev.otherlode.registry.ProbeRegistry
 import net.bytebuddy.ByteBuddy
@@ -193,5 +196,48 @@ class LoadedClassSweepTest {
         assertFailsWith<IllegalStateException> { sweep.run(runForwardPass = true) }
 
         assertEquals(1, dependencies.countGeneration, "a confirmation failure must not stop the dependency count")
+    }
+
+    private val sweptClass = LoadedClassSweepTest::class.java.name
+
+    private fun markers(vararg names: String) =
+        FrameworkMarkerRegistry(names.map { FrameworkMarkerDefinition(it.substringAfterLast('.'), listOf(listOf(it))) })
+
+    @Test
+    fun `the forward pass records a marker whose class the JVM has defined`() {
+        val markers = markers(sweptClass, "com.example.markers.NotLoaded")
+        val sweep = LoadedClassSweep(instrumentation, ProbeRegistry(), scopedConfig, frameworkMarkers = markers, clock = { 42L })
+
+        sweep.run(runForwardPass = true)
+
+        assertEquals(listOf(FrameworkMarker("LoadedClassSweepTest", listOf(sweptClass), 42L)), markers.seenMarkers())
+    }
+
+    @Test
+    fun `a pass that is not the forward pass records a marker too`() {
+        val markers = markers(sweptClass)
+        val sweep = LoadedClassSweep(instrumentation, ProbeRegistry(), scopedConfig, frameworkMarkers = markers, clock = { 7L })
+
+        sweep.run(runForwardPass = false)
+
+        assertEquals(listOf(FrameworkMarker("LoadedClassSweepTest", listOf(sweptClass), 7L)), markers.seenMarkers())
+    }
+
+    @Test
+    fun `a marker is recorded even when the confirmation pass throws`() {
+        val registry =
+            object : ProbeRegistry(confirmsDefinitions = true) {
+                override fun confirmFrom(
+                    loadedClassNames: Set<String>,
+                    registeredUpTo: Long,
+                ): List<String> = throw IllegalStateException("simulated confirm failure")
+            }
+        registry.register("com.example.Unconfirmed", layoutHash = 1L, probes = oneMethodProbe())
+        val markers = markers(sweptClass)
+        val sweep = LoadedClassSweep(instrumentation, registry, scopedConfig, frameworkMarkers = markers)
+
+        assertFailsWith<IllegalStateException> { sweep.run(runForwardPass = true) }
+
+        assertEquals(1, markers.seenMarkers().size)
     }
 }

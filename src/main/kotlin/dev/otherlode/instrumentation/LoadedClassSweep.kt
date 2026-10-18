@@ -2,6 +2,7 @@ package dev.otherlode.instrumentation
 
 import dev.otherlode.config.AgentConfig
 import dev.otherlode.dependencies.LoadedDependencyCounter
+import dev.otherlode.registry.FrameworkMarkerRegistry
 import dev.otherlode.registry.ProbeRegistry
 import java.lang.System.Logger.Level
 import java.lang.instrument.Instrumentation
@@ -27,13 +28,17 @@ import java.lang.instrument.Instrumentation
  * walks of the same array.
  *
  * The same array feeds [dependencyCounter], when one is given, which counts the distinct classes
- * loaded from each dependency.
+ * loaded from each dependency, and, on every pass, [frameworkMarkers], when given, which looks the
+ * names of the classes up against the marker list. A class in the array is defined, so a marker
+ * seen there is confirmed, and no class is resolved to see it.
  */
 open class LoadedClassSweep(
     private val instrumentation: Instrumentation,
     private val registry: ProbeRegistry,
     private val config: AgentConfig,
     private val dependencyCounter: LoadedDependencyCounter? = null,
+    private val frameworkMarkers: FrameworkMarkerRegistry? = null,
+    private val clock: () -> Long = System::currentTimeMillis,
 ) {
     private val log = System.getLogger(LoadedClassSweep::class.java.name)
     private var everFoundUnreported = false
@@ -63,6 +68,7 @@ open class LoadedClassSweep(
         val registeredUpTo = registry.registrationSequence()
         val loaded = instrumentation.allLoadedClasses
         try {
+            frameworkMarkers?.observe(loaded, clock())
             confirm(loaded, registeredUpTo)
             if (runForwardPass) reportUnreported(loaded)
         } finally {

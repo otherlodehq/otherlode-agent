@@ -18,6 +18,8 @@ import dev.otherlode.instrumentation.staticscan.StaticBaselineSender
 import dev.otherlode.registry.DependencyRegistry
 import dev.otherlode.registry.EndpointRegistry
 import dev.otherlode.registry.ExternalClassRegistry
+import dev.otherlode.registry.FrameworkMarkerDefinition
+import dev.otherlode.registry.FrameworkMarkerRegistry
 import dev.otherlode.registry.ProbeMeta
 import dev.otherlode.registry.ProbeRegistry
 import net.bytebuddy.agent.ByteBuddyAgent
@@ -1176,6 +1178,95 @@ class ExportSchedulerTest {
         assertTrue(exporter.manifests.drop(1).any { it.endpoints.isNotEmpty() })
     }
 
+    private val markerClass = java.util.ArrayList::class.java.name
+
+    private fun seenMarkers(): FrameworkMarkerRegistry =
+        FrameworkMarkerRegistry(listOf(FrameworkMarkerDefinition("list-marker", listOf(listOf(markerClass))))).also {
+            it.observe(arrayOf(java.util.ArrayList::class.java), seenAt = 5L)
+        }
+
+    @Test
+    fun `a framework marker rides the manifest and is not sent again once that manifest was confirmed`() {
+        val exporter = StampedExporter()
+        val scheduler =
+            ExportScheduler(config, resource, ProbeRegistry(), EndpointRegistry(), exporter, frameworkMarkers = seenMarkers())
+
+        scheduler.flush()
+        scheduler.flush()
+
+        val carrying = exporter.manifests.filter { it.frameworkMarkers.isNotEmpty() }
+        assertEquals(1, carrying.size)
+        assertEquals(listOf(FrameworkMarker("list-marker", listOf(markerClass), 5L)), carrying.single().frameworkMarkers)
+    }
+
+    @Test
+    fun `a framework marker whose manifest failed is sent again next flush`() {
+        val exporter = StampedExporter()
+        exporter.manifestOutcome = { if (it.frameworkMarkers.isNotEmpty()) refusal() else null }
+        val scheduler =
+            ExportScheduler(config, resource, ProbeRegistry(), EndpointRegistry(), exporter, frameworkMarkers = seenMarkers())
+
+        scheduler.flush()
+        exporter.manifestOutcome = { null }
+        scheduler.flush()
+        scheduler.flush()
+
+        assertEquals(2, exporter.manifests.count { it.frameworkMarkers.isNotEmpty() })
+        assertEquals(
+            listOf("list-marker"),
+            exporter.manifests
+                .last { it.frameworkMarkers.isNotEmpty() }
+                .frameworkMarkers
+                .map { it.id },
+        )
+    }
+
+    @Test
+    fun `a framework marker weighs against the manifest chunk cap`() {
+        val registry = ProbeRegistry()
+        registry.register("com.example.Foo", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "m", "()V", 1)))
+        val exporter = StampedExporter()
+        val scheduler =
+            ExportScheduler(
+                config,
+                resource,
+                registry,
+                EndpointRegistry(),
+                exporter,
+                maxManifestEntriesPerChunk = 1,
+                frameworkMarkers = seenMarkers(),
+            )
+
+        scheduler.flush()
+
+        val withMarker = exporter.manifests.single { it.frameworkMarkers.isNotEmpty() }
+        assertTrue(withMarker.probes.isEmpty(), "a full class chunk leaves no room for the marker")
+        assertTrue(exporter.manifests.any { it.probes.isNotEmpty() })
+    }
+
+    @Test
+    fun `the first flush's sweep finds a marker and the same flush's manifest carries it`() {
+        val markers = FrameworkMarkerRegistry(listOf(FrameworkMarkerDefinition("list-marker", listOf(listOf(markerClass)))))
+        val registry = ProbeRegistry()
+        val sweep = LoadedClassSweep(ByteBuddyAgent.install(), registry, config, frameworkMarkers = markers, clock = { 77L })
+        val exporter = StampedExporter()
+        val scheduler =
+            ExportScheduler(
+                config,
+                resource,
+                registry,
+                EndpointRegistry(),
+                exporter,
+                loadedClassSweep = sweep,
+                frameworkMarkers = markers,
+            )
+
+        scheduler.flush()
+
+        val marker = exporter.manifests.flatMap { it.frameworkMarkers }.single()
+        assertEquals(FrameworkMarker("list-marker", listOf(markerClass), 77L), marker)
+    }
+
     @Test
     fun `a refused disabled module manifest stops the manifest sends and is sent again next flush`() {
         val endpoints = EndpointRegistry()
@@ -2241,7 +2332,16 @@ class ExportSchedulerTest {
         val registry = ProbeRegistry(confirmsDefinitions = true)
         registry.register("com.example.never.Loaded", layoutHash = 1L, probes = listOf(ProbeMeta(ProbeKind.METHOD, "m", "()V", 1)))
         val sweep = RecordingSweep(ByteBuddyAgent.install(), registry, config)
-        val scheduler = ExportScheduler(config, resource, registry, EndpointRegistry(), RecordingExporter(), loadedClassSweep = sweep)
+        val scheduler =
+            ExportScheduler(
+                config,
+                resource,
+                registry,
+                EndpointRegistry(),
+                RecordingExporter(),
+                loadedClassSweep = sweep,
+                frameworkMarkers = FrameworkMarkerRegistry(emptyList()),
+            )
 
         repeat(10) { scheduler.flush() }
         scheduler.flushOnShutdown(Duration.ofSeconds(5))
@@ -2260,10 +2360,19 @@ class ExportSchedulerTest {
     }
 
     @Test
-    fun `the sweep walk is skipped entirely when nothing awaits confirmation and the forward direction is not due`() {
+    fun `the sweep walk is skipped entirely when nothing awaits confirmation, no marker is unseen and the forward direction is not due`() {
         val registry = ProbeRegistry(confirmsDefinitions = true)
         val sweep = RecordingSweep(ByteBuddyAgent.install(), registry, config)
-        val scheduler = ExportScheduler(config, resource, registry, EndpointRegistry(), RecordingExporter(), loadedClassSweep = sweep)
+        val scheduler =
+            ExportScheduler(
+                config,
+                resource,
+                registry,
+                EndpointRegistry(),
+                RecordingExporter(),
+                loadedClassSweep = sweep,
+                frameworkMarkers = FrameworkMarkerRegistry(emptyList()),
+            )
 
         scheduler.flush()
 
@@ -2271,11 +2380,46 @@ class ExportSchedulerTest {
     }
 
     @Test
+    fun `the sweep walk runs on every flush while a framework marker is unseen, and stops once every one is seen`() {
+        val registry = ProbeRegistry(confirmsDefinitions = true)
+        val sweep = RecordingSweep(ByteBuddyAgent.install(), registry, config)
+        val markers = FrameworkMarkerRegistry(listOf(FrameworkMarkerDefinition("list-marker", listOf(listOf(markerClass)))))
+        val scheduler =
+            ExportScheduler(
+                config,
+                resource,
+                registry,
+                EndpointRegistry(),
+                RecordingExporter(),
+                loadedClassSweep = sweep,
+                frameworkMarkers = markers,
+            )
+
+        scheduler.flush()
+        assertEquals(1, sweep.calls.size, "an unseen marker keeps the walk running off cadence")
+        assertEquals(false, sweep.calls.single().runForwardPass)
+
+        markers.observe(arrayOf(java.util.ArrayList::class.java), seenAt = 1L)
+        scheduler.flush()
+
+        assertEquals(1, sweep.calls.size, "every marker seen, nothing awaits confirmation, not due")
+    }
+
+    @Test
     fun `the sweep walk is not skipped on an off-cadence flush when a class awaits confirmation`() {
         val registry = ProbeRegistry(confirmsDefinitions = true)
         registry.register("com.example.never.Loaded", layoutHash = 1L, probes = listOf(ProbeMeta(ProbeKind.METHOD, "m", "()V", 1)))
         val sweep = RecordingSweep(ByteBuddyAgent.install(), registry, config)
-        val scheduler = ExportScheduler(config, resource, registry, EndpointRegistry(), RecordingExporter(), loadedClassSweep = sweep)
+        val scheduler =
+            ExportScheduler(
+                config,
+                resource,
+                registry,
+                EndpointRegistry(),
+                RecordingExporter(),
+                loadedClassSweep = sweep,
+                frameworkMarkers = FrameworkMarkerRegistry(emptyList()),
+            )
 
         scheduler.flush()
 
@@ -2287,7 +2431,16 @@ class ExportSchedulerTest {
     fun `the sweep walk is not skipped on the tenth flush even when nothing awaits confirmation`() {
         val registry = ProbeRegistry(confirmsDefinitions = true)
         val sweep = RecordingSweep(ByteBuddyAgent.install(), registry, config)
-        val scheduler = ExportScheduler(config, resource, registry, EndpointRegistry(), RecordingExporter(), loadedClassSweep = sweep)
+        val scheduler =
+            ExportScheduler(
+                config,
+                resource,
+                registry,
+                EndpointRegistry(),
+                RecordingExporter(),
+                loadedClassSweep = sweep,
+                frameworkMarkers = FrameworkMarkerRegistry(emptyList()),
+            )
 
         repeat(9) { scheduler.flush() }
         assertTrue(sweep.calls.isEmpty(), "the first nine flushes have nothing to confirm and are not due")
@@ -2312,6 +2465,7 @@ class ExportSchedulerTest {
                 RecordingExporter(),
                 loadedClassSweep = sweep,
                 dependencyRegistry = dependencyRegistry,
+                frameworkMarkers = FrameworkMarkerRegistry(emptyList()),
             )
 
         repeat(10) { scheduler.flush() }

@@ -42,6 +42,7 @@ import dev.otherlode.registry.DependencyOrigin
 import dev.otherlode.registry.DependencyRegistry
 import dev.otherlode.registry.EndpointRegistry
 import dev.otherlode.registry.ExternalClassRegistry
+import dev.otherlode.registry.FrameworkMarkerRegistry
 import dev.otherlode.registry.ProbeRegistry
 import net.bytebuddy.agent.builder.ResettableClassFileTransformer
 import java.lang.System.Logger.Level
@@ -148,6 +149,7 @@ object Agent {
 
         val registry = ProbeRegistry(confirmsDefinitions = true)
         val endpointRegistry = EndpointRegistry()
+        val frameworkMarkers = FrameworkMarkerRegistry()
         val dependencyRegistry = DependencyRegistry(indexClassNames = config.staticBaselineEnabled)
         // One resolver for both users, so its caches and its registrations of jars discovered by
         // load are shared: the loaded-class count and the external-class mapping must agree on a
@@ -276,9 +278,11 @@ object Agent {
                             registry,
                             config,
                             LoadedDependencyCounter(dependencyRegistry, dependencyResolver::resolve),
+                            frameworkMarkers,
                         ),
                     dependencyRegistry = dependencyRegistry,
                     externalClassRegistry = externalClassRegistry,
+                    frameworkMarkers = frameworkMarkers,
                     staticBaselineSender = staticBaselineSender,
                     classListingSender = classListingSender,
                     dependencyListing = dependencyListing,

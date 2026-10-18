@@ -1875,6 +1875,42 @@ class ProtoPayloadCodecTest {
     }
 
     @Test
+    fun `encodes and decodes a manifest's framework markers`() {
+        val manifest =
+            ProbeManifest(
+                resource = ResourceAttributes("checkout", null, "", null, "run-1"),
+                probes = emptyList(),
+                frameworkMarkers =
+                    listOf(
+                        FrameworkMarker(
+                            id = "grpc-server",
+                            classes = listOf("io.grpc.internal.ServerImpl\$ServerListenerImpl"),
+                            seenAt = 3000L,
+                        ),
+                        FrameworkMarker(id = "two-classes", classes = listOf("a.B", "a.C"), seenAt = 4000L),
+                    ),
+            )
+
+        val decoded = ProtoPayloadCodec.decodeProbeManifest(ProtoPayloadCodec.encode(manifest))
+
+        assertEquals(manifest, decoded)
+
+        val reparsed = ProtoProbeManifest.parseFrom(ProtoPayloadCodec.encode(manifest))
+        assertEquals(22, ProtoProbeManifest.getDescriptor().findFieldByName("framework_markers").number)
+        val marker = reparsed.frameworkMarkersList.first()
+        assertEquals("grpc-server", marker.id)
+        assertEquals(listOf("io.grpc.internal.ServerImpl\$ServerListenerImpl"), marker.classesList)
+        assertEquals(3000L, marker.seenAt)
+    }
+
+    @Test
+    fun `a manifest with no framework markers decodes to none`() {
+        val manifest = ProbeManifest(resource = ResourceAttributes("svc", null, "i-1", null, "run-1"), probes = emptyList())
+
+        assertEquals(emptyList(), ProtoPayloadCodec.decodeProbeManifest(ProtoPayloadCodec.encode(manifest)).frameworkMarkers)
+    }
+
+    @Test
     fun `a configured-off module encodes as the CONFIGURED_OFF wire kind`() {
         val bytes =
             ProtoPayloadCodec.encode(

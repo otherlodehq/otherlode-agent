@@ -120,6 +120,7 @@ The manifest says what each id in a delta batch names. It carries the resource a
 | `unreported_classes` | Name of a class the agent found loaded that no transformer was offered, and the time |
 | `endpoints` | Per endpoint: `endpoint_id`, verb, route template, the framework's own spelling of the template, framework name, how it was discovered, whether the template is a path or a regex, and the handler class, method and descriptor when known |
 | `disabled_endpoint_modules` | Module name, the reason as free text, the time, and a kind naming why: a linkage error, an advice failure, a transform failure, a route walk failure, or a hook that matched no method |
+| `framework_markers` | Per marker: its id, the class set that matched as fully qualified names, and the time of the sweep that saw it. Each is delivered once per run. See [frameworks with no module](endpoints#frameworks-with-no-module) |
 | `dependencies` | Per dependency: `dependency_id`, identities (`group_id`, `artifact_id`, `version`), how the identity was read, the location, how it was discovered, and class count |
 | `external_classes` | Name of a class outside scope that your code refers to, the `dependency_id` that provides it, and whether nothing provides it |
 | `references_recorded`, `dependencies_listed` | Flags the server uses to know when references and the startup dependency listing are complete |

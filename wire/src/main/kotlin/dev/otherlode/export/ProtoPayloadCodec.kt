@@ -28,6 +28,7 @@ import dev.otherlode.proto.EndpointLocation as ProtoEndpointLocation
 import dev.otherlode.proto.EndpointTemplateKind as ProtoEndpointTemplateKind
 import dev.otherlode.proto.ExternalClass as ProtoExternalClass
 import dev.otherlode.proto.FailedClass as ProtoFailedClass
+import dev.otherlode.proto.FrameworkMarker as ProtoFrameworkMarker
 import dev.otherlode.proto.GeneratedBy as ProtoGeneratedBy
 import dev.otherlode.proto.IncludeRules as ProtoIncludeRules
 import dev.otherlode.proto.InitializationFailure as ProtoInitializationFailure
@@ -164,6 +165,7 @@ object ProtoPayloadCodec {
             .addAllClassesFailedToInitialize(manifest.classesFailedToInitialize.map { toProto(it) })
             .setUnplacedVerificationFailures(manifest.unplacedVerificationFailures)
             .setVerifierRejectionsWatched(manifest.verifierRejectionsWatched)
+            .addAllFrameworkMarkers(manifest.frameworkMarkers.map { toProto(it) })
             .build()
 
     private fun fromProto(manifest: ProtoProbeManifest): ProbeManifest =
@@ -186,6 +188,7 @@ object ProtoPayloadCodec {
             classesFailedToInitialize = manifest.classesFailedToInitializeList.map { fromProto(it) },
             unplacedVerificationFailures = manifest.unplacedVerificationFailures,
             verifierRejectionsWatched = manifest.verifierRejectionsWatched,
+            frameworkMarkers = manifest.frameworkMarkersList.map { fromProto(it) },
         )
 
     private fun toProto(unreportedClass: UnreportedClass): ProtoUnreportedClass =
@@ -949,6 +952,17 @@ object ProtoPayloadCodec {
             firstSeenAt = delta.firstSeenAt,
             hitsTotal = delta.hitsTotal,
         )
+
+    private fun toProto(marker: FrameworkMarker): ProtoFrameworkMarker =
+        ProtoFrameworkMarker
+            .newBuilder()
+            .setId(marker.id)
+            .addAllClasses(marker.classes)
+            .setSeenAt(marker.seenAt)
+            .build()
+
+    private fun fromProto(marker: ProtoFrameworkMarker): FrameworkMarker =
+        FrameworkMarker(id = marker.id, classes = marker.classesList.toList(), seenAt = marker.seenAt)
 
     private fun toProto(module: DisabledEndpointModule): ProtoDisabledEndpointModule =
         ProtoDisabledEndpointModule

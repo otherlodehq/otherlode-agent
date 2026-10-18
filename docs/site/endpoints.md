@@ -304,6 +304,24 @@ A class that fails to weave runs from its original bytes and the agent logs a WA
 
 A framework class that was renamed is not caught. The module never matches it, which reads as the framework being absent. See [troubleshooting](troubleshooting).
 
+## Frameworks with no module
+
+A service whose web framework has no module above reports no endpoints. Without a signal, that reads the same as a service that serves none. So the agent keeps a fixed list of framework markers: a class, or a set of classes, that is defined in the JVM only once a framework's own routing is set up. When it sees every class of a marker loaded, the agent reports the marker's id and the classes that matched on the next manifest, delivered once per run. It never loads a class to look; it reads the names of the classes the JVM has already defined, so a marker is reported only after the class is defined. It looks on every flush, so a marker is reported on the first manifest after its classes load, and on the final flush.
+
+A marker is an observation. It does not say that a framework is uncovered, since a module may count some of its routes, and the server words what it means for the agent version and the modules installed. Markers are reported whatever else runs: a service with a Spring MVC module and a gRPC server reports both the endpoints and the gRPC marker, and a test run reports markers too.
+
+Each claim is narrow. It names the routing the class proves, and says whether the class loads when routing is configured or only when the server starts.
+
+| Marker id | Class that loads | Claim |
+|---|---|---|
+| `grpc-server` | `io.grpc.internal.ServerImpl$ServerListenerImpl` | A grpc-java server started, an in-process server included. A client alone does not load it. Armeria serving gRPC does not use it |
+| `armeria-server` | `com.linecorp.armeria.server.HttpServerPipelineConfigurator` | An Armeria server started. A client alone does not load it |
+| `undertow-routing-handler` | `io.undertow.server.RoutingHandler` | Undertow's own `RoutingHandler` configured, whether or not the server started. A server answering through another handler does not load it |
+| `javalin-5` | `io.javalin.jetty.JettyServer$start$wsAndHttpHandler$1` and `io.javalin.http.servlet.JavalinServlet` | Javalin 5's own Jetty server started. Javalin 4 loads the first class but not the second, and no Javalin release a module covers has the first. A Javalin 5 application deployed as a servlet in another container loads no marker |
+| `webflux-router-without-dispatcher` | `org.springframework.web.reactive.function.server.RouterFunctions$RouterFunctionWebHandler` | A Spring WebFlux router turned into a handler by `RouterFunctions.toHttpHandler` or `toWebHandler`, configured whether or not it was served. A router served by a `DispatcherHandler` does not load it. A test that binds `WebTestClient` to a router function loads it, so that test run reports the marker |
+
+The project's tests run each marker in three JVMs with `-Xlog:class+load`: one that uses only the framework's client side, or the framework without its routing, one that configures routing without starting it, and one that serves a request. They run against these releases: grpc-java 1.30.2 to 1.85.0 (five releases), Armeria 1.0.0 to 1.42.0 (five releases), Undertow 2.2.37, 2.3.26 and 2.4.1, Javalin 5.0.0, 5.3.2 and 5.6.5 (and 4.6.8, which must not complete the marker), and Spring Framework 5.3.39, 6.2.19 and 7.0.9. A release between two tested ones is expected to behave the same and is not tested.
+
 ## Settings
 
 | Option | Default | Effect |
@@ -316,8 +334,8 @@ The [configuration options](configuration) page gives the system property and en
 
 ## What is not covered
 
-- Javalin 5 has no module. Counting its endpoints needs one. For it, `otelBridgeEnabled` counts what OpenTelemetry resolves, discovered at dispatch only, so "never called" cannot be computed.
-- A Spring WebFlux router run through `RouterFunctions.toHttpHandler` or `toWebHandler`, with no `DispatcherHandler`, is not declared, and only its `resources(pattern, location)` routes are counted, found at dispatch.
+- Javalin 5 has no module. Counting its endpoints needs one. For it, `otelBridgeEnabled` counts what OpenTelemetry resolves, discovered at dispatch only, so "never called" cannot be computed. The agent reports the `javalin-5` [marker](#frameworks-with-no-module).
+- A Spring WebFlux router run through `RouterFunctions.toHttpHandler` or `toWebHandler`, with no `DispatcherHandler`, is not declared, and only its `resources(pattern, location)` routes are counted, found at dispatch. The agent reports the `webflux-router-without-dispatcher` [marker](#frameworks-with-no-module).
 - Requests that never reach the hooked framework are not counted. A servlet, filter or Tomcat valve that answers first is invisible to the Spring module, for example.
 - The agent reads no OpenAPI document and does no static analysis of call sites to find endpoints.
 - A route that a router builds at runtime by any means other than the registration points above is found only when a request reaches it.

@@ -741,6 +741,25 @@ message ProbeManifest {
   // never ran, since a class the verifier rejected fires no probe. False from an agent that predates
   // the field.
   bool verifier_rejections_watched = 21;
+  // Framework markers the agent saw load: classes defined only once a framework's own routing is
+  // set up. Each marker is delivered once per run, resent until a manifest carrying it is
+  // confirmed; the wire has no retraction, so a marker once sent stands. See FrameworkMarker.
+  repeated FrameworkMarker framework_markers = 22;
+}
+
+// Evidence that a framework's own routing loaded in this JVM: every class of one of the marker's
+// class sets was defined, as the loaded-class sweep saw it. The agent reports what loaded and
+// nothing more. Whether a module covers that framework, and how to word the claim, is the
+// server's to decide, from the id, the agent version and the modules the manifests list.
+// Reported whatever other endpoints the instance declares or counts.
+message FrameworkMarker {
+  // The marker's id from the agent's fixed list, kebab-case and stable, such as "grpc-server".
+  string id = 1;
+  // The class set that matched, as fully qualified binary names (a nested class with a dollar
+  // sign). Every one of them was defined when the sweep saw the marker.
+  repeated string classes = 2;
+  // Milliseconds since the epoch of the sweep that saw the marker.
+  int64 seen_at = 3;
 }
 
 // No line field, unlike ProbeLocation: the static scan records no line for a
