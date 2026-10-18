@@ -36,6 +36,10 @@ dependencies {
     // build.gradle.kts for the full rationale).
     compileOnly(project(":bootstrap"))
 
+    // The route normaliser a mapping is checked against; the root project ships the wire module in
+    // the agent jar.
+    compileOnly(project(":wire"))
+
     // Needed directly for net.bytebuddy.asm.Advice (the Java advice class), for the EndpointModule
     // types and for the ASM the class-file reads use. compileOnly: at runtime, ByteBuddy comes from
     // the root project's own dependency once this module's classes are merged into the shaded
@@ -254,6 +258,26 @@ containerSuite(
     javaDirs = emptyList(),
 ) {
     implementation("org.eclipse.jetty:jetty-servlet:$jetty9Version")
+}
+
+// Spring Boot 2.7 on Jetty 9.4 puts the Servlet 4.0 API jar (javax.servlet-api 4.0.1, which
+// spring-boot-starter-jetty ships as jakarta.servlet-api 4.0.4) beside a container that has no
+// getHttpServletMapping, so the API's default method answers.
+containerSuite(
+    "jetty9Servlet4Api",
+    listOf(
+        SourceDir(
+            "src/test/kotlin",
+            rewrite = true,
+            excludes = listOf("**/ServletModuleTest.kt", "**/ServletModuleDisablingTest.kt"),
+        ),
+        SourceDir("src/jetty/kotlin"),
+        SourceDir("src/jetty9api4/kotlin"),
+    ),
+    javaDirs = emptyList(),
+) {
+    implementation("org.eclipse.jetty:jetty-servlet:$jetty9Version")
+    implementation("javax.servlet:javax.servlet-api:4.0.1")
 }
 
 // A Spring Boot application on embedded Tomcat, with the servlet module and the Spring MVC module

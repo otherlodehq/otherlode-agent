@@ -237,3 +237,29 @@ class ErrorPageServlet : HttpServlet() {
 
 /** A subclass of a servlet the module leaves out by its hierarchy. */
 class SubOfOwnedServlet : io.javalin.http.servlet.JavalinServlet()
+
+/** Calls [target]'s public `service` directly, as a servlet that delegates to another does. */
+class DelegatingServlet(
+    private val target: HttpServlet,
+) : HttpServlet() {
+    override fun doGet(
+        req: HttpServletRequest,
+        resp: HttpServletResponse,
+    ) {
+        val request: ServletRequest = req
+        val response: ServletResponse = resp
+        target.service(request, response)
+    }
+}
+
+/** Starts asynchronous processing and dispatches to [target]. */
+class AsyncDispatchingServlet(
+    private val target: String,
+) : HttpServlet() {
+    override fun doGet(
+        req: HttpServletRequest,
+        resp: HttpServletResponse,
+    ) {
+        req.startAsync().dispatch(target)
+    }
+}

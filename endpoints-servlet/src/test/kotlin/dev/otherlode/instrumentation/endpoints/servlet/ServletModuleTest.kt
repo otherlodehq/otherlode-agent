@@ -1,8 +1,10 @@
 package dev.otherlode.instrumentation.endpoints.servlet
 
 import com.example.servlet.fixture.AllVerbsServlet
+import com.example.servlet.fixture.AsyncDispatchingServlet
 import com.example.servlet.fixture.BareServlet
 import com.example.servlet.fixture.BaseGetServlet
+import com.example.servlet.fixture.DelegatingServlet
 import com.example.servlet.fixture.ErrorPageServlet
 import com.example.servlet.fixture.FailingServlet
 import com.example.servlet.fixture.ForwardingServlet
@@ -217,6 +219,71 @@ class ServletModuleTest : ServletTestSupport() {
                 assertEquals(2, hits("*", "/once/protected"))
                 assertEquals(2, hits("*", "/once/outer"))
                 assertEquals(2, hits("GET", "/once/plain"))
+            }
+    }
+
+    @Test
+    fun `a servlet that calls another servlet's service directly counts the matched servlet only`() {
+        val inner = GetPostServlet()
+        container
+            .start("") {
+                servlet("inner", inner, "/delegate/inner")
+                servlet("outer", DelegatingServlet(inner), "/delegate/outer")
+            }.use { app ->
+                assertEquals(200, app.send("/delegate/inner"), "the container initialises the inner servlet with its own name")
+                assertEquals(200, app.send("/delegate/outer"))
+                assertEquals(1, hits("GET", "/delegate/outer"))
+                assertEquals(1, hits("GET", "/delegate/inner"), "only the request that went to it")
+            }
+    }
+
+    @Test
+    fun `an asynchronous dispatch counts nothing`() {
+        container
+            .start("") {
+                servlet("start", AsyncDispatchingServlet("/async/target"), "/async/start")
+                servlet("target", GetPostServlet(), "/async/target")
+            }.use { app ->
+                assertEquals(200, app.send("/async/start"))
+                assertEquals(1, hits("GET", "/async/start"))
+                assertEquals(0, hits("GET", "/async/target"))
+            }
+    }
+
+    @Test
+    fun `a request to a servlet that is left out still declares the context`() {
+        container
+            .start("") {
+                servlet(
+                    "own",
+                    io.javalin.http.servlet
+                        .JavalinServlet(),
+                    "/leftout/direct",
+                )
+                servlet("plain", GetPostServlet(), "/leftout/plain")
+            }.use { app ->
+                assertEquals(setOf(), declared("/leftout"))
+                assertEquals(200, app.send("/leftout/direct"))
+                assertEquals(setOf("GET /leftout/plain", "POST /leftout/plain"), declared("/leftout"))
+                assertEquals(0, hits("GET", "/leftout/plain"))
+            }
+    }
+
+    @Test
+    fun `exact mappings that differ by a trailing slash or hold a star are kept as written`() {
+        container
+            .start("") {
+                servlet("plain", GetPostServlet(), "/exact/a")
+                servlet("slash", BaseGetServlet(), "/exact/a/")
+                servlet("glob", BaseGetServlet(), "/exact/b*")
+            }.use { app ->
+                assertEquals(200, app.send("/exact/a"))
+                assertEquals(200, app.send("/exact/a/"))
+                assertEquals(200, app.send("/exact/b*"))
+                assertEquals(1, hits("GET", "/exact/a"))
+                assertEquals(1, hits("GET", "/exact/a/", EndpointTemplateKind.SERVLET_PATTERN))
+                assertEquals(1, hits("GET", "/exact/b*", EndpointTemplateKind.SERVLET_PATTERN))
+                assertNull(endpoint("GET", "/exact/b*"), "an exact mapping holding a star is no path template")
             }
     }
 

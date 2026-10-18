@@ -53,7 +53,11 @@ private class JettyWebApp(
         name: String,
         servlet: Servlet,
         vararg mappings: String,
-    ) = register(ServletHolder(name, servlet), *mappings)
+    ) {
+        val holder = ServletHolder(name, servlet)
+        holder.isAsyncSupported = true
+        register(holder, *mappings)
+    }
 
     private fun register(
         holder: ServletHolder,

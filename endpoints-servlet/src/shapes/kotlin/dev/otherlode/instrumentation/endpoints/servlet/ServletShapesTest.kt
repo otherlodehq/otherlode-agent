@@ -10,11 +10,13 @@ import com.example.servlet.fixture.ProtectedServiceServlet
 import com.example.servlet.fixture.PublicServiceSuperServlet
 import com.example.servlet.fixture.SubOfOwnedServlet
 import dev.otherlode.bootstrap.OtherlodeEndpoints
+import dev.otherlode.registry.RouteTemplateNormalizer
 import net.bytebuddy.ByteBuddy
 import net.bytebuddy.description.modifier.Visibility
 import net.bytebuddy.implementation.StubMethod
 import java.io.ByteArrayInputStream
 import java.io.InputStream
+import java.net.URL
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -127,8 +129,45 @@ class ServletShapesTest {
     }
 
     @Test
+    fun `an exact mapping the normaliser would change, or that holds a star or brace, is a servlet pattern`() {
+        for (kept in listOf("/a/", "/a*", "/a{b}", "/a/{id}", "/a/*/b", "/a//b", "/a/**", "/a/<b>", "/a//*", "/a/{b}/*", "*.d*", "*.{x}")) {
+            val mapping = assertNotNull(readMapping(kept), kept)
+            assertEquals(kept to OtherlodeEndpoints.TEMPLATE_SERVLET_PATTERN, mapping.template to mapping.kind, kept)
+        }
+        for (path in listOf("/a", "/a/b", "/a/*", "/*", "/a/b-c.d", "/Orders/*")) {
+            val mapping = assertNotNull(readMapping(path), path)
+            assertEquals(path to OtherlodeEndpoints.TEMPLATE_PATH, mapping.template to mapping.kind, path)
+            assertEquals(path, RouteTemplateNormalizer.normalize(path), "a path template is its own identity")
+        }
+    }
+
+    @Test
+    fun `a servlet is left out only where the module that counts behind it covers the release`() {
+        val withoutJavalin6 = hiding("io/javalin/router/ParsedEndpoint.class")
+        val withoutKtor2 = hiding("io/ktor/server/routing/Route.class")
+        val javalin = "io.javalin.http.servlet.JavalinServlet"
+        val ktor = "io.ktor.server.servlet.ServletApplicationEngine"
+
+        assertEquals(ServletShape.Left, ServletShapes().of(javalin, loader))
+        assertEquals(ServletShape.Left, ServletShapes().of(ktor, loader))
+        assertIs<ServletShape.Counted>(ServletShapes().of(javalin, withoutJavalin6), "Javalin 5 ships the servlet and no module")
+        assertIs<ServletShape.Counted>(ServletShapes().of(ktor, withoutKtor2), "Ktor 1 ships the servlet and no module")
+        assertEquals(ServletShape.Left, ServletShapes().of(javalin, withoutKtor2), "the markers are per framework")
+        assertEquals(ServletShape.Left, ServletShapes().of(ktor, withoutJavalin6))
+        assertIs<ServletShape.Counted>(
+            ServletShapes().of(SubOfOwnedServlet::class.java.name, withoutJavalin6),
+            "a subclass of an uncovered servlet is counted as a servlet",
+        )
+    }
+
+    private fun hiding(vararg resources: String): ClassLoader =
+        object : ClassLoader(loader) {
+            override fun getResource(name: String): URL? = if (name in resources) null else super.getResource(name)
+        }
+
+    @Test
     fun `a mapping outside the five forms is not read`() {
-        for (outside in listOf("/a/{id}", "^/a/.*", "a/b", "/a/*/b", "*.", "*.a/b", "/a*", "regex|/x", "x")) {
+        for (outside in listOf("^/a/.*", "a/b", "*.", "*.a/b", "regex|/x", "x")) {
             assertNull(readMapping(outside), outside)
         }
     }

@@ -62,6 +62,7 @@ private class UndertowWebApp(
         vararg mappings: String,
     ) {
         val info = ServletInfo(name, servlet.javaClass, ImmediateInstanceFactory(servlet))
+        info.isAsyncSupported = true
         info.addMappings(*mappings)
         deployment.addServlet(info)
     }

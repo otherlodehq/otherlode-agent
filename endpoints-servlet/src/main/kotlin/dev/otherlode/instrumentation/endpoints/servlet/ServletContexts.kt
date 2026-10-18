@@ -101,8 +101,9 @@ private class Held(
 /**
  * The servlet contexts the module has declared, held weakly, and what it declared for each.
  *
- * A context is declared at the first counted request it receives, from its servlet registrations:
- * every mapping of every registration that is neither an owned servlet nor a container servlet. The
+ * A context is declared at the first `REQUEST` dispatch that reaches a hooked servlet in it, a servlet
+ * left out included, from its servlet registrations: every mapping of every registration that is
+ * neither an owned servlet nor a container servlet. The
  * module reads the registrations of every held context again before each manifest, so a mapping
  * added since is declared within one flush interval.
  *

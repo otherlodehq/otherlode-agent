@@ -7,19 +7,27 @@ import net.bytebuddy.jar.asm.Opcodes
 import java.util.Collections
 import java.util.WeakHashMap
 
-/** Servlets a framework module counts behind, matched by class hierarchy. */
-internal val OWNED_SERVLETS: Set<String> =
-    setOf(
-        "org.springframework.web.servlet.DispatcherServlet",
-        "org.glassfish.jersey.servlet.ServletContainer",
-        "org.jboss.resteasy.plugins.server.servlet.HttpServletDispatcher",
-        "org.jboss.resteasy.plugins.server.servlet.HttpServlet30Dispatcher",
-        "org.apache.cxf.transport.servlet.CXFServlet",
-        "org.apache.cxf.jaxrs.servlet.CXFNonSpringJaxrsServlet",
-        "io.micronaut.servlet.engine.DefaultMicronautServlet",
-        "io.ktor.server.servlet.ServletApplicationEngine",
-        "io.ktor.server.servlet.jakarta.ServletApplicationEngine",
-        "io.javalin.http.servlet.JavalinServlet",
+private const val JAVALIN_COVERED = "io/javalin/router/ParsedEndpoint.class"
+private const val KTOR_COVERED = "io/ktor/server/routing/Route.class"
+
+/**
+ * Servlets a framework module counts behind, matched by class hierarchy. A value is a class file a
+ * class loader ships only with the releases that module covers, and a loader without it does not
+ * own the servlet: Javalin 5 and Ktor 1 ship the same class names and have no module. A null value
+ * means every release that has the class is covered or visibly switched off by its module.
+ */
+internal val OWNED_SERVLETS: Map<String, String?> =
+    mapOf(
+        "org.springframework.web.servlet.DispatcherServlet" to null,
+        "org.glassfish.jersey.servlet.ServletContainer" to null,
+        "org.jboss.resteasy.plugins.server.servlet.HttpServletDispatcher" to null,
+        "org.jboss.resteasy.plugins.server.servlet.HttpServlet30Dispatcher" to null,
+        "org.apache.cxf.transport.servlet.CXFServlet" to null,
+        "org.apache.cxf.jaxrs.servlet.CXFNonSpringJaxrsServlet" to null,
+        "io.micronaut.servlet.engine.DefaultMicronautServlet" to null,
+        "io.ktor.server.servlet.ServletApplicationEngine" to KTOR_COVERED,
+        "io.ktor.server.servlet.jakarta.ServletApplicationEngine" to KTOR_COVERED,
+        "io.javalin.http.servlet.JavalinServlet" to JAVALIN_COVERED,
     )
 
 private val JETTY_EE = listOf("ee8", "ee9", "ee10", "ee11")
@@ -102,8 +110,8 @@ private val NAMESPACES = listOf("javax", "jakarta")
  * Reads what a servlet class serves from the class files of its hierarchy, loading and reflecting
  * on nothing, and holds the answer per class loader.
  *
- * A servlet whose hierarchy reaches an owned servlet, or that is a container servlet by exact class
- * name, is [ServletShape.Left]. An `HttpServlet` serves the verbs of the `do*` methods its classes
+ * A servlet whose hierarchy reaches an owned servlet that its module covers on this loader (see
+ * [OWNED_SERVLETS]), or that is a container servlet by exact class name, is [ServletShape.Left]. An `HttpServlet` serves the verbs of the `do*` methods its classes
  * below `HttpServlet` declare, and every verb (`*`) when one of them overrides `service`. A servlet
  * that is not an `HttpServlet` serves every verb.
  */
@@ -128,7 +136,7 @@ internal class ServletShapes {
         val chain = ArrayList<ClassInfo>()
         var current: String? = className
         while (current != null && !isServletApi(current) && current != "java.lang.Object") {
-            if (current in OWNED_SERVLETS) return ServletShape.Left
+            if (OWNED_SERVLETS.containsKey(current) && ownerCovers(OWNED_SERVLETS[current], loader)) return ServletShape.Left
             val info =
                 readClass(loader, current) ?: throw UnreadableServlet("the class file of $current (servlet $className) cannot be read")
             chain += info
@@ -142,6 +150,11 @@ internal class ServletShapes {
             genericShape(className, chain)
         }
     }
+
+    private fun ownerCovers(
+        coveredRelease: String?,
+        loader: ClassLoader,
+    ): Boolean = coveredRelease == null || loader.getResource(coveredRelease) != null
 
     private fun httpServletShape(
         namespace: String,

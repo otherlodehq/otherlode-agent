@@ -44,7 +44,7 @@ private class TomcatWebApp(
         servlet: Servlet,
         vararg mappings: String,
     ) {
-        Tomcat.addServlet(context, name, servlet)
+        Tomcat.addServlet(context, name, servlet).isAsyncSupported = true
         for (mapping in mappings) context.addServletMappingDecoded(mapping, name)
     }
 

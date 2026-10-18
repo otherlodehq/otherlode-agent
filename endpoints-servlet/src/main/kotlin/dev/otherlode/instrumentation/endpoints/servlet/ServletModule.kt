@@ -60,8 +60,8 @@ private class ServletApiGate : ElementMatcher<ClassLoader?> {
  * frames it passes through: the keys of a servlet are bound only for the most derived class that
  * declares the method (see [ServletShapes]).
  *
- * A servlet context is declared at its first counted request, from its servlet registrations, and
- * again before each manifest for a mapping added since (see [ServletContexts]). Servlets another
+ * A servlet context is declared at the first `REQUEST` dispatch that reaches a hooked servlet in it,
+ * from its servlet registrations, and again before each manifest for a mapping added since (see [ServletContexts]). Servlets another
  * module counts behind, and a container's own servlets, are left out.
  */
 class ServletModule : EndpointModule {
