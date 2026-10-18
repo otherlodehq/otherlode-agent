@@ -339,11 +339,11 @@ class ExportScheduler(
     private fun maybeSweep(final: Boolean) {
         val sweep = loadedClassSweep ?: return
         val forwardPassDue = final || --flushesSinceSweep <= 0
-        if (forwardPassDue) flushesSinceSweep = SWEEP_EVERY_N_FLUSHES
         val countsDependencies = dependencyRegistry.isListingComplete
         if (!forwardPassDue && !countsDependencies && registry.unconfirmedClassCount() == 0 && !frameworkMarkers.hasUnseen()) return
         try {
             sweep.run(runForwardPass = forwardPassDue, final = final)
+            if (forwardPassDue) flushesSinceSweep = SWEEP_EVERY_N_FLUSHES
         } catch (t: Throwable) {
             log.log(Level.WARNING, "otherlode: the loaded-class sweep failed, will retry on a later flush", t)
         }

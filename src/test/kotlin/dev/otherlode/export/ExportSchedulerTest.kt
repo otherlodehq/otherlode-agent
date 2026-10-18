@@ -140,6 +140,12 @@ private class RecordingSweep(
     }
 }
 
+private fun forwardPassFlushes(sweep: RecordingSweep): List<Int> =
+    sweep.calls.withIndex().filter { it.value.runForwardPass }.map {
+        it.index +
+            1
+    }
+
 class ExportSchedulerTest {
     private val config = AgentConfig.parse("serviceName=checkout,serviceVersion=1.0.0,serviceInstanceId=instance-1,environment=test")
     private val resource = TestResources.forConfig(config)
@@ -2357,6 +2363,53 @@ class ExportSchedulerTest {
             "only the tenth flush and the final flush run the forward, unreported-class direction",
         )
         assertEquals(List(10) { false } + listOf(true), sweep.calls.map { it.final })
+    }
+
+    @Test
+    fun `a forward pass that throws on the tenth flush runs again on the eleventh`() {
+        val registry = ProbeRegistry(confirmsDefinitions = true)
+        var calls = 0
+        val sweep =
+            RecordingSweep(ByteBuddyAgent.install(), registry, config) {
+                if (++calls == 10) error("forward pass failed")
+            }
+        val scheduler =
+            ExportScheduler(
+                config,
+                resource,
+                registry,
+                EndpointRegistry(),
+                RecordingExporter(),
+                loadedClassSweep = sweep,
+                frameworkMarkers = FrameworkMarkerRegistry(emptyList()),
+            )
+        registry.register("com.example.never.Loaded", layoutHash = 1L, probes = listOf(ProbeMeta(ProbeKind.METHOD, "m", "()V", 1)))
+
+        repeat(10) { scheduler.flush() }
+        scheduler.flush()
+
+        assertEquals(listOf(10, 11), forwardPassFlushes(sweep))
+    }
+
+    @Test
+    fun `a forward pass that completes on the tenth flush is not repeated on the eleventh`() {
+        val registry = ProbeRegistry(confirmsDefinitions = true)
+        val sweep = RecordingSweep(ByteBuddyAgent.install(), registry, config)
+        val scheduler =
+            ExportScheduler(
+                config,
+                resource,
+                registry,
+                EndpointRegistry(),
+                RecordingExporter(),
+                loadedClassSweep = sweep,
+                frameworkMarkers = FrameworkMarkerRegistry(emptyList()),
+            )
+        registry.register("com.example.never.Loaded", layoutHash = 1L, probes = listOf(ProbeMeta(ProbeKind.METHOD, "m", "()V", 1)))
+
+        repeat(11) { scheduler.flush() }
+
+        assertEquals(listOf(10), forwardPassFlushes(sweep))
     }
 
     @Test
