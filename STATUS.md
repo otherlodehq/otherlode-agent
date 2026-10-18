@@ -140,9 +140,11 @@ dispatch for the other modules.
 
 ADR 0074. In order:
 
-1. The server accepts a third `EndpointTemplateKind`, the servlet pattern
-   template, as an identity of its own, and the collector's bindings are
-   bumped to carry it.
+1. Done: the server names the servlet pattern template kind (server
+   `e64d0ac`; it already kept an unnamed kind apart as "unknown"), and the
+   collector's bindings carry it (collector `17b6918`). The server commit
+   waits to deploy: GitHub did not start its CI on 2026-10-18 over a billing
+   problem on the account.
 2. The `servlet` module, on the ADR's test matrix: done. Tomcat 9.0, 10.1 and
    11, Jetty 10 and 12 (ee10), Undertow 2.3 and a Spring Boot embedded Tomcat
    pass, and Jetty 9.4 shows the `LINKAGE_ERROR` floor. ADR 0074's
