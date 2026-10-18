@@ -26,6 +26,39 @@ object FrameworkMarkers {
                 listOf(listOf("io.javalin.jetty.JettyServer\$start\$wsAndHttpHandler\$1", "io.javalin.http.servlet.JavalinServlet")),
             ),
             FrameworkMarkerDefinition(
+                "play-server",
+                listOf(
+                    listOf("play.core.server.PekkoHttpServer"),
+                    listOf("play.core.server.AkkaHttpServer"),
+                    listOf("play.core.server.NettyServer"),
+                ),
+            ),
+            FrameworkMarkerDefinition("helidon-webserver", listOf(listOf("io.helidon.webserver.LoomServer\$ListenerFuture"))),
+            FrameworkMarkerDefinition(
+                "struts2-dispatcher",
+                listOf(
+                    listOf("org.apache.struts2.dispatcher.ExecuteOperations"),
+                    listOf("org.apache.struts2.dispatcher.ng.ExecuteOperations"),
+                ),
+            ),
+            FrameworkMarkerDefinition(
+                "grails-url-mappings",
+                listOf(
+                    listOf(
+                        "org.grails.web.servlet.mvc.GrailsDispatcherServlet",
+                        "org.springframework.boot.web.servlet.context.ServletWebServerApplicationContext",
+                    ),
+                    listOf(
+                        "org.grails.web.servlet.mvc.GrailsDispatcherServlet",
+                        "org.springframework.boot.web.server.servlet.context.ServletWebServerApplicationContext",
+                    ),
+                    listOf(
+                        "org.grails.web.servlet.mvc.GrailsDispatcherServlet",
+                        "org.springframework.boot.web.servlet.support.SpringBootServletInitializer\$WarDeploymentApplicationContextFactory",
+                    ),
+                ),
+            ),
+            FrameworkMarkerDefinition(
                 "webflux-router-without-dispatcher",
                 listOf(listOf("org.springframework.web.reactive.function.server.RouterFunctions\$RouterFunctionWebHandler")),
             ),

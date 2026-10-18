@@ -61,4 +61,26 @@ class AgentReportsMarkerTest {
     fun `an Undertow JVM serving through a plain handler reports no marker`() {
         assertEquals(emptyList(), reportedBy("undertow", "2.4.1.Final", "markers.UndertowMain", "baseline"))
     }
+
+    @Test
+    fun `a serving Play JVM's manifest carries the Play marker with the backend that matched`() {
+        val markers = reportedBy("play-pekko", "3.0.12", "markers.PlayMain", "serving")
+
+        val marker = markers.single()
+        assertEquals("play-server", marker.id)
+        assertEquals(listOf("play.core.server.PekkoHttpServer"), marker.classes)
+    }
+
+    @Test
+    fun `a Play JVM that only uses the framework's helpers reports no marker`() {
+        assertEquals(emptyList(), reportedBy("play-pekko", "3.0.12", "markers.PlayMain", "baseline"))
+    }
+
+    @Test
+    fun `a serving Struts 2 JVM's manifest carries the Struts marker`() {
+        val markers = reportedBy("struts", "6.12.0", "markers.StrutsMain", "serving")
+
+        assertEquals(listOf("struts2-dispatcher"), markers.map { it.id })
+        assertEquals(listOf("org.apache.struts2.dispatcher.ExecuteOperations"), markers.single().classes)
+    }
 }
