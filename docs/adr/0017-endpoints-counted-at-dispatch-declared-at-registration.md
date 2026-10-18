@@ -120,7 +120,7 @@ Considered: treating every unresolvable supertype as "no match". Rejected: it wo
 - A loaded supertype whose declared methods cannot be reflected, because a type in a signature is absent, is treated like one that cannot be loaded: the class extending it is no match. Reflection on it would throw `NoClassDefFoundError` the same way when a JAX-RS runtime read it.
 - A switch-off from a matcher writes two WARNING lines: the matcher's own, naming the class, and the module's usual `disabled itself`. The earlier bullet's "one WARNING" counted only the first.
 
-Considered: keeping the prefix skip beside the loader fallback. Rejected: a skip by name decides nothing the load does not decide better, and it left every other absent supertype a way to switch the module off.
+Considered: keeping the prefix skip beside the loader fallback. Rejected: a skip by name decides nothing the load does not decide better, and it left every other absent supertype a way to switch the module off. The option rejected above, no match for every unresolvable supertype, is accepted here only for a supertype that cannot be loaded, since a class with one can never be defined and no resource is dropped.
 
 ## Amended on 2026-10-18: Spring MVC counts only what DispatcherServlet's dispatch looks up
 
