@@ -357,7 +357,7 @@ class ServletModuleTest : ServletTestSupport() {
 
                 app.addMappingAfterStart("late", "/late/second")
 
-                assertEquals(200, app.send("/late/second"))
+                assertEquals(200, app.send("/late/second"), "a request between the add and the flush is served")
                 assertEquals(setOf("GET /late/first", "POST /late/first"), declared("/late"), "declared at the flush, not before")
 
                 val flushThread = ServletTestAgent.flush()
@@ -366,7 +366,7 @@ class ServletModuleTest : ServletTestSupport() {
                     setOf("GET /late/first", "POST /late/first", "GET /late/second", "POST /late/second"),
                     declared("/late"),
                 )
-                assertEquals(0, hits("GET", "/late/second"))
+                assertEquals(0, hits("GET", "/late/second"), "the request before the flush counted nothing")
 
                 assertEquals(200, app.send("/late/second"))
                 assertEquals(1, hits("GET", "/late/second"))

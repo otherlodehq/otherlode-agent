@@ -126,19 +126,19 @@ internal class ServletContexts(
         synchronized(lock) {
             if (isHeld(context)) return
             val entry = Held(context)
-            if (refresh(entry, context)) held = (held.filter { it.get() != null } + entry).toTypedArray()
+            refresh(entry, context)
+            held = (held.filter { it.get() != null } + entry).toTypedArray()
         }
     }
 
     /** Reads the registrations of every held context again and declares what was added. */
     fun refreshAll() {
         synchronized(lock) {
-            val kept = ArrayList<Held>()
+            held = held.filter { it.get() != null }.toTypedArray()
             for (entry in held) {
                 val context = entry.get() ?: continue
-                if (refresh(entry, context)) kept += entry
+                refresh(entry, context)
             }
-            held = kept.toTypedArray()
         }
     }
 
@@ -153,8 +153,8 @@ internal class ServletContexts(
     private fun refresh(
         entry: Held,
         context: Any,
-    ): Boolean {
-        if (OtherlodeEndpoints.isDisabled(MODULE_NAME)) return true
+    ) {
+        if (OtherlodeEndpoints.isDisabled(MODULE_NAME)) return
         try {
             val api = ServletApi.of(context)
             val loader = api.loaderOf(context)
@@ -183,12 +183,8 @@ internal class ServletContexts(
                 entry.declared += declaredId(registration, mapping)
             }
             entry.declared += skipped
-            return true
-        } catch (e: IllegalStateException) {
-            return false
         } catch (t: Throwable) {
             OtherlodeEndpoints.moduleDisabled(MODULE_NAME, OtherlodeEndpoints.KIND_ROUTE_WALK_FAILED, t.toString())
-            return true
         }
     }
 

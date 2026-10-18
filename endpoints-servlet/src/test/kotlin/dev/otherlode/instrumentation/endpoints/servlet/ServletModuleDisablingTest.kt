@@ -82,3 +82,23 @@ private class NoMatchRequest(
         }
     }
 }
+
+/** A context whose registrations cannot be read disables the module, however it fails. */
+class ServletModuleUnreadableContextTest : ServletTestSupport() {
+    @Test
+    fun `a context that throws IllegalStateException from getServletRegistrations disables the module`() {
+        val context =
+            java.lang.reflect.Proxy.newProxyInstance(
+                javaClass.classLoader,
+                arrayOf(jakarta.servlet.ServletContext::class.java),
+            ) { _, method, _ ->
+                if (method.name == "getServletRegistrations") throw IllegalStateException("not usable") else null
+            }
+        ServletModule().declare(context)
+
+        val disabled = registry.disabledModules().single()
+        assertEquals("servlet", disabled.module)
+        assertEquals(DisabledEndpointModuleKind.ROUTE_WALK_FAILED, disabled.kind)
+        assertTrue("not usable" in disabled.reason, disabled.reason)
+    }
+}

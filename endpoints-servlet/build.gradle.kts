@@ -56,9 +56,7 @@ kotlin {
 // of them with the namespace rewritten, so adding a container is a dependency list and a suite.
 val javaxTestSources =
     tasks.register<Sync>("javaxTestSources") {
-        from("src/test/kotlin") {
-            exclude("**/ServletShapesTest.kt")
-        }
+        from("src/test/kotlin")
         into(layout.buildDirectory.dir("generated/javaxTest/kotlin"))
         filter { line -> line.replace("jakarta.servlet", "javax.servlet").replace("jakarta/servlet", "javax/servlet") }
     }
@@ -107,12 +105,15 @@ testing {
                 implementation(project(":endpoints-api"))
                 implementation("org.jetbrains.kotlin:kotlin-test-junit5:$kotlinVersion")
                 implementation("net.bytebuddy:byte-buddy:$byteBuddyVersion")
+                compileOnly(project(":bootstrap"))
                 implementation("org.apache.tomcat.embed:tomcat-embed-core:$tomcat9Version")
                 implementation("org.apache.tomcat.embed:tomcat-embed-jasper:$tomcat9Version")
             }
         }
     }
 }
+
+kotlin.target.compilations.getByName("tomcat9Test").associateWith(kotlin.target.compilations.getByName("main"))
 
 val tomcat9AgentJar =
     servletTestAgentJar("tomcat9", provider { testing.suites.named<JvmTestSuite>("tomcat9Test").get().sources.output })
