@@ -27,12 +27,14 @@ Each framework has its own module. A module does nothing on a JVM where its fram
 | Ktor 3 | `ktor-3` | 3.0.3, 3.5.2 | Once Ktor chose the route, before its handlers run |
 | JAX-RS, `javax.ws.rs` | `jaxrs` | Jersey 2.48 with `javax.ws.rs-api` 2.1.1 | Entry of the resource method |
 | JAX-RS, `jakarta.ws.rs` | `jaxrs` | Jersey 3.1.12 with `jakarta.ws.rs-api` 3.1.0, Jersey 4.0.3 with `jakarta.ws.rs-api` 4.0.0 | Entry of the resource method |
+| Plain servlets, `javax.servlet` | `servlet` | Tomcat 9.0.123 (Servlet 4.0) | Entry of the servlet's `service` method, against the mapping the container matched |
+| Plain servlets, `jakarta.servlet` | `servlet` | Tomcat 10.1.61 (Servlet 6.0) | Entry of the servlet's `service` method, against the mapping the container matched |
 | JDK `com.sun.net.httpserver.HttpServer` | `jdk-httpserver` | JDK 21, the test toolchain | Once the server found the context, before the handler runs |
 | Any framework OpenTelemetry instruments | `otel` | `opentelemetry-instrumentation-api` 2.31.1, and the OpenTelemetry Java agent 2.31.1's relocated copy. It compiles against 2.0.0 | Span end, after the handler ran. Off by default |
 
 The module name is what the agent logs, what the server shows as the endpoint's framework, and what appears in the list of [disabled modules](#modules-that-switch-themselves-off). It is also the name [`disabledEndpointModules`](configuration#disabledendpointmodules) takes to keep a module off.
 
-One Spring MVC module covers Spring Framework 5.3 through 7 and both the `javax` and `jakarta` servlet namespaces. The project's demo runs it inside a Spring Boot 4.1.1 fat jar. Spring WebFlux has a module of its own, so a failure in one never switches off the other, and it covers Spring Framework 5.3 through 7 too. The Ktor modules are separate because Ktor 3 replaced `Route` with `RoutingNode`. The Javalin modules are separate because Javalin 7 changed how `ParsedEndpoint` exposes its endpoint, and each module only acts on its own release. One Micronaut module covers Micronaut 4.0 through 5.x, and Micronaut 3 has a module of its own, because its router lists `UriRoute` where Micronaut 4 lists `UriRouteInfo`. Each only acts on its own release, so an application of either is counted by exactly one of them. Micronaut 5 needs JDK 25 or later. One Vert.x Web module covers 4.5 through 5.x, since the classes it hooks are the same in all of them. Vert.x Web 4.0 to 4.4 are not tested. The JAX-RS module reads annotations from either namespace.
+One Spring MVC module covers Spring Framework 5.3 through 7 and both the `javax` and `jakarta` servlet namespaces. The project's demo runs it inside a Spring Boot 4.1.1 fat jar. Spring WebFlux has a module of its own, so a failure in one never switches off the other, and it covers Spring Framework 5.3 through 7 too. The Ktor modules are separate because Ktor 3 replaced `Route` with `RoutingNode`. The Javalin modules are separate because Javalin 7 changed how `ParsedEndpoint` exposes its endpoint, and each module only acts on its own release. One Micronaut module covers Micronaut 4.0 through 5.x, and Micronaut 3 has a module of its own, because its router lists `UriRoute` where Micronaut 4 lists `UriRouteInfo`. Each only acts on its own release, so an application of either is counted by exactly one of them. Micronaut 5 needs JDK 25 or later. One Vert.x Web module covers 4.5 through 5.x, since the classes it hooks are the same in all of them. Vert.x Web 4.0 to 4.4 are not tested. The JAX-RS module reads annotations from either namespace. One servlet module covers `javax.servlet` and `jakarta.servlet`, from Servlet 4.0, and counts the servlets no framework module owns.
 
 Javalin 5 has no module. See [what is not covered](#what-is-not-covered).
 
@@ -61,13 +63,15 @@ A form whose meaning would be a guess stays as written: `{.x}`, `{;x}`, `{x*}`, 
 
 The verb is upper case. An endpoint with no verb constraint has the verb `*`. The framework's own spelling travels beside the template for display. The testkit calls it `verbatimTemplate`.
 
-The servlet context path is not part of the template. Spring reports the application-relative template, so a Spring Boot application with `server.servlet.context-path=/shop` still reports `/orders`. Spring WebFlux's `spring.webflux.base-path` is left out the same way. JAX-RS leaves out `@ApplicationPath`. The JDK `HttpServer` is an exception, because a context path is its whole template. Micronaut is the other: [`micronaut.server.context-path`](#micronaut) stays in the template of an annotated route.
+The servlet context path is not part of the template. Spring reports the application-relative template, so a Spring Boot application with `server.servlet.context-path=/shop` still reports `/orders`. Spring WebFlux's `spring.webflux.base-path` is left out the same way. JAX-RS leaves out `@ApplicationPath`, and the servlet module leaves out the context path of the web application. The JDK `HttpServer` is an exception, because a context path is its whole template. Micronaut is the other: [`micronaut.server.context-path`](#micronaut) stays in the template of an annotated route.
 
 A framework mapping that lists several paths or verbs gives one endpoint per combination. `@RequestMapping(path = ["/a", "/b"], method = [GET, POST])` is four endpoints.
 
-Two registrations that name the same verb and template are one endpoint with one count, even from two servers in the same JVM or from two frameworks. The numeric endpoint id the agent assigns is only meaningful inside one run, so the server identifies an endpoint across instances by its verb, its template and whether the template is a regex. The framework recorded for the endpoint is the one that registered it first. Two routes that differ only in a part the agent does not read merge for the same reason. Each module below says what it does not read.
+Two registrations that name the same verb and template are one endpoint with one count, even from two servers in the same JVM or from two frameworks. The numeric endpoint id the agent assigns is only meaningful inside one run, so the server identifies an endpoint across instances by its verb, its template and its template kind: path, regex or servlet pattern. The framework recorded for the endpoint is the one that registered it first. Two routes that differ only in a part the agent does not read merge for the same reason. Each module below says what it does not read.
 
 A framework can match a route by a regular expression, with no path to read a template from. The agent keeps that expression exactly as written, with no normalisation, as both the template and its display spelling, and marks the endpoint as a regex. A regex endpoint never merges with a path endpoint whose template reads the same, so its identity is the verb, the template and whether the template is a regex.
+
+A servlet mapping that no path can express is a third kind, the servlet pattern: an extension mapping such as `*.do`, which matches at any depth, and the default mapping `/`, which matches only what nothing else did. The agent keeps the pattern exactly as written, as the template and its display spelling, and marks the endpoint as a servlet pattern. It never merges with a path or regex endpoint whose template reads the same, so a default mapping `/` and a path endpoint `/` are two endpoints.
 
 ## Declared and discovered
 
@@ -216,6 +220,56 @@ Only Jersey is tested for serving. Quarkus REST's server classes are tested only
 
 A generated proxy of a resource class, such as a Spring CGLIB proxy or the subclass and client proxy Quarkus ArC generates, is skipped. The proxy calls the real method, so the real class counts.
 
+## Servlet
+
+A plain servlet is counted at its own entry. The agent hooks the public `service(ServletRequest, ServletResponse)` of every servlet class, `HttpServlet` included, and counts a request there against the mapping the container matched for it, which it reads from `HttpServletRequest.getHttpServletMapping()`. One module covers `javax.servlet` and `jakarta.servlet`. It needs Servlet 4.0 or later, since `getHttpServletMapping` is new in 4.0.
+
+A servlet context is declared at the first request it receives that reaches a servlet the module counts. The agent reads the context's servlet registrations then, and declares every mapping of every registration with the verbs described below, so a mapping that no request ever reaches reads as never called. A context that never receives a request declares nothing. The agent reads the registrations of every context it holds again before each manifest, so a mapping added after the first request is declared within one flush interval. A request that matches it before then counts nothing. The servlet API says a mapping cannot be added once a context is initialised, and which containers accept one anyway differs by release. The Tomcat 9.0 and 10.1 releases the tests run against refuse it through the servlet API. A mapping a container adds by its own means, as Tomcat's `Context.addServletMappingDecoded` does, is declared the same way.
+
+The template follows the mapping:
+
+| Mapping | Template | Kind |
+|---|---|---|
+| Exact, `/orders` | `/orders` | Path |
+| Path, `/api/*` | `/api/*` | Path |
+| Context root, the empty string | `/` | Path |
+| Extension, `*.do` | `*.do` | Servlet pattern |
+| Default, `/` | `/` | Servlet pattern |
+
+The context path is not part of it. Two web applications in one container that map the same pattern are one endpoint.
+
+The verbs are those of the `do*` methods that the servlet's class and its superclasses below `HttpServlet` declare. The agent reads them from the class files, and loads and reflects on nothing. This is the rule `HttpServlet.doOptions` uses to build `Allow`.
+
+- `doGet` declares `GET`. A `HEAD` request counts against it, unless the class declares `doHead`, which makes `HEAD` a verb of its own.
+- `doPost`, `doPut` and `doDelete` declare their verbs.
+- `doPatch` declares `PATCH` only where the servlet API's own `HttpServlet` declares it, which is Servlet 6.1. Before that, `HttpServlet.service` answers `PATCH` itself with a 501.
+- `doOptions` and `doTrace` declare a verb only when the class declares them.
+- A class that overrides `service`, with either signature, below `HttpServlet`, and a servlet that is not an `HttpServlet`, have the verb `*`.
+
+A request whose verb the servlet does not declare counts nothing, a 405 for example. A `do*` method that only calls `super` reads as served. The handler is the `do*` method that serves the verb, or `service` for a `*` servlet, as the class file that declares it has it.
+
+These count nothing:
+
+- A forward, an include, an asynchronous dispatch and an error page dispatch. Only the original `REQUEST` dispatch counts, so a request counts once and an error page is not a call.
+- A request a filter answers before it reaches the servlet.
+- A request to a servlet that is left out, as listed next.
+
+A servlet whose `service` calls `super.service`, or whose class overrides the protected `service`, still counts a request once.
+
+Some servlets are left out, whatever the state of the module that counts behind them:
+
+- Servlets another module counts behind: Spring MVC's `DispatcherServlet` and every subclass of it, Jersey's `ServletContainer`, RESTEasy's `HttpServletDispatcher` and `HttpServlet30Dispatcher`, CXF's `CXFServlet` and `CXFNonSpringJaxrsServlet`, Micronaut's `DefaultMicronautServlet`, Ktor's `ServletApplicationEngine` and Javalin's `JavalinServlet`. The agent matches them by class hierarchy, read from the class files. Without this a Spring application would report one `* /` endpoint that takes every hit.
+- The container's own servlets, matched by exact class name, so an adopter's subclass is counted: Tomcat's `DefaultServlet` and `JspServlet`, Jetty's `DefaultServlet`, `NoJspServlet`, `JettyJspServlet` and `ServletHandler$Default404Servlet` in each of its packages, Undertow's `DefaultServlet` and Quarkus's `QuarkusErrorServlet`. A container not in this list has its default servlet counted as a servlet at `/`, which is noise and never absence.
+
+A framework servlet no module counts behind, such as Vaadin's, JSF's `FacesServlet` or the H2 console, is a plain servlet and is counted as one.
+
+The module switches itself off in these cases (see [below](#modules-that-switch-themselves-off)):
+
+- The servlet API is older than 4.0. `getHttpServletMapping` does not link, and the kind is `LINKAGE_ERROR`.
+- A servlet registration holds a mapping that is none of the five forms above, as the regular expression and URI template specs Jetty accepts are. The agent declares nothing from that read, and the kind is `ROUTE_WALK_FAILED`.
+- A servlet class's class file cannot be read, so its verbs cannot be known. The kind is `ROUTE_WALK_FAILED`.
+- The container matched a declared servlet with no mapping match type. The kind is `ADVICE_FAILED`.
+
 ## JDK HttpServer
 
 Every `createContext` call registers an endpoint, with or without a handler. A later `setHandler` attaches the handler to the context. A context is a prefix match with no verb constraint, so the verb is `*` and the template is the context path exactly as registered. A request is counted when the server finds its context, before the handler runs. A request no context matches (the server's own 404) counts nothing.
@@ -232,7 +286,7 @@ A route OpenTelemetry reports in Vert.x's spelling, `/users/:id`, is read as `/u
 
 The bridge never discovers an endpoint another module owns. It skips a route when a framework module already holds the same identity, when a framework holds the same template with the verb `*`, and when a `HEAD` request names a template whose `GET` endpoint a framework holds. Otherwise a request that a framework module counted would count twice. If the owning module is switched off, those requests go uncounted.
 
-Two cases differ from the framework modules. OpenTelemetry's route includes the servlet context path, so a servlet application can report `/shop/orders` where the framework module reports `/orders`, and the two read as separate endpoints. A servlet-only application reports whatever OpenTelemetry reports, which may be a servlet mapping such as `/api/*`.
+Two cases differ from the framework modules. OpenTelemetry's route includes the servlet context path, so a servlet application can report `/shop/orders` where the framework module reports `/orders`, and the two read as separate endpoints. A servlet the `servlet` module counts is counted by it as well, without the context path.
 
 ## The handler
 
@@ -340,6 +394,9 @@ The [configuration options](configuration) page gives the system property and en
 
 - Javalin 5 has no module. Counting its endpoints needs one. For it, `otelBridgeEnabled` counts what OpenTelemetry resolves, discovered at dispatch only, so "never called" cannot be computed. The agent reports the `javalin-5` [marker](#frameworks-with-no-module).
 - A Spring WebFlux router run through `RouterFunctions.toHttpHandler` or `toWebHandler`, with no `DispatcherHandler`, is not declared, and only its `resources(pattern, location)` routes are counted, found at dispatch. The agent reports the `webflux-router-without-dispatcher` [marker](#frameworks-with-no-module).
+- JSP pages are not counted. Each page runs inside the container's one JSP servlet, which the servlet module leaves out.
+- The SOAP traffic of Apache CXF's `CXFServlet` is not counted. The servlet is left out, since its JAX-RS requests are counted by the JAX-RS module, and no module counts the rest.
+- A container that implements a servlet API older than 4.0, such as Tomcat 8.5 or Jetty 9.4, has no servlet counting. The `servlet` module is reported as disabled with the kind `LINKAGE_ERROR`.
 - Requests that never reach the hooked framework are not counted. A servlet, filter or Tomcat valve that answers first is invisible to the Spring module, for example.
 - The agent reads no OpenAPI document and does no static analysis of call sites to find endpoints.
 - A route that a router builds at runtime by any means other than the registration points above is found only when a request reaches it.

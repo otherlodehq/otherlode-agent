@@ -118,7 +118,7 @@ The manifest says what each id in a delta batch names. It carries the resource a
 | `unplaced_verification_failures` | How many `VerifyError` messages were in no format the agent reads, plus the messages the agent had no room to keep. Every manifest carries the run's total |
 | `verifier_rejections_watched` | True when the agent's hook on `VerifyError` is installed. Every manifest of a run agrees |
 | `unreported_classes` | Name of a class the agent found loaded that no transformer was offered, and the time |
-| `endpoints` | Per endpoint: `endpoint_id`, verb, route template, the framework's own spelling of the template, framework name, how it was discovered, whether the template is a path or a regex, and the handler class, method and descriptor when known |
+| `endpoints` | Per endpoint: `endpoint_id`, verb, route template, the framework's own spelling of the template, framework name, how it was discovered, whether the template is a path, a regex or a servlet pattern, and the handler class, method and descriptor when known |
 | `disabled_endpoint_modules` | Module name, the reason as free text, the time, and a kind naming why: a linkage error, an advice failure, a transform failure, a route walk failure, or a hook that matched no method |
 | `framework_markers` | Per marker: its id, the class set that matched as fully qualified names, and the time of the sweep that saw it. Each is delivered once per run. See [frameworks with no module](endpoints#frameworks-with-no-module) |
 | `dependencies` | Per dependency: `dependency_id`, identities (`group_id`, `artifact_id`, `version`), how the identity was read, the location, how it was discovered, and class count |

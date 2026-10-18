@@ -177,7 +177,7 @@ A correctly spelled name appears in that line too when none of the classes that 
 disabledEndpointModules=jaxrs;ktor-2
 ```
 
-- **Names are the module names.** They are `javalin-6`, `javalin-7`, `jaxrs`, `jdk-httpserver`, `ktor-2`, `ktor-3`, `micronaut`, `micronaut-3`, `spring-webflux`, `spring-webmvc`, `vertx-web` and `otel`, as the [supported frameworks](endpoints#supported-frameworks) table lists them.
+- **Names are the module names.** They are `javalin-6`, `javalin-7`, `jaxrs`, `jdk-httpserver`, `ktor-2`, `ktor-3`, `micronaut`, `micronaut-3`, `servlet`, `spring-webflux`, `spring-webmvc`, `vertx-web` and `otel`, as the [supported frameworks](endpoints#supported-frameworks) table lists them.
 - **A kept-off module does nothing.** It matches no class and counts nothing, whether or not its framework is on the classpath.
 - **The agent reports it.** Each module the option keeps off is sent as a disabled module with the kind `CONFIGURED_OFF` and a reason that names the option. A framework left uninstrumented then never reads as one with no endpoints. A module kept off by configuration is your choice, not a fault.
 - **`otel` is reported only when the bridge would have run.** With `otelBridgeEnabled` off, naming `otel` changes nothing.

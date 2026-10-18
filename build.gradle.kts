@@ -56,6 +56,7 @@ val jdk17Projects =
         ":endpoints-micronaut",
         ":endpoints-micronaut-3",
         ":endpoints-vertx-web",
+        ":endpoints-servlet",
         ":endpoints-otel-bridge",
         ":endpoints-spring-common",
         ":endpoints-spring-webmvc",
@@ -169,6 +170,10 @@ dependencies {
 
     // Endpoint module for Vert.x Web, covering 4.5 to 5.x with one module.
     implementation(project(":endpoints-vertx-web"))
+
+    // Endpoint module for plain servlets, covering the javax.servlet and jakarta.servlet namespaces
+    // with one module. It counts a servlet at its own entry against the mapping the container matched.
+    implementation(project(":endpoints-servlet"))
 
     // Route bridge endpoint module: counts the route OpenTelemetry's own HTTP server
     // instrumentation resolved, for a framework none of the modules above cover. Off by default
