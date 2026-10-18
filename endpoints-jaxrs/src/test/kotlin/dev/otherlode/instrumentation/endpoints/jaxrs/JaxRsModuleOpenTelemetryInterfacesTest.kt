@@ -6,7 +6,6 @@ import net.bytebuddy.jar.asm.ClassWriter
 import net.bytebuddy.jar.asm.Opcodes
 import net.bytebuddy.pool.TypePool
 import kotlin.test.Test
-import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -45,7 +44,34 @@ class JaxRsModuleOpenTelemetryInterfacesTest {
         }
     }
 
-    private fun matches(type: TypeDescription): Boolean = JaxRsModule().typeMatcher(ClassLoader.getSystemClassLoader()).matches(type)
+    private class DefiningLoader : ClassLoader(DefiningLoader::class.java.classLoader) {
+        fun define(
+            name: String,
+            interfaces: List<String> = emptyList(),
+        ) {
+            val writer = ClassWriter(0)
+            writer.visit(
+                Opcodes.V17,
+                Opcodes.ACC_PUBLIC or Opcodes.ACC_INTERFACE or Opcodes.ACC_ABSTRACT,
+                name,
+                null,
+                "java/lang/Object",
+                interfaces.toTypedArray(),
+            )
+            writer.visitEnd()
+            val bytes = writer.toByteArray()
+            defineClass(name.replace('/', '.'), bytes, 0, bytes.size)
+        }
+    }
+
+    private fun matches(
+        type: TypeDescription,
+        defined: List<String> = listOf(generated),
+    ): Boolean {
+        val loader = DefiningLoader()
+        defined.forEach(loader::define)
+        return JaxRsModule().typeMatcher(loader).matches(type)
+    }
 
     @Test
     fun `a class carrying only OpenTelemetry's generated interface is decided as no match`() {
@@ -65,18 +91,11 @@ class JaxRsModuleOpenTelemetryInterfacesTest {
     }
 
     @Test
-    fun `a helper class OpenTelemetry injected is decided as no match without reading its supertypes`() {
+    fun `a helper class OpenTelemetry injected is decided as no match`() {
         val helper = "io/opentelemetry/javaagent/shaded/instrumentation/servlet/v5_0/internal/Servlet5Accessor"
         val accessor = "io/opentelemetry/javaagent/shaded/instrumentation/servlet/ServletAccessor"
         val classes = Classes().define(helper, interfaces = listOf(accessor))
 
-        assertFalse(matches(classes.describe(helper)))
-    }
-
-    @Test
-    fun `an unresolvable interface that OpenTelemetry did not generate still fails the match`() {
-        val classes = Classes().define("t/Resource", interfaces = listOf("com/example/Missing"))
-
-        assertFailsWith<TypePool.Resolution.NoSuchTypeException> { matches(classes.describe("t/Resource")) }
+        assertFalse(matches(classes.describe(helper), defined = listOf(accessor)))
     }
 }

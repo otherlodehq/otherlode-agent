@@ -26,7 +26,7 @@ private const val SPRING_ROUTE_SUPPORT_SIMPLE_NAME = "HttpRouteSupport"
 /**
  * The classes holding OpenTelemetry's route prefixers: the Java agent's servlet and JAX-RS
  * bootstrap helpers, and the Spring MVC library instrumentation's route support for each servlet
- * namespace. A deployment loads some of them, so a class that never loads is simply not woven.
+ * namespace. A deployment loads only some of them.
  */
 internal val PREFIXER_NAMES: List<String> =
     listOf(

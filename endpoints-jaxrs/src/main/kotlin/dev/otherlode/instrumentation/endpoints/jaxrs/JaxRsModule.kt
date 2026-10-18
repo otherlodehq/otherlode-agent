@@ -13,9 +13,10 @@ import net.bytebuddy.matcher.ElementMatchers.isInterface
 import net.bytebuddy.matcher.ElementMatchers.isNative
 import net.bytebuddy.matcher.ElementMatchers.isStatic
 import net.bytebuddy.matcher.ElementMatchers.isSynthetic
-import net.bytebuddy.matcher.ElementMatchers.nameStartsWith
 import net.bytebuddy.matcher.ElementMatchers.not
+import net.bytebuddy.pool.TypePool
 import java.lang.System.Logger.Level
+import java.lang.ref.WeakReference
 import java.util.Collections
 import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
@@ -47,16 +48,6 @@ private val HTTP_METHOD_NAMES = NAMESPACES.map { "$it.HttpMethod" }.toSet()
  * base classes to visit.
  */
 private val SKIPPED_SUPERTYPE_PREFIXES = listOf("java.", "jdk.", "sun.", "com.sun.", "kotlin.", "jakarta.", "javax.")
-
-/**
- * The namespace of OpenTelemetry's Java agent's own code. The agent defines the interfaces it adds
- * to a framework class in memory (`GeneratedVirtualFieldNames` in `opentelemetry-javaagent`
- * 2.31.1) and injects its helper classes into an application loader from class files only its own
- * loader can read, so a pool cannot resolve either and a walk onto one throws. None of it can carry
- * a JAX-RS annotation, so a class under it is never matched and a supertype under it is never
- * entered.
- */
-private const val OPENTELEMETRY_AGENT_PREFIX = "io.opentelemetry.javaagent."
 
 private val ELIGIBLE_METHOD: ElementMatcher.Junction<MethodDescription> =
     not(isStatic<MethodDescription>()).and(not(isAbstract())).and(not(isNative())).and(not(isSynthetic()))
@@ -112,9 +103,10 @@ class JaxRsModule
          * The class's own declared annotations and methods are checked first, since that already
          * covers the common case of a resource class with no supertype of its own. Only when that
          * check fails does this walk supertypes at all, bounded by [SKIPPED_SUPERTYPE_PREFIXES]. A
-         * supertype whose erasure cannot be resolved, from a [TypeDescription] backed by a
-         * [net.bytebuddy.pool.TypePool] rather than a loaded class, is skipped rather than failing
-         * the match.
+         * supertype the [net.bytebuddy.pool.TypePool] has no class file for is asked of the class's
+         * loader instead (see [SupertypeResolver]): one that cannot be loaded means the class can
+         * never be defined, so the answer is no match, and one that loads is read from the loaded
+         * class.
          *
          * A custom verb annotation built on `@HttpMethod` (see [resolveVerb]) is not part of this
          * check: a method carrying only such an annotation, with no `@Path` anywhere in scope,
@@ -132,11 +124,11 @@ class JaxRsModule
          */
         override fun typeMatcher(classLoader: ClassLoader?): ElementMatcher<in TypeDescription> {
             val cache = supertypeCaches.cacheFor(classLoader)
-            return not(nameStartsWith<TypeDescription>(OPENTELEMETRY_AGENT_PREFIX))
-                .and(not(isInterface<TypeDescription>()))
+            val resolver = SupertypeResolver(classLoader, cache)
+            return not(isInterface<TypeDescription>())
                 .and(not(isAbstract()))
                 .and(not(isSynthetic()))
-                .and(ElementMatcher<TypeDescription> { type -> declaresOwnPathOrVerb(type) || hasInheritedPathOrVerb(type, cache) })
+                .and(ElementMatcher<TypeDescription> { type -> inScope(type, cache, resolver) })
         }
 
         /**
@@ -176,10 +168,11 @@ class JaxRsModule
             // With no class-level @Path the class is no root resource: a sub-resource reached
             // through a locator, which counts on the locator, or a class only Jersey would serve.
             // Declaring it at a prefix-less template would name an endpoint that does not exist.
-            val classPath = resolveClassPath(typeDescription, classLoader) ?: return builder
+            val resolver = SupertypeResolver(classLoader, supertypeCaches.cacheFor(classLoader))
+            val classPath = resolveClassPath(typeDescription, classLoader, resolver) ?: return builder
             val matched =
                 typeDescription.declaredMethods.filter(ELIGIBLE_METHOD).mapNotNull { method ->
-                    val source = resolveAnnotationSource(method, typeDescription)
+                    val source = resolveAnnotationSource(method, typeDescription, resolver)
                     val verb = resolveVerb(source)
                     val methodPath = pathValue(source)
                     if (verb == null &&
@@ -228,23 +221,25 @@ class JaxRsModule
         private fun resolveAnnotationSource(
             method: MethodDescription.InDefinedShape,
             type: TypeDescription,
+            resolver: SupertypeResolver,
         ): AnnotationSource {
             if (hasOwnJaxRsAnnotation(method)) return method
-            return findSuperclassMethod(type, method)
-                ?: findInterfaceMethod(type, method)
+            return findSuperclassMethod(type, method, resolver)
+                ?: findInterfaceMethod(type, method, resolver)
                 ?: method
         }
 
         private fun findSuperclassMethod(
             type: TypeDescription,
             target: MethodDescription.InDefinedShape,
+            resolver: SupertypeResolver,
         ): AnnotationSource? {
-            var current = superErasure(type)
+            var current = resolver.superErasure(type)
             while (current != null) {
                 val candidate = current
                 val match = runCatching { candidate.declaredMethods.firstOrNull { matchingAnnotated(it, target) } }.getOrNull()
                 if (match != null) return match
-                current = superErasure(candidate)
+                current = resolver.superErasure(candidate)
             }
             return null
         }
@@ -252,14 +247,15 @@ class JaxRsModule
         private fun findInterfaceMethod(
             type: TypeDescription,
             target: MethodDescription.InDefinedShape,
+            resolver: SupertypeResolver,
         ): AnnotationSource? {
             val matches = mutableListOf<MethodDescription.InDefinedShape>()
 
             fun walk(iface: TypeDescription) {
                 runCatching { iface.declaredMethods.firstOrNull { matchingAnnotated(it, target) } }.getOrNull()?.let { matches += it }
-                interfaceErasures(iface).forEach(::walk)
+                resolver.interfaceErasures(iface).forEach(::walk)
             }
-            interfaceErasures(type).forEach(::walk)
+            resolver.interfaceErasures(type).forEach(::walk)
 
             val first = matches.firstOrNull() ?: return null
             val conflicting = matches.drop(1).any { !sameVerbAndPath(first, it) }
@@ -293,11 +289,12 @@ class JaxRsModule
         private fun resolveClassPath(
             type: TypeDescription,
             classLoader: ClassLoader?,
+            resolver: SupertypeResolver,
         ): String? {
             pathValue(type)?.let { return it }
-            if (jerseyPresent(classLoader)) return findInheritedClassPath(type)
-            if (restEasyReactivePresent(classLoader)) return findQuarkusInheritedClassPath(type)
-            if (findInheritedClassPath(type) == null) return null
+            if (jerseyPresent(classLoader)) return findInheritedClassPath(type, resolver)
+            if (restEasyReactivePresent(classLoader)) return findQuarkusInheritedClassPath(type, resolver)
+            if (findInheritedClassPath(type, resolver) == null) return null
             if (classPathIgnoredWarned.size < IGNORED_CLASS_PATH_LOG_LIMIT && classPathIgnoredWarned.add(type.name)) {
                 log.log(
                     Level.INFO,
@@ -314,13 +311,20 @@ class JaxRsModule
          * direct interface carrying one, taken from the nearest class in the chain that has such an
          * interface, [type] itself included.
          */
-        private fun findInheritedClassPath(type: TypeDescription): String? {
-            var foundInterfacePath = interfaceErasures(type).firstNotNullOfOrNull { pathValue(it) }
-            var current: TypeDescription? = superErasure(type)
+        private fun findInheritedClassPath(
+            type: TypeDescription,
+            resolver: SupertypeResolver,
+        ): String? {
+            var foundInterfacePath = resolver.interfaceErasures(type).firstNotNullOfOrNull { pathValue(it) }
+            var current: TypeDescription? = resolver.superErasure(type)
             while (current != null) {
                 pathValue(current)?.let { return it }
-                if (foundInterfacePath == null) foundInterfacePath = interfaceErasures(current).firstNotNullOfOrNull { pathValue(it) }
-                current = superErasure(current)
+                if (foundInterfacePath ==
+                    null
+                ) {
+                    foundInterfacePath = resolver.interfaceErasures(current).firstNotNullOfOrNull { pathValue(it) }
+                }
+                current = resolver.superErasure(current)
             }
             return foundInterfacePath
         }
@@ -332,12 +336,15 @@ class JaxRsModule
          * Quarkus promotes the abstract class's subclass only when it is the only one, which this
          * class-at-a-time reading cannot know (ADR 0020).
          */
-        private fun findQuarkusInheritedClassPath(type: TypeDescription): String? {
-            superErasure(type)?.takeIf { it.isAbstract }?.let { superclass -> pathValue(superclass)?.let { return it } }
+        private fun findQuarkusInheritedClassPath(
+            type: TypeDescription,
+            resolver: SupertypeResolver,
+        ): String? {
+            resolver.superErasure(type)?.takeIf { it.isAbstract }?.let { superclass -> pathValue(superclass)?.let { return it } }
             var current: TypeDescription? = type
             while (current != null) {
-                interfaceErasures(current).firstNotNullOfOrNull { pathValue(it) }?.let { return it }
-                current = superErasure(current)
+                resolver.interfaceErasures(current).firstNotNullOfOrNull { pathValue(it) }?.let { return it }
+                current = resolver.superErasure(current)
             }
             return null
         }
@@ -402,14 +409,33 @@ private fun pathAnnotated(source: AnnotationSource): Boolean = source.declaredAn
 private fun verbAnnotated(source: AnnotationSource): Boolean = source.declaredAnnotations.any { it.annotationType.name in VERB_NAMES }
 
 /**
+ * Whether [type] is a JAX-RS resource in scope: it, or a supertype, carries a route annotation, and
+ * every supertype it needs to be defined can be described or loaded. A supertype that can be
+ * neither means [type] can never be defined, so it is not in scope.
+ */
+private fun inScope(
+    type: TypeDescription,
+    cache: SupertypeCache,
+    resolver: SupertypeResolver,
+): Boolean =
+    try {
+        (declaresOwnPathOrVerb(type) || hasInheritedPathOrVerb(type, cache, resolver)) && resolver.canBeDefined(type)
+    } catch (_: UndefinableTypeException) {
+        false
+    }
+
+/**
  * Whether any supertype of [type], superclass chain or interface graph, carries `@Path` or
  * declares a method carrying `@Path` or a standard verb. See [SKIPPED_SUPERTYPE_PREFIXES] for the
  * walk's bound. A supertype name being walked is not entered again, which guards against a
  * cyclical or diamond interface graph, and an answer that depended on that guard is not cached.
+ * Throws [UndefinableTypeException] when a supertype the walk reaches can be neither described nor
+ * loaded.
  */
 private fun hasInheritedPathOrVerb(
     type: TypeDescription,
     cache: SupertypeCache,
+    resolver: SupertypeResolver,
 ): Boolean {
     val inProgress = mutableSetOf<String>()
     var guardHits = 0
@@ -424,16 +450,16 @@ private fun hasInheritedPathOrVerb(
         val hitsBefore = guardHits
         val found =
             declaresOwnPathOrVerb(candidate) ||
-                superErasure(candidate)?.let { walk(it) } == true ||
-                interfaceErasures(candidate).any { walk(it) }
+                resolver.superErasure(candidate)?.let { walk(it) } == true ||
+                resolver.interfaceErasures(candidate).any { walk(it) }
         inProgress.remove(name)
         if (found || guardHits == hitsBefore) cache[name] = found
         return found
     }
 
-    val parent = superErasure(type)
+    val parent = resolver.superErasure(type)
     if (parent != null && walk(parent)) return true
-    return interfaceErasures(type).any { walk(it) }
+    return resolver.interfaceErasures(type).any { walk(it) }
 }
 
 /** An access-ordered LRU of supertype name to whether that supertype or anything above it carries a JAX-RS route annotation. */
@@ -443,7 +469,54 @@ private class SupertypeCache {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>): Boolean = size > SUPERTYPE_CACHE_SIZE
         }
 
+    private val loaded = ConcurrentHashMap<String, LoadAnswer>()
+    private val definable = ConcurrentHashMap.newKeySet<String>()
+
+    fun isDefinable(name: String): Boolean = name in definable
+
+    /** Whether a walk has already read [name] for this loader, so its description needs no further check. */
+    fun isKnown(name: String): Boolean = isDefinable(name) || get(name) != null
+
+    fun markDefinable(name: String) {
+        definable.add(name)
+    }
+
     operator fun get(name: String): Boolean? = synchronized(entries) { entries[name] }
+
+    /**
+     * The class named [name] as [loader] defines it, or null when [loader] cannot load it. Neither
+     * answer is held by a strong reference to the class, so a cache kept for a loader never keeps
+     * that loader alive through its own entries.
+     */
+    fun loadedClass(
+        name: String,
+        loader: ClassLoader?,
+    ): Class<*>? {
+        loaded[name]?.let { answer ->
+            if (!answer.loadable) return null
+            answer.reference?.get()?.let { return it }
+        }
+        val found = tryLoad(name, loader)
+        loaded[name] = LoadAnswer(found != null, found?.let { WeakReference(it) })
+        return found
+    }
+
+    private fun tryLoad(
+        name: String,
+        loader: ClassLoader?,
+    ): Class<*>? =
+        try {
+            Class.forName(name, false, loader)
+        } catch (_: Exception) {
+            null
+        } catch (_: LinkageError) {
+            null
+        }
+
+    private class LoadAnswer(
+        val loadable: Boolean,
+        val reference: WeakReference<Class<*>>?,
+    )
 
     operator fun set(
         name: String,
@@ -484,33 +557,102 @@ private class JaxRsLoaderGate : ElementMatcher<ClassLoader?> {
     }
 }
 
-private fun isSkippedSupertype(name: String): Boolean =
-    SKIPPED_SUPERTYPE_PREFIXES.any { name.startsWith(it) } || name.startsWith(OPENTELEMETRY_AGENT_PREFIX)
+private fun isSkippedSupertype(name: String): Boolean = SKIPPED_SUPERTYPE_PREFIXES.any { name.startsWith(it) }
 
 private fun sameSignature(
     a: MethodDescription,
     b: MethodDescription,
 ): Boolean = a.internalName == b.internalName && a.descriptor == b.descriptor
 
+/** Thrown when a supertype can be neither described from the pool nor loaded, so the class extending it can never be defined. */
+private class UndefinableTypeException(
+    typeName: String,
+) : RuntimeException("$typeName cannot be described or loaded", null, false, false)
+
 /**
- * [type]'s superclass, erased and resolved, or null when [type] has none, its erasure cannot be
- * resolved from a [net.bytebuddy.pool.TypePool]-backed description, or it falls under
+ * Reads a type's supertypes, erased, for [loader]'s classes, leaving out those under
  * [SKIPPED_SUPERTYPE_PREFIXES].
+ *
+ * The agent's pool resolves lazily (`TypePool.Default.WithLazyResolution`), so `asErasure()` hands
+ * back a description that throws only when something reads it. A supertype the pool has no class
+ * file for is therefore detected here by reading it, then asked of [loader] with
+ * `Class.forName(name, false, loader)`. A class defined with no reachable class file, such as an
+ * interface OpenTelemetry's agent generates in memory, loads, and is described from the loaded class.
+ * One that does not load is a class [loader] cannot define, and [UndefinableTypeException] says so.
+ *
+ * The load happens only when the pool had no bytes for a supertype, which is rare, and inside the
+ * transform of the class that extends it, so the JVM would load that supertype next on this same
+ * thread to define the class. It initialises nothing. A loader that locks itself for loading already
+ * holds that lock here and re-enters it; a parallel-capable loader locks per class name. A cyclic
+ * hierarchy, the only way the load could need the class being defined, is invalid and fails the
+ * definition regardless.
  */
-private fun superErasure(type: TypeDescription): TypeDescription? {
-    val erased = runCatching { type.superClass?.let(::resolveErasure) }.getOrNull() ?: return null
-    return if (isSkippedSupertype(erased.name)) null else erased
+private class SupertypeResolver(
+    private val loader: ClassLoader?,
+    private val cache: SupertypeCache,
+) {
+    /** [type]'s superclass, erased and readable, or null when there is none or it falls under [SKIPPED_SUPERTYPE_PREFIXES]. */
+    fun superErasure(type: TypeDescription): TypeDescription? = locate { type.superClass }?.let(::describe)
+
+    /** [type]'s own declared interfaces, erased and readable, without those under [SKIPPED_SUPERTYPE_PREFIXES]. */
+    fun interfaceErasures(type: TypeDescription): List<TypeDescription> = locateInterfaces(type).mapNotNull(::describe)
+
+    /**
+     * Whether every supertype above [type] can be described or loaded, so the class can be defined.
+     * A supertype found to be definable is remembered for [loader], with everything above it.
+     */
+    fun canBeDefined(type: TypeDescription): Boolean {
+        val seen = mutableSetOf<String>()
+
+        fun visit(
+            candidate: TypeDescription,
+            located: List<Supertype>,
+        ) {
+            if (!seen.add(candidate.name)) return
+            for (supertype in located) {
+                if (isSkippedSupertype(supertype.name) || cache.isDefinable(supertype.name)) continue
+                val described = describe(supertype) ?: continue
+                visit(described, locate { described.superClass }.let(::listOfNotNull) + locateInterfaces(described))
+            }
+            cache.markDefinable(candidate.name)
+        }
+        visit(type, locate { type.superClass }.let(::listOfNotNull) + locateInterfaces(type))
+        return true
+    }
+
+    private class Supertype(
+        val name: String,
+        val erased: TypeDescription?,
+    )
+
+    private fun locateInterfaces(type: TypeDescription): List<Supertype> {
+        val interfaces = type.interfaces
+        return (0 until interfaces.size).mapNotNull { index -> locate { interfaces[index] } }
+    }
+
+    private fun locate(read: () -> TypeDescription.Generic?): Supertype? =
+        try {
+            read()?.asErasure()?.let { Supertype(it.name, it) }
+        } catch (e: TypePool.Resolution.NoSuchTypeException) {
+            Supertype(e.name, null)
+        }
+
+    private fun describe(supertype: Supertype): TypeDescription? {
+        if (isSkippedSupertype(supertype.name)) return null
+        val erased = supertype.erased
+        if (erased != null && (cache.isKnown(supertype.name) || isReadable(erased))) return erased
+        val loaded = cache.loadedClass(supertype.name, loader) ?: throw UndefinableTypeException(supertype.name)
+        return TypeDescription.ForLoadedType.of(loaded)
+    }
+
+    private fun isReadable(type: TypeDescription): Boolean =
+        try {
+            type.modifiers
+            true
+        } catch (_: TypePool.Resolution.NoSuchTypeException) {
+            false
+        }
 }
-
-/** [type]'s own declared interfaces, erased, resolved, and filtered by [SKIPPED_SUPERTYPE_PREFIXES]. */
-private fun interfaceErasures(type: TypeDescription): List<TypeDescription> =
-    runCatching { type.interfaces.toList() }
-        .getOrDefault(emptyList())
-        .mapNotNull(::resolveErasure)
-        .filterNot { isSkippedSupertype(it.name) }
-
-/** The erasure of [generic], or null if it cannot be resolved from a [net.bytebuddy.pool.TypePool]-backed description. */
-private fun resolveErasure(generic: TypeDescription.Generic): TypeDescription? = runCatching { generic.asErasure() }.getOrNull()
 
 /** Whether a marker resource is visible on a loader, looked up once per loader and never loading a class. */
 private class MarkerPresence(

@@ -191,11 +191,10 @@ class JaxRsModuleAnnotationInheritanceTest {
     }
 
     @Test
-    fun `a supertype the type pool cannot resolve declares nothing and does not fail the transform`() {
+    fun `a supertype the type pool cannot resolve but the loader can load is read from the loaded class`() {
         // The description ByteBuddy hands a real transform is TypePool-backed and resolves a
-        // supertype lazily, so a resource whose superclass is not on its own loader (an optional
-        // dependency, a jar trimmed at packaging) raises on first touch. Letting that escape would
-        // disable this module for the process; with no class-level Path found, nothing is declared.
+        // supertype lazily, so a supertype with no reachable class file raises on first touch. The
+        // loader still defines it, so its class-level Path is read from the loaded class.
         val hidden = LegacyBase::class.java.name
         val loader = LegacyResource::class.java.classLoader
         val locator =
@@ -224,7 +223,7 @@ class JaxRsModuleAnnotationInheritanceTest {
             declared = calls.map { it.verb to it.template }.toSet()
         }
 
-        assertEquals(emptySet(), declared)
+        assertEquals(setOf("GET" to "/legacy/{id}"), declared)
     }
 
     @Test

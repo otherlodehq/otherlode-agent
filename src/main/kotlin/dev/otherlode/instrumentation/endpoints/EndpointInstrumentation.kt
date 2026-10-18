@@ -325,7 +325,7 @@ class EndpointInstrumentation(
          * so a loader the module rejects never has a class parsed for it, then
          * [EndpointModule.typeMatcher] for the defining loader.
          *
-         * A matcher that throws cannot say whether the module wanted the class, so the module is
+         * A matcher, loader or type, that throws cannot say whether the module wanted the class, so the module is
          * switched off as [OtherlodeEndpoints.KIND_TRANSFORM_FAILED] and answers no from then on.
          * The throw never leaves this matcher: ByteBuddy runs every module's matcher in one
          * transform call, and an exception from one would abort the weave for all of them.
@@ -343,9 +343,10 @@ class EndpointInstrumentation(
             val bootstrapMatcher = lazy(LazyThreadSafetyMode.PUBLICATION) { module.typeMatcher(null) }
             val failed = AtomicBoolean(false)
             return AgentBuilder.RawMatcher { typeDescription, classLoader, _, _, _ ->
-                if (failed.get() || !loaderMatcher.matches(classLoader)) return@RawMatcher false
+                if (failed.get()) return@RawMatcher false
                 val matched =
                     try {
+                        if (!loaderMatcher.matches(classLoader)) return@RawMatcher false
                         val typeMatcher: ElementMatcher<in TypeDescription> =
                             if (classLoader == null) {
                                 bootstrapMatcher.value

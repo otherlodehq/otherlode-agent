@@ -29,4 +29,4 @@ the section being read.
 
 ### Fixed
 
-- With OpenTelemetry's agent listed before this one, no endpoint module is switched off and no class goes unwoven. The JAX-RS module no longer reads the interfaces OpenTelemetry generates for a framework class, or its helper classes, which no class file can describe. A module whose type matcher cannot decide about a class switches only itself off, with the kind for a transform failure, instead of aborting the weave of every module that matched the class.
+- With OpenTelemetry's agent listed before this one, no endpoint module is switched off and no class goes unwoven. The JAX-RS module reads the interfaces OpenTelemetry generates for a framework class, and any other class defined without a class file, from the loaded class, and decides that a class whose supertype cannot be loaded at all can never be defined, so it is no match and the module stays on. A module whose type matcher cannot decide about a class switches only itself off, with the kind for a transform failure, instead of aborting the weave of every module that matched the class.

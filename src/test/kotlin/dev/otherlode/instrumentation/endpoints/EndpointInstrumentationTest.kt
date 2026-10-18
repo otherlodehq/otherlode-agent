@@ -506,6 +506,34 @@ class EndpointInstrumentationTest {
     }
 
     @Test
+    fun `a module whose class loader matcher throws is switched off and does not stop another module weaving the class`() {
+        val registry = EndpointRegistry()
+        val moduleName = "throwing-loader-matcher-${System.nanoTime()}"
+        val throwing =
+            object : EndpointModule {
+                override val name: String = moduleName
+
+                override fun classLoaderMatcher(): ElementMatcher<in ClassLoader> =
+                    ElementMatcher { throw IllegalStateException("simulated getResource failure") }
+
+                override fun typeMatcher(): ElementMatcher<in TypeDescription> = none()
+
+                override fun transform(
+                    builder: DynamicType.Builder<*>,
+                    typeDescription: TypeDescription,
+                    advice: AdviceBinder,
+                    classLoader: ClassLoader?,
+                ): DynamicType.Builder<*> = builder
+            }
+        val bystander = DeclaringModule(template = "/bystander", moduleName = "z-declaring-${System.nanoTime()}")
+
+        install(registry, listOf(throwing, bystander), "com.example.framework.FakeRouter")
+
+        assertEquals(DisabledEndpointModuleKind.TRANSFORM_FAILED, registry.disabledModules().single { it.module == moduleName }.kind)
+        assertEquals(listOf("/bystander"), registry.endpoints().map { it.verbatimTemplate })
+    }
+
+    @Test
     fun `a module whose matcher threw is not asked about another class`() {
         val registry = EndpointRegistry()
         val throwing = ThrowingMatcherModule("throwing-once-${System.nanoTime()}")
