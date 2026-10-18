@@ -136,18 +136,6 @@ wanted, is `PendingDeclarations.begin()` taking the declaring class name and
 hold the same string for JAX-RS but is a display label: nullable, and set at
 dispatch for the other modules.
 
-### Endpoint modules and framework markers: building, before 0.1.0
-
-Settled on 2026-10-17: ADR 0017's second amendment of that date, ADRs
-0072 and 0073, ADR 0020's amendment, and server ADR 0071. Chunks 1 to 9b
-(the normaliser, Spring MVC and WebFlux, Javalin, Micronaut, the regex
-template, Vert.x Web, the RESTEasy Reactive gate, and Micronaut's
-dispatch-point gate with `ROUTES_NOT_COUNTED`) have landed in all three
-repos. One chunk remains, with its `docs/site` pages:
-
-10. Wire: framework markers, each proved by a three-JVM fixture, then the
-    collector's bindings, then the server.
-
 ### A servlet module: to grill, before 0.1.0
 
 A plain servlet application reads as having no endpoints, and no marker
