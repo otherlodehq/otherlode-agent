@@ -27,7 +27,7 @@ Each framework has its own module. A module does nothing on a JVM where its fram
 | Ktor 3 | `ktor-3` | 3.0.3, 3.5.2 | Once Ktor chose the route, before its handlers run |
 | JAX-RS, `javax.ws.rs` | `jaxrs` | Jersey 2.48 with `javax.ws.rs-api` 2.1.1 | Entry of the resource method |
 | JAX-RS, `jakarta.ws.rs` | `jaxrs` | Jersey 3.1.12 with `jakarta.ws.rs-api` 3.1.0, Jersey 4.0.3 with `jakarta.ws.rs-api` 4.0.0 | Entry of the resource method |
-| Plain servlets, `javax.servlet` | `servlet` | Tomcat 9.0.123 (Servlet 4.0), Jetty 10.0.26 (Servlet 4.0). Jetty 9.4.58 (Servlet 3.1) shows the module switching itself off | Entry of the servlet's `service` method, against the mapping the container matched |
+| Plain servlets, `javax.servlet` | `servlet` | Tomcat 9.0.123 (Servlet 4.0), Jetty 10.0.26 (Servlet 4.0). Jetty 9.4.58 (Servlet 3.1), with the Servlet 3.1 and the 4.0 API jar, shows the module switching itself off | Entry of the servlet's `service` method, against the mapping the container matched |
 | Plain servlets, `jakarta.servlet` | `servlet` | Tomcat 10.1.61 (Servlet 6.0), Tomcat 11.0.27 (Servlet 6.1), Jetty 12.0.40 with `ee10` (Servlet 6.0), Undertow 2.3.26 (Servlet 6.0), and Spring Boot 3.5.16 on its embedded Tomcat | Entry of the servlet's `service` method, against the mapping the container matched |
 | JDK `com.sun.net.httpserver.HttpServer` | `jdk-httpserver` | JDK 21, the test toolchain | Once the server found the context, before the handler runs |
 | Any framework OpenTelemetry instruments | `otel` | `opentelemetry-instrumentation-api` 2.31.1, and the OpenTelemetry Java agent 2.31.1's relocated copy. It compiles against 2.0.0 | Span end, after the handler ran. Off by default |
@@ -71,7 +71,7 @@ Two registrations that name the same verb and template are one endpoint with one
 
 A framework can match a route by a regular expression, with no path to read a template from. The agent keeps that expression exactly as written, with no normalisation, as both the template and its display spelling, and marks the endpoint as a regex. A regex endpoint never merges with a path endpoint whose template reads the same, so its identity is the verb, the template and whether the template is a regex.
 
-A servlet mapping that no path can express is a third kind, the servlet pattern: an extension mapping such as `*.do`, which matches at any depth, and the default mapping `/`, which matches only what nothing else did. The agent keeps the pattern exactly as written, as the template and its display spelling, and marks the endpoint as a servlet pattern. It never merges with a path or regex endpoint whose template reads the same, so a default mapping `/` and a path endpoint `/` are two endpoints.
+A servlet mapping that no path can express is a third kind, the servlet pattern: an extension mapping such as `*.do`, which matches at any depth, the default mapping `/`, which matches only what nothing else did, and an exact mapping the naming rules would change or that holds a star or a brace, such as `/orders/` or `/api*`, which a container matches literally. The agent keeps the pattern exactly as written, as the template and its display spelling, and marks the endpoint as a servlet pattern. It never merges with a path or regex endpoint whose template reads the same, so a default mapping `/` and a path endpoint `/` are two endpoints.
 
 ## Declared and discovered
 
@@ -223,9 +223,9 @@ A generated proxy of a resource class, such as a Spring CGLIB proxy or the subcl
 
 ## Servlet
 
-A plain servlet is counted at its own entry. The agent hooks the public `service(ServletRequest, ServletResponse)` of every servlet class, `HttpServlet` included, and counts a request there against the mapping the container matched for it, which it reads from `HttpServletRequest.getHttpServletMapping()`. One module covers `javax.servlet` and `jakarta.servlet`. It needs Servlet 4.0 or later, since `getHttpServletMapping` is new in 4.0.
+A plain servlet is counted at its own entry. The agent hooks the public `service(ServletRequest, ServletResponse)` of every servlet class, `HttpServlet` included, and counts a request there against the mapping the container matched for it, which it reads from `HttpServletRequest.getHttpServletMapping()`. One module covers `javax.servlet` and `jakarta.servlet`. It needs a container that implements Servlet 4.0 or later, since `getHttpServletMapping` is new in 4.0.
 
-A servlet context is declared at the first request it receives that reaches a servlet the module counts. The agent reads the context's servlet registrations then, and declares every mapping of every registration with the verbs described below, so a mapping that no request ever reaches reads as never called. A context that never receives a request declares nothing. The agent reads the registrations of every context it holds again before each manifest, so a mapping added after the first request is declared within one flush interval. A request that matches it before then counts nothing: a late mapping is counted from the flush after it was added. The servlet API says a mapping cannot be added once a context is initialised, and which containers accept one anyway differs. Through `ServletRegistration.addMapping`, Tomcat 9.0, 10.1 and 11.0 and Jetty 10 refuse it with an `IllegalStateException`, and Jetty 12 (`ee10`) and Undertow 2.3 accept it. A mapping a container adds by its own means, as Tomcat's `Context.addServletMappingDecoded` and Jetty's `ServletHandler.addServletWithMapping` do, is accepted by Tomcat and Jetty and declared the same way.
+A servlet context is declared at the first request it receives, whichever servlet that request reaches, a servlet that is left out included. The agent reads the context's servlet registrations then, and declares every mapping of every registration with the verbs described below, so a mapping that no request ever reaches reads as never called. A context that never receives a request declares nothing. The agent reads the registrations of every context it holds again before each manifest, so a mapping added after the first request is declared within one flush interval. A request that matches it before then counts nothing: a late mapping is counted from the flush after it was added. The servlet API says a mapping cannot be added once a context is initialised, and which containers accept one anyway differs. Through `ServletRegistration.addMapping`, Tomcat 9.0, 10.1 and 11.0 and Jetty 10 refuse it with an `IllegalStateException`, and Jetty 12 (`ee10`) and Undertow 2.3 accept it. A mapping a container adds by its own means, as Tomcat's `Context.addServletMappingDecoded` and Jetty's `ServletHandler.addServletWithMapping` do, is accepted by Tomcat and Jetty and declared the same way.
 
 The template follows the mapping:
 
@@ -236,10 +236,13 @@ The template follows the mapping:
 | Context root, the empty string | `/` | Path |
 | Extension, `*.do` | `*.do` | Servlet pattern |
 | Default, `/` | `/` | Servlet pattern |
+| Exact that [the naming rules](#how-an-endpoint-is-named) would change or read as a wildcard or parameter, `/orders/`, `/api*`, `/a{b}`, `/a/**` | as written | Servlet pattern |
+
+An exact or path mapping is a path template only when the naming rules leave it as it is and no star or brace stands before a final `/*`. A container matches an exact mapping literally, so `/orders/` is not `/orders`, and `/api*` and `/a{b}` name one path each, with a star and braces in it. Reading them as path templates would merge `/orders/` with `/orders`, or show a literal path as a wildcard or a parameter. They are kept exactly as written, under the servlet pattern kind, as extension and default mappings are.
 
 The context path is not part of it. Two web applications in one container that map the same pattern are one endpoint.
 
-The verbs are those of the `do*` methods that the servlet's class and its superclasses below `HttpServlet` declare. The agent reads them from the class files, and loads and reflects on nothing. This is the rule `HttpServlet.doOptions` uses to build `Allow`.
+The verbs are those of the `do*` methods that the servlet's class and its superclasses below `HttpServlet` declare. The agent reads them from the class files, and loads and reflects on nothing. `HttpServlet.doOptions` reads `doGet`, `doPost`, `doPut` and `doDelete` the same way to build `Allow`. It always allows `OPTIONS` and `TRACE` and never reads `doHead`, which the agent treats as below.
 
 - `doGet` declares `GET`. A `HEAD` request counts against it, unless the class declares `doHead`, which makes `HEAD` a verb of its own.
 - `doPost`, `doPut` and `doDelete` declare their verbs.
@@ -251,25 +254,25 @@ A request whose verb the servlet does not declare counts nothing, a 405 for exam
 
 These count nothing:
 
-- A forward, an include, an asynchronous dispatch and an error page dispatch. Only the original `REQUEST` dispatch counts, so a request counts once and an error page is not a call. This is tested on each container listed above, Undertow included.
+- A forward, an include, an asynchronous dispatch (`startAsync` and then `dispatch`) and an error page dispatch. Only the original `REQUEST` dispatch counts, so a request counts once and an error page is not a call. Each is tested on each container listed above, Undertow included.
 - A request a filter answers before it reaches the servlet.
 - A request to a servlet that is left out, as listed next.
 
-A servlet whose `service` calls `super.service`, or whose class overrides the protected `service`, still counts a request once.
+A servlet whose `service` calls `super.service`, or whose class overrides the protected `service`, still counts a request once. So does a servlet that calls another servlet's public `service` directly, as long as the container initialised the other one, since the call enters the other servlet's hook with the first servlet's mapping and the agent counts only in the servlet whose configured name is the matched one. A servlet that has no `ServletConfig`, or whose config names no servlet, always counts. A servlet called directly before the container initialised it therefore counts the request a second time.
 
 Some servlets are left out, whatever the state of the module that counts behind them:
 
-- Servlets another module counts behind: Spring MVC's `DispatcherServlet` and every subclass of it, Jersey's `ServletContainer`, RESTEasy's `HttpServletDispatcher` and `HttpServlet30Dispatcher`, CXF's `CXFServlet` and `CXFNonSpringJaxrsServlet`, Micronaut's `DefaultMicronautServlet`, Ktor's `ServletApplicationEngine` and Javalin's `JavalinServlet`. The agent matches them by class hierarchy, read from the class files. Without this a Spring application would report one `* /` endpoint that takes every hit.
+- Servlets another module counts behind: Spring MVC's `DispatcherServlet` and every subclass of it, Jersey's `ServletContainer`, RESTEasy's `HttpServletDispatcher` and `HttpServlet30Dispatcher`, CXF's `CXFServlet` and `CXFNonSpringJaxrsServlet`, Micronaut's `DefaultMicronautServlet`, Ktor's `ServletApplicationEngine` and Javalin's `JavalinServlet`. The agent matches them by class hierarchy, read from the class files. Ktor's and Javalin's servlets are left out only in a class loader that has the release a module covers: `io/ktor/server/routing/Route.class`, which Ktor 2 and 3 ship and Ktor 1 does not, and `io/javalin/router/ParsedEndpoint.class`, which Javalin 6 and 7 ship and Javalin 5 does not. Javalin 5 and Ktor 1 have no module, so their servlet is counted as a plain servlet, a `*` endpoint on its mapping that takes every hit. Without this a Spring application would report one `* /` endpoint that takes every hit.
 - The container's own servlets, matched by exact class name, so an adopter's subclass is counted: Tomcat's `DefaultServlet` and `JspServlet`, Jetty's `DefaultServlet`, `NoJspServlet`, `JettyJspServlet` and `ServletHandler$Default404Servlet` in each of its packages, Undertow's `DefaultServlet` and Quarkus's `QuarkusErrorServlet`. A container not in this list has its default servlet counted as a servlet at `/`, which is noise and never absence.
 
 A framework servlet no module counts behind, such as Vaadin's, JSF's `FacesServlet` or the H2 console, is a plain servlet and is counted as one. The H2 console Spring Boot registers with `spring.h2.console.enabled` is declared as `GET` and `POST` on `/h2-console/*`, and a request to it counts once, in the servlet module only.
 
 The module switches itself off in these cases (see [below](#modules-that-switch-themselves-off)):
 
-- The servlet API is older than 4.0. `getHttpServletMapping` does not link, and the kind is `LINKAGE_ERROR`.
-- A servlet registration holds a mapping that is none of the five forms above. Jetty's own `ServletHandler` refuses a regular expression or URI template spec as a servlet mapping, so only a handler that overrides its `asPathSpec` puts one there. The agent declares nothing from that read, and the kind is `ROUTE_WALK_FAILED`.
+- The container implements a servlet API older than 4.0. With a 3.1 API jar `getHttpServletMapping` does not link. With a 4.0 jar over a container that does not implement it, as Spring Boot 2.7 on Jetty 9.4 has, the call answers with the API's default, which has no match type. The first request switches the module off before it declares anything, and the kind is `LINKAGE_ERROR` in both.
+- A servlet registration holds a mapping that is none of the five forms above: one that does not start with `/` or `*.`, and is not the empty string. Jetty's own `ServletHandler` refuses a regular expression or URI template spec as a servlet mapping, so only a handler that overrides its `asPathSpec` puts one there. The agent declares nothing from that read, and the kind is `ROUTE_WALK_FAILED`.
 - A servlet class's class file cannot be read, so its verbs cannot be known. The kind is `ROUTE_WALK_FAILED`.
-- The container matched a declared servlet with no mapping match type. The kind is `ADVICE_FAILED`.
+- A request reaches a servlet with a mapping that has no match type, though the container implements Servlet 4.0, because a filter hands the servlet a request object that hides the real mapping. The agent declares nothing, and the kind is `ADVICE_FAILED`.
 
 ## JDK HttpServer
 
@@ -395,11 +398,11 @@ The [configuration options](configuration) page gives the system property and en
 
 ## What is not covered
 
-- Javalin 5 has no module. Counting its endpoints needs one. For it, `otelBridgeEnabled` counts what OpenTelemetry resolves, discovered at dispatch only, so "never called" cannot be computed. The agent reports the `javalin-5` [marker](#frameworks-with-no-module).
+- Javalin 5 has no module. Counting its endpoints needs one. For it, `otelBridgeEnabled` counts what OpenTelemetry resolves, discovered at dispatch only, so "never called" cannot be computed. The agent reports the `javalin-5` [marker](#frameworks-with-no-module). A Javalin 5 application deployed as a WAR loads no marker, and its `JavalinServlet` is counted by the `servlet` module as one `*` endpoint on its mapping. The same holds for a Ktor 1 `ServletApplicationEngine`.
 - A Spring WebFlux router run through `RouterFunctions.toHttpHandler` or `toWebHandler`, with no `DispatcherHandler`, is not declared, and only its `resources(pattern, location)` routes are counted, found at dispatch. The agent reports the `webflux-router-without-dispatcher` [marker](#frameworks-with-no-module).
 - JSP pages are not counted. Each page runs inside the container's one JSP servlet, which the servlet module leaves out.
 - The SOAP traffic of Apache CXF's `CXFServlet` is not counted. The servlet is left out, since its JAX-RS requests are counted by the JAX-RS module, and no module counts the rest.
-- A container that implements a servlet API older than 4.0, such as Tomcat 8.5 or Jetty 9.4, has no servlet counting. The `servlet` module is reported as disabled with the kind `LINKAGE_ERROR` at the first request, and the application is served as it was. This is tested on Jetty 9.4.58.
+- A container that implements a servlet API older than 4.0, such as Tomcat 8.5 or Jetty 9.4, has no servlet counting. The `servlet` module is reported as disabled with the kind `LINKAGE_ERROR` at the first request, and the application is served as it was. This is tested on Jetty 9.4.58, with its own Servlet 3.1 API jar and with the Servlet 4.0 API jar (`javax.servlet-api` 4.0.1) Spring Boot 2.7 puts beside it.
 - Requests that never reach the hooked framework are not counted. A servlet, filter or Tomcat valve that answers first is invisible to the Spring module, for example.
 - The agent reads no OpenAPI document and does no static analysis of call sites to find endpoints.
 - A route that a router builds at runtime by any means other than the registration points above is found only when a request reaches it.

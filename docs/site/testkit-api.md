@@ -354,7 +354,7 @@ Returned by `neverSupplied` and `alwaysSupplied`. It names the function the para
 | `handlerMethod` | `String?` | The handler's method, where the framework exposes one. |
 | `handlerDescriptor` | `String?` | The handler method's descriptor. |
 | `isRegexTemplate` | `Boolean` | `true` when the framework matches the route by a regular expression. `routeTemplate` and `verbatimTemplate` are then that expression exactly as written, and the endpoint is not the path endpoint whose template reads the same. |
-| `isServletPatternTemplate` | `Boolean` | `true` when the template is a servlet mapping no path can express: an extension mapping such as `*.do`, or the default mapping `/`. `routeTemplate` and `verbatimTemplate` are then that pattern exactly as written, and the endpoint is neither the path endpoint nor the regex endpoint whose template reads the same. |
+| `isServletPatternTemplate` | `Boolean` | `true` when the template is a servlet mapping no path can express: an extension mapping such as `*.do`, the default mapping `/`, or an exact mapping the naming rules would change or that holds a star or a brace, such as `/orders/`. `routeTemplate` and `verbatimTemplate` are then that pattern exactly as written, and the endpoint is neither the path endpoint nor the regex endpoint whose template reads the same. |
 
 ### DisabledEndpointModule and SkippedClass
 

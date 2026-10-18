@@ -359,6 +359,10 @@ Endpoints:
 - JSP pages are not counted: each runs inside the container's one JSP
   servlet, which the servlet module leaves out (ADR 0074). Counting a page
   needs a hook in the JSP engine.
+- The servlet module counts a request a second time when a servlet calls
+  another servlet's `service` directly before the container initialised the
+  other one, since the hook tells the matched servlet by the name in its
+  `ServletConfig` (ADR 0074's second 2026-10-18 amendment).
 - The OTel bridge records OpenTelemetry's `HTTP` verb for an unknown method
   as an endpoint of its own.
 - An unclosed brace in a route template swallows the slashes after it, and
