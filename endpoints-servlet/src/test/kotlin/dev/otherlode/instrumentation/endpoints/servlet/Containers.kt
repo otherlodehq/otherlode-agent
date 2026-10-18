@@ -3,6 +3,27 @@ package dev.otherlode.instrumentation.endpoints.servlet
 import jakarta.servlet.Filter
 import jakarta.servlet.Servlet
 import jakarta.servlet.ServletContext
+import java.net.URI
+import java.net.http.HttpClient
+import java.net.http.HttpRequest
+import java.net.http.HttpResponse
+
+private val client = HttpClient.newHttpClient()
+
+/** Sends [method] to `http://localhost:[port][contextPath][path]` and returns the status. */
+fun sendHttp(
+    port: Int,
+    contextPath: String,
+    path: String,
+    method: String,
+): Int {
+    val request =
+        HttpRequest
+            .newBuilder(URI.create("http://localhost:$port$contextPath$path"))
+            .method(method, HttpRequest.BodyPublishers.noBody())
+            .build()
+    return client.send(request, HttpResponse.BodyHandlers.discarding()).statusCode()
+}
 
 /** What a test sets up in a servlet container before it starts. */
 interface WebApp {
@@ -65,6 +86,13 @@ interface ServletContainer {
      */
     val servesPatch: Boolean
         get() = System.getProperty("otherlode.servlet.patch") == "true"
+
+    /** The class names of the servlets [WebApp.containerDefaults] registers. */
+    val defaultServlets: Set<String>
+
+    /** The class names of servlets the container registers in a context by itself, whatever the application asks for. */
+    val ownServlets: Set<String>
+        get() = emptySet()
 
     fun start(
         contextPath: String,

@@ -9,10 +9,6 @@ import org.apache.catalina.startup.Tomcat
 import org.apache.tomcat.util.descriptor.web.ErrorPage
 import org.apache.tomcat.util.descriptor.web.FilterDef
 import org.apache.tomcat.util.descriptor.web.FilterMap
-import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
 import java.nio.file.Files
 
 fun containerUnderTest(): ServletContainer = TomcatContainer()
@@ -22,6 +18,8 @@ class MyDefaultServlet : DefaultServlet()
 
 /** Embedded Tomcat, in the namespace and release the suite's dependencies select. */
 class TomcatContainer : ServletContainer {
+    override val defaultServlets: Set<String> = setOf("org.apache.catalina.servlets.DefaultServlet", "org.apache.jasper.servlet.JspServlet")
+
     override fun start(
         contextPath: String,
         configure: WebApp.() -> Unit,
@@ -93,7 +91,6 @@ private class TomcatRunningApp(
 ) : RunningApp {
     private val tomcatContext = context
     override val servletContext: ServletContext = context.servletContext
-    private val client = HttpClient.newHttpClient()
 
     override fun addMappingAfterStart(
         servletName: String,
@@ -103,14 +100,7 @@ private class TomcatRunningApp(
     override fun send(
         path: String,
         method: String,
-    ): Int {
-        val request =
-            HttpRequest
-                .newBuilder(URI.create("http://localhost:$port$contextPath$path"))
-                .method(method, HttpRequest.BodyPublishers.noBody())
-                .build()
-        return client.send(request, HttpResponse.BodyHandlers.discarding()).statusCode()
-    }
+    ): Int = sendHttp(port, contextPath, path, method)
 
     override fun close() {
         tomcat.stop()

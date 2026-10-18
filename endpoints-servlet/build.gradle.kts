@@ -164,7 +164,17 @@ fun containerSuite(
         .getByName(suiteName)
         .associateWith(kotlin.target.compilations.getByName("main"))
 
-    val agentJar = servletTestAgentJar(name, agentClass, provider { testing.suites.named<JvmTestSuite>(suiteName).get().sources.output })
+    val agentJar =
+        servletTestAgentJar(
+            name,
+            agentClass,
+            provider {
+                testing.suites
+                    .named<JvmTestSuite>(suiteName)
+                    .get()
+                    .sources.output
+            },
+        )
     testing.suites.named<JvmTestSuite>(suiteName) {
         targets {
             all {
@@ -204,7 +214,7 @@ containerSuite(
 
 containerSuite(
     "jetty10",
-    listOf(sharedTests, SourceDir("src/jetty10/kotlin")),
+    listOf(sharedTests, SourceDir("src/jetty/kotlin"), SourceDir("src/jetty10/kotlin")),
 ) {
     implementation("org.eclipse.jetty:jetty-servlet:$jetty10Version")
     implementation("org.eclipse.jetty:apache-jsp:$jetty10Version")
@@ -237,7 +247,7 @@ containerSuite(
             rewrite = true,
             excludes = listOf("**/ServletModuleTest.kt", "**/ServletModuleDisablingTest.kt"),
         ),
-        SourceDir("src/jetty10/kotlin"),
+        SourceDir("src/jetty/kotlin"),
         SourceDir("src/jetty9/kotlin"),
     ),
     javaDirs = emptyList(),

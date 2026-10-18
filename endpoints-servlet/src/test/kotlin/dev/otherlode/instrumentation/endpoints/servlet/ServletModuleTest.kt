@@ -293,6 +293,10 @@ class ServletModuleTest : ServletTestSupport() {
                 adopterDefaultServlet("mine", "/defaults/mine/*")
             }.use { app ->
                 assertEquals(200, app.send("/defaults/app"))
+                val registered =
+                    app.servletContext.servletRegistrations.values
+                        .map { it.className }
+                assertTrue(container.defaultServlets.all { it in registered }, "${container.defaultServlets} are registered: $registered")
                 app.send("/defaults/missing.txt")
                 app.send("/defaults/missing.jsp")
                 assertNull(servletEndpoints().firstOrNull { it.routeTemplate == "*.jsp" || it.routeTemplate == "*.jspx" })
@@ -305,6 +309,24 @@ class ServletModuleTest : ServletTestSupport() {
                 val mine = servletEndpoints().filter { it.routeTemplate == "/defaults/mine/*" }
                 assertTrue(mine.isNotEmpty(), "a subclass of the default servlet is adopter code")
                 assertEquals(1, mine.sumOf { hits(it.verb, it.routeTemplate) })
+            }
+    }
+
+    @Test
+    fun `a servlet the container registers by itself is registered and left out`() {
+        container
+            .start("") {
+                servlet("app", GetPostServlet(), "/own/app")
+            }.use { app ->
+                assertEquals(200, app.send("/own/app"))
+                val registered =
+                    app.servletContext.servletRegistrations.values
+                        .map { it.className }
+                assertTrue(
+                    container.ownServlets.all { it in registered },
+                    "the container registers ${container.ownServlets}, and its registrations are $registered",
+                )
+                assertEquals(setOf("GET /own/app", "POST /own/app"), declared("/own"))
             }
     }
 
