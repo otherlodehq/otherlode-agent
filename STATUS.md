@@ -136,14 +136,17 @@ wanted, is `PendingDeclarations.begin()` taking the declaring class name and
 hold the same string for JAX-RS but is a display label: nullable, and set at
 dispatch for the other modules.
 
-### A servlet module: to grill, before 0.1.0
+### A servlet module: decided, to build before 0.1.0
 
-A plain servlet application reads as having no endpoints, and no marker
-class can tell it apart from Spring's `DispatcherServlet` or Jersey
-(ADR 0072). The candidate is one module on the standard Servlet API:
-declare from the registered servlet mappings once a context starts, count
-against the request's matched mapping (Servlet 4.0+), and leave out
-servlets another module owns. Needs its own research and grill.
+ADR 0074. In order:
+
+1. The server accepts a third `EndpointTemplateKind`, the servlet pattern
+   template, as an identity of its own, and the collector's bindings are
+   bumped to carry it.
+2. The `servlet` module, on the ADR's test matrix.
+3. The route bridge removes the prefix OpenTelemetry added (ADR 0019's
+   2026-10-18 amendment), tested with the servlet module present so
+   OpenTelemetry's `/shop/api/*` lands on the module's `/api/*`.
 
 ### Endpoint follow-ups
 
@@ -345,9 +348,12 @@ Endpoints:
   `getRegex()` returns a `kotlin.text.Regex` the shaded jar renames, so a
   fix reads `toString()` and has to decide how a pattern holding `/` or `:`
   becomes one segment.
-- The OTel bridge duplicates a route under a servlet context path:
-  OpenTelemetry's route includes the path and a framework module's identity
-  does not.
+- The OTel bridge duplicates a route under a Spring WebFlux base path with
+  OpenTelemetry's library instrumentation, which adds the base path where the
+  bridge cannot see the unprefixed route (ADR 0019's 2026-10-18 amendment).
+- JSP pages are not counted: each runs inside the container's one JSP
+  servlet, which the servlet module leaves out (ADR 0074). Counting a page
+  needs a hook in the JSP engine.
 - The OTel bridge records OpenTelemetry's `HTTP` verb for an unknown method
   as an endpoint of its own.
 - An unclosed brace in a route template swallows the slashes after it, and

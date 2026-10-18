@@ -172,16 +172,20 @@ _Avoid_: backend, server, ingest
 ### Endpoints
 
 **Endpoint**:
-One HTTP verb and route template a framework serves, as registered with that framework. Identity is the pair, with whether the template is a regex template; nothing about the server, port, or handler is part of it.
+One HTTP verb and route template a framework serves, as registered with that framework. Identity is the pair, with the template's kind (path, regex or servlet pattern); nothing about the server, port, or handler is part of it.
 _Avoid_: route (the template is the route; the endpoint is verb plus template), mapping, handler
 
 **Route template**:
-The normalised path pattern of an endpoint: leading slash, no trailing slash, `{name}` for a path parameter with any regex dropped, `*` for any wildcard or tail. The framework's own spelling is kept beside it for display only. A route the framework matches by a regular expression alone has a regex template instead.
+The normalised path pattern of an endpoint: leading slash, no trailing slash, `{name}` for a path parameter with any regex dropped, `*` for any wildcard or tail. The framework's own spelling is kept beside it for display only. A route the framework matches by a regular expression alone has a regex template instead, and a servlet extension or default mapping a servlet pattern template.
 _Avoid_: path, pattern, URL
 
 **Regex template**:
 The template of an endpoint a framework matches by a regular expression with no path: the expression exactly as written, marked as a regex so no reader takes it for a path.
 _Avoid_: regex route (the route is the endpoint; this is its template), raw path
+
+**Servlet pattern template**:
+The template of a servlet mapping no path template can express: an extension mapping (`*.do`), which matches at any depth, or the default mapping (`/`), which matches whatever no other mapping did. The pattern exactly as written, marked as a servlet pattern so no reader takes it for a path or a regex.
+_Avoid_: servlet regex, wildcard route
 
 **Endpoint probe**:
 The counter for one endpoint, incremented when the framework matches a request to it, before the handler runs.
@@ -207,6 +211,10 @@ The per-framework unit that hooks one framework's registration and dispatch. A m
 **Never called**:
 An endpoint that at least one instance registered and whose hit total has stayed at zero across every instance in scope. The framework would serve it; no request ever matched it.
 _Avoid_: unused endpoint (the product phrase, not the observation), dead
+
+**Owned servlet**:
+A servlet whose routes another endpoint module counts, such as Spring's `DispatcherServlet` or Jersey's `ServletContainer`. The servlet module leaves it out whatever that module's state, so its mapping never becomes an endpoint of its own.
+_Avoid_: framework servlet (a framework servlet no module counts behind is an ordinary servlet)
 
 **Route bridge**:
 An endpoint module that counts the route another instrumentation already resolved for a request, rather than hooking the framework itself. It only ever discovers endpoints by dispatch and never declares one.

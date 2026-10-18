@@ -29,3 +29,13 @@ The bridge skips a route, binding nothing and counting nothing, in three cases (
 - The request is a `HEAD` and a different framework holds the `GET` endpoint of the same template, since frameworks answer `HEAD` from the `GET` handler.
 
 Without the skip, a request a framework module counted would count twice. If the owning module switches itself off after declaring its endpoints, those requests go uncounted. `endpointsEnabled=false`, the one setting that turns modules off, turns the bridge off with them. A servlet context path still slips past the check: OpenTelemetry's route includes it and a framework module's identity does not, so the bridge can record a second endpoint for such a route.
+
+## Amended on 2026-10-18: the bridge removes the prefix OpenTelemetry added
+
+Decided in the servlet module grill (ADR 0074). OpenTelemetry's `http.route` includes the application root, as its HTTP semantic conventions ask ("SHOULD include the application root if there is one"), and for JAX-RS the servlet path too, so Spring's `/orders` reaches the bridge as `/shop/orders` and Jersey's `/users` as `/shop/api/users`. The ownership check missed them, and the bridge recorded a second endpoint discovered by dispatch, with the same traffic counted under both.
+
+The bridge learns the translation from OpenTelemetry's own prefixers. Each takes the unprefixed route and returns the prefixed one: `ServletContextPath.prepend` and `JaxrsContextPath.prepend` in the Java agent's bootstrap, and `HttpRouteSupport.prependContextPath` in the Spring MVC library instrumentation. Advice on their exit records the pair in a table, and the span-end advice resolves the final route through it, transitively, before the ownership check. Routes are low-cardinality by the same conventions, so the table stays small and nothing is held per request. A prefixer the bridge has not read leaves the route as it was, so the failure is the duplicate, never a lost count.
+
+Reading the context path from the `Context` at span end was rejected: on embedded Tomcat and Undertow, OpenTelemetry stores it only on a child context that has closed by then, and the library deployment never stores it. Trying shorter segment suffixes of the route was rejected: an uncovered framework's `/admin/orders` would go uncounted wherever a module owns `/orders`. Stripping context paths the framework modules published was rejected: it is ambiguous with several applications in one JVM.
+
+The Spring WebFlux library instrumentation adds the base path inside `getHttpRoute`, where the unprefixed route is never an argument, so that case stays a duplicate. The Java agent's WebFlux instrumentation adds none.
