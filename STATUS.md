@@ -143,14 +143,10 @@ ADR 0074. In order:
 1. The server accepts a third `EndpointTemplateKind`, the servlet pattern
    template, as an identity of its own, and the collector's bindings are
    bumped to carry it.
-2. The `servlet` module, on the ADR's test matrix. Started: Tomcat 9.0 and 10.1
-   are done, with the harness (`ServletContainer`, a suite per container) built
-   to take the rest. To come: Tomcat 11, Jetty 10 and 12 (ee10), Undertow 2.3,
-   Jetty 9.4 showing the `LINKAGE_ERROR` floor, and a Spring Boot embedded
-   Tomcat showing `dispatcherServlet` left out, the H2 console counted and no
-   request counted by two modules. The ADR names Tomcat 9 as accepting a late
-   `ServletRegistration.addMapping`; 9.0.123 and 10.1.61 refuse it, so the late
-   mapping test adds one through Tomcat's own `Context`.
+2. The `servlet` module, on the ADR's test matrix: done. Tomcat 9.0, 10.1 and
+   11, Jetty 10 and 12 (ee10), Undertow 2.3 and a Spring Boot embedded Tomcat
+   pass, and Jetty 9.4 shows the `LINKAGE_ERROR` floor. ADR 0074's
+   2026-10-18 amendment records where a container differed from the ADR.
 3. Done: the route bridge removes the prefix OpenTelemetry added (ADR 0019's
    2026-10-18 amendment), tested with the servlet module present so
    OpenTelemetry's `/shop/api/*` lands on the module's `/api/*`.
