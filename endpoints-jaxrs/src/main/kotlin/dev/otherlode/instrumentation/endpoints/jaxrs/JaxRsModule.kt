@@ -578,7 +578,8 @@ private class UndefinableTypeException(
  * file for is therefore detected here by reading it, then asked of [loader] with
  * `Class.forName(name, false, loader)`. A class defined with no reachable class file, such as an
  * interface OpenTelemetry's agent generates in memory, loads, and is described from the loaded class.
- * One that does not load is a class [loader] cannot define, and [UndefinableTypeException] says so.
+ * One that does not load, or loads but cannot be reflected because a type in its signatures is
+ * absent, is a class [loader] cannot define or use, and [UndefinableTypeException] says so.
  *
  * The load happens only when the pool had no bytes for a supertype, which is rare, and inside the
  * transform of the class that extends it, so the JVM would load that supertype next on this same
@@ -642,7 +643,13 @@ private class SupertypeResolver(
         val erased = supertype.erased
         if (erased != null && (cache.isKnown(supertype.name) || isReadable(erased))) return erased
         val loaded = cache.loadedClass(supertype.name, loader) ?: throw UndefinableTypeException(supertype.name)
-        return TypeDescription.ForLoadedType.of(loaded)
+        val description = TypeDescription.ForLoadedType.of(loaded)
+        try {
+            description.declaredMethods.size
+        } catch (_: LinkageError) {
+            throw UndefinableTypeException(supertype.name)
+        }
+        return description
     }
 
     private fun isReadable(type: TypeDescription): Boolean =

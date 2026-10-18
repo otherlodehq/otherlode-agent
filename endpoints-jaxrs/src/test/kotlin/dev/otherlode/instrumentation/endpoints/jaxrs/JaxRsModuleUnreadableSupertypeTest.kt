@@ -32,11 +32,15 @@ class JaxRsModuleUnreadableSupertypeTest {
         superName: String = "java/lang/Object",
         isInterface: Boolean = false,
         path: Boolean = false,
+        methodTakes: String? = null,
     ): ByteArray {
         val writer = ClassWriter(0)
         val access = if (isInterface) Opcodes.ACC_PUBLIC or Opcodes.ACC_INTERFACE or Opcodes.ACC_ABSTRACT else Opcodes.ACC_PUBLIC
         writer.visit(Opcodes.V17, access, name, null, superName, interfaces.toTypedArray())
         if (path) writer.visitAnnotation("Ljakarta/ws/rs/Path;", true).also { it.visit("value", "/x") }.visitEnd()
+        if (methodTakes != null) {
+            writer.visitMethod(Opcodes.ACC_PUBLIC or Opcodes.ACC_ABSTRACT, "take", "(L$methodTakes;)V", null, null).visitEnd()
+        }
         writer.visitEnd()
         return writer.toByteArray()
     }
@@ -106,6 +110,15 @@ class JaxRsModuleUnreadableSupertypeTest {
         val loader = DefiningLoader(javaClass.classLoader)
         loader.define("t.Plain", classBytes("t/Plain"))
         val describe = describe(mapOf("t.Resource" to classBytes("t/Resource", superName = "t/Plain")))
+
+        assertFalse(JaxRsModule().typeMatcher(loader).matches(describe("t.Resource")))
+    }
+
+    @Test
+    fun `a loaded supertype whose methods cannot be reflected is no match without throwing`() {
+        val loader = DefiningLoader(javaClass.classLoader)
+        loader.define("t.Odd", classBytes("t/Odd", isInterface = true, methodTakes = "t/Absent"))
+        val describe = describe(mapOf("t.Resource" to classBytes("t/Resource", interfaces = listOf("t/Odd"))))
 
         assertFalse(JaxRsModule().typeMatcher(loader).matches(describe("t.Resource")))
     }

@@ -176,6 +176,23 @@ ADR 0074. In order:
   matched value, since OpenTelemetry reports the concrete mount point; the
   bridge is off by default. A fix needs the bridge to recognise those
   values.
+- The OTel route bridge, under OpenTelemetry's Java agent, with RESTEasy
+  sub-resource locators: `ResteasyResourceLocatorInvokerInstrumentation`
+  prepends the locator's path through `JaxrsContextPath`, so the prefix table
+  records each step, and the transitive resolve ends on the sub-resource
+  method's own path (`/details`), not `/items/{id}/details`. Read from the
+  class files; no classic RESTEasy artifact is in the build to test it. The
+  JAX-RS module counts the request on the locator (`* /items/{id}`), so the
+  bridge only adds a misnamed duplicate, which can merge sub-resources of
+  different locators under one name. No count is lost.
+- The OTel route bridge, under OpenTelemetry's Java agent, with Vaadin:
+  `VaadinHelper.updateServerSpanName` prepends the concrete view path (for
+  example `/orders/42`), not a template, so every distinct view path takes a
+  prefix-table entry, under a context path and at the root alike, since an
+  unchanged route is recorded as a pair with itself (ADR 0019). A full table
+  adds nothing more, so later translations are not learned and their routes
+  read as duplicates. No count is lost. A fix needs the bridge to know the
+  route is not a template.
 - Vert.x Web 4.5.0's "a parameterised mount replaced by another" test failed
   once with no hits at all (1 run in 12, not reproduced since).
 - Spring MVC `resources(...)`: a lookup the adopter composes over Spring's
