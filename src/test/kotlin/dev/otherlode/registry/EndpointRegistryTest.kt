@@ -184,6 +184,36 @@ class EndpointRegistryTest {
     }
 
     @Test
+    fun `a bridge route made from an extension mapping is owned by that servlet pattern`() {
+        val registry = EndpointRegistry()
+        val servlet = EndpointTemplateKind.SERVLET_PATTERN
+        registry.register(key = Any(), framework = "servlet", verb = "GET", verbatimTemplate = "*.do", templateKind = servlet)
+
+        assertNull(registry.recordDispatchIfUnowned(Any(), "otel", "GET", "/*.do"))
+        assertNull(registry.recordDispatchIfUnowned(Any(), "otel", "HEAD", "/*.do"))
+        assertEquals("/*.php", registry.recordDispatchIfUnowned(Any(), "otel", "GET", "/*.php")?.routeTemplate)
+    }
+
+    @Test
+    fun `a bridge route made from the default mapping is owned by the servlet pattern slash`() {
+        val registry = EndpointRegistry()
+        val servlet = EndpointTemplateKind.SERVLET_PATTERN
+        registry.register(key = Any(), framework = "servlet", verb = "GET", verbatimTemplate = "/", templateKind = servlet)
+
+        assertNull(registry.recordDispatchIfUnowned(Any(), "otel", "GET", "/*"))
+        assertNull(registry.recordDispatchIfUnowned(Any(), "otel", "GET", "/"))
+        assertEquals("/shop/*", registry.recordDispatchIfUnowned(Any(), "otel", "GET", "/shop/*")?.routeTemplate)
+    }
+
+    @Test
+    fun `a bridge route made from the default mapping is counted when no servlet holds that pattern`() {
+        val registry = EndpointRegistry()
+        registry.register(key = Any(), framework = "servlet", verb = "GET", verbatimTemplate = "/orders")
+
+        assertEquals("/*", registry.recordDispatchIfUnowned(Any(), "otel", "GET", "/*")?.routeTemplate)
+    }
+
+    @Test
     fun `lookup on an unbound key is null`() {
         val registry = EndpointRegistry()
 

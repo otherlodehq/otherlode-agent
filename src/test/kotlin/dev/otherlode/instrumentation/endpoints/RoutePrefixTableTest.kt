@@ -42,13 +42,37 @@ class RoutePrefixTableTest {
     @Test
     fun `a prefixer that changed nothing records nothing`() {
         val table = OtherlodeEndpoints.RoutePrefixTable(8)
-        table.record("/orders", "/orders")
         table.record(null, "/orders")
         table.record("/shop", null)
         table.record("/shop", "")
 
-        assertEquals("/orders", table.resolve("/orders"))
         assertEquals("/shop", table.resolve("/shop"))
+    }
+
+    @Test
+    fun `a route a root context left unchanged resolves to itself`() {
+        val table = OtherlodeEndpoints.RoutePrefixTable(8)
+        table.record("/orders", "/orders")
+
+        assertEquals("/orders", table.resolve("/orders"))
+    }
+
+    @Test
+    fun `an unchanged route recorded after a prefixed one makes the route ambiguous`() {
+        val table = OtherlodeEndpoints.RoutePrefixTable(8)
+        table.record("/a/orders", "/orders")
+        table.record("/a/orders", "/a/orders")
+
+        assertEquals("/a/orders", table.resolve("/a/orders"))
+    }
+
+    @Test
+    fun `an unchanged route recorded before a prefixed one makes the route ambiguous`() {
+        val table = OtherlodeEndpoints.RoutePrefixTable(8)
+        table.record("/a/orders", "/a/orders")
+        table.record("/a/orders", "/orders")
+
+        assertEquals("/a/orders", table.resolve("/a/orders"))
     }
 
     @Test

@@ -26,6 +26,7 @@ data class HandlerRef(
 
 /** Stands in for the route object an [EndpointRegistry] key list holds, once that object is held apart. */
 private val ANCHOR = Any()
+private val EXTENSION_ROUTE = Regex("/\\*\\.[^/*]+")
 
 /**
  * Tracks one probe per HTTP endpoint, counted at the point a framework matches a request to it,
@@ -339,6 +340,14 @@ class EndpointRegistry {
      * framework module's identity does not, so the bridge records a second endpoint for such a
      * route.
      *
+     * A path template also reads as the servlet pattern OpenTelemetry's servlet instrumentation
+     * built it from. It reports an extension mapping `*.ext` with a slash in front, and the
+     * default mapping `/` as a slash and a star, or as `/` for a request on the context root. So
+     * the template with a slash before an extension mapping is owned by the servlet pattern
+     * `*.ext`, and the templates `/` and slash-star are owned by the servlet pattern `/`. A path
+     * mapping slash-star and the context root mapping are path templates the servlet module
+     * declares as such, and the ordinary identity match owns them.
+     *
      * The ownership check and the eventual creation are not one atomic step: a second thread
      * racing to create the same identity under a different framework between the two could still
      * end up owning it. This is the same non-atomic tradeoff the rest of this registry already
@@ -357,9 +366,24 @@ class EndpointRegistry {
         val identity = identityOf(verb, verbatimTemplate, contextPath, templateKind)
         val owners = mutableListOf(identity, identity.copy(verb = "*"))
         if (identity.verb == "HEAD") owners += identity.copy(verb = "GET")
+        if (templateKind == EndpointTemplateKind.PATH) {
+            servletPatternBehind(identity.routeTemplate)?.let { pattern ->
+                val patternIdentity = Identity(identity.verb, pattern, EndpointTemplateKind.SERVLET_PATTERN)
+                owners += patternIdentity
+                owners += patternIdentity.copy(verb = "*")
+                if (patternIdentity.verb == "HEAD") owners += patternIdentity.copy(verb = "GET")
+            }
+        }
         if (owners.any { entriesByIdentity[it]?.framework.let { owner -> owner != null && owner != framework } }) return null
         return recordDispatch(key, framework, verb, verbatimTemplate, contextPath, handlerClass, templateKind)
     }
+
+    private fun servletPatternBehind(pathTemplate: String): String? =
+        when {
+            pathTemplate == "/*" || pathTemplate == "/" -> "/"
+            EXTENSION_ROUTE.matches(pathTemplate) -> pathTemplate.substring(1)
+            else -> null
+        }
 
     private fun identityOf(
         verb: String?,

@@ -29,4 +29,7 @@ the section being read.
 
 ### Fixed
 
+- With the route bridge on, a servlet's extension mapping (`*.do`) and default mapping (`/`) count once, under the `servlet` module, instead of also under the bridge's `/*.do`, `/*` and `/`.
+- With the route bridge on, a route a root-context application serves is no longer attributed to another application's route when a second application's context path makes the two read alike. Both count, the second as the bridge's duplicate.
+
 - With OpenTelemetry's agent listed before this one, no endpoint module is switched off and no class goes unwoven. The JAX-RS module reads the interfaces OpenTelemetry generates for a framework class, and any other class defined without a class file, from the loaded class, and decides that a class whose supertype cannot be loaded at all can never be defined, so it is no match and the module stays on. A module whose type matcher cannot decide about a class switches only itself off, with the kind for a transform failure, instead of aborting the weave of every module that matched the class.

@@ -494,7 +494,8 @@ public final class OtherlodeEndpoints {
      * <p>Routes are low-cardinality, so the table holds at most {@code capacity} entries. A full
      * table adds nothing more and keeps what it has, so a translation is never replaced by another
      * route's. A prefixed route that two different routes were given for is ambiguous: it stays in
-     * the table as such and resolves to itself. A call is a map read once its pair is known, and
+     * the table as such and resolves to itself, and so is a prefixed route an unprefixed application
+     * also serves as its own. A call is a map read once its pair is known, and
      * never throws.
      */
     public static final class RoutePrefixTable {
@@ -508,9 +509,14 @@ public final class OtherlodeEndpoints {
             this.capacity = capacity;
         }
 
-        /** Records that a prefixer turned {@code unprefixed} into {@code prefixed}. A null, empty or unchanged route records nothing. */
+        /**
+         * Records that a prefixer turned {@code unprefixed} into {@code prefixed}. A null or empty
+         * route records nothing. A route the prefixer left unchanged, as an application at the
+         * root context does, is recorded as a pair with itself, so a different pair for the same
+         * route, from another application, makes it ambiguous in either order.
+         */
         public void record(String prefixed, String unprefixed) {
-            if (prefixed == null || unprefixed == null || unprefixed.isEmpty() || prefixed.equals(unprefixed)) return;
+            if (prefixed == null || unprefixed == null || unprefixed.isEmpty()) return;
             String known = unprefixedByPrefixed.get(prefixed);
             if (known == null) {
                 if (unprefixedByPrefixed.size() >= capacity) return;
@@ -531,7 +537,7 @@ public final class OtherlodeEndpoints {
             String current = route;
             for (int step = 0; step < MAX_STEPS; step++) {
                 String next = unprefixedByPrefixed.get(current);
-                if (next == null) return current;
+                if (next == null || next.equals(current)) return current;
                 if (next == AMBIGUOUS) return route;
                 current = next;
             }
