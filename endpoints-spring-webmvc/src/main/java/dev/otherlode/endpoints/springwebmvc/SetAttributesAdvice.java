@@ -67,6 +67,7 @@ public class SetAttributesAdvice {
     private static final String PREDICATE_RESOURCE_KEY = "fnrespred";
     private static final String INTROSPECTOR_REQUEST =
             "org.springframework.web.servlet.handler.HandlerMappingIntrospector$AttributesPreservingRequest";
+    private static final String DISPATCHER_CONTEXT = "org.springframework.web.servlet.DispatcherServlet.CONTEXT";
     private static final String RESOURCE_HANDLER_FUNCTION = "org.springframework.web.servlet.function.ResourceHandlerFunction";
     private static final String ROUTER_DSL = "org.springframework.web.servlet.function.RouterFunctionDsl";
     private static final String HANDLE_DESCRIPTOR =
@@ -82,6 +83,7 @@ public class SetAttributesAdvice {
             // Spring passes a null handler when no route matched.
             if (handlerFunction == null || resourceServed) return;
             if (INTROSPECTOR_REQUEST.equals(servletRequest.getClass().getName())
+                    || servletRequest.getAttribute(DISPATCHER_CONTEXT) == null
                     || servletRequest.getDispatcherType() == DispatcherType.ASYNC
                     || ("OPTIONS".equals(servletRequest.getMethod())
                             && servletRequest.getHeader("Origin") != null

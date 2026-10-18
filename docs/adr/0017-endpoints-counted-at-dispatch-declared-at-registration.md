@@ -120,3 +120,10 @@ Considered: treating every unresolvable supertype as "no match". Rejected: it wo
 - A switch-off from a matcher writes two WARNING lines: the matcher's own, naming the class, and the module's usual `disabled itself`. The earlier bullet's "one WARNING" counted only the first.
 
 Considered: keeping the prefix skip beside the loader fallback. Rejected: a skip by name decides nothing the load does not decide better, and it left every other absent supertype a way to switch the module off.
+
+## Amended on 2026-10-18: Spring MVC counts only what DispatcherServlet's dispatch looks up
+
+Decided on 2026-10-18, from a review of the filter rule in ADR 0074, after a failing test. OpenTelemetry's Spring MVC library filter (`WebMvcTelemetryProducingFilter`) and its Java agent counterpart (`OpenTelemetryHandlerMappingFilter`) look the route up after the filter chain returns. The earlier guard dropped that lookup only when the request already carried `HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE`, so when Spring Security answered 401 the lookup was the first, and the request counted although no handler was reached. With the library filter, a rejected request counted one hit on `GET /orders`.
+
+- The annotated (`handleMatch`), functional (`setAttributes`) and `resources(...)` hooks count only a request that carries `DispatcherServlet.WEB_APPLICATION_CONTEXT_ATTRIBUTE` (`org.springframework.web.servlet.DispatcherServlet.CONTEXT`). `DispatcherServlet.doService` sets it before `doDispatch` and so before any handler lookup, in 5.3.39, 6.2.19 and 7.0.9 (read from the class files). A filter that answers first leaves it unset. MockMvc runs a `DispatcherServlet` subclass and sets it, a Boot error dispatch and a forward re-enter `doService`, and the attribute is never cleared for a `REQUEST` dispatch, so the dispatch's own lookup always finds it. The URL-mapped hook already runs only inside `DispatcherServlet`.
+- A servlet that is not a `DispatcherServlet` and runs Spring's handler mappings itself would go uncounted. None is known.

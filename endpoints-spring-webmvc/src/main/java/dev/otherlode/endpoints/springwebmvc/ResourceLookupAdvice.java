@@ -39,6 +39,7 @@ public class ResourceLookupAdvice {
     private static final String RESOURCE_KEY = "fnres";
     private static final String INTROSPECTOR_REQUEST =
             "org.springframework.web.servlet.handler.HandlerMappingIntrospector$AttributesPreservingRequest";
+    private static final String DISPATCHER_CONTEXT = "org.springframework.web.servlet.DispatcherServlet.CONTEXT";
 
     @Advice.OnMethodExit(suppress = Throwable.class)
     public static void onExit(
@@ -52,6 +53,7 @@ public class ResourceLookupAdvice {
             OtherlodeEndpoints.resourceServed(servletRequest);
             String verb = servletRequest.getMethod();
             if (INTROSPECTOR_REQUEST.equals(servletRequest.getClass().getName())
+                    || servletRequest.getAttribute(DISPATCHER_CONTEXT) == null
                     || servletRequest.getDispatcherType() == DispatcherType.ASYNC
                     || !("GET".equals(verb) || "HEAD".equals(verb) || "OPTIONS".equals(verb))
                     || ("OPTIONS".equals(verb)

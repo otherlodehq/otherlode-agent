@@ -23,12 +23,15 @@ import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
  * Framework major version this agent supports. A lookup {@code HandlerMappingIntrospector} makes
  * for Spring Security or CORS arrives with the request wrapped in its own request class, an async
  * redispatch has the dispatcher type {@code ASYNC}, and a CORS preflight is answered by Spring's
- * preflight handler. None of the three is a call of the route it matches. Neither is a second
- * lookup on a request that is still a {@code REQUEST} dispatch but already carries {@code
- * HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE}, which only the first lookup sets. OpenTelemetry's
- * Spring MVC library instrumentation makes that lookup from its filter, after the dispatch, on the
- * container's request, to learn the route. A forward or an include has its own dispatcher type and
- * counts.
+ * preflight handler. None of the three is a call of the route it matches. Neither is a lookup
+ * made before {@code DispatcherServlet.doService} has set {@code
+ * DispatcherServlet.WEB_APPLICATION_CONTEXT_ATTRIBUTE} on the request, which it does before {@code
+ * doDispatch} in Spring 5.3, 6 and 7, so every dispatch carries it: OpenTelemetry's Spring MVC
+ * instrumentation looks the route up from its filter after the chain returns, and when an inner
+ * filter answered the request that is the first lookup. Nor is a second lookup on a request that is
+ * still a {@code REQUEST} dispatch but already carries {@code
+ * HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE}, which only the first lookup sets. A forward or
+ * an include has its own dispatcher type and counts.
  *
  * <p>The {@link RequestMappingInfo} handed to this method is a new object built per request by
  * {@code getMatchingCondition}, never the one {@link RegisterHandlerMethodAdvice} saw at
@@ -45,6 +48,7 @@ public class HandleMatchAdvice {
     private static final String MODULE = "spring-webmvc";
     private static final String INTROSPECTOR_REQUEST =
             "org.springframework.web.servlet.handler.HandlerMappingIntrospector$AttributesPreservingRequest";
+    private static final String DISPATCHER_CONTEXT = "org.springframework.web.servlet.DispatcherServlet.CONTEXT";
 
     @Advice.OnMethodEnter(suppress = Throwable.class)
     public static void onEnter(
@@ -52,6 +56,7 @@ public class HandleMatchAdvice {
             @Advice.Argument(2) HttpServletRequest request) {
         try {
             if (INTROSPECTOR_REQUEST.equals(request.getClass().getName())
+                    || request.getAttribute(DISPATCHER_CONTEXT) == null
                     || request.getDispatcherType() == DispatcherType.ASYNC
                     || (request.getDispatcherType() == DispatcherType.REQUEST
                             && request.getAttribute(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE) != null)

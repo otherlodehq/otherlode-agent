@@ -112,6 +112,39 @@ class SpringWebMvcRequestCountTest {
     }
 
     @Test
+    fun `a lookup made outside the dispatcher is no call on every route kind`() {
+        withModule { registry ->
+            val context = urlMappedContext()
+            val mockMvc = MockMvcBuilders.webAppContextSetup(context).build()
+
+            lookupOutsideDispatcher(context, "/checkout/42")
+            lookupOutsideDispatcher(context, "/static/app.js")
+            lookupOutsideDispatcher(context, "/unmapped/a")
+            assertEquals(emptyMap(), hits(registry), "a filter's lookup after the chain is no call")
+
+            mockMvc.perform(get("/checkout/42"))
+
+            assertEquals(mapOf("GET /checkout/{id}" to 1L), hits(registry))
+        }
+    }
+
+    @Test
+    fun `a functional lookup made outside the dispatcher is no call`() {
+        withModule { registry ->
+            val handler = HandlerFunction<ServerResponse> { ServerResponse.ok().build() }
+            val context = buildFunctionalWebApplicationContext(route(GET("/fn/{id}"), handler))
+            val mockMvc = MockMvcBuilders.webAppContextSetup(context).build()
+
+            lookupOutsideDispatcher(context, "/fn/1")
+            assertEquals(emptyMap(), hits(registry), "a filter's lookup after the chain is no call")
+
+            mockMvc.perform(get("/fn/1"))
+
+            assertEquals(mapOf("GET /fn/{id}" to 1L), hits(registry))
+        }
+    }
+
+    @Test
     fun `an async request counts once`() {
         withModule { registry ->
             val mockMvc = MockMvcBuilders.standaloneSetup(AsyncController()).build()

@@ -29,6 +29,8 @@ the section being read.
 
 ### Fixed
 
+- With OpenTelemetry's Spring MVC instrumentation present, a request that a filter answered before `DispatcherServlet` ran, a 401 from Spring Security for one, is no longer counted against the route OpenTelemetry looks up afterwards. Annotated, functional and `resources(...)` routes count only a lookup made by the dispatch.
+
 - With the route bridge on, a servlet's extension mapping (`*.do`) and default mapping (`/`) count once, under the `servlet` module, instead of also under the bridge's `/*.do`, `/*` and `/`.
 - With the route bridge on, a route a root-context application serves is no longer attributed to another application's route when a second application's context path makes the two read alike. Both count, the second as the bridge's duplicate.
 

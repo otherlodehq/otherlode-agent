@@ -6,8 +6,10 @@ import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestMethod
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.context.WebApplicationContext
+import org.springframework.web.servlet.HandlerMapping
 import org.springframework.web.servlet.function.RouterFunction
 import org.springframework.web.servlet.handler.HandlerMappingIntrospector
+import org.springframework.web.util.ServletRequestPathUtils
 import java.util.concurrent.Callable
 
 /** A handler that completes on another thread, so a request to it is dispatched twice. */
@@ -37,6 +39,22 @@ fun introspectorLookup(
     introspector.setApplicationContext(context)
     introspector.afterPropertiesSet()
     introspector.getCorsConfiguration(MockHttpServletRequest("GET", uri))
+}
+
+/**
+ * Looks [uri] up the way a servlet filter does after the chain returns, as OpenTelemetry's Spring
+ * MVC instrumentation does to learn the route: each handler mapping's `getHandler` on the
+ * container's own request, with no `DispatcherServlet` having run.
+ */
+fun lookupOutsideDispatcher(
+    context: WebApplicationContext,
+    uri: String,
+) {
+    for (mapping in context.getBeansOfType(HandlerMapping::class.java).values) {
+        val request = MockHttpServletRequest("GET", uri)
+        ServletRequestPathUtils.parseAndCache(request)
+        runCatching { mapping.getHandler(request) }
+    }
 }
 
 /**
