@@ -139,31 +139,14 @@ dispatch for the other modules.
 ### Endpoint modules and framework markers: building, before 0.1.0
 
 Settled on 2026-10-17: ADR 0017's second amendment of that date, ADRs
-0072 and 0073, ADR 0020's amendment, and server ADR 0071. Landing order,
-one commit per chunk, each with its `docs/site` pages:
+0072 and 0073, ADR 0020's amendment, and server ADR 0071. Chunks 1 to 9b
+(the normaliser, Spring MVC and WebFlux, Javalin, Micronaut, the regex
+template, Vert.x Web, the RESTEasy Reactive gate, and Micronaut's
+dispatch-point gate with `ROUTES_NOT_COUNTED`) have landed in all three
+repos. One chunk remains, with its `docs/site` pages:
 
-1. Normaliser rules for Micronaut's and Javalin's template forms.
-2. Spring MVC: declare functional routes at `afterPropertiesSet`, no
-   count for any CORS preflight, declare and count top-level
-   `resources(...)` routes.
-3. The functional-route walk moved to a helper both Spring modules share.
-4. `spring-webflux`.
-5. `javalin-6` and `javalin-7`, with the `CrudHandler` join.
-6. `micronaut` (4.0 to 5.x), then `micronaut-3` (Netty and servlet).
-7. Wire: the regex template field on `EndpointLocation`, then the
-   collector's bindings, then the server.
-8. `vertx-web`, and the route bridge converting Vert.x colon parameters.
-9. JAX-RS: the class-level `@Path` gate opens for RESTEasy Reactive.
-9b. Micronaut: the micronaut-aws 3.x hook, and declaration only once a
-    counted dispatch point exists, with a new disabled kind for a router
-    no dispatch point arms (ADR 0017's last amendment), then the
-    collector's bindings and the server's label.
 10. Wire: framework markers, each proved by a three-JVM fixture, then the
     collector's bindings, then the server.
-
-Chunk 2 also makes a request count once (ADR 0017's amendment): Spring
-Security 6.1.6 to 6.5 counted every Spring MVC request twice, and async
-redispatches counted again.
 
 ### A servlet module: to grill, before 0.1.0
 
