@@ -45,7 +45,7 @@ class SpringBootServletTest {
     private fun frameworkHits(framework: String): Long = endpoints(framework).sumOf { hits(it) }
 
     @Test
-    fun `dispatcherServlet is left out, a controller counts once in the Spring MVC module, and a registered servlet counts in the servlet module`() {
+    fun `dispatcherServlet is left out, a controller counts once in Spring MVC, and a registered servlet counts in the servlet module`() {
         val context =
             SpringApplicationBuilder(BootApp::class.java)
                 .properties("server.port=0", "spring.h2.console.enabled=true", "spring.main.banner-mode=off")
