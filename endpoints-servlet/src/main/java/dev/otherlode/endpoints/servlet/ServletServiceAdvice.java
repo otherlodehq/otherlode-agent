@@ -1,7 +1,7 @@
 package dev.otherlode.endpoints.servlet;
 
 import dev.otherlode.bootstrap.OtherlodeEndpoints;
-import java.util.List;
+import java.util.Arrays;
 import javax.servlet.DispatcherType;
 import javax.servlet.ServletContext;
 import javax.servlet.ServletRequest;
@@ -30,6 +30,9 @@ import net.bytebuddy.asm.Advice;
  * {@code getHttpServletMapping} does not link, and the failure disables the module with the kind
  * {@code LINKAGE_ERROR}.
  *
+ * <p>The Servlet 3.1 API's class files are version 51, which cannot call a static interface method
+ * such as {@code List.of}: the woven {@code HttpServlet} would fail to verify.
+ *
  * <p>This method is deliberately one flat body with no private helper method of its own; see the
  * Spring MVC module's {@code RegisterHandlerMethodAdvice} Javadoc for why.
  */
@@ -52,9 +55,9 @@ public class ServletServiceAdvice {
             Object entry = null;
             for (int attempt = 0; entry == null && attempt < 2; attempt++) {
                 if (attempt == 1) OtherlodeEndpoints.declare(MODULE, context);
-                entry = OtherlodeEndpoints.lookup(MODULE, List.of(context, name, pattern, method, hooked));
+                entry = OtherlodeEndpoints.lookup(MODULE, Arrays.<Object>asList(context, name, pattern, method, hooked));
                 if (entry == null) {
-                    entry = OtherlodeEndpoints.lookup(MODULE, List.of(context, name, pattern, "*", hooked));
+                    entry = OtherlodeEndpoints.lookup(MODULE, Arrays.<Object>asList(context, name, pattern, "*", hooked));
                 }
             }
             if (entry == null) return;
