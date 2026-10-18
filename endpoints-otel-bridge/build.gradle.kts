@@ -112,6 +112,30 @@ testing {
             useJUnitJupiter()
             sources {
                 kotlin.srcDir("src/prefixTestShared/kotlin")
+                resources.srcDir("src/prefixTestShared/resources")
+                kotlin.srcDir("src/agentOrderShared/kotlin")
+            }
+            dependencies {
+                implementation(project())
+                implementation(project(":"))
+                implementation(project(":endpoints-api"))
+                compileOnly(project(":bootstrap"))
+                implementation("org.jetbrains.kotlin:kotlin-test-junit5:2.2.21")
+                implementation("net.bytebuddy:byte-buddy:1.18.12")
+                implementation("org.apache.tomcat.embed:tomcat-embed-core:$tomcatVersion")
+                implementation("org.springframework:spring-webmvc:$springVersion")
+                implementation("org.glassfish.jersey.containers:jersey-container-servlet:$jerseyVersion")
+                implementation("org.glassfish.jersey.inject:jersey-hk2:$jerseyVersion")
+                implementation("jakarta.ws.rs:jakarta.ws.rs-api:3.1.0")
+            }
+        }
+
+        register<JvmTestSuite>("otelAgentFirstTest") {
+            useJUnitJupiter()
+            sources {
+                kotlin.srcDir("src/prefixTestShared/kotlin")
+                resources.srcDir("src/prefixTestShared/resources")
+                kotlin.srcDir("src/agentOrderShared/kotlin")
             }
             dependencies {
                 implementation(project())
@@ -132,6 +156,7 @@ testing {
             useJUnitJupiter()
             sources {
                 kotlin.srcDir("src/prefixTestShared/kotlin")
+                resources.srcDir("src/prefixTestShared/resources")
             }
             dependencies {
                 implementation(project())
@@ -151,6 +176,8 @@ testing {
 
 val otelAgentTestAgentJar =
     prefixTestAgentJar("agent", provider { testing.suites.named<JvmTestSuite>("otelAgentTest").get().sources.output })
+val otelAgentFirstTestAgentJar =
+    prefixTestAgentJar("agent-first", provider { testing.suites.named<JvmTestSuite>("otelAgentFirstTest").get().sources.output })
 val otelLibraryTestAgentJar =
     prefixTestAgentJar("library", provider { testing.suites.named<JvmTestSuite>("otelLibraryTest").get().sources.output })
 
@@ -166,6 +193,31 @@ testing.suites.named<JvmTestSuite>("otelAgentTest") {
                         listOf(
                             "-javaagent:${otelAgentTestAgentJar.get().archiveFile.get().asFile.absolutePath}",
                             "-javaagent:${otelJavaagent.singleFile.absolutePath}",
+                            "-Dotel.traces.exporter=none",
+                            "-Dotel.metrics.exporter=none",
+                            "-Dotel.logs.exporter=none",
+                        )
+                    },
+                )
+            }
+        }
+    }
+}
+
+// OpenTelemetry's agent listed first, so it has rewritten framework classes before this agent sees
+// them; otelAgentTest lists this agent first.
+testing.suites.named<JvmTestSuite>("otelAgentFirstTest") {
+    targets {
+        all {
+            testTask.configure {
+                dependsOn(otelAgentFirstTestAgentJar)
+                include("**/*Test.class")
+                forkEvery = 1
+                jvmArgumentProviders.add(
+                    CommandLineArgumentProvider {
+                        listOf(
+                            "-javaagent:${otelJavaagent.singleFile.absolutePath}",
+                            "-javaagent:${otelAgentFirstTestAgentJar.get().archiveFile.get().asFile.absolutePath}",
                             "-Dotel.traces.exporter=none",
                             "-Dotel.metrics.exporter=none",
                             "-Dotel.logs.exporter=none",
@@ -196,5 +248,6 @@ testing.suites.named<JvmTestSuite>("otelLibraryTest") {
 
 tasks.check {
     dependsOn(testing.suites.named("otelAgentTest"))
+    dependsOn(testing.suites.named("otelAgentFirstTest"))
     dependsOn(testing.suites.named("otelLibraryTest"))
 }

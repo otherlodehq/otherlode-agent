@@ -26,3 +26,7 @@ the section being read.
 - A module the configuration keeps off, by `disabledEndpointModules` or by `endpointsEnabled=false`, is reported as disabled with the kind `CONFIGURED_OFF`, in the wire format and in the testkit.
 - Endpoint counting for micronaut-aws 3.x on Lambda, as part of `micronaut-3`, at the entry of `MicronautLambdaContainerHandler.handleRequest` from the route match the request carries.
 - The Micronaut modules declare a router's routes only once a dispatch point they count at has been constructed: Netty's `RoutingInBoundHandler`, micronaut-servlet's `ServletHttpHandler`, micronaut-aws's `MicronautLambdaContainerHandler`, or `RouteExecutor` on Micronaut 4 and 5. A router that waits one flush interval with none constructed, or is still waiting at the final flush, reports the module as disabled with the new kind `ROUTES_NOT_COUNTED`, in the wire format and in the testkit, and the module declares nothing.
+
+### Fixed
+
+- With OpenTelemetry's agent listed before this one, no endpoint module is switched off and no class goes unwoven. The JAX-RS module no longer reads the interfaces OpenTelemetry generates for a framework class, or its helper classes, which no class file can describe. A module whose type matcher cannot decide about a class switches only itself off, with the kind for a transform failure, instead of aborting the weave of every module that matched the class.

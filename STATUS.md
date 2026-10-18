@@ -151,16 +151,6 @@ ADR 0074. In order:
    2026-10-18 amendment), tested with the servlet module present so
    OpenTelemetry's `/shop/api/*` lands on the module's `/api/*`.
 
-### Running beside OpenTelemetry: to fix before 0.1.0
-
-- With OpenTelemetry's agent listed before this one, OpenTelemetry has
-  rewritten servlet and Tomcat classes to carry its virtual-field interfaces,
-  which live in its own class loader. The JAX-RS matcher's supertype walk
-  cannot resolve them, so the class's weave fails, and a module that matched
-  that class (`spring-webmvc` on `DispatcherServlet`) is switched off. The
-  bridge's tests list OpenTelemetry's agent after this one, where it does not
-  happen.
-
 ### Endpoint follow-ups
 
 - `endpoints-ktor-3` compiles against Ktor 3.5.2, its newest supported

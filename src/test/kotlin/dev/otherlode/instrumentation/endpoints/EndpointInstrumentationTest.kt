@@ -482,6 +482,41 @@ class EndpointInstrumentationTest {
     }
 
     @Test
+    fun `a module whose matcher throws does not stop a module listed after it from weaving the class`() {
+        val registry = EndpointRegistry()
+        val throwing = ThrowingMatcherModule("a-throwing-${System.nanoTime()}")
+        val bystander = DeclaringModule(template = "/bystander", moduleName = "z-declaring-${System.nanoTime()}")
+
+        install(registry, listOf(throwing, bystander), "com.example.framework.FakeRouter")
+
+        assertEquals(listOf(throwing.name), registry.disabledModules().map { it.module })
+        assertEquals(listOf("/bystander"), registry.endpoints().map { it.verbatimTemplate })
+    }
+
+    @Test
+    fun `a module whose matcher throws does not switch off a module listed before it that matched the class`() {
+        val registry = EndpointRegistry()
+        val bystander = DeclaringModule(template = "/bystander", moduleName = "a-declaring-${System.nanoTime()}")
+        val throwing = ThrowingMatcherModule("z-throwing-${System.nanoTime()}")
+
+        install(registry, listOf(bystander, throwing), "com.example.framework.FakeRouter")
+
+        assertEquals(listOf(throwing.name), registry.disabledModules().map { it.module })
+        assertEquals(listOf("/bystander"), registry.endpoints().map { it.verbatimTemplate })
+    }
+
+    @Test
+    fun `a module whose matcher threw is not asked about another class`() {
+        val registry = EndpointRegistry()
+        val throwing = ThrowingMatcherModule("throwing-once-${System.nanoTime()}")
+        val router = install(registry, listOf(throwing), "com.example.framework.FakeRouter")
+
+        Class.forName("com.example.framework.BrokenRouter", true, router.javaClass.classLoader)
+
+        assertEquals(1, throwing.asked.get(), "a module switched off is not asked again")
+    }
+
+    @Test
     fun `a module whose type matcher throws is switched off as TRANSFORM_FAILED`() {
         val registry = EndpointRegistry()
         val moduleName = "throwing-matcher-${System.nanoTime()}"
@@ -785,6 +820,31 @@ private class DeclaringModule(
             withHook
         }
     }
+
+    override fun declare(frameworkObject: Any) = Unit
+}
+
+/** Throws from its type matcher on every fixture-framework class it is asked about, and counts the asks. */
+private class ThrowingMatcherModule(
+    override val name: String,
+) : EndpointModule {
+    val asked = AtomicInteger()
+
+    override fun typeMatcher(): ElementMatcher<in TypeDescription> =
+        ElementMatcher { type ->
+            if (type.name.startsWith("com.example.framework.")) {
+                asked.incrementAndGet()
+                throw IllegalStateException("simulated matcher failure")
+            }
+            false
+        }
+
+    override fun transform(
+        builder: DynamicType.Builder<*>,
+        typeDescription: TypeDescription,
+        advice: AdviceBinder,
+        classLoader: ClassLoader?,
+    ): DynamicType.Builder<*> = builder
 
     override fun declare(frameworkObject: Any) = Unit
 }

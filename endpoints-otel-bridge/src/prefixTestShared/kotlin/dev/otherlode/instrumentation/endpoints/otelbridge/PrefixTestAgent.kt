@@ -4,6 +4,7 @@ import dev.otherlode.instrumentation.endpoints.EndpointInstrumentation
 import dev.otherlode.instrumentation.endpoints.EndpointModules
 import dev.otherlode.registry.EndpointRegistry
 import java.lang.instrument.Instrumentation
+import java.util.concurrent.CopyOnWriteArrayList
 
 /**
  * A real `-javaagent` entry point for the suites that run a servlet container beside OpenTelemetry.
@@ -13,6 +14,9 @@ import java.lang.instrument.Instrumentation
 object PrefixTestAgent {
     lateinit var registry: EndpointRegistry
         private set
+
+    /** Every warning or worse the agent logged through `System.Logger`, from the first one on; see [CapturingLoggerFinder]. */
+    val warnings = CopyOnWriteArrayList<String>()
 
     @JvmStatic
     fun premain(

@@ -103,3 +103,12 @@ A router waits for its dispatch point for one flush interval, or until the agent
 
 Considered: gating on a dispatch class being on the classpath. Rejected: a Lambda application that also ships Netty for local runs would still declare what it cannot count.
 
+
+## Amended on 2026-10-18: a matcher that cannot decide switches off its own module and nothing else
+
+Decided on 2026-10-18, from a run with OpenTelemetry's agent listed before this one. ByteBuddy runs every module's raw matcher inside one transform call (`AgentBuilder.Default.ExecutingTransformer.doTransform`, byte-buddy 1.18.12), so a matcher that threw aborted the weave of the class for every module, and the listener switched off each module that had matched it up to that point. Which modules those were depended on the order of their names, and a module that sorted after the thrower was never recorded, so its hooks went missing from the class with no report.
+
+- A matcher that throws is caught where the module's matcher is called. That module is switched off as `TRANSFORM_FAILED`, with one WARNING naming the class it could not decide about, and answers no to every later class. Every other module's matcher still runs and the class is woven for them. This replaces the earlier wording that a matcher which throws is recorded among the modules a failed weave switches off.
+- The JAX-RS matcher cannot resolve what OpenTelemetry's agent adds, and no locator can supply it. Its generated field-accessor interfaces (`io.opentelemetry.javaagent.bootstrap.field.VirtualFieldAccessor$...`, built in memory and appended to the bootstrap class path as a jar, so a resource lookup finds no class file: `GeneratedVirtualFieldNames` and `FieldBackedImplementationInstaller`, opentelemetry-javaagent 2.31.1) and its helper classes (injected into an application loader from class files only the agent's own loader can read) have no class file reachable by name. Synthesizing the interfaces as OpenTelemetry's own locator does would copy a private generator. The module therefore matches no class under `io.opentelemetry.javaagent.` and enters no supertype under it, since none of that code can carry a JAX-RS annotation. Any other unresolvable supertype still throws, so the module is switched off rather than a real resource dropped silently.
+
+Considered: treating every unresolvable supertype as "no match". Rejected: it would drop a real JAX-RS resource whose base class cannot be read, with no report.

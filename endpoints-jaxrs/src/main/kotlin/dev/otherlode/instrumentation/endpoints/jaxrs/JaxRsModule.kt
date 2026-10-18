@@ -13,6 +13,7 @@ import net.bytebuddy.matcher.ElementMatchers.isInterface
 import net.bytebuddy.matcher.ElementMatchers.isNative
 import net.bytebuddy.matcher.ElementMatchers.isStatic
 import net.bytebuddy.matcher.ElementMatchers.isSynthetic
+import net.bytebuddy.matcher.ElementMatchers.nameStartsWith
 import net.bytebuddy.matcher.ElementMatchers.not
 import java.lang.System.Logger.Level
 import java.util.Collections
@@ -46,6 +47,16 @@ private val HTTP_METHOD_NAMES = NAMESPACES.map { "$it.HttpMethod" }.toSet()
  * base classes to visit.
  */
 private val SKIPPED_SUPERTYPE_PREFIXES = listOf("java.", "jdk.", "sun.", "com.sun.", "kotlin.", "jakarta.", "javax.")
+
+/**
+ * The namespace of OpenTelemetry's Java agent's own code. The agent defines the interfaces it adds
+ * to a framework class in memory (`GeneratedVirtualFieldNames` in `opentelemetry-javaagent`
+ * 2.31.1) and injects its helper classes into an application loader from class files only its own
+ * loader can read, so a pool cannot resolve either and a walk onto one throws. None of it can carry
+ * a JAX-RS annotation, so a class under it is never matched and a supertype under it is never
+ * entered.
+ */
+private const val OPENTELEMETRY_AGENT_PREFIX = "io.opentelemetry.javaagent."
 
 private val ELIGIBLE_METHOD: ElementMatcher.Junction<MethodDescription> =
     not(isStatic<MethodDescription>()).and(not(isAbstract())).and(not(isNative())).and(not(isSynthetic()))
@@ -121,7 +132,8 @@ class JaxRsModule
          */
         override fun typeMatcher(classLoader: ClassLoader?): ElementMatcher<in TypeDescription> {
             val cache = supertypeCaches.cacheFor(classLoader)
-            return not(isInterface<TypeDescription>())
+            return not(nameStartsWith<TypeDescription>(OPENTELEMETRY_AGENT_PREFIX))
+                .and(not(isInterface<TypeDescription>()))
                 .and(not(isAbstract()))
                 .and(not(isSynthetic()))
                 .and(ElementMatcher<TypeDescription> { type -> declaresOwnPathOrVerb(type) || hasInheritedPathOrVerb(type, cache) })
@@ -472,7 +484,8 @@ private class JaxRsLoaderGate : ElementMatcher<ClassLoader?> {
     }
 }
 
-private fun isSkippedSupertype(name: String): Boolean = SKIPPED_SUPERTYPE_PREFIXES.any { name.startsWith(it) }
+private fun isSkippedSupertype(name: String): Boolean =
+    SKIPPED_SUPERTYPE_PREFIXES.any { name.startsWith(it) } || name.startsWith(OPENTELEMETRY_AGENT_PREFIX)
 
 private fun sameSignature(
     a: MethodDescription,

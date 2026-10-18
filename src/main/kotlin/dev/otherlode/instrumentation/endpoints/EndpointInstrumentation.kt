@@ -21,6 +21,7 @@ import java.lang.instrument.Instrumentation
 import java.util.Collections
 import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Wires every discovered [EndpointModule]'s registration and dispatch advice into the JVM.
@@ -65,7 +66,7 @@ class EndpointInstrumentation(
     private val alreadyLoaded = ThreadLocal<Boolean?>()
 
     /**
-     * Every module whose raw matcher accepted, or threw on, the class ByteBuddy is handling on this
+     * Every module whose raw matcher accepted the class ByteBuddy is handling on this
      * thread. The listener's error callback gets no module, so this is how it knows whose hooks a
      * failed weave lost. One thread has one class in flight (see [PendingDeclarations]), so the
      * record is per thread and is cleared when the class is done.
@@ -316,11 +317,18 @@ class EndpointInstrumentation(
     }
 
     companion object {
+        private val matcherLog = System.getLogger(EndpointInstrumentation::class.java.name)
+
         /**
          * The matcher [install] registers for [module], which calls [onMatched] with [module] when it
-         * accepts a class or throws on one: its [EndpointModule.classLoaderMatcher] first,
+         * accepts a class: its [EndpointModule.classLoaderMatcher] first,
          * so a loader the module rejects never has a class parsed for it, then
          * [EndpointModule.typeMatcher] for the defining loader.
+         *
+         * A matcher that throws cannot say whether the module wanted the class, so the module is
+         * switched off as [OtherlodeEndpoints.KIND_TRANSFORM_FAILED] and answers no from then on.
+         * The throw never leaves this matcher: ByteBuddy runs every module's matcher in one
+         * transform call, and an exception from one would abort the weave for all of them.
          *
          * The type matcher is built once for each loader and kept weakly by it, since the default
          * form builds a new `namedOneOf` for every call and this runs for every class the JVM
@@ -333,8 +341,9 @@ class EndpointInstrumentation(
             val loaderMatcher = module.classLoaderMatcher()
             val byLoader = Collections.synchronizedMap(WeakHashMap<ClassLoader, ElementMatcher<in TypeDescription>>())
             val bootstrapMatcher = lazy(LazyThreadSafetyMode.PUBLICATION) { module.typeMatcher(null) }
+            val failed = AtomicBoolean(false)
             return AgentBuilder.RawMatcher { typeDescription, classLoader, _, _, _ ->
-                if (!loaderMatcher.matches(classLoader)) return@RawMatcher false
+                if (failed.get() || !loaderMatcher.matches(classLoader)) return@RawMatcher false
                 val matched =
                     try {
                         val typeMatcher: ElementMatcher<in TypeDescription> =
@@ -345,9 +354,16 @@ class EndpointInstrumentation(
                             }
                         typeMatcher.matches(typeDescription)
                     } catch (t: Throwable) {
-                        // A module whose matcher cannot say whether it wanted the class may have.
-                        onMatched(module)
-                        throw t
+                        if (failed.compareAndSet(false, true)) {
+                            matcherLog.log(
+                                Level.WARNING,
+                                "otherlode: endpoint module ${module.name} could not decide whether to match ${typeDescription.name}, " +
+                                    "so it is switched off",
+                                t,
+                            )
+                            OtherlodeEndpoints.moduleFailed(module.name, OtherlodeEndpoints.KIND_TRANSFORM_FAILED, t)
+                        }
+                        false
                     }
                 if (matched) onMatched(module)
                 matched
