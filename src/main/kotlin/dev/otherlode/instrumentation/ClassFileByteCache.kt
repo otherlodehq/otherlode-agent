@@ -248,12 +248,21 @@ class ClassFileByteCache(
         private const val INITIAL_CAPACITY = 1024
         private const val LOAD_FACTOR = 0.75f
 
-        /** A locator that reads [classLoader] (null for the bootstrap loader) directly, bypassing every cache. */
+        /**
+         * A locator that reads [classLoader] (null for the bootstrap loader) directly, bypassing every cache.
+         *
+         * The bootstrap loader's resource lookup does not see a jar appended to its search at run
+         * time, as OpenTelemetry's agent appends its own, so a class of that jar has no supertypes
+         * to describe. The jar is a `-javaagent` jar, which is on the system class path too.
+         */
         fun uncachedLocatorFor(classLoader: ClassLoader?): ClassFileLocator =
             if (classLoader != null) {
                 ClassFileLocator.ForClassLoader.of(classLoader)
             } else {
-                ClassFileLocator.ForClassLoader.ofBootLoader()
+                ClassFileLocator.Compound(
+                    ClassFileLocator.ForClassLoader.ofBootLoader(),
+                    ClassFileLocator.ForClassLoader.ofSystemLoader(),
+                )
             }
     }
 }

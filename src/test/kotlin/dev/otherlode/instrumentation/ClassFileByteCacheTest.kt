@@ -187,6 +187,15 @@ class ClassFileByteCacheTest {
     }
 
     @Test
+    fun `the bootstrap loader also reads a class file only the system class path serves`() {
+        val appended = ClassFileByteCacheTest::class.java.name
+
+        val bytes = ClassFileByteCache().read(null, appended)
+
+        assertTrue(bytes != null && bytes.isNotEmpty())
+    }
+
+    @Test
     fun `entries of a loader that becomes unreachable are collected`() {
         val cache = ClassFileByteCache()
         val reference = fill(cache)
