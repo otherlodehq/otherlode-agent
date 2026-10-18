@@ -6,7 +6,7 @@ import dev.otherlode.registry.EndpointRegistry
 
 /** The registry reads the servlet tests share. */
 abstract class ServletTestSupport {
-    protected val container: ServletContainer = TomcatContainer()
+    protected val container: ServletContainer = containerUnderTest()
 
     protected val registry: EndpointRegistry get() = ServletTestAgent.endpointRegistry
 

@@ -3,16 +3,6 @@ package dev.otherlode.instrumentation.endpoints.servlet
 import jakarta.servlet.Filter
 import jakarta.servlet.Servlet
 import jakarta.servlet.ServletContext
-import org.apache.catalina.Context
-import org.apache.catalina.startup.Tomcat
-import org.apache.tomcat.util.descriptor.web.ErrorPage
-import org.apache.tomcat.util.descriptor.web.FilterDef
-import org.apache.tomcat.util.descriptor.web.FilterMap
-import java.net.URI
-import java.net.http.HttpClient
-import java.net.http.HttpRequest
-import java.net.http.HttpResponse
-import java.nio.file.Files
 
 /** What a test sets up in a servlet container before it starts. */
 interface WebApp {
@@ -38,6 +28,12 @@ interface WebApp {
 
     /** Adds the container's own default and JSP servlets. */
     fun containerDefaults()
+
+    /** Registers an adopter's subclass of the container's default servlet under [name], mapped by [mapping]. */
+    fun adopterDefaultServlet(
+        name: String,
+        mapping: String,
+    )
 }
 
 /** A started container with one web application in it. */
@@ -63,101 +59,15 @@ interface RunningApp : AutoCloseable {
 
 /** A servlet container a test can run an application in. Adding a container is adding an implementation. */
 interface ServletContainer {
+    /**
+     * Whether the container's `HttpServlet` calls `doPatch` (Servlet 6.1), so `PATCH` is a verb a servlet
+     * declares. The build states it per suite, as a system property, from the container's release.
+     */
+    val servesPatch: Boolean
+        get() = System.getProperty("otherlode.servlet.patch") == "true"
+
     fun start(
         contextPath: String,
         configure: WebApp.() -> Unit,
     ): RunningApp
-}
-
-/** Embedded Tomcat, in the namespace and release the suite's dependencies select. */
-class TomcatContainer : ServletContainer {
-    override fun start(
-        contextPath: String,
-        configure: WebApp.() -> Unit,
-    ): RunningApp {
-        val base = Files.createTempDirectory("servlet-test")
-        val tomcat = Tomcat()
-        tomcat.setBaseDir(base.toString())
-        tomcat.setPort(0)
-        tomcat.connector
-        val context = tomcat.addContext(contextPath, base.toString())
-        TomcatWebApp(context).configure()
-        tomcat.start()
-        return TomcatRunningApp(tomcat, context, tomcat.connector.localPort, contextPath)
-    }
-}
-
-private class TomcatWebApp(
-    private val context: Context,
-) : WebApp {
-    override fun servlet(
-        name: String,
-        servlet: Servlet,
-        vararg mappings: String,
-    ) {
-        Tomcat.addServlet(context, name, servlet)
-        for (mapping in mappings) context.addServletMappingDecoded(mapping, name)
-    }
-
-    override fun filter(
-        name: String,
-        filter: Filter,
-        pattern: String,
-    ) {
-        val definition = FilterDef()
-        definition.filterName = name
-        definition.filter = filter
-        context.addFilterDef(definition)
-        val map = FilterMap()
-        map.filterName = name
-        map.addURLPattern(pattern)
-        context.addFilterMap(map)
-    }
-
-    override fun errorPage(
-        status: Int,
-        location: String,
-    ) {
-        val page = ErrorPage()
-        page.errorCode = status
-        page.location = location
-        context.addErrorPage(page)
-    }
-
-    override fun containerDefaults() {
-        Tomcat.initWebappDefaults(context)
-    }
-}
-
-private class TomcatRunningApp(
-    private val tomcat: Tomcat,
-    context: Context,
-    private val port: Int,
-    private val contextPath: String,
-) : RunningApp {
-    private val tomcatContext = context
-    override val servletContext: ServletContext = context.servletContext
-    private val client = HttpClient.newHttpClient()
-
-    override fun addMappingAfterStart(
-        servletName: String,
-        pattern: String,
-    ) = tomcatContext.addServletMappingDecoded(pattern, servletName)
-
-    override fun send(
-        path: String,
-        method: String,
-    ): Int {
-        val request =
-            HttpRequest
-                .newBuilder(URI.create("http://localhost:$port$contextPath$path"))
-                .method(method, HttpRequest.BodyPublishers.noBody())
-                .build()
-        return client.send(request, HttpResponse.BodyHandlers.discarding()).statusCode()
-    }
-
-    override fun close() {
-        tomcat.stop()
-        tomcat.destroy()
-    }
 }

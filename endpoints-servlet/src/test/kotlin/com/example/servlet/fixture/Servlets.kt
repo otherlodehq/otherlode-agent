@@ -28,7 +28,7 @@ open class GetPostServlet : HttpServlet() {
     ) = resp.say("post")
 }
 
-/** Declares every `do*` method, and a `doPatch` that Servlet 6.0 and earlier never call. */
+/** Declares every `do*` method but `doPatch`. */
 class AllVerbsServlet : HttpServlet() {
     override fun doGet(
         req: HttpServletRequest,
@@ -59,11 +59,6 @@ class AllVerbsServlet : HttpServlet() {
         req: HttpServletRequest,
         resp: HttpServletResponse,
     ) = resp.say("trace")
-
-    fun doPatch(
-        req: HttpServletRequest,
-        resp: HttpServletResponse,
-    ) = resp.say("patch")
 }
 
 /** Declares `GET` and `HEAD`, so `HEAD` is a verb of its own. */
@@ -223,19 +218,6 @@ class FailingServlet : HttpServlet() {
         req: HttpServletRequest,
         resp: HttpServletResponse,
     ): Unit = throw ServletException("boom")
-}
-
-/** Declares `GET` and a `doPatch` that only a Servlet 6.1 `HttpServlet` calls. */
-class PatchServlet : HttpServlet() {
-    override fun doGet(
-        req: HttpServletRequest,
-        resp: HttpServletResponse,
-    ) = resp.say("get")
-
-    fun doPatch(
-        req: HttpServletRequest,
-        resp: HttpServletResponse,
-    ) = resp.say("patch")
 }
 
 /** A subclass of a servlet the module leaves out by its hierarchy. */

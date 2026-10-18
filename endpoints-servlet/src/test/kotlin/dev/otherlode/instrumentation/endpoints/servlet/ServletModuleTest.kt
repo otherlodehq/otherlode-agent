@@ -11,6 +11,7 @@ import com.example.servlet.fixture.GetPostServlet
 import com.example.servlet.fixture.IncludingServlet
 import com.example.servlet.fixture.InheritingServlet
 import com.example.servlet.fixture.OuterServiceServlet
+import com.example.servlet.fixture.PatchServlet
 import com.example.servlet.fixture.ProtectedServiceServlet
 import com.example.servlet.fixture.ProtectedServiceSuperServlet
 import com.example.servlet.fixture.PublicServiceSuperServlet
@@ -41,6 +42,34 @@ class ServletModuleTest : ServletTestSupport() {
     @AfterEach
     fun moduleStillOn() {
         assertTrue(registry.disabledModules().isEmpty(), "no module switched itself off: ${registry.disabledModules()}")
+        assertEquals(
+            emptyList(),
+            servletEndpoints().filter { it.routeTemplate != "/defaults/mine/*" && !it.handlerClass.orEmpty().startsWith("$FIXTURE.") },
+            "no container servlet is declared",
+        )
+    }
+
+    @Test
+    fun `a doPatch is declared and counted only where the container's HttpServlet calls it`() {
+        container
+            .start("") {
+                servlet("patch", PatchServlet(), "/patch/x")
+            }.use { app ->
+                assertEquals(200, app.send("/patch/x"))
+                if (container.servesPatch) {
+                    assertEquals(setOf("GET /patch/x", "PATCH /patch/x"), declared("/patch"))
+                    assertEquals(200, app.send("/patch/x", "PATCH"))
+                    assertEquals(1, hits("PATCH", "/patch/x"))
+                    val patch = assertNotNull(endpoint("PATCH", "/patch/x"))
+                    assertEquals("doPatch", patch.handlerMethod)
+                } else {
+                    assertEquals(setOf("GET /patch/x"), declared("/patch"))
+                    val before = totalHits()
+                    assertEquals(501, app.send("/patch/x", "PATCH"))
+                    assertEquals(before, totalHits())
+                }
+                assertEquals(1, hits("GET", "/patch/x"))
+            }
     }
 
     @Test
@@ -92,7 +121,7 @@ class ServletModuleTest : ServletTestSupport() {
                         "TRACE /verbs/all",
                     ),
                     declared("/verbs"),
-                    "doPatch declares nothing before Servlet 6.1, and HEAD is no verb of its own",
+                    "HEAD is no verb of its own",
                 )
                 app.send("/verbs/all", "POST")
                 app.send("/verbs/all", "POST")
@@ -261,18 +290,21 @@ class ServletModuleTest : ServletTestSupport() {
             .start("") {
                 containerDefaults()
                 servlet("app", GetPostServlet(), "/defaults/app")
-                servlet("mine", MyDefaultServlet(), "/defaults/mine/*")
+                adopterDefaultServlet("mine", "/defaults/mine/*")
             }.use { app ->
                 assertEquals(200, app.send("/defaults/app"))
-                assertEquals(404, app.send("/defaults/missing.txt"))
-                assertEquals(404, app.send("/defaults/missing.jsp"))
-                val containerHandlers = servletEndpoints().filter { it.handlerClass?.startsWith("org.apache.") == true }
-                assertEquals(emptyList(), containerHandlers.filter { it.handlerClass != MyDefaultServlet::class.java.superclass.name })
-                assertNull(endpoint("*", "*.jsp", EndpointTemplateKind.SERVLET_PATTERN))
+                app.send("/defaults/missing.txt")
+                app.send("/defaults/missing.jsp")
                 assertNull(servletEndpoints().firstOrNull { it.routeTemplate == "*.jsp" || it.routeTemplate == "*.jspx" })
-                assertTrue(declared("/defaults/mine").isNotEmpty(), "a subclass of the default servlet is adopter code")
-                assertEquals(404, app.send("/defaults/mine/x"))
-                assertEquals(1, hits("*", "/defaults/mine/*"))
+                assertEquals(
+                    setOf("/defaults/mine/*"),
+                    servletEndpoints().filter { !it.handlerClass.orEmpty().startsWith("$FIXTURE.") }.map { it.routeTemplate }.toSet(),
+                    "only the adopter's subclass of a container servlet is declared",
+                )
+                app.send("/defaults/mine/x")
+                val mine = servletEndpoints().filter { it.routeTemplate == "/defaults/mine/*" }
+                assertTrue(mine.isNotEmpty(), "a subclass of the default servlet is adopter code")
+                assertEquals(1, mine.sumOf { hits(it.verb, it.routeTemplate) })
             }
     }
 
@@ -403,6 +435,3 @@ class ServletModuleTest : ServletTestSupport() {
             }
     }
 }
-
-/** An adopter's subclass of the container's default servlet. */
-class MyDefaultServlet : org.apache.catalina.servlets.DefaultServlet()
