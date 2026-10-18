@@ -7,6 +7,7 @@ import net.bytebuddy.jar.asm.ClassWriter
 import net.bytebuddy.jar.asm.Opcodes
 import net.bytebuddy.pool.TypePool
 import kotlin.test.Test
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -115,11 +116,21 @@ class JaxRsModuleUnreadableSupertypeTest {
     }
 
     @Test
-    fun `a loaded supertype whose methods cannot be reflected is no match without throwing`() {
+    fun `a loaded supertype whose methods cannot be reflected switches the module off instead of deciding`() {
         val loader = DefiningLoader(javaClass.classLoader)
         loader.define("t.Odd", classBytes("t/Odd", isInterface = true, methodTakes = "t/Absent"))
-        val describe = describe(mapOf("t.Resource" to classBytes("t/Resource", interfaces = listOf("t/Odd"))))
+        val describe =
+            describe(
+                mapOf(
+                    "t.Resource" to classBytes("t/Resource", interfaces = listOf("t/Odd")),
+                    "t.Good" to classBytes("t/Good", path = true),
+                ),
+            )
 
-        assertFalse(JaxRsModule().typeMatcher(loader).matches(describe("t.Resource")))
+        assertFailsWith<NoClassDefFoundError> { JaxRsModule().typeMatcher(loader).matches(describe("t.Resource")) }
+
+        val matcher = EndpointInstrumentation.rawMatcher(JaxRsModule())
+        assertFalse(matcher.matches(describe("t.Resource"), loader, null, null, null))
+        assertFalse(matcher.matches(describe("t.Good"), loader, null, null, null), "the module is off for the run")
     }
 }
