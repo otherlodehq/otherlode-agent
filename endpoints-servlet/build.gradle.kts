@@ -26,6 +26,7 @@ val jetty10Version = providers.gradleProperty("otherlode.framework.jetty10").get
 val jetty12Version = providers.gradleProperty("otherlode.framework.jetty12").getOrElse("12.0.40")
 val undertowVersion = providers.gradleProperty("otherlode.framework.undertow").getOrElse("2.3.26.Final")
 val springBootVersion = providers.gradleProperty("otherlode.framework.springBoot3").getOrElse("3.5.16")
+val h2Version = providers.gradleProperty("otherlode.framework.h2").getOrElse("2.3.232")
 
 dependencies {
     implementation(project(":endpoints-api"))
@@ -253,4 +254,18 @@ containerSuite(
     javaDirs = emptyList(),
 ) {
     implementation("org.eclipse.jetty:jetty-servlet:$jetty9Version")
+}
+
+// A Spring Boot application on embedded Tomcat, with the servlet module and the Spring MVC module
+// both installed by the test agent from the module service files, as the agent finds them.
+containerSuite(
+    "springBoot",
+    listOf(SourceDir("src/springboot/kotlin")),
+    javaDirs = emptyList(),
+    agentClass = "dev.otherlode.instrumentation.endpoints.servlet.BootTestAgent",
+) {
+    implementation(project(":endpoints-spring-common"))
+    implementation(project(":endpoints-spring-webmvc"))
+    implementation("org.springframework.boot:spring-boot-starter-web:$springBootVersion")
+    implementation("com.h2database:h2:$h2Version")
 }

@@ -220,5 +220,20 @@ class FailingServlet : HttpServlet() {
     ): Unit = throw ServletException("boom")
 }
 
+/** Answers an error page dispatch, and records the dispatcher type the container showed it. */
+class ErrorPageServlet : HttpServlet() {
+    override fun doGet(
+        req: HttpServletRequest,
+        resp: HttpServletResponse,
+    ) {
+        dispatches += req.dispatcherType.name
+        resp.say("error page")
+    }
+
+    companion object {
+        val dispatches: MutableList<String> = java.util.concurrent.CopyOnWriteArrayList()
+    }
+}
+
 /** A subclass of a servlet the module leaves out by its hierarchy. */
 class SubOfOwnedServlet : io.javalin.http.servlet.JavalinServlet()

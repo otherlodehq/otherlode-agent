@@ -3,6 +3,7 @@ package dev.otherlode.instrumentation.endpoints.servlet
 import com.example.servlet.fixture.AllVerbsServlet
 import com.example.servlet.fixture.BareServlet
 import com.example.servlet.fixture.BaseGetServlet
+import com.example.servlet.fixture.ErrorPageServlet
 import com.example.servlet.fixture.FailingServlet
 import com.example.servlet.fixture.ForwardingServlet
 import com.example.servlet.fixture.GenericOnlyServlet
@@ -250,10 +251,15 @@ class ServletModuleTest : ServletTestSupport() {
         container
             .start("") {
                 servlet("boom", FailingServlet(), "/err/boom")
-                servlet("page", GetPostServlet(), "/err/page")
+                servlet("page", ErrorPageServlet(), "/err/page")
                 errorPage(500, "/err/page")
             }.use { app ->
                 assertEquals(500, app.send("/err/boom"))
+                assertEquals(
+                    1,
+                    ErrorPageServlet.dispatches.size,
+                    "the container dispatched to the error page: ${ErrorPageServlet.dispatches}",
+                )
                 assertEquals(1, hits("GET", "/err/boom"))
                 assertEquals(0, hits("GET", "/err/page"))
             }
