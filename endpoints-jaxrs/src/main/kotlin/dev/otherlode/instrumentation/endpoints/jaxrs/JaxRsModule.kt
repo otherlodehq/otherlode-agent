@@ -3,6 +3,10 @@ package dev.otherlode.instrumentation.endpoints.jaxrs
 import dev.otherlode.bootstrap.OtherlodeEndpoints
 import dev.otherlode.instrumentation.endpoints.api.AdviceBinder
 import dev.otherlode.instrumentation.endpoints.api.EndpointModule
+import dev.otherlode.instrumentation.endpoints.api.SupertypeCache
+import dev.otherlode.instrumentation.endpoints.api.SupertypeCaches
+import dev.otherlode.instrumentation.endpoints.api.SupertypeResolver
+import dev.otherlode.instrumentation.endpoints.api.UndefinableTypeException
 import net.bytebuddy.description.annotation.AnnotationSource
 import net.bytebuddy.description.method.MethodDescription
 import net.bytebuddy.description.type.TypeDescription
@@ -14,9 +18,7 @@ import net.bytebuddy.matcher.ElementMatchers.isNative
 import net.bytebuddy.matcher.ElementMatchers.isStatic
 import net.bytebuddy.matcher.ElementMatchers.isSynthetic
 import net.bytebuddy.matcher.ElementMatchers.not
-import net.bytebuddy.pool.TypePool
 import java.lang.System.Logger.Level
-import java.lang.ref.WeakReference
 import java.util.Collections
 import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
@@ -92,7 +94,7 @@ class JaxRsModule
         private val log = System.getLogger(JaxRsModule::class.java.name)
         private val classPathIgnoredWarned = ConcurrentHashMap.newKeySet<String>()
         private val interfaceConflictWarned = AtomicBoolean(false)
-        private val supertypeCaches = SupertypeCaches()
+        private val supertypeCaches = SupertypeCaches(::RouteAnnotationCache)
         private val loaderGate = JaxRsLoaderGate()
 
         /**
@@ -124,7 +126,7 @@ class JaxRsModule
          */
         override fun typeMatcher(classLoader: ClassLoader?): ElementMatcher<in TypeDescription> {
             val cache = supertypeCaches.cacheFor(classLoader)
-            val resolver = SupertypeResolver(classLoader, cache)
+            val resolver = SupertypeResolver(classLoader, cache, ::isSkippedSupertype)
             return not(isInterface<TypeDescription>())
                 .and(not(isAbstract()))
                 .and(not(isSynthetic()))
@@ -168,7 +170,7 @@ class JaxRsModule
             // With no class-level @Path the class is no root resource: a sub-resource reached
             // through a locator, which counts on the locator, or a class only Jersey would serve.
             // Declaring it at a prefix-less template would name an endpoint that does not exist.
-            val resolver = SupertypeResolver(classLoader, supertypeCaches.cacheFor(classLoader))
+            val resolver = SupertypeResolver(classLoader, supertypeCaches.cacheFor(classLoader), ::isSkippedSupertype)
             val classPath = resolveClassPath(typeDescription, classLoader, resolver) ?: return builder
             val matched =
                 typeDescription.declaredMethods.filter(ELIGIBLE_METHOD).mapNotNull { method ->
@@ -415,7 +417,7 @@ private fun verbAnnotated(source: AnnotationSource): Boolean = source.declaredAn
  */
 private fun inScope(
     type: TypeDescription,
-    cache: SupertypeCache,
+    cache: RouteAnnotationCache,
     resolver: SupertypeResolver,
 ): Boolean =
     try {
@@ -434,7 +436,7 @@ private fun inScope(
  */
 private fun hasInheritedPathOrVerb(
     type: TypeDescription,
-    cache: SupertypeCache,
+    cache: RouteAnnotationCache,
     resolver: SupertypeResolver,
 ): Boolean {
     val inProgress = mutableSetOf<String>()
@@ -463,60 +465,15 @@ private fun hasInheritedPathOrVerb(
 }
 
 /** An access-ordered LRU of supertype name to whether that supertype or anything above it carries a JAX-RS route annotation. */
-private class SupertypeCache {
+private class RouteAnnotationCache : SupertypeCache() {
     private val entries =
         object : LinkedHashMap<String, Boolean>(16, 0.75f, true) {
             override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Boolean>): Boolean = size > SUPERTYPE_CACHE_SIZE
         }
 
-    private val loaded = ConcurrentHashMap<String, LoadAnswer>()
-    private val definable = ConcurrentHashMap.newKeySet<String>()
-
-    fun isDefinable(name: String): Boolean = name in definable
-
-    /** Whether a walk has already read [name] for this loader, so its description needs no further check. */
-    fun isKnown(name: String): Boolean = isDefinable(name) || get(name) != null
-
-    fun markDefinable(name: String) {
-        definable.add(name)
-    }
+    override fun isKnown(name: String): Boolean = super.isKnown(name) || get(name) != null
 
     operator fun get(name: String): Boolean? = synchronized(entries) { entries[name] }
-
-    /**
-     * The class named [name] as [loader] defines it, or null when [loader] cannot load it. Neither
-     * answer is held by a strong reference to the class, so a cache kept for a loader never keeps
-     * that loader alive through its own entries.
-     */
-    fun loadedClass(
-        name: String,
-        loader: ClassLoader?,
-    ): Class<*>? {
-        loaded[name]?.let { answer ->
-            if (!answer.loadable) return null
-            answer.reference?.get()?.let { return it }
-        }
-        val found = tryLoad(name, loader)
-        loaded[name] = LoadAnswer(found != null, found?.let { WeakReference(it) })
-        return found
-    }
-
-    private fun tryLoad(
-        name: String,
-        loader: ClassLoader?,
-    ): Class<*>? =
-        try {
-            Class.forName(name, false, loader)
-        } catch (_: Exception) {
-            null
-        } catch (_: LinkageError) {
-            null
-        }
-
-    private class LoadAnswer(
-        val loadable: Boolean,
-        val reference: WeakReference<Class<*>>?,
-    )
 
     operator fun set(
         name: String,
@@ -524,24 +481,6 @@ private class SupertypeCache {
     ) {
         synchronized(entries) { entries[name] = value }
     }
-}
-
-/**
- * One [SupertypeCache] per class loader, held weakly so a retired loader stays collectible. A
- * `null` loader gets a fresh cache on every call, which is the same as no cache: the gate rejects
- * the bootstrap loader, so only a caller that does not know the loader passes `null`.
- */
-private class SupertypeCaches {
-    private val byLoader = Collections.synchronizedMap(WeakHashMap<ClassLoader, SupertypeCache>())
-
-    fun cacheFor(loader: ClassLoader?): SupertypeCache =
-        if (loader ==
-            null
-        ) {
-            SupertypeCache()
-        } else {
-            byLoader.getOrPut(loader) { SupertypeCache() }
-        }
 }
 
 /** Whether a loader can see a JAX-RS API, looked up once per loader and held weakly. */
@@ -563,99 +502,6 @@ private fun sameSignature(
     a: MethodDescription,
     b: MethodDescription,
 ): Boolean = a.internalName == b.internalName && a.descriptor == b.descriptor
-
-/** Thrown when a supertype can be neither described from the pool nor loaded, so the class extending it can never be defined. */
-private class UndefinableTypeException(
-    typeName: String,
-) : RuntimeException("$typeName cannot be described or loaded", null, false, false)
-
-/**
- * Reads a type's supertypes, erased, for [loader]'s classes, leaving out those under
- * [SKIPPED_SUPERTYPE_PREFIXES].
- *
- * The agent's pool resolves lazily (`TypePool.Default.WithLazyResolution`), so `asErasure()` hands
- * back a description that throws only when something reads it. A supertype the pool has no class
- * file for is therefore detected here by reading it, then asked of [loader] with
- * `Class.forName(name, false, loader)`. A class defined with no reachable class file, such as an
- * interface OpenTelemetry's agent generates in memory, loads, and is described from the loaded class.
- * One that does not load is a class [loader] cannot define, and [UndefinableTypeException] says so.
- * One that loads but whose methods cannot be reflected, because a type in a signature is absent, is
- * not undefinable, since the JVM resolves signature types lazily: the error reaches the matcher,
- * which switches the module off rather than guess.
- *
- * The load happens only when the pool had no bytes for a supertype, which is rare, and inside the
- * transform of the class that extends it, so the JVM would load that supertype next on this same
- * thread to define the class. It initialises nothing. A loader that locks itself for loading already
- * holds that lock here and re-enters it; a parallel-capable loader locks per class name. A cyclic
- * hierarchy, the only way the load could need the class being defined, is invalid and fails the
- * definition regardless.
- */
-private class SupertypeResolver(
-    private val loader: ClassLoader?,
-    private val cache: SupertypeCache,
-) {
-    /** [type]'s superclass, erased and readable, or null when there is none or it falls under [SKIPPED_SUPERTYPE_PREFIXES]. */
-    fun superErasure(type: TypeDescription): TypeDescription? = locate { type.superClass }?.let(::describe)
-
-    /** [type]'s own declared interfaces, erased and readable, without those under [SKIPPED_SUPERTYPE_PREFIXES]. */
-    fun interfaceErasures(type: TypeDescription): List<TypeDescription> = locateInterfaces(type).mapNotNull(::describe)
-
-    /**
-     * Whether every supertype above [type] can be described or loaded, so the class can be defined.
-     * A supertype found to be definable is remembered for [loader], with everything above it.
-     */
-    fun canBeDefined(type: TypeDescription): Boolean {
-        val seen = mutableSetOf<String>()
-
-        fun visit(
-            candidate: TypeDescription,
-            located: List<Supertype>,
-        ) {
-            if (!seen.add(candidate.name)) return
-            for (supertype in located) {
-                if (isSkippedSupertype(supertype.name) || cache.isDefinable(supertype.name)) continue
-                val described = describe(supertype) ?: continue
-                visit(described, locate { described.superClass }.let(::listOfNotNull) + locateInterfaces(described))
-            }
-            cache.markDefinable(candidate.name)
-        }
-        visit(type, locate { type.superClass }.let(::listOfNotNull) + locateInterfaces(type))
-        return true
-    }
-
-    private class Supertype(
-        val name: String,
-        val erased: TypeDescription?,
-    )
-
-    private fun locateInterfaces(type: TypeDescription): List<Supertype> {
-        val interfaces = type.interfaces
-        return (0 until interfaces.size).mapNotNull { index -> locate { interfaces[index] } }
-    }
-
-    private fun locate(read: () -> TypeDescription.Generic?): Supertype? =
-        try {
-            read()?.asErasure()?.let { Supertype(it.name, it) }
-        } catch (e: TypePool.Resolution.NoSuchTypeException) {
-            Supertype(e.name, null)
-        }
-
-    private fun describe(supertype: Supertype): TypeDescription? {
-        if (isSkippedSupertype(supertype.name)) return null
-        val erased = supertype.erased
-        if (erased != null && (cache.isKnown(supertype.name) || isReadable(erased))) return erased
-        val loaded = cache.loadedClass(supertype.name, loader) ?: throw UndefinableTypeException(supertype.name)
-        return TypeDescription.ForLoadedType.of(loaded)
-    }
-
-    private fun isReadable(type: TypeDescription): Boolean =
-        try {
-            type.modifiers
-            true
-        } catch (_: TypePool.Resolution.NoSuchTypeException) {
-            false
-        }
-}
 
 /** Whether a marker resource is visible on a loader, looked up once per loader and never loading a class. */
 private class MarkerPresence(

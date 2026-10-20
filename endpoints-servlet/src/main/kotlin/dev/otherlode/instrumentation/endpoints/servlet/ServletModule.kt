@@ -2,19 +2,21 @@ package dev.otherlode.instrumentation.endpoints.servlet
 
 import dev.otherlode.instrumentation.endpoints.api.AdviceBinder
 import dev.otherlode.instrumentation.endpoints.api.EndpointModule
+import dev.otherlode.instrumentation.endpoints.api.SupertypeCache
+import dev.otherlode.instrumentation.endpoints.api.SupertypeCaches
+import dev.otherlode.instrumentation.endpoints.api.SupertypeResolver
+import dev.otherlode.instrumentation.endpoints.api.UndefinableTypeException
 import net.bytebuddy.description.method.MethodDescription
 import net.bytebuddy.description.type.TypeDescription
 import net.bytebuddy.dynamic.DynamicType
 import net.bytebuddy.matcher.ElementMatcher
 import net.bytebuddy.matcher.ElementMatchers.declaresMethod
-import net.bytebuddy.matcher.ElementMatchers.hasSuperType
 import net.bytebuddy.matcher.ElementMatchers.isAbstract
 import net.bytebuddy.matcher.ElementMatchers.isBridge
 import net.bytebuddy.matcher.ElementMatchers.isInterface
 import net.bytebuddy.matcher.ElementMatchers.isPublic
 import net.bytebuddy.matcher.ElementMatchers.isStatic
 import net.bytebuddy.matcher.ElementMatchers.named
-import net.bytebuddy.matcher.ElementMatchers.namedOneOf
 import net.bytebuddy.matcher.ElementMatchers.not
 import net.bytebuddy.matcher.ElementMatchers.takesArgument
 import net.bytebuddy.matcher.ElementMatchers.takesArguments
@@ -24,7 +26,38 @@ import java.util.WeakHashMap
 private const val ADVICE = "dev.otherlode.endpoints.servlet.ServletServiceAdvice"
 private val NAMESPACES = listOf("javax", "jakarta")
 private val SERVLET_MARKERS = NAMESPACES.map { "$it/servlet/Servlet.class" }
+private val SERVLET_INTERFACES = NAMESPACES.map { "$it.servlet.Servlet" }.toSet()
+private val SKIPPED_SUPERTYPE_PREFIXES = listOf("java.", "jdk.", "sun.", "com.sun.", "kotlin.")
 private val PLATFORM_LOADER: ClassLoader = ClassLoader.getPlatformClassLoader()
+
+private fun isSkippedSupertype(name: String): Boolean = SKIPPED_SUPERTYPE_PREFIXES.any { name.startsWith(it) }
+
+/**
+ * Whether [type] is, or extends or implements, a servlet interface, and every supertype it needs to
+ * be defined can be described or loaded. A supertype that can be neither means [type] can never be
+ * defined, so it is not a servlet this module can count.
+ */
+private fun isServlet(
+    type: TypeDescription,
+    resolver: SupertypeResolver,
+): Boolean =
+    try {
+        reachesServlet(type, resolver, mutableSetOf()) && resolver.canBeDefined(type)
+    } catch (_: UndefinableTypeException) {
+        false
+    }
+
+private fun reachesServlet(
+    type: TypeDescription,
+    resolver: SupertypeResolver,
+    visited: MutableSet<String>,
+): Boolean {
+    if (type.name in SERVLET_INTERFACES) return true
+    if (!visited.add(type.name)) return false
+    val parent = resolver.superErasure(type)
+    if (parent != null && reachesServlet(parent, resolver, visited)) return true
+    return resolver.interfaceErasures(type).any { reachesServlet(it, resolver, visited) }
+}
 
 private fun serviceMethod(namespace: String): ElementMatcher.Junction<MethodDescription> =
     named<MethodDescription>("service")
@@ -69,13 +102,23 @@ class ServletModule : EndpointModule {
 
     private val contexts = ServletContexts(ServletShapes())
     private val apiGate = ServletApiGate()
+    private val supertypeCaches = SupertypeCaches(::SupertypeCache)
 
     override fun classLoaderMatcher(): ElementMatcher<in ClassLoader> = apiGate
 
-    override fun typeMatcher(): ElementMatcher<in TypeDescription> =
-        not(isInterface<TypeDescription>())
+    override fun typeMatcher(): ElementMatcher<in TypeDescription> = typeMatcher(null)
+
+    /**
+     * A supertype the pool has no class file for is asked of [classLoader] (see
+     * [SupertypeResolver]): one that cannot be loaded means the class can never be defined, so the
+     * answer is no match, and one that loads is read from the loaded class.
+     */
+    override fun typeMatcher(classLoader: ClassLoader?): ElementMatcher<in TypeDescription> {
+        val resolver = SupertypeResolver(classLoader, supertypeCaches.cacheFor(classLoader), ::isSkippedSupertype)
+        return not(isInterface<TypeDescription>())
             .and(declaresMethod(serviceMethod("javax").or(serviceMethod("jakarta"))))
-            .and(hasSuperType(namedOneOf<TypeDescription>("javax.servlet.Servlet", "jakarta.servlet.Servlet")))
+            .and(ElementMatcher<TypeDescription> { type -> isServlet(type, resolver) })
+    }
 
     override fun transform(
         builder: DynamicType.Builder<*>,
