@@ -373,6 +373,11 @@ Endpoints:
 - The OTel bridge duplicates a route under a Spring WebFlux base path with
   OpenTelemetry's library instrumentation, which adds the base path where the
   bridge cannot see the unprefixed route (ADR 0019's 2026-10-18 amendment).
+- A registered servlet whose superclass is defined in memory, with no class
+  file, switches the servlet module off with `ROUTE_WALK_FAILED`: the
+  declare-time walk reads class files by resource (ADR 0074's 2026-10-20
+  amendment). It could read that superclass from the loaded class, as the
+  type matcher does.
 - JSP pages are not counted: each runs inside the container's one JSP
   servlet, which the servlet module leaves out (ADR 0074). Counting a page
   needs a hook in the JSP engine.
