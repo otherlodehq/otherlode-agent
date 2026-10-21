@@ -38,7 +38,10 @@ class MicronautModuleMatcherTest {
     fun `the classes of Micronaut 3 are not accepted`() {
         val jars = System.getProperty("otherlode.micronaut3.jars").split(File.pathSeparator).map { File(it) }
         assertTrue(jars.isNotEmpty() && jars.all { it.isFile }, "$jars")
-        val pool = TypePool.Default.of(ClassFileLocator.Compound(jars.map { ClassFileLocator.ForJarFile.of(it) } + ClassFileLocator.ForClassLoader.ofBootLoader()))
+        val pool =
+            TypePool.Default.of(
+                ClassFileLocator.Compound(jars.map { ClassFileLocator.ForJarFile.of(it) } + ClassFileLocator.ForClassLoader.ofBootLoader()),
+            )
 
         val micronaut3 = URLClassLoader(jars.map { it.toURI().toURL() }.toTypedArray(), null)
         val matcher = module.typeMatcher(micronaut3)
