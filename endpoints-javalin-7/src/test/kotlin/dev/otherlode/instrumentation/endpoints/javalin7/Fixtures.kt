@@ -62,7 +62,7 @@ fun <T> serve(
             configure(it)
             routes(it.routes)
         }
-    app.start(0)
+    app.start("127.0.0.1", 0)
     try {
         return block(app.port())
     } finally {

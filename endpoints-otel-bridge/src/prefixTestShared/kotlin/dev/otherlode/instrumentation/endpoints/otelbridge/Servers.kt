@@ -42,7 +42,7 @@ class TomcatApp(
         val base = Files.createTempDirectory("otel-bridge-test")
         tomcat.setBaseDir(base.toString())
         tomcat.setPort(0)
-        tomcat.connector
+        tomcat.connector.setProperty("address", "127.0.0.1")
         val context = tomcat.addContext(contextPath, base.toString())
         configure(context)
         tomcat.start()

@@ -10,6 +10,7 @@ import io.ktor.server.routing.post
 import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
 import kotlinx.coroutines.delay
+import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.URI
 import java.net.http.HttpClient
@@ -46,7 +47,7 @@ class Ktor3ModuleTest {
     @Test
     fun `registration and dispatch through a real CIO server are tracked end to end`() {
         val registry = Ktor3TestAgent.registry
-        val port = ServerSocket(0).use { it.localPort }
+        val port = ServerSocket(0, 1, InetAddress.getLoopbackAddress()).use { it.localPort }
         val seamWarnings = mutableListOf<LogRecord>()
         val seamLog = JulLogger.getLogger("dev.otherlode.bootstrap.OtherlodeEndpoints")
         val capture =
@@ -62,7 +63,7 @@ class Ktor3ModuleTest {
         seamLog.addHandler(capture)
 
         val server =
-            embeddedServer(CIO, port = port) {
+            embeddedServer(CIO, host = "127.0.0.1", port = port) {
                 routing {
                     get("/checkout/{id}") { call.respondText("ok") }
                     // Suspends, so the dispatch method resumes, re-entering with null arguments.
@@ -137,7 +138,7 @@ class Ktor3ModuleTest {
     ) {
         val request =
             HttpRequest
-                .newBuilder(URI.create("http://localhost:$port$path"))
+                .newBuilder(URI.create("http://127.0.0.1:$port$path"))
                 .timeout(Duration.ofSeconds(5))
                 .GET()
                 .build()

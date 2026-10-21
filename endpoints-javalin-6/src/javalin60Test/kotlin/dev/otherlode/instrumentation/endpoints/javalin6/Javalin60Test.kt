@@ -14,7 +14,7 @@ class Javalin60Test {
     @Test
     fun `Javalin 6_0 disables the module with a LINKAGE_ERROR and keeps serving`() {
         withModules(expectNoneDisabled = false) { registry ->
-            val app = Javalin.create().get("/hello") { ctx -> ctx.result("hello") }.start(0)
+            val app = Javalin.create().get("/hello") { ctx -> ctx.result("hello") }.start("127.0.0.1", 0)
             try {
                 assertEquals(200, send(app.port(), "GET", "/hello"))
             } finally {

@@ -170,7 +170,7 @@ class Micronaut3ModuleTest {
                             .newHttpClient()
                             .newWebSocketBuilder()
                             .buildAsync(
-                                URI.create("ws://localhost:$port$path"),
+                                URI.create("ws://127.0.0.1:$port$path"),
                                 object : WebSocket.Listener {
                                     override fun onOpen(webSocket: WebSocket) {
                                         opened.countDown()

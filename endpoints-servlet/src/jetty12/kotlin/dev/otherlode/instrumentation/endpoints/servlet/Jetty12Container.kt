@@ -37,6 +37,7 @@ class Jetty12Container : ServletContainer {
     ): RunningApp {
         val server = Server()
         val connector = ServerConnector(server)
+        connector.host = LOOPBACK
         connector.port = 0
         server.addConnector(connector)
         val base = Files.createTempDirectory("servlet-test")
@@ -106,7 +107,7 @@ private class Jetty12WebApp(
 private class Jetty12RunningApp(
     private val server: Server,
     private val handler: ServletContextHandler,
-    private val port: Int,
+    override val port: Int,
     private val contextPath: String,
 ) : RunningApp {
     override val servletContext: ServletContext = handler.servletContext

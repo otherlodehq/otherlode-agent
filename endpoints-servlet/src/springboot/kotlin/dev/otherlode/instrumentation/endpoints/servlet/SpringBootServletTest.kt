@@ -19,7 +19,7 @@ private fun sendHttp(
 ): Int {
     val request =
         HttpRequest
-            .newBuilder(URI.create("http://localhost:$port$path"))
+            .newBuilder(URI.create("http://127.0.0.1:$port$path"))
             .method(method, HttpRequest.BodyPublishers.noBody())
             .build()
     return HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.discarding()).statusCode()
@@ -48,7 +48,7 @@ class SpringBootServletTest {
     fun `dispatcherServlet is left out, a controller counts once in Spring MVC, and a registered servlet counts in the servlet module`() {
         val context =
             SpringApplicationBuilder(BootApp::class.java)
-                .properties("server.port=0", "spring.h2.console.enabled=true", "spring.main.banner-mode=off")
+                .properties("server.port=0", "server.address=127.0.0.1", "spring.h2.console.enabled=true", "spring.main.banner-mode=off")
                 .run()
         context.use {
             val port = (context as ServletWebServerApplicationContext).webServer.port

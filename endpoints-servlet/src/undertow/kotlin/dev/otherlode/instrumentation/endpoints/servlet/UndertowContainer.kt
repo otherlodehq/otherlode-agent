@@ -44,7 +44,7 @@ class UndertowContainer : ServletContainer {
                 .builder()
                 .addHttpListener(
                     0,
-                    "localhost",
+                    LOOPBACK,
                 ).setHandler(Handlers.path().addPrefixPath(path, manager.start()))
                 .build()
         server.start()
@@ -94,7 +94,7 @@ private class UndertowWebApp(
 private class UndertowRunningApp(
     private val server: Undertow,
     private val manager: DeploymentManager,
-    private val port: Int,
+    override val port: Int,
     private val contextPath: String,
 ) : RunningApp {
     override val servletContext: ServletContext = manager.deployment.servletContext

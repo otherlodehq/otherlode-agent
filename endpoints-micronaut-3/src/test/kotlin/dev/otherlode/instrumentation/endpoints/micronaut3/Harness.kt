@@ -63,7 +63,12 @@ fun <T> serve(
     block: (Int) -> T,
 ): T {
     client = newClient()
-    val defaults = mapOf<String, Any>("micronaut.server.port" to -1, "endpoints.all.enabled" to false)
+    val defaults =
+        mapOf<String, Any>(
+            "micronaut.server.host" to "127.0.0.1",
+            "micronaut.server.port" to -1,
+            "endpoints.all.enabled" to false,
+        )
     val server = startOnFreePort(defaults + properties)
     try {
         return block(server.port)
@@ -107,7 +112,7 @@ fun send(
     val publisher = if (body == null) HttpRequest.BodyPublishers.noBody() else HttpRequest.BodyPublishers.ofString(body)
     val request =
         HttpRequest
-            .newBuilder(URI.create("http://localhost:$port$path"))
+            .newBuilder(URI.create("http://127.0.0.1:$port$path"))
             .timeout(Duration.ofSeconds(10))
             .method(method, publisher)
     headers.forEach { (name, value) -> request.header(name, value) }

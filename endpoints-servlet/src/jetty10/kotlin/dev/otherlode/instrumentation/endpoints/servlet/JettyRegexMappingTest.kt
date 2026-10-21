@@ -29,6 +29,7 @@ class JettyRegexMappingTest : ServletTestSupport() {
     fun `a regex path spec disables the module with ROUTE_WALK_FAILED and declares nothing`() {
         val server = Server()
         val connector = ServerConnector(server)
+        connector.host = LOOPBACK
         connector.port = 0
         server.addConnector(connector)
         val handler = ServletContextHandler(ServletContextHandler.NO_SESSIONS)

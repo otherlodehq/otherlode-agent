@@ -58,7 +58,7 @@ fun <T> serve(
             vertx
                 .createHttpServer()
                 .requestHandler(router)
-                .listen(0)
+                .listen(0, "127.0.0.1")
                 .toCompletionStage()
                 .toCompletableFuture()
                 .get(10, TimeUnit.SECONDS)
@@ -90,7 +90,7 @@ fun send(
     client
         .send(
             HttpRequest
-                .newBuilder(URI.create("http://localhost:$port$path"))
+                .newBuilder(URI.create("http://127.0.0.1:$port$path"))
                 .timeout(Duration.ofSeconds(5))
                 .method(method, HttpRequest.BodyPublishers.noBody())
                 .build(),

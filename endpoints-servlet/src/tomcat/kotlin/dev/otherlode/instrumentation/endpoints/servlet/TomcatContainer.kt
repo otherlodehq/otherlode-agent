@@ -28,7 +28,7 @@ class TomcatContainer : ServletContainer {
         val tomcat = Tomcat()
         tomcat.setBaseDir(base.toString())
         tomcat.setPort(0)
-        tomcat.connector
+        tomcat.connector.setProperty("address", LOOPBACK)
         val context = tomcat.addContext(contextPath, base.toString())
         TomcatWebApp(context).configure()
         tomcat.start()
@@ -86,7 +86,7 @@ private class TomcatWebApp(
 private class TomcatRunningApp(
     private val tomcat: Tomcat,
     context: Context,
-    private val port: Int,
+    override val port: Int,
     private val contextPath: String,
 ) : RunningApp {
     private val tomcatContext = context

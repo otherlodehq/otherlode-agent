@@ -58,7 +58,7 @@ fun <T> serve(
 ): T {
     val app = Javalin.create { configure(it) }
     routes(app)
-    app.start(0)
+    app.start("127.0.0.1", 0)
     try {
         return block(app.port())
     } finally {

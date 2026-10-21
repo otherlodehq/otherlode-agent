@@ -253,7 +253,7 @@ class VertxWebModuleTest {
                         vertx
                             .createHttpServer()
                             .requestHandler(it)
-                            .listen(0)
+                            .listen(0, "127.0.0.1")
                             .toCompletionStage()
                             .toCompletableFuture()
                             .get(10, TimeUnit.SECONDS)
@@ -616,7 +616,7 @@ class VertxWebModuleTest {
                             .createHttpServer()
                             .requestHandler(
                                 it,
-                            ).listen(0)
+                            ).listen(0, "127.0.0.1")
                             .toCompletionStage()
                             .toCompletableFuture()
                             .get(10, TimeUnit.SECONDS)

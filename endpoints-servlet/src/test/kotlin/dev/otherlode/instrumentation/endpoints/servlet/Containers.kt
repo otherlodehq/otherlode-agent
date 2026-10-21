@@ -8,9 +8,16 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 
+/**
+ * The address every test container binds and every request targets. A listener on a specific address
+ * and one on the wildcard can share a port number on macOS, and a connection then reaches the specific
+ * one, so a request meant for one suite's server would be answered by another's.
+ */
+const val LOOPBACK = "127.0.0.1"
+
 private val client = HttpClient.newHttpClient()
 
-/** Sends [method] to `http://localhost:[port][contextPath][path]` and returns the status. */
+/** Sends [method] to `http://127.0.0.1:[port][contextPath][path]` and returns the status. */
 fun sendHttp(
     port: Int,
     contextPath: String,
@@ -19,7 +26,7 @@ fun sendHttp(
 ): Int {
     val request =
         HttpRequest
-            .newBuilder(URI.create("http://localhost:$port$contextPath$path"))
+            .newBuilder(URI.create("http://$LOOPBACK:$port$contextPath$path"))
             .method(method, HttpRequest.BodyPublishers.noBody())
             .build()
     return client.send(request, HttpResponse.BodyHandlers.discarding()).statusCode()
@@ -60,6 +67,9 @@ interface WebApp {
 /** A started container with one web application in it. */
 interface RunningApp : AutoCloseable {
     val servletContext: ServletContext
+
+    /** The port the container listens on, at [LOOPBACK]. */
+    val port: Int
 
     /**
      * Maps [pattern] to the servlet registered as [servletName] after the container started, by the
