@@ -136,22 +136,14 @@ wanted, is `PendingDeclarations.begin()` taking the declaring class name and
 hold the same string for JAX-RS but is a display label: nullable, and set at
 dispatch for the other modules.
 
-### A servlet module: decided, to build before 0.1.0
+### The servlet pattern template kind: the server deploy
 
-ADR 0074. In order:
-
-1. Done: the server names the servlet pattern template kind (server
-   `e64d0ac`; it already kept an unnamed kind apart as "unknown"), and the
-   collector's bindings carry it (collector `17b6918`). The server commit
-   waits to deploy: GitHub did not start its CI on 2026-10-18 over a billing
-   problem on the account.
-2. The `servlet` module, on the ADR's test matrix: done. Tomcat 9.0, 10.1 and
-   11, Jetty 10 and 12 (ee10), Undertow 2.3 and a Spring Boot embedded Tomcat
-   pass, and Jetty 9.4 shows the `LINKAGE_ERROR` floor. ADR 0074's
-   2026-10-18 amendment records where a container differed from the ADR.
-3. Done: the route bridge removes the prefix OpenTelemetry added (ADR 0019's
-   2026-10-18 amendment), tested with the servlet module present so
-   OpenTelemetry's `/shop/api/*` lands on the module's `/api/*`.
+The servlet module is built (agent ADR 0074 with amendments, ADR 0019's
+2026-10-18 amendment; `CONTEXT.md`). The server names the servlet pattern
+template kind at `e64d0ac` on its master, and the collector's bindings carry
+it at `17b6918`. GitHub Actions started no job for the server commit on
+2026-10-18 for the same billing reason as above; the CI run for master's
+head deploys it.
 
 ### Endpoint follow-ups
 
