@@ -28,6 +28,7 @@ repo carries all of them), then `~/.claude/`.
 | `/nightwork` | `skills/nightwork/SKILL.md` |
 | `unslop` | `skills/unslop/SKILL.md` |
 | `technical-writing` | `skills/technical-writing/SKILL.md` |
+| `copy-style` | `skills/copy-style/SKILL.md` |
 | `verify-ui` | `skills/verify-ui/SKILL.md` (server repo) |
 
 ## Principles
@@ -220,7 +221,9 @@ he asks.
   STATUS so "do that one" still resolves later.
 - Count what you ask him to confirm, and check the count.
 - Run `unslop` over the reply as you write it, and over every comment,
-  doc, ADR and piece of copy you touched.
+  doc, ADR and piece of copy you touched. Replies, comments, ADRs and
+  commits follow `unslop` alone, while customer-facing copy also loads
+  `copy-style` and follows the guide its table names.
 - Write a code comment only when the repo's `CLAUDE.md` comment rule
   allows it. Delete the rest.
 - End the reply to a task with one line naming the playbook you ran and

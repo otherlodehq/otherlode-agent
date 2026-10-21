@@ -59,6 +59,8 @@ A change that breaks one of these needs an ADR first.
   behaviour a customer can see or set, or modifies behaviour a `docs/site`
   page documents, updates that page in the same commit. A refactor, a fix
   that restores documented behaviour, or an internal change needs none.
+- **Docs voice and style.** Customer docs follow the `copy-style` skill's
+  `docs.md`.
 - **Releases are deliberate.** Never cut a release or push a `v*` tag
   unless a maintainer asks.
 - **No session ids or links in commit messages.** A commit message never
