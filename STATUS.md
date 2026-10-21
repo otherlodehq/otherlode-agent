@@ -45,6 +45,25 @@ deferrals, gzip, a collector config file, and agent-level redaction
 
 ## TODO
 
+### Tooling: code principles, a refactoring playbook and a prose lint
+
+From the comparison with pstack's poteto-mode (`cursor/plugins`, `190d287`).
+Each lands in every repo as a shared path.
+
+- Code-design principles as short leaf files under `power-mode`, cited in
+  the reply wherever one shaped a choice: model the domain, subtract before
+  you add, attack the premise (after two failed fixes, test the assumption
+  they shared), test behaviour not implementation, make operations
+  idempotent, encode lessons in structure. Leave out poteto's Laziness
+  Protocol and Never Block on the Human, which pull against "correct over
+  cheap" and the ask-first list.
+- A Refactoring playbook: pin current behaviour with a characterisation
+  test before moving anything, and revert a reshape that leaves the code no
+  easier to read.
+- A lint for the rules repeated in prose across the skills and `CLAUDE.md`
+  files (no em dashes, no semicolons in prose, no session ids), run as a
+  hook or in the `Claude config` workflow, so the prose can drop them.
+
 ### The class listing's cost on demo-spring and a large classpath
 
 The overhead page states the listing's cost on PetClinic's jar from run
