@@ -5,8 +5,8 @@
 1. Read the code the page describes. Check each claim against it. When the
    code is wrong rather than the page, route it to Bug fix. If the right
    behaviour is a design change, grill it per Design.
-2. Write the change through the review loop. For customer-facing copy,
-   show it before you commit. For a rewrite across many pages, show one
+2. Write the change yourself, since prose skips the review loop unless
+   Luke asks for one. For customer-facing copy, show it before you commit. For a rewrite across many pages, show one
    page as a sample first.
 3. Load `copy-style` and follow the guide its table names for the kind of
    copy (docs, UI or marketing), then the repo's `docs/site/README.md`.

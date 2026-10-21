@@ -94,7 +94,8 @@ commands to run.
 
 - Judgement stays in this session: design, briefs, review, fixes, commit
   messages, STATUS. A subagent's report is a claim to check.
-- Building and editing go through the review loop below.
+- Code goes through the review loop below. Prose does not, unless Luke
+  asks for a review.
 - Pick the model by the job:
   - Sonnet (`model: sonnet`) writes to a brief: code, tests and fixes.
     The fixes for a review's findings stay in this session.
@@ -112,15 +113,20 @@ commands to run.
 
 ## Review loop
 
-Every playbook that builds or edits files runs this loop. It is the one
+Every playbook that builds or edits code runs this loop. It is the one
 definition: `/chunked-build`, `/deep-review` and nightwork point here.
 `/chunked-build` adds how to brief, review and verify.
 
-**Small edits skip the loop.** This session makes an edit with no behaviour
-in it directly: a typo, a one-line copy fix, a rename inside one file, a
-STATUS or run-log edit. Its todo item reads `skip: trivial`. Anything that
-changes what code does, what a test pins, or more than one line a reader
-sees goes through the loop.
+**Only code goes through the loop.** Code means source, tests,
+migrations, build and CI config, hooks and scripts, so anything that
+changes what runs or what a test pins. Prose skips the loop unless Luke
+asks for a review. That covers docs, customer copy, skills, commands,
+ADRs, `CONTEXT.md`, `STATUS.md`, `CLAUDE.md` and READMEs. This session
+writes prose itself, checks every claim in it against the code and runs
+`unslop` over it. Customer copy still goes to Luke before it's committed.
+A code edit with no behaviour in it, such as a typo in a string or a
+rename inside one file, skips the loop too. Its todo item reads
+`skip: prose` or `skip: trivial`.
 
 1. **Sonnet implements.** A Sonnet subagent (`model: sonnet`) writes the
    change from a written brief that says "do not commit". This session
