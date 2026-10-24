@@ -45,6 +45,18 @@ deferrals, gzip, a collector config file, and agent-level redaction
 
 ## TODO
 
+### Hardening from the 2026-10-24 grilling: in flight
+
+Decided in ADRs 0075 and 0076 and in amendments to ADRs 0014, 0017, 0068 and 0070. Landing order, one commit each:
+
+1. The Spring functional-route verb set and the cap on identities found at dispatch (ADR 0017).
+2. The WebFlux `Origin` read and module failure reasons that name the exception class only (ADR 0017).
+3. A rejected `exportUrl` or unusable token turns export off; identity values over 1024 bytes are skipped (ADR 0076).
+4. `final_flush` only on the shutdown flush's closing heartbeat (ADR 0068).
+5. The static baseline keeps the first copy of a class name in JVM search order (ADR 0014).
+6. Chunks bounded by encoded bytes and element count, and the class that alone breaks a bound (ADR 0075).
+7. The testkit docs say any local process can post to the testkit's collector.
+
 ### Tooling: code principles, a refactoring playbook and a prose lint
 
 From the comparison with pstack's poteto-mode (`cursor/plugins`, `190d287`).
