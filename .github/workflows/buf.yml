@@ -28,7 +28,9 @@ jobs:
   buf:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       # Build, lint and format run on every event, and breaking does too unless a pull request
       # carries the "buf skip breaking" label. A pull request is checked against its base commit.
       # A push to master publishes, so it and a manual run are checked against what the registry
@@ -36,7 +38,7 @@ jobs:
       # still caught, and shipping an intended break needs a manual push. A change to this file
       # alone does not trigger a push run, so it never publishes an unchanged schema; run the
       # workflow by hand to check it.
-      - uses: bufbuild/buf-action@v1
+      - uses: bufbuild/buf-action@85aebf73123b5c15fd5528aaecbf9129cddf7fa7 # v1.6.0
         with:
           token: ${{ secrets.BUF_TOKEN }}
           lint: true

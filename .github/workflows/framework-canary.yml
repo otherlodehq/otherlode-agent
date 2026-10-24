@@ -5,14 +5,19 @@ on:
     - cron: '43 3 * * 1'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 # A red build is the whole output: the job publishes nothing and opens no issues.
 jobs:
   canary:
     name: a newest framework release (a red build means a release breaks an endpoint module)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
           # The same JDKs the build job installs. The last version listed becomes JAVA_HOME and
@@ -21,7 +26,7 @@ jobs:
             17
             25
             21
-      - uses: gradle/actions/setup-gradle@v6
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
       # Newest stable release of each framework line the modules' tests run against. The
       # compile-against floors in the build files do not move.
       - id: newest
@@ -56,7 +61,7 @@ jobs:
             echo "and see ADR 0017."
           } | tee -a "$GITHUB_STEP_SUMMARY"
           echo "::error title=Framework release broke a module::an endpoint module's tests failed with the newest framework releases"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
           name: canary-test-reports

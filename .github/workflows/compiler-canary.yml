@@ -5,14 +5,19 @@ on:
     - cron: '17 5 * * 1'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 # A red build is the whole output: the job publishes nothing and opens no issues.
 jobs:
   canary:
     name: an unread compiler release (a red build means a compiler writes a shape the agent has not read)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-java@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
         with:
           distribution: temurin
           # The same JDKs the build job installs, since the javac fixtures use 17, 21 and 25 as
@@ -22,7 +27,7 @@ jobs:
             17
             25
             21
-      - uses: gradle/actions/setup-gradle@v6
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
       # Extends the kotlinc and scalac lists in gradle.properties with the newest stable release of
       # each (kotlinc, scalac 2.12, scalac 2.13, Scala 3) when it is not listed already.
       - id: newest
@@ -43,7 +48,7 @@ jobs:
             echo "and add a Scala 3 release to scala3-read-releases.txt once the matrix passes for it (ADR 0055)."
           } | tee -a "$GITHUB_STEP_SUMMARY"
           echo "::error title=Unread compiler release::a matrix test failed with the newest compiler releases"
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: failure()
         with:
           name: canary-test-reports
