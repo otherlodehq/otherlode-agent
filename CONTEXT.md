@@ -368,7 +368,7 @@ An in-scope class with no concrete method to probe, such as an interface with on
 A probe present in a manifest whose hit total has stayed at zero. The class loaded; the code did not run. A collector claims it only for a probe that is not inline, not generated and not an unread shape.
 
 **Final flush**:
-The delta batch the agent's shutdown hook sends, marked as such so a collector can tell an instance that ended cleanly from one that went silent.
+The empty delta batch that closes the agent's shutdown flush, sent after its other delta batches and marked as such, so a collector can tell an instance that ended cleanly from one that went silent.
 _Avoid_: last batch, shutdown batch
 
 **Never loaded**:

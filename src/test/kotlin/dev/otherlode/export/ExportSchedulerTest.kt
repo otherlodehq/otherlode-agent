@@ -915,7 +915,7 @@ class ExportSchedulerTest {
         val lead = sent.first()
         assertTrue(!hasHits(lead), "the leading batch is a heartbeat")
         assertEquals(5_000L, lead.countsPendingSince, "the start of the flush where the counts became pending, not this flush's")
-        assertTrue(lead.finalFlush, "it carries finalFlush like the flush's other batches")
+        assertFalse(lead.finalFlush, "the leading heartbeat never carries finalFlush")
         assertEquals(5_000L, sent[1].countsPendingSince)
     }
 
@@ -1339,7 +1339,7 @@ class ExportSchedulerTest {
         exporter.gate.countDown()
         hook.join(10_000)
 
-        assertEquals(2, exporter.deltaSends.get(), "exactly one final flush after the in-flight one finished")
+        assertEquals(2, exporter.deltaSends.get(), "the in-flight flush's batch, then the final flush's closing batch alone")
     }
 
     @Test
@@ -1366,7 +1366,7 @@ class ExportSchedulerTest {
 
         scheduler.flushOnShutdown(Duration.ofSeconds(5))
 
-        assertEquals(1, exporter.deltaBatches.size)
+        assertEquals(listOf(true), exporter.deltaBatches.map { it.finalFlush }, "the closing batch alone")
     }
 
     @Test
@@ -1402,20 +1402,19 @@ class ExportSchedulerTest {
     }
 
     @Test
-    fun `flushOnShutdown marks the empty heartbeat batch as the final flush`() {
+    fun `flushOnShutdown ends with one empty batch marked as the final flush`() {
         val registry = ProbeRegistry()
         val exporter = RecordingExporter()
         val scheduler = ExportScheduler(config, resource, registry, EndpointRegistry(), exporter)
 
         scheduler.flushOnShutdown(Duration.ofSeconds(5))
 
-        val batch = exporter.deltaBatches.single()
-        assertTrue(batch.deltas.isEmpty(), "nothing changed, so this is still the liveness heartbeat")
-        assertTrue(batch.finalFlush)
+        assertTrue(exporter.deltaBatches.all { it.deltas.isEmpty() }, "nothing changed, so every batch is empty")
+        assertEquals(listOf(true), exporter.deltaBatches.map { it.finalFlush }, "the closing batch is the flush's only empty batch")
     }
 
     @Test
-    fun `flushOnShutdown marks every batch of its flush as final, standalone endpoint batch included`() {
+    fun `flushOnShutdown marks only its closing batch as final, standalone endpoint batch included`() {
         val registry = ProbeRegistry()
         val probes = registry.register("com.example.Foo", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "bar", "()V", 1)))
         probes[0] += 1
@@ -1426,8 +1425,214 @@ class ExportSchedulerTest {
 
         scheduler.flushOnShutdown(Duration.ofSeconds(5))
 
-        assertEquals(2, exporter.deltaBatches.size, "the probe batch is already full, so the endpoint delta gets its own")
-        assertTrue(exporter.deltaBatches.all { it.finalFlush }, "every batch this flush sends must carry the final flush marker")
+        assertEquals(
+            3,
+            exporter.deltaBatches.size,
+            "the probe batch is already full, so the endpoint delta gets its own, then the closing batch",
+        )
+        assertEquals(listOf(false, false, true), exporter.deltaBatches.map { it.finalFlush })
+        assertTrue(
+            exporter.deltaBatches
+                .last()
+                .deltas
+                .isEmpty() &&
+                exporter.deltaBatches
+                    .last()
+                    .endpointDeltas
+                    .isEmpty(),
+        )
+    }
+
+    private fun transportFailure() = ExportFailedException("unavailable", 503, refused = false)
+
+    @Test
+    fun `a shutdown flush that confirms its hit batches sends them unmarked and closes with an empty marked batch carrying 0`() {
+        val scenario = PendingScenario(probeCount = 2, maxDeltasPerBatch = 1)
+
+        val sent = scenario.flush(at = 5_000, final = true)
+
+        assertEquals(listOf(true, true, false), sent.map(::hasHits))
+        assertEquals(listOf(false, false, true), sent.map { it.finalFlush })
+        assertEquals(0L, sent.last().countsPendingSince)
+        assertEquals(sent.maxOf { it.payloadSequence }, sent.last().payloadSequence, "the highest sequence")
+    }
+
+    @Test
+    fun `a shutdown flush whose last hit batch is refused closes with a marked batch carrying the pending state`() {
+        val scenario = PendingScenario(probeCount = 2, maxDeltasPerBatch = 1)
+        var hitBatches = 0
+        scenario.exporter.deltaOutcome = { if (hasHits(it) && ++hitBatches == 2) refusal() else null }
+
+        val sent = scenario.flush(at = 5_000, final = true)
+
+        assertEquals(listOf(true, true, false), sent.map(::hasHits))
+        assertEquals(listOf(false, false, true), sent.map { it.finalFlush })
+        assertEquals(5_000L, sent.last().countsPendingSince)
+    }
+
+    @Test
+    fun `a shutdown flush whose hit batch fails by transport still sends the marked closing batch with the pending state`() {
+        for (failure in listOf<() -> Exception>(
+            { transportFailure() },
+            { ExportFailedException("timed out") },
+            { java.io.IOException("reset") },
+        )) {
+            val scenario = PendingScenario(probeCount = 3, maxDeltasPerBatch = 1)
+            var hitBatches = 0
+            scenario.exporter.deltaOutcome = { if (hasHits(it) && ++hitBatches == 2) failure() else null }
+
+            val sent = scenario.flush(at = 5_000, final = true)
+
+            assertEquals(listOf(true, true, false), sent.map(::hasHits), "the loop ended after the failure: $failure")
+            assertEquals(listOf(false, false, true), sent.map { it.finalFlush })
+            assertEquals(5_000L, sent.last().countsPendingSince)
+        }
+    }
+
+    @Test
+    fun `a shutdown flush that starts pending leads with an unmarked heartbeat and closes with a marked one`() {
+        val scenario = PendingScenario()
+        scenario.exporter.deltaOutcome = { if (hasHits(it)) refusal() else null }
+        scenario.flush(at = 1_000)
+        scenario.exporter.deltaOutcome = { null }
+
+        val sent = scenario.flush(at = 2_000, final = true)
+
+        assertEquals(listOf(false, true, false), sent.map(::hasHits), "leading heartbeat, hit batch, closing heartbeat")
+        assertEquals(listOf(false, false, true), sent.map { it.finalFlush })
+        assertEquals(listOf(1_000L, 1_000L, 0L), sent.map { it.countsPendingSince })
+    }
+
+    @Test
+    fun `a shutdown flush with nothing to send and nothing pending sends exactly one marked empty batch`() {
+        val scenario = PendingScenario(probeCount = 0)
+
+        val sent = scenario.flush(at = 5_000, final = true)
+
+        assertEquals(1, sent.count { it.finalFlush })
+        assertTrue(sent.none(::hasHits))
+        assertTrue(sent.last().finalFlush)
+        assertEquals(0L, sent.last().countsPendingSince)
+    }
+
+    @Test
+    fun `exactly one delta batch of a shutdown flush carries finalFlush, with manifest chunks sent beside it`() {
+        val scenario = PendingScenario(probeCount = 3, maxDeltasPerBatch = 1, maxManifestEntriesPerChunk = 1)
+
+        scenario.flush(at = 5_000, final = true)
+
+        assertTrue(scenario.exporter.manifests.size > 1, "several manifest chunks went out")
+        assertEquals(1, scenario.exporter.deltas.count { it.finalFlush })
+        assertTrue(
+            scenario.exporter.deltas
+                .last()
+                .finalFlush,
+        )
+    }
+
+    @Test
+    fun `a scheduled flush never carries finalFlush`() {
+        val scenario = PendingScenario(probeCount = 2, maxDeltasPerBatch = 1)
+        scenario.exporter.deltaOutcome = { if (hasHits(it)) refusal() else null }
+
+        val refused = scenario.flush(at = 1_000)
+        scenario.exporter.deltaOutcome = { null }
+        val cleared = scenario.flush(at = 2_000)
+        val idle = scenario.flush(at = 3_000)
+
+        assertTrue((refused + cleared + idle).none { it.finalFlush })
+    }
+
+    @Test
+    fun `the server never sees a clean end with nothing pending while a hit batch of the shutdown flush went unconfirmed`() {
+        var cases = 0
+        for (hitBatchCount in 1..3) {
+            for (position in 0 until hitBatchCount) {
+                for (outcome in listOf("confirmed", "refused", "transport")) {
+                    for (startPending in listOf(false, true)) {
+                        for (closing in listOf("confirmed", "refused", "transport")) {
+                            cases++
+                            val label = "n=$hitBatchCount position=$position outcome=$outcome startPending=$startPending closing=$closing"
+                            val scenario = PendingScenario(probeCount = hitBatchCount, maxDeltasPerBatch = 1)
+                            if (startPending) {
+                                scenario.exporter.deltaOutcome = { if (hasHits(it)) refusal() else null }
+                                scenario.flush(at = 1_000)
+                            }
+                            val accepted = mutableListOf<DeltaBatch>()
+                            var hitBatches = 0
+                            val manifestsBefore = scenario.exporter.manifests.size
+                            scenario.exporter.deltaOutcome = { batch ->
+                                val failure =
+                                    when {
+                                        batch.finalFlush -> {
+                                            when (closing) {
+                                                "refused" -> refusal()
+                                                "transport" -> transportFailure()
+                                                else -> null
+                                            }
+                                        }
+
+                                        hasHits(batch) && hitBatches++ == position -> {
+                                            when (outcome) {
+                                                "refused" -> refusal()
+                                                "transport" -> transportFailure()
+                                                else -> null
+                                            }
+                                        }
+
+                                        else -> {
+                                            null
+                                        }
+                                    }
+                                if (failure == null) accepted += batch
+                                failure
+                            }
+
+                            scenario.flush(at = 5_000, final = true)
+
+                            val confirmedHitBatches = accepted.count(::hasHits)
+                            val ended = accepted.any { it.finalFlush }
+                            val newest =
+                                (
+                                    accepted.map { it.payloadSequence to it.countsPendingSince } +
+                                        scenario.exporter.manifests
+                                            .drop(manifestsBefore)
+                                            .map { it.payloadSequence to it.countsPendingSince }
+                                ).maxByOrNull { it.first }
+                            val pendingNow = newest != null && newest.second != 0L
+                            if (confirmedHitBatches < hitBatchCount) {
+                                assertTrue(!ended || pendingNow, "clean end with nothing pending, hit batch unconfirmed: $label")
+                            } else if (closing == "confirmed") {
+                                assertTrue(ended && !pendingNow, "all confirmed reads as a clean end with nothing pending: $label")
+                            } else {
+                                assertTrue(!ended, "a closing batch that was not accepted gives no clean end: $label")
+                            }
+                            assertTrue(accepted.count { it.finalFlush } <= 1, "at most one marked payload: $label")
+                        }
+                    }
+                }
+            }
+        }
+        assertEquals(108, cases)
+    }
+
+    @Test
+    fun `a shutdown flush whose batches cannot be computed closes with a marked batch carrying its start`() {
+        val exporter = StampedExporter()
+        val registry =
+            object : ProbeRegistry() {
+                override fun computeDeltaBatches(
+                    resource: ResourceAttributes,
+                    maxDeltasPerBatch: Int,
+                ): List<ProbeRegistry.DeltaSnapshot> = throw IllegalStateException("compute failed")
+            }
+        val scheduler = ExportScheduler(config, resource, registry, EndpointRegistry(), exporter, clock = { 7_000L })
+
+        scheduler.flush(final = true)
+
+        val closing = exporter.deltas.single()
+        assertTrue(closing.finalFlush)
+        assertEquals(7_000L, closing.countsPendingSince)
     }
 
     @Test
@@ -2563,7 +2768,7 @@ class ExportSchedulerTest {
     }
 
     @Test
-    fun `dependency deltas that do not fit go on a standalone batch carrying final`() {
+    fun `dependency deltas that do not fit go on a standalone batch, and only the closing batch carries final`() {
         val registry = ProbeRegistry()
         val probes = registry.register("com.example.Foo", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "bar", "()V", 1)))
         probes[0] += 1
@@ -2583,10 +2788,10 @@ class ExportSchedulerTest {
 
         scheduler.flushOnShutdown(Duration.ofSeconds(5))
 
-        assertEquals(listOf(1, 0, 0), exporter.deltaBatches.map { it.deltas.size })
-        assertEquals(listOf(0, 1, 0), exporter.deltaBatches.map { it.endpointDeltas.size })
-        assertEquals(listOf(0, 0, 1), exporter.deltaBatches.map { it.dependencyDeltas.size })
-        assertTrue(exporter.deltaBatches.all { it.finalFlush })
+        assertEquals(listOf(1, 0, 0, 0), exporter.deltaBatches.map { it.deltas.size })
+        assertEquals(listOf(0, 1, 0, 0), exporter.deltaBatches.map { it.endpointDeltas.size })
+        assertEquals(listOf(0, 0, 1, 0), exporter.deltaBatches.map { it.dependencyDeltas.size })
+        assertEquals(listOf(false, false, false, true), exporter.deltaBatches.map { it.finalFlush })
     }
 
     @Test
@@ -2679,7 +2884,7 @@ class ExportSchedulerTest {
         scheduler.flush(final = true)
         scheduler.flush(final = true)
 
-        assertEquals(2, exporter.deltaBatches.size, "the heartbeat goes out on both flushes")
+        assertEquals(2, exporter.deltaBatches.size, "the closing batch goes out on both flushes")
     }
 
     /**

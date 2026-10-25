@@ -38,7 +38,7 @@ The agent flushes on a fixed interval, `flushIntervalSeconds`, 60 seconds by def
 
 Each flush sends the delta batch and, if something is waiting, the manifest, at the same time. A flush that finds a dependency whose counts were just delivered sends one more manifest for it, and a flush that completes the dependency listing may send one more, empty, manifest that says so.
 
-On a graceful JVM exit a shutdown hook runs one last flush with `final_flush` set on its delta batches. It has a budget of 10 seconds in total, shared with any flush still running, and it skips the static baseline and class listing retries. A flush still working against an unreachable collector can use the whole budget, and then no final flush runs. `kill -9`, an out-of-memory kill and a crash send no final flush.
+On a graceful JVM exit a shutdown hook runs one last flush. It ends with an empty delta batch that carries `final_flush`. It has a budget of 10 seconds in total, shared with any flush still running, and it skips the static baseline and class listing retries. A flush still working against an unreachable collector can use the whole budget, and then no final flush runs. `kill -9`, an out-of-memory kill and a crash send no final flush.
 
 ### Chunk caps
 
@@ -83,7 +83,7 @@ A delta batch carries the resource attributes plus these lists. Each entry is a 
 | `deltas` | For each probe whose count changed: `class_id`, `probe_index`, `kind` (method, branch, optional argument, initializer returned or initializer threw), `first_seen_at` and `hits_total` |
 | `endpoint_deltas` | For each endpoint whose count changed: `endpoint_id`, `first_seen_at`, `hits_total` |
 | `dependency_deltas` | For each dependency: `dependency_id`, `first_loaded_at`, `loaded_classes_total` |
-| `final_flush` | True only on the shutdown flush |
+| `final_flush` | True only on the last, empty delta batch of the shutdown flush |
 | `payload_sequence`, `counts_pending_since` | Where the run stands in delivering its counts; see [Pending counts](#pending-counts) |
 
 `hits_total` is the cumulative count since the process started, not the amount since the last flush. The server merges it with `max()`, so a batch that arrives twice or out of order changes nothing. `first_seen_at` is the time of the flush that first saw a non-zero count, so it is accurate to one interval.

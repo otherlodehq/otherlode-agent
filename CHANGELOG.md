@@ -34,6 +34,7 @@ the section being read.
 - A Spring functional route that no walk declared counts a request under its method only when the method is `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS` or `TRACE`, and under `*` otherwise. A declared route keeps the method it was declared with.
 - An endpoint module records at most 8,192 endpoints it finds only at dispatch, and past that logs one WARNING and records no new ones. It also binds at most 8,192 request keys at dispatch; past that a request still counts, and its endpoint is resolved again each time. Declared endpoints are never limited.
 - The reason of a disabled endpoint module names the exception's class, not its message, unless the exception is a linkage error.
+- The shutdown flush ends with one empty delta batch that carries `final_flush`, sent after its other batches and stamped with the pending state they left. No other batch carries it, so a run whose last hit batch was refused or lost no longer reads as having ended cleanly with nothing pending.
 
 ### Fixed
 

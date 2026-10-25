@@ -231,10 +231,10 @@ class ExportScheduler(
      * A flush that starts with pending counts sends an empty delta batch first, on its own, and a
      * flush that clears them ends with another; see [DeliveryState] and [sendDeltaBatch].
      *
-     * [final] is true only for the flush [flushOnShutdown] runs. It is carried onto every delta
-     * batch this flush sends, the empty heartbeat and a standalone batch of endpoint or dependency
-     * deltas included, so a collector can tell an instance that ended cleanly from one that went
-     * silent. The manifest send is unaffected.
+     * [final] is true only for the flush [flushOnShutdown] runs. That flush ends its delta sends
+     * with one empty batch carrying `finalFlush`, after every hit batch, so a collector can tell an
+     * instance that ended cleanly from one that went silent. No other batch carries it. The
+     * manifest send is unaffected.
      */
     fun flush(final: Boolean = false) {
         val flushStart = clock()
@@ -610,56 +610,87 @@ class ExportScheduler(
      * [generation] have reached the collector, and this records it
      * ([DependencyRegistry.markCountsDelivered]).
      *
-     * Returns whether the loop ran to its end with every hit batch confirmed.
+     * The shutdown flush ([final]) ends with one more empty batch that carries `finalFlush`. It is
+     * sent after every hit batch, whatever happened to them, and stamped then, so it carries the
+     * pending state the hit batches left. No other batch of the flush carries `finalFlush`. The
+     * shutdown flush sends no empty batch of its own before that one, since the closing batch is
+     * its liveness signal, and it replaces the one a clearing flush would send. When anything the
+     * loop does not account for throws, such as computing the batches, the shutdown flush marks the
+     * run pending before it closes, so the run never ends cleanly with its hits unconfirmed and
+     * nothing pending.
+     *
+     * Returns whether the loop ran to its end with every hit batch confirmed, and for the shutdown
+     * flush also whether the closing batch did not fail without a refusal.
      */
     private fun sendDeltaBatch(
         final: Boolean,
         generation: Long,
         flushStart: Long,
     ): Boolean {
+        var confirmed = false
         try {
-            val probeBatches = registry.computeDeltaBatches(resource, maxDeltasPerBatch)
-            val riders =
-                endpointRegistry.computeDeltas(maxDeltasPerBatch).map(::endpointDeltaRider) +
-                    dependencyRegistry.computeDeltas(maxDeltasPerBatch).map(::dependencyDeltaRider)
-            if (delivery.isPending()) sendHeartbeat(final)
-            var allConfirmed = true
-            for (send in composeDeltaSends(probeBatches, riders, final)) {
-                val hits = hasHits(send.batch)
-                try {
-                    sendStamped(send.batch)
-                } catch (e: ExportFailedException) {
-                    if (hits) {
-                        delivery.markPending(flushStart)
-                        allConfirmed = false
-                    }
-                    if (!e.refused) throw e
-                    log.log(Level.WARNING, "otherlode: delta export failed, will retry next flush", e)
-                    continue
-                } catch (t: Throwable) {
-                    if (hits) delivery.markPending(flushStart)
-                    throw t
-                }
-                send.probeSnapshot?.let(registry::advanceBaseline)
-                send.riders.forEach { it.advance() }
-            }
-            if (!allConfirmed) return false
-            dependencyRegistry.markCountsDelivered(generation)
-            if (delivery.isPending()) {
-                delivery.clear()
-                sendHeartbeat(final)
-            }
-            return true
+            confirmed = sendHitBatches(final, generation, flushStart)
         } catch (t: Throwable) {
             log.log(Level.WARNING, "otherlode: delta export failed, will retry next flush", t)
-            return false
+            if (final) delivery.markPending(flushStart)
+        }
+        if (!final) return confirmed
+        return try {
+            sendHeartbeat(finalFlush = true)
+            confirmed
+        } catch (t: Throwable) {
+            log.log(Level.WARNING, "otherlode: closing export failed, the run will read as one that went silent", t)
+            false
         }
     }
 
+    private fun sendHitBatches(
+        final: Boolean,
+        generation: Long,
+        flushStart: Long,
+    ): Boolean {
+        val probeBatches = registry.computeDeltaBatches(resource, maxDeltasPerBatch)
+        val riders =
+            endpointRegistry.computeDeltas(maxDeltasPerBatch).map(::endpointDeltaRider) +
+                dependencyRegistry.computeDeltas(maxDeltasPerBatch).map(::dependencyDeltaRider)
+        if (delivery.isPending()) sendHeartbeat(finalFlush = false)
+        var allConfirmed = true
+        for (send in composeDeltaSends(probeBatches, riders)) {
+            val hits = hasHits(send.batch)
+            if (final && !hits) {
+                send.probeSnapshot?.let(registry::advanceBaseline)
+                continue
+            }
+            try {
+                sendStamped(send.batch)
+            } catch (e: ExportFailedException) {
+                if (hits) {
+                    delivery.markPending(flushStart)
+                    allConfirmed = false
+                }
+                if (!e.refused) throw e
+                log.log(Level.WARNING, "otherlode: delta export failed, will retry next flush", e)
+                continue
+            } catch (t: Throwable) {
+                if (hits) delivery.markPending(flushStart)
+                throw t
+            }
+            send.probeSnapshot?.let(registry::advanceBaseline)
+            send.riders.forEach { it.advance() }
+        }
+        if (!allConfirmed) return false
+        dependencyRegistry.markCountsDelivered(generation)
+        if (delivery.isPending()) {
+            delivery.clear()
+            if (!final) sendHeartbeat(finalFlush = false)
+        }
+        return true
+    }
+
     /** Sends an empty delta batch. A refusal is logged and the caller goes on; any other failure propagates. */
-    private fun sendHeartbeat(final: Boolean) {
+    private fun sendHeartbeat(finalFlush: Boolean) {
         try {
-            sendStamped(DeltaBatch(resource, emptyList(), finalFlush = final))
+            sendStamped(DeltaBatch(resource, emptyList(), finalFlush = finalFlush))
         } catch (e: ExportFailedException) {
             if (!e.refused) throw e
             log.log(Level.WARNING, "otherlode: heartbeat export failed, will retry next flush", e)
@@ -691,21 +722,18 @@ class ExportScheduler(
      * changed, so a flush with only endpoint or dependency activity still sends exactly one
      * [DeltaBatch], carrying both the heartbeat and those deltas.
      *
-     * [final] is stamped onto every batch built here, including the heartbeat and a standalone
-     * batch, so a shutdown flush with nothing to report still tells the collector this instance
-     * ended cleanly.
+     * No batch built here carries `finalFlush`; the shutdown flush's closing batch does.
      */
     private fun composeDeltaSends(
         probeBatches: List<ProbeRegistry.DeltaSnapshot>,
         riders: List<Rider<DeltaBatch>>,
-        final: Boolean,
     ): List<DeltaSend> {
-        val builders = probeBatches.map { DeltaSendBuilder(it.batch.copy(finalFlush = final), it) }.toMutableList()
+        val builders = probeBatches.map { DeltaSendBuilder(it.batch.copy(finalFlush = false), it) }.toMutableList()
 
         for (rider in riders) {
             val target =
                 builders.firstOrNull { it.size + rider.size <= maxDeltasPerBatch }
-                    ?: DeltaSendBuilder(DeltaBatch(resource, emptyList(), finalFlush = final), null).also(builders::add)
+                    ?: DeltaSendBuilder(DeltaBatch(resource, emptyList()), null).also(builders::add)
             target.batch = rider.attach(target.batch)
             target.size += rider.size
             target.riders += rider
