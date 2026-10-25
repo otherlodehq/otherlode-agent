@@ -58,6 +58,30 @@ otherlode: 'com.acme.*' matches no class and is ignored: write a dotted package 
 
 The agent drops a prefix that contains `*` or `/`. If the dropped prefix was your only one, the agent then refuses to start with the line above. Write `com.acme`, not `com.acme.*` or `com/acme`.
 
+### The export URL is refused
+
+```text
+otherlode: exportUrl must be an absolute http or https URL; exportUrl from the environment variable OTHERLODE_EXPORT_URL is refused, so the agent is off for this JVM
+```
+
+The line names the source that gave the value: the agent option, the system property or the environment variable. It does not repeat the value, apart from the host in the underscore case. The reason is one of these.
+
+- The value is not an absolute `http` or `https` URL with a host. A mistyped `collector:4319` with no scheme falls here.
+- The value has a query string.
+- The value has a fragment.
+- The value holds an `@` after the scheme, as a user name or password does. The agent never sends one. Set the token with `authToken`, and write an `@` in a path as `%40`.
+- The host has an underscore, as a Docker Compose service name can: `otherlode: exportUrl's host 'otherlode_collector' has an underscore, which a URL host name cannot contain; ...`. Java's HTTP client cannot reach such a host. Use a network alias or host name without an underscore, or an IP address.
+
+Fix the value at the source the line names and restart the JVM. The agent does not fall back to `http://localhost:4319`, since that would send your data to an address you never chose.
+
+### The auth token is refused
+
+```text
+otherlode: authToken from the environment variable OTHERLODE_AUTH_TOKEN holds a character outside visible ASCII (! to ~), so the agent is off for this JVM; set a token of visible ASCII characters only
+```
+
+The token holds a character that is not between `!` and `~`: a space inside the token, a control character, an invisible character such as U+FEFF or U+200B, or a non-ASCII character. The log never shows the token or its length. Copy the token again from its source as plain text, set it at the source the line names, and restart the JVM.
+
 ### The agent could not install its helper jar
 
 ```text
@@ -104,13 +128,12 @@ These warnings each mean the agent kept running with a default instead of your v
 |---|---|
 | `otherlode: ignoring unknown agent option 'foo' (known options: [...])` | The option name is misspelled or does not exist. The line lists every name. Names are case-sensitive. |
 | `otherlode: ignoring malformed agent option 'x' (expected key=value; a value cannot contain a comma, set such a value through a system property or environment variable instead)` | A comma split the argument string into a piece with no `=`. A value that holds a comma, such as several packages joined with commas, must come from a system property or environment variable. Separate packages with `;`. |
-| `otherlode: exportUrl must be an absolute http or https URL, ignoring 'collector:4319' and using the default http://localhost:4319` | The value has no scheme or host. The agent falls back to `http://localhost:4319`, which is why a mistyped `exportUrl` looks like a collector that never answers. A query string or fragment gets the same treatment, with its own reason. |
 | `otherlode: flushIntervalSeconds must be a whole number from 1 to 86400, ignoring '30s' and using the default of 60s` | Write plain seconds with no unit. |
 | `otherlode: enabled must be 'true' or 'false', ignoring 'yes' and using the default of true` | The same message appears for `staticBaselineEnabled`, `classListingEnabled`, `endpointsEnabled`, `otelBridgeEnabled` and `testRun`, each naming its own option and default. |
-| `otherlode: exportUrl's host 'otherlode_collector' has an underscore, which a URL host name cannot contain; ...` | The host name has an underscore, as a Docker Compose service name can. Java's HTTP client cannot reach such a host. Use a network alias or host name without an underscore, or an IP address. |
 | `otherlode: exportUrl uses plain http, so the auth token is sent unencrypted` | `authToken` is set and `exportUrl` starts with `http://`. Use an `https://` URL unless the collector is on the same host. |
 | `otherlode: ignoring all of OTEL_RESOURCE_ATTRIBUTES, since its entry 'x' is not key=value; no service name, namespace, version or environment is read from it` | One malformed entry discards the whole list, as the OpenTelemetry specification says. Fix the entry. |
 | `otherlode: ignoring '..' from <source>, since no URL path can name a service or namespace '..'` | A service name or namespace of `.` or `..` is refused. |
+| `otherlode: ignoring the value from <source>, since it is longer than 1024 bytes in UTF-8` | A service name, namespace, version, environment or instance ID is longer than the collector accepts. The agent skips it and the next source gives the value. Shorten the value at the source the line names. |
 | `otherlode: callbackAnnotations entry '@com.acme.Handles' is not a fully qualified annotation type name and is ignored: write the dotted name with its package and no wildcard, such as 'com.acme.Handles'` | An entry in [`callbackAnnotations`](configuration#callbackannotations) has a leading `@`, a `/`, a `*`, a trailing `.class`, no package, or a part that is not a Java identifier. The agent drops that entry and keeps the others. Write the annotation's name as you would import it. |
 | `otherlode: disabledEndpointModules entry 'ktor-9' names no endpoint module and is ignored: the modules are ...` | An entry in [`disabledEndpointModules`](configuration#disabledendpointmodules) is not a module name. The agent skips it, so the module you meant stays on, and keeps the other entries. The line lists the module names. |
 
@@ -134,7 +157,7 @@ The exception under the line names the cause. If neither line appears, the sends
 The exception is a `java.net.ConnectException` or a timeout.
 
 - The agent cannot reach the address. Check `exportUrl` from the same host or pod with `curl`, using the same URL.
-- `exportUrl` fell back to its default because the value was invalid. Look for `exportUrl must be...` [above](#an-option-is-ignored). The default, `http://localhost:4319`, reaches nothing in a container that runs no collector.
+- You set no `exportUrl`, so the agent uses its default, `http://localhost:4319`. That address reaches nothing in a container that runs no collector. An `exportUrl` the agent cannot use does not cause this: it turns the agent off (see [the export URL is refused](#the-export-url-is-refused)).
 - The collector accepts the connection and never answers. The agent gives up on a request after 10 seconds.
 
 One send makes up to 5 attempts, so a single failure takes several seconds to log. [What the agent sends](data-sent#when-the-collector-is-down-or-refuses-a-payload) describes the retry rules.

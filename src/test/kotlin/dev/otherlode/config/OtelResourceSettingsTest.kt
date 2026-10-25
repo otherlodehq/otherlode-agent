@@ -158,4 +158,17 @@ class OtelResourceSettingsTest {
         assertEquals("env-p", resolve(properties = mapOf("otel.resource.attributes" to "deployment.environment.name=env-p")).environment)
         assertEquals("env-e", resolve(env = mapOf("OTEL_RESOURCE_ATTRIBUTES" to "deployment.environment=env-e")).environment)
     }
+
+    @Test
+    fun `an environment or version over 1024 bytes is skipped`() {
+        val long = "e".repeat(1025)
+
+        assertEquals(
+            "prod",
+            resolve(env = mapOf("OTEL_RESOURCE_ATTRIBUTES" to "deployment.environment.name=$long,deployment.environment=prod")).environment,
+        )
+        assertNull(resolve(env = mapOf("OTEL_RESOURCE_ATTRIBUTES" to "deployment.environment.name=$long")).environment)
+        assertNull(resolve(env = mapOf("OTEL_RESOURCE_ATTRIBUTES" to "service.version=$long")).serviceVersion)
+        assertEquals("1.0", resolve(env = mapOf("OTEL_RESOURCE_ATTRIBUTES" to "service.version=1.0")).serviceVersion)
+    }
 }

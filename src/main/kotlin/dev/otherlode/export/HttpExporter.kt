@@ -80,9 +80,17 @@ class HttpExporter(
                             .timeout(requestTimeout)
                             .header("Content-Type", "application/x-protobuf")
                             .POST(HttpRequest.BodyPublishers.ofByteArray(body))
-                    if (authToken != null) requestBuilder.header("Authorization", "Bearer $authToken")
+                    if (authToken != null) {
+                        try {
+                            requestBuilder.header("Authorization", "Bearer $authToken")
+                        } catch (e: IllegalArgumentException) {
+                            throw HeaderRefusedException("otherlode: the Authorization header value is not valid, so nothing can be sent")
+                        }
+                    }
                     val request = requestBuilder.build()
                     client.send(request, HttpResponse.BodyHandlers.discarding()).statusCode()
+                } catch (e: HeaderRefusedException) {
+                    throw ExportFailedException(e.message.orEmpty())
                 } catch (e: Exception) {
                     lastError = e
                     null
@@ -137,3 +145,7 @@ class ExportFailedException(
     val statusCode: Int? = null,
     val refused: Boolean = false,
 ) : RuntimeException(message)
+
+private class HeaderRefusedException(
+    message: String,
+) : RuntimeException(message, null, false, false)

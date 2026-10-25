@@ -117,7 +117,19 @@ data class AgentConfig(
      * only the discovered modules say which names are real.
      */
     val disabledEndpointModules: List<String>,
+    /**
+     * Why the agent refuses this configuration, one message for each problem, or empty when it
+     * accepts it. A set [exportUrl] the agent cannot use, and an [authToken] with a character outside
+     * `!` to `~`, each add one. [dev.otherlode.Agent] logs each as an ERROR, unless [enabled] is false,
+     * and turns itself off for this JVM. No message quotes the token, or any of the URL but an underscore host.
+     */
+    val refusals: List<String> = emptyList(),
 ) {
+    /** Names the service, its instance and the export URL, and masks [authToken], so a printed configuration holds no secret. */
+    override fun toString(): String =
+        "AgentConfig(serviceName=$serviceName, serviceInstanceId=$serviceInstanceId, exportUrl=$exportUrl, " +
+            "authToken=${if (authToken == null) "null" else "****"})"
+
     companion object {
         /** OpenTelemetry's name for a Java service that names none. */
         const val DEFAULT_SERVICE_NAME = "unknown_service:java"
@@ -198,9 +210,11 @@ data class AgentConfig(
 
             val prefixes = parsePackagePrefixes(resolve("includePackages"))
             val excludedPrefixes = parsePackagePrefixes(resolve("excludePackages"))
-            val exportUrl = parseExportUrl(resolve("exportUrl"))
+            val (exportUrl, exportUrlRefusal) = parseExportUrl(resolveSourced("exportUrl", options, systemProperties, env))
             val authToken = resolve("authToken")
-            if (authToken != null && exportUrl.startsWith("http://")) {
+            val tokenRefusal = authToken?.let { tokenRefusal("authToken", it, options, systemProperties, env) }
+            val refusals = listOfNotNull(exportUrlRefusal, tokenRefusal)
+            if (refusals.isEmpty() && authToken != null && exportUrl.startsWith("http://")) {
                 log.log(Level.WARNING, "otherlode: exportUrl uses plain http, so the auth token is sent unencrypted")
             }
             val testRun = parseBoolean("testRun", resolve("testRun"), default = false)
@@ -211,9 +225,16 @@ data class AgentConfig(
                         ?: ServiceIdentityValues.usable(detectedServiceName(detectServiceName), "service name detection")
                         ?: DEFAULT_SERVICE_NAME,
                 serviceNamespace = resolveIdentity("serviceNamespace", options, systemProperties, env) ?: otel.serviceNamespace,
-                serviceVersion = resolve("serviceVersion") ?: otel.serviceVersion,
-                serviceInstanceId = resolve("serviceInstanceId") ?: UUID.randomUUID().toString(),
-                environment = resolve("environment") ?: otel.environment ?: TEST_RUN_ENVIRONMENT.takeIf { testRun },
+                serviceVersion =
+                    resolveIdentity("serviceVersion", options, systemProperties, env, ServiceIdentityValues::withinLimit)
+                        ?: otel.serviceVersion,
+                serviceInstanceId =
+                    resolveIdentity("serviceInstanceId", options, systemProperties, env, ServiceIdentityValues::withinLimit)
+                        ?: UUID.randomUUID().toString(),
+                environment =
+                    resolveIdentity("environment", options, systemProperties, env, ServiceIdentityValues::withinLimit)
+                        ?: otel.environment
+                        ?: TEST_RUN_ENVIRONMENT.takeIf { testRun },
                 exportUrl = exportUrl,
                 authToken = authToken,
                 flushInterval = parseFlushInterval(resolve("flushIntervalSeconds")),
@@ -227,6 +248,7 @@ data class AgentConfig(
                 testRun = testRun,
                 callbackAnnotations = parseCallbackAnnotations(resolve("callbackAnnotations")),
                 disabledEndpointModules = parseNameList(resolve("disabledEndpointModules")),
+                refusals = refusals,
             )
         }
 
@@ -247,21 +269,59 @@ data class AgentConfig(
                 ?: valueOrNull(env(OptionNames.environmentVariable(key)))
 
         /**
-         * Walks the three sources for [key] as [resolveOption] does, for a service name or
-         * namespace. A value that [ServiceIdentityValues.usable] skips falls through to the next
-         * source, as a blank one does.
+         * Walks the three sources for [key] as [resolveOption] does, for a value of the service's
+         * identity. A value that [screen] skips falls through to the next source, as a blank one
+         * does. The default screen, [ServiceIdentityValues.usable], is the one for a service name
+         * or namespace.
          */
         private fun resolveIdentity(
             key: String,
             options: Map<String, String>,
             systemProperties: (String) -> String?,
             env: (String) -> String?,
+            screen: (String?, String) -> String? = ServiceIdentityValues::usable,
         ): String? {
             val property = OptionNames.systemProperty(key)
             val variable = OptionNames.environmentVariable(key)
-            return ServiceIdentityValues.usable(valueOrNull(options[key]), "the agent option $key")
-                ?: ServiceIdentityValues.usable(valueOrNull(systemProperties(property)), "the system property $property")
-                ?: ServiceIdentityValues.usable(valueOrNull(env(variable)), "the environment variable $variable")
+            return screen(valueOrNull(options[key]), "the agent option $key")
+                ?: screen(valueOrNull(systemProperties(property)), "the system property $property")
+                ?: screen(valueOrNull(env(variable)), "the environment variable $variable")
+        }
+
+        private class Sourced(
+            val value: String,
+            val source: String,
+        )
+
+        /** [resolveOption], with the name of the source that gave the value. */
+        private fun resolveSourced(
+            key: String,
+            options: Map<String, String>,
+            systemProperties: (String) -> String?,
+            env: (String) -> String?,
+        ): Sourced? {
+            val property = OptionNames.systemProperty(key)
+            val variable = OptionNames.environmentVariable(key)
+            valueOrNull(options[key])?.let { return Sourced(it, "the agent option $key") }
+            valueOrNull(systemProperties(property))?.let { return Sourced(it, "the system property $property") }
+            return valueOrNull(env(variable))?.let { Sourced(it, "the environment variable $variable") }
+        }
+
+        /**
+         * The refusal for a token that holds a character outside `!` to `~`, or null. It names the
+         * source of the token, never the token or its length.
+         */
+        private fun tokenRefusal(
+            key: String,
+            token: String,
+            options: Map<String, String>,
+            systemProperties: (String) -> String?,
+            env: (String) -> String?,
+        ): String? {
+            if (token.all { it in '!'..'~' }) return null
+            val source = resolveSourced(key, options, systemProperties, env)?.source
+            return "otherlode: $key from $source holds a character outside visible ASCII (! to ~), so the agent is off for this JVM; " +
+                "set a token of visible ASCII characters only"
         }
 
         private fun valueOrNull(raw: String?): String? = raw?.trim()?.ifBlank { null }
@@ -382,29 +442,40 @@ data class AgentConfig(
          * producing a `//` in every request path. The scheme is lowercased, since URL schemes are
          * case-insensitive and anything reading the URL afterwards can then compare it
          * exactly; the host and path are kept as given. A value that is not an absolute http(s) URL
-         * with a host falls back to the default with a warning: left as is, `URI.create` would throw on
-         * every attempt of every flush, so the collector would never be reached and the log would fill
-         * with the same stack trace at each tick. A query string or a fragment falls back the same way,
-         * since the appended path would land inside it.
+         * with a host is refused: left as is, `URI.create` would throw on every attempt of every
+         * flush, and falling back to the default would send the payloads and the token to an address
+         * nobody chose. A query string or a fragment is refused the same way, since the appended path
+         * would land inside it.
          *
          * A host name with an underscore, such as a Docker Compose service name, gets its own
          * reason. `java.net.URI` parses it with no host, and the JDK's `HttpClient` refuses such a
-         * URI too, so the value cannot be used; without the reason the warning would read as if the
+         * URI too, so the value cannot be used; without the reason the message would read as if the
          * URL had no host at all.
+         *
+         * A URL with a user name or password is refused too. The JDK's `HttpClient` never sends
+         * userinfo, and the URL appears in the message of every failed send.
+         *
+         * Returns the URL and the refusal message. A refusal never quotes the value, apart from the
+         * host of a URL that holds no userinfo. The URL of a refusal is the default and is not used.
          */
-        private fun parseExportUrl(raw: String?): String {
-            if (raw == null) return DEFAULT_EXPORT_URL
-            val trimmed = raw.trim().trimEnd('/')
+        private fun parseExportUrl(sourced: Sourced?): Pair<String, String?> {
+            if (sourced == null) return DEFAULT_EXPORT_URL to null
+            val trimmed = sourced.value.trimEnd('/')
             val uri = runCatching { URI(trimmed) }.getOrNull()
+            val hasUserInfo = uri?.rawUserInfo != null || '@' in trimmed.substringAfter("://", "")
             val underscoreHost =
                 uri
-                    ?.takeIf { it.host == null }
+                    ?.takeIf { it.host == null && !hasUserInfo }
                     ?.rawAuthority
-                    ?.substringAfterLast('@')
                     ?.substringBefore(':')
                     ?.takeIf { '_' in it }
             val reason =
                 when {
+                    hasUserInfo -> {
+                        "exportUrl must not hold an @ after the scheme, as a user name or password does, which the agent " +
+                            "never sends; set the token with authToken, and write an @ in a path as %40"
+                    }
+
                     underscoreHost != null -> {
                         "exportUrl's host '$underscoreHost' has an underscore, which a URL host name cannot " +
                             "contain; use a host name or alias without one, or an IP address"
@@ -427,11 +498,11 @@ data class AgentConfig(
                     }
                 }
             if (reason != null) {
-                log.log(Level.WARNING, "otherlode: $reason, ignoring '$raw' and using the default $DEFAULT_EXPORT_URL")
-                return DEFAULT_EXPORT_URL
+                return DEFAULT_EXPORT_URL to
+                    "otherlode: $reason; exportUrl from ${sourced.source} is refused, so the agent is off for this JVM"
             }
             val scheme = checkNotNull(uri).scheme
-            return scheme.lowercase() + trimmed.substring(scheme.length)
+            return (scheme.lowercase() + trimmed.substring(scheme.length)) to null
         }
 
         /**

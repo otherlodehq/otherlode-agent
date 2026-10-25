@@ -27,6 +27,11 @@ the section being read.
 - Endpoint counting for micronaut-aws 3.x on Lambda, as part of `micronaut-3`, at the entry of `MicronautLambdaContainerHandler.handleRequest` from the route match the request carries.
 - The Micronaut modules declare a router's routes only once a dispatch point they count at has been constructed: Netty's `RoutingInBoundHandler`, micronaut-servlet's `ServletHttpHandler`, micronaut-aws's `MicronautLambdaContainerHandler`, or `RouteExecutor` on Micronaut 4 and 5. A router that waits one flush interval with none constructed, or is still waiting at the final flush, reports the module as disabled with the new kind `ROUTES_NOT_COUNTED`, in the wire format and in the testkit, and the module declares nothing.
 
+### Changed
+
+- An `exportUrl` the agent cannot use turns the agent off for the JVM with one ERROR, in place of a warning and a fall back to `http://localhost:4319`. A URL with a user name or password is one of these. An `authToken` with a character outside the visible ASCII range `!` to `~` turns the agent off the same way. Neither ERROR quotes the token, or any of the URL but a host with an underscore.
+- A service name, namespace, version, environment or instance ID over 1024 bytes is skipped with a warning, and the next source gives the value, since the collector refuses a payload that carries one.
+
 ### Fixed
 
 - With OpenTelemetry's Spring MVC instrumentation present, a request that a filter answered before `DispatcherServlet` ran, a 401 from Spring Security for one, is no longer counted against the route OpenTelemetry looks up afterwards. Annotated, functional and `resources(...)` routes count only a lookup made by the dispatch.

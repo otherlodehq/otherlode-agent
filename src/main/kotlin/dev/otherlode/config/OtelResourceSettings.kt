@@ -28,10 +28,17 @@ internal class OtelResourceSettings(
     val serviceNamespace: String? =
         ServiceIdentityValues.usable(attributes["service.namespace"], "service.namespace in the resource attributes")
 
-    /** The `service.version` attribute. */
-    val serviceVersion: String? get() = attributes["service.version"]
+    /** The `service.version` attribute, unless [ServiceIdentityValues.withinLimit] skips it. */
+    val serviceVersion: String? =
+        ServiceIdentityValues.withinLimit(attributes["service.version"], "service.version in the resource attributes")
 
-    val environment: String? get() = attributes["deployment.environment.name"] ?: attributes["deployment.environment"]
+    /** The `deployment.environment.name` attribute, else the older `deployment.environment`, unless [ServiceIdentityValues.withinLimit] skips it. */
+    val environment: String? =
+        ServiceIdentityValues.withinLimit(
+            attributes["deployment.environment.name"],
+            "deployment.environment.name in the resource attributes",
+        )
+            ?: ServiceIdentityValues.withinLimit(attributes["deployment.environment"], "deployment.environment in the resource attributes")
 
     companion object {
         private val log = System.getLogger(OtelResourceSettings::class.java.name)

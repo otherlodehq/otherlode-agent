@@ -143,6 +143,36 @@ class AgentTest {
     }
 
     @Test
+    fun `a refused configuration returns null, installs nothing and starts no otherlode threads`() {
+        for (args in listOf("exportUrl=ftp://collector.example.com", "authToken=abc\u200Bdef")) {
+            val calls = mutableListOf<String>()
+            val before = currentThreadNames()
+
+            val running = Agent.start("includePackages=com.acme,$args", recordingInstrumentation(calls))
+
+            assertNull(running, "args '$args' must be refused")
+            assertEquals(emptyList(), calls, "args '$args' must not touch Instrumentation")
+            val newThreadNames = currentThreadNames() - before
+            assertTrue(newThreadNames.none { it.startsWith("otherlode-") }, "args '$args' started otherlode- threads: $newThreadNames")
+        }
+    }
+
+    @Test
+    fun `a refused configuration logs one ERROR per problem, and none when the agent is disabled`() {
+        val enabledErrors =
+            logMessagesFrom(Agent::class.java.name, java.util.logging.Level.SEVERE) {
+                Agent.start("includePackages=com.acme,exportUrl=ftp://x,authToken=abc\u200Bdef", recordingInstrumentation(mutableListOf()))
+            }
+        assertEquals(2, enabledErrors.size, "$enabledErrors")
+
+        val disabledErrors =
+            logMessagesFrom(Agent::class.java.name, java.util.logging.Level.SEVERE) {
+                Agent.start("enabled=false,exportUrl=ftp://x", recordingInstrumentation(mutableListOf()))
+            }
+        assertEquals(emptyList(), disabledErrors)
+    }
+
+    @Test
     fun `a startup step that fails after install removes every transformer it added and starts no otherlode threads`() {
         val calls = mutableListOf<String>()
         val before = currentThreadNames()

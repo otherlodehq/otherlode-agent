@@ -126,9 +126,9 @@ object Agent {
 
     /**
      * Returns what was started, or null if the agent did not start: [AgentConfig.enabled] is
-     * false, [AgentConfig.includePackages] is empty, or the bootstrap holder could not
-     * be installed. Both configuration checks run before anything is constructed, so a refused
-     * start leaves no thread, transformer or registry behind. `internal` rather than `private` so a
+     * false, [AgentConfig.refusals] is not empty, [AgentConfig.includePackages] is empty, or the
+     * bootstrap holder could not be installed. The configuration checks run before anything is
+     * constructed, so a refused start leaves no thread, transformer or registry behind. `internal` rather than `private` so a
      * test can drive this directly with a real [Instrumentation] and stop what it started,
      * without going through [premain]'s `void` contract.
      */
@@ -140,6 +140,10 @@ object Agent {
         val config = AgentConfig.parse(agentArgs)
         if (!config.enabled) {
             log.log(Level.INFO, "otherlode: disabled by configuration, nothing will be instrumented or exported")
+            return null
+        }
+        if (config.refusals.isNotEmpty()) {
+            config.refusals.forEach { log.log(Level.ERROR, it) }
             return null
         }
         if (config.includePackages.isEmpty()) {

@@ -7,6 +7,7 @@ import java.util.logging.LogRecord
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
+import kotlin.test.assertNull
 import kotlin.test.assertTrue
 import java.util.logging.Level as JulLevel
 import java.util.logging.Logger as JulLogger
@@ -258,14 +259,6 @@ class AgentConfigTest {
     }
 
     @Test
-    fun `an endpoint that is not an absolute http(s) URL falls back to the default`() {
-        // Left as is, URI.create would throw on every attempt of every flush.
-        assertEquals("http://localhost:4319", AgentConfig.parse("exportUrl=not a url").exportUrl)
-        assertEquals("http://localhost:4319", AgentConfig.parse("exportUrl=ftp://collector.example.com").exportUrl)
-        assertEquals("http://localhost:4319", AgentConfig.parse("exportUrl=/v1/otherlode").exportUrl)
-    }
-
-    @Test
     fun `an unknown option key is ignored without disturbing the known ones`() {
         val config = AgentConfig.parse("serviceName=checkout,includePackage=com.acme")
 
@@ -468,26 +461,121 @@ class AgentConfigTest {
     }
 
     @Test
-    fun `an exportUrl with a query string falls back to the default with a warning`() {
-        val warnings =
-            warningsFrom { assertEquals("http://localhost:4319", parseQuietly("exportUrl=http://host:4319/base?key=1").exportUrl) }
+    fun `each rejected exportUrl refuses the configuration with one message that names the setting and its source`() {
+        val rejected =
+            mapOf(
+                "a missing scheme" to ("/v1/marker" to "absolute http or https URL"),
+                "an ftp scheme" to ("ftp://marker.example.com" to "absolute http or https URL"),
+                "a query string" to ("http://host:4319/base?key=marker" to "query string"),
+                "a fragment" to ("http://host:4319/base#marker" to "fragment"),
+                "an unparsable value" to ("not a marker url" to "absolute http or https URL"),
+                "an @ in the path" to ("https://host/marker@team" to "@ after the scheme"),
+            )
+        for ((name, case) in rejected) {
+            val (url, reason) = case
+            val errors = parseQuietly("exportUrl=$url").refusals
 
-        assertEquals(1, warnings.count { it.contains("exportUrl") && it.contains("query") }, "$warnings")
+            assertEquals(1, errors.size, "$name: $errors")
+            assertTrue(errors.single().contains("exportUrl") && errors.single().contains("agent option"), "$name: $errors")
+            assertTrue(reason in errors.single(), "$name gave another reason: $errors")
+            assertTrue("marker" !in errors.single(), "$name quoted the value: $errors")
+        }
     }
 
     @Test
-    fun `an exportUrl whose host has an underscore falls back to the default with a warning naming the underscore`() {
-        val warnings =
-            warningsFrom { assertEquals("http://localhost:4319", parseQuietly("exportUrl=http://otherlode_collector:4319").exportUrl) }
+    fun `a rejected exportUrl names the system property or environment variable it came from`() {
+        val fromProperty = mapOf("otherlode.export.url" to "ftp://x")
+        val propertyErrors = AgentConfig.parse(null, env = { null }, systemProperties = fromProperty::get).refusals
+        assertTrue(propertyErrors.single().contains("system property otherlode.export.url"), "$propertyErrors")
 
-        assertEquals(1, warnings.count { it.contains("'otherlode_collector'") && it.contains("underscore") }, "$warnings")
+        val fromEnv = mapOf("OTHERLODE_EXPORT_URL" to "ftp://x")
+        val envErrors = AgentConfig.parse(null, env = fromEnv::get, systemProperties = { null }).refusals
+        assertTrue(envErrors.single().contains("environment variable OTHERLODE_EXPORT_URL"), "$envErrors")
     }
 
     @Test
-    fun `an exportUrl with a fragment falls back to the default with a warning`() {
-        val warnings = warningsFrom { assertEquals("http://localhost:4319", parseQuietly("exportUrl=http://host:4319/base#top").exportUrl) }
+    fun `an underscore host is named in the refusal`() {
+        val errors = parseQuietly("exportUrl=http://otherlode_collector:4319").refusals
 
-        assertEquals(1, warnings.count { it.contains("exportUrl") && it.contains("fragment") }, "$warnings")
+        assertTrue(errors.single().contains("'otherlode_collector'") && errors.single().contains("underscore"), "$errors")
+    }
+
+    @Test
+    fun `an exportUrl with a user name or password is refused without quoting any of it`() {
+        for (url in listOf(
+            "http://user:marker@host:4319",
+            "http://user:marker@otherlode_collector:4319",
+            "http://my_user:pa/ss@collector:4319",
+            "http://user:marker@host:4319?k=1",
+        )) {
+            val errors = parseQuietly("exportUrl=$url").refusals
+
+            assertEquals(1, errors.size, "$url: $errors")
+            assertTrue(errors.single().contains("user name or password"), "$url: $errors")
+            assertTrue(listOf("marker", "user:", "my_user", "pa/ss").none { it in errors.single() }, "$url: $errors")
+        }
+    }
+
+    @Test
+    fun `parse logs no ERROR for a refusal, which the agent logs only when it is enabled`() {
+        val errors = errorsFrom { assertTrue(parseQuietly("exportUrl=ftp://x").refusals.isNotEmpty()) }
+
+        assertEquals(emptyList(), errors)
+    }
+
+    @Test
+    fun `a bad exportUrl and a bad token give one refusal each`() {
+        val refusals = parseQuietly("exportUrl=ftp://x,authToken=abc\u200Bdef").refusals
+
+        assertEquals(2, refusals.size, "$refusals")
+        assertTrue(refusals[0].contains("exportUrl") && refusals[1].contains("authToken"), "$refusals")
+    }
+
+    @Test
+    fun `a printed configuration masks the token`() {
+        val printed = parseQuietly("authToken=secret-marker").toString()
+
+        assertTrue("secret-marker" !in printed && "****" in printed, printed)
+    }
+
+    @Test
+    fun `an unset exportUrl gives the default and is not refused`() {
+        assertEquals(emptyList(), parseQuietly("serviceName=x").refusals)
+        assertEquals("http://localhost:4319", parseQuietly("serviceName=x").exportUrl)
+    }
+
+    @Test
+    fun `a token with a character outside visible ASCII refuses the configuration without logging the token`() {
+        val bad =
+            listOf(
+                "abc\uFEFFmarker",
+                "abc\u200Bmarker",
+                "abc\u0001marker",
+                "abc marker",
+                "abc\tmarker",
+                "abc\u00E9marker",
+                "\uFEFFmarker",
+                "marker\u007F",
+            )
+        for (token in bad) {
+            val env = mapOf("OTHERLODE_AUTH_TOKEN" to token)
+            val errors = AgentConfig.parse(null, env = env::get, systemProperties = { null }).refusals
+
+            assertEquals(1, errors.size, "$errors")
+            assertTrue(errors.single().contains("environment variable OTHERLODE_AUTH_TOKEN"), "$errors")
+            assertTrue(!errors.single().contains("marker") && !errors.single().contains("abc"), "$errors")
+            assertTrue(!errors.single().contains(token.length.toString()), "$errors")
+        }
+        val optionErrors = parseQuietly("authToken=abc\u200Bmarker").refusals
+        assertTrue(optionErrors.single().contains("agent option authToken"), "$optionErrors")
+    }
+
+    @Test
+    fun `a plain ASCII token is accepted, and the surrounding whitespace is trimmed first`() {
+        val config = parseQuietly("", env = mapOf("OTHERLODE_AUTH_TOKEN" to " abc.DEF-123_~!=\n")::get)
+
+        assertEquals(emptyList(), config.refusals)
+        assertEquals("abc.DEF-123_~!=", config.authToken)
     }
 
     @Test
@@ -679,7 +767,14 @@ class AgentConfigTest {
     ): AgentConfig = AgentConfig.parse(agentArgs, env = env, systemProperties = { null }, detectServiceName = { null })
 
     /** The messages of every WARNING [AgentConfig] logs while [block] runs. */
-    private fun warningsFrom(block: () -> Unit): List<String> {
+    private fun warningsFrom(block: () -> Unit): List<String> =
+        recordsFrom(block).filter { it.level == JulLevel.WARNING }.mapNotNull { it.message }
+
+    /** The messages of every ERROR [AgentConfig] logs while [block] runs. */
+    private fun errorsFrom(block: () -> Unit): List<String> =
+        recordsFrom(block).filter { it.level == JulLevel.SEVERE }.mapNotNull { it.message }
+
+    private fun recordsFrom(block: () -> Unit): List<LogRecord> {
         val records = mutableListOf<LogRecord>()
         val handler =
             object : Handler() {
@@ -701,6 +796,6 @@ class AgentConfigTest {
             julLogger.removeHandler(handler)
             julLogger.level = originalLevel
         }
-        return records.filter { it.level == JulLevel.WARNING }.mapNotNull { it.message }
+        return records
     }
 }

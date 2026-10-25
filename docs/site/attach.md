@@ -113,9 +113,9 @@ The agent finds the main class from the launch command. It reads `Start-Class`, 
 
 ## Point the agent at a collector
 
-`exportUrl` is the base URL of the collector. It defaults to `http://localhost:4319`. The agent appends its own paths to it, so a path in the URL is kept. A query string or a fragment is refused with a warning, and the agent uses the default.
+`exportUrl` is the base URL of the collector. It defaults to `http://localhost:4319`. The agent appends its own paths to it, so a path in the URL is kept. A value the agent cannot use, such as one with a query string or a fragment, turns the agent off for the life of the JVM with one ERROR. The agent does not fall back to the default.
 
-`authToken` is sent to the collector as `Authorization: Bearer <token>`. Set the token through the `OTHERLODE_AUTH_TOKEN` environment variable, not through the option string. Every user on the host can read a process's arguments with `ps`, and cannot read its environment.
+`authToken` is sent to the collector as `Authorization: Bearer <token>`. It may hold only visible ASCII characters. A token with any other character, such as an invisible one copied from a web page, turns the agent off with one ERROR. Set the token through the `OTHERLODE_AUTH_TOKEN` environment variable, not through the option string. Every user on the host can read a process's arguments with `ps`, and cannot read its environment.
 
 If `authToken` is set and `exportUrl` starts with `http://`, the agent logs a warning that the token travels unencrypted. Use an `https://` URL for any collector that is not on the same host.
 

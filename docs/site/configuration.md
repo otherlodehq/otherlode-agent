@@ -43,13 +43,13 @@ The system property and environment variable names come from the option name. Th
 
 | Option | Default | Accepted values | If the value is invalid |
 |---|---|---|---|
-| `serviceName` | The first of OpenTelemetry's settings, [service-name detection](#service-name-detection), then `unknown_service:java` | Any text, except `.` and `..` | `.` and `..` are skipped with a warning, and the next source gives the name |
-| `serviceNamespace` | None, which is the unspecified namespace | Any text, except `.` and `..` | `.` and `..` are skipped with a warning, and the next source gives the namespace |
-| `serviceVersion` | OpenTelemetry's `service.version`, else none | Any text | No check |
-| `serviceInstanceId` | A random UUID, new for each process | Any text | No check |
-| `environment` | OpenTelemetry's `deployment.environment.name`, then `deployment.environment`, then `test` when `testRun` is on, else none | Any text | No check |
-| `exportUrl` | `http://localhost:4319` | An absolute `http` or `https` URL with a host, and with no query string or fragment. A path is allowed | Warning, and the default is used |
-| `authToken` | None | Any text | No check |
+| `serviceName` | The first of OpenTelemetry's settings, [service-name detection](#service-name-detection), then `unknown_service:java` | Any text up to 1024 bytes, except `.` and `..` | `.`, `..` and a longer value are skipped with a warning, and the next source gives the name |
+| `serviceNamespace` | None, which is the unspecified namespace | Any text up to 1024 bytes, except `.` and `..` | `.`, `..` and a longer value are skipped with a warning, and the next source gives the namespace |
+| `serviceVersion` | OpenTelemetry's `service.version`, else none | Any text up to 1024 bytes | A longer value is skipped with a warning, and the next source gives the version |
+| `serviceInstanceId` | A random UUID, new for each process | Any text up to 1024 bytes | A longer value is skipped with a warning, and the next source gives the ID, else the random UUID |
+| `environment` | OpenTelemetry's `deployment.environment.name`, then `deployment.environment`, then `test` when `testRun` is on, else none | Any text up to 1024 bytes | A longer value is skipped with a warning, and the next source gives the environment |
+| `exportUrl` | `http://localhost:4319` | An absolute `http` or `https` URL with a host, and with no query string or fragment. A path is allowed | ERROR, and the agent is off for this JVM |
+| `authToken` | None | Visible ASCII characters only, `!` to `~` | ERROR, and the agent is off for this JVM |
 | `flushIntervalSeconds` | `60` | A whole number of seconds from `1` to `86400` | Warning, and the default is used |
 | `includePackages` | None. Required. | Dotted package or class prefixes, separated by `;` | Glob and path prefixes are dropped with a warning. If no prefix is left, the agent logs an ERROR and disables itself |
 | `excludePackages` | None | Dotted package or class prefixes, separated by `;` | Glob and path prefixes are dropped with a warning |
@@ -62,7 +62,7 @@ The system property and environment variable names come from the option name. Th
 | `otelBridgeEnabled` | `false` | `true` or `false`, in any letter case | Warning, and the default is used |
 | `testRun` | `false` | `true` or `false`, in any letter case | Warning, and the default is used |
 
-No invalid value stops your application. An invalid value gets a warning in the log and the default. The one exception is an empty `includePackages`, which disables the agent for the life of the JVM (see [includePackages and excludePackages](#includepackages-and-excludepackages)).
+No invalid value stops your application. An invalid value gets a warning in the log and the default. Three values disable the agent for the life of the JVM instead: an empty `includePackages` (see [includePackages and excludePackages](#includepackages-and-excludepackages)), an `exportUrl` the agent cannot use (see [exportUrl](#exporturl)) and an `authToken` with a character outside visible ASCII (see [authToken](#authtoken)).
 
 ## Where a value comes from
 
@@ -197,19 +197,22 @@ The agent logs one INFO line listing the modules the option keeps off. A name th
 
 The agent normalises the value before it uses it. It trims spaces, drops trailing `/` characters, and lowercases the scheme, so `HTTPS://Collector.example.com/` becomes `https://Collector.example.com`. The host and the path keep the letter case you wrote. A path is kept: `https://gateway.example.com/otherlode` posts to `https://gateway.example.com/otherlode/v1/otherlode/deltas`.
 
-The agent refuses these values with a warning, and uses `http://localhost:4319` instead.
+The agent refuses these values. It logs one ERROR and turns itself off for the life of the JVM: it instruments nothing and sends nothing. The default `http://localhost:4319` applies only when you set no `exportUrl`. Falling back to it would send your data, and your token, to an address you never chose.
 
 - A value that is not an absolute `http` or `https` URL with a host. A relative path such as `/v1/otherlode` and a value with no scheme both fall here.
 - A value with a query string.
 - A value with a fragment.
+- A value with a user name or password, such as `http://user:secret@collector:4319`, or any other `@` after the scheme. The agent never sends a user name or password, so set the token with [authToken](#authtoken).
 
-A host name that contains an underscore, such as `http://my_collector:4319`, is refused too, with a warning that names the underscore. Java's HTTP client cannot send to such a host. Use a host name or network alias without an underscore, or an IP address.
+A host name that contains an underscore, such as `http://my_collector:4319`, is refused too, and the ERROR names the underscore. Java's HTTP client cannot send to such a host. Use a host name or network alias without an underscore, or an IP address.
+
+The ERROR names `exportUrl` and the source that gave the value: the agent option, the system property or the environment variable. It does not repeat the value, apart from the host in the underscore case. It keeps the reason, as in `otherlode: exportUrl must be an absolute http or https URL; exportUrl from the environment variable OTHERLODE_EXPORT_URL is refused, so the agent is off for this JVM`. The instance sends no data until you fix the value and restart the JVM. When the agent is disabled with `enabled=false`, it logs no ERROR for these values.
 
 For what the agent sends to this URL, and what it does when the collector is down, see [what the agent sends](data-sent).
 
 ## authToken
 
-When `authToken` is set, the agent sends `Authorization: Bearer <token>` with every request. It trims the token and checks nothing else about it.
+When `authToken` is set, the agent sends `Authorization: Bearer <token>` with every request. It trims the token. The token may hold only the visible ASCII characters `!` to `~`. A token with a space inside it, a control character, an invisible character such as U+FEFF or U+200B, or any other non-ASCII character turns the agent off for the life of the JVM. The agent logs one ERROR that names the source of the token, such as the environment variable `OTHERLODE_AUTH_TOKEN`. It never logs the token or its length. A token copied from a web page or a document can carry an invisible character.
 
 The agent's own advice is to set the token through `OTHERLODE_AUTH_TOKEN`. Both the argument string and a `-D` flag appear on the process command line, which every user on the host can read through `ps` and `/proc/<pid>/cmdline`. An environment variable does not.
 
@@ -242,6 +245,8 @@ Each payload names the service that sent it with these values.
 At each step, the first value that is not blank wins. A service is known by its namespace and its name together. With no namespace, the service is in the unspecified namespace.
 
 A service name or namespace of `.` or `..` is skipped with a warning, as if it were blank, and the next source gives the value. The server shows a service at a URL path that holds both values, and browsers drop `.` and `..` path segments, so neither value can name a service. The check covers every source of a name or a namespace, including OpenTelemetry's and detection.
+
+The name, namespace, version, environment and instance ID each hold at most 1024 bytes in UTF-8, which is the collector's limit. The collector refuses every payload that carries a longer value. The agent skips a longer value with a warning that names its source and the limit, never the value, and the next source gives the value. An instance ID that every source skips falls back to the random UUID. Multi-byte characters count by their bytes, so 512 characters of two bytes each fit and 513 do not.
 
 The agent never reads the instance ID from OpenTelemetry's `service.instance.id`. Many deployment templates give every replica the same value there, and the server counts instances by that ID, so the replicas would read as one instance. Set `serviceInstanceId` yourself to pin the ID, for example to a pod name or to a name for a test task.
 

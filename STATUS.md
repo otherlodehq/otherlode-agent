@@ -51,7 +51,7 @@ Decided in ADRs 0075 and 0076 and in amendments to ADRs 0014, 0017, 0068 and 007
 
 1. The Spring functional-route verb set and the cap on identities found at dispatch (ADR 0017).
 2. The WebFlux `Origin` read and module failure reasons that name the exception class only (ADR 0017).
-3. A rejected `exportUrl` or unusable token turns export off; identity values over 1024 bytes are skipped (ADR 0076).
+3. A rejected `exportUrl` or unusable token turns the agent off; identity values over 1024 bytes are skipped (ADR 0076).
 4. `final_flush` only on the shutdown flush's closing heartbeat (ADR 0068).
 5. The static baseline keeps the first copy of a class name in JVM search order (ADR 0014).
 6. Chunks bounded by encoded bytes and element count, and the class that alone breaks a bound (ADR 0075).

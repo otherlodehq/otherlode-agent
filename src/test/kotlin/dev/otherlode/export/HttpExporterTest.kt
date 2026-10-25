@@ -304,6 +304,30 @@ class HttpExporterTest {
     }
 
     @Test
+    fun `a token the request builder refuses fails the send without the token in the message or the cause chain`() {
+        val exporter =
+            HttpExporter(
+                endpoint = "http://localhost:1",
+                authToken = "tok\u0001marker\u200B",
+                maxAttempts = 5,
+                initialBackoff = Duration.ofSeconds(30),
+                maxBackoff = Duration.ofSeconds(30),
+            )
+
+        val started = System.nanoTime()
+        val failure = assertFailsWith<ExportFailedException> { exporter.exportDeltaBatch(emptyBatch) }
+        assertTrue(Duration.ofNanos(System.nanoTime() - started) < Duration.ofSeconds(10), "the send retried")
+
+        assertTrue(failure.message.orEmpty().contains("Authorization"), "${failure.message}")
+        var cause: Throwable? = failure
+        while (cause != null) {
+            assertFalse(cause.message.orEmpty().contains("marker"), "$cause")
+            cause = cause.cause
+        }
+        assertEquals(null, failure.cause)
+    }
+
+    @Test
     fun `no Authorization header is sent when no token is configured`() {
         val endpoint = startServer { 200 }
         val exporter = exporterFor(endpoint)
