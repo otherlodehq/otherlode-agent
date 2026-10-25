@@ -118,7 +118,7 @@ _Avoid_: foreign agent, other instrumentation
 One scheduled export tick, sending a delta batch and any manifest entries not yet delivered.
 
 **Complete flush**:
-A flush whose delta batches were all confirmed. Its last delta batch carries `flush_complete`.
+A flush whose delta batches before its last were all confirmed. Its last delta batch carries `flush_complete`.
 _Avoid_: successful flush, finished flush
 
 **Delta batch**:

@@ -91,7 +91,7 @@ The agent reports on a timer, so a hit that just happened has not reached the co
 
 Pick the wait by what you want to know:
 
-- `awaitSettled(timeout)` waits for two reports to arrive after the call. One report can already be mid-flight when your last action finishes and miss its hits. Use it before asking about hit counts.
+- `awaitSettled(timeout)` waits until every instance that has reported has completed two flushes after the call, or has exited with a complete shutdown flush. A flush that was already running when your last action finished can miss its hits, and the complete flush after it carries them. Use it before asking about hit counts. If an instance stops without a complete shutdown flush, for example a child JVM you kill with `kill -9`, the wait times out and names it.
 - `awaitProbe(className, methodName, timeout)` waits until the collector has seen the method at all. Use it before the first query about a class that loads late.
 - `awaitEndpoint(verb, route, timeout)` does the same for an endpoint.
 - `awaitNextFlush(timeout)` waits for one report. It is enough to know the agent is alive.

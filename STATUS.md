@@ -68,15 +68,16 @@ Static baseline follow-ups the first-copy change surfaced. Each only loses evide
 - A jar whose manifest cannot be read is still scanned; the JDK drops such a jar. `Class-Path` entries are split on single spaces and resolved as file paths, where the JDK tokenises and resolves URLs.
 - Cross-class reads can take a shadowed copy's tables from the referencing root's locator.
 
-### The settled wait and `flush_complete` (ADR 0077): building
+### The settled wait and `flush_complete` (ADR 0077): agent built, bindings to bump
 
-Landing order:
-1. Chunk 0: ADR 0077, the amendments to ADRs 0018 and 0036, and the `CONTEXT.md` terms.
-2. Agent: `DeltaBatch.flush_complete` (field 8), set by `ExportScheduler` on the last batch of a complete flush, with `data-sent.md`.
-3. Testkit: `awaitSettled` waits per instance for two complete flushes, counts a batch once per run and `payload_sequence`, and names the unsettled instances on timeout. A regression test makes hits after the scheduler starts and forces a pending or split flush. `testkit.md` and `testkit-api.md` follow.
-4. Luke: `buf push --exclude-unnamed --label master` from this repo, since Actions runs no job.
-5. Collector: bump the bindings, with a redaction test that `flush_complete` passes and marks nothing stripped.
-6. Server: bump the bindings.
+The agent sets `DeltaBatch.flush_complete` and the testkit's `awaitSettled` waits per instance for two complete flushes. Left, in order:
+1. Luke: `buf push --exclude-unnamed --label master` from this repo, since Actions runs no job. This session had no Buf credentials.
+2. Collector: bump the bindings, with a redaction test that `flush_complete` passes and marks nothing stripped. Until then a collector built from master strips the field from an agent built from master and marks the run `fields_stripped`.
+3. Server: bump the bindings.
+
+Open, to decide: a delta batch the agent saw time out on all five attempts (about 50 seconds) can still be applied later, after the next flush has read its counts. When it carries `flush_complete`, `awaitSettled` can count it and return with up to one interval of hits unsent. It needs the testkit's handler stalled that long, as at a breakpoint while a child JVM keeps running. A testkit rule that ignores a complete batch older than one the instance has already sent narrows it but leaves a window, so a full fix changes ADR 0077's rule.
+
+`testkit/src/main/kotlin/dev/otherlode/testkit/OtherlodeTestCollector.kt` fails ktlint 1.5.0 with 22 `condition-wrapping` errors on master. A formatting-only commit fixes it.
 
 ### Tooling: code principles, a refactoring playbook and a prose lint
 

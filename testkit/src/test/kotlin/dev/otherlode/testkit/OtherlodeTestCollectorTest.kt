@@ -46,6 +46,7 @@ import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Duration
 import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.concurrent.thread
 import kotlin.test.AfterTest
 import kotlin.test.Test
@@ -304,26 +305,194 @@ class OtherlodeTestCollectorTest {
         }
     }
 
-    @Test
-    fun `awaitSettled returns once two delta batches are sent after the call, and times out with only one`() {
-        val target = startCollector()
-        val exporter = exporterFor(target)
+    private fun sendFlushBatch(
+        target: OtherlodeTestCollector,
+        instanceId: String,
+        payloadSequence: Long,
+        flushComplete: Boolean,
+        finalFlush: Boolean = false,
+    ) {
+        exporterFor(target).exportDeltaBatch(
+            DeltaBatch(
+                ResourceAttributes("svc", null, instanceId, null, "run-1"),
+                emptyList(),
+                finalFlush = finalFlush,
+                payloadSequence = payloadSequence,
+                flushComplete = flushComplete,
+            ),
+        )
+    }
 
+    private fun sendLater(block: () -> Unit) =
         thread(isDaemon = true) {
             Thread.sleep(50)
-            exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("svc", null, "i-1", null, "run-1"), emptyList()))
-            Thread.sleep(50)
-            exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("svc", null, "i-1", null, "run-1"), emptyList()))
+            block()
+        }
+
+    @Test
+    fun `awaitNextFlush returns on a batch it has already seen, since any accepted delta batch counts`() {
+        val target = startCollector()
+        sendFlushBatch(target, "i-1", payloadSequence = 1, flushComplete = true)
+
+        sendLater { sendFlushBatch(target, "i-1", payloadSequence = 1, flushComplete = true) }
+
+        target.awaitNextFlush(Duration.ofSeconds(2))
+    }
+
+    @Test
+    fun `awaitSettled returns once an instance sends two complete flushes after the call, and times out with only one`() {
+        val target = startCollector()
+
+        sendLater {
+            sendFlushBatch(target, "i-1", payloadSequence = 1, flushComplete = true)
+            sendFlushBatch(target, "i-1", payloadSequence = 2, flushComplete = true)
         }
         target.awaitSettled(Duration.ofSeconds(2))
 
-        thread(isDaemon = true) {
-            Thread.sleep(50)
-            exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("svc", null, "i-1", null, "run-1"), emptyList()))
-        }
+        sendLater { sendFlushBatch(target, "i-1", payloadSequence = 3, flushComplete = true) }
         assertFailsWith<TimeoutException> {
-            target.awaitSettled(Duration.ofMillis(150))
+            target.awaitSettled(Duration.ofMillis(300))
         }
+    }
+
+    @Test
+    fun `awaitSettled does not return while a flush that read its counts before the action is still sending`() {
+        val target = startCollector()
+        val secondFlushSent = AtomicBoolean(false)
+
+        sendLater {
+            sendFlushBatch(target, "i-1", payloadSequence = 1, flushComplete = false)
+            sendFlushBatch(target, "i-1", payloadSequence = 2, flushComplete = false)
+            sendFlushBatch(target, "i-1", payloadSequence = 3, flushComplete = true)
+            Thread.sleep(400)
+            secondFlushSent.set(true)
+            sendFlushBatch(target, "i-1", payloadSequence = 4, flushComplete = true)
+        }
+        target.awaitSettled(Duration.ofSeconds(5))
+
+        assertTrue(secondFlushSent.get(), "the wait returned on the first flush's batches alone")
+    }
+
+    @Test
+    fun `awaitSettled never settles an instance on batches without flushComplete`() {
+        val target = startCollector()
+
+        sendLater {
+            for (sequence in 1L..6L) sendFlushBatch(target, "i-1", payloadSequence = sequence, flushComplete = false)
+        }
+        val failure = assertFailsWith<TimeoutException> { target.awaitSettled(Duration.ofSeconds(2)) }
+
+        assertTrue("i-1" in failure.message.orEmpty(), failure.message)
+        assertTrue("0 of 2" in failure.message.orEmpty(), failure.message)
+    }
+
+    @Test
+    fun `awaitSettled counts a retried batch once, by instance and payload sequence`() {
+        val target = startCollector()
+
+        sendLater {
+            sendFlushBatch(target, "i-1", payloadSequence = 1, flushComplete = true)
+            sendFlushBatch(target, "i-1", payloadSequence = 1, flushComplete = true)
+        }
+        val failure = assertFailsWith<TimeoutException> { target.awaitSettled(Duration.ofSeconds(2)) }
+
+        assertTrue("i-1" in failure.message.orEmpty(), failure.message)
+        assertTrue("1 of 2" in failure.message.orEmpty(), failure.message)
+    }
+
+    @Test
+    fun `awaitSettled does not count a retry after the call of a batch delivered before it`() {
+        val target = startCollector()
+        sendFlushBatch(target, "i-1", payloadSequence = 1, flushComplete = true)
+
+        sendLater {
+            sendFlushBatch(target, "i-1", payloadSequence = 1, flushComplete = true)
+            sendFlushBatch(target, "i-1", payloadSequence = 2, flushComplete = true)
+        }
+        val failure = assertFailsWith<TimeoutException> { target.awaitSettled(Duration.ofSeconds(2)) }
+
+        assertTrue("1 of 2" in failure.message.orEmpty(), failure.message)
+    }
+
+    @Test
+    fun `awaitSettled counts every arrival of a batch with payload sequence 0`() {
+        val target = startCollector()
+
+        sendLater {
+            sendFlushBatch(target, "i-1", payloadSequence = 0, flushComplete = true)
+            sendFlushBatch(target, "i-1", payloadSequence = 0, flushComplete = true)
+        }
+
+        target.awaitSettled(Duration.ofSeconds(2))
+    }
+
+    @Test
+    fun `awaitSettled waits for every instance and names the one that has not settled`() {
+        val target = startCollector()
+
+        sendLater {
+            sendFlushBatch(target, "i-2", payloadSequence = 1, flushComplete = false)
+            sendFlushBatch(target, "i-1", payloadSequence = 1, flushComplete = true)
+            sendFlushBatch(target, "i-1", payloadSequence = 2, flushComplete = true)
+        }
+        val failure = assertFailsWith<TimeoutException> { target.awaitSettled(Duration.ofSeconds(2)) }
+
+        val message = failure.message.orEmpty()
+        assertTrue("i-2" in message && "0 of 2" in message, message)
+        assertFalse("i-1" in message, message)
+    }
+
+    @Test
+    fun `awaitSettled needs two complete flushes from an instance first heard from after the call began`() {
+        val target = startCollector()
+        val secondFlushSent = AtomicBoolean(false)
+
+        sendLater {
+            sendFlushBatch(target, "i-1", payloadSequence = 1, flushComplete = true)
+            sendFlushBatch(target, "i-2", payloadSequence = 1, flushComplete = true)
+            sendFlushBatch(target, "i-1", payloadSequence = 2, flushComplete = true)
+            Thread.sleep(300)
+            secondFlushSent.set(true)
+            sendFlushBatch(target, "i-2", payloadSequence = 2, flushComplete = true)
+        }
+        target.awaitSettled(Duration.ofSeconds(5))
+
+        assertTrue(secondFlushSent.get(), "the wait returned on one flush from an instance first heard from after the call")
+    }
+
+    @Test
+    fun `awaitSettled counts an instance that ended with a complete final flush as settled`() {
+        val target = startCollector()
+
+        sendLater { sendFlushBatch(target, "i-1", payloadSequence = 1, flushComplete = true, finalFlush = true) }
+        target.awaitSettled(Duration.ofSeconds(2))
+
+        target.awaitSettled(Duration.ofSeconds(2))
+    }
+
+    @Test
+    fun `awaitSettled times out for an instance whose final flush was not complete, and says why`() {
+        val target = startCollector()
+        sendFlushBatch(target, "i-1", payloadSequence = 1, flushComplete = true)
+        sendFlushBatch(target, "i-1", payloadSequence = 2, flushComplete = false, finalFlush = true)
+
+        sendLater {
+            sendFlushBatch(target, "i-1", payloadSequence = 3, flushComplete = true)
+            sendFlushBatch(target, "i-1", payloadSequence = 4, flushComplete = true)
+        }
+        val failure = assertFailsWith<TimeoutException> { target.awaitSettled(Duration.ofSeconds(2)) }
+
+        val message = failure.message.orEmpty()
+        assertTrue("i-1" in message && "final flush that was not complete" in message, message)
+    }
+
+    @Test
+    fun `awaitSettled times out and says so when no instance was heard from`() {
+        val target = startCollector()
+
+        val failure = assertFailsWith<TimeoutException> { target.awaitSettled(Duration.ofMillis(150)) }
+
+        assertTrue("no instance was heard from" in failure.message.orEmpty(), failure.message)
     }
 
     @Test

@@ -22,6 +22,7 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.ReentrantLock
@@ -438,6 +439,13 @@ public class OtherlodeTestCollector internal constructor(
 
     private val deltaBatchSeq = AtomicLong(0)
 
+    /** Complete delta batches counted per instance; see [recordCompleteFlush]. */
+    private val completeFlushCounts = ConcurrentHashMap<String, AtomicInteger>()
+    private val countedFlushSequences = ConcurrentHashMap<String, MutableSet<Long>>()
+
+    /** Instances that sent a `final_flush` delta batch which carried `flush_complete`. */
+    private val instancesWithCompleteFinalFlush: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
     /** Orders a [ProbeRef] by class name, method name, line, then branch index, the same order [neverHit] sorts by. */
     private val probeRefComparator: Comparator<ProbeRef> =
         compareBy({ it.className }, { it.methodName }, { it.line }, {
@@ -562,23 +570,64 @@ public class OtherlodeTestCollector internal constructor(
     }
 
     /**
-     * Blocks until two delta batches, from any instance, have arrived after this call began.
-     * Waiting for two, not one, closes two gaps a single [awaitNextFlush] leaves open: a flush
-     * can already be mid-compute when the caller's last action completes, so it can land without
-     * that action's hits, and the same flush tick sends its manifest and its delta batch
-     * concurrently, so a probe a caller just triggered for the first time may not have a manifest
-     * entry yet even once its delta batch arrives. A second batch means at least one full tick
-     * started after the action, and gives that tick's concurrent manifest send a whole interval
-     * to land. A test that needs the manifest entry itself, not just the count, can still call
-     * [awaitProbe] or [awaitEndpoint] for that exact guarantee.
+     * Blocks until every hit made before this call has reached the collector. At least one
+     * instance must have been heard from, and each instance heard from, including one first heard
+     * from after the call began, must have sent two complete flushes since the call began, or ended
+     * with a complete final flush. A complete flush is one whose delta batches before its last were
+     * all confirmed; its last batch carries `flush_complete`. The second one read its counts after the call began,
+     * so it holds every earlier hit. A retried batch counts once.
      *
-     * Throws [TimeoutException] if [timeout] elapses before two batches arrive.
+     * An instance that went silent, or whose final flush was not complete, never settles. Throws
+     * [TimeoutException] if [timeout] elapses first, naming each instance that has not settled and
+     * why. A test that needs a manifest entry itself can still call [awaitProbe] or [awaitEndpoint].
      */
     @Throws(TimeoutException::class)
     public fun awaitSettled(timeout: Duration) {
         checkNoRejections()
-        val start = deltaBatchSeq.get()
-        awaitUntil(timeout, "fewer than two delta batches arrived within $timeout") { deltaBatchSeq.get() >= start + 2 }
+        val completeFlushesAtStart = completeFlushCounts.mapValues { it.value.get() }
+        awaitUntil(timeout, { settledTimeoutMessage(timeout, completeFlushesAtStart) }) {
+            instanceIds.isNotEmpty() && instancesNotSettled(completeFlushesAtStart).isEmpty()
+        }
+    }
+
+    /** Each instance heard from that has not settled, by id, with the reason; see [awaitSettled]. */
+    private fun instancesNotSettled(completeFlushesAtStart: Map<String, Int>): Map<String, String> {
+        val reasons = sortedMapOf<String, String>()
+        for (instanceId in instanceIds) {
+            if (instanceId in instancesWithCompleteFinalFlush) continue
+            if (instanceId in instancesThatEndedCleanly) {
+                reasons[instanceId] = "ended with a final flush that was not complete"
+                continue
+            }
+            val sinceStart = (completeFlushCounts[instanceId]?.get() ?: 0) - (completeFlushesAtStart[instanceId] ?: 0)
+            if (sinceStart < SETTLED_COMPLETE_FLUSHES) {
+                reasons[instanceId] = "sent $sinceStart of $SETTLED_COMPLETE_FLUSHES complete flushes since the call began"
+            }
+        }
+        return reasons
+    }
+
+    private fun settledTimeoutMessage(
+        timeout: Duration,
+        completeFlushesAtStart: Map<String, Int>,
+    ): String {
+        if (instanceIds.isEmpty()) return "no instance was heard from within $timeout"
+        val reasons = instancesNotSettled(completeFlushesAtStart)
+        return "these instances had not settled within $timeout: " +
+            reasons.entries.joinToString("; ") { (instanceId, reason) -> "$instanceId $reason" }
+    }
+
+    /** Counts a complete delta batch toward [awaitSettled], once per instance and payload sequence. */
+    private fun recordCompleteFlush(
+        instanceId: String,
+        payloadSequence: Long,
+        finalFlush: Boolean,
+    ) {
+        val firstArrival =
+            payloadSequence == 0L ||
+                countedFlushSequences.computeIfAbsent(instanceId) { ConcurrentHashMap.newKeySet() }.add(payloadSequence)
+        if (firstArrival) completeFlushCounts.computeIfAbsent(instanceId) { AtomicInteger() }.incrementAndGet()
+        if (finalFlush) instancesWithCompleteFinalFlush += instanceId
     }
 
     /**
@@ -2756,6 +2805,7 @@ public class OtherlodeTestCollector internal constructor(
                 }
                 if (batch.finalFlush) instancesThatEndedCleanly += instanceId
                 instanceIds += instanceId
+                if (batch.flushComplete) recordCompleteFlush(instanceId, batch.payloadSequence, batch.finalFlush)
                 deltaBatchSeq.incrementAndGet()
             }
         if (!applied) return
@@ -3175,6 +3225,8 @@ public class OtherlodeTestCollector internal constructor(
          * identifies an outcome.
          */
         private const val REDACTED_LITERAL = "…"
+
+        private const val SETTLED_COMPLETE_FLUSHES = 2
 
         /** A class's static initialiser, a class state and never a method row. */
         private const val CLASS_INIT = "<clinit>"

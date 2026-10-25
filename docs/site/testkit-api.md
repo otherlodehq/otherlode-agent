@@ -47,7 +47,7 @@ A wait blocks the calling thread until its condition holds. Each takes a `java.t
 | Wait | Returns when |
 |---|---|
 | `awaitNextFlush(timeout)` | A delta batch has arrived that was received after the call began. An empty batch counts, because the agent sends one on every flush as a liveness signal. |
-| `awaitSettled(timeout)` | Two delta batches, from any instance, have arrived after the call began. One batch can miss the hits of the action that just finished, and a probe's manifest entry can arrive after the batch that carries its count. Two batches span a full flush. |
+| `awaitSettled(timeout)` | Every instance heard from has completed two flushes since the call began, or has ended with a complete shutdown flush. A flush is complete when its last delta batch carries `flush_complete`. The first complete flush can have read its counts before your last action, so the second one holds every hit made before the call. With no instance heard from yet, it keeps waiting. An instance that went silent, or whose shutdown flush was not complete, never settles, and the timeout names it. A probe's manifest entry can still arrive after its count: wait for it with `awaitProbe`. |
 | `awaitProbe(className, methodName, timeout)` | Some manifest has named a probe in that class for that method. Use it when the test needs the manifest entry itself. |
 | `awaitEndpoint(verb, routeTemplate, timeout)` | Some manifest has named that endpoint. Verb and route template are normalised as in [endpoint queries](#endpoint-queries). |
 | `awaitDependency(groupId, artifactId, timeout)` | Some manifest has listed the dependency. After it returns, `dependency` does not throw `UnknownDependencyException`. |
