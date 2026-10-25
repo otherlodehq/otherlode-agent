@@ -57,7 +57,7 @@ class RegistryResolverTest {
                 null,
                 "com.example.Ref",
                 OtherlodeEndpoints.TEMPLATE_PATH,
-            )
+            )!!
         resolver.attachHandler(dispatched, "com.example.Ref", "handle", HANDLE)
 
         assertEquals(target, joinOf(registry, "/registered"))
@@ -205,7 +205,7 @@ class RegistryResolverTest {
         assertTrue(OtherlodeEndpoints.isDisabled(moduleName), "a half-declared module must stop counting, not keep going")
         val disabled = registry.disabledModules().single()
         assertEquals(moduleName, disabled.module)
-        assertTrue("simulated walk failure" in disabled.reason)
+        assertEquals("java.lang.IllegalStateException", disabled.reason)
         assertEquals(DisabledEndpointModuleKind.ROUTE_WALK_FAILED, disabled.kind)
         assertNull(
             OtherlodeEndpoints.recordDispatch(moduleName, "key", "GET", "/after-failure", null, null),

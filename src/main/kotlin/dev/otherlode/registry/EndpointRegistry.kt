@@ -1,5 +1,6 @@
 package dev.otherlode.registry
 
+import dev.otherlode.bootstrap.OtherlodeEndpoints
 import dev.otherlode.export.DisabledEndpointModule
 import dev.otherlode.export.DisabledEndpointModuleKind
 import dev.otherlode.export.EndpointDelta
@@ -10,6 +11,7 @@ import java.lang.System.Logger.Level
 import java.lang.ref.ReferenceQueue
 import java.lang.ref.WeakReference
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
@@ -62,8 +64,13 @@ private val EXTENSION_ROUTE = Regex("/\\*\\.[^/*]+")
  * snapshot remembers the version it staged per entry, and [advanceManifest] only ever raises
  * `deliveredVersion`, never lowers it. A change landing while a send is in flight is still picked
  * up by the next compute, since the version it bumped to was never staged by that in-flight send.
+ *
+ * @param dispatchLimit how many identities each framework module may create at dispatch, and how
+ *   many request-built keys it may bind there.
  */
-class EndpointRegistry {
+class EndpointRegistry(
+    private val dispatchLimit: Int = OtherlodeEndpoints.DISPATCH_LIMIT,
+) {
     private val log = System.getLogger(EndpointRegistry::class.java.name)
 
     private data class Identity(
@@ -135,6 +142,13 @@ class EndpointRegistry {
         internal var lastAppliedDeltaSequence: Long = 0
     }
 
+    private class DispatchCount {
+        val created = AtomicInteger(0)
+        val boundKeys = AtomicInteger(0)
+        val createdWarned = AtomicBoolean(false)
+        val keysWarned = AtomicBoolean(false)
+    }
+
     private class DisabledModuleEntry(
         val reason: String,
         val kind: DisabledEndpointModuleKind,
@@ -175,6 +189,7 @@ class EndpointRegistry {
     /** Where a route object's [WeakRouteKey] is queued once the object is collected. */
     private val collectedKeys = ReferenceQueue<Any>()
     private val disabledModulesByName = ConcurrentHashMap<String, DisabledModuleEntry>()
+    private val dispatchCounts = ConcurrentHashMap<String, DispatchCount>()
     private val nextEndpointId = AtomicInteger(0)
     private val nextDeltaSequence = AtomicLong(0)
 
@@ -293,7 +308,7 @@ class EndpointRegistry {
         handler: HandlerRef? = null,
         templateKind: EndpointTemplateKind = EndpointTemplateKind.PATH,
     ): EndpointEntry {
-        val entry = findOrCreate(framework, verb, verbatimTemplate, contextPath, EndpointDiscoverySource.REGISTRATION, templateKind)
+        val entry = findOrCreate(framework, verb, verbatimTemplate, contextPath, templateKind)
         bind(key, entry)
         upgradeDiscoverySource(entry, EndpointDiscoverySource.REGISTRATION)
         if (handler != null) attachHandler(entry, handler)
@@ -308,6 +323,13 @@ class EndpointRegistry {
      * [handlerClass] is attached the way [attachHandler] attaches any join: it never replaces a
      * join that names a method, so a registration hook's fuller join survives this class-only one.
      *
+     * A module may create at most the registry's dispatch limit of identities this way. Past it,
+     * a new identity is not created: this binds nothing and returns null, and the module logs one
+     * warning. An identity that exists already is returned, and one declared by [register] is
+     * never limited and does not count toward the limit. A module may also bind at most that many
+     * request-built keys this way. Past that limit the entry is still returned, and the key is
+     * resolved again on its next request.
+     *
      * The caller calls [EndpointEntry.hit] itself once this returns; this method only resolves
      * the entry.
      */
@@ -319,9 +341,9 @@ class EndpointRegistry {
         contextPath: String? = null,
         handlerClass: String? = null,
         templateKind: EndpointTemplateKind = EndpointTemplateKind.PATH,
-    ): EndpointEntry {
-        val entry = findOrCreate(framework, verb, verbatimTemplate, contextPath, EndpointDiscoverySource.DISPATCH, templateKind)
-        bind(key, entry)
+    ): EndpointEntry? {
+        val entry = findOrCreateAtDispatch(framework, verb, verbatimTemplate, contextPath, templateKind) ?: return null
+        if (!isValue(key) || lookup(key) != null || reserveDispatchKey(framework)) bind(key, entry)
         if (handlerClass != null) attachHandler(entry, HandlerRef(handlerClass))
         return entry
     }
@@ -408,20 +430,81 @@ class EndpointRegistry {
         verb: String?,
         verbatimTemplate: String,
         contextPath: String?,
-        initialSource: EndpointDiscoverySource,
         templateKind: EndpointTemplateKind,
     ): EndpointEntry {
         val identity = identityOf(verb, verbatimTemplate, contextPath, templateKind)
         return entriesByIdentity.computeIfAbsent(identity) {
-            EndpointEntry(
-                endpointId = nextEndpointId.getAndIncrement(),
-                verb = identity.verb,
-                routeTemplate = identity.routeTemplate,
-                verbatimTemplate = verbatimTemplate,
-                framework = framework,
-                discoverySource = initialSource,
-                templateKind = templateKind,
-            )
+            newEntry(identity, verbatimTemplate, framework, EndpointDiscoverySource.REGISTRATION, templateKind)
+        }
+    }
+
+    private fun findOrCreateAtDispatch(
+        framework: String,
+        verb: String?,
+        verbatimTemplate: String,
+        contextPath: String?,
+        templateKind: EndpointTemplateKind,
+    ): EndpointEntry? {
+        val identity = identityOf(verb, verbatimTemplate, contextPath, templateKind)
+        entriesByIdentity[identity]?.let { return it }
+        if (!reserveDispatchIdentity(framework)) return entriesByIdentity[identity]
+        val count = checkNotNull(dispatchCounts[framework])
+        var created = false
+        val entry =
+            entriesByIdentity.computeIfAbsent(identity) {
+                created = true
+                newEntry(identity, verbatimTemplate, framework, EndpointDiscoverySource.DISPATCH, templateKind)
+            }
+        if (!created) count.created.decrementAndGet()
+        return entry
+    }
+
+    private fun newEntry(
+        identity: Identity,
+        verbatimTemplate: String,
+        framework: String,
+        source: EndpointDiscoverySource,
+        templateKind: EndpointTemplateKind,
+    ): EndpointEntry =
+        EndpointEntry(
+            endpointId = nextEndpointId.getAndIncrement(),
+            verb = identity.verb,
+            routeTemplate = identity.routeTemplate,
+            verbatimTemplate = verbatimTemplate,
+            framework = framework,
+            discoverySource = source,
+            templateKind = templateKind,
+        )
+
+    private fun reserveDispatchIdentity(framework: String): Boolean {
+        val count = dispatchCounts.computeIfAbsent(framework) { DispatchCount() }
+        return reserve(count.created, count.createdWarned) {
+            "otherlode: endpoint module $framework found $dispatchLimit endpoints at dispatch, its limit; " +
+                "it records no new ones, and the endpoints it holds keep counting"
+        }
+    }
+
+    private fun reserveDispatchKey(framework: String): Boolean {
+        val count = dispatchCounts.computeIfAbsent(framework) { DispatchCount() }
+        return reserve(count.boundKeys, count.keysWarned) {
+            "otherlode: endpoint module $framework bound $dispatchLimit request keys at dispatch, its limit; " +
+                "a request with a new key still counts, and the agent resolves its endpoint again each time"
+        }
+    }
+
+    /** Takes one slot of [slots], or logs [warning] once through [warned] and reports false at the limit. */
+    private fun reserve(
+        slots: AtomicInteger,
+        warned: AtomicBoolean,
+        warning: () -> String,
+    ): Boolean {
+        while (true) {
+            val taken = slots.get()
+            if (taken >= dispatchLimit) {
+                if (warned.compareAndSet(false, true)) log.log(Level.WARNING, warning())
+                return false
+            }
+            if (slots.compareAndSet(taken, taken + 1)) return true
         }
     }
 
@@ -432,6 +515,7 @@ class EndpointRegistry {
         if (entry.discoverySource == source) return
         synchronized(entry) {
             if (entry.discoverySource == source) return@synchronized
+            if (entry.discoverySource == EndpointDiscoverySource.DISPATCH) dispatchCounts[entry.framework]?.created?.decrementAndGet()
             entry.discoverySource = source
             entry.version++
         }

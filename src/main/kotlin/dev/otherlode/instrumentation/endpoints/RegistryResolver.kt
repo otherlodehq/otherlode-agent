@@ -101,7 +101,7 @@ class RegistryResolver(
         contextPath: String?,
         handlerClass: String?,
         templateKind: Int,
-    ): Any = registry.recordDispatch(key, framework, verb, verbatimTemplate, contextPath, handlerClass, kindOf(templateKind))
+    ): Any? = registry.recordDispatch(key, framework, verb, verbatimTemplate, contextPath, handlerClass, kindOf(templateKind))
 
     override fun recordDispatchIfUnowned(
         key: Any,

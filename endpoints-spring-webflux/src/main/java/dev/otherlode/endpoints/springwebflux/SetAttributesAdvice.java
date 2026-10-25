@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Map;
 import net.bytebuddy.asm.Advice;
 import org.springframework.http.HttpMethod;
+import org.springframework.web.cors.reactive.CorsUtils;
 import org.springframework.web.reactive.function.server.RouterFunctions;
 import org.springframework.web.reactive.function.server.ServerRequest;
 import org.springframework.web.util.pattern.PathPattern;
@@ -61,13 +62,8 @@ public class SetAttributesAdvice {
             boolean resourceServed = OtherlodeEndpoints.takeResourceServed(request.exchange());
             if (handlerFunction == null || resourceServed) return;
 
+            if (CorsUtils.isPreFlightRequest(request.exchange().getRequest())) return;
             HttpMethod httpMethod = request.method();
-            if (httpMethod != null
-                    && "OPTIONS".equals(httpMethod.name())
-                    && request.headers().asHttpHeaders().getFirst("Origin") != null
-                    && request.headers().asHttpHeaders().getFirst("Access-Control-Request-Method") != null) {
-                return;
-            }
 
             Object patternValue = attributes.get(RouterFunctions.MATCHING_PATTERN_ATTRIBUTE);
             if (patternValue == null) return;
@@ -84,8 +80,7 @@ public class SetAttributesAdvice {
                 return;
             }
 
-            List<Object> key = List.of(FUNCTIONAL_KEY, pattern, verb);
-            Object entry = OtherlodeEndpoints.lookup(MODULE, key);
+            Object entry = OtherlodeEndpoints.lookup(MODULE, List.of(FUNCTIONAL_KEY, pattern, verb));
             if (entry == null) {
                 entry = OtherlodeEndpoints.lookup(MODULE, List.of(FUNCTIONAL_KEY, pattern, "*"));
             }
@@ -117,7 +112,9 @@ public class SetAttributesAdvice {
                     handlerMethod = null;
                     handlerDescriptor = null;
                 }
-                entry = OtherlodeEndpoints.recordDispatch(MODULE, key, verb, pattern, null, handlerClass);
+                String countedVerb = OtherlodeEndpoints.standardVerb(verb);
+                entry = OtherlodeEndpoints.recordDispatch(
+                        MODULE, List.of(FUNCTIONAL_KEY, pattern, countedVerb), countedVerb, pattern, null, handlerClass);
                 if (entry != null) {
                     OtherlodeEndpoints.attachHandler(MODULE, entry, handlerClass, handlerMethod, handlerDescriptor);
                 }

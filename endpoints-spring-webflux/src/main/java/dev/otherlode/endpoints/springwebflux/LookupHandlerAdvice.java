@@ -5,6 +5,7 @@ import java.util.List;
 import net.bytebuddy.asm.Advice;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.server.reactive.ServerHttpRequest;
+import org.springframework.web.cors.reactive.CorsUtils;
 import org.springframework.util.ClassUtils;
 import org.springframework.web.reactive.HandlerMapping;
 import org.springframework.web.server.ServerWebExchange;
@@ -35,12 +36,7 @@ public class LookupHandlerAdvice {
             if (handler == null) return;
             ServerHttpRequest request = exchange.getRequest();
             HttpMethod requestMethod = request.getMethod();
-            if (requestMethod != null
-                    && "OPTIONS".equals(requestMethod.name())
-                    && request.getHeaders().getFirst("Origin") != null
-                    && request.getHeaders().getFirst("Access-Control-Request-Method") != null) {
-                return;
-            }
+            if (CorsUtils.isPreFlightRequest(request)) return;
 
             Object best = exchange.getAttributes().get(HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE);
             if (!(best instanceof PathPattern)) return;

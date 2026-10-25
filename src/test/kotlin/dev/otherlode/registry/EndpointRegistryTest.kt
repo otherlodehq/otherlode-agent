@@ -1,5 +1,6 @@
 package dev.otherlode.registry
 
+import dev.otherlode.bootstrap.OtherlodeEndpoints
 import dev.otherlode.export.DisabledEndpointModuleKind
 import dev.otherlode.export.EndpointDiscoverySource
 import dev.otherlode.export.EndpointTemplateKind
@@ -240,13 +241,110 @@ class EndpointRegistryTest {
         assertSame(entry, registry.lookup(key))
     }
 
+    private fun warningsFrom(block: () -> Unit): List<String> {
+        val messages = mutableListOf<String>()
+        val handler =
+            object : java.util.logging.Handler() {
+                override fun publish(record: java.util.logging.LogRecord) {
+                    if (record.level == java.util.logging.Level.WARNING) messages += record.message.orEmpty()
+                }
+
+                override fun flush() {}
+
+                override fun close() {}
+            }
+        val logger =
+            java.util.logging.Logger
+                .getLogger(EndpointRegistry::class.java.name)
+        logger.addHandler(handler)
+        try {
+            block()
+        } finally {
+            logger.removeHandler(handler)
+        }
+        return messages
+    }
+
+    @Test
+    fun `the dispatch limit is 8192 by default`() {
+        assertEquals(8192, OtherlodeEndpoints.DISPATCH_LIMIT)
+        val registry = EndpointRegistry()
+
+        repeat(OtherlodeEndpoints.DISPATCH_LIMIT) {
+            assertTrue(registry.recordDispatch(Any(), "otel", "GET", "/p/$it") != null)
+        }
+        val warnings = warningsFrom { assertNull(registry.recordDispatch(Any(), "otel", "GET", "/past")) }
+
+        assertEquals(OtherlodeEndpoints.DISPATCH_LIMIT, registry.endpoints().size)
+        assertEquals(1, warnings.size, "warnings: $warnings")
+    }
+
+    @Test
+    fun `a module past its dispatch limit records nothing new, warns once and still counts existing identities`() {
+        val registry = EndpointRegistry(dispatchLimit = 3)
+        val existingKey = Any()
+        val existing = registry.recordDispatch(existingKey, "otel", "GET", "/a")
+        registry.recordDispatch(Any(), "otel", "GET", "/b")
+        registry.recordDispatchIfUnowned(Any(), "otel", "GET", "/c")
+
+        val refusedKey = Any()
+        val warnings =
+            warningsFrom {
+                assertNull(registry.recordDispatch(refusedKey, "otel", "GET", "/d"))
+                assertNull(registry.recordDispatch(Any(), "otel", "GET", "/e"))
+                assertNull(registry.recordDispatchIfUnowned(Any(), "otel", "GET", "/f"))
+            }
+
+        assertEquals(1, warnings.size, "warnings: $warnings")
+        assertTrue("otel" in warnings.single() && "3" in warnings.single(), warnings.single())
+        assertEquals(setOf("/a", "/b", "/c"), registry.endpoints().map { it.routeTemplate }.toSet())
+        assertNull(registry.lookup(refusedKey))
+        assertSame(existing, registry.recordDispatch(Any(), "otel", "GET", "/a"))
+        assertSame(existing, registry.lookup(existingKey))
+        existing!!.hit()
+        assertEquals(1L, registry.lookup(existingKey)!!.count)
+    }
+
+    @Test
+    fun `an identity declared at registration is created past the limit and does not count toward it`() {
+        val registry = EndpointRegistry(dispatchLimit = 2)
+        registry.register(Any(), "spring", "GET", "/declared-before")
+        registry.recordDispatch(Any(), "spring", "GET", "/d1")
+        registry.recordDispatch(Any(), "spring", "GET", "/d2")
+        assertNull(registry.recordDispatch(Any(), "spring", "GET", "/d3"))
+
+        val late = registry.register(Any(), "spring", "GET", "/declared-after")
+
+        assertEquals(EndpointDiscoverySource.REGISTRATION, late.discoverySource)
+        assertEquals(4, registry.endpoints().size)
+        val fresh = EndpointRegistry(dispatchLimit = 2)
+        repeat(5) { fresh.register(Any(), "spring", "GET", "/r$it") }
+        assertTrue(fresh.recordDispatch(Any(), "spring", "GET", "/d1") != null)
+        assertTrue(fresh.recordDispatch(Any(), "spring", "GET", "/d2") != null)
+    }
+
+    @Test
+    fun `two modules have independent dispatch limits`() {
+        val registry = EndpointRegistry(dispatchLimit = 1)
+
+        assertTrue(registry.recordDispatch(Any(), "otel", "GET", "/o1") != null)
+        val warnings = warningsFrom { assertNull(registry.recordDispatch(Any(), "otel", "GET", "/o2")) }
+        assertTrue(registry.recordDispatch(Any(), "ktor", "GET", "/k1") != null)
+        val ktorWarnings = warningsFrom { assertNull(registry.recordDispatch(Any(), "ktor", "GET", "/k2")) }
+
+        assertEquals(1, warnings.size)
+        assertEquals(1, ktorWarnings.size)
+        assertTrue("otel" in warnings.single() && "ktor" !in warnings.single())
+        assertTrue("ktor" in ktorWarnings.single())
+    }
+
     @Test
     fun `recordDispatch marks a new entry as discovered by dispatch`() {
         val registry = EndpointRegistry()
 
         val entry = registry.recordDispatch(key = Any(), framework = "http-server", verb = "GET", verbatimTemplate = "/promo")
 
-        assertEquals(EndpointDiscoverySource.DISPATCH, entry.discoverySource)
+        assertEquals(EndpointDiscoverySource.DISPATCH, entry!!.discoverySource)
     }
 
     @Test
@@ -341,7 +439,7 @@ class EndpointRegistryTest {
                 handlerClass = "com.example.PromoHandler",
             )
 
-        assertEquals("com.example.PromoHandler", entry.handlerClass)
+        assertEquals("com.example.PromoHandler", entry!!.handlerClass)
         assertNull(entry.handlerMethod)
     }
 
@@ -803,5 +901,30 @@ class EndpointRegistryTest {
             System.gc()
             Thread.sleep(10)
         }
+    }
+
+    @Test
+    fun `a module binds at most its dispatch limit of request keys and still returns the entry past it`() {
+        val registry = EndpointRegistry(dispatchLimit = 2)
+        val first = registry.recordDispatch(listOf("GET", "/a", 1), "otel", "GET", "/a")
+        registry.recordDispatch(listOf("GET", "/a", 2), "otel", "GET", "/a")
+
+        val warnings = warningsFrom { assertSame(first, registry.recordDispatch(listOf("GET", "/a", 3), "otel", "GET", "/a")) }
+
+        assertSame(first, registry.lookup(listOf("GET", "/a", 2)))
+        assertNull(registry.lookup(listOf("GET", "/a", 3)))
+        assertEquals(1, warnings.size, "warnings: $warnings")
+        assertEquals(1, registry.endpoints().size)
+    }
+
+    @Test
+    fun `a dispatch identity that is declared later gives its slot back`() {
+        val registry = EndpointRegistry(dispatchLimit = 1)
+        registry.recordDispatch(Any(), "spring", "GET", "/x")
+        assertNull(registry.recordDispatch(Any(), "spring", "GET", "/y"))
+
+        registry.register(Any(), "spring", "GET", "/x")
+
+        assertTrue(registry.recordDispatch(Any(), "spring", "GET", "/y") != null)
     }
 }

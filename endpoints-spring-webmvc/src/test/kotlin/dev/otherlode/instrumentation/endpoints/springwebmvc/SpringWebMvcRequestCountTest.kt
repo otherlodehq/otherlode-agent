@@ -7,15 +7,20 @@ import net.bytebuddy.agent.ByteBuddyAgent
 import org.junit.jupiter.api.Assumptions.assumeTrue
 import org.springframework.core.io.FileUrlResource
 import org.springframework.core.io.Resource
+import org.springframework.http.HttpMethod
+import org.springframework.mock.web.MockHttpServletRequest
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.asyncDispatch
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.head
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.options
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.request
+import org.springframework.test.web.servlet.request.RequestPostProcessor
 import org.springframework.test.web.servlet.setup.MockMvcBuilders
 import org.springframework.web.servlet.function.HandlerFunction
 import org.springframework.web.servlet.function.RequestPredicate
 import org.springframework.web.servlet.function.RequestPredicates.GET
+import org.springframework.web.servlet.function.RequestPredicates.method
 import org.springframework.web.servlet.function.RequestPredicates.path
 import org.springframework.web.servlet.function.RouterFunction
 import org.springframework.web.servlet.function.RouterFunctions
@@ -183,6 +188,32 @@ class SpringWebMvcRequestCountTest {
     }
 
     @Test
+    fun `a preflight whose Origin value the request refuses to read does not disable the module`() {
+        val unreadableOrigin =
+            RequestPostProcessor { original ->
+                object : MockHttpServletRequest(original.servletContext, original.method, original.requestURI) {
+                    override fun getHeader(name: String): String? =
+                        if (name == "Origin") throw IllegalArgumentException("marker-4b2d") else super.getHeader(name)
+                }.apply {
+                    addHeader("Origin", "http://example.com\u0085")
+                    addHeader("Access-Control-Request-Method", "GET")
+                }
+            }
+        withModule { registry ->
+            val handler = HandlerFunction<ServerResponse> { ServerResponse.ok().build() }
+            val location = FileUrlResource(staticDirectory().toUri().toURL())
+            val routes = route(path("/fn/{id}"), handler).andOther(resources("/static/**", location))
+            val mockMvc = MockMvcBuilders.webAppContextSetup(buildFunctionalWebApplicationContext(routes)).build()
+
+            runCatching { mockMvc.perform(options("/fn/1").with(unreadableOrigin)) }
+            runCatching { mockMvc.perform(options("/static/app.js").with(unreadableOrigin)) }
+
+            assertTrue(registry.disabledModules().isEmpty(), "disabled: ${registry.disabledModules()}")
+            assertEquals(emptyMap(), hits(registry))
+        }
+    }
+
+    @Test
     fun `an OPTIONS request without the CORS headers to an OPTIONS-mapped route still counts`() {
         withModule { registry ->
             val mockMvc = MockMvcBuilders.standaloneSetup(OptionsController()).build()
@@ -244,6 +275,52 @@ class SpringWebMvcRequestCountTest {
 
             assertEquals(setOf("GET /built/{id}"), identities(registry))
             assertEquals(EndpointDiscoverySource.REGISTRATION, registry.endpoints().single().discoverySource)
+        }
+    }
+
+    @Test
+    fun `a non-standard method on an undeclared functional route counts under any verb`() {
+        val propfind = runCatching { HttpMethod.valueOf("PROPFIND") }.getOrNull()
+        assumeTrue(propfind != null, "Spring 5.3 reads an unknown method as null, which already counts under any verb")
+        withModule { registry ->
+            val handler = HandlerFunction<ServerResponse> { ServerResponse.ok().build() }
+            val routes = route(path("/discovered").and(RequestPredicate { true }), handler)
+            val mockMvc = MockMvcBuilders.webAppContextSetup(buildFunctionalWebApplicationContext(routes)).build()
+
+            mockMvc.perform(request(propfind!!, "/discovered"))
+            mockMvc.perform(request(HttpMethod.valueOf("X-ONE"), "/discovered"))
+
+            assertEquals(mapOf("* /discovered" to 2L), hits(registry))
+            assertEquals(setOf("* /discovered"), identities(registry))
+        }
+    }
+
+    @Test
+    fun `a declared functional route with a non-standard method counts under its declared method`() {
+        val propfind = runCatching { HttpMethod.valueOf("PROPFIND") }.getOrNull()
+        assumeTrue(propfind != null, "Spring 5.3 cannot declare a method outside its enum")
+        withModule { registry ->
+            val handler = HandlerFunction<ServerResponse> { ServerResponse.ok().build() }
+            val routes = route(method(propfind!!).and(path("/dav")), handler)
+            val mockMvc = MockMvcBuilders.webAppContextSetup(buildFunctionalWebApplicationContext(routes)).build()
+
+            mockMvc.perform(request(propfind, "/dav"))
+
+            assertEquals(mapOf("PROPFIND /dav" to 1L), hits(registry))
+        }
+    }
+
+    @Test
+    fun `a standard method on an undeclared functional route keeps its verb`() {
+        withModule { registry ->
+            val handler = HandlerFunction<ServerResponse> { ServerResponse.ok().build() }
+            val routes = route(path("/discovered").and(RequestPredicate { true }), handler)
+            val mockMvc = MockMvcBuilders.webAppContextSetup(buildFunctionalWebApplicationContext(routes)).build()
+
+            mockMvc.perform(post("/discovered"))
+            mockMvc.perform(get("/discovered"))
+
+            assertEquals(mapOf("POST /discovered" to 1L, "GET /discovered" to 1L), hits(registry))
         }
     }
 

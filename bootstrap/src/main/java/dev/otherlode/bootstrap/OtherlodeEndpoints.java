@@ -545,7 +545,36 @@ public final class OtherlodeEndpoints {
         }
     }
 
+    /**
+     * The most endpoints a module may create at dispatch, and the most request keys it may bind to
+     * endpoints it holds. An endpoint the module declared at registration does not count.
+     */
+    public static final int DISPATCH_LIMIT = 8192;
+
     private static final RoutePrefixTable ROUTE_PREFIXES = new RoutePrefixTable(8192);
+
+    /**
+     * The verb a functional route is counted under for a request method named {@code method}: the
+     * method itself when it is one of GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS and TRACE, else
+     * {@code *}. A null method is {@code *} too. The verb is for an endpoint found at dispatch; a
+     * declared route is looked up under the request's own method first.
+     */
+    public static String standardVerb(String method) {
+        if (method == null) return "*";
+        switch (method) {
+            case "GET":
+            case "HEAD":
+            case "POST":
+            case "PUT":
+            case "PATCH":
+            case "DELETE":
+            case "OPTIONS":
+            case "TRACE":
+                return method;
+            default:
+                return "*";
+        }
+    }
 
     /** Records that one of OpenTelemetry's route prefixers turned {@code unprefixed} into {@code prefixed}. Never throws. */
     public static void recordRoutePrefix(String prefixed, String unprefixed) {
@@ -756,11 +785,14 @@ public final class OtherlodeEndpoints {
     /**
      * Disables a module after {@code failure} was caught at the site {@code siteKind} names. A
      * {@link LinkageError} is {@link #KIND_LINKAGE_ERROR} whichever site caught it; any other
-     * throwable keeps {@code siteKind}.
+     * throwable keeps {@code siteKind}. The reason of a {@link LinkageError} is the error with its
+     * message, which names a framework class or member. Any other reason is the exception's class
+     * name alone, since its message can hold request text.
      */
     public static void moduleFailed(String module, int siteKind, Throwable failure) {
         int kind = failure instanceof LinkageError ? KIND_LINKAGE_ERROR : siteKind;
-        disable(module, kind, String.valueOf(failure));
+        String reason = failure instanceof LinkageError ? String.valueOf(failure) : failure == null ? "null" : failure.getClass().getName();
+        disable(module, kind, reason);
     }
 
     /**

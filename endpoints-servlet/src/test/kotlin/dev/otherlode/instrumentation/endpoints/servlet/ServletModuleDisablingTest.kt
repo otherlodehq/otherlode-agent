@@ -170,6 +170,6 @@ class ServletModuleUnreadableContextTest : ServletTestSupport() {
         val disabled = registry.disabledModules().single()
         assertEquals("servlet", disabled.module)
         assertEquals(DisabledEndpointModuleKind.ROUTE_WALK_FAILED, disabled.kind)
-        assertTrue("not usable" in disabled.reason, disabled.reason)
+        assertEquals("java.lang.IllegalStateException", disabled.reason)
     }
 }

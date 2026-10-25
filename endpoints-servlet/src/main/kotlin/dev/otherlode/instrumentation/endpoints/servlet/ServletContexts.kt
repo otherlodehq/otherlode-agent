@@ -185,7 +185,8 @@ internal class ServletContexts(
             }
             entry.declared += skipped
         } catch (t: Throwable) {
-            OtherlodeEndpoints.moduleDisabled(MODULE_NAME, OtherlodeEndpoints.KIND_ROUTE_WALK_FAILED, t.toString())
+            val reason = if (t is UnsupportedMapping) t.message ?: t.javaClass.name else t.javaClass.name
+            OtherlodeEndpoints.moduleDisabled(MODULE_NAME, OtherlodeEndpoints.KIND_ROUTE_WALK_FAILED, reason)
         }
     }
 

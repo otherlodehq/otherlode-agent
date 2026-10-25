@@ -55,11 +55,19 @@ public class ResourceLookupAdvice {
             if (INTROSPECTOR_REQUEST.equals(servletRequest.getClass().getName())
                     || servletRequest.getAttribute(DISPATCHER_CONTEXT) == null
                     || servletRequest.getDispatcherType() == DispatcherType.ASYNC
-                    || !("GET".equals(verb) || "HEAD".equals(verb) || "OPTIONS".equals(verb))
-                    || ("OPTIONS".equals(verb)
-                            && servletRequest.getHeader("Origin") != null
-                            && servletRequest.getHeader("Access-Control-Request-Method") != null)) {
+                    || !("GET".equals(verb) || "HEAD".equals(verb) || "OPTIONS".equals(verb))) {
                 return;
+            }
+            if ("OPTIONS".equals(verb)) {
+                try {
+                    if (servletRequest.getHeader("Origin") != null
+                            && servletRequest.getHeader("Access-Control-Request-Method") != null) {
+                        return;
+                    }
+                } catch (RuntimeException e) {
+                    // Spring Security's firewall throws for a header value it refuses; Spring refuses the request after this.
+                    return;
+                }
             }
 
             Object nest = request.attributes().get(RouterFunctions.MATCHING_PATTERN_ATTRIBUTE);

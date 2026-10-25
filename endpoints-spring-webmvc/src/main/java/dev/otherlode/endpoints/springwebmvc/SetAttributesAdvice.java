@@ -84,11 +84,19 @@ public class SetAttributesAdvice {
             if (handlerFunction == null || resourceServed) return;
             if (INTROSPECTOR_REQUEST.equals(servletRequest.getClass().getName())
                     || servletRequest.getAttribute(DISPATCHER_CONTEXT) == null
-                    || servletRequest.getDispatcherType() == DispatcherType.ASYNC
-                    || ("OPTIONS".equals(servletRequest.getMethod())
-                            && servletRequest.getHeader("Origin") != null
-                            && servletRequest.getHeader("Access-Control-Request-Method") != null)) {
+                    || servletRequest.getDispatcherType() == DispatcherType.ASYNC) {
                 return;
+            }
+            if ("OPTIONS".equals(servletRequest.getMethod())) {
+                try {
+                    if (servletRequest.getHeader("Origin") != null
+                            && servletRequest.getHeader("Access-Control-Request-Method") != null) {
+                        return;
+                    }
+                } catch (RuntimeException e) {
+                    // Spring Security's firewall throws for a header value it refuses; Spring refuses the request after this.
+                    return;
+                }
             }
             Object patternValue = request.attributes().get(RouterFunctions.MATCHING_PATTERN_ATTRIBUTE);
             if (patternValue == null) return;
@@ -108,8 +116,7 @@ public class SetAttributesAdvice {
                 return;
             }
 
-            List<Object> key = List.of(FUNCTIONAL_KEY, pattern, verb);
-            Object entry = OtherlodeEndpoints.lookup(MODULE, key);
+            Object entry = OtherlodeEndpoints.lookup(MODULE, List.of(FUNCTIONAL_KEY, pattern, verb));
             if (entry == null) {
                 entry = OtherlodeEndpoints.lookup(MODULE, List.of(FUNCTIONAL_KEY, pattern, "*"));
             }
@@ -140,7 +147,9 @@ public class SetAttributesAdvice {
                     handlerMethod = null;
                     handlerDescriptor = null;
                 }
-                entry = OtherlodeEndpoints.recordDispatch(MODULE, key, verb, pattern, null, handlerClass);
+                String countedVerb = OtherlodeEndpoints.standardVerb(verb);
+                entry = OtherlodeEndpoints.recordDispatch(
+                        MODULE, List.of(FUNCTIONAL_KEY, pattern, countedVerb), countedVerb, pattern, null, handlerClass);
                 if (entry != null) {
                     OtherlodeEndpoints.attachHandler(MODULE, entry, handlerClass, handlerMethod, handlerDescriptor);
                 }

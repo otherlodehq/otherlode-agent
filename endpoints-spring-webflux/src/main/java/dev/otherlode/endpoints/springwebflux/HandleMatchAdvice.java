@@ -6,6 +6,7 @@ import java.util.List;
 import net.bytebuddy.asm.Advice;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.server.reactive.ServerHttpRequest;
+import org.springframework.web.cors.reactive.CorsUtils;
 import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.reactive.result.method.RequestMappingInfo;
 import org.springframework.web.server.ServerWebExchange;
@@ -39,12 +40,7 @@ public class HandleMatchAdvice {
         try {
             ServerHttpRequest request = exchange.getRequest();
             HttpMethod requestMethod = request.getMethod();
-            if (requestMethod != null
-                    && "OPTIONS".equals(requestMethod.name())
-                    && request.getHeaders().getFirst("Origin") != null
-                    && request.getHeaders().getFirst("Access-Control-Request-Method") != null) {
-                return;
-            }
+            if (CorsUtils.isPreFlightRequest(request)) return;
 
             Iterator<PathPattern> patterns = info.getPatternsCondition().getPatterns().iterator();
             if (!patterns.hasNext()) return;

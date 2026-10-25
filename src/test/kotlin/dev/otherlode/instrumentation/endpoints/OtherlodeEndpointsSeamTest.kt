@@ -37,6 +37,16 @@ import kotlin.test.assertTrue
 @Order(Int.MIN_VALUE)
 @TestMethodOrder(MethodOrderer.OrderAnnotation::class)
 class OtherlodeEndpointsSeamTest {
+    @Test
+    fun `standardVerb keeps the eight standard methods and maps anything else to any verb`() {
+        for (verb in listOf("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE")) {
+            assertEquals(verb, OtherlodeEndpoints.standardVerb(verb))
+        }
+        for (other in listOf("get", "PROPFIND", "X-ONE", "", null)) {
+            assertEquals("*", OtherlodeEndpoints.standardVerb(other), "$other")
+        }
+    }
+
     @BeforeEach
     fun installBootstrapHolder() {
         BootstrapHolder.install(ByteBuddyAgent.install())
@@ -174,7 +184,7 @@ class OtherlodeEndpointsSeamTest {
 
         val disableCall = resolver.disableCalls.single()
         assertEquals(failureModule, disableCall.module)
-        assertTrue("linkage boom" in disableCall.reason)
+        assertEquals("java.lang.RuntimeException", disableCall.reason)
         assertEquals(
             OtherlodeEndpoints.KIND_TRANSFORM_FAILED,
             disableCall.kind,
@@ -457,7 +467,43 @@ class OtherlodeEndpointsSeamTest {
 
         val call = resolver.disableCalls.single()
         assertEquals(OtherlodeEndpoints.KIND_ROUTE_WALK_FAILED, call.kind)
-        assertTrue("first" in call.reason)
+        assertEquals("java.lang.IllegalStateException", call.reason)
+    }
+
+    @Test
+    @Order(13)
+    fun `a module failure names the exception class in its reason and its log line, and a linkage error keeps its message`() {
+        val resolver = RecordingResolver()
+        OtherlodeEndpoints.install(resolver.asResolver() as OtherlodeEndpoints.Resolver)
+        val generalModule = uniqueModule("reason-general")
+        val linkageModule = uniqueModule("reason-linkage")
+        val logged = mutableListOf<String>()
+        val handler =
+            object : java.util.logging.Handler() {
+                override fun publish(record: java.util.logging.LogRecord) {
+                    logged += record.message.orEmpty()
+                }
+
+                override fun flush() {}
+
+                override fun close() {}
+            }
+        val logger =
+            java.util.logging.Logger
+                .getLogger(OtherlodeEndpoints::class.java.name)
+        logger.addHandler(handler)
+        try {
+            OtherlodeEndpoints.moduleFailed(generalModule, IllegalStateException("marker-7f3a header value"))
+            OtherlodeEndpoints.moduleFailed(linkageModule, NoClassDefFoundError("marker-7f3a"))
+        } finally {
+            logger.removeHandler(handler)
+        }
+
+        assertEquals("java.lang.IllegalStateException", resolver.disableCalls.single { it.module == generalModule }.reason)
+        assertEquals("java.lang.NoClassDefFoundError: marker-7f3a", resolver.disableCalls.single { it.module == linkageModule }.reason)
+        assertTrue(logged.any { generalModule in it && it.endsWith("java.lang.IllegalStateException") }, "logged: $logged")
+        assertTrue(logged.any { linkageModule in it && it.endsWith("java.lang.NoClassDefFoundError: marker-7f3a") }, "logged: $logged")
+        assertTrue(logged.none { generalModule in it && "marker-7f3a" in it }, "logged: $logged")
     }
 
     @Test

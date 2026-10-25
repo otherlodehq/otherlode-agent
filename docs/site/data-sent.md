@@ -119,7 +119,7 @@ The manifest says what each id in a delta batch names. It carries the resource a
 | `verifier_rejections_watched` | True when the agent's hook on `VerifyError` is installed. Every manifest of a run agrees |
 | `unreported_classes` | Name of a class the agent found loaded that no transformer was offered, and the time |
 | `endpoints` | Per endpoint: `endpoint_id`, verb, route template, the framework's own spelling of the template, framework name, how it was discovered, whether the template is a path, a regex or a servlet pattern, and the handler class, method and descriptor when known |
-| `disabled_endpoint_modules` | Module name, the reason as free text, the time, and a kind naming why: a linkage error, an advice failure, a transform failure, a route walk failure, or a hook that matched no method |
+| `disabled_endpoint_modules` | Module name, the reason (the exception's class name when the module failed on an exception), the time, and a kind naming why: a linkage error, an advice failure, a transform failure, a route walk failure, or a hook that matched no method |
 | `framework_markers` | Per marker: its id, the class set that matched as fully qualified names, and the time of the sweep that saw it. Each is delivered once per run. See [frameworks with no module](endpoints#frameworks-with-no-module) |
 | `dependencies` | Per dependency: `dependency_id`, identities (`group_id`, `artifact_id`, `version`), how the identity was read, the location, how it was discovered, and class count |
 | `external_classes` | Name of a class outside scope that your code refers to, the `dependency_id` that provides it, and whether nothing provides it |
@@ -183,7 +183,7 @@ A listing that matches no class is one chunk with no names. A process sends no l
 
 A probe only increments a counter in an array. It reads no value.
 
-The free text in `skipped_classes`, `unreadable_classes`, `unprobed_classes` and `disabled_endpoint_modules` is a reason from the JVM or the agent, such as a linkage error message. It names classes and does not hold application data.
+The free text in `skipped_classes`, `unreadable_classes`, `unprobed_classes` and `disabled_endpoint_modules` is a reason from the JVM or the agent, such as a linkage error message. For `disabled_endpoint_modules`, when the module failed on an exception other than a linkage error, it is the exception's class name, never its message. It names classes and does not hold application data.
 
 ## When the collector is down or refuses a payload
 

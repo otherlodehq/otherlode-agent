@@ -175,7 +175,7 @@ class EndpointInstrumentationTest {
         assertEquals(1, calls.get())
         val disabled = registry.disabledModules().single { it.module == failing.name }
         assertEquals(DisabledEndpointModuleKind.ADVICE_FAILED, disabled.kind)
-        assertTrue("hook gave up" in disabled.reason)
+        assertEquals("java.lang.IllegalStateException", disabled.reason)
         assertEquals(1, registry.disabledModules().size)
     }
 
@@ -289,7 +289,7 @@ class EndpointInstrumentationTest {
 
         val disabled = registry.disabledModules().single { it.module == declaring.name }
         assertEquals(DisabledEndpointModuleKind.TRANSFORM_FAILED, disabled.kind)
-        assertTrue("module gave up after declaring" in disabled.reason)
+        assertEquals("java.lang.IllegalStateException", disabled.reason)
     }
 
     @Test

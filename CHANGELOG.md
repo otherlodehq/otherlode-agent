@@ -31,8 +31,13 @@ the section being read.
 
 - An `exportUrl` the agent cannot use turns the agent off for the JVM with one ERROR, in place of a warning and a fall back to `http://localhost:4319`. A URL with a user name or password is one of these. An `authToken` with a character outside the visible ASCII range `!` to `~` turns the agent off the same way. Neither ERROR quotes the token, or any of the URL but a host with an underscore.
 - A service name, namespace, version, environment or instance ID over 1024 bytes is skipped with a warning, and the next source gives the value, since the collector refuses a payload that carries one.
+- A Spring functional route that no walk declared counts a request under its method only when the method is `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS` or `TRACE`, and under `*` otherwise. A declared route keeps the method it was declared with.
+- An endpoint module records at most 8,192 endpoints it finds only at dispatch, and past that logs one WARNING and records no new ones. It also binds at most 8,192 request keys at dispatch; past that a request still counts, and its endpoint is resolved again each time. Declared endpoints are never limited.
+- The reason of a disabled endpoint module names the exception's class, not its message, unless the exception is a linkage error.
 
 ### Fixed
+
+- A CORS preflight whose `Origin` holds a character Spring Security's firewall refuses no longer disables the Spring WebFlux or Spring MVC module.
 
 - With OpenTelemetry's Spring MVC instrumentation present, a request that a filter answered before `DispatcherServlet` ran, a 401 from Spring Security for one, is no longer counted against the route OpenTelemetry looks up afterwards. Annotated, functional and `resources(...)` routes count only a lookup made by the dispatch.
 

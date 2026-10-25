@@ -5,8 +5,10 @@ import java.util.List;
 import net.bytebuddy.asm.Advice;
 import org.springframework.core.io.Resource;
 import org.springframework.http.HttpMethod;
+import org.springframework.web.cors.reactive.CorsUtils;
 import org.springframework.web.reactive.function.server.RouterFunctions;
 import org.springframework.web.reactive.function.server.ServerRequest;
+import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.util.pattern.PathPattern;
 import reactor.core.publisher.Mono;
 
@@ -66,9 +68,7 @@ public class ResourceLookupAdvice {
             boolean counted =
                     verb != null
                             && ("GET".equals(verb) || "HEAD".equals(verb) || "OPTIONS".equals(verb))
-                            && !("OPTIONS".equals(verb)
-                                    && request.headers().asHttpHeaders().getFirst("Origin") != null
-                                    && request.headers().asHttpHeaders().getFirst("Access-Control-Request-Method") != null);
+                            && !CorsUtils.isPreFlightRequest(((ServerWebExchange) exchange).getRequest());
 
             Object key = null;
             Object entry = null;

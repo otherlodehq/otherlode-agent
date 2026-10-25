@@ -13,6 +13,7 @@ import org.springframework.web.reactive.function.server.HandlerFunction
 import org.springframework.web.reactive.function.server.RequestPredicate
 import org.springframework.web.reactive.function.server.RequestPredicates.GET
 import org.springframework.web.reactive.function.server.RequestPredicates.OPTIONS
+import org.springframework.web.reactive.function.server.RequestPredicates.method
 import org.springframework.web.reactive.function.server.RequestPredicates.path
 import org.springframework.web.reactive.function.server.RouterFunction
 import org.springframework.web.reactive.function.server.RouterFunctions
@@ -43,6 +44,46 @@ class SpringWebFluxRequestCountTest {
         routerFunctions: List<RouterFunction<*>> = emptyList(),
         urlMap: Map<String, Any> = emptyMap(),
     ): WebTestClient = WebTestClient.bindToApplicationContext(buildWebFluxContext(controllers, routerFunctions, urlMap)).build()
+
+    @Test
+    fun `a non-standard method on an undeclared functional route counts under any verb`() {
+        val propfind = runCatching { HttpMethod.valueOf("PROPFIND") }.getOrNull()
+        assumeTrue(propfind != null, "Spring 5.3 reads an unknown method as null, which already counts under any verb")
+        withModule { registry ->
+            val client = clientFor(routerFunctions = listOf(route(path("/discovered").and(RequestPredicate { true }), handler)))
+
+            client.send(propfind!!, "/discovered")
+            client.send(HttpMethod.valueOf("X-ONE"), "/discovered")
+
+            assertEquals(mapOf("* /discovered" to 2L), hits(registry))
+            assertEquals(setOf("* /discovered"), identities(registry))
+        }
+    }
+
+    @Test
+    fun `a declared functional route with a non-standard method counts under its declared method`() {
+        val propfind = runCatching { HttpMethod.valueOf("PROPFIND") }.getOrNull()
+        assumeTrue(propfind != null, "Spring 5.3 cannot declare a method outside its enum")
+        withModule { registry ->
+            val client = clientFor(routerFunctions = listOf(route(method(propfind!!).and(path("/dav")), handler)))
+
+            client.send(propfind, "/dav")
+
+            assertEquals(mapOf("PROPFIND /dav" to 1L), hits(registry))
+        }
+    }
+
+    @Test
+    fun `a standard method on an undeclared functional route keeps its verb`() {
+        withModule { registry ->
+            val client = clientFor(routerFunctions = listOf(route(path("/discovered").and(RequestPredicate { true }), handler)))
+
+            client.send(HttpMethod.POST, "/discovered")
+            client.send(HttpMethod.GET, "/discovered")
+
+            assertEquals(mapOf("POST /discovered" to 1L, "GET /discovered" to 1L), hits(registry))
+        }
+    }
 
     private fun staticDirectory(): Path {
         val directory = Files.createTempDirectory("otherlode-static")
