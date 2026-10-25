@@ -75,8 +75,6 @@ The agent sets `DeltaBatch.flush_complete` and the testkit's `awaitSettled` wait
 2. Collector: bump the bindings, with a redaction test that `flush_complete` passes and marks nothing stripped. Until then a collector built from master strips the field from an agent built from master and marks the run `fields_stripped`.
 3. Server: bump the bindings.
 
-Open, to decide: a delta batch the agent saw time out on all five attempts (about 50 seconds) can still be applied later, after the next flush has read its counts. When it carries `flush_complete`, `awaitSettled` can count it and return with up to one interval of hits unsent. It needs the testkit's handler stalled that long, as at a breakpoint while a child JVM keeps running. A testkit rule that ignores a complete batch older than one the instance has already sent narrows it but leaves a window, so a full fix changes ADR 0077's rule.
-
 ### Tooling: code principles, a refactoring playbook and a prose lint
 
 From the comparison with pstack's poteto-mode (`cursor/plugins`, `190d287`).
