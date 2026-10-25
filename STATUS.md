@@ -68,6 +68,16 @@ Static baseline follow-ups the first-copy change surfaced. Each only loses evide
 - A jar whose manifest cannot be read is still scanned; the JDK drops such a jar. `Class-Path` entries are split on single spaces and resolved as file paths, where the JDK tokenises and resolves URLs.
 - Cross-class reads can take a shadowed copy's tables from the referencing root's locator.
 
+### The settled wait and `flush_complete` (ADR 0077): building
+
+Landing order:
+1. Chunk 0: ADR 0077, the amendments to ADRs 0018 and 0036, and the `CONTEXT.md` terms.
+2. Agent: `DeltaBatch.flush_complete` (field 8), set by `ExportScheduler` on the last batch of a complete flush, with `data-sent.md`.
+3. Testkit: `awaitSettled` waits per instance for two complete flushes, counts a batch once per run and `payload_sequence`, and names the unsettled instances on timeout. A regression test makes hits after the scheduler starts and forces a pending or split flush. `testkit.md` and `testkit-api.md` follow.
+4. Luke: `buf push --exclude-unnamed --label master` from this repo, since Actions runs no job.
+5. Collector: bump the bindings, with a redaction test that `flush_complete` passes and marks nothing stripped.
+6. Server: bump the bindings.
+
 ### Tooling: code principles, a refactoring playbook and a prose lint
 
 From the comparison with pstack's poteto-mode (`cursor/plugins`, `190d287`).
@@ -492,10 +502,6 @@ Dependencies and the testkit:
 - `withHomeAsTilde` turns a home of `C:\` into `C:`, so on Windows every
   `C:\...` location would read as `~\...`, though its KDoc says a root home
   changes nothing.
-- The testkit's `awaitSettled` counts two delta batches after its start,
-  which assumes one batch per flush, so a flush split into several batches
-  can wake it before the hit totals settle. ADR 0036 fixed the same flaw in
-  `dependency()`.
 
 Overhead and memory:
 

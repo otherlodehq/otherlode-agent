@@ -18,3 +18,7 @@ The JUnit 5 extension in `otherlode-testkit` starts a single `OtherlodeTestColle
 - A test must let the agent flush before asserting. The collector's `awaitSettled` waits for two consecutive heartbeats, since a flush already mid-compute when the last request completes can land without that hit, and one tick's manifest and delta go out concurrently.
 - `junit-jupiter-api` is a `compileOnly` dependency of the testkit module, so adopters who do not use JUnit pay nothing for it, the same shape as OpenTelemetry's `opentelemetry-sdk-testing`.
 - The collector the extension starts accepts payloads from one instance only and records a rejection for any other. With `maxParallelForks` above 1 every fork's agent posts to the one fixed port, and a fork with no extension-using test would otherwise mix its data into another fork's answers. Added 2026-10-03 in a review.
+
+## Amended on 2026-10-25: settled waits for two complete flushes per instance
+
+`awaitSettled` no longer waits for two consecutive heartbeats from any instance. One flush can send several delta batches from one read of the counters, so two batches can come from a flush that missed the last hit. It waits until every instance heard from has sent two batches marked `flush_complete` since the call, or has ended with a complete shutdown flush (ADR 0077).

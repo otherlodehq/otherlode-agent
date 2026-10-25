@@ -30,3 +30,7 @@ ADR 0030 sends the listing, the counts and the reference mappings in three strea
 - The testkit judges a dependency once its entry has arrived and drops its batch-counting gate. Its list queries and `absentReferences()` throw until every instance heard from has sent `dependencies_listed`. A test waits for that with `awaitDependenciesListed`.
 - `otherlode-collector` forwards the field unchanged and logs it. `otherlode-server` ignores it for now. Its statuses no longer see an entry before its counts, but it still returns an empty list for an instance whose listing has not arrived. Gating its answers on the flag is a follow-up there.
 - The testkit's general "settled" wait counts delta batches in the same way. It keeps the split-flush weakness for hit totals. This ADR does not change that.
+
+## Amended on 2026-10-25: the settled wait
+
+ADR 0077 closes the split-flush weakness this record left in the testkit's settled wait. A delta batch carries `flush_complete` on the last batch of a flush whose earlier batches were all confirmed, and `awaitSettled` waits for two of them per instance.

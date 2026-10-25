@@ -117,6 +117,10 @@ _Avoid_: foreign agent, other instrumentation
 **Flush**:
 One scheduled export tick, sending a delta batch and any manifest entries not yet delivered.
 
+**Complete flush**:
+A flush whose delta batches were all confirmed. Its last delta batch carries `flush_complete`.
+_Avoid_: successful flush, finished flush
+
 **Delta batch**:
 The payload listing every probe whose hit total changed since the last confirmed delivery. An empty one is the liveness heartbeat.
 _Avoid_: metrics, snapshot
@@ -342,7 +346,7 @@ _Avoid_: listing complete (the agent's own state, before anything is sent)
 ### Testkit
 
 **Settled**:
-The state in which every hit made before a given moment has reached the test collector: two consecutive heartbeats have arrived since then.
+The state in which every hit made before a given moment has reached the test collector: every instance heard from has completed two flushes since then, or ended with a complete flush.
 _Avoid_: flushed, synced
 
 ### Static baseline
