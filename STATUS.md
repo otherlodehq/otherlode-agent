@@ -57,9 +57,11 @@ deferrals, gzip, a collector config file, and agent-level redaction
 
 Decided in ADRs 0075 and 0076 and in amendments to ADRs 0014, 0017, 0068 and 0070, and landed on 2026-10-25 as one commit each: the endpoint registry bounds (11dea70), export URL and token refusal (9fbfd4c), `final_flush` on the closing batch (133c6a7), the baseline's first copy (78388b7), the testkit note (7eca8fc) and chunk bounds by bytes and elements.
 
+The class-loader gap this left is closed on the server by server ADR 0079: a class any in-scope run skipped makes no zero-count claim (server 2241248, 9ff9c3d and 56f5d01, not deployed yet). The server's own follow-ups are in its `STATUS.md`.
+
 Open:
-- **A class name held by two class loaders.** A copy too large to report goes out as a skipped class by name, and its hits are not sent. If another copy under the same name was delivered with its probes, a method only the large copy ran reads as never hit. The same holds for a transform-failure skip in a second loader. Closing it needs a server rule, with a server ADR, that a run reporting a class as skipped is not judged on that class from its probes.
-- **Server follow-ups.** Bump the collector module so the server's ingest takes the 1024-byte identity cap and the element counter, then switch the server's payloadcap middleware to `ingest`'s counter, keeping its byte budget. Add the new reasons to the server's troubleshooting list (`docs/site/troubleshooting.md:68`).
+- **ADR 0009's list of the collector's 400 reasons** (line 17) leaves out the 1024-byte identity cap, and its 413 note leaves out the element limits (collector ADR 0008).
+- **otherlode.dev's `.github/workflows/claude-config.yml`** is still the old, tag-pinned copy, so its shared-files check fails. Copy this repo's file there. That checkout was on `docs-sync/server`, diverged from origin/master, so it was left alone.
 
 Static baseline follow-ups the first-copy change surfaced. Each only loses evidence:
 - A Spring Boot jar's `BOOT-INF/classes` copies rank at the jar's place on the classpath, but at runtime the launcher's class loader asks its parent first, so a flat root later on the classpath wins. Classifying all flat roots first, then each jar's nested entries, would match.
