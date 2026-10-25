@@ -18,7 +18,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * Pins the blind spot STATUS.md describes: a class that loads while the same thread is already
+ * Pins the blind spot `docs/site/classes.md` describes: a class that loads while the same thread is already
  * inside another class's transform is reported nowhere, and cannot be.
  *
  * `java.lang.instrument` refuses to call a transformer while that thread is already inside

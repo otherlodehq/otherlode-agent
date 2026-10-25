@@ -181,8 +181,7 @@ class EndpointInstrumentation(
                         // The rollback covers this class only. moduleFailed below switches the
                         // module off for the whole process, so routes it already declared for
                         // earlier classes keep their manifest rows while their advice stops
-                        // counting: those do read as never called. The disabled list is the only
-                        // signal for that; see STATUS.md.
+                        // counting. The disabled list is the only signal for that.
                         pendingDeclarations.rollbackTo(mark)
                         log.log(Level.WARNING, "otherlode: endpoint module ${module.name} failed to transform ${typeDescription.name}", t)
                         OtherlodeEndpoints.moduleFailed(module.name, OtherlodeEndpoints.KIND_TRANSFORM_FAILED, t)

@@ -17,11 +17,14 @@ multi-tenant backend.
    and `benchmark-overhead/README.md` quote run 38944648115 on `1332f3f`
    (2026-10-16), with narrow startup at +21.7%, inside the README's 25%
    target. Re-run on the tagged commit and update both pages if a figure
-   moves.
+   moves. The run is `benchmark-overhead.yml`, which waits for the
+   organisation's GitHub Actions billing to be fixed.
 2. **Cut the releases** (ADRs 0062 and 0063, collector ADR 0006). Cutting
    is Luke's call. Collector `v0.1.0` goes first, since the agent's
-   `release.sh` refuses a release until it exists. The agent's needs its
-   `## [0.1.0]` changelog section written. Before the first release of each,
+   `release.sh` refuses a release until it exists. Each needs its
+   `## [0.1.0]` changelog section written, since both `release.yml` files
+   refuse one without it. `release.yml` and `rehearsal.yml` run in GitHub
+   Actions, so cutting waits for the billing fix too. Before the first release of each,
    make the collector's GHCR package public. Still unknown: whether a
    dropped Portal deployment frees its version. A `rehearsal/1-again` tag
    answers it.
@@ -43,7 +46,7 @@ multi-tenant backend.
    `docs/site`, the README, and the server's UI and docs.
 5. **Before the first customer:** the server STATUS's "Go-live
    checklist" (the company, the privacy policy, the site, the front door,
-   one snapshot refresh measured on db-f1-micro). No collector can be given
+   the database tier). No collector can be given
    an ingest URL until the front door exists. None of it blocks publishing
    the agent.
 
@@ -141,15 +144,6 @@ Known so far:
 - To inventory: the GitHub and Buf tokens CI uses, the WorkOS and GCP credentials behind the hosted server, and the
   `otherlode.dev` domain registration.
 
-### A class that failed to initialise: the server deploy
-
-Settled on 2026-10-16 (agent ADR 0071, server ADR 0070, both with
-amendments; `CONTEXT.md`). Built in every repo; the server's side is on
-its master at `133a73b`. GitHub Actions started no job for it (nor for
-`80fb450` before it): the organisation's billing refused them. Once
-billing is fixed, re-run the CI workflow for master's head; it migrates
-(0006), deploys and syncs the server docs to otherlode.dev.
-
 ### HotSwap of a woven class with changed code: to grill
 
 Raised 2026-10-04 while landing ADR 0060. A woven class whose class file
@@ -184,15 +178,6 @@ wanted, is `PendingDeclarations.begin()` taking the declaring class name and
 `commit()` attaching it. Not `EndpointEntry.handlerClass`, which happens to
 hold the same string for JAX-RS but is a display label: nullable, and set at
 dispatch for the other modules.
-
-### The servlet pattern template kind: the server deploy
-
-The servlet module is built (agent ADR 0074 with amendments, ADR 0019's
-2026-10-18 amendment; `CONTEXT.md`). The server names the servlet pattern
-template kind at `e64d0ac` on its master, and the collector's bindings carry
-it at `17b6918`. GitHub Actions started no job for the server commit on
-2026-10-18 for the same billing reason as above; the CI run for master's
-head deploys it.
 
 ### Endpoint follow-ups
 
@@ -305,11 +290,11 @@ consumer decide what is old enough to act on. This also answers most of the
 trust problem with agent-raised PRs: the judgement sits with the party that
 has the context for it.
 
-The store mostly holds this already. `probes.first_seen_at` (migration 0002)
-dates a probe, `instances.first_seen_at` and `last_seen_at` bound the
-observation window per instance, and `last_hit_at` is derived already as
-`max(probe_counts.updated_at) FILTER (WHERE hits_total > 0)` for the
-stale-hit finding, null when nothing ever hit it. Putting these on the
+The store mostly holds this already. `service_probe_locations` keeps each
+probe location's first and last hit per environment, `instances.first_seen_at`
+and `runs.last_seen_at` bound the observation window, and the stale-hit
+finding derives `last_hit_at` as the latest `updated_at` of a count with
+hits, null when nothing ever hit it. Putting these on the
 never-hit rows is read-path work, not a schema change. Two facts have to
 travel together, because either alone misleads: how long the finding has been
 dead, and how long Otherlode has been watching. "Dead for 90 days" says nothing
@@ -429,7 +414,8 @@ Endpoints:
 - The OTel bridge records OpenTelemetry's `HTTP` verb for an unknown method
   as an endpoint of its own.
 - An unclosed brace in a route template swallows the slashes after it, and
-  a regex holding `}` (`{p:[^}]+}`) closes early.
+  a regex holding `}` (`{p:[^}]+}`) closes early. `RouteTemplateNormalizer`'s
+  KDoc says an unclosed brace is kept as written.
 - Weld's proxies are not recognised as runtime-generated, since their
   naming has not been read from Weld's source, so a JAX-RS resource under
   CDI counts twice.
@@ -596,9 +582,16 @@ Each ADR named has the reasoning and what it would take to change.
 
 ## Cloud session build notes
 
-Two things a fresh cloud session needs for this repo's build. Maven Central
-has answered 429 through the sandbox proxy, and a session-local Gradle init
-script pointing at Google's mirror of it
-(`maven-central.storage-download.googleapis.com/maven2`) worked once the
-user approved it. The `ktlint` CLI the chunked-build command runs is not
-preinstalled; the 1.5.0 release binary from GitHub works.
+What a fresh cloud session needs for this repo's build:
+
+- Maven Central has answered 429 through the sandbox proxy. A user-level
+  Gradle init script in `~/.gradle/init.d` that points every repository
+  at Google's mirror (`maven-central.storage-download.googleapis.com/maven2`)
+  works. Never put it in the repo.
+- The build compiles against JDK 17 and 25 toolchains, and their
+  download through foojay gets 403. `apt-get install openjdk-17-jdk-headless
+  openjdk-25-jdk-headless` works.
+- The `ktlint` CLI the chunked-build command runs is not preinstalled; the
+  1.5.0 release binary from GitHub works.
+- `buf` is not preinstalled; `go install github.com/bufbuild/buf/cmd/buf@v1.50.0`
+  works. Pushing to the Buf Schema Registry needs Luke's `BUF_TOKEN`.
