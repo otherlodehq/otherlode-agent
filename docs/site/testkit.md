@@ -196,6 +196,10 @@ OtherlodeTestCollector.start().use { collector ->
 
 `OtherlodeTestCollector.start(port)` binds a fixed port. With no argument it picks any free one, and `exportUrl` reports it.
 
+## Who can post to the collector
+
+The testkit's collector listens on the loopback address and checks no token. Any process on the same machine that reaches its port can post payloads to it. The extension's collector accepts one agent, so a payload from another process makes every query throw. A collector started with `OtherlodeTestCollector.start()` accepts every agent that posts to it, and its queries count their hits together. Run the testkit only on machines where you trust the other processes, as you would for the build itself.
+
 ## Run forks in parallel
 
 With `maxParallelForks` above 1, each fork is its own JVM, and every fork's agent posts to the same port. The extension's collector holds that port in one fork only, and it accepts one agent. Payloads from any other agent are rejected, and every query in the run then throws an exception that lists the reasons.
