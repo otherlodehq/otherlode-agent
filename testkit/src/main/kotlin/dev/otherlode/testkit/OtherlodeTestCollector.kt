@@ -1003,8 +1003,12 @@ public class OtherlodeTestCollector internal constructor(
         val unjudgeable = failedToInitializeNames() + classesWithInitializerRunning()
         val candidates =
             locations.filter {
-                it.key.kind != WireProbeKind.OPTIONAL_ARGUMENT && !it.inline && it.generatedBy == WireGeneratedBy.NONE && it.hits <= 0L &&
-                    it.key.method.className !in unjudgeable && isNeverHitRow(it, judgement)
+                it.key.kind != WireProbeKind.OPTIONAL_ARGUMENT &&
+                    !it.inline &&
+                    it.generatedBy == WireGeneratedBy.NONE &&
+                    it.hits <= 0L &&
+                    it.key.method.className !in unjudgeable &&
+                    isNeverHitRow(it, judgement)
             }
         val folded = foldedSites(locations, candidates)
         return candidates
@@ -1030,13 +1034,17 @@ public class OtherlodeTestCollector internal constructor(
         val neverHitMethods =
             locations
                 .filter {
-                    it.key.kind == WireProbeKind.METHOD && !it.inline && it.generatedBy == WireGeneratedBy.NONE &&
-                        it.unreadShape == WireUnreadShape.NONE && it.hits <= 0L
+                    it.key.kind == WireProbeKind.METHOD &&
+                        !it.inline &&
+                        it.generatedBy == WireGeneratedBy.NONE &&
+                        it.unreadShape == WireUnreadShape.NONE &&
+                        it.hits <= 0L
                 }.mapTo(HashSet()) { it.key.method }
         val guardOutcomes =
             candidates
                 .filter {
-                    it.key.kind == WireProbeKind.BRANCH && it.routine == WireRoutineKind.NONE &&
+                    it.key.kind == WireProbeKind.BRANCH &&
+                        it.routine == WireRoutineKind.NONE &&
                         it.unreadShape == WireUnreadShape.NONE
                 }.mapTo(HashSet()) { it.key.method to it.key.outcome }
         val guards = siteGuards()
@@ -1517,8 +1525,11 @@ public class OtherlodeTestCollector internal constructor(
             val withDefaultMethods =
                 probesByKey.entries
                     .filter { (key, probe) ->
-                        key.serviceInstanceId == instance && probe.kind == WireProbeKind.METHOD && !probe.static &&
-                            probe.methodName != CLASS_INIT && probe.methodName != CONSTRUCTOR
+                        key.serviceInstanceId == instance &&
+                            probe.kind == WireProbeKind.METHOD &&
+                            !probe.static &&
+                            probe.methodName != CLASS_INIT &&
+                            probe.methodName != CONSTRUCTOR
                     }.mapTo(HashSet()) { it.value.className }
             failed += rejected
             failed += threw
@@ -1773,7 +1784,10 @@ public class OtherlodeTestCollector internal constructor(
             val neverHitNodes =
                 graph.nodes.keys
                     .filter {
-                        !isHit(it) && it !in coveredBy && it.methodName != CLASS_INIT && it !in unjudged &&
+                        !isHit(it) &&
+                            it !in coveredBy &&
+                            it.methodName != CLASS_INIT &&
+                            it !in unjudged &&
                             it.className !in failedToInitialize
                     }.map { ClusterNode(it) } + outcomes.keys + classNodes.keys
             return neverHitNodes
@@ -1837,7 +1851,8 @@ public class OtherlodeTestCollector internal constructor(
         }
         val listsMoreThanRoot =
             members.any {
-                it != root && it.outcome == null &&
+                it != root &&
+                    it.outcome == null &&
                     (it.isClass || (it.method.methodName != CLASS_INIT && it.method !in unjudged))
             }
         if ((root.isClass || root.outcome != null) && !listsMoreThanRoot) return null
@@ -1981,8 +1996,14 @@ public class OtherlodeTestCollector internal constructor(
         return locations
             .filter {
                 val outcome = it.key.outcome
-                it.key.kind == WireProbeKind.BRANCH && outcome != null && !it.inline && it.generatedBy == WireGeneratedBy.NONE &&
-                    it.unreadShape == WireUnreadShape.NONE && it.routine == WireRoutineKind.NONE && it.hits == 0L && isHit(it.key.method) &&
+                it.key.kind == WireProbeKind.BRANCH &&
+                    outcome != null &&
+                    !it.inline &&
+                    it.generatedBy == WireGeneratedBy.NONE &&
+                    it.unreadShape == WireUnreadShape.NONE &&
+                    it.routine == WireRoutineKind.NONE &&
+                    it.hits == 0L &&
+                    isHit(it.key.method) &&
                     it.key.method.className !in unjudgeable
             }.associate { location ->
                 val instance = location.newest.key.serviceInstanceId
@@ -2994,7 +3015,8 @@ public class OtherlodeTestCollector internal constructor(
                         .filter {
                             it.methods.isNotEmpty() &&
                                 it.methods.all { method ->
-                                    method.inline || method.generatedBy != WireGeneratedBy.NONE ||
+                                    method.inline ||
+                                        method.generatedBy != WireGeneratedBy.NONE ||
                                         method.unreadShape != WireUnreadShape.NONE
                                 }
                         }.map { it.className }

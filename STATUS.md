@@ -77,8 +77,6 @@ The agent sets `DeltaBatch.flush_complete` and the testkit's `awaitSettled` wait
 
 Open, to decide: a delta batch the agent saw time out on all five attempts (about 50 seconds) can still be applied later, after the next flush has read its counts. When it carries `flush_complete`, `awaitSettled` can count it and return with up to one interval of hits unsent. It needs the testkit's handler stalled that long, as at a breakpoint while a child JVM keeps running. A testkit rule that ignores a complete batch older than one the instance has already sent narrows it but leaves a window, so a full fix changes ADR 0077's rule.
 
-`testkit/src/main/kotlin/dev/otherlode/testkit/OtherlodeTestCollector.kt` fails ktlint 1.5.0 with 22 `condition-wrapping` errors on master. A formatting-only commit fixes it.
-
 ### Tooling: code principles, a refactoring playbook and a prose lint
 
 From the comparison with pstack's poteto-mode (`cursor/plugins`, `190d287`).
