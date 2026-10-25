@@ -192,6 +192,13 @@ data class ProbeDelta(
  *
  * [payloadSequence] and [countsPendingSince] are the run's delivery state when the agent stamped
  * this batch, as [ProbeManifest] documents them. Both are 0 until stamped.
+ *
+ * [flushComplete] is set on at most one delta batch of a flush: the last delta batch that flush
+ * sends, and only when the flush read its counts and every delta batch it sent before that one was
+ * confirmed. A flush in which an earlier batch is refused or fails, or whose counts could not be
+ * read, sets it on no batch. Its last batch is an idle flush's heartbeat, a flush with
+ * hits' last hit batch, a flush that started with pending counts' closing heartbeat, or a shutdown
+ * flush's [finalFlush] batch.
  */
 data class DeltaBatch(
     val resource: ResourceAttributes,
@@ -201,6 +208,7 @@ data class DeltaBatch(
     val dependencyDeltas: List<DependencyDelta> = emptyList(),
     val payloadSequence: Long = 0,
     val countsPendingSince: Long = 0,
+    val flushComplete: Boolean = false,
 )
 
 /**

@@ -81,7 +81,14 @@ object ProtoPayloadCodec {
      */
     fun weightOf(batch: DeltaBatch): PayloadWeight =
         weightOf(
-            toProto(batch.copy(finalFlush = true, payloadSequence = Long.MAX_VALUE, countsPendingSince = Long.MAX_VALUE)),
+            toProto(
+                batch.copy(
+                    finalFlush = true,
+                    flushComplete = true,
+                    payloadSequence = Long.MAX_VALUE,
+                    countsPendingSince = Long.MAX_VALUE,
+                ),
+            ),
         )
 
     /** The encoded size and element count of [manifest], with the stamped fields at their widest. */
@@ -235,6 +242,7 @@ object ProtoPayloadCodec {
             .addAllDependencyDeltas(batch.dependencyDeltas.map { toProto(it) })
             .setPayloadSequence(batch.payloadSequence)
             .setCountsPendingSince(batch.countsPendingSince)
+            .setFlushComplete(batch.flushComplete)
             .build()
 
     private fun fromProto(batch: ProtoDeltaBatch): DeltaBatch =
@@ -246,6 +254,7 @@ object ProtoPayloadCodec {
             dependencyDeltas = batch.dependencyDeltasList.map { fromProto(it) },
             payloadSequence = batch.payloadSequence,
             countsPendingSince = batch.countsPendingSince,
+            flushComplete = batch.flushComplete,
         )
 
     private fun toProto(resource: ResourceAttributes): ProtoResourceAttributes {

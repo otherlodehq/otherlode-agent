@@ -806,6 +806,7 @@ class ExportSchedulerTest {
         maxDeltasPerBatch: Int = ExportScheduler.DEFAULT_MAX_DELTAS_PER_BATCH,
         maxManifestEntriesPerChunk: Int = ExportScheduler.DEFAULT_MAX_MANIFEST_ENTRIES_PER_CHUNK,
         val dependencyRegistry: DependencyRegistry = DependencyRegistry(),
+        val endpointRegistry: EndpointRegistry = EndpointRegistry(),
     ) {
         val registry = ProbeRegistry()
         val exporter = StampedExporter()
@@ -817,7 +818,7 @@ class ExportSchedulerTest {
                 config,
                 resource,
                 registry,
-                EndpointRegistry(),
+                endpointRegistry,
                 exporter,
                 maxDeltasPerBatch = maxDeltasPerBatch,
                 maxManifestEntriesPerChunk = maxManifestEntriesPerChunk,
@@ -1632,6 +1633,7 @@ class ExportSchedulerTest {
 
         val closing = exporter.deltas.single()
         assertTrue(closing.finalFlush)
+        assertFalse(closing.flushComplete)
         assertEquals(7_000L, closing.countsPendingSince)
     }
 
@@ -3444,5 +3446,303 @@ class ExportSchedulerTest {
                 .toSet(),
         )
         exporter.manifests.forEach { assertTrue(ProtoPayloadCodec.encode(it).size <= ChunkLimits.MAX_ENCODED_BYTES) }
+    }
+
+    private fun completeFlags(sent: List<DeltaBatch>) = sent.map { it.flushComplete }
+
+    @Test
+    fun `an idle flush marks its one heartbeat as completing the flush`() {
+        val scenario = PendingScenario(probeCount = 0)
+
+        val sent = scenario.flush(at = 5_000)
+
+        assertEquals(listOf(false), sent.map(::hasHits))
+        assertEquals(listOf(true), completeFlags(sent))
+    }
+
+    @Test
+    fun `a flush with hits marks its one hit batch as completing the flush`() {
+        val scenario = PendingScenario()
+
+        val sent = scenario.flush(at = 5_000)
+
+        assertEquals(listOf(true), sent.map(::hasHits))
+        assertEquals(listOf(true), completeFlags(sent))
+    }
+
+    @Test
+    fun `a flush that starts pending marks only its closing heartbeat`() {
+        val scenario = PendingScenario()
+        scenario.exporter.deltaOutcome = { if (hasHits(it)) refusal() else null }
+        scenario.flush(at = 1_000)
+        scenario.exporter.deltaOutcome = { null }
+
+        val sent = scenario.flush(at = 2_000)
+
+        assertEquals(listOf(false, true, false), sent.map(::hasHits), "leading heartbeat, hit batch, closing heartbeat")
+        assertEquals(listOf(false, false, true), completeFlags(sent))
+    }
+
+    @Test
+    fun `a split flush marks only its last batch`() {
+        val scenario = PendingScenario(probeCount = 3, maxDeltasPerBatch = 1)
+
+        val sent = scenario.flush(at = 5_000)
+
+        assertEquals(3, sent.size)
+        assertEquals(listOf(false, false, true), completeFlags(sent))
+    }
+
+    @Test
+    fun `a rider-only batch that comes last carries the mark`() {
+        val endpointRegistry = EndpointRegistry()
+        endpointRegistry.register(key = Any(), framework = "http-server", verb = "GET", verbatimTemplate = "/health").hit()
+        val scenario = PendingScenario(maxDeltasPerBatch = 1, endpointRegistry = endpointRegistry)
+
+        val sent = scenario.flush(at = 5_000)
+
+        assertEquals(listOf(1, 0), sent.map { it.deltas.size })
+        assertEquals(listOf(0, 1), sent.map { it.endpointDeltas.size })
+        assertEquals(listOf(false, true), completeFlags(sent))
+    }
+
+    @Test
+    fun `a refused hit batch mid-flush leaves the mark off every batch of the flush, those after it included`() {
+        val scenario = PendingScenario(probeCount = 3, maxDeltasPerBatch = 1)
+        var hitBatches = 0
+        scenario.exporter.deltaOutcome = { if (hasHits(it) && ++hitBatches == 2) refusal() else null }
+
+        val sent = scenario.flush(at = 5_000)
+
+        assertEquals(3, sent.size, "the refusal does not stop the loop")
+        assertEquals(listOf(false, false, false), completeFlags(sent))
+    }
+
+    @Test
+    fun `a hit batch that fails by transport mid-flush leaves the mark off every batch of the flush`() {
+        val scenario = PendingScenario(probeCount = 3, maxDeltasPerBatch = 1)
+        var hitBatches = 0
+        scenario.exporter.deltaOutcome = { if (hasHits(it) && ++hitBatches == 2) transportFailure() else null }
+
+        val sent = scenario.flush(at = 5_000)
+
+        assertEquals(2, sent.size, "the failure ends the loop")
+        assertEquals(listOf(false, false), completeFlags(sent))
+    }
+
+    @Test
+    fun `a refused leading heartbeat leaves the mark off the closing heartbeat too`() {
+        val scenario = PendingScenario()
+        scenario.exporter.deltaOutcome = { if (hasHits(it)) refusal() else null }
+        scenario.flush(at = 1_000)
+        var heartbeats = 0
+        scenario.exporter.deltaOutcome = { if (!hasHits(it) && ++heartbeats == 1) refusal() else null }
+
+        val sent = scenario.flush(at = 2_000)
+
+        assertEquals(listOf(false, true, false), sent.map(::hasHits), "leading heartbeat, hit batch, closing heartbeat")
+        assertEquals(listOf(false, false, false), completeFlags(sent))
+    }
+
+    @Test
+    fun `a shutdown flush that confirms every batch marks its final_flush batch and no other`() {
+        val scenario = PendingScenario(probeCount = 2, maxDeltasPerBatch = 1)
+
+        val sent = scenario.flush(at = 5_000, final = true)
+
+        assertEquals(listOf(false, false, true), sent.map { it.finalFlush })
+        assertEquals(listOf(false, false, true), completeFlags(sent))
+    }
+
+    @Test
+    fun `a shutdown flush that starts pending and confirms every batch marks only its final_flush batch`() {
+        val scenario = PendingScenario()
+        scenario.exporter.deltaOutcome = { if (hasHits(it)) refusal() else null }
+        scenario.flush(at = 1_000)
+        scenario.exporter.deltaOutcome = { null }
+
+        val sent = scenario.flush(at = 2_000, final = true)
+
+        assertEquals(listOf(false, true, false), sent.map(::hasHits), "leading heartbeat, hit batch, closing batch")
+        assertEquals(listOf(false, false, true), completeFlags(sent))
+    }
+
+    @Test
+    fun `a shutdown flush after a failed hit batch leaves its final_flush batch unmarked`() {
+        for (failure in listOf<() -> Exception>({ transportFailure() }, { refusal() }, { java.io.IOException("reset") })) {
+            val scenario = PendingScenario(probeCount = 3, maxDeltasPerBatch = 1)
+            var hitBatches = 0
+            scenario.exporter.deltaOutcome = { if (hasHits(it) && ++hitBatches == 2) failure() else null }
+
+            val sent = scenario.flush(at = 5_000, final = true)
+
+            assertTrue(sent.last().finalFlush, "the closing batch is still sent: $failure")
+            assertEquals(sent.map { false }, completeFlags(sent), "$failure")
+        }
+    }
+
+    @Test
+    fun `a shutdown flush whose leading heartbeat was refused leaves its final_flush batch unmarked`() {
+        val scenario = PendingScenario()
+        scenario.exporter.deltaOutcome = { if (hasHits(it)) refusal() else null }
+        scenario.flush(at = 1_000)
+        var heartbeats = 0
+        scenario.exporter.deltaOutcome = { if (!hasHits(it) && ++heartbeats == 1) refusal() else null }
+
+        val sent = scenario.flush(at = 2_000, final = true)
+
+        assertTrue(sent.last().finalFlush)
+        assertEquals(listOf(false, false, false), completeFlags(sent))
+    }
+
+    private data class FlushPlan(
+        val final: Boolean,
+        val probeHits: Boolean,
+        val endpointHit: Boolean,
+        val dependencyLoad: Boolean,
+        val failures: Map<Int, String>,
+    )
+
+    private data class FlushScenarioSpec(
+        val probeCount: Int,
+        val maxDeltasPerBatch: Int,
+        val withEndpoint: Boolean,
+        val withDependencies: Boolean,
+        val flushes: List<FlushPlan>,
+    )
+
+    private class Attempt(
+        val batch: DeltaBatch,
+        val failure: Exception?,
+    )
+
+    private fun generateFlushScenario(random: Random): FlushScenarioSpec {
+        val flushCount = random.nextInt(1, 6)
+        return FlushScenarioSpec(
+            probeCount = random.nextInt(0, 5),
+            maxDeltasPerBatch = random.nextInt(1, 4),
+            withEndpoint = random.nextBoolean(),
+            withDependencies = random.nextBoolean(),
+            flushes =
+                List(flushCount) { index ->
+                    FlushPlan(
+                        final = index == flushCount - 1 && random.nextInt(3) == 0,
+                        probeHits = random.nextBoolean(),
+                        endpointHit = random.nextBoolean(),
+                        dependencyLoad = random.nextBoolean(),
+                        failures =
+                            (0 until 7)
+                                .filter { random.nextInt(5) == 0 }
+                                .associateWith { listOf("refusal", "transport", "io").random(random) },
+                    )
+                },
+        )
+    }
+
+    private fun failureFor(kind: String?): Exception? =
+        when (kind) {
+            "refusal" -> refusal()
+            "transport" -> transportFailure()
+            "io" -> java.io.IOException("reset")
+            else -> null
+        }
+
+    /** The first rule the flush's recorded sends break, or null. */
+    private fun flushCompleteViolation(
+        attempts: List<Attempt>,
+        final: Boolean,
+    ): String? {
+        if (attempts.isEmpty()) return "the flush sent no delta batch"
+        val marked = attempts.indices.filter { attempts[it].batch.flushComplete }
+        val last = attempts.lastIndex
+        return when {
+            marked.size > 1 -> "more than one batch carries flush_complete: $marked"
+            marked.isNotEmpty() && marked.single() != last -> "batch ${marked.single()} carries it but the last batch is $last"
+            marked.isNotEmpty() && attempts.dropLast(1).any { it.failure != null } ->
+                "a batch carries it after an earlier batch was not confirmed"
+            marked.isEmpty() && attempts.all { it.failure == null } -> "every batch was confirmed and none carries it"
+            final && marked.isNotEmpty() && !attempts[last].batch.finalFlush -> "a shutdown flush marks a batch that is not final_flush"
+            else -> null
+        }
+    }
+
+    @Test
+    fun `flush_complete marks the last batch of a flush when the ones before it were confirmed, over generated scenarios`() {
+        val random = Random(20_261_025)
+        var markedFlushes = 0
+        var unmarkedAfterFailure = 0
+        var markedClosingHeartbeats = 0
+        var markedShutdowns = 0
+        var unmarkedShutdowns = 0
+        var markedRiderOnly = 0
+        repeat(400) {
+            val spec = generateFlushScenario(random)
+            val endpointRegistry = EndpointRegistry()
+            val endpoint =
+                endpointRegistry.register(key = Any(), framework = "http-server", verb = "GET", verbatimTemplate = "/health")
+            val dependencyRegistry = if (spec.withDependencies) dependencyRegistryWithLoads("a", "b") else DependencyRegistry()
+            val scenario =
+                PendingScenario(
+                    probeCount = spec.probeCount,
+                    maxDeltasPerBatch = spec.maxDeltasPerBatch,
+                    dependencyRegistry = dependencyRegistry,
+                    endpointRegistry = endpointRegistry,
+                )
+            if (spec.withEndpoint) endpoint.hit()
+            try {
+                spec.flushes.forEachIndexed { index, plan ->
+                    if (plan.probeHits) scenario.counters.forEach { it[0] += 1 }
+                    if (spec.withEndpoint && plan.endpointHit) endpoint.hit()
+                    if (spec.withDependencies && plan.dependencyLoad) {
+                        for (entry in dependencyRegistry.entries()) {
+                            dependencyRegistry.recordLoaded(entry.dependencyId, "org.lib.Extra$index.C${entry.dependencyId}")
+                        }
+                    }
+                    val attempts = mutableListOf<Attempt>()
+                    scenario.exporter.deltaOutcome = { batch ->
+                        failureFor(plan.failures[attempts.size]).also { attempts += Attempt(batch, it) }
+                    }
+
+                    scenario.flush(at = 1_000L * (index + 1), final = plan.final)
+
+                    val violation = flushCompleteViolation(attempts, plan.final)
+                    if (violation != null) {
+                        val trace =
+                            attempts.joinToString("\n") {
+                                "  hits=${hasHits(it.batch)} pendingSince=${it.batch.countsPendingSince} final=${it.batch.finalFlush} " +
+                                    "complete=${it.batch.flushComplete} failure=${it.failure}"
+                            }
+                        throw AssertionError("flush $index: $violation\n$spec\n$trace")
+                    }
+                    val complete = attempts.any { it.batch.flushComplete }
+                    if (complete) markedFlushes++
+                    if (!complete && attempts.any { it.failure != null }) unmarkedAfterFailure++
+                    if (complete &&
+                        attempts.size > 1 &&
+                        attempts.first().batch.countsPendingSince != 0L &&
+                        !hasHits(attempts.last().batch)
+                    ) {
+                        markedClosingHeartbeats++
+                    }
+                    if (complete &&
+                        hasHits(attempts.last().batch) &&
+                        attempts
+                            .last()
+                            .batch.deltas
+                            .isEmpty()
+                    ) {
+                        markedRiderOnly++
+                    }
+                    if (plan.final && complete) markedShutdowns++
+                    if (plan.final && !complete) unmarkedShutdowns++
+                }
+            } finally {
+                scenario.scheduler.stop()
+            }
+        }
+        assertTrue(markedFlushes > 0 && unmarkedAfterFailure > 0, "the scenarios cover both outcomes")
+        assertTrue(markedClosingHeartbeats > 0, "the scenarios cover a marked closing heartbeat")
+        assertTrue(markedRiderOnly > 0, "the scenarios cover a marked rider-only batch")
+        assertTrue(markedShutdowns > 0 && unmarkedShutdowns > 0, "the scenarios cover both outcomes of a shutdown flush")
     }
 }

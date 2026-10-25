@@ -90,11 +90,14 @@ A delta batch carries the resource attributes plus these lists. Each entry is a 
 | `endpoint_deltas` | For each endpoint whose count changed: `endpoint_id`, `first_seen_at`, `hits_total` |
 | `dependency_deltas` | For each dependency: `dependency_id`, `first_loaded_at`, `loaded_classes_total` |
 | `final_flush` | True only on the last, empty delta batch of the shutdown flush |
+| `flush_complete` | True only on the last delta batch of a flush, when the collector accepted every delta batch the flush sent before it |
 | `payload_sequence`, `counts_pending_since` | Where the run stands in delivering its counts; see [Pending counts](#pending-counts) |
 
 `hits_total` is the cumulative count since the process started, not the amount since the last flush. The server merges it with `max()`, so a batch that arrives twice or out of order changes nothing. `first_seen_at` is the time of the flush that first saw a non-zero count, so it is accurate to one interval.
 
 The agent sends the batch even when no count changed. An empty batch is a heartbeat: it tells the server the instance is alive and idle, not crashed or cut off.
+
+One flush can send several delta batches. The chunk caps split a large batch, and a flush that starts with pending counts sends a heartbeat first and, once the collector has accepted the rest, another at the end. The flush's last delta batch carries `flush_complete` when the collector accepted every delta batch the flush sent before it. When the collector refuses an earlier batch, or an earlier send gets no answer, no batch of that flush carries it, and neither does a shutdown flush that could not read its counts.
 
 The ids refer to the manifest of the same run. They mean nothing without it.
 

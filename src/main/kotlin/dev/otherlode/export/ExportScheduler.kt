@@ -621,6 +621,13 @@ class ExportScheduler(
      * run pending before it closes, so the run never ends cleanly with its hits unconfirmed and
      * nothing pending.
      *
+     * `flushComplete` is set on at most one batch of a flush, the last one the flush sends, and
+     * only when every delta batch the flush sent before it was confirmed, empty batches included.
+     * It is decided when the batch is built, from the sends so far. A flush that started clean
+     * carries it on the last batch of the loop. A flush that started pending carries it on its
+     * closing heartbeat. The shutdown flush carries it on its closing `finalFlush` batch. A failure
+     * of any kind, including one before the first send, leaves it off every later batch.
+     *
      * Returns whether the loop ran to its end with every hit batch confirmed, and for the shutdown
      * flush also whether the closing batch did not fail without a refusal.
      */
@@ -630,15 +637,17 @@ class ExportScheduler(
         flushStart: Long,
     ): Boolean {
         var confirmed = false
+        val sends = FlushSends()
         try {
-            confirmed = sendHitBatches(final, generation, flushStart)
+            confirmed = sendHitBatches(final, generation, flushStart, sends)
         } catch (t: Throwable) {
+            sends.unconfirmed()
             log.log(Level.WARNING, "otherlode: delta export failed, will retry next flush", t)
             if (final) delivery.markPending(flushStart)
         }
         if (!final) return confirmed
         return try {
-            sendHeartbeat(finalFlush = true)
+            sendHeartbeat(sends, finalFlush = true, flushComplete = sends.allConfirmed)
             confirmed
         } catch (t: Throwable) {
             log.log(Level.WARNING, "otherlode: closing export failed, the run will read as one that went silent", t)
@@ -650,22 +659,27 @@ class ExportScheduler(
         final: Boolean,
         generation: Long,
         flushStart: Long,
+        sends: FlushSends,
     ): Boolean {
         val probeBatches = registry.computeDeltaBatches(resource, maxDeltasPerBatch)
         val riders =
             endpointRegistry.computeDeltas(maxDeltasPerBatch).map(::endpointDeltaRider) +
                 dependencyRegistry.computeDeltas(maxDeltasPerBatch).map(::dependencyDeltaRider)
-        if (delivery.isPending()) sendHeartbeat(finalFlush = false)
+        val pendingAtStart = delivery.isPending()
+        if (pendingAtStart) sendHeartbeat(sends, finalFlush = false, flushComplete = false)
         var allConfirmed = true
-        for (send in composeDeltaSends(probeBatches, riders)) {
+        val deltaSends = composeDeltaSends(probeBatches, riders)
+        for (send in deltaSends) {
             val hits = hasHits(send.batch)
             if (final && !hits) {
                 send.probeSnapshot?.let(registry::advanceBaseline)
                 continue
             }
+            val completesFlush = !final && !pendingAtStart && send === deltaSends.last() && sends.allConfirmed
             try {
-                sendStamped(send.batch)
+                sendStamped(send.batch.copy(flushComplete = completesFlush))
             } catch (e: ExportFailedException) {
+                sends.unconfirmed()
                 if (hits) {
                     delivery.markPending(flushStart)
                     allConfirmed = false
@@ -674,6 +688,7 @@ class ExportScheduler(
                 log.log(Level.WARNING, "otherlode: delta export failed, will retry next flush", e)
                 continue
             } catch (t: Throwable) {
+                sends.unconfirmed()
                 if (hits) delivery.markPending(flushStart)
                 throw t
             }
@@ -684,18 +699,43 @@ class ExportScheduler(
         dependencyRegistry.markCountsDelivered(generation)
         if (delivery.isPending()) {
             delivery.clear()
-            if (!final) sendHeartbeat(finalFlush = false)
+            if (!final) sendHeartbeat(sends, finalFlush = false, flushComplete = sends.allConfirmed)
         }
         return true
     }
 
-    /** Sends an empty delta batch. A refusal is logged and the caller goes on; any other failure propagates. */
-    private fun sendHeartbeat(finalFlush: Boolean) {
+    /**
+     * Whether every delta batch a flush has sent so far was confirmed. A batch that was sent and
+     * refused or failed, and a failure before any batch was sent, make it false for the rest of
+     * the flush. Only the flush's delta thread touches it.
+     */
+    private class FlushSends {
+        var allConfirmed = true
+            private set
+
+        fun unconfirmed() {
+            allConfirmed = false
+        }
+    }
+
+    /**
+     * Sends an empty delta batch. A refusal is logged and the caller goes on; any other failure
+     * propagates. Either marks [sends] unconfirmed.
+     */
+    private fun sendHeartbeat(
+        sends: FlushSends,
+        finalFlush: Boolean,
+        flushComplete: Boolean,
+    ) {
         try {
-            sendStamped(DeltaBatch(resource, emptyList(), finalFlush = finalFlush))
+            sendStamped(DeltaBatch(resource, emptyList(), finalFlush = finalFlush, flushComplete = flushComplete))
         } catch (e: ExportFailedException) {
+            sends.unconfirmed()
             if (!e.refused) throw e
             log.log(Level.WARNING, "otherlode: heartbeat export failed, will retry next flush", e)
+        } catch (t: Throwable) {
+            sends.unconfirmed()
+            throw t
         }
     }
 

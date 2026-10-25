@@ -237,6 +237,34 @@ class ProtoPayloadCodecTest {
     }
 
     @Test
+    fun `a delta batch round-trips flushComplete true and false`() {
+        val resource = ResourceAttributes("checkout", "1.0.0", "", null, "run-1")
+
+        for (value in listOf(true, false)) {
+            val batch = DeltaBatch(resource, emptyList(), flushComplete = value)
+
+            assertEquals(value, ProtoDeltaBatch.parseFrom(ProtoPayloadCodec.encode(batch)).flushComplete)
+            assertEquals(batch, ProtoPayloadCodec.decodeDeltaBatch(ProtoPayloadCodec.encode(batch)))
+        }
+    }
+
+    @Test
+    fun `flushComplete defaults to false and the widest weight of a batch includes it`() {
+        val resource = ResourceAttributes("checkout", "1.0.0", "", null, "run-1")
+        val batch = DeltaBatch(resource, emptyList())
+        val widest =
+            batch.copy(
+                finalFlush = true,
+                flushComplete = true,
+                payloadSequence = Long.MAX_VALUE,
+                countsPendingSince = Long.MAX_VALUE,
+            )
+
+        assertFalse(batch.flushComplete)
+        assertEquals(ProtoPayloadCodec.encode(widest).size.toLong(), ProtoPayloadCodec.weightOf(batch).bytes)
+    }
+
+    @Test
     fun `payload sequence and pending-since time default to zero`() {
         val resource = ResourceAttributes("checkout", "1.0.0", "", null, "run-1")
 

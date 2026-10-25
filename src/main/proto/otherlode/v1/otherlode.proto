@@ -193,6 +193,14 @@ message DeltaBatch {
   int64 payload_sequence = 6;
   // See ProbeManifest.counts_pending_since.
   int64 counts_pending_since = 7;
+  // Set on at most one delta batch of a flush: the last delta batch that flush sends, and only when
+  // the flush read its counts and every delta batch it sent before that one was confirmed. A flush
+  // in which an earlier batch is refused or fails, or whose counts could not be read, sets it on no
+  // batch. An idle flush sets it on its one heartbeat, a flush with hits on its
+  // last hit batch, and a flush that started with pending counts on its closing heartbeat. The
+  // shutdown flush sets it on its final_flush batch. A batch carrying it says that every probe
+  // counter, endpoint and dependency the flush read is on the wire.
+  bool flush_complete = 8;
 }
 
 // Why code outside scope may call a method that no in-scope code calls. Set only on a METHOD
