@@ -20,10 +20,10 @@ import java.lang.System.Logger.Level
 import java.util.jar.JarFile
 
 /**
- * What one static baseline scan found. [ownClassNames] is every class name the scan saw in a
+ * What one static baseline scan found. [ownClassNames] is every class name whose kept copy is in a
  * directory root or under `BOOT-INF/classes`/`WEB-INF/classes`, in scope or not: the adopter's own
- * code. [flatJarClassNames] is every class name it saw at the root of a jar, which may be the
- * adopter's own jar or a dependency on a flat classpath. Both are kept only to filter the scan's
+ * code. [flatJarClassNames] is every class name whose kept copy is at the root of a jar, which may
+ * be the adopter's own jar or a dependency on a flat classpath. Both are kept only to filter the scan's
  * references and are never sent.
  */
 data class StaticScanResult(
@@ -89,12 +89,18 @@ class StaticBaselineScanner(
         val unprobed = mutableListOf<UnprobedClass>()
         val ownClassNames = HashSet<String>()
         val flatJarClassNames = HashSet<String>()
+        private val seenClassNames = HashSet<String>()
+
+        /** True the first time [className] is offered, false for every later copy of the name. */
+        fun firstCopyOf(className: String): Boolean = seenClassNames.add(className)
 
         fun toResult() = StaticScanResult(declared, unreadable, unprobed, ownClassNames, flatJarClassNames)
     }
 
     /**
      * Scans [classpathRoots] plus every jar they reach through a manifest `Class-Path` attribute.
+     * Only the first copy of a class name, in the JVM's search order, is kept; a later copy lands in
+     * no list of the result.
      * A `java -jar app.jar` launch puts only `app.jar` on `java.class.path`; the dependencies the
      * launcher actually loads are named in its manifest, relative to the jar's own directory, and
      * can name further jars with manifests of their own. Without following them, an adopter's
@@ -113,8 +119,9 @@ class StaticBaselineScanner(
     }
 
     /**
-     * [roots] followed by every jar reachable through manifest `Class-Path` entries, in
-     * discovery order, each file once. An entry is resolved the way the JDK's launcher resolves
+     * [roots] followed by every jar reachable through manifest `Class-Path` entries, each file
+     * once, in the depth-first order the JVM searches them: the jars a jar names come right after
+     * it, before the next root. An entry is resolved the way the JDK's launcher resolves
      * it, as a relative path against the referencing jar's parent directory; an entry that does
      * not exist is dropped, and a jar whose manifest cannot be read contributes nothing beyond
      * itself.
@@ -127,10 +134,11 @@ class StaticBaselineScanner(
             val canonical = runCatching { root.canonicalFile }.getOrDefault(root.absoluteFile)
             if (ordered.putIfAbsent(canonical, root) != null) continue
             if (!isJarFile(root) || !root.isFile) continue
-            for (entry in manifestClassPathEntries(root)) {
-                val referenced = File(root.absoluteFile.parentFile, entry)
-                if (referenced.exists()) queue.addLast(referenced)
-            }
+            manifestClassPathEntries(root)
+                .map { File(root.absoluteFile.parentFile, it) }
+                .filter { it.exists() }
+                .asReversed()
+                .forEach(queue::addFirst)
         }
         return ordered.values.toList()
     }
@@ -163,6 +171,7 @@ class StaticBaselineScanner(
             val pool = TypePool.Default.WithLazyResolution.of(locator)
             val resources = folderResources(root)
             candidateClassNamesInFolder(root).forEach { className ->
+                if (!buckets.firstCopyOf(className)) return@forEach
                 buckets.ownClassNames += className
                 classify(className, pool, locator, resources, buckets)
             }
@@ -217,6 +226,7 @@ class StaticBaselineScanner(
             // BOOT-INF/classes/META-INF/versions/N/, which only the stripped name reveals.
             if (!isClassEntry(relativeName)) continue
             val className = relativeName.removeSuffix(".class").replace('/', '.')
+            if (!buckets.firstCopyOf(className)) continue
             if (nestedPrefix != null) buckets.ownClassNames += className else buckets.flatJarClassNames += className
             classify(className, pool, locator, if (nestedPrefix != null) nestedResources.getValue(nestedPrefix) else flatResources, buckets)
         }

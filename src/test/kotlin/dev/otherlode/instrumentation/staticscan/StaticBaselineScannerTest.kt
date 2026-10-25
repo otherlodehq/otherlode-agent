@@ -423,6 +423,141 @@ class StaticBaselineScannerTest {
         assertTrue("com.example.target.CoroutineTargetKt\$twoPoints\$1" !in everyBucketName)
     }
 
+    /** A class named [internalName] whose only content is [methodName]: abstract in an interface, or a concrete public method in a class. */
+    private fun duplicateBytes(
+        internalName: String,
+        methodName: String,
+        asInterface: Boolean,
+    ): ByteArray {
+        val cw = ClassWriter(ClassWriter.COMPUTE_FRAMES or ClassWriter.COMPUTE_MAXS)
+        val access = if (asInterface) Opcodes.ACC_PUBLIC or Opcodes.ACC_INTERFACE or Opcodes.ACC_ABSTRACT else Opcodes.ACC_PUBLIC
+        cw.visit(Opcodes.V17, access, internalName, null, "java/lang/Object", null)
+        if (asInterface) {
+            cw.visitMethod(Opcodes.ACC_PUBLIC or Opcodes.ACC_ABSTRACT, methodName, "()V", null, null).visitEnd()
+        } else {
+            val mv = cw.visitMethod(Opcodes.ACC_PUBLIC, methodName, "()V", null, null)
+            mv.visitCode()
+            mv.visitInsn(Opcodes.RETURN)
+            mv.visitMaxs(0, 0)
+            mv.visitEnd()
+        }
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    private val dupName = "com/example/target/Dup"
+    private val dupClassName = "com.example.target.Dup"
+
+    private fun assertOnlyFirstDupKept(result: StaticScanResult) {
+        assertEquals(listOf(dupClassName), result.unprobedClasses.map { it.className })
+        assertTrue(result.declaredClasses.isEmpty(), "the later concrete copy is declared nowhere")
+        assertTrue(result.unreadableClasses.isEmpty())
+        assertEquals(setOf(dupClassName), result.allClassNames())
+    }
+
+    @Test
+    fun `two directory roots holding one class name keep the first copy and drop the later one from every list`() {
+        val first = directoryRoot("$dupName.class" to duplicateBytes(dupName, "first", asInterface = true))
+        val second = directoryRoot("$dupName.class" to duplicateBytes(dupName, "second", asInterface = false))
+        val scanner = StaticBaselineScanner(listOf("com.example.target"))
+
+        val result = scanner.scan(listOf(first, second))
+
+        assertOnlyFirstDupKept(result)
+        assertEquals(setOf(dupClassName), result.ownClassNames)
+    }
+
+    @Test
+    fun `a directory root's copy of a class name shadows a later jar's copy`() {
+        val first = directoryRoot("$dupName.class" to duplicateBytes(dupName, "first", asInterface = true))
+        val second = jarRoot("$dupName.class" to duplicateBytes(dupName, "second", asInterface = false))
+        val scanner = StaticBaselineScanner(listOf("com.example.target"))
+
+        val result = scanner.scan(listOf(first, second))
+
+        assertOnlyFirstDupKept(result)
+        assertTrue(result.flatJarClassNames.isEmpty(), "the shadowed jar copy is recorded nowhere")
+    }
+
+    @Test
+    fun `a later copy that cannot be read is dropped too`() {
+        val first = jarRoot("$dupName.class" to duplicateBytes(dupName, "first", asInterface = true))
+        val second = directoryRoot("$dupName.class" to byteArrayOf(1, 2, 3))
+        val scanner = StaticBaselineScanner(listOf("com.example.target"))
+
+        val result = scanner.scan(listOf(first, second))
+
+        assertOnlyFirstDupKept(result)
+    }
+
+    @Test
+    fun `a class name held by one root only is unaffected`() {
+        val first = directoryRoot("$dupName.class" to duplicateBytes(dupName, "first", asInterface = false))
+        val second = directoryRoot("com/example/target/SampleTarget.class" to sampleTargetBytes)
+        val scanner = StaticBaselineScanner(listOf("com.example.target"))
+
+        val result = scanner.scan(listOf(first, second))
+
+        assertEquals(setOf(dupClassName, "com.example.target.SampleTarget"), result.declaredClasses.map { it.className }.toSet())
+    }
+
+    @Test
+    fun `jars named by a Class-Path are searched depth first, so the first copy is the referenced jar's`() {
+        val dir = directoryRoot()
+        val a = File(dir, "a.jar")
+        val b = File(dir, "b.jar")
+        val c = File(dir, "c.jar")
+        writeJar(a, emptyList(), classPath = "b.jar")
+        writeJar(b, listOf("$dupName.class" to duplicateBytes(dupName, "fromB", asInterface = false)))
+        writeJar(c, listOf("$dupName.class" to duplicateBytes(dupName, "fromC", asInterface = false)))
+        val scanner = StaticBaselineScanner(listOf("com.example.target"))
+
+        val result = scanner.scan(listOf(a, c))
+
+        val declared = result.declaredClasses.single()
+        assertEquals(dupClassName, declared.className)
+        assertEquals(listOf("fromB"), declared.methods.map { it.methodName })
+    }
+
+    @Test
+    fun `the jars one Class-Path names are searched in the order it names them`() {
+        val dir = directoryRoot()
+        val a = File(dir, "a.jar")
+        val b = File(dir, "b.jar")
+        val d = File(dir, "d.jar")
+        writeJar(a, emptyList(), classPath = "b.jar d.jar")
+        writeJar(b, listOf("$dupName.class" to duplicateBytes(dupName, "fromB", asInterface = false)))
+        writeJar(d, listOf("$dupName.class" to duplicateBytes(dupName, "fromD", asInterface = false)))
+        val scanner = StaticBaselineScanner(listOf("com.example.target"))
+
+        val result = scanner.scan(listOf(a))
+
+        assertEquals(
+            listOf("fromB"),
+            result.declaredClasses
+                .single()
+                .methods
+                .map { it.methodName },
+        )
+    }
+
+    @Test
+    fun `a Class-Path cycle visits each jar once`() {
+        val dir = directoryRoot()
+        val a = File(dir, "a.jar")
+        val b = File(dir, "b.jar")
+        writeJar(a, listOf("com/example/target/SampleTarget.class" to sampleTargetBytes), classPath = "b.jar")
+        writeJar(b, listOf("$dupName.class" to duplicateBytes(dupName, "fromB", asInterface = false)), classPath = "a.jar")
+        val scanner = StaticBaselineScanner(listOf("com.example.target"))
+
+        val result = scanner.scan(listOf(a))
+
+        assertEquals(
+            listOf("com.example.target.SampleTarget", dupClassName),
+            result.declaredClasses.map { it.className },
+        )
+    }
+
     @Test
     fun `an in-scope class with no concrete methods is reported as unprobed, not declared`() {
         val root =

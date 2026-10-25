@@ -161,6 +161,8 @@ The scan runs once per process, on a background thread that does not hold up sta
 
 The scan walks each entry of `java.class.path` that is a directory, a `.jar` file or a `.zip` file. It also follows the `Class-Path` attribute of every jar's manifest to further jars, relative to the directory of the jar that names them, which is how `java -jar app.jar` finds its libraries.
 
+When two entries hold a class of the same name, the baseline keeps the copy the JVM would load, the first in the classpath's search order. The jars a `Class-Path` names are searched right after the jar that names them.
+
 Inside a jar, the scan reads:
 
 - Classes at the root of the jar.

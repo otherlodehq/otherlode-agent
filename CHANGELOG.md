@@ -35,6 +35,7 @@ the section being read.
 - An endpoint module records at most 8,192 endpoints it finds only at dispatch, and past that logs one WARNING and records no new ones. It also binds at most 8,192 request keys at dispatch; past that a request still counts, and its endpoint is resolved again each time. Declared endpoints are never limited.
 - The reason of a disabled endpoint module names the exception's class, not its message, unless the exception is a linkage error.
 - The shutdown flush ends with one empty delta batch that carries `final_flush`, sent after its other batches and stamped with the pending state they left. No other batch carries it, so a run whose last hit batch was refused or lost no longer reads as having ended cleanly with nothing pending.
+- The static baseline keeps only the copy of a class name the JVM loads, the first in the classpath's search order, and searches the jars a manifest `Class-Path` names right after the jar that names them. A shadowed copy no longer makes a loaded class read as never loaded.
 
 ### Fixed
 

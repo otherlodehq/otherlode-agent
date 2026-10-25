@@ -57,6 +57,12 @@ Decided in ADRs 0075 and 0076 and in amendments to ADRs 0014, 0017, 0068 and 007
 6. Chunks bounded by encoded bytes and element count, and the class that alone breaks a bound (ADR 0075).
 7. The testkit docs say any local process can post to the testkit's collector.
 
+
+Static baseline follow-ups the first-copy change surfaced. Each only loses evidence:
+- A Spring Boot jar's `BOOT-INF/classes` copies rank at the jar's place on the classpath, but at runtime the launcher's class loader asks its parent first, so a flat root later on the classpath wins. Classifying all flat roots first, then each jar's nested entries, would match.
+- A class held only under `META-INF/versions/N/` of an earlier multi-release jar marks no name, so a later root's base copy is kept.
+- A jar whose manifest cannot be read is still scanned; the JDK drops such a jar. `Class-Path` entries are split on single spaces and resolved as file paths, where the JDK tokenises and resolves URLs.
+- Cross-class reads can take a shadowed copy's tables from the referencing root's locator.
 ### Tooling: code principles, a refactoring playbook and a prose lint
 
 From the comparison with pstack's poteto-mode (`cursor/plugins`, `190d287`).
