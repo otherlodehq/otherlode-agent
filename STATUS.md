@@ -61,7 +61,6 @@ The class-loader gap this left is closed on the server by server ADR 0079: a cla
 
 Open:
 - **ADR 0009's list of the collector's 400 reasons** (line 17) leaves out the 1024-byte identity cap, and its 413 note leaves out the element limits (collector ADR 0008).
-- **otherlode.dev's `.github/workflows/claude-config.yml`** is still the old, tag-pinned copy, so its shared-files check fails. Copy this repo's file there. That checkout was on `docs-sync/server`, diverged from origin/master, so it was left alone.
 
 Static baseline follow-ups the first-copy change surfaced. Each only loses evidence:
 - A Spring Boot jar's `BOOT-INF/classes` copies rank at the jar's place on the classpath, but at runtime the launcher's class loader asks its parent first, so a flat root later on the classpath wins. Classifying all flat roots first, then each jar's nested entries, would match.
