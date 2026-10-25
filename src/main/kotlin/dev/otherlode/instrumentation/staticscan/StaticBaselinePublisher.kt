@@ -21,6 +21,9 @@ import java.lang.System.Logger.Level
  * would carry JDK names and names nothing maps, and losing the references is better than losing
  * the baseline.
  *
+ * A scan holding a class too large for one chunk is not sent at all, and the agent logs one WARNING
+ * that names the class and the bound; see [StaticBaselineChunker].
+ *
  * Every chunk carries [includeRules], the rules the scan applied. Chunks are sent in order
  * through [sender], and the first failure stops the send. The chunks left are sent again after a
  * later flush the collector confirms; until they arrive the collector holds a partial scan, which
@@ -59,7 +62,18 @@ class StaticBaselinePublisher(
                 log.log(Level.WARNING, "otherlode: could not filter the static baseline's references; it is sent without them", e)
                 result.withoutReferences()
             }
-        sender.offer(StaticBaselineChunker.chunk(filtered, resource, System.currentTimeMillis(), maxEntriesPerChunk, includeRules))
+        val chunks =
+            try {
+                StaticBaselineChunker.chunk(filtered, resource, System.currentTimeMillis(), maxEntriesPerChunk, includeRules)
+            } catch (e: ClassTooLargeException) {
+                log.log(
+                    Level.WARNING,
+                    "otherlode: the static baseline is not sent: ${e.className} alone exceeds ${e.bound.description} for one chunk, " +
+                        "and a scan without it would read as complete",
+                )
+                return
+            }
+        sender.offer(chunks)
         sender.sendPending()
     }
 

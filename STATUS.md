@@ -45,24 +45,20 @@ deferrals, gzip, a collector config file, and agent-level redaction
 
 ## TODO
 
-### Hardening from the 2026-10-24 grilling: in flight
+### Hardening from the 2026-10-24 grilling: landed, with open items
 
-Decided in ADRs 0075 and 0076 and in amendments to ADRs 0014, 0017, 0068 and 0070. Landing order, one commit each:
+Decided in ADRs 0075 and 0076 and in amendments to ADRs 0014, 0017, 0068 and 0070, and landed on 2026-10-25 as one commit each: the endpoint registry bounds (11dea70), export URL and token refusal (9fbfd4c), `final_flush` on the closing batch (133c6a7), the baseline's first copy (78388b7), the testkit note (7eca8fc) and chunk bounds by bytes and elements.
 
-1. The Spring functional-route verb set and the cap on identities found at dispatch (ADR 0017).
-2. The WebFlux `Origin` read and module failure reasons that name the exception class only (ADR 0017).
-3. A rejected `exportUrl` or unusable token turns the agent off; identity values over 1024 bytes are skipped (ADR 0076).
-4. `final_flush` only on the shutdown flush's closing heartbeat (ADR 0068).
-5. The static baseline keeps the first copy of a class name in JVM search order (ADR 0014).
-6. Chunks bounded by encoded bytes and element count, and the class that alone breaks a bound (ADR 0075).
-7. The testkit docs say any local process can post to the testkit's collector.
-
+Open:
+- **A class name held by two class loaders.** A copy too large to report goes out as a skipped class by name, and its hits are not sent. If another copy under the same name was delivered with its probes, a method only the large copy ran reads as never hit. The same holds for a transform-failure skip in a second loader. Closing it needs a server rule, with a server ADR, that a run reporting a class as skipped is not judged on that class from its probes.
+- **Server follow-ups.** Bump the collector module so the server's ingest takes the 1024-byte identity cap and the element counter, then switch the server's payloadcap middleware to `ingest`'s counter, keeping its byte budget. Add the new reasons to the server's troubleshooting list (`docs/site/troubleshooting.md:68`).
 
 Static baseline follow-ups the first-copy change surfaced. Each only loses evidence:
 - A Spring Boot jar's `BOOT-INF/classes` copies rank at the jar's place on the classpath, but at runtime the launcher's class loader asks its parent first, so a flat root later on the classpath wins. Classifying all flat roots first, then each jar's nested entries, would match.
 - A class held only under `META-INF/versions/N/` of an earlier multi-release jar marks no name, so a later root's base copy is kept.
 - A jar whose manifest cannot be read is still scanned; the JDK drops such a jar. `Class-Path` entries are split on single spaces and resolved as file paths, where the JDK tokenises and resolves URLs.
 - Cross-class reads can take a shadowed copy's tables from the referencing root's locator.
+
 ### Tooling: code principles, a refactoring playbook and a prose lint
 
 From the comparison with pstack's poteto-mode (`cursor/plugins`, `190d287`).

@@ -927,4 +927,28 @@ class EndpointRegistryTest {
 
         assertTrue(registry.recordDispatch(Any(), "spring", "GET", "/y") != null)
     }
+
+    @Test
+    fun `endpoint manifest chunks close by encoded bytes before the entry cap`() {
+        val registry = EndpointRegistry()
+        repeat(300) { registry.register(Any(), "spring", "GET", "/" + "a".repeat(60_000) + it) }
+
+        val chunks = registry.computeManifestEntries(maxPerChunk = 5_000)
+
+        assertTrue(chunks.size >= 3, "chunks: ${chunks.size}")
+        assertEquals(300, chunks.sumOf { it.endpoints.size })
+        for (chunk in chunks) {
+            val weight =
+                chunk.endpoints.fold(dev.otherlode.export.ChunkLimits.MANIFEST_FRAME_ALLOWANCE) { sum, endpoint ->
+                    sum +
+                        dev.otherlode.export.ProtoPayloadCodec
+                            .entryWeight(endpoint)
+                }
+            assertTrue(
+                dev.otherlode.export.PayloadKind.MANIFEST
+                    .admits(weight),
+                "a chunk weighs $weight",
+            )
+        }
+    }
 }

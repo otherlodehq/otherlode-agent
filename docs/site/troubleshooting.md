@@ -172,7 +172,7 @@ The exception message is `otherlode: unexpected status <code> from <exportUrl>/v
 | `404` | The URL does not reach a collector. The agent appends `/v1/otherlode/deltas`, `/v1/otherlode/manifest`, `/v1/otherlode/static-baseline` and `/v1/otherlode/class-listing` to `exportUrl`, so a proxy must forward those paths. Drop any path from `exportUrl` that the collector does not expect. |
 | `301`, `302`, `307`, `308` | The agent does not follow redirects. A proxy that redirects `http` to `https` causes this. Put the final `https://` URL in `exportUrl`. |
 | `400`, `422` | The receiver rejected the content. With the testkit's collector, see [A test fails with a version mismatch](#a-test-fails-with-a-version-mismatch). With another receiver, see its log for the reason. |
-| `413` | The receiver refused the request body as too large. A reverse proxy or gateway in front of the collector usually has the limit. Raise it. The agent keeps the static baseline and the class listing after a `413` and sends them once the limit is raised, with no restart. The agent splits its payloads by entry count, not by size, so the fix is on the receiving side. [What the agent sends](data-sent#chunk-caps) lists the caps. Once a count has been refused, the run says on each later payload that its counts are pending, so a collector does not read its zero hits as never hit. Payloads stamped before the first refusal in that flush say nothing of it. |
+| `413` | The receiver refused the request body as too large. A reverse proxy or gateway in front of the collector usually has the limit. Raise it. The agent keeps the static baseline and the class listing after a `413` and sends them once the limit is raised, with no restart. The agent keeps each payload under 8 MiB and under 90% of the collector's element limit, so the limit that refused it is in front of the collector, and the fix is on the receiving side. [What the agent sends](data-sent#chunk-caps) lists the caps. Once a count has been refused, the run says on each later payload that its counts are pending, so a collector does not read its zero hits as never hit. Payloads stamped before the first refusal in that flush say nothing of it. |
 | `408`, `429`, `5xx` | The agent retries these within the send. If they persist across flushes, the collector is overloaded or down. |
 
 The agent resends the same payload on the next flush for every status above, so a repeated warning means the answer has not changed. The static baseline and the class listing are the exception. For `400` and `422` each logs a warning and stops sending, since the same bytes meet the same answer:
@@ -190,6 +190,20 @@ otherlode: failed to send static baseline chunk 1 of 4; it and the chunks after 
 ```
 
 This logs once. The chunks stay pending and go out one per flush after a flush whose own sends the collector confirmed. If the main sends fail, fix those first.
+
+### A class is too large to send
+
+```text
+otherlode: the static baseline is not sent: com.acme.Huge alone exceeds the 8 MiB limit on encoded bytes for one chunk, and a scan without it would read as complete
+```
+
+One declared class is too large for a static baseline chunk, over 8 MiB of encoded bytes or over 180,000 elements. The agent never splits a class, and a scan without it would read as complete, so it sends no chunk of the scan. The run has no complete scan, and the server makes no never-loaded claim for it. A class like this has very long string constants in its conditions, or tens of thousands of methods or call edges. Exclude the class with `excludePackages`, or split it, and restart.
+
+```text
+otherlode: com.acme.Huge is reported as skipped: its manifest entries alone exceed the collector's limits on encoded bytes or elements, so its methods are not reported
+```
+
+When the class's manifest entries are too large, the agent logs this line. The agent reports it as skipped with the reason `too large to report: its manifest entries exceed the collector's limits`, and sends none of its hits. The server counts the class as loaded and claims nothing about its methods. Split the class to get its methods reported, or exclude it.
 
 ### A class listing send fails
 

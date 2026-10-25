@@ -42,14 +42,20 @@ On a graceful JVM exit a shutdown hook runs one last flush. It ends with an empt
 
 ### Chunk caps
 
-A payload that would be larger than its cap is split into several requests, sent in order.
+A payload that would be larger than its cap is split into several requests, sent in order. A request closes when the next entry would take it past any of three bounds: its entry cap, 8 MiB of encoded bytes, or 90% of the collector's element limit for its kind. An element is every embedded message and every element of a repeated field, at every depth, in the protobuf encoding. The resource counts as one. The agent measures bytes and elements on the encoding it sends.
 
-| Payload | Cap per request |
-|---|---|
-| Delta batch | 20,000 entries (probe, endpoint and dependency deltas together) |
-| Probe manifest | 5,000 entries, where call edges, referenced classes and branch sites inside a probe each count as an entry |
-| Static baseline | About 20,000 entries, where a declared class weighs its methods plus their call edges, branch sites and references. A class is never split, so a heavier class gets a chunk of its own |
-| Class listing | 20,000 class names |
+| Payload | Entry cap | Element bound |
+|---|---|---|
+| Delta batch | 20,000 entries (probe, endpoint and dependency deltas together) | 450,000 |
+| Probe manifest | 5,000 entries, where call edges, referenced classes and branch sites inside a probe each count as an entry | 90,000 |
+| Static baseline | About 20,000 entries, where a declared class weighs its methods plus their call edges, branch sites and references | 180,000 |
+| Class listing | 20,000 class names | 90,000 |
+
+A class is never split across requests, so a class can break a bound on its own. What the agent does depends on the payload:
+
+- **Manifest.** The class goes out as a skipped class with the reason `too large to report: its manifest entries exceed the collector's limits`, in place of its probes. The server counts it as loaded and claims nothing about its methods. The agent leaves the class's probe deltas out of every delta batch, and logs a `WARNING` that names the class. The classes behind it go out as usual.
+- **Static baseline.** The agent sends no chunk of the scan and logs one `WARNING` that names the class and the bound. A scan without the class would read as complete, and the server would then drop the class's call edges and creations from the baseline. The run has no complete scan, so the server makes no never-loaded claim for it.
+- **Class listing and delta batch.** A class name is at most 65,535 bytes, and a class never has more deltas than probe locations in its manifest, so neither can break a bound on its own.
 
 ## Payloads
 
@@ -158,7 +164,7 @@ The agent sends a static baseline only when you set `staticBaselineEnabled`. A b
 | `external_classes` | The same mapping as in the manifest |
 | `include_rules` | The include and exclude rules the scan applied, as the agent parsed them: `include_packages` and `exclude_packages` |
 
-The server uses the baseline only when it holds every chunk of a scan, which `chunk_count` tells it. See [classes](classes).
+The server uses the baseline only when it holds every chunk of a scan, which `chunk_count` tells it. A scan that holds a class too large for one chunk is not sent. See [classes](classes).
 
 ### Class listing chunk
 

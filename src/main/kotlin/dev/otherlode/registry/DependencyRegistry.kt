@@ -1,10 +1,14 @@
 package dev.otherlode.registry
 
+import dev.otherlode.export.ChunkLimits
 import dev.otherlode.export.DependencyDelta
 import dev.otherlode.export.DependencyDiscoverySource
 import dev.otherlode.export.DependencyIdentity
 import dev.otherlode.export.DependencyIdentitySource
 import dev.otherlode.export.DependencyLocation
+import dev.otherlode.export.PayloadKind
+import dev.otherlode.export.ProtoPayloadCodec
+import dev.otherlode.export.chunkedByWeight
 import java.io.File
 import java.io.IOException
 import java.nio.file.InvalidPathException
@@ -416,10 +420,13 @@ class DependencyRegistry(
      * Empty when there is nothing to send. Nothing is marked delivered here; see [advanceManifest].
      */
     fun computeManifestEntries(maxPerChunk: Int): List<ManifestSnapshot> =
-        entries()
-            .filter { !it.delivered && isSendable(it) }
-            .chunked(maxPerChunk)
-            .map { chunk -> ManifestSnapshot(chunk.map { it.toLocation() }, chunk) }
+        chunkedByWeight(
+            entries().filter { !it.delivered && isSendable(it) }.map { it to it.toLocation() },
+            maxPerChunk,
+            PayloadKind.MANIFEST,
+            ChunkLimits.MANIFEST_FRAME_ALLOWANCE,
+        ) { ProtoPayloadCodec.entryWeight(it.second) }
+            .map { chunk -> ManifestSnapshot(chunk.map { it.second }, chunk.map { it.first }) }
 
     /**
      * Marks every dependency [snapshot] staged as delivered. Call this only once the send carrying

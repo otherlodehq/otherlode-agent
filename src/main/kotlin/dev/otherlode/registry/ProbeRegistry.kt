@@ -8,10 +8,13 @@ import dev.otherlode.export.DeltaBatch
 import dev.otherlode.export.FailedClass
 import dev.otherlode.export.InitializationFailure
 import dev.otherlode.export.KotlinKind
+import dev.otherlode.export.PayloadKind
+import dev.otherlode.export.PayloadWeight
 import dev.otherlode.export.ProbeDelta
 import dev.otherlode.export.ProbeKind
 import dev.otherlode.export.ProbeLocation
 import dev.otherlode.export.ProbeManifest
+import dev.otherlode.export.ProtoPayloadCodec
 import dev.otherlode.export.ResourceAttributes
 import dev.otherlode.export.SkippedClass
 import dev.otherlode.export.UnreportedClass
@@ -80,6 +83,12 @@ import java.util.concurrent.atomic.AtomicLong
  * always starts every count at zero regardless of this key. Long-running,
  * cross-restart visibility is the collector's job: it aggregates deltas
  * from every `service.instance.id` a service has ever reported, over time.
+ *
+ * A class whose manifest entries alone break a bound of [PayloadKind.MANIFEST] cannot go out in
+ * any chunk, and a class is never split. It is reported as a skipped class with a fixed reason in
+ * place of its probes, and its probe deltas are left out of every delta batch. The probes stay
+ * woven and the probe path is unchanged. The size of a class's manifest is fixed when the class
+ * registers, so a class delivered in an earlier manifest is within the bounds for good.
  *
  * A class's manifest is send-once. When [advanceManifestBaseline] records it as delivered, the
  * class's probe locations and its other manifest-only fields are released, and only each probe's
@@ -190,6 +199,15 @@ open class ProbeRegistry(
         /** True once [confirmFrom] has returned this class's name, so it is returned only once. */
         var reported: Boolean = false
 
+        /** What [ManifestData] adds to a manifest payload, taken the first time it is needed. */
+        @Volatile
+        var manifestWeight: PayloadWeight? = null
+
+        /** Whether the class's manifest entries alone break a bound; null until measured. */
+        @Volatile
+        var oversize: Boolean? = null
+        var oversizeLogged = false
+
         /** The [ProbeRegistry.registrationSequence] value given to the latest transform of this class. */
         @Volatile
         var sequence: Long = sequence
@@ -243,6 +261,7 @@ open class ProbeRegistry(
         val batch: DeltaBatch,
         internal val sequence: Long,
         internal val staged: List<Pair<Any, LongArray>>,
+        internal val weight: PayloadWeight,
     )
 
     /**
@@ -256,10 +275,12 @@ open class ProbeRegistry(
         internal val stagedUnreported: List<Any>,
         internal val stagedFailed: List<Any> = emptyList(),
         internal val stagedInitializationFailures: List<Any> = emptyList(),
+        internal val weight: PayloadWeight,
     )
 
     private val entriesByKey = ConcurrentHashMap<RegistryKey, ClassEntry>()
     private val skippedByClassName = ConcurrentHashMap<String, SkippedEntry>()
+    private val manifestFrames = ConcurrentHashMap<ResourceAttributes, PayloadWeight>()
     private val unreportedByClassName = ConcurrentHashMap<String, UnreportedEntry>()
     private val failedByClassName = ConcurrentHashMap<String, FailedEntry>()
     private val initializationFailures = ConcurrentHashMap<Pair<String, InitializationFailure>, InitializationFailureEntry>()
@@ -705,20 +726,25 @@ open class ProbeRegistry(
      * snapshots it was built from, and [advanceBaseline] must be called with it explicitly, only
      * after the batch is confirmed delivered.
      *
-     * This is the single-batch form of [computeDeltaBatches], with no size cap.
+     * This is the single-batch form of [computeDeltaBatches], with no entry cap. The byte and
+     * element bounds still apply, so it throws [IllegalArgumentException] when the
+     * changed probes need more than one batch.
      */
     open fun computeDeltaBatch(resource: ResourceAttributes): DeltaSnapshot = computeDeltaBatches(resource, Int.MAX_VALUE).single()
 
     /**
      * Like [computeDeltaBatch], but splits the changed probes into batches of at most
      * [maxDeltasPerBatch] each, so a burst of activity (a busy startup, a long collector outage
-     * ending) never produces one unbounded POST.
+     * ending) never produces one unbounded POST. A batch also closes when the next class would take
+     * it past the encoded bytes or the element count of [PayloadKind.DELTA_BATCH].
      *
      * Classes are never split across batches: each [DeltaSnapshot] stages whole classes, so
      * [advanceBaseline] on one batch marks exactly that batch's classes as delivered and nothing
      * else. A single class whose changed probes alone exceed the cap gets a batch of its own,
-     * larger than the cap. Classes with nothing changed are staged nowhere, since there is
-     * nothing to advance for them.
+     * larger than the cap. A class has at most as many deltas as its manifest has probe locations,
+     * so it breaks no bound on its own: a class with enough probes to do so is reported as skipped,
+     * and its deltas are left out here. Classes with nothing changed are staged nowhere, since there
+     * is nothing to advance for them.
      *
      * Always returns at least one batch. An empty one is the liveness heartbeat described in
      * [dev.otherlode.export.ExportScheduler.flush].
@@ -730,18 +756,25 @@ open class ProbeRegistry(
         val batches = mutableListOf<DeltaSnapshot>()
         var deltas = mutableListOf<ProbeDelta>()
         var staged = mutableListOf<Pair<Any, LongArray>>()
+        val frame = ProtoPayloadCodec.weightOf(DeltaBatch(resource, emptyList()))
+        var weight = frame
 
         fun seal() {
-            batches += DeltaSnapshot(DeltaBatch(resource, deltas), nextSnapshotSequence.incrementAndGet(), staged)
+            batches += DeltaSnapshot(DeltaBatch(resource, deltas), nextSnapshotSequence.incrementAndGet(), staged, weight)
             deltas = mutableListOf()
             staged = mutableListOf()
+            weight = frame
         }
         for (entry in entriesByKey.values) {
+            if (breaksBound(entry, resource)) continue
             val snapshot = entry.counts.copyOf()
             val entryDeltas = changedProbesOf(entry, snapshot)
             if (entryDeltas.isEmpty()) continue
-            if (deltas.isNotEmpty() && deltas.size + entryDeltas.size > maxDeltasPerBatch) seal()
+            val entryWeight = entryDeltas.fold(PayloadWeight.ZERO) { sum, delta -> sum + ProtoPayloadCodec.entryWeight(delta) }
+            val full = deltas.size + entryDeltas.size > maxDeltasPerBatch || !PayloadKind.DELTA_BATCH.admits(weight + entryWeight)
+            if (deltas.isNotEmpty() && full) seal()
             deltas += entryDeltas
+            weight += entryWeight
             staged += entry to snapshot
         }
         if (deltas.isNotEmpty() || batches.isEmpty()) seal()
@@ -990,21 +1023,23 @@ open class ProbeRegistry(
      * A class that registers after an earlier successful send is picked up on a later call, not
      * left out of every manifest for the rest of the process's life.
      *
-     * This is the single-chunk form of [computeManifestDeltas], with no size cap. Unlike that
-     * method it always returns a snapshot, possibly with nothing in it.
+     * This is the single-chunk form of [computeManifestDeltas], with no entry cap. Unlike that
+     * method it always returns a snapshot, possibly with nothing in it. The byte and element bounds
+     * still apply, so it throws [IllegalArgumentException] when the manifest needs more than one chunk.
      */
-    open fun computeManifestDelta(resource: ResourceAttributes): ManifestSnapshot =
-        computeManifestDeltas(resource, Int.MAX_VALUE).singleOrNull()
-            ?: ManifestSnapshot(
-                ProbeManifest(resource, emptyList()),
-                emptyList(),
-                emptyList(),
-                emptyList(),
-            )
+    open fun computeManifestDelta(resource: ResourceAttributes): ManifestSnapshot {
+        val chunks = computeManifestDeltas(resource, Int.MAX_VALUE).toList()
+        require(chunks.size <= 1) { "the manifest needs ${chunks.size} chunks, so it has no single form" }
+        return chunks.singleOrNull()
+            ?: ProbeManifest(resource, emptyList()).let {
+                ManifestSnapshot(it, emptyList(), emptyList(), emptyList(), weight = ProtoPayloadCodec.weightOf(it))
+            }
+    }
 
     /**
      * Like [computeManifestDelta], but splits the not-yet-sent classes into chunks of at most
-     * [maxEntriesPerChunk] entries each. A skipped, unreported, failed or failed-to-initialise class counts as one entry. A
+     * [maxEntriesPerChunk] entries each. A chunk also closes when the next class would take it past
+     * the encoded bytes or the element count of [PayloadKind.MANIFEST]. A skipped, unreported, failed or failed-to-initialise class counts as one entry. A
      * registered class counts as its probe locations, plus its probes' call edges, referenced
      * classes and branch-site weight, plus one for its own [ClassLocation] record, plus the names in
      * its [ClassReferences] record, since all of it is staged and committed together. The first
@@ -1012,7 +1047,10 @@ open class ProbeRegistry(
      *
      * Classes are never split across chunks, so [advanceManifestBaseline] on one chunk marks
      * exactly that chunk's classes as included. A single class with more locations than the cap
-     * gets a chunk of its own. Yields nothing when there is nothing to send.
+     * gets a chunk of its own. A class whose entries alone break the byte or element bound is
+     * recorded as skipped with [OVERSIZE_REASON], logged once, and staged without its probes, so
+     * the server knows it loaded and claims nothing about its methods; the chunks behind it go out
+     * as usual. Yields nothing when there is nothing to send.
      *
      * Chunks are built lazily, one when the consumer asks for it. A consumer that advances each
      * chunk before asking for the next never holds more than one chunk's locations, because
@@ -1025,6 +1063,8 @@ open class ProbeRegistry(
     ): Sequence<ManifestSnapshot> =
         sequence {
             recordInitializationFailures()
+            val kind = PayloadKind.MANIFEST
+            val frame = ProtoPayloadCodec.weightOf(ProbeManifest(resource, emptyList()))
             var locations = mutableListOf<ProbeLocation>()
             var skipped = mutableListOf<SkippedClass>()
             var classLocations = mutableListOf<ClassLocation>()
@@ -1044,6 +1084,12 @@ open class ProbeRegistry(
             // beside it. Deriving the cap check from list sizes alone would silently ignore that
             // weight the moment a chunk already held an earlier class's edges.
             var chunkWeight = 0
+            var encoded = frame
+
+            fun full(
+                entries: Int,
+                weight: PayloadWeight,
+            ): Boolean = chunkWeight > 0 && (chunkWeight + entries > maxEntriesPerChunk || !kind.admits(encoded + weight))
 
             fun takeChunk(): ManifestSnapshot {
                 val chunk =
@@ -1063,6 +1109,7 @@ open class ProbeRegistry(
                         stagedUnreported,
                         stagedFailed,
                         stagedInitializationFailed,
+                        weight = encoded,
                     )
                 locations = mutableListOf()
                 skipped = mutableListOf()
@@ -1077,18 +1124,25 @@ open class ProbeRegistry(
                 initializationFailed = mutableListOf()
                 stagedInitializationFailed = mutableListOf()
                 chunkWeight = 0
+                encoded = frame
                 return chunk
             }
             for (entry in entriesByKey.values) {
                 if (entry.manifestIncluded) continue
                 if (confirmsDefinitions && !isConfirmed(entry)) continue
                 var data = entry.manifestData ?: continue
+                if (breaksBound(entry, resource)) {
+                    recordOversize(entry)
+                    stagedEntries += entry
+                    continue
+                }
+                val classWeight = manifestWeightOf(entry, data)
                 val weight =
                     data.probes.size +
                         data.probes.sumOf { meta ->
                             meta.calls.size + meta.referencedClasses.size + meta.branchSites.sumOf { it.chunkWeight }
                         } + 1 + data.classReferences.size
-                if (chunkWeight > 0 && chunkWeight + weight > maxEntriesPerChunk) {
+                if (full(weight, classWeight)) {
                     yield(takeChunk())
                     // The consumer ran between the read above and here, and may have delivered this class.
                     data = entry.manifestData ?: continue
@@ -1098,53 +1152,112 @@ open class ProbeRegistry(
                 classLocations += classLocationOf(entry, data)
                 classReferencesOf(entry, data)?.let { classReferences += it }
                 chunkWeight += weight
+                encoded += classWeight
             }
             for ((className, entry) in skippedByClassName) {
                 if (entry.manifestIncluded) continue
-                if (chunkWeight > 0 && chunkWeight + 1 > maxEntriesPerChunk) {
+                val skippedClass = SkippedClass(className, entry.reason, entry.skippedAt)
+                val skippedWeight = ProtoPayloadCodec.entryWeight(skippedClass)
+                if (full(1, skippedWeight)) {
                     yield(takeChunk())
                     if (entry.manifestIncluded) continue
                 }
                 stagedSkipped += entry
-                skipped += SkippedClass(className, entry.reason, entry.skippedAt)
+                skipped += skippedClass
                 chunkWeight += 1
+                encoded += skippedWeight
             }
             // One entry each, the same weight a skipped class carries: both are a class name and a
             // couple of scalars on the wire.
             for ((className, entry) in unreportedByClassName) {
                 if (entry.manifestIncluded) continue
-                if (chunkWeight > 0 && chunkWeight + 1 > maxEntriesPerChunk) {
+                val unreportedClass = UnreportedClass(className, entry.firstSeenUnreportedAt)
+                val unreportedWeight = ProtoPayloadCodec.entryWeight(unreportedClass)
+                if (full(1, unreportedWeight)) {
                     yield(takeChunk())
                     if (entry.manifestIncluded) continue
                 }
                 stagedUnreported += entry
-                unreported += UnreportedClass(className, entry.firstSeenUnreportedAt)
+                unreported += unreportedClass
                 chunkWeight += 1
+                encoded += unreportedWeight
             }
             for ((className, entry) in failedByClassName) {
                 if (entry.manifestIncluded) continue
-                if (chunkWeight > 0 && chunkWeight + 1 > maxEntriesPerChunk) {
+                val failedClass = FailedClass(className, entry.withheldAt)
+                val failedWeight = ProtoPayloadCodec.entryWeight(failedClass)
+                if (full(1, failedWeight)) {
                     yield(takeChunk())
                     if (entry.manifestIncluded) continue
                 }
                 val stillFailed = failedByClassName.computeIfPresent(className) { _, current -> current.also { it.staged = true } }
                 if (stillFailed !== entry) continue
                 stagedFailed += entry
-                failed += FailedClass(className, entry.withheldAt)
+                failed += failedClass
                 chunkWeight += 1
+                encoded += failedWeight
             }
             for ((key, entry) in initializationFailures) {
                 if (entry.manifestIncluded) continue
-                if (chunkWeight > 0 && chunkWeight + 1 > maxEntriesPerChunk) {
+                val initializationFailure = ClassFailedToInitialize(key.first, key.second, entry.observedAt)
+                val initializationWeight = ProtoPayloadCodec.entryWeight(initializationFailure)
+                if (full(1, initializationWeight)) {
                     yield(takeChunk())
                     if (entry.manifestIncluded) continue
                 }
                 stagedInitializationFailed += entry
-                initializationFailed += ClassFailedToInitialize(key.first, key.second, entry.observedAt)
+                initializationFailed += initializationFailure
                 chunkWeight += 1
+                encoded += initializationWeight
             }
-            if (chunkWeight > 0) yield(takeChunk())
+            if (chunkWeight > 0 || stagedEntries.isNotEmpty()) yield(takeChunk())
         }
+
+    /** What [data] adds to a manifest payload: its probe locations, its [ClassLocation] and its [ClassReferences]. */
+    private fun manifestWeightOf(
+        entry: ClassEntry,
+        data: ManifestData,
+    ): PayloadWeight =
+        entry.manifestWeight ?: run {
+            val locations =
+                locationsOf(entry, data).fold(PayloadWeight.ZERO) { sum, location ->
+                    sum +
+                        ProtoPayloadCodec.entryWeight(location)
+                }
+            val classLocation = ProtoPayloadCodec.entryWeight(classLocationOf(entry, data))
+            val references = classReferencesOf(entry, data)?.let { ProtoPayloadCodec.entryWeight(it) } ?: PayloadWeight.ZERO
+            (locations + classLocation + references).also { entry.manifestWeight = it }
+        }
+
+    /**
+     * Whether [entry]'s manifest entries alone break a bound of [PayloadKind.MANIFEST] in a manifest of
+     * [resource]. The verdict is taken before any staging and kept. A released class that was never
+     * measured was delivered with its probes, so it is within the bounds.
+     */
+    private fun breaksBound(
+        entry: ClassEntry,
+        resource: ResourceAttributes,
+    ): Boolean {
+        entry.oversize?.let { return it }
+        val data = entry.manifestData ?: return false
+        val frame = manifestFrames.getOrPut(resource) { ProtoPayloadCodec.weightOf(ProbeManifest(resource, emptyList())) }
+        val oversize = PayloadKind.MANIFEST.exceededBound(frame + manifestWeightOf(entry, data)) != null
+        entry.oversize = oversize
+        return oversize
+    }
+
+    /** Records [entry]'s class as skipped with [OVERSIZE_REASON], and logs it once for the entry. */
+    private fun recordOversize(entry: ClassEntry) {
+        skippedByClassName.computeIfAbsent(entry.className) { SkippedEntry(OVERSIZE_REASON, System.currentTimeMillis()) }
+        if (!entry.oversizeLogged) {
+            entry.oversizeLogged = true
+            log.log(
+                Level.WARNING,
+                "otherlode: ${entry.className} is reported as skipped: its manifest entries alone exceed the collector's limits " +
+                    "on encoded bytes or elements, so its methods are not reported",
+            )
+        }
+    }
 
     /**
      * Marks every class staged by [snapshot] as included, so it is not sent again. Classes that
@@ -1162,6 +1275,7 @@ open class ProbeRegistry(
         for (entry in snapshot.stagedEntries) {
             (entry as ClassEntry).manifestIncluded = true
             entry.manifestData = null
+            entry.manifestWeight = null
         }
         for (entry in snapshot.stagedSkipped) (entry as SkippedEntry).manifestIncluded = true
         for (entry in snapshot.stagedUnreported) (entry as UnreportedEntry).manifestIncluded = true
@@ -1172,7 +1286,10 @@ open class ProbeRegistry(
     /** How many registered classes still hold their manifest metadata; for tests. */
     internal fun classesHoldingMetadata(): Int = entriesByKey.values.count { it.manifestData != null }
 
-    private companion object {
-        val PROBE_KINDS: List<ProbeKind> = ProbeKind.entries
+    internal companion object {
+        /** The reason a class reported as skipped gives when its manifest entries alone break a bound. */
+        const val OVERSIZE_REASON: String = "too large to report: its manifest entries exceed the collector's limits"
+
+        private val PROBE_KINDS: List<ProbeKind> = ProbeKind.entries
     }
 }

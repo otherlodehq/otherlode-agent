@@ -15,7 +15,7 @@ This page covers the whole class. For what the agent records inside a class that
 | Instrumented | The class loaded, matched the rules, and has at least one method, default-argument site or static initialiser to probe. | Its probes reach the collector in the manifest. |
 | Never initialised | The class loaded, has a static initialiser, and no instance ran it. | `neverInitialized()` in [the testkit](testkit-api), and the server's class findings. |
 | Never instantiated | The class loaded, and none of its constructors ran in any instance. | `neverInstantiated()`, and the server's class findings. |
-| Skipped | The class matched the rules and the agent could not instrument it. | A `WARNING` log line, `skippedClasses()`, and the manifest's skipped list. |
+| Skipped | The class matched the rules and the agent could not instrument it, or its manifest entries are too large to send. | A `WARNING` log line, `skippedClasses()`, and the manifest's skipped list. |
 | Loaded where no transformer saw it | The class loaded, but the JVM offered it to no transformer. | One `INFO` log line, and the manifest. |
 | Failed to load | The agent wove the class and the JVM never defined it. | A `WARNING` log line, `failedToLoad()`, and the manifest. |
 | Failed to initialise | The JVM defined the class and either its static initialiser threw or the JVM's verifier rejected it, so the class can never run in that JVM. | The manifest, and `failedToInitialize()`. |
@@ -184,13 +184,21 @@ Each class the scan finds in scope lands in one of three lists:
 
 Only a declared class can be never loaded. The live tier never registers an unprobed class, so declaring one would make the server call a heavily used marker interface never loaded. An unreadable class never silently drops out of the inventory, since it is on the list.
 
-The server calls a declared class never loaded only when it holds the complete scan. The agent sends the scan in chunks of about 20,000 entries, and each chunk says its position out of the total. The agent sends the chunks in order and stops at the first failure. It sends the rest after the next flush that the collector confirms, and logs these lines on the way:
+The server calls a declared class never loaded only when it holds the complete scan. The agent sends the scan in chunks of about 20,000 entries, and each chunk stays under 8 MiB and under 180,000 elements (see [chunk caps](data-sent#chunk-caps)). Each chunk says its position out of the total. The agent sends the chunks in order and stops at the first failure. It sends the rest after the next flush that the collector confirms, and logs these lines on the way:
 
 ```text
 otherlode: failed to send static baseline chunk 2 of 3; it and the chunks after it are sent again after a flush the collector confirms
 otherlode: the static baseline reached the collector after a retry
 otherlode: the collector refused static baseline chunk 1 of 3 with status 400, which resending the same bytes cannot change; the scan is not sent again
 ```
+
+A class is never split across chunks. If one declared class is too large for a chunk on its own, over 8 MiB or over 180,000 elements, the agent sends no chunk of the scan and logs one `WARNING` that names the class and the bound, never a string constant from it:
+
+```text
+otherlode: the static baseline is not sent: com.acme.Huge alone exceeds the 8 MiB limit on encoded bytes for one chunk, and a scan without it would read as complete
+```
+
+A scan without the class would be complete and wrong. The server would miss the class's call edges and creations, and another class could read as never constructed. The run has no complete scan, so the server makes no never-loaded claim for it.
 
 In the testkit, `neverLoaded()` also leaves out a declared class whose methods are all inline, generated or unread shapes. Kotlin callers never call an inline method, and the compiler regenerates generated ones, so such a class never loading is no evidence it is dead.
 
@@ -257,6 +265,8 @@ Every line starts with `otherlode:`.
 | `WARNING` | `classes the JVM's verifier rejects will not be named on this JVM, so a run's zero counts say nothing about them: <reason>` | The hook on `VerifyError` did not install. |
 | `WARNING` | `reading the verifier's rejections failed, so this run's zero counts are no longer evidence` | Reading what the hook collected failed on one flush. The run counts one unplaced failure and makes no claim from a zero count. |
 | `WARNING` | `<class> registered dynamically but was not in the static baseline computed at startup ...` | The static scan has a blind spot in this deployment. |
+| `WARNING` | `the static baseline is not sent: <class> alone exceeds <bound> for one chunk, ...` | One class is too large for a chunk, so the agent sends no chunk of the scan. |
+| `WARNING` | `<class> is reported as skipped: its manifest entries alone exceed the collector's limits ...` | A loaded class's manifest entries are too large to send, so it is reported as skipped and its hits are not sent. |
 | `WARNING` | `failed to send static baseline chunk <i> of <n>; ...` | A chunk will be sent again. |
 | `WARNING` | `the collector refused static baseline chunk <i> of <n> with status <code>, ...` | The collector refused a chunk with a `400` or `422`. The agent does not resend the scan. |
 | `INFO` | `the static baseline reached the collector after a retry` | A failed chunk got through. |

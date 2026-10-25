@@ -1,10 +1,14 @@
 package dev.otherlode.classlisting
 
+import dev.otherlode.export.ChunkLimits
 import dev.otherlode.export.IncludeRules
+import dev.otherlode.export.PayloadKind
+import dev.otherlode.export.ProtoPayloadCodec
 import dev.otherlode.export.ResourceAttributes
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertTrue
 
 class ClassListingChunkerTest {
     private val resource = ResourceAttributes("checkout", "1.0.0", "instance-1", "test", "run-1", flushIntervalSeconds = 30)
@@ -62,5 +66,46 @@ class ClassListingChunkerTest {
     @Test
     fun `a cap below one is refused`() {
         assertFailsWith<IllegalArgumentException> { ClassListingChunker.chunk(names(1), resource, rules, 1L, maxNamesPerChunk = 0) }
+    }
+
+    @Test
+    fun `long names split a chunk by encoded bytes long before the name cap`() {
+        val all = List(300) { "com.acme." + "N".repeat(60_000) + "%04d".format(it) }
+
+        val chunks = ClassListingChunker.chunk(all, resource, rules, listedAt = 1L)
+
+        assertTrue(chunks.size >= 3, "300 names of 60,000 bytes are 18 MB, so more than two chunks")
+        assertEquals(all, chunks.flatMap { it.classNames })
+        chunks.forEach { assertTrue(ProtoPayloadCodec.encode(it).size <= ChunkLimits.MAX_ENCODED_BYTES) }
+        assertEquals(setOf(chunks.size), chunks.map { it.chunkCount }.toSet())
+    }
+
+    @Test
+    fun `a name of the longest length is never split and always fits`() {
+        val longest = "n.".padEnd(65_535, 'N')
+
+        val chunks = ClassListingChunker.chunk(listOf(longest), resource, rules, listedAt = 1L)
+
+        assertEquals(listOf(listOf(longest)), chunks.map { it.classNames })
+    }
+
+    @Test
+    fun `many short names split a chunk by element count when the name cap is above it`() {
+        val all = names(100_000)
+
+        val chunks = ClassListingChunker.chunk(all, resource, rules, listedAt = 1L, maxNamesPerChunk = 1_000_000)
+
+        assertTrue(chunks.size >= 2)
+        assertEquals(all, chunks.flatMap { it.classNames })
+        chunks.forEach {
+            val weight = ProtoPayloadCodec.weightOf(it)
+            assertTrue(weight.elements <= PayloadKind.CLASS_LISTING.maxElements, "a chunk holds ${weight.elements} elements")
+            assertTrue(ProtoPayloadCodec.encode(it).size <= ChunkLimits.MAX_ENCODED_BYTES)
+        }
+        assertEquals(
+            PayloadKind.CLASS_LISTING.maxElements,
+            ProtoPayloadCodec.weightOf(chunks.first()).elements,
+            "the first chunk is filled to the bound",
+        )
     }
 }

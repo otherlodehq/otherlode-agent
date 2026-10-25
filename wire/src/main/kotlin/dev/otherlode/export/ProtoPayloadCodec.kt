@@ -1,5 +1,9 @@
 package dev.otherlode.export
 
+import com.google.protobuf.CodedOutputStream
+import com.google.protobuf.Descriptors
+import com.google.protobuf.Descriptors.FieldDescriptor
+import com.google.protobuf.Message
 import dev.otherlode.proto.BodyKind as ProtoBodyKind
 import dev.otherlode.proto.BranchOutcome as ProtoBranchOutcome
 import dev.otherlode.proto.BranchRole as ProtoBranchRole
@@ -70,6 +74,156 @@ object ProtoPayloadCodec {
     fun encode(listing: ClassListing): ByteArray = toProto(listing).toByteArray()
 
     fun decodeClassListing(bytes: ByteArray): ClassListing = fromProto(ProtoClassListing.parseFrom(bytes))
+
+    /**
+     * The encoded size and element count of [batch], with the fields the exporter stamps just before
+     * it sends set to their widest values, so a weight taken before stamping still bounds the payload.
+     */
+    fun weightOf(batch: DeltaBatch): PayloadWeight =
+        weightOf(
+            toProto(batch.copy(finalFlush = true, payloadSequence = Long.MAX_VALUE, countsPendingSince = Long.MAX_VALUE)),
+        )
+
+    /** The encoded size and element count of [manifest], with the stamped fields at their widest. */
+    fun weightOf(manifest: ProbeManifest): PayloadWeight =
+        weightOf(
+            toProto(
+                manifest.copy(
+                    referencesRecorded = true,
+                    dependenciesListed = true,
+                    payloadSequence = Long.MAX_VALUE,
+                    countsPendingSince = Long.MAX_VALUE,
+                    unplacedVerificationFailures = Long.MAX_VALUE,
+                    verifierRejectionsWatched = true,
+                ),
+            ),
+        )
+
+    /** The encoded size and element count of [baseline], with the chunk position at its widest. */
+    fun weightOf(baseline: StaticBaseline): PayloadWeight =
+        weightOf(toProto(baseline.copy(chunkIndex = Int.MAX_VALUE, chunkCount = Int.MAX_VALUE)))
+
+    /** The encoded size and element count of [listing], with the chunk position at its widest. */
+    fun weightOf(listing: ClassListing): PayloadWeight =
+        weightOf(toProto(listing.copy(chunkIndex = Int.MAX_VALUE, chunkCount = Int.MAX_VALUE)))
+
+    /**
+     * What one entry adds to a payload that holds it in a repeated field: its tag, its length prefix
+     * and its encoding, and the elements it brings. These functions weigh the entries of each payload
+     * kind. The weight of a payload is at most the weight of its empty form plus the weights of its
+     * entries.
+     */
+    fun entryWeight(
+        @Suppress("UNUSED_PARAMETER") delta: ProbeDelta,
+    ): PayloadWeight = widestProbeDelta
+
+    /** What one endpoint delta adds to a delta batch: the widest any endpoint delta encodes to. */
+    fun entryWeight(
+        @Suppress("UNUSED_PARAMETER") delta: EndpointDelta,
+    ): PayloadWeight = widestEndpointDelta
+
+    /** What one dependency delta adds to a delta batch: the widest any dependency delta encodes to. */
+    fun entryWeight(
+        @Suppress("UNUSED_PARAMETER") delta: DependencyDelta,
+    ): PayloadWeight = widestDependencyDelta
+
+    private val widestProbeDelta: PayloadWeight by lazy {
+        ProbeKind.entries
+            .maxOf { kind ->
+                entry(ProtoDeltaBatch.DELTAS_FIELD_NUMBER, toProto(ProbeDelta(-1, -1, kind, Long.MIN_VALUE, Long.MIN_VALUE))).bytes
+            }.let { PayloadWeight(it, 1) }
+    }
+
+    private val widestEndpointDelta: PayloadWeight by lazy {
+        entry(ProtoDeltaBatch.ENDPOINT_DELTAS_FIELD_NUMBER, toProto(EndpointDelta(-1, Long.MIN_VALUE, Long.MIN_VALUE)))
+    }
+
+    private val widestDependencyDelta: PayloadWeight by lazy {
+        entry(ProtoDeltaBatch.DEPENDENCY_DELTAS_FIELD_NUMBER, toProto(DependencyDelta(-1, Long.MIN_VALUE, Long.MIN_VALUE)))
+    }
+
+    /** What one probe location adds to a manifest. The other overloads weigh the other entry kinds the same way. */
+    fun entryWeight(location: ProbeLocation): PayloadWeight = entry(ProtoProbeManifest.PROBES_FIELD_NUMBER, toProto(location))
+
+    /** What one [SkippedClass] adds to its payload. */
+    fun entryWeight(skipped: SkippedClass): PayloadWeight = entry(ProtoProbeManifest.SKIPPED_CLASSES_FIELD_NUMBER, toProto(skipped))
+
+    /** What one [EndpointLocation] adds to its payload. */
+    fun entryWeight(location: EndpointLocation): PayloadWeight = entry(ProtoProbeManifest.ENDPOINTS_FIELD_NUMBER, toProto(location))
+
+    /** What one [DisabledEndpointModule] adds to its payload. */
+    fun entryWeight(module: DisabledEndpointModule): PayloadWeight =
+        entry(ProtoProbeManifest.DISABLED_ENDPOINT_MODULES_FIELD_NUMBER, toProto(module))
+
+    /** What one [ClassLocation] adds to its payload. */
+    fun entryWeight(location: ClassLocation): PayloadWeight = entry(ProtoProbeManifest.CLASS_LOCATIONS_FIELD_NUMBER, toProto(location))
+
+    /** What one [UnreportedClass] adds to its payload. */
+    fun entryWeight(unreported: UnreportedClass): PayloadWeight =
+        entry(ProtoProbeManifest.UNREPORTED_CLASSES_FIELD_NUMBER, toProto(unreported))
+
+    /** What one [DependencyLocation] adds to its payload. */
+    fun entryWeight(location: DependencyLocation): PayloadWeight = entry(ProtoProbeManifest.DEPENDENCIES_FIELD_NUMBER, toProto(location))
+
+    /** What one [ClassReferences] adds to its payload. */
+    fun entryWeight(references: ClassReferences): PayloadWeight =
+        entry(ProtoProbeManifest.CLASS_REFERENCES_FIELD_NUMBER, toProto(references))
+
+    /** What one [ExternalClass] adds to its payload. */
+    fun entryWeight(externalClass: ExternalClass): PayloadWeight =
+        entry(ProtoProbeManifest.EXTERNAL_CLASSES_FIELD_NUMBER, toProto(externalClass))
+
+    /** What one [FailedClass] adds to its payload. */
+    fun entryWeight(failed: FailedClass): PayloadWeight = entry(ProtoProbeManifest.FAILED_CLASSES_FIELD_NUMBER, toProto(failed))
+
+    /** What one [ClassFailedToInitialize] adds to its payload. */
+    fun entryWeight(failed: ClassFailedToInitialize): PayloadWeight =
+        entry(ProtoProbeManifest.CLASSES_FAILED_TO_INITIALIZE_FIELD_NUMBER, toProto(failed))
+
+    /** What one [FrameworkMarker] adds to its payload. */
+    fun entryWeight(marker: FrameworkMarker): PayloadWeight = entry(ProtoProbeManifest.FRAMEWORK_MARKERS_FIELD_NUMBER, toProto(marker))
+
+    /** What one [DeclaredClass] adds to its payload. */
+    fun entryWeight(declared: DeclaredClass): PayloadWeight = entry(ProtoStaticBaseline.DECLARED_CLASSES_FIELD_NUMBER, toProto(declared))
+
+    /** What one [UnreadableClass] adds to its payload. */
+    fun entryWeight(unreadable: UnreadableClass): PayloadWeight =
+        entry(ProtoStaticBaseline.UNREADABLE_CLASSES_FIELD_NUMBER, toProto(unreadable))
+
+    /** What one [UnprobedClass] adds to its payload. */
+    fun entryWeight(unprobed: UnprobedClass): PayloadWeight = entry(ProtoStaticBaseline.UNPROBED_CLASSES_FIELD_NUMBER, toProto(unprobed))
+
+    /** What one class name adds to a [ClassListing]. */
+    fun classNameWeight(className: String): PayloadWeight =
+        PayloadWeight(CodedOutputStream.computeStringSize(ProtoClassListing.CLASS_NAMES_FIELD_NUMBER, className).toLong(), 1)
+
+    private fun weightOf(message: Message): PayloadWeight = PayloadWeight(message.serializedSize.toLong(), elementsIn(message))
+
+    private fun entry(
+        fieldNumber: Int,
+        message: Message,
+    ): PayloadWeight = PayloadWeight(CodedOutputStream.computeMessageSize(fieldNumber, message).toLong(), 1 + elementsIn(message))
+
+    private val countedFields = java.util.concurrent.ConcurrentHashMap<Descriptors.Descriptor, List<FieldDescriptor>>()
+
+    private fun elementsIn(message: Message): Long {
+        val fields =
+            countedFields.computeIfAbsent(message.descriptorForType) { descriptor ->
+                descriptor.fields.filter { it.isRepeated || it.javaType == FieldDescriptor.JavaType.MESSAGE }
+            }
+        var count = 0L
+        for (field in fields) {
+            val isMessage = field.javaType == FieldDescriptor.JavaType.MESSAGE
+            if (field.isRepeated) {
+                val size = message.getRepeatedFieldCount(field)
+                count += size
+                if (isMessage) for (i in 0 until size) count += elementsIn(message.getRepeatedField(field, i) as Message)
+            } else if (message.hasField(field)) {
+                count += 1 + elementsIn(message.getField(field) as Message)
+            }
+        }
+        return count
+    }
 
     private fun toProto(batch: DeltaBatch): ProtoDeltaBatch =
         ProtoDeltaBatch

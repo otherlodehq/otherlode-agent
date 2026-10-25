@@ -1,12 +1,16 @@
 package dev.otherlode.registry
 
 import dev.otherlode.bootstrap.OtherlodeEndpoints
+import dev.otherlode.export.ChunkLimits
 import dev.otherlode.export.DisabledEndpointModule
 import dev.otherlode.export.DisabledEndpointModuleKind
 import dev.otherlode.export.EndpointDelta
 import dev.otherlode.export.EndpointDiscoverySource
 import dev.otherlode.export.EndpointLocation
 import dev.otherlode.export.EndpointTemplateKind
+import dev.otherlode.export.PayloadKind
+import dev.otherlode.export.ProtoPayloadCodec
+import dev.otherlode.export.chunkedByWeight
 import java.lang.System.Logger.Level
 import java.lang.ref.ReferenceQueue
 import java.lang.ref.WeakReference
@@ -655,23 +659,15 @@ class EndpointRegistry(
      * that chunk is confirmed delivered.
      */
     fun computeManifestEntries(maxPerChunk: Int): List<ManifestSnapshot> {
-        val chunks = mutableListOf<ManifestSnapshot>()
-        var endpoints = mutableListOf<EndpointLocation>()
-        var staged = mutableListOf<Pair<EndpointEntry, Long>>()
-
+        val pending = mutableListOf<Triple<EndpointEntry, Long, EndpointLocation>>()
         for (entry in entriesByIdentity.values) {
             val version = entry.version
             if (version <= entry.deliveredVersion) continue
-            if (endpoints.size == maxPerChunk) {
-                chunks += ManifestSnapshot(endpoints, staged)
-                endpoints = mutableListOf()
-                staged = mutableListOf()
-            }
-            endpoints += entry.toLocation()
-            staged += entry to version
+            pending += Triple(entry, version, entry.toLocation())
         }
-        if (endpoints.isNotEmpty()) chunks += ManifestSnapshot(endpoints, staged)
-        return chunks
+        return chunkedByWeight(pending, maxPerChunk, PayloadKind.MANIFEST, ChunkLimits.MANIFEST_FRAME_ALLOWANCE) {
+            ProtoPayloadCodec.entryWeight(it.third)
+        }.map { chunk -> ManifestSnapshot(chunk.map { it.third }, chunk.map { it.first to it.second }) }
     }
 
     /**

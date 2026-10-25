@@ -581,11 +581,13 @@ class ExportScheduler(
 
     /**
      * A chunk from a registry other than the probe registry, packed onto a probe delta batch or a
-     * class manifest chunk: its weight against the cap, how it adds itself to the payload, and how
-     * its registry marks it delivered once that payload's send is confirmed.
+     * class manifest chunk: its weight against the entry cap, its encoded weight against the byte
+     * and element bounds, how it adds itself to the payload, and how its registry marks it
+     * delivered once that payload's send is confirmed.
      */
     private class Rider<T>(
         val size: Int,
+        val weight: PayloadWeight,
         val attach: (T) -> T,
         val advance: () -> Unit,
     )
@@ -700,6 +702,7 @@ class ExportScheduler(
     private fun endpointDeltaRider(snapshot: EndpointRegistry.DeltaSnapshot): Rider<DeltaBatch> =
         Rider(
             size = snapshot.deltas.size,
+            weight = snapshot.deltas.fold(PayloadWeight.ZERO) { sum, delta -> sum + ProtoPayloadCodec.entryWeight(delta) },
             attach = { it.copy(endpointDeltas = it.endpointDeltas + snapshot.deltas) },
             advance = { endpointRegistry.advanceDeltas(snapshot) },
         )
@@ -707,6 +710,7 @@ class ExportScheduler(
     private fun dependencyDeltaRider(snapshot: DependencyRegistry.DeltaSnapshot): Rider<DeltaBatch> =
         Rider(
             size = snapshot.deltas.size,
+            weight = snapshot.deltas.fold(PayloadWeight.ZERO) { sum, delta -> sum + ProtoPayloadCodec.entryWeight(delta) },
             attach = { it.copy(dependencyDeltas = it.dependencyDeltas + snapshot.deltas) },
             advance = { dependencyRegistry.advanceDeltas(snapshot) },
         )
@@ -714,8 +718,10 @@ class ExportScheduler(
     /**
      * Packs endpoint and dependency delta snapshots onto probe delta batches, in [riders] order.
      * Each goes on the first batch with room for it, room being [maxDeltasPerBatch] minus that
-     * batch's weight so far; a snapshot that fits nowhere becomes its own [DeltaBatch] with no
-     * probe deltas, which a later rider may then share.
+     * batch's weight so far, and the encoded bytes and element count of [PayloadKind.DELTA_BATCH]; a
+     * snapshot that fits nowhere becomes its own [DeltaBatch] with no probe deltas, which a later
+     * rider may then share. At the default [maxDeltasPerBatch], a rider of fixed-size deltas
+     * breaks no bound on its own.
      *
      * [probeBatches] is never empty: [ProbeRegistry.computeDeltaBatches] always returns at least
      * one batch as the liveness heartbeat. That batch is where every rider lands when nothing else
@@ -728,14 +734,16 @@ class ExportScheduler(
         probeBatches: List<ProbeRegistry.DeltaSnapshot>,
         riders: List<Rider<DeltaBatch>>,
     ): List<DeltaSend> {
-        val builders = probeBatches.map { DeltaSendBuilder(it.batch.copy(finalFlush = false), it) }.toMutableList()
+        val builders = probeBatches.map { DeltaSendBuilder(it.batch.copy(finalFlush = false), it, it.weight) }.toMutableList()
 
         for (rider in riders) {
             val target =
-                builders.firstOrNull { it.size + rider.size <= maxDeltasPerBatch }
-                    ?: DeltaSendBuilder(DeltaBatch(resource, emptyList()), null).also(builders::add)
+                builders.firstOrNull {
+                    it.size + rider.size <= maxDeltasPerBatch && PayloadKind.DELTA_BATCH.admits(it.weight + rider.weight)
+                } ?: DeltaSendBuilder(DeltaBatch(resource, emptyList()), null).also(builders::add)
             target.batch = rider.attach(target.batch)
             target.size += rider.size
+            target.weight += rider.weight
             target.riders += rider
         }
         return builders.map { DeltaSend(it.batch, it.probeSnapshot, it.riders) }
@@ -744,6 +752,7 @@ class ExportScheduler(
     private class DeltaSendBuilder(
         var batch: DeltaBatch,
         val probeSnapshot: ProbeRegistry.DeltaSnapshot?,
+        var weight: PayloadWeight = ProtoPayloadCodec.weightOf(batch),
     ) {
         var size = batch.deltas.size
         val riders = mutableListOf<Rider<DeltaBatch>>()
@@ -780,7 +789,7 @@ class ExportScheduler(
      *
      * Class chunks are built, sent and advanced one at a time, so the first flush holds one
      * chunk rather than the whole manifest, and the first failure stops the send before the next
-     * chunk is built. Riders are small and computed up front.
+     * chunk is built. Riders are computed up front, in chunks their registries bound by weight.
      *
      * `dependenciesListed` is read once, after the riders are computed and before the
      * first send, so every chunk of one call carries the same value.
@@ -824,6 +833,7 @@ class ExportScheduler(
     private fun endpointManifestRider(chunk: EndpointRegistry.ManifestSnapshot): Rider<ProbeManifest> =
         Rider(
             size = chunk.endpoints.size,
+            weight = chunk.endpoints.fold(PayloadWeight.ZERO) { sum, entry -> sum + ProtoPayloadCodec.entryWeight(entry) },
             attach = { it.copy(endpoints = it.endpoints + chunk.endpoints) },
             advance = { endpointRegistry.advanceManifest(chunk) },
         )
@@ -831,6 +841,7 @@ class ExportScheduler(
     private fun frameworkMarkerRider(snapshot: FrameworkMarkerRegistry.ManifestSnapshot): Rider<ProbeManifest> =
         Rider(
             size = snapshot.markers.size,
+            weight = snapshot.markers.fold(PayloadWeight.ZERO) { sum, entry -> sum + ProtoPayloadCodec.entryWeight(entry) },
             attach = { it.copy(frameworkMarkers = it.frameworkMarkers + snapshot.markers) },
             advance = { frameworkMarkers.advanceManifest(snapshot) },
         )
@@ -838,6 +849,7 @@ class ExportScheduler(
     private fun disabledModulesRider(snapshot: EndpointRegistry.DisabledModulesSnapshot): Rider<ProbeManifest> =
         Rider(
             size = snapshot.modules.size,
+            weight = snapshot.modules.fold(PayloadWeight.ZERO) { sum, entry -> sum + ProtoPayloadCodec.entryWeight(entry) },
             attach = { it.copy(disabledEndpointModules = it.disabledEndpointModules + snapshot.modules) },
             advance = { endpointRegistry.advanceDisabledModules(snapshot) },
         )
@@ -845,6 +857,7 @@ class ExportScheduler(
     private fun dependencyManifestRider(chunk: DependencyRegistry.ManifestSnapshot): Rider<ProbeManifest> =
         Rider(
             size = chunk.dependencies.size,
+            weight = chunk.dependencies.fold(PayloadWeight.ZERO) { sum, entry -> sum + ProtoPayloadCodec.entryWeight(entry) },
             attach = { it.copy(dependencies = it.dependencies + chunk.dependencies) },
             advance = { dependencyRegistry.advanceManifest(chunk) },
         )
@@ -852,6 +865,7 @@ class ExportScheduler(
     private fun externalClassManifestRider(chunk: ExternalClassRegistry.ManifestSnapshot): Rider<ProbeManifest> =
         Rider(
             size = chunk.externalClasses.size,
+            weight = chunk.externalClasses.fold(PayloadWeight.ZERO) { sum, entry -> sum + ProtoPayloadCodec.entryWeight(entry) },
             attach = { it.copy(externalClasses = it.externalClasses + chunk.externalClasses) },
             advance = { externalClassRegistry.advanceManifest(chunk) },
         )
@@ -859,7 +873,8 @@ class ExportScheduler(
     /**
      * Packs endpoint, dependency, external-class and framework-marker chunks onto class manifest chunks, in [riders] order. Each
      * rider goes on the first manifest with room for it, room being [maxManifestEntriesPerChunk]
-     * minus that manifest's weight so far. A rider that fits nowhere, including when there are no
+     * minus that manifest's weight so far, and the encoded bytes and element count of
+     * [PayloadKind.MANIFEST]. A rider that fits nowhere, including when there are no
      * class chunks at all, becomes its own [ProbeManifest] with no probes, which a later rider may
      * then share.
      *
@@ -883,13 +898,14 @@ class ExportScheduler(
                     builder.riders,
                 )
             for (chunk in classChunks) {
-                val builder = ManifestSendBuilder(chunk.manifest, chunk)
+                val builder = ManifestSendBuilder(chunk.manifest, chunk, chunk.weight)
                 val iterator = waiting.iterator()
                 while (iterator.hasNext()) {
                     val rider = iterator.next()
-                    if (builder.size + rider.size > maxManifestEntriesPerChunk) continue
+                    if (!builder.admits(rider)) continue
                     builder.manifest = rider.attach(builder.manifest)
                     builder.size += rider.size
+                    builder.weight += rider.weight
                     builder.riders += rider
                     iterator.remove()
                 }
@@ -898,10 +914,13 @@ class ExportScheduler(
             val own = mutableListOf<ManifestSendBuilder>()
             for (rider in waiting) {
                 val target =
-                    own.firstOrNull { it.size + rider.size <= maxManifestEntriesPerChunk }
-                        ?: ManifestSendBuilder(emptyManifest(dependenciesListed), null).also(own::add)
+                    own.firstOrNull { it.admits(rider) }
+                        ?: emptyManifest(
+                            dependenciesListed,
+                        ).let { ManifestSendBuilder(it, null, ProtoPayloadCodec.weightOf(it)) }.also(own::add)
                 target.manifest = rider.attach(target.manifest)
                 target.size += rider.size
+                target.weight += rider.weight
                 target.riders += rider
             }
             for (builder in own) yield(finish(builder))
@@ -964,10 +983,14 @@ class ExportScheduler(
         }
     }
 
-    private class ManifestSendBuilder(
+    private inner class ManifestSendBuilder(
         var manifest: ProbeManifest,
         val probeSnapshot: ProbeRegistry.ManifestSnapshot?,
+        var weight: PayloadWeight,
     ) {
+        fun admits(rider: Rider<ProbeManifest>): Boolean =
+            size + rider.size <= maxManifestEntriesPerChunk && PayloadKind.MANIFEST.admits(weight + rider.weight)
+
         // Every list the chunker weighted, call edges, references and branch sites included, so
         // packing a rider onto this one cannot overshoot the cap. A bucket missing here reads as
         // weightless and absorbs a full chunk; edges, references and sites nest inside each probe

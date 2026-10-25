@@ -3406,4 +3406,43 @@ class ExportSchedulerTest {
 
         assertEquals(2, exporter.deltaBatches.size)
     }
+
+    @Test
+    fun `a flush reports a class too large for a chunk as skipped, sends its neighbours, and sends none of its hits`() {
+        val literal = "x".repeat(65_535)
+        val site =
+            BranchSite(
+                siteIndex = 0,
+                siteKey = null,
+                line = 1,
+                condition = List(140) { ConditionPart(ConditionPartKind.STRING_LITERAL, literal) },
+                outcomes = listOf(BranchOutcome(0, BranchRole.TAKEN)),
+            )
+        val registry = ProbeRegistry()
+        registry.register("com.example.Before", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "m", "()V", 1)))[0] = 2
+        registry.register(
+            "com.example.Huge",
+            1L,
+            listOf(ProbeMeta(ProbeKind.BRANCH, "m", "()V", 1, branchIndex = 0, branchSites = listOf(site))),
+        )[0] = 7
+        registry.register("com.example.After", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "m", "()V", 1)))[0] = 3
+        val exporter = RecordingExporter()
+        val scheduler = ExportScheduler(config, resource, registry, EndpointRegistry(), exporter)
+
+        scheduler.flush()
+
+        assertEquals(
+            setOf("com.example.Before", "com.example.After"),
+            exporter.manifests.flatMap { m -> m.probes.map { it.className } }.toSet(),
+        )
+        assertEquals(listOf("com.example.Huge"), exporter.manifests.flatMap { it.skippedClasses }.map { it.className })
+        assertEquals(
+            setOf(2L, 3L),
+            exporter.deltaBatches
+                .flatMap { it.deltas }
+                .map { it.hitsTotal }
+                .toSet(),
+        )
+        exporter.manifests.forEach { assertTrue(ProtoPayloadCodec.encode(it).size <= ChunkLimits.MAX_ENCODED_BYTES) }
+    }
 }

@@ -4,17 +4,23 @@ import dev.otherlode.export.BranchOutcome
 import dev.otherlode.export.BranchRole
 import dev.otherlode.export.BranchSite
 import dev.otherlode.export.CallEdge
+import dev.otherlode.export.ChunkBound
+import dev.otherlode.export.ChunkLimits
 import dev.otherlode.export.ConditionPart
 import dev.otherlode.export.ConditionPartKind
 import dev.otherlode.export.DeclaredClass
 import dev.otherlode.export.DeclaredMethod
 import dev.otherlode.export.IncludeRules
 import dev.otherlode.export.LineRange
+import dev.otherlode.export.PayloadKind
+import dev.otherlode.export.ProtoPayloadCodec
 import dev.otherlode.export.ResourceAttributes
 import dev.otherlode.export.UnprobedClass
 import dev.otherlode.export.UnreadableClass
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class StaticBaselineChunkerTest {
@@ -194,5 +200,80 @@ class StaticBaselineChunkerTest {
             )
 
         assertEquals(listOf(listOf("First"), listOf("Second")), chunks.map { c -> c.declaredClasses.map { it.className } })
+    }
+
+    private fun classWithLiterals(
+        name: String,
+        literals: Int,
+    ): DeclaredClass {
+        val literal = "x".repeat(65_535)
+        val site =
+            BranchSite(
+                siteIndex = 0,
+                siteKey = null,
+                line = 1,
+                condition = List(literals) { ConditionPart(ConditionPartKind.STRING_LITERAL, literal) },
+                outcomes = listOf(BranchOutcome(0, BranchRole.TAKEN), BranchOutcome(1, BranchRole.FALL_THROUGH)),
+            )
+        return DeclaredClass(name, listOf(DeclaredMethod("m", "()V", branchSites = listOf(site))))
+    }
+
+    @Test
+    fun `long string constants split a chunk by encoded bytes before the entry cap`() {
+        val result = StaticScanResult((1..4).map { classWithLiterals("C$it", literals = 76) }, emptyList())
+
+        val chunks = StaticBaselineChunker.chunk(result, resource, scannedAt = 1L, maxEntriesPerChunk = 1_000_000)
+
+        assertEquals(
+            listOf(listOf("C1"), listOf("C2"), listOf("C3"), listOf("C4")),
+            chunks.map { c -> c.declaredClasses.map { it.className } },
+        )
+        chunks.forEach { assertTrue(ProtoPayloadCodec.encode(it).size <= ChunkLimits.MAX_ENCODED_BYTES) }
+    }
+
+    @Test
+    fun `many small nested entries split a chunk by element count before the byte cap`() {
+        val edge = CallEdge("com.example.Callee", "c", "()V", virtual = false)
+        val heavy = (1..5).map { DeclaredClass("H$it", listOf(DeclaredMethod("m", "()V", calls = List(40_000) { edge }))) }
+
+        val chunks = StaticBaselineChunker.chunk(StaticScanResult(heavy, emptyList()), resource, 1L, maxEntriesPerChunk = 10_000_000)
+
+        assertEquals(listOf(4, 1), chunks.map { it.declaredClasses.size })
+        chunks.forEach {
+            val weight = ProtoPayloadCodec.weightOf(it)
+            assertTrue(weight.elements <= PayloadKind.STATIC_BASELINE.maxElements, "a chunk holds ${weight.elements} elements")
+            assertTrue(ProtoPayloadCodec.encode(it).size <= ChunkLimits.MAX_ENCODED_BYTES)
+        }
+    }
+
+    @Test
+    fun `a class whose entry alone exceeds the byte bound fails the whole scan, naming the class and the bound`() {
+        val result =
+            StaticScanResult(
+                listOf(declared("Small", 2), classWithLiterals("com.acme.Huge", literals = 140), declared("Other", 1)),
+                emptyList(),
+            )
+
+        val failure =
+            assertFailsWith<ClassTooLargeException> {
+                StaticBaselineChunker.chunk(result, resource, scannedAt = 1L, maxEntriesPerChunk = 1_000_000)
+            }
+
+        assertEquals("com.acme.Huge", failure.className)
+        assertEquals(ChunkBound.ENCODED_BYTES, failure.bound)
+        assertFalse(failure.message.orEmpty().contains("xxxxxxxx"), "the message never carries a string constant")
+    }
+
+    @Test
+    fun `a class whose entry alone exceeds the element bound fails the whole scan`() {
+        val edge = CallEdge("com.example.Callee", "c", "()V", virtual = false)
+        val result =
+            StaticScanResult(listOf(DeclaredClass("Wide", listOf(DeclaredMethod("m", "()V", calls = List(190_000) { edge })))), emptyList())
+
+        val failure =
+            assertFailsWith<ClassTooLargeException> { StaticBaselineChunker.chunk(result, resource, 1L, maxEntriesPerChunk = 10_000_000) }
+
+        assertEquals("Wide", failure.className)
+        assertEquals(ChunkBound.ELEMENTS, failure.bound)
     }
 }

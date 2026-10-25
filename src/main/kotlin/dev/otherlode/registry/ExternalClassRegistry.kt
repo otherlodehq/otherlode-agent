@@ -1,6 +1,10 @@
 package dev.otherlode.registry
 
+import dev.otherlode.export.ChunkLimits
 import dev.otherlode.export.ExternalClass
+import dev.otherlode.export.PayloadKind
+import dev.otherlode.export.ProtoPayloadCodec
+import dev.otherlode.export.chunkedByWeight
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
@@ -139,7 +143,9 @@ class ExternalClassRegistry(
                 .mapNotNull { entry -> toExternalClass(entry)?.let { entry to it } }
                 .filter { (_, external) -> external.dependencyId?.let(isDependencySendable) ?: true }
                 .toList()
-        return sendable.chunked(maxPerChunk).map { chunk -> ManifestSnapshot(chunk.map { it.second }, chunk.map { it.first }) }
+        return chunkedByWeight(sendable, maxPerChunk, PayloadKind.MANIFEST, ChunkLimits.MANIFEST_FRAME_ALLOWANCE) {
+            ProtoPayloadCodec.entryWeight(it.second)
+        }.map { chunk -> ManifestSnapshot(chunk.map { it.second }, chunk.map { it.first }) }
     }
 
     private fun toExternalClass(entry: Entry): ExternalClass? {
