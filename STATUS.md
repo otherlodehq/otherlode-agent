@@ -39,6 +39,13 @@ multi-tenant backend.
    the org secret's repository access, keeping `otherlode-server`, whose CI
    still reads it. Without the token the docs job skips the sync to
    otherlode.dev with only a notice.
+2b. **Luke: push the wire schema to the Buf Schema Registry.** Master
+   carries `DeltaBatch.flush_complete` (ADR 0077, `f4c058c`), and Actions
+   runs no job, so `buf.yml` never pushed it. From this repo's root, with
+   `BUF_TOKEN` set: `buf push --exclude-unnamed --label master`. Then the
+   collector and the server bump their bindings (see "The settled wait and
+   `flush_complete`" below); the collector's release, and so the agent's,
+   waits on that bump.
 3. **The quickstart** in otherlode.dev's `start/` (that repo's ADR 0001).
    The agent's and collector's pages and the overview are written.
 4. **Review all customer copy.** Copy edits are pre-approved until
