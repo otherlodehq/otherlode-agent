@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted, amended by ADR 0079
 ---
 
 # Hibernate's enhancement methods are not probed

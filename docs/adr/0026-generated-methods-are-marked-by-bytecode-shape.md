@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted, amended by ADR 0078
 ---
 
 # Compiler-generated methods keep their probes and are marked with what generated them, from bytecode shape rather than `kotlin.Metadata`

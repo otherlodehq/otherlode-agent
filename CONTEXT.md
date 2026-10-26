@@ -65,7 +65,7 @@ The jumps kotlinc adds to a suspend function or suspend lambda for its state mac
 _Avoid_: coroutine noise, state-machine branches
 
 **Generated method**:
-A method the compiler emits from a declaration rather than from a body the adopter wrote: an enum's `values` and `valueOf`, a data class's `componentN`, `copy`, and the `equals`, `hashCode` and `toString` it did not override by hand, a `$DefaultImpls` method that only forwards to the interface's own default method, an overload `@JvmOverloads` adds that only forwards to its `$default` twin, a multi-file facade's function, a Scala case class's and its companion's plumbing (`copy`, `canEqual`, `productElement` and the rest, `apply`, `unapply`) that the adopter did not write by hand, and a static forwarder. Probed and marked with what generated it, and so are the branch sites inside it; never reported as never hit. A `$DefaultImpls` method holding the interface method's real body, or an override the adopter wrote, is ordinary code.
+A method the compiler emits from a declaration rather than from a body the adopter wrote: an enum's `values` and `valueOf`, a data class's `componentN`, `copy`, and the `equals`, `hashCode` and `toString` it did not override by hand, a `$DefaultImpls` method that only forwards to the interface's own default method, an overload `@JvmOverloads` adds that only forwards to its `$default` twin, a multi-file facade's function, a Scala case class's and its companion's plumbing (`copy`, `canEqual`, `productElement` and the rest, `apply`, `unapply`) that the adopter did not write by hand, a static forwarder, a value class's `-impl` statics and the boxed members that forward to them, and the kotlinx.serialization plugin's `$serializer` class members and companion `serializer()`. Probed and marked with what generated it, and so are the branch sites inside it; never reported as never hit. A `$DefaultImpls` method holding the interface method's real body, or an override the adopter wrote, is ordinary code.
 _Avoid_: synthetic method (a JVM flag; these are not synthetic), compiler method
 
 **Unread shape**:
@@ -81,7 +81,7 @@ A class a framework synthesized in memory rather than compiled from source, name
 _Avoid_: proxy class (a Spring bean proxy is one shape of it), synthetic class (a JVM flag; these are not synthetic), skipped class (a skipped class is one the agent wanted and could not have)
 
 **Enhancement method**:
-A method Hibernate's bytecode enhancement adds to an entity class the adopter wrote, named with the `$$_hibernate_` prefix, including a reader and writer per persistent field. Never probed, never declared, and passed through when the adopter's code calls one, the way a synthetic accessor is.
+A method a JPA enhancer adds to an entity class the adopter wrote: Hibernate's `$$_hibernate_` methods, Ebean's `_ebean_` members and its added `toString`, EclipseLink's `_persistence_` methods, and OpenJPA's `pc` methods on its own list, including a reader and writer per persistent field. Never probed, never declared, and passed through when the adopter's code calls one, the way a synthetic accessor is. OpenJPA's wrapper around an accessor it moved to `pc<name>` is one too, and the moved accessor reports under the adopter's name (ADR 0079).
 _Avoid_: generated method (that is compiler output that stands for a declaration), synthetic method (a JVM flag; these are not synthetic)
 
 **Skipped class**:

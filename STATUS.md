@@ -66,6 +66,31 @@ deferrals, gzip, a collector config file, and agent-level redaction
 
 ## TODO
 
+### Generated code read as the adopter's (ADRs 0078 and 0079): to build
+
+Decided on 2026-10-26, before v0.1.0. Landing order:
+
+1. **Kotlin shapes (agent).** `GeneratedBy.VALUE_CLASS` on the wire and in
+   the testkit; `DATA_CLASS` takes mangled `componentN` and `copy` and
+   needs no line table on them, which also stops it marking a plain class's
+   hand-written `component1` and `copy`; `DEFAULT_IMPLS` takes the boxed,
+   `Unit` and suspend-`Unit` stubs and forwarders. The canary covers the
+   shapes on all four kotlinc releases. `methods-and-branches.md` loses its
+   line on data classes with a value-class property.
+2. **kotlinx.serialization (agent).** `GeneratedBy.KOTLINX_SERIALIZATION`;
+   the `$serializer`, `serializer()` and lazy-lambda rules; a
+   `@Serializer(forClass)` object's interface methods as an unread shape.
+   The plugin is a test-only dependency, and the canary adds K1 mode on 2.x.
+3. **JPA enhancers (agent).** Ebean, EclipseLink and OpenJPA as ADR 0079
+   says, each pinned by an entity that library enhanced; `classes.md` and
+   `compatibility.md`.
+4. **Server.** The two new values: store constants, `generated_by`
+   rendering, the UI's labels, and an unknown value rendering as `unknown`
+   rather than `none`; the bindings bump. Needs chunk 1's proto change.
+
+Chunks 2 and 3 do not depend on each other. The research behind the
+rules is quoted in the two ADRs.
+
 ### The JAX-RS module parses every class its loader gate passes
 
 `JaxRsModule`'s type matcher starts with `not(isInterface())`, so in a
@@ -441,14 +466,8 @@ Methods, branches and generated code:
   `THROW_ONLY`; javac's try-with-resources is read only at the resource's
   null check, which is `NULL_DEFAULT`; a `Throwable` the analyser cannot
   read counts as one when its name ends in `Exception` or `Error`.
-- Kotlin `value class` `-impl` methods and kotlinx.serialization's output
-  are not `GeneratedBy` values.
 - Mockito's named-module helpers (`$MockitoModuleProbe$`,
   `InjectionBase$<n>`) are not recognised as runtime-generated (ADR 0029).
-- EclipseLink (`_persistence_*`), OpenJPA (`pc*`) and Ebean (`_ebean_*`)
-  weave methods into entities as Hibernate does, and only Hibernate's are
-  passed through (ADR 0047). Each needs reading from its own source first,
-  and OpenJPA's `pc` is a prefix a person writes, so a prefix cannot match it.
 - `LoadedClassSweep` drops every synthetic class, so a multi-file part that
   reached no transformer is not reported.
 - Two narrow cases still read a woven class's class file through its loader
@@ -555,21 +574,6 @@ otherwise. ADRs 0054 and 0055 hold the rule.
   as a super-interface whose sub-interface overrides the default does not
   reach that sub-interface's `$DefaultImpls` body. The default mode from
   2.2 is unaffected.
-- A value class as a generic interface's type argument (`Impl : I<V>`,
-  kotlinc 2.1 and earlier) gives a stub that boxes through `V.box-impl`,
-  then casts and unboxes the result. It is not read and reads as the
-  adopter's code (ADR 0026's amendment). `Unit` as the type argument gives
-  a stub that pops the result and returns void (`get()V`), not read either.
-  Both turn up in a sub-interface's `$DefaultImpls` forwarders too
-  (`SV$DefaultImpls.put-<hash>`, `SU$DefaultImpls.put`).
-- A data class with a value-class property is not recognised: its
-  `componentN` and `copy` names are mangled (`component2-<hash>`), so none
-  of its generated methods is marked (kotlinc 1.9.25 and 2.1.21).
-- A suspend default returning `Unit` gives a `$DefaultImpls` forwarder that
-  ends by comparing the result with the suspended marker and returning
-  `Unit`: a sub-interface's under `disable` on every kotlinc, and the
-  interface's own under `all-compatibility` before 2.2. Not read, and a
-  false never-hit when unused.
 - javac 25 at `--release 21` lowers an enum pattern switch through
   `typeSwitch` with ConstantDynamic `EnumDesc` arguments, and every javac
   lowers a qualified enum label the same way. `bootstrapSwitch` reads
