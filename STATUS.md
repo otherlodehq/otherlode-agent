@@ -33,8 +33,14 @@ multi-tenant backend.
    make the collector's GHCR package public. Still unknown: whether a
    dropped Portal deployment frees its version. A `rehearsal/1-again` tag
    answers it.
-3. **The quickstart** in otherlode.dev's `start/` (that repo's ADR 0001).
-   The agent's and collector's pages and the overview are written.
+3. **Check the quickstart end to end.** otherlode.dev's
+   `start/quickstart.md` is written (`8dc55c3`) but has not been run. Run
+   it against the dev stack with the collector's forward URL pointed at
+   it, since `ingest.otherlode.dev` exists only after the front door. Its
+   links to the agent's and collector's pages resolve once their first
+   releases sync. It tells readers to ignore the agent's plain-http token
+   warning on `localhost`; exempting loopback addresses in the agent
+   would remove that sentence.
 4. **Review all customer copy.** Copy edits are pre-approved until
    release, and the whole corpus is reviewed once before it:
    `docs/site`, the README, and the server's UI and docs.
