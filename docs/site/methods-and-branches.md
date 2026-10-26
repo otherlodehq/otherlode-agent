@@ -241,6 +241,7 @@ The rules are exact so that a method you wrote is never hidden:
 - A Scala method is marked only when its body is instruction for instruction the one scalac writes for that member of that class. Bodies change between compiler releases, so see [Unread shapes](#unread-shapes).
 - Kotlin property accessors are not generated in this sense. A never-called setter is real dead code and stays unmarked.
 - Kotlin value classes and kotlinx.serialization output have no rule, so their methods read as your code.
+- A data class with a value-class property is not recognized. kotlinc adds a hash to the name of each `componentN` and of `copy` whose signature holds the value class, such as `component1-sYCTz3k`, so the class does not match the data-class rule and none of its generated methods is marked, `equals`, `hashCode` and `toString` included.
 
 A generated method is no node in the [call graph](call-graph). A call to a generated forwarder counts toward the method it forwards to.
 

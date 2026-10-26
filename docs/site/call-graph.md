@@ -76,7 +76,7 @@ The testkit's `RootKind` names five kinds of root. They call for different actio
 
 | Root kind | What the root is | What to make of it |
 |---|---|---|
-| `UNCALLED` | A method with no in-scope caller and no outside caller. | The strongest case for deletion. Nothing in your code calls it and nothing outside is known to. Check for reflection first. |
+| `UNCALLED` | A method with no in-scope caller and no outside caller. | The strongest case for deletion. Nothing in your code calls it and nothing outside is known to. Check [Before you delete](#before-you-delete) first. |
 | `CALLED_FROM_OUTSIDE_SCOPE` | A method with no in-scope caller, but with an outside caller. | Weaker evidence. Code you do not own may call it. See below. |
 | `REACHED_FROM_HIT` | A method that a caller with hits refers to, with the call not behind an untaken branch outcome. | Not dead by structure. Read the callers the cluster names. Mostly this is an override that a virtual call never reached, or a call that an exception cut short. |
 | `UNTAKEN_OUTCOME` | A branch outcome that never ran, in a method that did. | The most actionable kind. See below. |
@@ -116,6 +116,16 @@ The label changes nothing but the name of the root kind. The method stays never 
 Treat `CALLED_FROM_OUTSIDE_SCOPE` as a prompt to look, not a verdict. An override of `Object.toString` or `Runnable.run` that never ran in a long window is often removable, and the label tells you why the agent could not say "uncalled". An `@EventListener` that never fired is a different question, one about whether the event still exists. A never-called web handler also appears as a never-called endpoint, so the two views agree.
 
 The static baseline's declared methods carry no outside caller. A never-loaded class's methods fold into the class finding anyway.
+
+## Before you delete
+
+Otherlode observes what ran, not what exists. A method that never ran can still change the program by being there, so deleting it can change code that did run. Check these cases first.
+
+- **Java serialization.** A `Serializable` class with no explicit `serialVersionUID` gets one computed from its non-private members. Deleting a non-private method changes it, and data serialized before the deletion then fails to read with `InvalidClassException`. A private method takes no part in it.
+- **Frameworks that read metadata.** A framework can act on a method it never calls. A lazy Spring `@Bean` method that nothing requests never runs, yet while it exists a `@ConditionalOnMissingBean` bean of the same type is not created. Deleting the method creates that bean. A handler registered by annotation and called only on an event is in the same position.
+- **Reflection over members.** Code that lists `getDeclaredMethods()` or `getDeclaredFields()` and acts on the list sees one member fewer.
+
+The claim still holds in each case: the method never ran.
 
 ## Reading a cluster in the testkit
 
