@@ -1,5 +1,7 @@
 package dev.otherlode.instrumentation.endpoints
 
+import dev.otherlode.registry.DeclaringClass
+import dev.otherlode.registry.DefinitionAttempt
 import java.lang.System.Logger.Level
 
 /**
@@ -14,6 +16,10 @@ import java.lang.System.Logger.Level
  * hazard and get the same answer: hold the declarations, and commit them only once the rewrite has
  * produced bytes.
  *
+ * What a commit runs it runs for one declaring class, whose name [begin] took. Each staged
+ * declaration receives that class, so the registry can hold the endpoints back until the JVM has
+ * defined it.
+ *
  * One slot per thread, with no key. ByteBuddy runs the transform callback, the rewrite and the
  * result callbacks back to back on the loading thread, and its `CircularityLock` holds a
  * per-thread entry throughout, so one thread has at most one class in flight.
@@ -24,20 +30,28 @@ import java.lang.System.Logger.Level
  */
 class PendingDeclarations internal constructor() {
     private val log = System.getLogger(PendingDeclarations::class.java.name)
-    private val staged = ThreadLocal<MutableList<() -> Unit>?>()
+    private val staged = ThreadLocal<Staging?>()
+
+    private class Staging(
+        val className: String,
+    ) {
+        val declarations: MutableList<(DeclaringClass) -> Unit> = mutableListOf()
+    }
 
     /**
      * Holds [declaration] if this thread is inside a transform and returns true. Returns false
-     * when nothing is in flight, leaving the caller to run it.
+     * when nothing is in flight, leaving the caller to run it. A committed [declaration] receives
+     * the class whose transform staged it.
      */
-    fun stage(declaration: () -> Unit): Boolean {
+    fun stage(declaration: (DeclaringClass) -> Unit): Boolean {
         val pending = staged.get() ?: return false
-        pending += declaration
+        pending.declarations += declaration
         return true
     }
 
     /**
-     * Starts holding declarations on this thread, and returns how many are held already.
+     * Starts holding declarations on this thread for the class named [className], and returns how
+     * many are held already.
      *
      * Every module whose type matcher matched a class gets its own transform callback, and
      * ByteBuddy runs them all for that one class before it rewrites anything, so this is called
@@ -53,10 +67,10 @@ class PendingDeclarations internal constructor() {
      * back whatever a module declared anyway. It would be harmless regardless: declaring one
      * endpoint key twice is the same endpoint.
      */
-    fun begin(): Int {
+    fun begin(className: String): Int {
         val pending = staged.get()
-        if (pending != null) return pending.size
-        staged.set(mutableListOf())
+        if (pending != null) return pending.declarations.size
+        staged.set(Staging(className))
         return 0
     }
 
@@ -68,24 +82,31 @@ class PendingDeclarations internal constructor() {
      * nobody called. Modules that already finished keep what they staged.
      */
     fun rollbackTo(mark: Int) {
-        val pending = staged.get() ?: return
+        val pending = staged.get()?.declarations ?: return
         while (pending.size > mark) pending.removeAt(pending.size - 1)
     }
 
     /**
-     * Runs what this thread staged, in the order it was declared, and stops holding.
+     * Runs what this thread staged, in the order it was declared, and stops holding. Each
+     * declaration receives the class [begin] named, defined by [classLoader], with the definition
+     * attempt [captureAttempt] reads. It is read only when something was staged.
      *
      * A declaration that throws is logged and the rest still run. Declaring an endpoint must
      * never disturb the application, which is why the seam swallows a failure of its own. Letting
      * one escape here would reach ByteBuddy's error path instead, and that discards the rewritten
      * class, so one bad route would cost the whole class its advice.
      */
-    fun commit() {
-        val pending = staged.get() ?: return
+    internal fun commit(
+        classLoader: ClassLoader?,
+        captureAttempt: () -> DefinitionAttempt? = DefinitionAttempt.Companion::capture,
+    ) {
+        val staging = staged.get() ?: return
         staged.remove()
-        for (declaration in pending) {
+        if (staging.declarations.isEmpty()) return
+        val declaring = DeclaringClass.of(staging.className, classLoader, captureAttempt())
+        for (declaration in staging.declarations) {
             try {
-                declaration()
+                declaration(declaring)
             } catch (t: Throwable) {
                 log.log(
                     Level.WARNING,
@@ -103,5 +124,5 @@ class PendingDeclarations internal constructor() {
     }
 
     /** How many declarations this thread is holding; for tests. */
-    fun pendingCount(): Int = staged.get()?.size ?: 0
+    fun pendingCount(): Int = staged.get()?.declarations?.size ?: 0
 }

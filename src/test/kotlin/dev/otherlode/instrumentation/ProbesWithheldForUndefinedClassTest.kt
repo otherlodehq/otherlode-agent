@@ -2,6 +2,7 @@ package dev.otherlode.instrumentation
 
 import dev.otherlode.config.AgentConfig
 import dev.otherlode.export.ResourceAttributes
+import dev.otherlode.registry.EndpointRegistry
 import dev.otherlode.registry.ProbeRegistry
 import net.bytebuddy.agent.ByteBuddyAgent
 import net.bytebuddy.agent.builder.ResettableClassFileTransformer
@@ -237,7 +238,7 @@ class ProbesWithheldForUndefinedClassTest {
         val registry = ProbeRegistry(confirmsDefinitions = true)
         val config = AgentConfig.parse("includePackages=com.example.target")
         install(registry, config)
-        val sweep = LoadedClassSweep(instrumentation, registry, config)
+        val sweep = LoadedClassSweep(instrumentation, registry, EndpointRegistry(), config)
 
         val loader = freshLoader()
         assertFailsWith<NoClassDefFoundError> { Class.forName(VANISHING_SUB, true, loader) }
@@ -282,7 +283,7 @@ class ProbesWithheldForUndefinedClassTest {
         val registry = ProbeRegistry(confirmsDefinitions = true)
         val config = AgentConfig.parse("includePackages=com.example.target")
         install(registry, config)
-        val sweep = LoadedClassSweep(instrumentation, registry, config)
+        val sweep = LoadedClassSweep(instrumentation, registry, EndpointRegistry(), config)
 
         // SteadyBase is not in the loader's denied set, so this class defines normally. Its probe
         // counts stay at zero: no method on it is ever called, so confirmation can only come from
@@ -312,7 +313,7 @@ class ProbesWithheldForUndefinedClassTest {
         val registry = ProbeRegistry(confirmsDefinitions = true)
         val config = AgentConfig.parse("includePackages=com.example.target")
         install(registry, config)
-        val sweep = LoadedClassSweep(instrumentation, registry, config)
+        val sweep = LoadedClassSweep(instrumentation, registry, EndpointRegistry(), config)
         val stalled = CountDownLatch(1)
         val release = CountDownLatch(1)
         val loader = StallingSuperclassLoader(javaClass.classLoader, stalled, release)

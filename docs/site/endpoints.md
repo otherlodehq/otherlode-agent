@@ -200,7 +200,7 @@ A route that is removed or cleared is not retracted. It stays declared and reads
 
 ## JAX-RS
 
-JAX-RS has no registration call, so the agent reads the annotations when a resource class loads and declares the routes then. A request is counted when the resource method is entered, which a JAX-RS server does after it matches the request. A call made directly from your own code also counts.
+JAX-RS has no registration call, so the agent reads the annotations when a resource class loads and declares the routes then. It reports them once it has seen the class defined, or once one of them is called, so a resource class that fails to load reports no routes. A request is counted when the resource method is entered, which a JAX-RS server does after it matches the request. A call made directly from your own code also counts.
 
 A class is read when all of these hold:
 

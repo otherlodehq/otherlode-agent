@@ -2,6 +2,7 @@ package dev.otherlode.instrumentation
 
 import dev.otherlode.config.AgentConfig
 import dev.otherlode.dependencies.LoadedDependencyCounter
+import dev.otherlode.registry.EndpointRegistry
 import dev.otherlode.registry.FrameworkMarkerRegistry
 import dev.otherlode.registry.ProbeRegistry
 import java.lang.System.Logger.Level
@@ -22,6 +23,8 @@ import java.lang.instrument.Instrumentation
  * `defineClass` raised a `ClassFormatError`, or a `LinkageError` for a supertype absent at load. A
  * class the verifier rejects is defined, and a `VerifyError` hook names it instead. Left alone, such
  * a class sits in the manifest permanently at zero, which is what a collector reads as dead code.
+ * The same question is put to [endpointRegistry] for a class that declared endpoints
+ * from its transform.
  *
  * Both directions read [Instrumentation.getAllLoadedClasses] once per [run] call and compare it
  * against the registry from opposite sides, so one sweep serves both rather than two independent
@@ -35,6 +38,7 @@ import java.lang.instrument.Instrumentation
 open class LoadedClassSweep(
     private val instrumentation: Instrumentation,
     private val registry: ProbeRegistry,
+    private val endpointRegistry: EndpointRegistry,
     private val config: AgentConfig,
     private val dependencyCounter: LoadedDependencyCounter? = null,
     private val frameworkMarkers: FrameworkMarkerRegistry? = null,
@@ -66,10 +70,11 @@ open class LoadedClassSweep(
     ) {
         // Read before the snapshot, so a class registered after the snapshot is not judged by it.
         val registeredUpTo = registry.registrationSequence()
+        val endpointsRegisteredUpTo = endpointRegistry.registrationSequence()
         val loaded = instrumentation.allLoadedClasses
         try {
             frameworkMarkers?.observe(loaded, clock())
-            confirm(loaded, registeredUpTo)
+            confirm(loaded, registeredUpTo, endpointsRegisteredUpTo)
             if (runForwardPass) reportUnreported(loaded)
         } finally {
             dependencyCounter?.count(loaded)
@@ -79,22 +84,38 @@ open class LoadedClassSweep(
 
     /**
      * Reconciles every registry entry not yet confirmed defined against [loaded]'s names, taken
-     * unfiltered. Logs one `WARNING` per class name [ProbeRegistry.confirmFrom] returns.
-     * `confirmFrom` returns a name once and never again, so this cannot repeat for the same class.
-     * [registeredUpTo] is the registry's sequence from before [loaded] was taken.
+     * unfiltered. Logs one `WARNING` per class name [ProbeRegistry.confirmFrom] returns, and one per
+     * class [EndpointRegistry.confirmFrom] returns.
+     * Each returns a name once and never again, so this cannot repeat for the same class.
+     * [registeredUpTo] and [endpointsRegisteredUpTo] are the registries' sequences from before
+     * [loaded] was taken.
      */
     private fun confirm(
         loaded: Array<Class<*>>,
         registeredUpTo: Long,
+        endpointsRegisteredUpTo: Long,
     ) {
+        val probesAwait = registry.unconfirmedClassCount() > 0
+        val endpointsAwait = endpointRegistry.unconfirmedClassCount() > 0
         // The walk runs on every flush once dependencies are counted; skip building the name set when nothing awaits it.
-        if (registry.unconfirmedClassCount() == 0) return
+        if (!probesAwait && !endpointsAwait) return
         val loadedNames = loaded.mapTo(mutableSetOf()) { it.name }
-        for (name in registry.confirmFrom(loadedNames, registeredUpTo)) {
-            log.log(
-                Level.WARNING,
-                "otherlode: $name was woven and registered but the JVM never defined it; its probes are withheld for good",
-            )
+        if (probesAwait) {
+            for (name in registry.confirmFrom(loadedNames, registeredUpTo)) {
+                log.log(
+                    Level.WARNING,
+                    "otherlode: $name was woven and registered but the JVM never defined it; its probes are withheld for good",
+                )
+            }
+        }
+        if (endpointsAwait) {
+            for (withheld in endpointRegistry.confirmFrom(loadedNames, endpointsRegisteredUpTo)) {
+                log.log(
+                    Level.WARNING,
+                    "otherlode: ${withheld.className} declared ${endpointsPhrase(withheld.endpointCount)} while being woven " +
+                        "but the JVM never defined it; its endpoints are withheld for good",
+                )
+            }
         }
     }
 
@@ -107,6 +128,13 @@ open class LoadedClassSweep(
         val withheld = registry.withheldForGoodClassCount()
         if (withheld > 0) {
             log.log(Level.WARNING, "otherlode: $withheld classes were woven and registered but never confirmed defined")
+        }
+        val withheldEndpointClasses = endpointRegistry.withheldForGoodClassCount()
+        if (withheldEndpointClasses > 0) {
+            log.log(
+                Level.WARNING,
+                "otherlode: $withheldEndpointClasses classes declared endpoints while being woven but were never confirmed defined",
+            )
         }
     }
 
@@ -199,4 +227,6 @@ open class LoadedClassSweep(
          */
         val IGNORED_NAME_PREFIXES = listOf("net.bytebuddy.", "sun.reflect.", "jdk.internal.reflect.")
     }
+
+    private fun endpointsPhrase(count: Int): String = if (count == 1) "1 endpoint" else "$count endpoints"
 }

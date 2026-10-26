@@ -169,23 +169,6 @@ edit deleted would read as never hit unless a collector learns the old entry
 is superseded, which may need a wire field), and whether that is worth it for a
 development convenience.
 
-### The endpoint tier has no confirmation
-
-`EndpointInstrumentation` stages and commits declarations from its own
-listener for the ADR 0007 reason, so a class that declares endpoints and then
-fails to define leaves rows nothing will ever increment: a route reading as
-never called, the endpoint form of what ADR 0028 fixed for probes.
-
-Deferred with its reason in that ADR rather than left to omission. The
-exposure is narrower than the probe tier's, which registers every class the
-agent weaves: `JaxRsModule` is the only module that declares from inside a
-transform, and every other module declares at runtime from a framework object
-that already exists, so its class certainly loaded. The link, when it is
-wanted, is `PendingDeclarations.begin()` taking the declaring class name and
-`commit()` attaching it. Not `EndpointEntry.handlerClass`, which happens to
-hold the same string for JAX-RS but is a display label: nullable, and set at
-dispatch for the other modules.
-
 ### Endpoint follow-ups
 
 - `endpoints-ktor-3` compiles against Ktor 3.5.2, its newest supported

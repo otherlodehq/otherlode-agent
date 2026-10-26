@@ -280,6 +280,7 @@ object Agent {
                         LoadedClassSweep(
                             instrumentation,
                             registry,
+                            endpointRegistry,
                             config,
                             LoadedDependencyCounter(dependencyRegistry, dependencyResolver::resolve),
                             frameworkMarkers,

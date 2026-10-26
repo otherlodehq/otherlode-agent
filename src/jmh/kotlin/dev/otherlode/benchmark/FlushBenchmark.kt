@@ -210,6 +210,7 @@ open class FlushBenchmark {
                 LoadedClassSweep(
                     instrumentation,
                     registry,
+                    EndpointRegistry(),
                     config,
                     LoadedDependencyCounter(dependencies, config.includePackages, config.excludePackages),
                 )

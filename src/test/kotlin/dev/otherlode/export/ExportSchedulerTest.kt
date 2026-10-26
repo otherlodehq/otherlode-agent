@@ -15,6 +15,7 @@ import dev.otherlode.instrumentation.branch.ConfiguredCallbackAnnotations
 import dev.otherlode.instrumentation.branch.UnreadCause
 import dev.otherlode.instrumentation.branch.UnreadShapeCounts
 import dev.otherlode.instrumentation.staticscan.StaticBaselineSender
+import dev.otherlode.registry.DeclaringClass
 import dev.otherlode.registry.DependencyRegistry
 import dev.otherlode.registry.EndpointRegistry
 import dev.otherlode.registry.ExternalClassRegistry
@@ -123,7 +124,7 @@ private class RecordingSweep(
     config: AgentConfig,
     /** Runs on every call, standing in for work the real sweep does, such as counting dependencies. */
     private val onRun: () -> Unit = {},
-) : LoadedClassSweep(instrumentation, registry, config) {
+) : LoadedClassSweep(instrumentation, registry, EndpointRegistry(), config) {
     data class Call(
         val runForwardPass: Boolean,
         val final: Boolean,
@@ -1255,7 +1256,8 @@ class ExportSchedulerTest {
     fun `the first flush's sweep finds a marker and the same flush's manifest carries it`() {
         val markers = FrameworkMarkerRegistry(listOf(FrameworkMarkerDefinition("list-marker", listOf(listOf(markerClass)))))
         val registry = ProbeRegistry()
-        val sweep = LoadedClassSweep(ByteBuddyAgent.install(), registry, config, frameworkMarkers = markers, clock = { 77L })
+        val sweep =
+            LoadedClassSweep(ByteBuddyAgent.install(), registry, EndpointRegistry(), config, frameworkMarkers = markers, clock = { 77L })
         val exporter = StampedExporter()
         val scheduler =
             ExportScheduler(
@@ -2688,6 +2690,35 @@ class ExportSchedulerTest {
     }
 
     @Test
+    fun `the sweep walk is not skipped on an off-cadence flush when only a class that declared endpoints awaits confirmation`() {
+        val registry = ProbeRegistry(confirmsDefinitions = true)
+        val endpointRegistry = EndpointRegistry()
+        endpointRegistry.register(
+            key = "k",
+            framework = "jaxrs",
+            verb = "GET",
+            verbatimTemplate = "/never",
+            declaringClass = DeclaringClass.of("com.example.never.Loaded", null, null),
+        )
+        val sweep = RecordingSweep(ByteBuddyAgent.install(), registry, config)
+        val scheduler =
+            ExportScheduler(
+                config,
+                resource,
+                registry,
+                endpointRegistry,
+                RecordingExporter(),
+                loadedClassSweep = sweep,
+                frameworkMarkers = FrameworkMarkerRegistry(emptyList()),
+            )
+
+        scheduler.flush()
+
+        assertEquals(1, sweep.calls.size, "the probe registry awaits nothing, the endpoint registry awaits one class")
+        assertEquals(false, sweep.calls.single().runForwardPass)
+    }
+
+    @Test
     fun `the sweep walk is not skipped on the tenth flush even when nothing awaits confirmation`() {
         val registry = ProbeRegistry(confirmsDefinitions = true)
         val sweep = RecordingSweep(ByteBuddyAgent.install(), registry, config)
@@ -2875,7 +2906,7 @@ class ExportSchedulerTest {
         val registry = ProbeRegistry()
         val exporter = RecordingExporter()
         val sweep =
-            object : LoadedClassSweep(ByteBuddyAgent.install(), registry, config) {
+            object : LoadedClassSweep(ByteBuddyAgent.install(), registry, EndpointRegistry(), config) {
                 override fun run(
                     runForwardPass: Boolean,
                     final: Boolean,
@@ -3224,6 +3255,7 @@ class ExportSchedulerTest {
                     LoadedClassSweep(
                         ByteBuddyAgent.install(),
                         probeRegistry,
+                        EndpointRegistry(),
                         agentConfig,
                         LoadedDependencyCounter(dependencyRegistry, includes, emptyList()),
                     ),
@@ -3317,6 +3349,7 @@ class ExportSchedulerTest {
                     LoadedClassSweep(
                         ByteBuddyAgent.install(),
                         probeRegistry,
+                        EndpointRegistry(),
                         agentConfig,
                         LoadedDependencyCounter(dependencyRegistry, includes, emptyList()),
                     ),

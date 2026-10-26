@@ -319,15 +319,16 @@ class ExportScheduler(
      * rather than waiting a whole cycle.
      *
      * The two directions the sweep serves keep different cadences. Confirmation
-     * ([ProbeRegistry.confirmFrom]) runs on every flush a class awaits it, since a class held back
-     * stays held back until it is confirmed, and waiting ten flushes would delay every class's
-     * first manifest by that much. The forward, unreported-class direction is the expensive part,
-     * an `isCandidate` filter over every class the JVM holds, and runs every tenth flush; the
-     * shutdown flush always runs it, so an instance that ends cleanly always gives a final answer.
+     * ([ProbeRegistry.confirmFrom], [EndpointRegistry.confirmFrom]) runs on every flush a class
+     * awaits it, since a class held back stays held back until it is confirmed, and waiting ten
+     * flushes would delay every class's first manifest by that much. The forward, unreported-class
+     * direction is the expensive part, an `isCandidate` filter over every class the JVM holds, and
+     * runs every tenth flush; the shutdown flush always runs it, so an instance that ends cleanly
+     * always gives a final answer.
      *
      * Before the dependency listing completes, the walk is skipped entirely, with no call into the
-     * sweep at all, when there is nothing for either direction to do: no class awaiting
-     * confirmation, every framework marker seen, and the forward direction not due.
+     * sweep at all, when there is nothing for either direction to do: no class or declaring
+     * class awaiting confirmation, every framework marker seen, and the forward direction not due.
      * `getAllLoadedClasses` allocates an array of every class the JVM holds. A process that loads
      * no marker leaves one unseen for good, so with the shipped list the walk runs on every flush.
      * Once the listing completes the walk runs on every flush, since the sweep counts the classes
@@ -340,7 +341,14 @@ class ExportScheduler(
         val sweep = loadedClassSweep ?: return
         val forwardPassDue = final || --flushesSinceSweep <= 0
         val countsDependencies = dependencyRegistry.isListingComplete
-        if (!forwardPassDue && !countsDependencies && registry.unconfirmedClassCount() == 0 && !frameworkMarkers.hasUnseen()) return
+        if (!forwardPassDue &&
+            !countsDependencies &&
+            registry.unconfirmedClassCount() == 0 &&
+            endpointRegistry.unconfirmedClassCount() == 0 &&
+            !frameworkMarkers.hasUnseen()
+        ) {
+            return
+        }
         try {
             sweep.run(runForwardPass = forwardPassDue, final = final)
             if (forwardPassDue) flushesSinceSweep = SWEEP_EVERY_N_FLUSHES

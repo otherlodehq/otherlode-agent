@@ -69,6 +69,13 @@ private val EXTENSION_ROUTE = Regex("/\\*\\.[^/*]+")
  * `deliveredVersion`, never lowers it. A change landing while a send is in flight is still picked
  * up by the next compute, since the version it bumped to was never staged by that in-flight send.
  *
+ * An endpoint a module declares from inside a class's transform is published only once a source
+ * of it is confirmed: the declaring class is confirmed defined, the endpoint was also registered
+ * outside a transform or discovered by dispatch, or it has a hit. The registry keeps the state
+ * ADR 0028 describes for a class's probes for each declaring class, and [confirmFrom] settles it
+ * against the JVM's loaded classes under the rule of ADR 0066. The dispatch key of such an
+ * endpoint is bound at once, so a hit before confirmation still counts.
+ *
  * @param dispatchLimit how many identities each framework module may create at dispatch, and how
  *   many request-built keys it may bind there.
  */
@@ -126,6 +133,17 @@ class EndpointRegistry(
             count++
         }
 
+        /**
+         * True once a source other than a declaring class's transform has produced this entry: a
+         * registration outside a transform, or discovery by dispatch.
+         */
+        @Volatile
+        internal var anchored: Boolean = false
+
+        /** The classes whose transforms declared this entry. Replaced whole under the entry's monitor. */
+        @Volatile
+        internal var declaringClasses: List<DeclaringState> = emptyList()
+
         /** Bumped on any change a collector needs to see again: creation, a discovery-source upgrade, or a new handler join. */
         @Volatile
         internal var version: Long = 1
@@ -151,6 +169,42 @@ class EndpointRegistry(
         val boundKeys = AtomicInteger(0)
         val createdWarned = AtomicBoolean(false)
         val keysWarned = AtomicBoolean(false)
+    }
+
+    private data class DeclaringKey(
+        val className: String,
+        val loaderId: Int,
+    )
+
+    /**
+     * What the registry knows of one class that declared endpoints from its transform, and
+     * whether the JVM defined it. [confirmed], [missedConfirmations], [attempts], [unwatchable],
+     * [reported], [sequence] and [withheldForGood] mean what the same fields of [ProbeRegistry]'s
+     * class entries mean.
+     */
+    internal class DeclaringState(
+        val className: String,
+        val classLoaderRef: WeakReference<ClassLoader>?,
+        attempt: DefinitionAttempt?,
+        sequence: Long,
+    ) {
+        /** The endpoints this class declared. */
+        val endpoints: MutableSet<EndpointEntry> = ConcurrentHashMap.newKeySet()
+
+        @Volatile
+        var confirmed: Boolean = false
+
+        /** Guarded by the state's monitor, as are [attempts], [unwatchable] and [reported]. */
+        var missedConfirmations: Int = 0
+        val attempts: MutableList<DefinitionAttempt> = if (attempt == null) mutableListOf() else mutableListOf(attempt)
+        var unwatchable: Boolean = attempt == null
+        var reported: Boolean = false
+
+        @Volatile
+        var sequence: Long = sequence
+
+        @Volatile
+        var withheldForGood: Boolean = false
     }
 
     private class DisabledModuleEntry(
@@ -196,6 +250,12 @@ class EndpointRegistry(
     private val dispatchCounts = ConcurrentHashMap<String, DispatchCount>()
     private val nextEndpointId = AtomicInteger(0)
     private val nextDeltaSequence = AtomicLong(0)
+    private val declaringStates = ConcurrentHashMap<DeclaringKey, DeclaringState>()
+    private val lastRegistrationSequence = AtomicLong(0)
+    private val unwatchableWarned = AtomicBoolean(false)
+
+    /** Says whether [attempt] is over. Replaced by a test that scripts the answer without a second thread. */
+    internal var attemptEnded: (DefinitionAttempt) -> Boolean = { it.hasEnded() }
 
     /**
      * Resolves a dispatch key to its entry. This is the hot-path lookup a dispatch hook calls on
@@ -241,7 +301,12 @@ class EndpointRegistry(
     }
 
     private fun isValue(key: Any?): Boolean =
-        key == null || key is String || key is Number || key is Boolean || key is Char || key is Enum<*> ||
+        key == null ||
+            key is String ||
+            key is Number ||
+            key is Boolean ||
+            key is Char ||
+            key is Enum<*> ||
             (key is List<*> && key.all(::isValue))
 
     /** A route object, compared by identity. [WeakRouteKey] stores one and [StrongRouteKey] looks one up; they compare equal. */
@@ -302,6 +367,10 @@ class EndpointRegistry(
      * its version so the next manifest compute includes it again with the corrected source.
      *
      * [handler], when given, is attached the same way [attachHandler] would.
+     *
+     * [declaringClass] is set for a registration made from inside a class's transform. The key is
+     * bound at once, but the endpoint is published only once a source of it is confirmed; see the
+     * class description. A registration without one is a source in itself.
      */
     fun register(
         key: Any,
@@ -311,8 +380,10 @@ class EndpointRegistry(
         contextPath: String? = null,
         handler: HandlerRef? = null,
         templateKind: EndpointTemplateKind = EndpointTemplateKind.PATH,
+        declaringClass: DeclaringClass? = null,
     ): EndpointEntry {
         val entry = findOrCreate(framework, verb, verbatimTemplate, contextPath, templateKind)
+        if (declaringClass == null) entry.anchored = true else watch(declaringClass, entry)
         bind(key, entry)
         upgradeDiscoverySource(entry, EndpointDiscoverySource.REGISTRATION)
         if (handler != null) attachHandler(entry, handler)
@@ -347,6 +418,7 @@ class EndpointRegistry(
         templateKind: EndpointTemplateKind = EndpointTemplateKind.PATH,
     ): EndpointEntry? {
         val entry = findOrCreateAtDispatch(framework, verb, verbatimTemplate, contextPath, templateKind) ?: return null
+        if (!entry.anchored) entry.anchored = true
         if (!isValue(key) || lookup(key) != null || reserveDispatchKey(framework)) bind(key, entry)
         if (handlerClass != null) attachHandler(entry, HandlerRef(handlerClass))
         return entry
@@ -575,6 +647,167 @@ class EndpointRegistry(
         disabledModulesByName.map { (module, entry) -> DisabledEndpointModule(module, entry.reason, entry.disabledAt, entry.kind) }
 
     /**
+     * Records that [declaring] declared [entry] from its transform, and starts watching the class
+     * if it is not watched yet. A repeat declaration from a class that is not confirmed starts a
+     * new definition attempt: the old attempt, its misses and a withhold belonged to the earlier
+     * transform. A declaration from the commit that started the attempt already held starts none.
+     */
+    private fun watch(
+        declaring: DeclaringClass,
+        entry: EndpointEntry,
+    ) {
+        val attempt = declaring.attempt
+        if (attempt == null) warnUnwatchableOnce()
+        var created = false
+        val state =
+            declaringStates.computeIfAbsent(DeclaringKey(declaring.className, declaring.loaderId)) {
+                created = true
+                DeclaringState(declaring.className, declaring.classLoaderRef, attempt, lastRegistrationSequence.incrementAndGet())
+            }
+        if (!created) startNewAttempt(state, attempt)
+        state.endpoints.add(entry)
+        synchronized(entry) {
+            if (state !in entry.declaringClasses) entry.declaringClasses = entry.declaringClasses + state
+        }
+    }
+
+    private fun startNewAttempt(
+        state: DeclaringState,
+        attempt: DefinitionAttempt?,
+    ) {
+        if (isConfirmed(state)) return
+        synchronized(state) {
+            if (state.confirmed) return
+            if (attempt != null && state.attempts.any { it === attempt }) return
+            if (attempt != null) state.attempts += attempt else state.unwatchable = true
+            state.missedConfirmations = 0
+            state.withheldForGood = false
+            state.sequence = lastRegistrationSequence.incrementAndGet()
+        }
+    }
+
+    private fun warnUnwatchableOnce() {
+        if (!unwatchableWarned.compareAndSet(false, true)) return
+        log.log(
+            Level.WARNING,
+            "otherlode: the definition attempt of a class that declared endpoints could not be read from its thread's stack; " +
+                "such classes are never reported as failed to load",
+        )
+    }
+
+    /**
+     * Whether [entry] has a source: a registration outside a transform, discovery by dispatch, a
+     * hit, or a declaring class confirmed defined.
+     */
+    private fun isPublishable(entry: EndpointEntry): Boolean =
+        entry.anchored || entry.count > 0 || entry.declaringClasses.any { isConfirmed(it) }
+
+    /**
+     * Whether [state]'s class has evidence of having been defined: an earlier confirmation recorded
+     * by [confirmFrom], or a hit on an endpoint that this class alone produced. A hit on an endpoint
+     * another class or source shares does not say which one served it. A hit that confirms the
+     * class also lifts a withhold.
+     */
+    private fun isConfirmed(state: DeclaringState): Boolean {
+        if (state.confirmed) return true
+        if (state.endpoints.any { it.count > 0 && !it.anchored && it.declaringClasses.singleOrNull() === state }) {
+            synchronized(state) {
+                state.confirmed = true
+                state.withheldForGood = false
+                state.attempts.clear()
+            }
+        }
+        return state.confirmed
+    }
+
+    /**
+     * The sequence number of the newest declaration. A sweep reads it before it takes its
+     * loaded-class snapshot and passes it to [confirmFrom], which then leaves alone every class
+     * that declared after that point.
+     */
+    internal fun registrationSequence(): Long = lastRegistrationSequence.get()
+
+    /**
+     * Reconciles every declaring class not yet confirmed defined against [loadedClassNames], the
+     * JVM's own loaded-class names, by the rule [ProbeRegistry.confirmFrom] applies to a class's
+     * probes. A class is confirmed when its name is in that set or its classloader has been
+     * collected. A class found in neither takes a miss only when every definition attempt it has
+     * recorded has ended, and two misses withhold it for good. An unwatchable class never takes a
+     * miss.
+     *
+     * Returns each class this withholds for good the first time, with the number of its endpoints
+     * that no other source publishes, and never returns it again. A class whose endpoints all have
+     * another source is withheld without being returned. [registeredUpTo] is the
+     * [registrationSequence] value read before [loadedClassNames] was taken.
+     */
+    fun confirmFrom(
+        loadedClassNames: Set<String>,
+        registeredUpTo: Long = Long.MAX_VALUE,
+    ): List<WithheldEndpointClass> {
+        val newlyWithheld = mutableListOf<WithheldEndpointClass>()
+        for (state in declaringStates.values) {
+            if (state.sequence > registeredUpTo) continue
+            if (isConfirmed(state) || state.withheldForGood) continue
+            val loaderCollected = state.classLoaderRef != null && state.classLoaderRef.get() == null
+            if (state.className in loadedClassNames || loaderCollected) {
+                synchronized(state) {
+                    state.confirmed = true
+                    state.attempts.clear()
+                }
+                continue
+            }
+            val watched = synchronized(state) { if (state.unwatchable) null else state.attempts.toList() } ?: continue
+            if (watched.any { !attemptEnded(it) }) continue
+            if (recordMiss(state, watched, registeredUpTo)) {
+                val withheld = state.endpoints.count { !isPublishable(it) }
+                if (withheld > 0 && markReported(state)) newlyWithheld += WithheldEndpointClass(state.className, withheld)
+            }
+        }
+        return newlyWithheld
+    }
+
+    /**
+     * Counts one miss against [state] and says whether that withholds it for good. Between the
+     * caller's read of [watched] and this lock, a retry can add an attempt or move the class past
+     * [registeredUpTo], and a confirmation can clear the attempts. Then the miss belongs to a state
+     * that no longer exists, so it is dropped.
+     */
+    private fun recordMiss(
+        state: DeclaringState,
+        watched: List<DefinitionAttempt>,
+        registeredUpTo: Long,
+    ): Boolean =
+        synchronized(state) {
+            if (state.attempts != watched ||
+                state.unwatchable ||
+                state.sequence > registeredUpTo ||
+                state.withheldForGood ||
+                state.confirmed
+            ) {
+                return false
+            }
+            state.missedConfirmations++
+            state.attempts.clear()
+            if (state.missedConfirmations < 2) return false
+            state.withheldForGood = true
+            true
+        }
+
+    /** Marks [state] as named, and says whether this call is the first to do so. */
+    private fun markReported(state: DeclaringState): Boolean =
+        synchronized(state) {
+            if (state.reported) return false
+            state.reported = true
+            true
+        }
+
+    /** How many declaring classes are not yet confirmed defined and not withheld for good. */
+    fun unconfirmedClassCount(): Int = declaringStates.values.count { !isConfirmed(it) && !it.withheldForGood }
+
+    /** How many declaring classes were never confirmed defined and are withheld for good. */
+    fun withheldForGoodClassCount(): Int = declaringStates.values.count { !isConfirmed(it) && it.withheldForGood }
+
+    /**
      * Compares each entry's live count against its last successfully sent value, and returns
      * batches of at most [maxPerBatch] endpoints whose count changed. Returns an empty list when
      * nothing changed: unlike [ProbeRegistry.computeDeltaBatches], an endpoint delta batch has no
@@ -651,8 +884,9 @@ class EndpointRegistry(
     /**
      * Returns chunks of at most [maxPerChunk] endpoints, covering every endpoint never delivered or
      * changed since it was last delivered (a discovery-source upgrade, a newly attached handler).
-     * Returns an empty list when there is nothing to send. Disabled modules are not here; see
-     * [computeDisabledModules].
+     * An endpoint whose only source is a declaring class not yet confirmed defined is left out
+     * until it is. Returns an empty list when there is nothing to send. Disabled modules are not
+     * here; see [computeDisabledModules].
      *
      * Nothing is marked as delivered here. Each returned [ManifestSnapshot] names the version it
      * staged per endpoint, and [advanceManifest] must be called with it explicitly, only once
@@ -663,6 +897,7 @@ class EndpointRegistry(
         for (entry in entriesByIdentity.values) {
             val version = entry.version
             if (version <= entry.deliveredVersion) continue
+            if (!isPublishable(entry)) continue
             pending += Triple(entry, version, entry.toLocation())
         }
         return chunkedByWeight(pending, maxPerChunk, PayloadKind.MANIFEST, ChunkLimits.MANIFEST_FRAME_ALLOWANCE) {

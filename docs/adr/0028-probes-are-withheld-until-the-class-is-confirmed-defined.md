@@ -39,3 +39,15 @@ The deferred bucket on `ProbeManifest` is built, as `failed_classes` (ADR 0065).
 ## Amended on 2026-10-06: a miss counts only once the definition attempt has ended
 
 ADR 0066 replaces "absent on two consecutive sweeps" with "absent on two sweeps after the attempt to define the class ended", and clears a failure on a retry or a later confirmation. It also corrects this ADR: a class the verifier rejects is defined, since the JVM verifies after it defines, so it is confirmed and never withheld.
+
+## Amended on 2026-10-25: the endpoint tier is confirmed too
+
+The deferral above is closed. An endpoint a module declares from inside a class's transform stays out of the manifest until that class is confirmed defined, by the same evidence and the same miss rule (ADR 0066) as a class's probes.
+
+- **The key is still bound at commit.** The JAX-RS advice looks its key up at request time, and an unbound key would send the hit to dispatch under another template. So `PendingDeclarations.begin()` takes the declaring class name, `commit()` registers the declarations with that name, the defining loader and the definition attempt, and the registry binds the keys at once. Only publication waits.
+- **Confirmation is per declaring class.** Endpoint identity is shared: several keys and classes can merge into one entry, and an entry can exist from dispatch already. An entry is published once any source of it is confirmed: a declaring class that is confirmed, a registration made outside a transform, discovery by dispatch, or a hit on the entry itself.
+- **The evidence is the probe tier's.** The class name in the loaded set, a collected loader, or a hit on an endpoint that class alone declared confirms it. A hit on an endpoint another class or source shares publishes that endpoint and confirms no class, since it does not say which one served the request. A hit on its own endpoint also lifts a withhold, since it proves the class was defined. Absent from two sweeps after the attempt ended, it is withheld for good, with one `WARNING` naming the class and its count of withheld endpoints, and a count in the shutdown summary. `LoadedClassSweep` serves both registries in one walk, and the scheduler's sweep gate counts unconfirmed endpoint classes too.
+- **A module-disable staged in a transform is not withheld.** Turning a module off claims nothing about a route.
+- **`failed_classes` is not extended.** A resource class the probe tier also wove is already named there. One outside the include rules is named only in the `WARNING`, and its endpoints never existed for the framework to serve.
+
+Rejected: holding the declarations unbound until confirmation, which loses every hit before the sweep; confirming per endpoint entry, which a dispatched or shared entry would confirm for a class that never defined; and moving the probe tier's state machine into a shared class, which reshapes tested code for one more caller. The endpoint registry keeps its own copy of the miss rule, built on `DefinitionAttempt`.

@@ -7,6 +7,7 @@ import dev.otherlode.dependencies.TestJars.pom
 import dev.otherlode.export.DependencyDiscoverySource
 import dev.otherlode.instrumentation.LoadedClassSweep
 import dev.otherlode.registry.DependencyRegistry
+import dev.otherlode.registry.EndpointRegistry
 import dev.otherlode.registry.ProbeRegistry
 import net.bytebuddy.agent.ByteBuddyAgent
 import org.junit.jupiter.api.io.TempDir
@@ -50,6 +51,7 @@ class LoadedDependencySweepTest {
             LoadedClassSweep(
                 instrumentation,
                 ProbeRegistry(),
+                EndpointRegistry(),
                 AgentConfig.parse("includePackages=com.acme"),
                 LoadedDependencyCounter(registry, includes, emptyList()),
             )

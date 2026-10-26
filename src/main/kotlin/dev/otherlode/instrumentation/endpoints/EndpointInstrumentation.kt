@@ -162,7 +162,7 @@ class EndpointInstrumentation(
                     // bytes; see PendingDeclarations. The mark is where this module's own
                     // declarations start, since another module matching the same class may have
                     // staged some already.
-                    val mark = pendingDeclarations.begin()
+                    val mark = pendingDeclarations.begin(typeDescription.name)
                     if (alreadyLoaded.get() == true) return@transform reweave(module, typeBuilder, typeDescription, classLoader, mark)
                     try {
                         // A view of the cached binder that records this call's hooks alone; see
@@ -377,8 +377,9 @@ class EndpointInstrumentation(
      *
      * `onTransformation` runs only after `make()` has produced the bytes, so an endpoint declared
      * from inside the transform callback reaches the registry only for a class that really was
-     * woven. `onComplete` runs whatever the outcome, so a failed transform's declarations are
-     * dropped rather than left staged on the thread.
+     * woven. The registry then publishes it once the JVM is known to have defined that class; see
+     * [EndpointRegistry]. `onComplete` runs whatever the outcome, so a failed transform's
+     * declarations are dropped rather than left staged on the thread.
      */
     private inner class EndpointTransformListener : AgentBuilder.Listener.Adapter() {
         override fun onDiscovery(
@@ -398,7 +399,7 @@ class EndpointInstrumentation(
             loaded: Boolean,
             dynamicType: DynamicType,
         ) {
-            pendingDeclarations.commit()
+            pendingDeclarations.commit(classLoader)
         }
 
         override fun onError(

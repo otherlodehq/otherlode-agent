@@ -261,6 +261,8 @@ Every line starts with `otherlode:`.
 | `INFO` | `<n> loaded classes reached no transformer and are reported as unreported rather than instrumented; ...` | The first sweep found classes no transformer saw. |
 | `WARNING` | `<class> was woven and registered but the JVM never defined it; its probes are withheld for good` | The class failed to load. |
 | `WARNING` | `<n> classes were woven and registered but never confirmed defined` | The shutdown total of classes that failed to load. |
+| `WARNING` | `<class> declared <n> endpoints while being woven but the JVM never defined it; its endpoints are withheld for good` | A JAX-RS resource class failed to load, and its routes are left out. |
+| `WARNING` | `<n> classes declared endpoints while being woven but were never confirmed defined` | The shutdown total of such resource classes. |
 | `WARNING` | `the definition attempt of a woven class could not be read from its thread's stack; ...` | Some classes cannot be reported as failed to load. |
 | `WARNING` | `classes the JVM's verifier rejects will not be named on this JVM, so a run's zero counts say nothing about them: <reason>` | The hook on `VerifyError` did not install. |
 | `WARNING` | `reading the verifier's rejections failed, so this run's zero counts are no longer evidence` | Reading what the hook collected failed on one flush. The run counts one unplaced failure and makes no claim from a zero count. |

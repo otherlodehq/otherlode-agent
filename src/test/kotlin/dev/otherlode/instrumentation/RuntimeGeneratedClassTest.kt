@@ -2,6 +2,7 @@ package dev.otherlode.instrumentation
 
 import dev.otherlode.config.AgentConfig
 import dev.otherlode.export.ResourceAttributes
+import dev.otherlode.registry.EndpointRegistry
 import dev.otherlode.registry.ProbeRegistry
 import javassist.util.proxy.ProxyFactory
 import net.bytebuddy.ByteBuddy
@@ -127,7 +128,7 @@ class RuntimeGeneratedClassTest {
             assertTrue(name in synchronized(offered) { offered.toSet() }, "$name never reached a transformer, so this proved nothing")
         }
 
-        LoadedClassSweep(instrumentation, registry, config).run(runForwardPass = true)
+        LoadedClassSweep(instrumentation, registry, EndpointRegistry(), config).run(runForwardPass = true)
         val manifest = registry.manifest(ResourceAttributes("test", null, "instance-1", null, "run-1"))
         for (name in generated) {
             assertTrue(manifest.probes.none { it.className == name }, "$name was woven")

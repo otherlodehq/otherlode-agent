@@ -2,6 +2,7 @@ package dev.otherlode.instrumentation
 
 import dev.otherlode.config.AgentConfig
 import dev.otherlode.export.ResourceAttributes
+import dev.otherlode.registry.EndpointRegistry
 import dev.otherlode.registry.ProbeRegistry
 import net.bytebuddy.agent.ByteBuddyAgent
 import net.bytebuddy.agent.builder.ResettableClassFileTransformer
@@ -168,7 +169,7 @@ class DeflectedClassLoadTest {
         Class.forName(NOTHING_TO_PROBE, true, loader)
         assertTrue(loader.nested != null, "the nested class never loaded, so this test proved nothing")
 
-        LoadedClassSweep(instrumentation, registry, config).run(runForwardPass = true)
+        LoadedClassSweep(instrumentation, registry, EndpointRegistry(), config).run(runForwardPass = true)
 
         val manifest = registry.manifest(ResourceAttributes("test", null, "instance-1", null, "run-1"))
         val unreported = manifest.unreportedClasses.map { it.className }
@@ -193,7 +194,7 @@ class DeflectedClassLoadTest {
         val registry = ProbeRegistry()
         val config = AgentConfig.parse("includePackages=java;jdk;sun;com.sun;net.bytebuddy;org.junit;org.gradle")
 
-        LoadedClassSweep(instrumentation, registry, config).run(runForwardPass = true)
+        LoadedClassSweep(instrumentation, registry, EndpointRegistry(), config).run(runForwardPass = true)
 
         val unreported =
             registry

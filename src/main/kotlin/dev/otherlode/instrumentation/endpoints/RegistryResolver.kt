@@ -4,6 +4,7 @@ import dev.otherlode.bootstrap.OtherlodeEndpoints
 import dev.otherlode.export.DisabledEndpointModuleKind
 import dev.otherlode.export.EndpointTemplateKind
 import dev.otherlode.instrumentation.endpoints.api.EndpointModule
+import dev.otherlode.registry.DeclaringClass
 import dev.otherlode.registry.EndpointRegistry
 import dev.otherlode.registry.HandlerRef
 import java.lang.System.Logger.Level
@@ -55,7 +56,7 @@ class RegistryResolver(
         handlerDescriptor: String?,
         templateKind: Int,
     ): Any? {
-        val declare = {
+        fun declare(declaring: DeclaringClass?) =
             registry.register(
                 key = key,
                 framework = framework,
@@ -64,19 +65,10 @@ class RegistryResolver(
                 contextPath = contextPath,
                 handler = handlerRef(handlerClass, handlerMethod, handlerDescriptor),
                 templateKind = kindOf(templateKind),
+                declaringClass = declaring,
             )
-            Unit
-        }
-        if (pendingDeclarations.stage(declare)) return null
-        return registry.register(
-            key = key,
-            framework = framework,
-            verb = verb,
-            verbatimTemplate = verbatimTemplate,
-            contextPath = contextPath,
-            handler = handlerRef(handlerClass, handlerMethod, handlerDescriptor),
-            templateKind = kindOf(templateKind),
-        )
+        if (pendingDeclarations.stage { declare(it) }) return null
+        return declare(null)
     }
 
     private fun kindOf(templateKind: Int): EndpointTemplateKind =

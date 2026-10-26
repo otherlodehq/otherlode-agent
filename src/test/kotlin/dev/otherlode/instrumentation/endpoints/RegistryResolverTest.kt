@@ -7,6 +7,7 @@ import dev.otherlode.instrumentation.BootstrapHolder
 import dev.otherlode.instrumentation.branch.HandlerForwarder
 import dev.otherlode.instrumentation.endpoints.api.AdviceBinder
 import dev.otherlode.instrumentation.endpoints.api.EndpointModule
+import dev.otherlode.registry.DeclaringClass
 import dev.otherlode.registry.EndpointRegistry
 import dev.otherlode.registry.HandlerRef
 import net.bytebuddy.agent.ByteBuddyAgent
@@ -19,6 +20,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 private const val HANDLE = "(Lcom/sun/net/httpserver/HttpExchange;)V"
@@ -72,9 +74,9 @@ class RegistryResolverTest {
         val resolver = RegistryResolver(registry, emptyList(), pending)
 
         resolver.register("direct", "fake", "GET", "/a//b/", null, null, null, null, OtherlodeEndpoints.TEMPLATE_REGEX)
-        pending.begin()
+        pending.begin("com.example.Declaring")
         resolver.register("staged", "fake", "GET", "/c//d/", null, null, null, null, OtherlodeEndpoints.TEMPLATE_REGEX)
-        pending.commit()
+        pending.commit(null)
 
         assertEquals(
             mapOf("/a//b/" to EndpointTemplateKind.REGEX, "/c//d/" to EndpointTemplateKind.REGEX),
@@ -90,9 +92,9 @@ class RegistryResolverTest {
         val servlet = OtherlodeEndpoints.TEMPLATE_SERVLET_PATTERN
 
         resolver.register("direct", "fake", "GET", "*.do", "/ctx", null, null, null, servlet)
-        pending.begin()
+        pending.begin("com.example.Declaring")
         resolver.register("staged", "fake", "GET", "/", null, null, null, null, servlet)
-        pending.commit()
+        pending.commit(null)
 
         assertEquals(
             mapOf("*.do" to EndpointTemplateKind.SERVLET_PATTERN, "/" to EndpointTemplateKind.SERVLET_PATTERN),
@@ -113,9 +115,9 @@ class RegistryResolverTest {
         val pending = PendingDeclarations()
         val resolver = RegistryResolver(registry, emptyList(), pending, forwardersToHandleOrder())
 
-        pending.begin()
+        pending.begin("com.example.Declaring")
         resolver.register("k1", "fake", "GET", "/staged", null, "com.example.Ref", "handle", HANDLE, OtherlodeEndpoints.TEMPLATE_PATH)
-        pending.commit()
+        pending.commit(null)
 
         assertEquals(HandlerRef("com.example.HandlersKt", "handleOrder", HANDLE), joinOf(registry, "/staged"))
     }
@@ -220,7 +222,7 @@ class RegistryResolverTest {
         val pending = PendingDeclarations()
         val resolver = RegistryResolver(registry, emptyList(), pending)
 
-        pending.begin()
+        pending.begin("com.example.Declaring")
         assertNull(
             resolver.register(
                 "key-1",
@@ -235,11 +237,13 @@ class RegistryResolverTest {
             ),
             "a staged declaration answers null rather than an entry",
         )
-        assertEquals(0, registry.computeManifestEntries(100).sumOf { it.endpoints.size }, "nothing is declared while staged")
+        assertEquals(0, registry.endpoints().size, "nothing is declared while staged")
 
-        pending.commit()
+        pending.commit(null)
+        assertEquals(1, registry.endpoints().size, "the commit declares what the transform staged")
+        registry.confirmFrom(setOf("com.example.Declaring"))
         val declared = registry.computeManifestEntries(100).flatMap { it.endpoints }
-        assertEquals(1, declared.size, "the commit declares what the transform staged")
+        assertEquals(1, declared.size, "a confirmed class publishes what it declared")
         assertEquals("/staged", declared.single().routeTemplate)
     }
 
@@ -249,7 +253,7 @@ class RegistryResolverTest {
         val pending = PendingDeclarations()
         val resolver = RegistryResolver(registry, emptyList(), pending)
 
-        pending.begin()
+        pending.begin("com.example.Declaring")
         resolver.register("key-1", "fake", "GET", "/dropped", null, null, null, null, OtherlodeEndpoints.TEMPLATE_PATH)
         // What onComplete does for a transform that failed: the class runs without advice, so an
         // endpoint declared for it would sit at zero dispatches and read as never called.
@@ -284,15 +288,78 @@ class RegistryResolverTest {
     @Test
     fun `a staged declaration that throws on commit does not stop the ones after it`() {
         val pending = PendingDeclarations()
-        pending.begin()
+        pending.begin("com.example.Declaring")
         var ranAfterTheFailure = false
         pending.stage { throw IllegalStateException("bad route") }
         pending.stage { ranAfterTheFailure = true }
 
-        pending.commit()
+        pending.commit(null)
 
         assertTrue(ranAfterTheFailure)
         assertEquals(0, pending.pendingCount())
+    }
+
+    @Test
+    fun `every declaration of one commit receives the class begin named, defined by the loader commit was given`() {
+        val pending = PendingDeclarations()
+        val received = mutableListOf<DeclaringClass>()
+        val loader = ClassLoader.getSystemClassLoader()
+        pending.begin("com.example.Declaring")
+        pending.stage { received += it }
+        pending.begin("com.example.Declaring")
+        pending.stage { received += it }
+
+        pending.commit(loader)
+
+        assertEquals(2, received.size)
+        assertEquals("com.example.Declaring", received.first().className)
+        assertSame(received.first(), received.last(), "one commit is one declaring class")
+        assertSame(loader, received.first().classLoaderRef!!.get())
+    }
+
+    @Test
+    fun `a commit that staged nothing reads no definition attempt`() {
+        val pending = PendingDeclarations()
+        pending.begin("com.example.Declaring")
+
+        pending.commit(null) { error("the attempt is read only when something was staged") }
+
+        assertEquals(0, pending.pendingCount())
+    }
+
+    @Test
+    fun `a staged registration records the class begin named, and the class is confirmed by its name`() {
+        val registry = EndpointRegistry()
+        val pending = PendingDeclarations()
+        val resolver = RegistryResolver(registry, emptyList(), pending)
+
+        pending.begin("com.example.Declaring")
+        resolver.register("key-1", "fake", "GET", "/staged", null, null, null, null, OtherlodeEndpoints.TEMPLATE_PATH)
+        pending.commit(null)
+
+        assertEquals(1, registry.unconfirmedClassCount())
+        assertEquals(0, registry.computeManifestEntries(100).sumOf { it.endpoints.size }, "a declaration from a transform waits")
+        registry.confirmFrom(setOf("com.example.Declaring"))
+        assertEquals(1, registry.computeManifestEntries(100).sumOf { it.endpoints.size })
+    }
+
+    @Test
+    fun `a module disable staged in a transform is committed and withholds nothing`() {
+        val registry = EndpointRegistry()
+        val pending = PendingDeclarations()
+
+        pending.begin("com.example.Declaring")
+        pending.stage {
+            registry.recordDisabledModule(
+                "staged-module",
+                "hook matches no method",
+                DisabledEndpointModuleKind.HOOK_UNMATCHED,
+            )
+        }
+        pending.commit(null)
+
+        assertEquals(listOf("staged-module"), registry.computeDisabledModules()?.modules?.map { it.module })
+        assertEquals(0, registry.unconfirmedClassCount())
     }
 
     @Test

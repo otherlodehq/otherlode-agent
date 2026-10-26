@@ -30,6 +30,7 @@ the section being read.
 
 ### Changed
 
+- A JAX-RS resource class's routes are reported once the agent has seen the class defined or a route of it called. A resource class the JVM never defines reports no routes, and the agent logs a `WARNING` naming it (ADR 0028).
 - Every chunk of a delta batch, manifest, static baseline and class listing closes at 8 MiB of encoded bytes or 90% of the collector's element limit for its kind, as well as at its entry cap. A class too large to send alone is reported as skipped in the manifest, and its hits are not sent. A static baseline that holds such a class is not sent at all, and the agent logs one WARNING that names the class.
 - An `exportUrl` the agent cannot use turns the agent off for the JVM with one ERROR, in place of a warning and a fall back to `http://localhost:4319`. A URL with a user name or password is one of these. An `authToken` with a character outside the visible ASCII range `!` to `~` turns the agent off the same way. Neither ERROR quotes the token, or any of the URL but a host with an underscore.
 - A service name, namespace, version, environment or instance ID over 1024 bytes is skipped with a warning, and the next source gives the value, since the collector refuses a payload that carries one.

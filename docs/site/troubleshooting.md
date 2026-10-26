@@ -279,6 +279,14 @@ The agent rewrote the class, and the JVM then never defined it, on two sweeps in
 
 The agent holds back the class's probes, so the report does not list it as dead code.
 
+A JAX-RS resource class that declared routes and was never defined gets a line of its own, counting the routes nothing else reports, and those routes stay out of the report:
+
+```text
+otherlode: com.acme.shop.PluginResource declared 2 endpoints while being woven but the JVM never defined it; its endpoints are withheld for good
+```
+
+At shutdown the agent adds `otherlode: 1 classes declared endpoints while being woven but were never confirmed defined`. A route that another class or framework also serves is still reported, and a class whose routes all have another source gets no line of its own.
+
 ## A method has no branch probes
 
 A method keeps its entry probe and loses branch probes in three situations, each with its own message.

@@ -6,6 +6,7 @@ import dev.otherlode.export.FrameworkMarker
 import dev.otherlode.export.ProbeKind
 import dev.otherlode.export.ResourceAttributes
 import dev.otherlode.registry.DependencyRegistry
+import dev.otherlode.registry.EndpointRegistry
 import dev.otherlode.registry.FrameworkMarkerDefinition
 import dev.otherlode.registry.FrameworkMarkerRegistry
 import dev.otherlode.registry.ProbeMeta
@@ -75,7 +76,8 @@ class LoadedClassSweepTest {
         // list.
         val registry = ProbeRegistry(confirmsDefinitions = true)
         registry.register("java.lang.String", layoutHash = 1L, probes = oneMethodProbe())
-        val sweep = LoadedClassSweep(instrumentation, registry, AgentConfig.parse("includePackages=java.lang;com.example"))
+        val sweep =
+            LoadedClassSweep(instrumentation, registry, EndpointRegistry(), AgentConfig.parse("includePackages=java.lang;com.example"))
 
         sweep.run(runForwardPass = true)
 
@@ -91,7 +93,7 @@ class LoadedClassSweepTest {
     fun `a registered class the JVM has loaded is confirmed by a sweep`() {
         val registry = ProbeRegistry(confirmsDefinitions = true)
         registry.register(LoadedClassSweepTest::class.java.name, layoutHash = 1L, probes = oneMethodProbe())
-        val sweep = LoadedClassSweep(instrumentation, registry, scopedConfig)
+        val sweep = LoadedClassSweep(instrumentation, registry, EndpointRegistry(), scopedConfig)
 
         sweep.run(runForwardPass = false)
 
@@ -102,7 +104,7 @@ class LoadedClassSweepTest {
     fun `one WARNING is logged per class newly withheld for good, and none again for the same class`() {
         val registry = ProbeRegistry(confirmsDefinitions = true)
         registry.register("com.example.never.Loaded", layoutHash = 1L, probes = oneMethodProbe())
-        val sweep = LoadedClassSweep(instrumentation, registry, scopedConfig)
+        val sweep = LoadedClassSweep(instrumentation, registry, EndpointRegistry(), scopedConfig)
 
         val records =
             captureLogRecords(LoadedClassSweep::class.java.name) {
@@ -120,7 +122,7 @@ class LoadedClassSweepTest {
     fun `the shutdown summary is logged only on the final flush and only when a class was withheld`() {
         val registry = ProbeRegistry(confirmsDefinitions = true)
         registry.register("com.example.never.Loaded", layoutHash = 1L, probes = oneMethodProbe())
-        val sweep = LoadedClassSweep(instrumentation, registry, scopedConfig)
+        val sweep = LoadedClassSweep(instrumentation, registry, EndpointRegistry(), scopedConfig)
 
         val beforeFinal =
             captureLogRecords(LoadedClassSweep::class.java.name) {
@@ -144,7 +146,7 @@ class LoadedClassSweepTest {
     @Test
     fun `the shutdown summary is not logged when no class was withheld`() {
         val registry = ProbeRegistry(confirmsDefinitions = true)
-        val sweep = LoadedClassSweep(instrumentation, registry, scopedConfig)
+        val sweep = LoadedClassSweep(instrumentation, registry, EndpointRegistry(), scopedConfig)
 
         val records = captureLogRecords(LoadedClassSweep::class.java.name) { sweep.run(runForwardPass = false, final = true) }
 
@@ -169,7 +171,7 @@ class LoadedClassSweepTest {
         val registry = ProbeRegistry()
         val config = AgentConfig.parse("includePackages=com.example.target")
 
-        LoadedClassSweep(instrumentation, registry, config).run(runForwardPass = true)
+        LoadedClassSweep(instrumentation, registry, EndpointRegistry(), config).run(runForwardPass = true)
 
         val unreported =
             registry
@@ -191,7 +193,8 @@ class LoadedClassSweepTest {
             }
         registry.register("com.example.Unconfirmed", layoutHash = 1L, probes = oneMethodProbe())
         val dependencies = DependencyRegistry().apply { markListingComplete() }
-        val sweep = LoadedClassSweep(instrumentation, registry, scopedConfig, LoadedDependencyCounter(dependencies) { null })
+        val sweep =
+            LoadedClassSweep(instrumentation, registry, EndpointRegistry(), scopedConfig, LoadedDependencyCounter(dependencies) { null })
 
         assertFailsWith<IllegalStateException> { sweep.run(runForwardPass = true) }
 
@@ -206,7 +209,15 @@ class LoadedClassSweepTest {
     @Test
     fun `the forward pass records a marker whose class the JVM has defined`() {
         val markers = markers(sweptClass, "com.example.markers.NotLoaded")
-        val sweep = LoadedClassSweep(instrumentation, ProbeRegistry(), scopedConfig, frameworkMarkers = markers, clock = { 42L })
+        val sweep =
+            LoadedClassSweep(
+                instrumentation,
+                ProbeRegistry(),
+                EndpointRegistry(),
+                scopedConfig,
+                frameworkMarkers = markers,
+                clock = { 42L },
+            )
 
         sweep.run(runForwardPass = true)
 
@@ -216,7 +227,8 @@ class LoadedClassSweepTest {
     @Test
     fun `a pass that is not the forward pass records a marker too`() {
         val markers = markers(sweptClass)
-        val sweep = LoadedClassSweep(instrumentation, ProbeRegistry(), scopedConfig, frameworkMarkers = markers, clock = { 7L })
+        val sweep =
+            LoadedClassSweep(instrumentation, ProbeRegistry(), EndpointRegistry(), scopedConfig, frameworkMarkers = markers, clock = { 7L })
 
         sweep.run(runForwardPass = false)
 
@@ -234,7 +246,7 @@ class LoadedClassSweepTest {
             }
         registry.register("com.example.Unconfirmed", layoutHash = 1L, probes = oneMethodProbe())
         val markers = markers(sweptClass)
-        val sweep = LoadedClassSweep(instrumentation, registry, scopedConfig, frameworkMarkers = markers)
+        val sweep = LoadedClassSweep(instrumentation, registry, EndpointRegistry(), scopedConfig, frameworkMarkers = markers)
 
         assertFailsWith<IllegalStateException> { sweep.run(runForwardPass = true) }
 
