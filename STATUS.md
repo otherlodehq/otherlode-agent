@@ -34,18 +34,24 @@ multi-tenant backend.
    make the collector's GHCR package public. Still unknown: whether a
    dropped Portal deployment frees its version. A `rehearsal/1-again` tag
    answers it.
-3. **Check the quickstart end to end.** otherlode.dev's
-   `start/quickstart.md` is written (`8dc55c3`) but has not been run. Run
-   it against the dev stack with the collector's forward URL pointed at
-   it, since `ingest.otherlode.dev` exists only after the front door. Its
-   links to the agent's and collector's pages resolve once their first
+3. **Run the quickstart's release-only steps.** Every other step ran on
+   the dev stack on 2026-10-26. These need the releases or the front door:
+   the Maven Central download, the `ghcr.io/otherlodehq/otherlode-collector`
+   image, `https://app.otherlode.dev` and `https://ingest.otherlode.dev`.
+   Its links to the agent's and collector's pages resolve once their first
    releases sync. It tells readers to ignore the agent's plain-http token
    warning on `localhost`; exempting loopback addresses in the agent
    would remove that sentence.
-4. **Review all customer copy.** Copy edits are pre-approved until
+4. **Neither release workflow has run in full.** The collector's
+   `release.yml` has never run, so its GHCR multi-arch push, the
+   attestation `deploy.md` tells users to verify, its GitHub release and
+   its docs sync first run at v0.1.0. The agent's `rehearsal/1` covered
+   the Portal upload only; `release.yml`'s `github-release` and `docs`
+   jobs have never run.
+5. **Review all customer copy.** Copy edits are pre-approved until
    release, and the whole corpus is reviewed once before it:
    `docs/site`, the README, and the server's UI and docs.
-5. **Before the first customer:** the server STATUS's "Go-live
+6. **Before the first customer:** the server STATUS's "Go-live
    checklist" (the company, the privacy policy, the site, the front door,
    the database tier). No collector can be given
    an ingest URL until the front door exists. None of it blocks publishing
@@ -68,13 +74,8 @@ superclass, so its own class file need not name a JAX-RS type. Measure the
 cost on a Jersey or Quarkus service first, then find a necessary condition
 that holds for inherited annotations.
 
-### Hardening from the 2026-10-24 grilling: landed, with open items
+### Hardening follow-ups
 
-Decided in ADRs 0075 and 0076 and in amendments to ADRs 0014, 0017, 0068 and 0070, and landed on 2026-10-25 as one commit each: the endpoint registry bounds (11dea70), export URL and token refusal (9fbfd4c), `final_flush` on the closing batch (133c6a7), the baseline's first copy (78388b7), the testkit note (7eca8fc) and chunk bounds by bytes and elements.
-
-The class-loader gap this left is closed on the server by server ADR 0079: a class any in-scope run skipped makes no zero-count claim (server 2241248, 9ff9c3d and 56f5d01, not deployed yet). The server's own follow-ups are in its `STATUS.md`.
-
-Open:
 - **ADR 0009's list of the collector's 400 reasons** (line 17) leaves out the 1024-byte identity cap, and its 413 note leaves out the element limits (collector ADR 0008).
 
 Static baseline follow-ups the first-copy change surfaced. Each only loses evidence:
@@ -82,6 +83,13 @@ Static baseline follow-ups the first-copy change surfaced. Each only loses evide
 - A class held only under `META-INF/versions/N/` of an earlier multi-release jar marks no name, so a later root's base copy is kept.
 - A jar whose manifest cannot be read is still scanned; the JDK drops such a jar. `Class-Path` entries are split on single spaces and resolved as file paths, where the JDK tokenises and resolves URLs.
 - Cross-class reads can take a shadowed copy's tables from the referencing root's locator.
+
+### The benchmark's ceiling job fails some nights
+
+`benchmark-overhead.yml`'s ceiling job failed on 2026-10-23 (run
+39925722950) and 2026-10-25 (run 40176739802) with `InvalidRunException:
+The overhead run is invalid`; the runs between passed. Find what makes a
+run invalid before the release run of checklist item 1 depends on it.
 
 ### Tooling: code principles, a refactoring playbook and a prose lint
 
