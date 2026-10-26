@@ -13,18 +13,23 @@ the collector as open source. `otherlode-server` stays closed source and
 hosted (server ADR 0001), so every adopter's collector forwards to one
 multi-tenant backend.
 
-1. **Re-run the overhead on the commit to be tagged.** `docs/site/overhead.md`
+1. **Headline startup is past the 25% target.** `docs/site/overhead.md`
    and `benchmark-overhead/README.md` quote run 38944648115 on `1332f3f`
-   (2026-10-16), with narrow startup at +21.7%, inside the README's 25%
-   target. Re-run on the tagged commit and update both pages if a figure
-   moves. The run is `benchmark-overhead.yml`, which waits for the
-   organisation's GitHub Actions billing to be fixed.
+   (2026-10-16): narrow startup +21.7%, inside the README's 25% target.
+   Every scheduled `benchmark-overhead.yml` run since 2026-10-19 reads
+   +33% to +38%. On `5b28fcf` (run 40296149809) it is 16.9 s to 22.7 s
+   (+34.5%), and the ceiling 18.3 s to 50.7 s (+177%). From 2026-10-13
+   to 2026-10-18 runs read +17% to +23%, except 2026-10-14 at +35%. The
+   jump sits between `356ffd0` and `6644fe4`. The runner image also
+   moved: `ubuntu-latest` went to Ubuntu 26 from 2026-10-19. Run the
+   workflow by hand on both commits back to back to tell the two apart.
+   Then fix the regression, or move the target and both pages, and re-run
+   on the commit to be tagged.
 2. **Cut the releases** (ADRs 0062 and 0063, collector ADR 0006). Cutting
    is Luke's call. Collector `v0.1.0` goes first, since the agent's
    `release.sh` refuses a release until it exists. Each needs its
    `## [0.1.0]` changelog section written, since both `release.yml` files
-   refuse one without it. `release.yml` and `rehearsal.yml` run in GitHub
-   Actions, so cutting waits for the billing fix too. Before the first release of each,
+   refuse one without it. Before the first release of each,
    make the collector's GHCR package public. Still unknown: whether a
    dropped Portal deployment frees its version. A `rehearsal/1-again` tag
    answers it.
@@ -39,15 +44,10 @@ multi-tenant backend.
    the org secret's repository access, keeping `otherlode-server`, whose CI
    still reads it. Without the token the docs job skips the sync to
    otherlode.dev with only a notice.
-2b. **Bump the collector's and the server's bindings** to the schema with
-   `DeltaBatch.flush_complete` (ADR 0077), pushed to the Buf Schema
-   Registry on 2026-10-26 (see "The settled wait and `flush_complete`"
-   below). The collector's release, and so the agent's, waits on that
-   bump.
 3. **The quickstart** in otherlode.dev's `start/` (that repo's ADR 0001).
    The agent's and collector's pages and the overview are written.
 4. **Review all customer copy.** Copy edits are pre-approved until
-   release (2026-10-16), and the whole corpus is reviewed once before it:
+   release, and the whole corpus is reviewed once before it:
    `docs/site`, the README, and the server's UI and docs.
 5. **Before the first customer:** the server STATUS's "Go-live
    checklist" (the company, the privacy policy, the site, the front door,
@@ -75,12 +75,6 @@ Static baseline follow-ups the first-copy change surfaced. Each only loses evide
 - A class held only under `META-INF/versions/N/` of an earlier multi-release jar marks no name, so a later root's base copy is kept.
 - A jar whose manifest cannot be read is still scanned; the JDK drops such a jar. `Class-Path` entries are split on single spaces and resolved as file paths, where the JDK tokenises and resolves URLs.
 - Cross-class reads can take a shadowed copy's tables from the referencing root's locator.
-
-### The settled wait and `flush_complete` (ADR 0077): agent built, bindings to bump
-
-The agent sets `DeltaBatch.flush_complete` and the testkit's `awaitSettled` waits per instance for two complete flushes. The schema is in the Buf Schema Registry as `buf.build/otherlode/otherlode` commit `d207ad116b064bfb98c4388a9fad93ea`, label `master`, pushed by hand on 2026-10-26 from `5b28fcf` since Actions runs no job. Left, in order:
-1. Collector: bump the bindings, with a redaction test that `flush_complete` passes and marks nothing stripped. Until then a collector built from master strips the field from an agent built from master and marks the run `fields_stripped`.
-2. Server: bump the bindings.
 
 ### Tooling: code principles, a refactoring playbook and a prose lint
 
