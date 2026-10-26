@@ -36,7 +36,7 @@ Most problems are visible at WARNING and above. The DEBUG lines add detail about
 
 ## The agent is disabled
 
-A disabled agent instruments nothing and sends nothing, and your application starts and runs as if the flag were absent. The server lists no instance for it.
+A disabled agent instruments nothing and sends nothing, and your application starts and runs as if the flag were absent. Otherlode lists no instance for it.
 
 ### includePackages is missing
 
@@ -118,7 +118,7 @@ The `enabled` option is `false`, often through `OTHERLODE_ENABLED=false` in the 
 otherlode: endpoint instrumentation failed to install, continuing without endpoint tracking
 ```
 
-The method and branch tiers work. The endpoint tier did not install, and the instance reports no endpoints. A variant, `otherlode: endpoint module discovery failed, continuing without endpoint tracking`, means the agent could not load its list of endpoint modules. The stack trace names the cause. The agent still loads that list with `endpointsEnabled=false`, so it can report each module as kept off, and the discovery error appears with the option off too. In that case no module is reported, so the server cannot tell this instance's endpoints were not instrumented. Report the trace.
+The method and branch tiers work. The endpoint tier did not install, and the instance reports no endpoints. A variant, `otherlode: endpoint module discovery failed, continuing without endpoint tracking`, means the agent could not load its list of endpoint modules. The stack trace names the cause. The agent still loads that list with `endpointsEnabled=false`, so it can report each module as kept off, and the discovery error appears with the option off too. In that case no module is reported, so Otherlode cannot tell this instance's endpoints were not instrumented. Report the trace.
 
 ## An option is ignored
 
@@ -197,13 +197,13 @@ This logs once. The chunks stay pending and go out one per flush after a flush w
 otherlode: the static baseline is not sent: com.acme.Huge alone exceeds the 8 MiB limit on encoded bytes for one chunk, and a scan without it would read as complete
 ```
 
-One declared class is too large for a static baseline chunk, over 8 MiB of encoded bytes or over 180,000 elements. The agent never splits a class, and a scan without it would read as complete, so it sends no chunk of the scan. The run has no complete scan, and the server makes no never-loaded claim for it. A class like this has very long string constants in its conditions, or tens of thousands of methods or call edges. Exclude the class with `excludePackages`, or split it, and restart.
+One declared class is too large for a static baseline chunk, over 8 MiB of encoded bytes or over 180,000 elements. The agent never splits a class, and a scan without it would read as complete, so it sends no chunk of the scan. The run has no complete scan, and Otherlode makes no never-loaded claim for it. A class like this has very long string constants in its conditions, or tens of thousands of methods or call edges. Exclude the class with `excludePackages`, or split it, and restart.
 
 ```text
 otherlode: com.acme.Huge is reported as skipped: its manifest entries alone exceed the collector's limits on encoded bytes or elements, so its methods are not reported
 ```
 
-When the class's manifest entries are too large, the agent logs this line. The agent reports it as skipped with the reason `too large to report: its manifest entries exceed the collector's limits`, and sends none of its hits. The server counts the class as loaded and claims nothing about its methods. Split the class to get its methods reported, or exclude it.
+When the class's manifest entries are too large, the agent logs this line. The agent reports it as skipped with the reason `too large to report: its manifest entries exceed the collector's limits`, and sends none of its hits. Otherlode counts the class as loaded and claims nothing about its methods. Split the class to get its methods reported, or exclude it.
 
 ### A class listing send fails
 
@@ -234,7 +234,7 @@ The listing reads only the class path, and only when it names every folder the J
 otherlode: the static baseline scan did not end within 15s of shutdown, so this test run may send no complete scan
 ```
 
-This appears only with `testRun` and `staticBaselineEnabled` both on. The shutdown hook waits 15 seconds for the scan, and the scan was still running. The server makes no never-loaded claim from an incomplete scan. Run the scan on a smaller classpath, or accept that this test run reports no complete scan.
+This appears only with `testRun` and `staticBaselineEnabled` both on. The shutdown hook waits 15 seconds for the scan, and the scan was still running. Otherlode makes no never-loaded claim from an incomplete scan. Run the scan on a smaller classpath, or accept that this test run reports no complete scan.
 
 ## A test fails with a version mismatch
 
@@ -263,7 +263,7 @@ The class is in your include rules, but a superclass or interface, at any depth,
 otherlode: instrumentation failed for com.acme.shop.Report, class will run uninstrumented
 ```
 
-The agent could not weave the class. The stack trace under the line says why, and the class runs unchanged. The server counts a skipped class as loaded, and the report does not call it dead. [Classes](classes) lists the class states. If the cause is not in your build, report the class, its compiler and the trace.
+The agent could not weave the class. The stack trace under the line says why, and the class runs unchanged. Otherlode counts a skipped class as loaded, and the report does not call it dead. [Classes](classes) lists the class states. If the cause is not in your build, report the class, its compiler and the trace.
 
 The testkit lists skipped classes with `collector.skippedClasses()`.
 

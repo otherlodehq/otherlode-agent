@@ -13,17 +13,17 @@ This page covers the whole class. For what the agent records inside a class that
 | State | What puts a class there | Where you see it |
 |---|---|---|
 | Instrumented | The class loaded, matched the rules, and has at least one method, default-argument site or static initialiser to probe. | Its probes reach the collector in the manifest. |
-| Never initialised | The class loaded, has a static initialiser, and no instance ran it. | `neverInitialized()` in [the testkit](testkit-api), and the server's class findings. |
-| Never instantiated | The class loaded, and none of its constructors ran in any instance. | `neverInstantiated()`, and the server's class findings. |
+| Never initialised | The class loaded, has a static initialiser, and no instance ran it. | `neverInitialized()` in [the testkit](testkit-api), and Otherlode's class findings. |
+| Never instantiated | The class loaded, and none of its constructors ran in any instance. | `neverInstantiated()`, and Otherlode's class findings. |
 | Skipped | The class matched the rules and the agent could not instrument it, or its manifest entries are too large to send. | A `WARNING` log line, `skippedClasses()`, and the manifest's skipped list. |
 | Loaded where no transformer saw it | The class loaded, but the JVM offered it to no transformer. | One `INFO` log line, and the manifest. |
 | Failed to load | The agent wove the class and the JVM never defined it. | A `WARNING` log line, `failedToLoad()`, and the manifest. |
 | Failed to initialise | The JVM defined the class and either its static initialiser threw or the JVM's verifier rejected it, so the class can never run in that JVM. | The manifest, and `failedToInitialize()`. |
-| Never loaded | A complete static baseline declared the class and no manifest ever mentioned it. | `neverLoaded()`, and the server's class findings. |
+| Never loaded | A complete static baseline declared the class and no manifest ever mentioned it. | `neverLoaded()`, and Otherlode's class findings. |
 | Nothing to probe | The class loaded and has no method, default-argument site or static initialiser the agent probes. | Nothing, except in the static baseline's unprobed list. |
 | Left out | The class is synthetic, or a framework generated it at runtime. | Nothing. |
 
-A class holds at most one of never loaded, never initialised and never instantiated: the first that applies, in that order. The server judges these findings. The agent sends the facts they rest on.
+A class holds at most one of never loaded, never initialised and never instantiated: the first that applies, in that order. Otherlode judges these findings. The agent sends the facts they rest on.
 
 ## Instrumented classes
 
@@ -56,7 +56,7 @@ Both findings leave out the class's inline, generated and unread-shape methods w
 
 ## Skipped classes
 
-The agent skips a class that matched the rules and that it could not instrument. The class runs unchanged. The agent records the class name and a reason, once per class name, and sends the list in the manifest, so the server counts the class as loaded and never as dead code.
+The agent skips a class that matched the rules and that it could not instrument. The class runs unchanged. The agent records the class name and a reason, once per class name, and sends the list in the manifest, so Otherlode counts the class as loaded and never as dead code.
 
 Two causes put a class here:
 
@@ -76,7 +76,7 @@ A type that a field or method signature names, but that is not a supertype, does
 
 The JVM does not call a transformer for a class it loads while the same thread is inside another transform. The agent never sees such a class, and neither does any other agent. It is defined and runs, but it has no probes and does not appear in the manifest as an instrumented or skipped class. Next to a complete static baseline that declared it, the class would read as never loaded, though it ran.
 
-The agent finds these classes by sweeping every class the JVM holds. A sweep keeps the loaded classes that are in scope and that the agent never registered, skipped or found to have nothing to probe. It names each one in the manifest, and the server counts it as loaded. It makes no claim about the class's methods.
+The agent finds these classes by sweeping every class the JVM holds. A sweep keeps the loaded classes that are in scope and that the agent never registered, skipped or found to have nothing to probe. It names each one in the manifest, and Otherlode counts it as loaded. It makes no claim about the class's methods.
 
 The sweep runs every tenth flush and on the shutdown flush. With the default `flushIntervalSeconds` of 60, that is about every ten minutes. The sweep ignores:
 
@@ -121,7 +121,7 @@ If the agent cannot read the stack that shows when a definition attempt started 
 otherlode: the definition attempt of a woven class could not be read from its thread's stack; such classes are never reported as failed to load
 ```
 
-A class that failed to load is a deployment to fix, never dead code. The server reads it that way even where a complete baseline declared the class. If some instance loaded the class, the class is loaded, whatever another instance says. `failedToLoad()` lists the classes some manifest named and no instance loaded, and `neverLoaded()` leaves them out.
+A class that failed to load is a deployment to fix, never dead code. Otherlode reads it that way even where a complete baseline declared the class. If some instance loaded the class, the class is loaded, whatever another instance says. `failedToLoad()` lists the classes some manifest named and no instance loaded, and `neverLoaded()` leaves them out.
 
 ## Failed to initialise
 
@@ -182,9 +182,9 @@ Each class the scan finds in scope lands in one of three lists:
 | Unprobed | A class with nothing to probe, such as an interface with only abstract methods or an annotation type. |
 | Unreadable | A class file the scan could not read or resolve, with the reason. The scan logs nothing about it. |
 
-Only a declared class can be never loaded. The live tier never registers an unprobed class, so declaring one would make the server call a heavily used marker interface never loaded. An unreadable class never silently drops out of the inventory, since it is on the list.
+Only a declared class can be never loaded. The live tier never registers an unprobed class, so declaring one would make Otherlode call a heavily used marker interface never loaded. An unreadable class never silently drops out of the inventory, since it is on the list.
 
-The server calls a declared class never loaded only when it holds the complete scan. The agent sends the scan in chunks of about 20,000 entries, and each chunk stays under 8 MiB and under 180,000 elements (see [chunk caps](data-sent#chunk-caps)). Each chunk says its position out of the total. The agent sends the chunks in order and stops at the first failure. It sends the rest after the next flush that the collector confirms, and logs these lines on the way:
+Otherlode calls a declared class never loaded only when it holds the complete scan. The agent sends the scan in chunks of about 20,000 entries, and each chunk stays under 8 MiB and under 180,000 elements (see [chunk caps](data-sent#chunk-caps)). Each chunk says its position out of the total. The agent sends the chunks in order and stops at the first failure. It sends the rest after the next flush that the collector confirms, and logs these lines on the way:
 
 ```text
 otherlode: failed to send static baseline chunk 2 of 3; it and the chunks after it are sent again after a flush the collector confirms
@@ -198,7 +198,7 @@ A class is never split across chunks. If one declared class is too large for a c
 otherlode: the static baseline is not sent: com.acme.Huge alone exceeds the 8 MiB limit on encoded bytes for one chunk, and a scan without it would read as complete
 ```
 
-A scan without the class would be complete and wrong. The server would miss the class's call edges and creations, and another class could read as never constructed. The run has no complete scan, so the server makes no never-loaded claim for it.
+A scan without the class would be complete and wrong. Otherlode would miss the class's call edges and creations, and another class could read as never constructed. The run has no complete scan, so Otherlode makes no never-loaded claim for it.
 
 In the testkit, `neverLoaded()` also leaves out a declared class whose methods are all inline, generated or unread shapes. Kotlin callers never call an inline method, and the compiler regenerates generated ones, so such a class never loading is no evidence it is dead.
 
@@ -206,7 +206,7 @@ In the testkit, `neverLoaded()` also leaves out a declared class whose methods a
 
 The scan can only find classes in places it knows to look. It cannot find a class whose location another system decides at run time. If you start Tomcat with `java -cp bootstrap.jar:tomcat-juli.jar org.apache.catalina.startup.Bootstrap start`, nothing about your application is on `java.class.path`. Tomcat reads `server.xml` after the agent's scan has finished, finds `webapps/shop.war`, and builds a class loader for it. A plugin loader that scans a directory at its own discretion has the same effect.
 
-Classes in those places are instrumented normally when they load, since the JVM tells the agent about every class any loader defines. What they lack is a declaration. A class in the WAR that never loads is not in the baseline, and so the server never calls it never loaded.
+Classes in those places are instrumented normally when they load, since the JVM tells the agent about every class any loader defines. What they lack is a declaration. A class in the WAR that never loads is not in the baseline, and so Otherlode never calls it never loaded.
 
 The agent warns you when it detects the gap. If a class registers when it loads and is in none of the scan's lists, the scan missed it for this process. The agent logs this line once per class:
 
@@ -218,9 +218,9 @@ Classes that register before the scan finishes are checked when it ends, with a 
 
 ## The class listing
 
-A class that is missing from a run's probes may be deleted, or it may not have loaded yet. The static baseline can name every class, but it is off by default. The **class listing** is on by default and cheaper: once per process, the agent lists the names of the classes the build holds. The server uses it to tell removed code from code that has not loaded.
+A class that is missing from a run's probes may be deleted, or it may not have loaded yet. The static baseline can name every class, but it is off by default. The **class listing** is on by default and cheaper: once per process, the agent lists the names of the classes the build holds. Otherlode uses it to tell removed code from code that has not loaded.
 
-The listing holds names only. It reads no class file, so it says which classes exist and not what they contain. It lists every class file whose name falls under `includePackages` and under no prefix in `excludePackages`. Like the scan, it leaves out `module-info` and `package-info`. In a multi-release jar, a class under `META-INF/versions/N/` is listed by its own name, since the JVM can load a class from there. The rules that need a class's bytes, such as the synthetic-class rule in [Classes the agent leaves out](#classes-the-agent-leaves-out), do not apply to it. The listing carries the include and exclude rules it applied, so the server can tell a class outside them from a class that is gone.
+The listing holds names only. It reads no class file, so it says which classes exist and not what they contain. It lists every class file whose name falls under `includePackages` and under no prefix in `excludePackages`. Like the scan, it leaves out `module-info` and `package-info`. In a multi-release jar, a class under `META-INF/versions/N/` is listed by its own name, since the JVM can load a class from there. The rules that need a class's bytes, such as the synthetic-class rule in [Classes the agent leaves out](#classes-the-agent-leaves-out), do not apply to it. The listing carries the include and exclude rules it applied, so Otherlode can tell a class outside them from a class that is gone.
 
 It reads the classpath the way the JVM's system class loader does:
 
@@ -228,7 +228,7 @@ It reads the classpath the way the JVM's system class loader does:
 - In a Spring Boot executable jar or WAR, the classes under `BOOT-INF/classes/` or `WEB-INF/classes/`, and the classes in each nested jar under `BOOT-INF/lib/`, or `WEB-INF/lib/` and `WEB-INF/lib-provided/`. A multi-module application keeps its own classes in nested jars, and `includePackages` filters them like any other.
 - A directory that holds an unpacked Spring Boot application, as a container image built by Spring Boot's build plugins or a buildpack runs it, the same way: its `BOOT-INF/classes/`, every jar in its library folder, and every jar or folder its classpath index names.
 
-Like the scan, the listing cannot see a class whose location another system decides at run time: a WAR that an application server deploys, an OSGi bundle, a plugin folder, or the extra folders Spring Boot's `PropertiesLauncher` reads from `loader.path`. The server accepts a class's absence only when an earlier listing named that class, so a place the agent never reads cannot turn into a false removal.
+Like the scan, the listing cannot see a class whose location another system decides at run time: a WAR that an application server deploys, an OSGi bundle, a plugin folder, or the extra folders Spring Boot's `PropertiesLauncher` reads from `loader.path`. Otherlode accepts a class's absence only when an earlier listing named that class, so a place the agent never reads cannot turn into a false removal.
 
 The agent sends a listing only when it read the whole classpath. If a directory, a jar or a nested jar that exists cannot be opened or read, the agent sends no listing for that process and logs one warning that names the file and the cause. A listing with a hole would read as proof that the missing classes are gone. A classpath entry that does not exist is skipped, as the JVM skips it. The agent also sends no listing when `java.class.path` is empty or has an empty element, which the JVM reads as the working directory, or when the JVM runs from a module path or a linked image, which the listing does not read. An unpacked Spring Boot application whose classpath index is malformed also gives no listing. Spring Boot does not launch from one either.
 
@@ -274,7 +274,7 @@ Every line starts with `otherlode:`.
 | `INFO` | `the static baseline reached the collector after a retry` | A failed chunk got through. |
 | `WARNING` | `could not read <file> for the class listing, so no class listing is sent: <cause>` | A directory, jar or nested jar could not be read, so this process sends no class listing. |
 | `WARNING` | `java.class.path is empty or has an empty element, which the JVM reads as the working directory, so no class listing is sent` | Name the classpath, or remove the empty element, such as a leading or trailing `:`, to get a listing. |
-| `WARNING` | `this JVM runs from a module path or a linked image, which the class listing does not read, so no class listing is sent` | The application runs from the module path or a `jlink` image. No listing is sent, so the server removes no code for this process. |
+| `WARNING` | `this JVM runs from a module path or a linked image, which the class listing does not read, so no class listing is sent` | The application runs from the module path or a `jlink` image. No listing is sent, so Otherlode removes no code for this process. |
 | `WARNING` | `the class listing failed, so no class listing is sent` | An unexpected error stopped the listing. The stack trace follows. |
 | `WARNING` | `failed to send class listing chunk <i> of <n>; ...` | A chunk will be sent again. |
 | `WARNING` | `the collector refused class listing chunk <i> of <n> with status <code>, ...` | The collector refused a chunk with a `400` or `422`. The agent does not resend the listing. |

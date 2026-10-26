@@ -53,8 +53,8 @@ A payload that would be larger than its cap is split into several requests, sent
 
 A class is never split across requests, so a class can break a bound on its own. What the agent does depends on the payload:
 
-- **Manifest.** The class goes out as a skipped class with the reason `too large to report: its manifest entries exceed the collector's limits`, in place of its probes. The server counts it as loaded and claims nothing about its methods. The agent leaves the class's probe deltas out of every delta batch, and logs a `WARNING` that names the class. The classes behind it go out as usual.
-- **Static baseline.** The agent sends no chunk of the scan and logs one `WARNING` that names the class and the bound. A scan without the class would read as complete, and the server would then drop the class's call edges and creations from the baseline. The run has no complete scan, so the server makes no never-loaded claim for it.
+- **Manifest.** The class goes out as a skipped class with the reason `too large to report: its manifest entries exceed the collector's limits`, in place of its probes. Otherlode counts it as loaded and claims nothing about its methods. The agent leaves the class's probe deltas out of every delta batch, and logs a `WARNING` that names the class. The classes behind it go out as usual.
+- **Static baseline.** The agent sends no chunk of the scan and logs one `WARNING` that names the class and the bound. A scan without the class would read as complete, and Otherlode would then drop the class's call edges and creations from the baseline. The run has no complete scan, so Otherlode makes no never-loaded claim for it.
 - **Class listing and delta batch.** A class name is at most 65,535 bytes, and a class never has more deltas than probe locations in its manifest, so neither can break a bound on its own.
 
 ## Payloads
@@ -73,12 +73,12 @@ Every payload carries the same resource attributes.
 | `run_id` | A random `UUID` made once per process. It differs on every start, even under a pinned `service_instance_id` |
 | `test_run` | True when you started the agent with `testRun` |
 | `agent_version` | The agent jar's version, empty when unknown |
-| `flush_interval_seconds` | The value of `flushIntervalSeconds`, in whole seconds. The server reads it to tell a run that stopped without its final flush from one that is quiet between flushes |
+| `flush_interval_seconds` | The value of `flushIntervalSeconds`, in whole seconds. Otherlode reads it to tell a run that stopped without its final flush from one that is quiet between flushes |
 | `fields_stripped` | Never set by the agent. A collector sets it only while its redaction is switched on, when it dropped a field it does not know before forwarding |
 
 The agent adds no host name, address, user name, environment variable or system property. Resource attributes come from your configuration, from OpenTelemetry's `service.*` and `deployment.environment*` settings (see [configuration options](configuration)), and from service name detection when you set none.
 
-The run id lets the server keep one process's data apart from the next when an instance id is pinned. A consumer needs it because class ids and every total only mean something within one run.
+The run id lets Otherlode keep one process's data apart from the next when an instance id is pinned. A consumer needs it because class ids and every total only mean something within one run.
 
 ### Delta batch
 
@@ -93,9 +93,9 @@ A delta batch carries the resource attributes plus these lists. Each entry is a 
 | `flush_complete` | True only on the last delta batch of a flush, when the collector accepted every delta batch the flush sent before it |
 | `payload_sequence`, `counts_pending_since` | Where the run stands in delivering its counts; see [Pending counts](#pending-counts) |
 
-`hits_total` is the cumulative count since the process started, not the amount since the last flush. The server merges it with `max()`, so a batch that arrives twice or out of order changes nothing. `first_seen_at` is the time of the flush that first saw a non-zero count, so it is accurate to one interval.
+`hits_total` is the cumulative count since the process started, not the amount since the last flush. Otherlode merges it with `max()`, so a batch that arrives twice or out of order changes nothing. `first_seen_at` is the time of the flush that first saw a non-zero count, so it is accurate to one interval.
 
-The agent sends the batch even when no count changed. An empty batch is a heartbeat: it tells the server the instance is alive and idle, not crashed or cut off.
+The agent sends the batch even when no count changed. An empty batch is a heartbeat: it tells Otherlode the instance is alive and idle, not crashed or cut off.
 
 One flush can send several delta batches. The chunk caps split a large batch, and a flush that starts with pending counts sends a heartbeat first and, once the collector has accepted the rest, another at the end. The flush's last delta batch carries `flush_complete` when the collector accepted every delta batch the flush sent before it. When the collector refuses an earlier batch, or an earlier send gets no answer, no batch of that flush carries it, and neither does a shutdown flush that could not read its counts.
 
@@ -103,7 +103,7 @@ The ids refer to the manifest of the same run. They mean nothing without it.
 
 ### Pending counts
 
-Every delta batch and manifest carries two numbers that tell the server whether the run's counts are behind. Static baseline and class listing chunks carry neither.
+Every delta batch and manifest carries two numbers that tell Otherlode whether the run's counts are behind. Static baseline and class listing chunks carry neither.
 
 - `payload_sequence` numbers the run's delta batches and manifests from 1, one higher each time. The payload with the highest number is the run's latest word, whatever order the payloads arrived in. A gap in the numbers means nothing.
 - `counts_pending_since` is 0 when, as of the moment the payload was stamped, no count the run sent has been refused or gone unanswered. Otherwise it is the time, in milliseconds since the epoch, of the flush in which that first happened.
@@ -112,7 +112,7 @@ While the latest payload of a run carries a value other than 0, some of its hits
 
 ### Probe manifest
 
-The manifest says what each id in a delta batch names. It carries the resource attributes plus the lists below. Class entries go out once. After a manifest carrying a class is confirmed, the agent drops that class's names and keeps only each probe's kind, so if the manifest is lost after that, the server gets it back only when the instance restarts.
+The manifest says what each id in a delta batch names. It carries the resource attributes plus the lists below. Class entries go out once. After a manifest carrying a class is confirmed, the agent drops that class's names and keeps only each probe's kind, so if the manifest is lost after that, Otherlode gets it back only when the instance restarts.
 
 | Field | Content |
 |---|---|
@@ -132,7 +132,7 @@ The manifest says what each id in a delta batch names. It carries the resource a
 | `framework_markers` | Per marker: its id, the class set that matched as fully qualified names, and the time of the sweep that saw it. Each is delivered once per run. See [frameworks with no module](endpoints#frameworks-with-no-module) |
 | `dependencies` | Per dependency: `dependency_id`, identities (`group_id`, `artifact_id`, `version`), how the identity was read, the location, how it was discovered, and class count |
 | `external_classes` | Name of a class outside scope that your code refers to, the `dependency_id` that provides it, and whether nothing provides it |
-| `references_recorded`, `dependencies_listed` | Flags the server uses to know when references and the startup dependency listing are complete |
+| `references_recorded`, `dependencies_listed` | Flags Otherlode uses to know when references and the startup dependency listing are complete |
 | `payload_sequence`, `counts_pending_since` | Where the run stands in delivering its counts; see [Pending counts](#pending-counts) |
 
 #### Branch and site keys
@@ -167,7 +167,7 @@ The agent sends a static baseline only when you set `staticBaselineEnabled`. A b
 | `external_classes` | The same mapping as in the manifest |
 | `include_rules` | The include and exclude rules the scan applied, as the agent parsed them: `include_packages` and `exclude_packages` |
 
-The server uses the baseline only when it holds every chunk of a scan, which `chunk_count` tells it. A scan that holds a class too large for one chunk is not sent. See [classes](classes).
+Otherlode uses the baseline only when it holds every chunk of a scan, which `chunk_count` tells it. A scan that holds a class too large for one chunk is not sent. See [classes](classes).
 
 ### Class listing chunk
 
@@ -176,11 +176,11 @@ The agent sends a class listing unless you set `classListingEnabled=false`. A ba
 | Field | Content |
 |---|---|
 | `class_names` | The dotted names of the listed classes, distinct across the listing and sent in ascending order. A chunk holds at most 20,000 |
-| `include_rules` | The include and exclude rules the listing applied, as the agent parsed them. A prefix covers a name that equals it, or continues it with `.` or `$`. The server uses them to tell a class outside the rules from a class the build lacks |
+| `include_rules` | The include and exclude rules the listing applied, as the agent parsed them. A prefix covers a name that equals it, or continues it with `.` or `$`. Otherlode uses them to tell a class outside the rules from a class the build lacks |
 | `listed_at` | When the listing was made, in milliseconds since the epoch. Every chunk of one listing carries the same value |
 | `chunk_index`, `chunk_count` | Which part this chunk is, counting from 0, and how many parts the listing has |
 
-A listing that matches no class is one chunk with no names. A process sends no listing when a directory, jar or nested jar it reads cannot be read, because the server reads a class's absence from a complete listing as proof that the build lacks it. The server uses a listing only when it holds every chunk. See [classes](classes#the-class-listing).
+A listing that matches no class is one chunk with no names. A process sends no listing when a directory, jar or nested jar it reads cannot be read, because Otherlode reads a class's absence from a complete listing as proof that the build lacks it. Otherlode uses a listing only when it holds every chunk. See [classes](classes#the-class-listing).
 
 ## What the agent never sends
 
@@ -211,7 +211,7 @@ Every other status, including a `401`, `403`, `404` and a redirect, fails the se
 ### After a failed send
 
 - **Delta batch.** The counts are not marked as delivered. The next flush reports the live cumulative count again, which is how a lost acknowledgement or a late batch heals. A refused request, meaning a `4xx` status the agent does not retry, does not stop the flush: the later delta requests still go, and the refused one is built again on the next flush. Any other failure stops the flush's delta requests at that one; the manifest, sent alongside, is not affected. The requests it did confirm stay confirmed either way. Counts a collector has not confirmed are pending: the next flush leads with an empty delta batch that says so, sent on its own so the news arrives even when the batch with the counts is refused for its size. A flush that then confirms every batch with counts ends with another empty batch saying nothing is pending.
-- **Manifest.** A chunk the collector did not confirm stays pending and is built again on the next flush. The agent builds, sends and confirms one chunk at a time and stops at the first failure. A disabled endpoint module goes first, on a manifest of its own, before any class chunk, since its record is what tells the server the endpoints sent earlier are no longer counted.
+- **Manifest.** A chunk the collector did not confirm stays pending and is built again on the next flush. The agent builds, sends and confirms one chunk at a time and stops at the first failure. A disabled endpoint module goes first, on a manifest of its own, before any class chunk, since its record is what tells Otherlode the endpoints sent earlier are no longer counted.
 - **Static baseline.** Chunks go out in order and the first failure stops the send. The chunks left are sent again, one per flush, after a flush whose own sends the collector confirmed. A `400` or `422` answer means the collector refused the content, and the agent drops every chunk left and logs a warning. Any other failure keeps the chunks, such as a `401` while a token rotates or a `413`, since a proxy's size limit can be raised while the process runs. The scan is never repeated in a process.
 - **Class listing.** Sent and resent as the static baseline is, with the same rules for each status. A `400` or `422` answer drops the listing for the process. Any other failure keeps the chunks, including a `404` from a collector that does not serve the route yet.
 - **Resending a delivered payload.** If the collector processed a request but the agent never saw the answer, the agent sends the same payload again. Cumulative counts and chunk indexes make the repeat harmless.

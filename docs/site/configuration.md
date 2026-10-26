@@ -104,7 +104,7 @@ A `-D` flag is as visible as the argument string, since anyone who can list proc
 | `endpointsEnabled` | The agent installs its framework endpoint modules. One switch covers all of them; [disabledEndpointModules](#disabledendpointmodules) keeps single modules off. A module activates only when its framework is on the application's classpath. With the option off, the agent logs one INFO line and reports no endpoints. Each module it would otherwise have installed is reported as disabled, with the kind `CONFIGURED_OFF`, so `otel` is reported only when `otelBridgeEnabled` is on. The endpoint modules ignore `includePackages` and `excludePackages`. See [endpoints](endpoints). |
 | `otelBridgeEnabled` | The agent also counts the route that OpenTelemetry's own HTTP server instrumentation resolved, for a framework no endpoint module covers. It needs `endpointsEnabled`. See [endpoints](endpoints). |
 | `staticBaselineEnabled` | The agent scans the classpath once, on a background thread, for classes under `includePackages` that never load. Off by default because the cost of the scan grows with the size of the classpath. See [classes](classes). |
-| `classListingEnabled` | The agent lists the names of the classes the classpath holds under `includePackages`, once, on a background thread, and sends the list. It reads the central directories of jars and class folders and parses no class file. On by default. With it off, the server cannot tell a class you removed from one that has not loaded yet. See [classes](classes). |
+| `classListingEnabled` | The agent lists the names of the classes the classpath holds under `includePackages`, once, on a background thread, and sends the list. It reads the central directories of jars and class folders and parses no class file. On by default. With it off, Otherlode cannot tell a class you removed from one that has not loaded yet. See [classes](classes). |
 | `testRun` | The agent marks every payload of this run as a test run, and a run with no named environment reports to the environment `test`. At shutdown, after the final flush, a test run with `staticBaselineEnabled` on waits up to 15 seconds for the static baseline scan to finish. See [naming the tests that call your code](test-runs). |
 
 ## includePackages and excludePackages
@@ -129,7 +129,7 @@ otherlode: 'com.acme.*' matches no class and is ignored: write a dotted package 
 
 ### An empty includePackages disables the agent
 
-The agent needs a scope to probe. When `includePackages` has no usable prefix, the agent logs one ERROR, disables itself for the life of the JVM, installs nothing and sends nothing. The server lists no instance for it, which is the visible signal. An instance that reported zero probes would read as a service with no dead code.
+The agent needs a scope to probe. When `includePackages` has no usable prefix, the agent logs one ERROR, disables itself for the life of the JVM, installs nothing and sends nothing. Otherlode lists no instance for it, which is the visible signal. An instance that reported zero probes would read as a service with no dead code.
 
 An empty list is any of these.
 
@@ -228,7 +228,7 @@ otherlode: exportUrl uses plain http, so the auth token is sent unencrypted
 
 The agent starts the first flush at a random point within the first interval, so a fleet of instances that start together does not send at the same moment. The flushes after it follow every interval at a fixed rate.
 
-Every payload carries the interval as `flush_interval_seconds`, so the server can tell a run that stopped without its final flush from one that is quiet between flushes.
+Every payload carries the interval as `flush_interval_seconds`, so Otherlode can tell a run that stopped without its final flush from one that is quiet between flushes.
 
 ## Service identity
 
@@ -244,13 +244,13 @@ Each payload names the service that sent it with these values.
 
 At each step, the first value that is not blank wins. A service is known by its namespace and its name together. With no namespace, the service is in the unspecified namespace.
 
-A service name or namespace of `.` or `..` is skipped with a warning, as if it were blank, and the next source gives the value. The server shows a service at a URL path that holds both values, and browsers drop `.` and `..` path segments, so neither value can name a service. The check covers every source of a name or a namespace, including OpenTelemetry's and detection.
+A service name or namespace of `.` or `..` is skipped with a warning, as if it were blank, and the next source gives the value. Otherlode shows a service at a URL path that holds both values, and browsers drop `.` and `..` path segments, so neither value can name a service. The check covers every source of a name or a namespace, including OpenTelemetry's and detection.
 
 The name, namespace, version, environment and instance ID each hold at most 1024 bytes in UTF-8, which is the collector's limit. The collector refuses every payload that carries a longer value. The agent skips a longer value with a warning that names its source and the limit, never the value, and the next source gives the value. An instance ID that every source skips falls back to the random UUID. Multi-byte characters count by their bytes, so 512 characters of two bytes each fit and 513 do not.
 
-The agent never reads the instance ID from OpenTelemetry's `service.instance.id`. Many deployment templates give every replica the same value there, and the server counts instances by that ID, so the replicas would read as one instance. Set `serviceInstanceId` yourself to pin the ID, for example to a pod name or to a name for a test task.
+The agent never reads the instance ID from OpenTelemetry's `service.instance.id`. Many deployment templates give every replica the same value there, and Otherlode counts instances by that ID, so the replicas would read as one instance. Set `serviceInstanceId` yourself to pin the ID, for example to a pod name or to a name for a test task.
 
-Each process also gets a random run ID, which no option sets. A restart under a pinned instance ID is therefore a new run. The server keeps the data of each run apart.
+Each process also gets a random run ID, which no option sets. A restart under a pinned instance ID is therefore a new run. Otherlode keeps the data of each run apart.
 
 ## OpenTelemetry's settings
 
@@ -323,7 +323,7 @@ Detection reads the classpath files these ways.
 - A `.properties` file is read as ISO 8859-1, as Spring reads it by default.
 - A YAML file is read as nested block mappings (`spring:`, then `application:`, then `name:`) with plain, single-quoted or double-quoted values and `#` comments. The first document that names the application wins when a file holds several documents split by `---`. The agent does not read flow mappings, block scalars (`|`, `>`), anchors, aliases, escapes or a dotted key such as `spring.application.name:`.
 
-If detection finds nothing, the name is `unknown_service:java`, OpenTelemetry's name for a Java service that names none. The server treats a name that starts with `unknown_service` as a service that was never named.
+If detection finds nothing, the name is `unknown_service:java`, OpenTelemetry's name for a Java service that names none. Otherlode treats a name that starts with `unknown_service` as a service that was never named.
 
 ## Other settings the agent reads
 

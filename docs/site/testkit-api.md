@@ -68,7 +68,7 @@ For `omissionCount`, `className` is the class that declares the function. For a 
 
 ### Findings
 
-A finding method takes no arguments and returns a list. It judges the merged hits of every instance heard from, by name. A probe, class, or call edge that one instance reports is the same one in another instance, whatever number each instance gave it. A branch outcome is the same outcome by its branch key when it has one, and by its branch index when it has none. A finding names no instance. The server merges instances the same way, so a finding here previews the server's.
+A finding method takes no arguments and returns a list. It judges the merged hits of every instance heard from, by name. A probe, class, or call edge that one instance reports is the same one in another instance, whatever number each instance gave it. A branch outcome is the same outcome by its branch key when it has one, and by its branch index when it has none. A finding names no instance. Otherlode merges instances the same way, so a finding here previews Otherlode's.
 
 | Query | Returns |
 |---|---|
@@ -281,7 +281,7 @@ One probe, merged across instances. A single flat type serves every probe kind, 
 | `targetClassName` | `String?` | For an optional-argument probe, the class of the function when it differs from the class that holds the probe. |
 | `neverLoaded` | `Boolean` | `true` for a cluster member that exists only because a complete static baseline declared it. |
 
-Where instances disagree about a row, the collector applies the server's choice. The newest instance's line wins. A row is inline when any copy is. `generatedBy` and `inlinedFromClassName` take the greatest value. A row is routine or an unread shape when any copy is.
+Where instances disagree about a row, the collector applies Otherlode's choice. The newest instance's line wins. A row is inline when any copy is. `generatedBy` and `inlinedFromClassName` take the greatest value. A row is routine or an unread shape when any copy is.
 
 ### OutsideCaller
 
