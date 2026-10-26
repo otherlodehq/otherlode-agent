@@ -832,6 +832,7 @@ object ProtoPayloadCodec {
             UnreadShape.MULTIFILE_FACADE -> ProtoUnreadShape.UNREAD_SHAPE_MULTIFILE_FACADE
             UnreadShape.COROUTINE_MACHINERY -> ProtoUnreadShape.UNREAD_SHAPE_COROUTINE_MACHINERY
             UnreadShape.STRING_SWITCH -> ProtoUnreadShape.UNREAD_SHAPE_STRING_SWITCH
+            UnreadShape.KOTLINX_SERIALIZER_OBJECT -> ProtoUnreadShape.UNREAD_SHAPE_KOTLINX_SERIALIZER_OBJECT
         }
 
     private fun fromProto(unreadShape: ProtoUnreadShape): UnreadShape =
@@ -844,6 +845,7 @@ object ProtoPayloadCodec {
             ProtoUnreadShape.UNREAD_SHAPE_MULTIFILE_FACADE -> UnreadShape.MULTIFILE_FACADE
             ProtoUnreadShape.UNREAD_SHAPE_COROUTINE_MACHINERY -> UnreadShape.COROUTINE_MACHINERY
             ProtoUnreadShape.UNREAD_SHAPE_STRING_SWITCH -> UnreadShape.STRING_SWITCH
+            ProtoUnreadShape.UNREAD_SHAPE_KOTLINX_SERIALIZER_OBJECT -> UnreadShape.KOTLINX_SERIALIZER_OBJECT
             ProtoUnreadShape.UNRECOGNIZED -> throw IllegalArgumentException("unrecognized unread shape on the wire: $unreadShape")
         }
 
@@ -859,6 +861,8 @@ object ProtoPayloadCodec {
             GeneratedBy.CASE_CLASS -> ProtoGeneratedBy.CASE_CLASS
             GeneratedBy.STATIC_FORWARDER -> ProtoGeneratedBy.STATIC_FORWARDER
             GeneratedBy.SCALA_OBJECT -> ProtoGeneratedBy.SCALA_OBJECT
+            GeneratedBy.VALUE_CLASS -> ProtoGeneratedBy.VALUE_CLASS
+            GeneratedBy.KOTLINX_SERIALIZATION -> ProtoGeneratedBy.KOTLINX_SERIALIZATION
         }
 
     // Never written inside an origin oneof, but a peer can still set the oneof to its zero value, so it
@@ -875,6 +879,8 @@ object ProtoPayloadCodec {
             ProtoGeneratedBy.CASE_CLASS -> GeneratedBy.CASE_CLASS
             ProtoGeneratedBy.STATIC_FORWARDER -> GeneratedBy.STATIC_FORWARDER
             ProtoGeneratedBy.SCALA_OBJECT -> GeneratedBy.SCALA_OBJECT
+            ProtoGeneratedBy.VALUE_CLASS -> GeneratedBy.VALUE_CLASS
+            ProtoGeneratedBy.KOTLINX_SERIALIZATION -> GeneratedBy.KOTLINX_SERIALIZATION
             ProtoGeneratedBy.UNRECOGNIZED -> throw IllegalArgumentException("unrecognized generated-by reason on the wire: $generatedBy")
         }
 

@@ -506,6 +506,7 @@ class ExportScheduler(
             UnreadShape.MULTIFILE_FACADE -> "Kotlin multi-file facade methods"
             UnreadShape.COROUTINE_MACHINERY -> "coroutine machinery"
             UnreadShape.STRING_SWITCH -> "string switch lowering"
+            UnreadShape.KOTLINX_SERIALIZER_OBJECT -> "kotlinx.serialization serializer objects"
         }
 
     /**

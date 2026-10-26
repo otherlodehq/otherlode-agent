@@ -26,6 +26,8 @@ import net.bytebuddy.jar.asm.Opcodes
 import net.bytebuddy.jar.asm.RecordComponentVisitor
 import net.bytebuddy.jar.asm.Type
 import net.bytebuddy.jar.asm.TypePath
+import net.bytebuddy.jar.asm.signature.SignatureReader
+import net.bytebuddy.jar.asm.signature.SignatureVisitor
 import dev.otherlode.export.BranchSite as BranchSitePayload
 
 /**
@@ -1137,7 +1139,7 @@ object BranchSiteAnalyzer {
                 handlerInterfaces = handlerInterfaces,
                 guardsByMethod = guardsByMethod,
                 isOwnClassBodyClass = hasEnclosingMethod,
-                forwarderKeys = generatedByMethod.filterValues { it in PASS_THROUGH_FORWARDERS }.keys,
+                forwarderKeys = generatedMarks.passThroughKeys(),
                 classAccess = classAccess,
                 superInternalName = superInternalName,
             )
@@ -1912,7 +1914,7 @@ object BranchSiteAnalyzer {
                     null
                 } ?: return null
             return try {
-                readMethodTable(bytes)
+                readMethodTable(bytes, lookup)
             } catch (_: Exception) {
                 null
             }
@@ -3200,7 +3202,10 @@ object BranchSiteAnalyzer {
     private fun returnTypeOf(descriptor: String): String = descriptor.substring(descriptor.lastIndexOf(')') + 1)
 
     /** Matches a Kotlin data class component accessor's name, capturing its one-based index. */
-    private val dataClassComponentPattern = Regex("^component(\\d+)$")
+    private val dataClassComponentPattern = Regex("^component(\\d+)(?:-[A-Za-z0-9_-]{7})?$")
+
+    /** Matches `copy`, or the name kotlinc mangles it to when its signature holds a value class. */
+    private val dataClassCopyPattern = Regex("^copy(?:-[A-Za-z0-9_-]{7})?$")
 
     /**
      * What compiled each of [internalClassName]'s own declared methods into existence, from
@@ -3232,6 +3237,9 @@ object BranchSiteAnalyzer {
      * forwards to that interface's `$DefaultImpls` is [GeneratedBy.DEFAULT_IMPLS]; see
      * [defaultImplsStubs].
      *
+     * A class that [isValueClassShape] accepts has its generated members marked
+     * [GeneratedBy.VALUE_CLASS]; see [valueClassMarks].
+     *
      * A data class is recognised by the shape the compiler alone can produce: a consecutive
      * `component1` through `componentN`, each taking no parameters, whose return types in order
      * equal the parameter types of some `<init>` with exactly N parameters, plus a `copy` taking
@@ -3240,7 +3248,8 @@ object BranchSiteAnalyzer {
      * marked unless all of them are present; a class that hand-writes some but not all, such as a
      * bare `copy` and `component1` with no `equals`, `hashCode`, or `toString`, is left
      * [GeneratedBy.NONE] throughout, since the compiler itself never produces that partial shape.
-     * Once the shape matches, `componentN` and `copy` are [GeneratedBy.DATA_CLASS], and each of
+     * `componentN` and `copy` may carry the `-` and seven characters kotlinc appends when their
+     * signature holds a value class. Once the shape matches, each of `componentN`, `copy`,
      * `equals`, `hashCode` and `toString` is [GeneratedBy.DATA_CLASS] only when it is absent from
      * [methodsWithLineNumbers]; see [markDataClassMembers].
      *
@@ -3273,13 +3282,17 @@ object BranchSiteAnalyzer {
         isKotlinClass: Boolean,
         interfaceInternalNames: List<String>,
         lookup: (internalName: String) -> ByteArray?,
+        scalaLookup: (internalName: String) -> ByteArray? = lookup,
         scalaReleaseOf: ((internalName: String) -> String?)? = { null },
     ): GeneratedMarks {
         val result = mutableMapOf<Pair<String, String>, GeneratedBy>()
 
         if (internalClassName.endsWith(DEFAULT_IMPLS_SUFFIX)) {
             val interfaceInternalName = internalClassName.removeSuffix(DEFAULT_IMPLS_SUFFIX)
-            for (key in defaultImplsForwarders(classBytes, interfaceInternalName)) result[key] = GeneratedBy.DEFAULT_IMPLS
+            val isValueClass = valueClassTest(lookup)
+            for (key in defaultImplsForwarders(classBytes, interfaceInternalName, isValueClass, lookup)) {
+                result[key] = GeneratedBy.DEFAULT_IMPLS
+            }
             return GeneratedMarks(result)
         }
 
@@ -3302,6 +3315,9 @@ object BranchSiteAnalyzer {
 
         markDataClassMembers(internalClassName, methodAccess, methodsWithLineNumbers, result)
 
+        val valueClass = valueClassMarks(classBytes, internalClassName, methodAccess, methodsWithLineNumbers)
+        for (key in valueClass.marked) result.putIfAbsent(key, GeneratedBy.VALUE_CLASS)
+
         if (kotlinKind == KotlinKind.MULTIFILE_CLASS_FACADE) {
             for (key in multifileFacadeForwarders(classBytes, internalClassName)) result.putIfAbsent(key, GeneratedBy.MULTIFILE_FACADE)
         }
@@ -3311,13 +3327,22 @@ object BranchSiteAnalyzer {
         }
 
         if (isKotlinClass && interfaceInternalNames.isNotEmpty()) {
-            for (key in defaultImplsStubs(classBytes, interfaceInternalNames)) result.putIfAbsent(key, GeneratedBy.DEFAULT_IMPLS)
+            val isValueClass = valueClassTest(lookup)
+            val stubs =
+                defaultImplsStubs(
+                    classBytes,
+                    interfaceInternalNames,
+                    isValueClass,
+                    ownIsValueClass = isValueClassShape(internalClassName, methodAccess),
+                    lookup = lookup,
+                )
+            for (key in stubs) result.putIfAbsent(key, GeneratedBy.DEFAULT_IMPLS)
         }
 
         if (isScalaClass) {
             // No release function means the caller wants the marks alone, as the method table does.
             if (scalaReleaseOf == null) {
-                for ((key, generatedBy) in ScalaGeneratedMethods.of(classBytes, lookup)) result.putIfAbsent(key, generatedBy)
+                for ((key, generatedBy) in ScalaGeneratedMethods.of(classBytes, scalaLookup)) result.putIfAbsent(key, generatedBy)
                 return GeneratedMarks(result)
             }
             val scala = ScalaGeneratedMethods.analyse(classBytes, lookup, scalaReleaseOf)
@@ -3342,7 +3367,7 @@ object BranchSiteAnalyzer {
                     .associateWith { UnreadShape.MULTIFILE_FACADE }
             return GeneratedMarks(result, unread, cause = UnreadCause.UNREAD_STRUCTURE.takeIf { unread.isNotEmpty() })
         }
-        return GeneratedMarks(result)
+        return GeneratedMarks(result, valueClassForwarders = valueClass.forwarders)
     }
 
     /**
@@ -3355,7 +3380,12 @@ object BranchSiteAnalyzer {
         val unread: Map<Pair<String, String>, UnreadShape> = emptyMap(),
         val unreadRelease: String? = null,
         val cause: UnreadCause? = null,
-    )
+        private val valueClassForwarders: Set<Pair<String, String>> = emptySet(),
+    ) {
+        /** The methods a call passes through: the [PASS_THROUGH_FORWARDERS] and a value class's boxed forwarders. */
+        fun passThroughKeys(): Set<Pair<String, String>> =
+            generated.filterValues { it in PASS_THROUGH_FORWARDERS }.keys + valueClassForwarders
+    }
 
     private const val ACTIVITY_INTERFACE_DESCRIPTOR = "L${CallbackAnnotations.ACTIVITY_INTERFACE};"
 
@@ -3702,11 +3732,37 @@ object BranchSiteAnalyzer {
      * would hide that body from never-hit with nothing to show for it. Every forwarder in the
      * compiler matrix's fixtures matches, generic, primitive, `long`/`double`, property accessor,
      * `$default` and suspend methods included (ADR 0055).
+     *
+     * A forwarder's name may be the called name plus `-` and seven characters, which kotlinc adds
+     * when a parameter or the result is a value class. Such a forwarder boxes an argument with
+     * `box-impl` of a value class that [isValueClass] accepts, and unboxes the result with
+     * `checkcast` and `unbox-impl`. It may drop a `Unit` result with `pop` and return `void`. A
+     * suspend forwarder may end with the suspended-marker check that returns `Unit`: `dup`, a call
+     * to `getCOROUTINE_SUSPENDED`, `if_acmpne`, `areturn`, then `pop` and `Unit.INSTANCE`. When it
+     * forwards to a super-interface's `$DefaultImpls` it must also cast its receiver, since an
+     * adopter's `override suspend fun run() = super.run()` compiles to the same tail without the cast.
+     * Its types must be the ones the called method takes and returns once the sub-interface's type
+     * arguments for the super-interface are put in, read through [lookup], as [matchesExpected]
+     * checks, and the sub-interface must not declare the method itself: a member the adopter wrote
+     * in the sub-interface is declared there, and one that only calls `super` compiles to the same
+     * body, while kotlinc declares nothing for the inherited defaults it forwards.
      */
     private fun defaultImplsForwarders(
         classBytes: ByteArray,
         interfaceInternalName: String,
+        isValueClass: (String) -> Boolean,
+        lookup: (internalName: String) -> ByteArray?,
     ): Set<Pair<String, String>> {
+        val interfaceBytes by lazy {
+            try {
+                lookup(interfaceInternalName)
+            } catch (_: Exception) {
+                null
+            }
+        }
+        val interfaceScope by lazy { interfaceBytes?.let { scopeOf(it, lookup) } }
+        val declaredByInterface by lazy { interfaceBytes?.let { declaredMethods(it) } }
+
         // A super-interface's `$DefaultImpls` method takes that interface as its first parameter.
         fun callsOwnInterfacesDefaultImpls(
             owner: String,
@@ -3717,7 +3773,7 @@ object BranchSiteAnalyzer {
             return first.sort == Type.OBJECT && first.internalName == owner.removeSuffix(DEFAULT_IMPLS_SUFFIX)
         }
 
-        val forwarders = mutableSetOf<Pair<String, String>>()
+        val candidates = mutableListOf<ForwarderCandidate>()
         val classVisitor =
             object : ClassVisitor(Opcodes.ASM9) {
                 override fun visitMethod(
@@ -3738,12 +3794,18 @@ object BranchSiteAnalyzer {
                             opcode == Opcodes.INVOKESTATIC &&
                                 (
                                     owner == interfaceInternalName ||
-                                        (isStatic && calledName == name && callsOwnInterfacesDefaultImpls(owner, calledDescriptor))
+                                        (
+                                            isStatic && namesTheCall(name, calledName) &&
+                                                callsOwnInterfacesDefaultImpls(owner, calledDescriptor)
+                                        )
                                 )
                         },
                         returnCast = ownReturn.takeIf { it.sort in REFERENCE_SORTS }?.internalName,
                         allowBoxing = true,
                         allowReceiverCast = true,
+                        isValueClass = isValueClass,
+                        allowDroppedResult = true,
+                        allowSuspendTail = descriptor.endsWith(CONTINUATION_RETURNS_OBJECT),
                     ) { match ->
                         val forwards =
                             if (match.calledOwner == interfaceInternalName) {
@@ -3753,21 +3815,38 @@ object BranchSiteAnalyzer {
                                 !match.cast &&
                                     match.boxed.isEmpty() &&
                                     match.receiverCast == null &&
+                                    !match.dropped &&
+                                    match.returnUnboxed == null &&
                                     (
                                         match.returnBoxed == null ||
                                             returnMatches(ownReturn, Type.getReturnType(match.calledDescriptor), match)
                                     )
                             } else {
                                 val superInterface = match.calledOwner.removeSuffix(DEFAULT_IMPLS_SUFFIX)
-                                (match.receiverCast == null || match.receiverCast == superInterface) &&
-                                    forwardsThroughErasure(ownParameters, ownReturn, match, offset = 0)
+                                val declared = declaredByInterface
+                                val ownMember =
+                                    name to "(" + ownParameters.drop(1).joinToString("") { it.descriptor } + ")" + ownReturn.descriptor
+                                declared != null && ownMember !in declared &&
+                                    (match.receiverCast == null || match.receiverCast == superInterface) &&
+                                    (!match.suspendTail || match.receiverCast != null) &&
+                                    forwardsThroughErasure(ownParameters, ownReturn, match, offset = 0) &&
+                                    forwardsAsTyped(
+                                        ownParameters,
+                                        ownReturn,
+                                        match,
+                                        offset = 0,
+                                        interfaceScope,
+                                        superInterface,
+                                        lookup,
+                                        true,
+                                    )
                             }
-                        if (forwards) forwarders += name to descriptor
+                        if (forwards) candidates += ForwarderCandidate(name to descriptor, match)
                     }
                 }
             }
         ClassReader(classBytes).accept(classVisitor, ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
-        return forwarders
+        return withoutBoxingTwins(candidates)
     }
 
     /**
@@ -3787,7 +3866,16 @@ object BranchSiteAnalyzer {
      * return type may differ when both are references, and a differing return needs exactly that
      * cast. At a primitive type argument (`Impl : I<Int>`) the stub boxes the parameter with its box
      * type's `valueOf` before the call, and returns the box type through the same cast; any other
-     * primitive must match exactly.
+     * primitive must match exactly. At a value class, the stub's name adds `-` and seven characters,
+     * and the stub boxes the argument with `box-impl` of a class [isValueClass] accepts and unboxes
+     * the result with `checkcast` and `unbox-impl`. At `Unit` the stub drops the result with `pop`.
+     * Its types must be the ones the called method takes and returns once the class's type
+     * arguments for that interface are put in, read through [lookup], as [matchesExpected] checks,
+     * and it must not be final. kotlinc writes the stub open, and an overload the adopter wrote
+     * with a `super` call compiles to the same body, final by default. An open one is marked: one
+     * declared `open`, one that overrides another interface's member, or one an all-open compiler
+     * plugin opens. Only `kotlin.Metadata` tells those apart, and this rule does not read it. In a value class,
+     * where [ownIsValueClass] is true, the stub casts `this` to the interface first.
      *
      * The interface is one the class file lists itself. kotlinc names the direct interface's
      * `$DefaultImpls`, even for a default declared on a super-interface (checked with `javap`), so no
@@ -3797,8 +3885,12 @@ object BranchSiteAnalyzer {
     private fun defaultImplsStubs(
         classBytes: ByteArray,
         interfaceInternalNames: List<String>,
+        isValueClass: (String) -> Boolean,
+        ownIsValueClass: Boolean,
+        lookup: (internalName: String) -> ByteArray?,
     ): Set<Pair<String, String>> {
-        val stubs = mutableSetOf<Pair<String, String>>()
+        val candidates = mutableListOf<ForwarderCandidate>()
+        val scope by lazy { scopeOf(classBytes, lookup) }
         val classVisitor =
             object : ClassVisitor(Opcodes.ASM9) {
                 override fun visitMethod(
@@ -3808,7 +3900,8 @@ object BranchSiteAnalyzer {
                     signature: String?,
                     exceptions: Array<out String>?,
                 ): MethodVisitor? {
-                    if (access and (BODYLESS_FLAGS or Opcodes.ACC_STATIC or Opcodes.ACC_SYNTHETIC or Opcodes.ACC_BRIDGE) != 0) return null
+                    val excluded = BODYLESS_FLAGS or Opcodes.ACC_STATIC or Opcodes.ACC_SYNTHETIC or Opcodes.ACC_BRIDGE or Opcodes.ACC_FINAL
+                    if (access and excluded != 0) return null
                     if (name.startsWith("<")) return null
                     val stubParameters = Type.getArgumentTypes(descriptor)
                     val stubReturn = Type.getReturnType(descriptor)
@@ -3821,22 +3914,41 @@ object BranchSiteAnalyzer {
                             opcode == Opcodes.INVOKESTATIC &&
                                 owner.endsWith(DEFAULT_IMPLS_SUFFIX) &&
                                 interfaceName in interfaceInternalNames &&
-                                calledName == name &&
+                                namesTheCall(name, calledName) &&
                                 calledParameters.size == stubParameters.size + 1 &&
                                 calledParameters[0].sort == Type.OBJECT &&
                                 calledParameters[0].internalName == interfaceName
                         },
                         returnCast = stubReturn.takeIf { it.sort in REFERENCE_SORTS }?.internalName,
                         allowBoxing = true,
+                        allowReceiverCast = ownIsValueClass,
+                        isValueClass = isValueClass,
+                        allowDroppedResult = true,
                     ) { match ->
                         // Load 0 is `this`, so the stub's parameter i is load i + 1 and the called
                         // method's parameter i + 1, after the interface.
-                        if (forwardsThroughErasure(stubParameters, stubReturn, match, offset = 1)) stubs += name to descriptor
+                        val interfaceName = match.calledOwner.removeSuffix(DEFAULT_IMPLS_SUFFIX)
+                        val ownGeneric = signature?.let { ownErasures(it, scope.bounds) }
+                        val stub =
+                            (match.receiverCast == null || match.receiverCast == interfaceName) &&
+                                forwardsThroughErasure(stubParameters, stubReturn, match, offset = 1) &&
+                                forwardsAsTyped(
+                                    stubParameters,
+                                    stubReturn,
+                                    match,
+                                    offset = 1,
+                                    scope,
+                                    interfaceName,
+                                    lookup,
+                                    false,
+                                    ownGeneric,
+                                )
+                        if (stub) candidates += ForwarderCandidate(name to descriptor, match)
                     }
                 }
             }
         ClassReader(classBytes).accept(classVisitor, ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
-        return stubs
+        return withoutBoxingTwins(candidates)
     }
 
     /**
@@ -3844,7 +3956,13 @@ object BranchSiteAnalyzer {
      * forwarding call, whether a [cast] followed it, and the positions among the loads of those
      * [boxed] before the call, each with the field descriptor of the primitive it boxed, the type
      * of a [receiverCast] on the first load, and the primitive the call returned when the body
-     * boxed it before returning ([returnBoxed]).
+     * boxed it before returning ([returnBoxed]). [boxed] also holds the underlying type of a value
+     * class that a `box-impl` call wrapped. [returnUnboxed] is the underlying type when the body
+     * cast the result to a value class and read it with `unbox-impl`, [dropped] says it threw the
+     * result away with `pop`, and [suspendTail] that it ended with the suspend marker check that
+     * returns `Unit`. [boxedInto] holds, by the same positions as [boxed], the internal name of the
+     * box type or value class each load was boxed into, and [unboxedFrom] the value class the
+     * result was cast to before `unbox-impl`.
      */
     private class ForwarderMatch(
         val calledOwner: String,
@@ -3853,6 +3971,12 @@ object BranchSiteAnalyzer {
         val boxed: Map<Int, String>,
         val receiverCast: String?,
         val returnBoxed: String?,
+        val returnUnboxed: String? = null,
+        val dropped: Boolean = false,
+        val suspendTail: Boolean = false,
+        val boxedInto: Map<Int, String> = emptyMap(),
+        val unboxedFrom: String? = null,
+        val calledName: String = "",
     )
 
     /**
@@ -3874,6 +3998,23 @@ object BranchSiteAnalyzer {
                 else -> null
             } ?: return null
         return primitive.takeIf { descriptor == "($it)L${BOX_TYPES.getValue(it)};" }
+    }
+
+    /**
+     * The underlying type of the value class a call boxes, when it is `<Value>.box-impl(<type>)`
+     * and [isValueClass] says its owner is one; null for any other call.
+     */
+    private fun valueClassBoxedType(
+        isValueClass: (String) -> Boolean,
+        opcode: Int,
+        owner: String,
+        name: String,
+        descriptor: String,
+    ): String? {
+        if (opcode != Opcodes.INVOKESTATIC || name != VALUE_CLASS_BOX) return null
+        val parameters = parseParameterDescriptors(descriptor)
+        if (parameters.size != 1 || returnTypeOf(descriptor) != "L$owner;" || !isValueClass(owner)) return null
+        return parameters.single()
     }
 
     /**
@@ -3953,6 +4094,19 @@ object BranchSiteAnalyzer {
         calledReturn: Type,
         match: ForwarderMatch,
     ): Boolean {
+        if (match.dropped) {
+            return ownReturn.sort == Type.VOID && calledReturn.descriptor == OBJECT_DESCRIPTOR && !match.cast && match.returnUnboxed == null
+        }
+        val unboxed = match.returnUnboxed
+        if (unboxed != null) {
+            return !match.cast && calledReturn.descriptor == OBJECT_DESCRIPTOR && ownReturn.descriptor == unboxed
+        }
+        if (match.suspendTail) {
+            return !match.cast &&
+                ownReturn.descriptor == OBJECT_DESCRIPTOR &&
+                calledReturn.descriptor == OBJECT_DESCRIPTOR &&
+                match.calledDescriptor.endsWith(CONTINUATION_RETURNS_OBJECT)
+        }
         val boxedPrimitive = match.returnBoxed
         if (boxedPrimitive != null) {
             return !match.cast && calledReturn.descriptor == boxedPrimitive && ownReturn.sort == Type.OBJECT &&
@@ -3968,6 +4122,496 @@ object BranchSiteAnalyzer {
     ): Boolean = a == b || (a.sort in REFERENCE_SORTS && b.sort in REFERENCE_SORTS)
 
     private val REFERENCE_SORTS = setOf(Type.OBJECT, Type.ARRAY)
+
+    /**
+     * Whether a forwarder in a class with [scope] passes and returns the types the `$DefaultImpls`
+     * method [match] called expects once [interfaceName]'s type arguments are put in. False when
+     * the scope or the called method cannot be read.
+     */
+    private fun forwardsAsTyped(
+        ownParameters: Array<Type>,
+        ownReturn: Type,
+        match: ForwarderMatch,
+        offset: Int,
+        scope: TypeScope?,
+        interfaceName: String,
+        lookup: (internalName: String) -> ByteArray?,
+        firstIsReceiver: Boolean,
+        ownGeneric: ExpectedTypes? = null,
+    ): Boolean {
+        val typeScope = scope ?: return false
+        val arguments = typeScope.interfaceArguments[interfaceName] ?: emptyList()
+        val key = Triple(match.calledOwner, match.calledName, match.calledDescriptor) to interfaceName
+        val expected =
+            typeScope.expected.getOrPut(key) { expectedTypes(match, arguments, typeScope.bounds, lookup) } ?: return false
+        return matchesExpected(ownParameters, ownReturn, match, offset, expected, firstIsReceiver, ownGeneric)
+    }
+
+    /** The name and descriptor of every method the class in [bytes] declares, or null when it cannot be read. */
+    private fun declaredMethods(bytes: ByteArray): Set<Pair<String, String>>? {
+        val methods = mutableSetOf<Pair<String, String>>()
+        try {
+            ClassReader(bytes).accept(
+                object : ClassVisitor(Opcodes.ASM9) {
+                    override fun visitMethod(
+                        access: Int,
+                        name: String,
+                        descriptor: String,
+                        signature: String?,
+                        exceptions: Array<out String>?,
+                    ): MethodVisitor? = null.also { methods += name to descriptor }
+                },
+                ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES,
+            )
+        } catch (_: Exception) {
+            return null
+        }
+        return methods
+    }
+
+    /** A method a forwarder rule accepted, with what it saw of the call. */
+    private class ForwarderCandidate(
+        val key: Pair<String, String>,
+        val match: ForwarderMatch,
+    )
+
+    /**
+     * The accepted [candidates] less each one that boxes an argument for a `$DefaultImpls` method
+     * another candidate calls without boxing. At a nullable type argument (`I<Int?>`) the generic
+     * signature reads as at the plain one (`I<Integer>`), and kotlinc writes the stub that passes
+     * the box. An overload the adopter wrote that takes the primitive or the value class's
+     * underlying type and boxes it for the same `super` call is the twin, and kotlinc never writes
+     * both for one called method.
+     */
+    private fun withoutBoxingTwins(candidates: List<ForwarderCandidate>): Set<Pair<String, String>> {
+        fun call(candidate: ForwarderCandidate) =
+            Triple(candidate.match.calledOwner, candidate.match.calledName, candidate.match.calledDescriptor)
+        val unboxedCalls = candidates.filter { it.match.boxedInto.isEmpty() }.mapTo(mutableSetOf()) { call(it) }
+        return candidates.filterNot { it.match.boxedInto.isNotEmpty() && call(it) in unboxedCalls }.mapTo(mutableSetOf()) { it.key }
+    }
+
+    /** A stub's own generic [signature] erased through [bounds], for a class whose descriptors keep a bound its signature has replaced. */
+    private fun ownErasures(
+        signature: String,
+        bounds: Map<String, SignatureType>,
+    ): ExpectedTypes? {
+        val method = parseMethodSignature(signature) ?: return null
+        val all = bounds + method.formals
+        return ExpectedTypes(method.parameters.map { eraseIn(it, all) }, eraseIn(method.returnType, all))
+    }
+
+    /**
+     * Whether a stub's or forwarder's own types are the ones [expected] says the called
+     * `$DefaultImpls` method takes and returns, position by position, as [match] saw the call: own
+     * parameter i is the call's parameter i + [offset], and the call's parameter 0 is the interface
+     * receiver, which [expected] leaves out. A parameter boxed into a box type or value class must
+     * expect that type, and any other must expect its own type. A dropped result must expect
+     * `Unit`, a result unboxed from a value class must expect that class, and any other result its
+     * own type. A suspend tail returns what the call returned. With [firstIsReceiver], own
+     * parameter 0 is a `$DefaultImpls` forwarder's receiver, typed as the sub-interface where the
+     * call takes the super-interface, and is not checked. A position also matches when the stub's
+     * own generic signature, [ownGeneric], erases to the expected type: in a class kotlinc
+     * regenerates from a reified inline function, the signatures name the concrete type and the
+     * descriptors keep its bound. An overload the adopter wrote with a `super` call usually differs
+     * at some position. The rules that call this turn away most that do not; see [defaultImplsStubs]
+     * for the open ones they cannot.
+     */
+    private fun matchesExpected(
+        ownParameters: Array<Type>,
+        ownReturn: Type,
+        match: ForwarderMatch,
+        offset: Int,
+        expected: ExpectedTypes,
+        firstIsReceiver: Boolean = false,
+        ownGeneric: ExpectedTypes? = null,
+    ): Boolean {
+        val parametersMatch =
+            ownParameters.indices.all { index ->
+                if (firstIsReceiver && index == 0) return@all true
+                val wanted = expected.parameters.getOrNull(index + offset - 1) ?: return@all false
+                val boxedInto = match.boxedInto[index + offset]
+                when {
+                    boxedInto != null -> wanted == "L$boxedInto;"
+                    ownParameters[index].descriptor == wanted -> true
+                    else -> ownGeneric?.parameters?.getOrNull(index) == wanted
+                }
+            }
+        if (!parametersMatch) return false
+        val unboxedFrom = match.unboxedFrom
+        return when {
+            match.suspendTail -> true
+            match.dropped -> unitDescriptorShape.matches(expected.returnType)
+            unboxedFrom != null -> expected.returnType == "L$unboxedFrom;"
+            else -> ownReturn.descriptor == expected.returnType || ownGeneric?.returnType == expected.returnType
+        }
+    }
+
+    /** `Unit`'s descriptor by shape, so that `shadowJar` leaves it alone: one package segment, then `/Unit;`. */
+    private val unitDescriptorShape = Regex("^L[^/;]+/Unit;$")
+
+    /** The erased types a called `$DefaultImpls` method takes after its receiver, and returns, for one caller. */
+    private class ExpectedTypes(
+        val parameters: List<String>,
+        val returnType: String,
+    )
+
+    /**
+     * What a caller of the `$DefaultImpls` method [match] called must pass and get back, erased:
+     * that method's generic signature, read through [lookup], with each type variable that the
+     * receiver `I<T, ...>` binds replaced by the caller's type argument for `I` at its position in
+     * [typeArguments], erased through [bounds], and each other type variable by its own bound. With
+     * no generic signature, the method's descriptor. Null when the method cannot be read, which
+     * fails the match.
+     */
+    private fun expectedTypes(
+        match: ForwarderMatch,
+        typeArguments: List<SignatureType>,
+        bounds: Map<String, SignatureType>,
+        lookup: (internalName: String) -> ByteArray?,
+    ): ExpectedTypes? {
+        val bytes =
+            try {
+                lookup(match.calledOwner)
+            } catch (_: Exception) {
+                null
+            } ?: return null
+        var found = false
+        var genericSignature: String? = null
+        try {
+            ClassReader(bytes).accept(
+                object : ClassVisitor(Opcodes.ASM9) {
+                    override fun visitMethod(
+                        access: Int,
+                        name: String,
+                        descriptor: String,
+                        signature: String?,
+                        exceptions: Array<out String>?,
+                    ): MethodVisitor? {
+                        if (name == match.calledName && descriptor == match.calledDescriptor) {
+                            found = true
+                            genericSignature = signature
+                        }
+                        return null
+                    }
+                },
+                ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES,
+            )
+        } catch (_: Exception) {
+            return null
+        }
+        if (!found) return null
+        val method = genericSignature?.let { parseMethodSignature(it) }
+        if (method == null) {
+            val called = Type.getMethodType(match.calledDescriptor)
+            return ExpectedTypes(called.argumentTypes.drop(1).map { it.descriptor }, called.returnType.descriptor)
+        }
+        val receiver = method.parameters.firstOrNull() ?: return null
+        val positions =
+            receiver.arguments
+                .withIndex()
+                .mapNotNull { (index, argument) -> argument.variable?.let { it to index } }
+                .toMap()
+
+        fun erase(
+            type: SignatureType,
+            depth: Int = 0,
+        ): String =
+            type.erasure { variable ->
+                val position = positions[variable]
+                val bound = method.formals[variable]
+                when {
+                    depth > MAX_TYPE_VARIABLE_DEPTH -> OBJECT_DESCRIPTOR
+                    position != null -> typeArguments.getOrNull(position)?.let { eraseIn(it, bounds) } ?: OBJECT_DESCRIPTOR
+                    bound != null -> erase(bound, depth + 1)
+                    else -> OBJECT_DESCRIPTOR
+                }
+            }
+        return ExpectedTypes(method.parameters.drop(1).map { erase(it) }, erase(method.returnType))
+    }
+
+    /** [type] erased, with each type variable read as the erasure of its bound in [bounds], or `Object`. */
+    private fun eraseIn(
+        type: SignatureType,
+        bounds: Map<String, SignatureType>,
+        depth: Int = 0,
+    ): String =
+        type.erasure { variable ->
+            val bound = bounds[variable]
+            if (bound == null || depth > MAX_TYPE_VARIABLE_DEPTH) OBJECT_DESCRIPTOR else eraseIn(bound, bounds, depth + 1)
+        }
+
+    private const val MAX_TYPE_VARIABLE_DEPTH = 8
+
+    /** How many enclosing classes and methods [scopeOf] walks out through. */
+    private const val MAX_ENCLOSING_SCOPES = 8
+
+    /**
+     * What a caller's class says about the interfaces it implements: the type arguments its generic
+     * signature gives each one, and the first bound of every type variable in scope, its own and
+     * those of the methods and classes that enclose it (an inner, local or anonymous class sees its
+     * outer class's and enclosing method's variables), the innermost first.
+     */
+    private class TypeScope(
+        val interfaceArguments: Map<String, List<SignatureType>>,
+        val bounds: Map<String, SignatureType>,
+    ) {
+        /** What each called `$DefaultImpls` method expects, by call and interface, read once per class. */
+        val expected = HashMap<Pair<Triple<String, String, String>, String>, ExpectedTypes?>()
+    }
+
+    /**
+     * The [TypeScope] of the class in [classBytes], walking out through its `EnclosingMethod` and
+     * its own `InnerClasses` entry, reading each enclosing class through [lookup].
+     */
+    private fun scopeOf(
+        classBytes: ByteArray,
+        lookup: (internalName: String) -> ByteArray?,
+    ): TypeScope {
+        val bounds = LinkedHashMap<String, SignatureType>()
+        var interfaceArguments: Map<String, List<SignatureType>> = emptyMap()
+        var bytes: ByteArray? = classBytes
+        var level = 0
+        while (bytes != null && level <= MAX_ENCLOSING_SCOPES) {
+            val shape = readScopeShape(bytes) ?: break
+            val classSignature = shape.signature?.let { parseClassSignature(it) }
+            if (level == 0) interfaceArguments = classSignature?.interfaceArguments ?: emptyMap()
+            classSignature?.formals?.forEach { (name, bound) -> bounds.putIfAbsent(name, bound) }
+            val enclosing = shape.enclosingOwner ?: shape.outer
+            val enclosingBytes =
+                enclosing?.let {
+                    try {
+                        lookup(it)
+                    } catch (_: Exception) {
+                        null
+                    }
+                }
+            val methodName = shape.enclosingMethodName
+            val methodDescriptor = shape.enclosingMethodDescriptor
+            if (enclosingBytes != null && methodName != null && methodDescriptor != null) {
+                readMethodSignature(enclosingBytes, methodName, methodDescriptor)
+                    ?.let { parseMethodSignature(it) }
+                    ?.formals
+                    ?.forEach { (name, bound) -> bounds.putIfAbsent(name, bound) }
+            }
+            bytes = enclosingBytes
+            level++
+        }
+        return TypeScope(interfaceArguments, bounds)
+    }
+
+    /** A class's generic signature and what encloses it: the class an `EnclosingMethod` names, with its method, or an inner class's outer class. */
+    private class ScopeShape(
+        val signature: String?,
+        val enclosingOwner: String?,
+        val enclosingMethodName: String?,
+        val enclosingMethodDescriptor: String?,
+        val outer: String?,
+    )
+
+    private fun readScopeShape(bytes: ByteArray): ScopeShape? {
+        var self = ""
+        var signature: String? = null
+        var enclosingOwner: String? = null
+        var enclosingMethodName: String? = null
+        var enclosingMethodDescriptor: String? = null
+        var outer: String? = null
+        try {
+            ClassReader(bytes).accept(
+                object : ClassVisitor(Opcodes.ASM9) {
+                    override fun visit(
+                        version: Int,
+                        access: Int,
+                        name: String,
+                        classSignature: String?,
+                        superName: String?,
+                        interfaces: Array<out String>?,
+                    ) {
+                        self = name
+                        signature = classSignature
+                    }
+
+                    override fun visitOuterClass(
+                        owner: String,
+                        name: String?,
+                        descriptor: String?,
+                    ) {
+                        enclosingOwner = owner
+                        enclosingMethodName = name
+                        enclosingMethodDescriptor = descriptor
+                    }
+
+                    override fun visitInnerClass(
+                        name: String,
+                        outerName: String?,
+                        innerName: String?,
+                        access: Int,
+                    ) {
+                        if (name == self && outerName != null && access and Opcodes.ACC_STATIC == 0) outer = outerName
+                    }
+                },
+                ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES,
+            )
+        } catch (_: Exception) {
+            return null
+        }
+        return ScopeShape(signature, enclosingOwner, enclosingMethodName, enclosingMethodDescriptor, outer)
+    }
+
+    /** The generic signature of method [name] [descriptor] in the class in [bytes], or null. */
+    private fun readMethodSignature(
+        bytes: ByteArray,
+        name: String,
+        descriptor: String,
+    ): String? {
+        var found: String? = null
+        try {
+            ClassReader(bytes).accept(
+                object : ClassVisitor(Opcodes.ASM9) {
+                    override fun visitMethod(
+                        access: Int,
+                        methodName: String,
+                        methodDescriptor: String,
+                        signature: String?,
+                        exceptions: Array<out String>?,
+                    ): MethodVisitor? {
+                        if (methodName == name && methodDescriptor == descriptor) found = signature
+                        return null
+                    }
+                },
+                ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES,
+            )
+        } catch (_: Exception) {
+            return null
+        }
+        return found
+    }
+
+    /** A class's generic signature: its type variables with their first bounds, and each interface's type arguments. */
+    private class ClassSignature(
+        val formals: Map<String, SignatureType>,
+        val interfaceArguments: Map<String, List<SignatureType>>,
+    )
+
+    /** A method's generic signature: its own type variables with their first bounds, its parameters and its return. */
+    private class MethodSignature(
+        val formals: Map<String, SignatureType>,
+        val parameters: List<SignatureType>,
+        val returnType: SignatureType,
+    )
+
+    /** Reads the formal type parameters a [SignatureReader] reports, keeping each one's first bound. */
+    private open class FormalsVisitor : SignatureVisitor(Opcodes.ASM9) {
+        val formals = LinkedHashMap<String, SignatureType>()
+        private var current: String? = null
+
+        override fun visitFormalTypeParameter(name: String) {
+            current = name
+        }
+
+        override fun visitClassBound(): SignatureVisitor = bound()
+
+        override fun visitInterfaceBound(): SignatureVisitor = bound()
+
+        private fun bound(): SignatureVisitor {
+            val name = current ?: return SignatureType()
+            if (name in formals) return SignatureType()
+            return SignatureType().also { formals[name] = it }
+        }
+    }
+
+    private fun parseClassSignature(signature: String): ClassSignature? {
+        val interfaces = mutableListOf<SignatureType>()
+        val visitor =
+            object : FormalsVisitor() {
+                override fun visitSuperclass(): SignatureVisitor = SignatureType()
+
+                override fun visitInterface(): SignatureVisitor = SignatureType().also { interfaces += it }
+            }
+        try {
+            SignatureReader(signature).accept(visitor)
+        } catch (_: Exception) {
+            return null
+        }
+        val arguments = interfaces.mapNotNull { type -> type.className?.let { it to type.arguments.toList() } }.toMap()
+        return ClassSignature(visitor.formals, arguments)
+    }
+
+    private fun parseMethodSignature(signature: String): MethodSignature? {
+        val parameters = mutableListOf<SignatureType>()
+        var returnType: SignatureType? = null
+        val visitor =
+            object : FormalsVisitor() {
+                override fun visitParameterType(): SignatureVisitor = SignatureType().also { parameters += it }
+
+                override fun visitReturnType(): SignatureVisitor = SignatureType().also { returnType = it }
+
+                override fun visitExceptionType(): SignatureVisitor = SignatureType()
+            }
+        try {
+            SignatureReader(signature).accept(visitor)
+        } catch (_: Exception) {
+            return null
+        }
+        return MethodSignature(visitor.formals, parameters, returnType ?: return null)
+    }
+
+    /** One type in a generic signature: a primitive, a class with its type arguments, an array, or a type variable. */
+    private class SignatureType : SignatureVisitor(Opcodes.ASM9) {
+        private var base: Char? = null
+        var className: String? = null
+            private set
+        var variable: String? = null
+            private set
+        private var element: SignatureType? = null
+        val arguments = mutableListOf<SignatureType>()
+
+        override fun visitBaseType(descriptor: Char) {
+            base = descriptor
+        }
+
+        override fun visitTypeVariable(name: String) {
+            variable = name
+        }
+
+        override fun visitArrayType(): SignatureVisitor = SignatureType().also { element = it }
+
+        override fun visitClassType(name: String) {
+            className = name
+        }
+
+        override fun visitInnerClassType(name: String) {
+            className = className + "$" + name
+            arguments.clear()
+        }
+
+        override fun visitTypeArgument() {
+            arguments += SignatureType().also { it.visitClassType("java/lang/Object") }
+        }
+
+        override fun visitTypeArgument(wildcard: Char): SignatureVisitor = SignatureType().also { arguments += it }
+
+        /** The erased descriptor, with a type variable read through [variableErasure]. */
+        fun erasure(variableErasure: (String) -> String): String {
+            base?.let { return it.toString() }
+            className?.let { return "L$it;" }
+            element?.let { return "[" + it.erasure(variableErasure) }
+            return variable?.let(variableErasure) ?: OBJECT_DESCRIPTOR
+        }
+    }
+
+    private const val OBJECT_DESCRIPTOR = "Ljava/lang/Object;"
+
+    /**
+     * The end of a suspend function's descriptor, without its `kotlin` prefix so that `shadowJar`
+     * leaves it alone: the continuation parameter, then the `Object` result.
+     */
+    private const val CONTINUATION_RETURNS_OBJECT = "/coroutines/Continuation;)Ljava/lang/Object;"
+
+    /** The owner of `getCOROUTINE_SUSPENDED`, matched by suffix for the same reason. */
+    private const val COROUTINE_INTRINSICS_SUFFIX = "/coroutines/intrinsics/IntrinsicsKt"
+
+    /** The owner of the `INSTANCE` field of `Unit`, matched by suffix for the same reason. */
+    private const val UNIT_SUFFIX = "/Unit"
 
     /**
      * The `equals`, `hashCode` and `toString` of a record whose body is exactly javac's: `aload_0`,
@@ -4227,8 +4871,11 @@ object BranchSiteAnalyzer {
      * [allowNullChecks], kotlinc's parameter null checks may come before the loads: `aload` of a
      * reference parameter, `ldc` of its name, then `invokestatic` of
      * `Intrinsics.checkNotNullParameter` or `checkParameterIsNotNull`. Labels, line numbers, frames
-     * and other pseudo-instructions are ignored. See [defaultImplsForwarders] and
-     * [multifileFacadeForwarders].
+     * and other pseudo-instructions are ignored. With [isValueClass], a load may also be boxed by
+     * `box-impl` of a class it accepts, and the result cast to such a class and read with
+     * `unbox-impl`. With [allowDroppedResult], the result may be dropped with `pop` before a `void`
+     * return, and with [allowSuspendTail] it may end with the suspended-marker check that returns
+     * `Unit`. See [defaultImplsForwarders] and [multifileFacadeForwarders].
      */
     private class ForwarderShapeVisitor(
         private val expectedLoads: List<Pair<Int, Int>>,
@@ -4237,14 +4884,25 @@ object BranchSiteAnalyzer {
         private val returnCast: String? = null,
         private val allowBoxing: Boolean = false,
         private val allowReceiverCast: Boolean = false,
+        private val isValueClass: (String) -> Boolean = { false },
+        private val allowDroppedResult: Boolean = false,
+        private val allowSuspendTail: Boolean = false,
         private val onForwarder: (ForwarderMatch) -> Unit,
     ) : MethodVisitor(Opcodes.ASM9) {
         private var cast = false
+        private var pendingUnbox: String? = null
+        private var returnUnboxed: String? = null
+        private var dropped = false
+        private var tailStage = 0
+        private var tailLabel: Label? = null
         private var receiverCast: String? = null
         private var returnBoxed: String? = null
         private var calledOwner = ""
+        private var calledName = ""
         private var calledDescriptor = ""
         private val boxed = mutableMapOf<Int, String>()
+        private val boxedInto = mutableMapOf<Int, String>()
+        private var unboxedFrom: String? = null
         private val referenceSlots = expectedLoads.filter { it.first == Opcodes.ALOAD }.mapTo(mutableSetOf()) { it.second }
         private val pushed = mutableListOf<Pushed>()
         private var invoked = false
@@ -4275,10 +4933,31 @@ object BranchSiteAnalyzer {
             descriptor: String,
             isInterface: Boolean,
         ) {
+            if (tailStage != 0) {
+                val checksSuspended =
+                    tailStage == 1 &&
+                        opcode == Opcodes.INVOKESTATIC &&
+                        owner.endsWith(COROUTINE_INTRINSICS_SUFFIX) &&
+                        name == "getCOROUTINE_SUSPENDED" &&
+                        descriptor == "()$OBJECT_DESCRIPTOR"
+                if (!checksSuspended) return reject()
+                tailStage = 2
+                return
+            }
             if (invoked) {
+                val unboxType = pendingUnbox
+                if (unboxType != null) {
+                    val unboxes =
+                        opcode == Opcodes.INVOKEVIRTUAL && owner == unboxType && name == VALUE_CLASS_UNBOX && descriptor.startsWith("()")
+                    if (!unboxes) return reject()
+                    returnUnboxed = descriptor.substring(2)
+                    unboxedFrom = unboxType
+                    pendingUnbox = null
+                    return
+                }
                 val primitive =
-                    if (allowBoxing && !returned && !cast &&
-                        returnBoxed == null
+                    if (allowBoxing && !returned && !cast && !dropped &&
+                        returnBoxed == null && returnUnboxed == null
                     ) {
                         boxedPrimitive(opcode, owner, name, descriptor)
                     } else {
@@ -4295,22 +4974,60 @@ object BranchSiteAnalyzer {
                 pushed.clear()
                 return
             }
-            val boxing = if (allowBoxing) boxedPrimitive(opcode, owner, name, descriptor) else null
+            val boxing =
+                if (allowBoxing) {
+                    boxedPrimitive(opcode, owner, name, descriptor) ?: valueClassBoxedType(isValueClass, opcode, owner, name, descriptor)
+                } else {
+                    null
+                }
             if (boxing != null) {
                 val load = pushed.lastOrNull() as? Pushed.Load
                 if (load == null || load.opcode != loadOpcodeFor(boxing)) return reject()
                 if (boxed.put(pushed.size - 1, boxing) != null) return reject()
+                boxedInto[pushed.size - 1] = if (name == VALUE_CLASS_BOX) owner else BOX_TYPES.getValue(boxing)
                 return
             }
             if (!isForwardingCall(opcode, owner, name, descriptor)) return reject()
             if (pushed != expectedLoads.map { (loadOpcode, slot) -> Pushed.Load(loadOpcode, slot) }) return reject()
             calledOwner = owner
+            calledName = name
             calledDescriptor = descriptor
             invoked = true
         }
 
         override fun visitInsn(opcode: Int) {
-            if (!invoked || returned || opcode !in Opcodes.IRETURN..Opcodes.RETURN) return reject()
+            if (tailStage != 0) {
+                when {
+                    tailStage == 3 && opcode == Opcodes.ARETURN -> {
+                        tailStage = 4
+                    }
+
+                    tailStage == 5 && opcode == Opcodes.POP -> {
+                        tailStage = 6
+                    }
+
+                    tailStage == 7 && opcode == Opcodes.ARETURN -> {
+                        tailStage = 8
+                        returned = true
+                    }
+
+                    else -> {
+                        reject()
+                    }
+                }
+                return
+            }
+            val plain = !returned && !cast && !dropped && returnBoxed == null && returnUnboxed == null && pendingUnbox == null
+            if (invoked && plain && allowDroppedResult && opcode == Opcodes.POP) {
+                dropped = true
+                return
+            }
+            if (invoked && plain && allowSuspendTail && opcode == Opcodes.DUP) {
+                tailStage = 1
+                return
+            }
+            if (!invoked || returned || opcode !in Opcodes.IRETURN..Opcodes.RETURN || pendingUnbox != null) return reject()
+            if (dropped && opcode != Opcodes.RETURN) return reject()
             returned = true
         }
 
@@ -4323,8 +5040,16 @@ object BranchSiteAnalyzer {
             opcode: Int,
             type: String,
         ) {
+            if (tailStage != 0) return reject()
             if (allowReceiverCast && opcode == Opcodes.CHECKCAST && !invoked && pushed.size == 1 && receiverCast == null) {
                 receiverCast = type
+                return
+            }
+            val castsToValueClass =
+                allowBoxing && opcode == Opcodes.CHECKCAST && invoked && !returned && !cast && !dropped && returnBoxed == null &&
+                    returnUnboxed == null && pendingUnbox == null && type != returnCast && isValueClass(type)
+            if (castsToValueClass) {
+                pendingUnbox = type
                 return
             }
             if (opcode != Opcodes.CHECKCAST || type != returnCast || !invoked || returned || cast) return reject()
@@ -4336,7 +5061,16 @@ object BranchSiteAnalyzer {
             owner: String,
             name: String,
             descriptor: String,
-        ) = reject()
+        ) {
+            val readsUnit =
+                tailStage == 6 &&
+                    opcode == Opcodes.GETSTATIC &&
+                    owner.endsWith(UNIT_SUFFIX) &&
+                    name == "INSTANCE" &&
+                    descriptor == "L$owner;"
+            if (!readsUnit) return reject()
+            tailStage = 7
+        }
 
         override fun visitInvokeDynamicInsn(
             name: String,
@@ -4348,7 +5082,15 @@ object BranchSiteAnalyzer {
         override fun visitJumpInsn(
             opcode: Int,
             label: Label,
-        ) = reject()
+        ) {
+            if (tailStage != 2 || opcode != Opcodes.IF_ACMPNE) return reject()
+            tailLabel = label
+            tailStage = 3
+        }
+
+        override fun visitLabel(label: Label) {
+            if (tailStage == 4 && label == tailLabel) tailStage = 5
+        }
 
         override fun visitIincInsn(
             varIndex: Int,
@@ -4382,9 +5124,24 @@ object BranchSiteAnalyzer {
 
         override fun visitEnd() {
             if (!broken && invoked &&
-                returned
+                returned && pendingUnbox == null && (tailStage == 0 || tailStage == 8)
             ) {
-                onForwarder(ForwarderMatch(calledOwner, calledDescriptor, cast, boxed, receiverCast, returnBoxed))
+                onForwarder(
+                    ForwarderMatch(
+                        calledOwner,
+                        calledDescriptor,
+                        cast,
+                        boxed,
+                        receiverCast,
+                        returnBoxed,
+                        returnUnboxed,
+                        dropped,
+                        tailStage == 8,
+                        boxedInto,
+                        unboxedFrom,
+                        calledName,
+                    ),
+                )
             }
         }
     }
@@ -4392,17 +5149,18 @@ object BranchSiteAnalyzer {
     /**
      * Finds a consecutive `component1..componentN` group, a matching `<init>`, a matching `copy`,
      * and all three of `equals`/`hashCode`/`toString`, and leaves [result] untouched unless every
-     * part of the shape is present. When it is, the `componentN` group and `copy` are marked
-     * [GeneratedBy.DATA_CLASS], and so is each of `equals`, `hashCode` and `toString` that is not
-     * in [methodsWithLineNumbers].
+     * part of the shape is present. The names of `componentN` and `copy` may end in `-` and seven
+     * characters from `[A-Za-z0-9_-]`, which kotlinc adds when the signature holds a value class.
+     * The hash is not checked: it names the signature, not the author, and a plain class gets the
+     * same names. When the shape is present, each of those methods that is not in
+     * [methodsWithLineNumbers] is marked [GeneratedBy.DATA_CLASS].
      *
-     * kotlinc 2.2.21 emits the generated `equals`, `hashCode` and `toString` with no line-number
-     * table, and an override the adopter wrote with a table pointing at its body; access flags,
-     * the local variable table and parameter annotations are the same for both (checked with
-     * `javap`). A method with at least one line number is therefore the adopter's and stays
-     * [GeneratedBy.NONE], so a hand-written `equals` reads as ordinary code. Kotlin forbids
-     * hand-writing `componentN` or `copy` on a data class, so those two need no such check. A class
-     * compiled without debug info has no line numbers anywhere, so all three are marked, and a
+     * kotlinc emits the generated members with no line-number table, and a method the adopter wrote
+     * with a table pointing at its body; access flags, the local variable table and parameter
+     * annotations are the same for both (checked with `javap`). A method with at least one line
+     * number is therefore the adopter's and stays [GeneratedBy.NONE], so a hand-written `equals`,
+     * or a plain class's hand-written `component1` and `copy`, read as ordinary code. A class
+     * compiled without debug info has no line numbers anywhere, so all of them are marked, and a
      * hand-written override there is hidden as generated. That is accepted: such a class has lost
      * its inline marks too, and when it loads it draws the stripped-debug warning.
      */
@@ -4435,17 +5193,353 @@ object BranchSiteAnalyzer {
         val ownerDescriptor = "L$internalClassName;"
         val copyKey =
             methodAccess.keys.firstOrNull { (name, descriptor) ->
-                name == "copy" && returnTypeOf(descriptor) == ownerDescriptor && parseParameterDescriptors(descriptor) == componentTypes
+                dataClassCopyPattern.matches(name) &&
+                    returnTypeOf(descriptor) == ownerDescriptor &&
+                    parseParameterDescriptors(descriptor) == componentTypes
             } ?: return
 
         val objectMethodKeys =
             listOf("equals" to "(Ljava/lang/Object;)Z", "hashCode" to "()I", "toString" to "()Ljava/lang/String;")
         if (objectMethodKeys.any { it !in methodAccess }) return
 
-        for (index in 1..componentCount) result[components.getValue(index).first] = GeneratedBy.DATA_CLASS
-        result[copyKey] = GeneratedBy.DATA_CLASS
-        for (key in objectMethodKeys) {
+        val members = (1..componentCount).map { components.getValue(it).first } + copyKey + objectMethodKeys
+        for (key in members) {
             if (key !in methodsWithLineNumbers) result[key] = GeneratedBy.DATA_CLASS
+        }
+    }
+
+    /** Whether [text] is the seven characters kotlinc appends to a mangled name after its `-`. */
+    private fun isMangleHash(text: String): Boolean =
+        text.length == MANGLE_HASH_LENGTH && text.all { it in 'A'..'Z' || it in 'a'..'z' || it in '0'..'9' || it == '_' || it == '-' }
+
+    /** Whether [name] is [plain] followed by `-` and a mangle hash. */
+    private fun isMangledForm(
+        name: String,
+        plain: String,
+    ): Boolean =
+        name.length == plain.length + 1 + MANGLE_HASH_LENGTH &&
+            name.startsWith(plain) &&
+            name[plain.length] == '-' &&
+            isMangleHash(name.substring(plain.length + 1))
+
+    /** Whether [name] is a stub's or forwarder's own name for a call to [calledName]. */
+    private fun namesTheCall(
+        name: String,
+        calledName: String,
+    ): Boolean = name == calledName || isMangledForm(name, calledName)
+
+    /** Whether [name] already ends in `-` and a mangle hash. */
+    private fun isMangled(name: String): Boolean =
+        name.length > MANGLE_HASH_LENGTH + 1 && name[name.length - MANGLE_HASH_LENGTH - 1] == '-' &&
+            isMangleHash(name.substring(name.length - MANGLE_HASH_LENGTH))
+
+    private const val MANGLE_HASH_LENGTH = 7
+    private const val VALUE_CLASS_BOX = "box-impl"
+    private const val VALUE_CLASS_UNBOX = "unbox-impl"
+    private const val IMPL_SUFFIX = "-impl"
+    private const val VALUE_CLASS_CONSTRUCTOR = "constructor-impl"
+    private val VALUE_CLASS_STATICS = setOf("equals-impl", "equals-impl0", "hashCode-impl", "toString-impl")
+    private val VALUE_CLASS_OBJECT_STATICS = setOf("equals-impl", "hashCode-impl", "toString-impl")
+
+    /**
+     * Whether a class named [internalName] with these [methodAccess] entries is a Kotlin value
+     * class: it declares a synthetic static `box-impl` returning its own type and a synthetic
+     * instance `unbox-impl`. Source cannot declare a synthetic method.
+     */
+    private fun isValueClassShape(
+        internalName: String,
+        methodAccess: Map<Pair<String, String>, Int>,
+    ): Boolean {
+        val synthetic = Opcodes.ACC_SYNTHETIC
+        val boxes =
+            methodAccess.any { (key, access) ->
+                key.first == VALUE_CLASS_BOX &&
+                    access and (synthetic or Opcodes.ACC_STATIC) == (synthetic or Opcodes.ACC_STATIC) &&
+                    returnTypeOf(key.second) == "L$internalName;"
+            }
+        val unboxes =
+            methodAccess.any { (key, access) ->
+                key.first == VALUE_CLASS_UNBOX && access and (synthetic or Opcodes.ACC_STATIC) == synthetic && key.second.startsWith("()")
+            }
+        return boxes && unboxes
+    }
+
+    /**
+     * A test, memoised, for whether a class read through [lookup] is a value class, as
+     * [isValueClassShape] says. A class that cannot be read is not one.
+     */
+    private fun valueClassTest(lookup: (internalName: String) -> ByteArray?): (String) -> Boolean {
+        val known = HashMap<String, Boolean>()
+        return { internalName ->
+            known.getOrPut(internalName) {
+                val bytes =
+                    try {
+                        lookup(internalName)
+                    } catch (_: Exception) {
+                        null
+                    }
+                bytes != null &&
+                    try {
+                        val access = LinkedHashMap<Pair<String, String>, Int>()
+                        ClassReader(bytes).accept(
+                            object : ClassVisitor(Opcodes.ASM9) {
+                                override fun visitMethod(
+                                    methodAccess: Int,
+                                    name: String,
+                                    descriptor: String,
+                                    signature: String?,
+                                    exceptions: Array<out String>?,
+                                ): MethodVisitor? = null.also { access[name to descriptor] = methodAccess }
+                            },
+                            ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES,
+                        )
+                        isValueClassShape(internalName, access)
+                    } catch (_: Exception) {
+                        false
+                    }
+            }
+        }
+    }
+
+    /** What [valueClassMarks] found: the methods to mark, and the boxed ones among them that only forward. */
+    private class ValueClassMarks(
+        val marked: Set<Pair<String, String>>,
+        val forwarders: Set<Pair<String, String>>,
+    )
+
+    /**
+     * The generated members of [internalClassName] when it is a value class, as
+     * [isValueClassShape] decides, and none otherwise.
+     *
+     * The statics `equals-impl`, `equals-impl0`, `hashCode-impl` and `toString-impl` are marked
+     * when they have no line-number table: a `toString` the adopter wrote puts its body in
+     * `toString-impl` with one. A non-synthetic instance method is marked when its body reads the
+     * class's one field, loads its arguments, calls the static with its own name plus `-impl` (its
+     * own name when that is already mangled) and returns. Whatever its line table says, it is a
+     * pass-through to the static. The exception is a forwarder to `equals-impl`, `hashCode-impl`
+     * or `toString-impl` that was not marked: it forwards to the adopter's body. The constructor,
+     * the property getter and the statics that hold an adopter's member stay unmarked.
+     *
+     * A value class that inherits an interface's default method `m` without overriding it gets a
+     * static `m-impl` that boxes its first argument with `box-impl`, loads the rest and calls `m` on
+     * the boxed value with `invokevirtual`. When the class has no boxed forwarder `m` of its own
+     * calling it, it is marked and is a pass-through to `m`: a member `m` the adopter declares always
+     * gets that forwarder. Its line table cannot decide it, since kotlinc 2.1 and earlier give it the
+     * class declaration's lines.
+     */
+    private fun valueClassMarks(
+        classBytes: ByteArray,
+        internalClassName: String,
+        methodAccess: Map<Pair<String, String>, Int>,
+        methodsWithLineNumbers: Set<Pair<String, String>>,
+    ): ValueClassMarks {
+        val none = ValueClassMarks(emptySet(), emptySet())
+        if (!isValueClassShape(internalClassName, methodAccess)) return none
+        val marked =
+            methodAccess
+                .filter { (key, access) ->
+                    key.first in VALUE_CLASS_STATICS && access and Opcodes.ACC_STATIC != 0 && key !in methodsWithLineNumbers
+                }.keys
+                .toMutableSet()
+
+        val fields = mutableListOf<Pair<String, String>>()
+        val bodies = mutableListOf<Triple<String, String, List<String>>>()
+        val staticBodies = mutableListOf<Triple<String, String, List<String>>>()
+        val classVisitor =
+            object : ClassVisitor(Opcodes.ASM9) {
+                override fun visitField(
+                    access: Int,
+                    name: String,
+                    descriptor: String,
+                    signature: String?,
+                    value: Any?,
+                ): FieldVisitor? = null.also { if (access and Opcodes.ACC_STATIC == 0) fields += name to descriptor }
+
+                override fun visitMethod(
+                    access: Int,
+                    name: String,
+                    descriptor: String,
+                    signature: String?,
+                    exceptions: Array<out String>?,
+                ): MethodVisitor? {
+                    if (access and (BODYLESS_FLAGS or Opcodes.ACC_SYNTHETIC or Opcodes.ACC_BRIDGE) != 0) return null
+                    if (name.startsWith("<")) return null
+                    if (access and Opcodes.ACC_STATIC != 0) {
+                        val inherited = name.endsWith(IMPL_SUFFIX) && name !in VALUE_CLASS_STATICS && name != VALUE_CLASS_CONSTRUCTOR
+                        return if (inherited) InstructionTokenVisitor { staticBodies += Triple(name, descriptor, it) } else null
+                    }
+                    return InstructionTokenVisitor { bodies += Triple(name, descriptor, it) }
+                }
+            }
+        ClassReader(classBytes).accept(classVisitor, ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
+        val field = fields.singleOrNull() ?: return ValueClassMarks(marked, emptySet())
+
+        val forwarders = mutableSetOf<Pair<String, String>>()
+        for ((name, descriptor, tokens) in bodies) {
+            val target = if (isMangled(name)) name else name + IMPL_SUFFIX
+            val parameters = parseParameterDescriptors(descriptor)
+            val returnType = returnTypeOf(descriptor)
+            val staticDescriptor = "(" + field.second + parameters.joinToString("") + ")" + returnType
+            var slot = 1
+            val expected =
+                buildList {
+                    add("load:${Opcodes.ALOAD}:0")
+                    add("field:${Opcodes.GETFIELD}:$internalClassName.${field.first}:${field.second}")
+                    for (type in parameters) {
+                        add("load:${loadOpcodeFor(type)}:$slot")
+                        slot += slotWidth(type)
+                    }
+                    add("call:${Opcodes.INVOKESTATIC}:$internalClassName.$target$staticDescriptor")
+                    add("return:${Type.getReturnType(descriptor).getOpcode(Opcodes.IRETURN)}")
+                }
+            val staticKey = target to staticDescriptor
+            val forwardsToAdopter = target in VALUE_CLASS_OBJECT_STATICS && staticKey !in marked
+            if (tokens == expected && !forwardsToAdopter) forwarders += name to descriptor
+        }
+
+        val boxedForwarderTargets = forwarders.mapTo(mutableSetOf()) { (name, _) -> if (isMangled(name)) name else name + IMPL_SUFFIX }
+        for ((name, descriptor, tokens) in staticBodies) {
+            if (name in boxedForwarderTargets) continue
+            val parameters = parseParameterDescriptors(descriptor)
+            val underlying = parameters.firstOrNull() ?: continue
+            if (underlying != field.second) continue
+            val member = name.removeSuffix(IMPL_SUFFIX)
+            val rest = parameters.drop(1)
+            val returnType = returnTypeOf(descriptor)
+            var slot = slotWidth(underlying)
+            val expected =
+                buildList {
+                    add("load:${loadOpcodeFor(underlying)}:0")
+                    add("call:${Opcodes.INVOKESTATIC}:$internalClassName.$VALUE_CLASS_BOX($underlying)L$internalClassName;")
+                    for (type in rest) {
+                        add("load:${loadOpcodeFor(type)}:$slot")
+                        slot += slotWidth(type)
+                    }
+                    add("call:${Opcodes.INVOKEVIRTUAL}:$internalClassName.$member(${rest.joinToString("")})$returnType")
+                    add("return:${Type.getReturnType(descriptor).getOpcode(Opcodes.IRETURN)}")
+                }
+            if (tokens == expected) forwarders += name to descriptor
+        }
+        return ValueClassMarks(marked + forwarders, forwarders)
+    }
+
+    /**
+     * Records a method body as one token per instruction, in order, and hands them to [onBody] at
+     * its end. Labels, line numbers and frames add none. A token reads `load:<opcode>:<slot>`,
+     * `field:<opcode>:<owner>.<name>:<descriptor>`, `call:<opcode>:<owner>.<name><descriptor>` or
+     * `return:<opcode>`, and any other instruction is `other`.
+     */
+    private class InstructionTokenVisitor(
+        private val onBody: (List<String>) -> Unit,
+    ) : MethodVisitor(Opcodes.ASM9) {
+        private val tokens = mutableListOf<String>()
+
+        override fun visitVarInsn(
+            opcode: Int,
+            varIndex: Int,
+        ) {
+            tokens += if (opcode in Opcodes.ILOAD..Opcodes.ALOAD) "load:$opcode:$varIndex" else "other"
+        }
+
+        override fun visitFieldInsn(
+            opcode: Int,
+            owner: String,
+            name: String,
+            descriptor: String,
+        ) {
+            tokens += "field:$opcode:$owner.$name:$descriptor"
+        }
+
+        override fun visitMethodInsn(
+            opcode: Int,
+            owner: String,
+            name: String,
+            descriptor: String,
+            isInterface: Boolean,
+        ) {
+            tokens += "call:$opcode:$owner.$name$descriptor"
+        }
+
+        override fun visitInsn(opcode: Int) {
+            tokens += if (opcode in Opcodes.IRETURN..Opcodes.RETURN) "return:$opcode" else "other"
+        }
+
+        override fun visitIntInsn(
+            opcode: Int,
+            operand: Int,
+        ) {
+            tokens += "other"
+        }
+
+        override fun visitTypeInsn(
+            opcode: Int,
+            type: String,
+        ) {
+            tokens += "other"
+        }
+
+        override fun visitJumpInsn(
+            opcode: Int,
+            label: Label,
+        ) {
+            tokens += "other"
+        }
+
+        override fun visitLdcInsn(value: Any?) {
+            tokens += "other"
+        }
+
+        override fun visitIincInsn(
+            varIndex: Int,
+            increment: Int,
+        ) {
+            tokens += "other"
+        }
+
+        override fun visitInvokeDynamicInsn(
+            name: String,
+            descriptor: String,
+            bootstrapMethodHandle: Handle,
+            vararg bootstrapMethodArguments: Any?,
+        ) {
+            tokens += "other"
+        }
+
+        override fun visitTableSwitchInsn(
+            min: Int,
+            max: Int,
+            dflt: Label,
+            vararg labels: Label,
+        ) {
+            tokens += "other"
+        }
+
+        override fun visitLookupSwitchInsn(
+            dflt: Label,
+            keys: IntArray,
+            labels: Array<out Label>,
+        ) {
+            tokens += "other"
+        }
+
+        override fun visitMultiANewArrayInsn(
+            descriptor: String,
+            numDimensions: Int,
+        ) {
+            tokens += "other"
+        }
+
+        override fun visitTryCatchBlock(
+            start: Label,
+            end: Label,
+            handler: Label,
+            type: String?,
+        ) {
+            tokens += "other"
+        }
+
+        override fun visitEnd() {
+            onBody(tokens)
         }
     }
 
@@ -4729,7 +5823,7 @@ object BranchSiteAnalyzer {
             } ?: return null
         val table =
             try {
-                readMethodTable(bytes)
+                readMethodTable(bytes, lookupCompanionBytes)
             } catch (_: Exception) {
                 null
             } ?: return null
@@ -4793,7 +5887,10 @@ object BranchSiteAnalyzer {
      * bytecode. Every method's first line and raw candidates are recorded, as [analyze] records
      * them.
      */
-    private fun readMethodTable(classBytes: ByteArray): MethodTable {
+    private fun readMethodTable(
+        classBytes: ByteArray,
+        lookup: (internalName: String) -> ByteArray?,
+    ): MethodTable {
         var classAccess = 0
         var internalName = ""
         var superInternalName: String? = null
@@ -4904,8 +6001,8 @@ object BranchSiteAnalyzer {
 
         ClassReader(classBytes).accept(classVisitor, ClassReader.SKIP_FRAMES)
         // A method with any line number carries a line-number table, which is all the data-class
-        // rule in computeGeneratedBy asks of methodsWithLineNumbers. Only the forwarders are kept,
-        // and no forwarder rule reads another class, so nothing is looked up.
+        // and value-class rules in computeGeneratedBy ask of methodsWithLineNumbers. Only the
+        // pass-throughs are kept. Scala's rules read no other class here.
         val forwarderKeys =
             computeGeneratedBy(
                 classBytes,
@@ -4917,11 +6014,10 @@ object BranchSiteAnalyzer {
                 isScalaClass,
                 isKotlinClass,
                 interfaceInternalNames,
-                lookup = { null },
+                lookup = lookup,
                 scalaReleaseOf = null,
-            ).generated
-                .filterValues { it in PASS_THROUGH_FORWARDERS }
-                .keys
+                scalaLookup = { null },
+            ).passThroughKeys()
         return MethodTable(
             classAccess,
             methodAccess,

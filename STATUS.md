@@ -68,39 +68,46 @@ deferrals, gzip, a collector config file, and agent-level redaction
 
 ### Generated code read as the adopter's (ADRs 0078 and 0079): to build
 
-Decided on 2026-10-26, before v0.1.0. Landing order:
+The Kotlin shapes (chunk 1) are built. Left, in order:
 
-1. **Kotlin shapes (agent).** `GeneratedBy.VALUE_CLASS` on the wire and in
-   the testkit; `DATA_CLASS` takes mangled `componentN` and `copy` and
-   needs no line table on them, which also stops it marking a plain class's
-   hand-written `component1` and `copy`; `DEFAULT_IMPLS` takes the boxed,
-   `Unit` and suspend-`Unit` stubs and forwarders. The canary covers the
-   shapes on all four kotlinc releases. `methods-and-branches.md` loses its
-   line on data classes with a value-class property.
-2. **kotlinx.serialization (agent).** `GeneratedBy.KOTLINX_SERIALIZATION`;
+1. **kotlinx.serialization (agent).** `GeneratedBy.KOTLINX_SERIALIZATION`;
    the `$serializer`, `serializer()` and lazy-lambda rules; a
-   `@Serializer(forClass)` object's interface methods as an unread shape.
-   The plugin is a test-only dependency, and the canary adds K1 mode on 2.x.
-3. **JPA enhancers (agent).** Ebean, EclipseLink and OpenJPA as ADR 0079
+   `@Serializer(forClass)` object's interface methods as the unread shape
+   `KOTLINX_SERIALIZER_OBJECT`. The plugin is a test-only dependency, and
+   the canary adds K1 mode on 2.x.
+2. **JPA enhancers (agent).** Ebean, EclipseLink and OpenJPA as ADR 0079
    says, each pinned by an entity that library enhanced; `classes.md` and
    `compatibility.md`.
-4. **Server.** The two new values: store constants, `generated_by`
-   rendering, the UI's labels, and an unknown value rendering as `unknown`
-   rather than `none`; the bindings bump. Needs chunk 1's proto change.
+3. **Server.** `VALUE_CLASS`, `KOTLINX_SERIALIZATION` and the unread shape
+   `KOTLINX_SERIALIZER_OBJECT`: store constants, rendering, the UI's labels,
+   an unknown value rendering as `unknown`, and the bindings bump.
 
-Chunks 2 and 3 do not depend on each other. The research behind the
-rules is quoted in the two ADRs.
+Chunks 1 and 2 do not depend on each other.
 
-### The JAX-RS module parses every class its loader gate passes
+### Open overloads marked as stubs: to decide
 
-`JaxRsModule`'s type matcher starts with `not(isInterface())`, so in a
-JAX-RS application the pool parses every class the JAX-RS loader defines,
-as the servlet module did before ADR 0074's 2026-10-26 amendment. A byte
-check like the servlet one is not sound as it stands: a resource can
-inherit its `@Path` and method annotations from an interface or a
-superclass, so its own class file need not name a JAX-RS type. Measure the
-cost on a Jersey or Quarkus service first, then find a necessary condition
-that holds for inherited annotations.
+An overload the adopter wrote that only calls `super`, and that is open,
+compiles to a `$DefaultImpls` stub's exact bytes and is marked
+`DEFAULT_IMPLS`: one declared `open`, one that overrides another
+interface's member (`override fun put(t: Int) = super<Store>.put(t)`), or
+any member the all-open or kotlin-spring plugin opens, which covers most
+Spring Boot Kotlin code (ADR 0078's amendment). Only `kotlin.Metadata`
+tells them apart: it lists declared functions and not fake overrides.
+ADR 0026 keeps the agent off metadata. Decide whether the stub rule reads
+it.
+
+### Kotlin shapes still unmarked
+
+Each is compiler output that reads as the adopter's code:
+- A value class's static for an inherited interface default whose body
+  also checks a parameter for null, carries kotlinc's hash in place of
+  `-impl`, or casts a generic result.
+- A stub that casts an argument before the call (`class C : Mid<String>`
+  where `Mid<T : CharSequence>`), and `get-<hash>` for a value-class type
+  argument such as `Label`.
+- A stub kotlinc writes with a wrong hash in a build that mixes a
+  `-jvm-default=disable` library with an `all` or `all-compatibility`
+  consumer: it calls a `$DefaultImpls` method that does not exist.
 
 ### Hardening follow-ups
 

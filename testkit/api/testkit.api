@@ -167,10 +167,12 @@ public final class dev/otherlode/testkit/GeneratedBy : java/lang/Enum {
 	public static final field DEFAULT_IMPLS Ldev/otherlode/testkit/GeneratedBy;
 	public static final field ENUM Ldev/otherlode/testkit/GeneratedBy;
 	public static final field JVM_OVERLOADS Ldev/otherlode/testkit/GeneratedBy;
+	public static final field KOTLINX_SERIALIZATION Ldev/otherlode/testkit/GeneratedBy;
 	public static final field MULTIFILE_FACADE Ldev/otherlode/testkit/GeneratedBy;
 	public static final field RECORD Ldev/otherlode/testkit/GeneratedBy;
 	public static final field SCALA_OBJECT Ldev/otherlode/testkit/GeneratedBy;
 	public static final field STATIC_FORWARDER Ldev/otherlode/testkit/GeneratedBy;
+	public static final field VALUE_CLASS Ldev/otherlode/testkit/GeneratedBy;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
 	public static fun valueOf (Ljava/lang/String;)Ldev/otherlode/testkit/GeneratedBy;
 	public static fun values ()[Ldev/otherlode/testkit/GeneratedBy;
@@ -388,6 +390,7 @@ public final class dev/otherlode/testkit/UnreachedCluster {
 public final class dev/otherlode/testkit/UnreadShape : java/lang/Enum {
 	public static final field CASE_CLASS Ldev/otherlode/testkit/UnreadShape;
 	public static final field COROUTINE_MACHINERY Ldev/otherlode/testkit/UnreadShape;
+	public static final field KOTLINX_SERIALIZER_OBJECT Ldev/otherlode/testkit/UnreadShape;
 	public static final field MULTIFILE_FACADE Ldev/otherlode/testkit/UnreadShape;
 	public static final field SCALA_ENUM Ldev/otherlode/testkit/UnreadShape;
 	public static final field SCALA_OBJECT Ldev/otherlode/testkit/UnreadShape;

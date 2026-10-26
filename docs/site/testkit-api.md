@@ -416,7 +416,9 @@ What produced a method, read from the bytecode alone.
 |---|---|
 | `ENUM` | An enum's `values`, `valueOf` or `getEntries`. |
 | `DATA_CLASS` | A Kotlin data class's `componentN` and `copy`, and whichever of `equals`, `hashCode` and `toString` you did not write. |
-| `DEFAULT_IMPLS` | A `$DefaultImpls` method that only forwards to the interface's own default method. |
+| `VALUE_CLASS` | A Kotlin value class's `equals-impl`, `equals-impl0`, `hashCode-impl` and `toString-impl` that the compiler wrote, the boxed methods that only forward to a static, and the static whose body only calls an interface default the class inherits. |
+| `KOTLINX_SERIALIZATION` | Code the kotlinx.serialization compiler plugin generates. |
+| `DEFAULT_IMPLS` | A `$DefaultImpls` method that only forwards to the interface's own default method, and a class's stub that only forwards to `$DefaultImpls`. |
 | `RECORD` | A Java record's `equals`, `hashCode` or `toString`. |
 | `JVM_OVERLOADS` | An overload that `@JvmOverloads` adds, whose body only forwards to its `$default` twin. |
 | `MULTIFILE_FACADE` | A function of a Kotlin multi-file facade whose body only forwards to the same function on a part class. |
@@ -447,6 +449,7 @@ The family of compiler output a probe's code belongs to when the agent could not
 | `MULTIFILE_FACADE` | A method of a Kotlin multi-file facade that is not a recognised forwarder. |
 | `COROUTINE_MACHINERY` | A jump or switch in a suspend-shaped method that matches no coroutine shape the agent reads. |
 | `STRING_SWITCH` | The collision side of a bucket in a string switch's `hashCode` lowering that the agent cannot read. |
+| `KOTLINX_SERIALIZER_OBJECT` | A `@Serializer(forClass = ...)` object's `serialize`, `deserialize` and `getDescriptor`, which the plugin may have filled in. |
 
 ### OutsideCallerKind
 

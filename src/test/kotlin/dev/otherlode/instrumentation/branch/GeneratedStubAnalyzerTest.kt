@@ -28,16 +28,18 @@ class GeneratedStubAnalyzerTest {
     }
 
     /**
-     * A class `Impl` implementing [interfaces], with a Kotlin `Metadata` annotation when
-     * [kotlin] is set and one `public String m(String)` whose body [body] writes.
+     * A class `Impl` implementing [interfaces], with the generic [signature] when given, a Kotlin
+     * `Metadata` annotation when [kotlin] is set and one `public String m(String)` whose body
+     * [body] writes.
      */
     private fun implClass(
         interfaces: Array<String> = arrayOf(IFACE),
         kotlin: Boolean = true,
+        signature: String? = null,
         body: (MethodVisitor) -> Unit,
     ): ByteArray {
         val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
-        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC or Opcodes.ACC_FINAL, IMPL, null, "java/lang/Object", interfaces)
+        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC or Opcodes.ACC_FINAL, IMPL, signature, "java/lang/Object", interfaces)
         if (kotlin) writer.visitAnnotation("Lkotlin/Metadata;", true).visitEnd()
         val mv = writer.visitMethod(Opcodes.ACC_PUBLIC, "m", STUB_DESCRIPTOR, null, null)
         mv.visitCode()
@@ -47,6 +49,40 @@ class GeneratedStubAnalyzerTest {
         writer.visitEnd()
         return writer.toByteArray()
     }
+
+    /**
+     * The interface's `DefaultImpls` as kotlinc writes it, one static per method the stubs here
+     * call, each with the generic signature that maps its type variable to the interface's.
+     */
+    private val defaultImpls: ByteArray by lazy {
+        val owner = "$IFACE\$DefaultImpls"
+        val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
+        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC or Opcodes.ACC_FINAL, owner, null, "java/lang/Object", null)
+
+        fun static(
+            name: String,
+            descriptor: String,
+            signature: String?,
+        ) {
+            val mv = writer.visitMethod(Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC, name, descriptor, signature, null)
+            mv.visitCode()
+            mv.visitInsn(Opcodes.ACONST_NULL)
+            mv.visitInsn(Opcodes.ARETURN)
+            mv.visitMaxs(0, 0)
+            mv.visitEnd()
+        }
+        static("m", FORWARDED_DESCRIPTOR, null)
+        static("m", "(L$IFACE;Ljava/lang/Object;)Ljava/lang/Object;", "<T:Ljava/lang/Object;>(L$IFACE<TT;>;TT;)TT;")
+        static(
+            "n",
+            "(L$IFACE;Ljava/lang/Object;Ljava/lang/String;)Ljava/lang/String;",
+            "<T:Ljava/lang/Object;>(L$IFACE<TT;>;TT;Ljava/lang/String;)Ljava/lang/String;",
+        )
+        writer.visitEnd()
+        writer.toByteArray()
+    }
+
+    private val lookup: (String) -> ByteArray? = { name -> defaultImpls.takeIf { name == "$IFACE\$DefaultImpls" } }
 
     private fun forwardTo(
         owner: String,
@@ -70,10 +106,11 @@ class GeneratedStubAnalyzerTest {
         box: Pair<String, String>? = "java/lang/Integer" to "(I)Ljava/lang/Integer;",
         boxReference: Pair<String, String>? = null,
         boxTwice: Boolean = false,
+        signature: String? = "Ljava/lang/Object;L$IFACE<Ljava/lang/Integer;>;",
     ): GeneratedBy {
         val descriptor = "(ILjava/lang/String;)Ljava/lang/String;"
         val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
-        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC or Opcodes.ACC_FINAL, IMPL, null, "java/lang/Object", arrayOf(IFACE))
+        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC or Opcodes.ACC_FINAL, IMPL, signature, "java/lang/Object", arrayOf(IFACE))
         writer.visitAnnotation("Lkotlin/Metadata;", true).visitEnd()
         val mv = writer.visitMethod(Opcodes.ACC_PUBLIC, "n", descriptor, null, null)
         mv.visitCode()
@@ -90,12 +127,20 @@ class GeneratedStubAnalyzerTest {
         mv.visitMaxs(0, 0)
         mv.visitEnd()
         writer.visitEnd()
-        return BranchSiteAnalyzer.analyze(writer.toByteArray()) { _, _ -> true }.generatedBy("n", descriptor)
+        return BranchSiteAnalyzer.analyze(writer.toByteArray(), lookup) { _, _ -> true }.generatedBy("n", descriptor)
     }
 
     @Test
     fun `a stub that boxes an int with Integer valueOf for an Object parameter is DEFAULT_IMPLS`() {
         assertEquals(GeneratedBy.DEFAULT_IMPLS, boxingStub("(L$IFACE;Ljava/lang/Object;Ljava/lang/String;)Ljava/lang/String;"))
+    }
+
+    @Test
+    fun `a stub that boxes an int is NONE unless the class gives the interface Integer as a type argument`() {
+        val forwarded = "(L$IFACE;Ljava/lang/Object;Ljava/lang/String;)Ljava/lang/String;"
+
+        assertEquals(GeneratedBy.NONE, boxingStub(forwarded, signature = null))
+        assertEquals(GeneratedBy.NONE, boxingStub(forwarded, signature = "Ljava/lang/Object;L$IFACE<Ljava/lang/Object;>;"))
     }
 
     @Test
@@ -120,7 +165,7 @@ class GeneratedStubAnalyzerTest {
     }
 
     private fun markOfStub(bytes: ByteArray): GeneratedBy =
-        BranchSiteAnalyzer.analyze(bytes) { _, _ -> true }.generatedBy("m", STUB_DESCRIPTOR)
+        BranchSiteAnalyzer.analyze(bytes, lookup) { _, _ -> true }.generatedBy("m", STUB_DESCRIPTOR)
 
     @Test
     fun `a Kotlin class method that loads this and its parameter and calls its interface's DefaultImpls is DEFAULT_IMPLS`() {
@@ -184,7 +229,9 @@ class GeneratedStubAnalyzerTest {
     fun `a generic interface's stub, calling with Object and casting the Object it gets back to its own return type, is DEFAULT_IMPLS`() {
         val erased =
             forwardWith("(L$IFACE;Ljava/lang/Object;)Ljava/lang/Object;") { it.visitTypeInsn(Opcodes.CHECKCAST, "java/lang/String") }
-        assertEquals(GeneratedBy.DEFAULT_IMPLS, markOfStub(implClass(body = erased)))
+        val ofString = "Ljava/lang/Object;L$IFACE<Ljava/lang/String;>;"
+        assertEquals(GeneratedBy.DEFAULT_IMPLS, markOfStub(implClass(signature = ofString, body = erased)))
+        assertEquals(GeneratedBy.NONE, markOfStub(implClass(body = erased)), "no type argument accounts for String")
     }
 
     @Test

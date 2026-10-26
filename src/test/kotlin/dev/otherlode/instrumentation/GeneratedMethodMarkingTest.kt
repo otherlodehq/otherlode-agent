@@ -123,6 +123,45 @@ class GeneratedMethodMarkingTest {
     }
 
     @Test
+    fun `a value class's -impl statics and boxed forwarders are VALUE_CLASS, its constructor, getter and own member are not`() {
+        val registry = ProbeRegistry()
+        install(registry, AgentConfig.parse("includePackages=com.example.target"))
+
+        Class.forName("com.example.target.GeneratedValue", true, fixtureLoader())
+
+        val probes =
+            registry
+                .manifest(ResourceAttributes("test", null, "instance-1", null, "run-1"))
+                .probes
+                .filter { it.className == "com.example.target.GeneratedValue" && it.kind == ProbeKind.METHOD }
+
+        listOf("equals-impl", "equals-impl0", "hashCode-impl", "toString-impl", "equals", "hashCode", "toString").forEach { name ->
+            assertEquals(GeneratedBy.VALUE_CLASS, probes.single { it.methodName == name }.generatedBy, name)
+        }
+        listOf("constructor-impl", "getV", "twice-impl").forEach { name ->
+            assertEquals(GeneratedBy.NONE, probes.single { it.methodName == name }.generatedBy, name)
+        }
+    }
+
+    @Test
+    fun `a plain class's hand-written component, copy, equals, hashCode and toString are all NONE`() {
+        val registry = ProbeRegistry()
+        install(registry, AgentConfig.parse("includePackages=com.example.target"))
+
+        Class.forName("com.example.target.HandWrittenParts", true, fixtureLoader())
+
+        val probes =
+            registry
+                .manifest(ResourceAttributes("test", null, "instance-1", null, "run-1"))
+                .probes
+                .filter { it.className == "com.example.target.HandWrittenParts" && it.kind == ProbeKind.METHOD }
+
+        listOf("component1", "component2", "copy", "equals", "hashCode", "toString").forEach { name ->
+            assertEquals(GeneratedBy.NONE, probes.single { it.methodName == name }.generatedBy, name)
+        }
+    }
+
+    @Test
     fun `an enum's values, valueOf, and getEntries are marked ENUM`() {
         val registry = ProbeRegistry()
         val config = AgentConfig.parse("includePackages=com.example.target")

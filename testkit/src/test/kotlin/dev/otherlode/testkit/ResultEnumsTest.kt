@@ -27,6 +27,20 @@ class ResultEnumsTest {
     }
 
     @Test
+    fun `the value-class and kotlinx serialization marks map between the wire and the testkit`() {
+        assertEquals(GeneratedBy.VALUE_CLASS, WireGeneratedBy.VALUE_CLASS.toTestkit())
+        assertEquals(WireGeneratedBy.VALUE_CLASS, GeneratedBy.VALUE_CLASS.toWire())
+        assertEquals(GeneratedBy.KOTLINX_SERIALIZATION, WireGeneratedBy.KOTLINX_SERIALIZATION.toTestkit())
+        assertEquals(WireGeneratedBy.KOTLINX_SERIALIZATION, GeneratedBy.KOTLINX_SERIALIZATION.toWire())
+    }
+
+    @Test
+    fun `the kotlinx serializer object unread shape maps between the wire and the testkit`() {
+        assertEquals(UnreadShape.KOTLINX_SERIALIZER_OBJECT, WireUnreadShape.KOTLINX_SERIALIZER_OBJECT.toTestkit())
+        assertEquals(WireUnreadShape.KOTLINX_SERIALIZER_OBJECT, UnreadShape.KOTLINX_SERIALIZER_OBJECT.toWire())
+    }
+
+    @Test
     fun `RoutineKind mirrors every wire value but NONE, in order, and maps back`() {
         assertEquals(WireRoutineKind.entries.map { it.name } - "NONE", RoutineKind.entries.map { it.name })
         for (wire in WireRoutineKind.entries - WireRoutineKind.NONE) assertEquals(wire, wire.toTestkit()?.toWire())

@@ -33,7 +33,7 @@ public enum class GeneratedBy {
     /** A data class's `componentN` and `copy`, and whichever of `equals`, `hashCode` and `toString` the adopter did not write. */
     DATA_CLASS,
 
-    /** A `$DefaultImpls` method that only forwards to the interface's own default method. */
+    /** A `$DefaultImpls` method that only forwards to the interface's own default method, or a class's stub that only forwards to `$DefaultImpls`. */
     DEFAULT_IMPLS,
 
     /** A Java record's `equals`, `hashCode` or `toString`. */
@@ -53,6 +53,16 @@ public enum class GeneratedBy {
 
     /** A Scala object's `writeReplace`. */
     SCALA_OBJECT,
+
+    /**
+     * A Kotlin value class's `equals-impl`, `equals-impl0`, `hashCode-impl` and `toString-impl` that the
+     * compiler wrote, the boxed methods that only forward to a static, and the static whose body only
+     * calls an interface default the class inherits.
+     */
+    VALUE_CLASS,
+
+    /** What the kotlinx.serialization compiler plugin generates: a `$serializer` class's members and a companion's `serializer()`. */
+    KOTLINX_SERIALIZATION,
 }
 
 /**
@@ -97,6 +107,9 @@ public enum class UnreadShape {
 
     /** The collision side of a bucket in a string switch's `hashCode` lowering the agent cannot read. */
     STRING_SWITCH,
+
+    /** A `@Serializer(forClass = ...)` object's `serialize`, `deserialize` and `getDescriptor`, which the plugin may have filled in. */
+    KOTLINX_SERIALIZER_OBJECT,
 }
 
 /**
@@ -216,6 +229,8 @@ internal fun WireGeneratedBy.toTestkit(): GeneratedBy? =
         WireGeneratedBy.CASE_CLASS -> GeneratedBy.CASE_CLASS
         WireGeneratedBy.STATIC_FORWARDER -> GeneratedBy.STATIC_FORWARDER
         WireGeneratedBy.SCALA_OBJECT -> GeneratedBy.SCALA_OBJECT
+        WireGeneratedBy.VALUE_CLASS -> GeneratedBy.VALUE_CLASS
+        WireGeneratedBy.KOTLINX_SERIALIZATION -> GeneratedBy.KOTLINX_SERIALIZATION
     }
 
 internal fun GeneratedBy.toWire(): WireGeneratedBy =
@@ -229,6 +244,8 @@ internal fun GeneratedBy.toWire(): WireGeneratedBy =
         GeneratedBy.CASE_CLASS -> WireGeneratedBy.CASE_CLASS
         GeneratedBy.STATIC_FORWARDER -> WireGeneratedBy.STATIC_FORWARDER
         GeneratedBy.SCALA_OBJECT -> WireGeneratedBy.SCALA_OBJECT
+        GeneratedBy.VALUE_CLASS -> WireGeneratedBy.VALUE_CLASS
+        GeneratedBy.KOTLINX_SERIALIZATION -> WireGeneratedBy.KOTLINX_SERIALIZATION
     }
 
 internal fun WireRoutineKind.toTestkit(): RoutineKind? =
@@ -256,6 +273,7 @@ internal fun WireUnreadShape.toTestkit(): UnreadShape? =
         WireUnreadShape.MULTIFILE_FACADE -> UnreadShape.MULTIFILE_FACADE
         WireUnreadShape.COROUTINE_MACHINERY -> UnreadShape.COROUTINE_MACHINERY
         WireUnreadShape.STRING_SWITCH -> UnreadShape.STRING_SWITCH
+        WireUnreadShape.KOTLINX_SERIALIZER_OBJECT -> UnreadShape.KOTLINX_SERIALIZER_OBJECT
     }
 
 internal fun UnreadShape.toWire(): WireUnreadShape =
@@ -267,6 +285,7 @@ internal fun UnreadShape.toWire(): WireUnreadShape =
         UnreadShape.MULTIFILE_FACADE -> WireUnreadShape.MULTIFILE_FACADE
         UnreadShape.COROUTINE_MACHINERY -> WireUnreadShape.COROUTINE_MACHINERY
         UnreadShape.STRING_SWITCH -> WireUnreadShape.STRING_SWITCH
+        UnreadShape.KOTLINX_SERIALIZER_OBJECT -> WireUnreadShape.KOTLINX_SERIALIZER_OBJECT
     }
 
 internal fun WireEndpointDiscoverySource.toTestkit(): EndpointDiscoverySource =

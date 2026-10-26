@@ -8,6 +8,7 @@ import dev.otherlode.export.GeneratedBy
 import dev.otherlode.instrumentation.CompilerFixtures
 import net.bytebuddy.jar.asm.ClassReader
 import net.bytebuddy.jar.asm.ClassVisitor
+import net.bytebuddy.jar.asm.ClassWriter
 import net.bytebuddy.jar.asm.Opcodes
 import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
@@ -32,6 +33,7 @@ class KotlincMatrixTest {
         private const val DESCRIBER_IMPL = "com/example/target/kotlinc/DescriberImpl"
         private const val STRING = "Ljava/lang/String;"
         private const val PLAIN_DESCRIBER = "com/example/target/kotlinc/PlainDescriber"
+        private val OBJECT_METHOD_NAMES = setOf("equals", "hashCode", "toString")
 
         /**
          * Where a call to a `Describer.plain` stub leads once passed through: the `$DefaultImpls`
@@ -592,6 +594,310 @@ class KotlincMatrixTest {
                 listOf(BranchRole.FALL_THROUGH),
             ),
             sites.map { site -> site.outcomes.map { it.role } },
+        )
+    }
+
+    // --- value classes ---
+
+    private fun CompilerFixtures.Build.entries(simpleName: String) = markEntries(simpleName)
+
+    private fun List<Triple<String, String, GeneratedBy>>.marksOf(
+        predicate: (name: String, descriptor: String) -> Boolean,
+    ): List<GeneratedBy> = filter { predicate(it.first, it.second) }.map { it.third }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `a value class's -impl statics and boxed forwarders are VALUE_CLASS whatever the underlying type`(version: String) {
+        val build = CompilerFixtures.kotlinc(version)
+
+        listOf("Id" to "I", "Label" to STRING, "Wide" to "J").forEach { (name, underlying) ->
+            val marks = build.marks(name)
+            val self = "Lcom/example/target/kotlinc/$name;"
+            assertEquals(GeneratedBy.VALUE_CLASS, marks.of("equals-impl", "(${underlying}Ljava/lang/Object;)Z"), "$name.equals-impl")
+            assertEquals(GeneratedBy.VALUE_CLASS, marks.of("equals-impl0", "($underlying$underlying)Z"), "$name.equals-impl0")
+            assertEquals(GeneratedBy.VALUE_CLASS, marks.of("hashCode-impl", "($underlying)I"), "$name.hashCode-impl")
+            assertEquals(GeneratedBy.VALUE_CLASS, marks.of("toString-impl", "($underlying)$STRING"), "$name.toString-impl")
+            assertEquals(GeneratedBy.VALUE_CLASS, marks.only("equals"), "$name.equals")
+            assertEquals(GeneratedBy.VALUE_CLASS, marks.only("hashCode"), "$name.hashCode")
+            assertEquals(GeneratedBy.VALUE_CLASS, marks.only("toString"), "$name.toString")
+            assertEquals(GeneratedBy.NONE, marks.of("constructor-impl", "($underlying)$underlying"), "$name.constructor-impl")
+            assertEquals(GeneratedBy.NONE, marks.of("box-impl", "($underlying)$self"), "$name.box-impl")
+            assertEquals(GeneratedBy.NONE, marks.of("unbox-impl", "()$underlying"), "$name.unbox-impl")
+            assertEquals(GeneratedBy.NONE, marks.only("<init>"), "$name.<init>")
+            assertTrue(build.entries(name).marksOf { n, _ -> n.startsWith("get") }.all { it == GeneratedBy.NONE }, "$name getter")
+        }
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `a value class's hand-written toString and its own members stay unmarked, the generated ones are marked`(version: String) {
+        val marks = CompilerFixtures.kotlinc(version).marks("Shout")
+
+        assertEquals(GeneratedBy.NONE, marks.of("toString-impl", "($STRING)$STRING"), "toString-impl holds the adopter's body")
+        assertEquals(GeneratedBy.NONE, marks.only("toString"), "toString forwards to the adopter's body")
+        assertEquals(GeneratedBy.NONE, marks.of("twice-impl", "($STRING)$STRING"), "twice-impl is the adopter's member")
+        assertEquals(GeneratedBy.VALUE_CLASS, marks.only("hashCode"))
+        assertEquals(GeneratedBy.VALUE_CLASS, marks.only("equals"))
+        assertEquals(GeneratedBy.VALUE_CLASS, marks.of("hashCode-impl", "($STRING)I"))
+        assertEquals(GeneratedBy.VALUE_CLASS, marks.of("equals-impl", "(${STRING}Ljava/lang/Object;)Z"))
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `a value class's init block keeps constructor-impl unmarked`(version: String) {
+        val marks = CompilerFixtures.kotlinc(version).marks("Checked")
+
+        assertEquals(GeneratedBy.NONE, marks.of("constructor-impl", "(I)I"))
+        assertEquals(GeneratedBy.VALUE_CLASS, marks.only("toString"))
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `a value class's interface override forwards to its static and is VALUE_CLASS, the static holding the adopter's body is not`(
+        version: String,
+    ) {
+        val marks = CompilerFixtures.kotlinc(version).marks("Rank")
+
+        assertEquals(GeneratedBy.VALUE_CLASS, marks.of("compareTo-yZqmlhs", "(I)I"), "the boxed forwarder")
+        assertEquals(GeneratedBy.NONE, marks.of("compareTo-yZqmlhs", "(II)I"), "the static holds the adopter's body")
+        assertEquals(GeneratedBy.NONE, marks.of("compareTo", "(Ljava/lang/Object;)I"), "the bridge")
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `a call to a value class's boxed forwarder passes through to its static`(version: String) {
+        val build = CompilerFixtures.kotlinc(version)
+        val caller = "com/example/target/kotlinc/RankCaller"
+        val writer = ClassWriter(0)
+        writer.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC or Opcodes.ACC_SUPER, caller, null, "java/lang/Object", null)
+        writer.visitMethod(Opcodes.ACC_PUBLIC, "call", "(Lcom/example/target/kotlinc/Rank;)$STRING", null, null).apply {
+            visitCode()
+            visitVarInsn(Opcodes.ALOAD, 1)
+            visitMethodInsn(Opcodes.INVOKEVIRTUAL, "com/example/target/kotlinc/Rank", "toString", "()$STRING", false)
+            visitInsn(Opcodes.ARETURN)
+            visitMaxs(1, 2)
+            visitEnd()
+        }
+        writer.visitEnd()
+        val calls =
+            BranchSiteAnalyzer
+                .analyze(writer.toByteArray(), build.lookup, includePackages = listOf("com.example.target")) { _, _ -> true }
+                .callsOf("call", "(Lcom/example/target/kotlinc/Rank;)$STRING")
+
+        assertTrue(CallEdge("com.example.target.kotlinc.Rank", "toString-impl", "(I)$STRING", virtual = false) in calls, "calls: $calls")
+        assertTrue(calls.none { it.methodName == "toString" }, "the forwarder is passed through: $calls")
+    }
+
+    private fun dataMembers(
+        version: String,
+        simpleName: String,
+    ): List<Pair<String, GeneratedBy>> =
+        CompilerFixtures
+            .kotlinc(version)
+            .markEntries(simpleName)
+            .filter { (name, _, _) ->
+                (name.startsWith("component") || name == "copy" || name.startsWith("copy-") || name in OBJECT_METHOD_NAMES) &&
+                    !name.contains('$')
+            }.map { it.first to it.third }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `a data class with value-class properties has every mangled componentN and copy, and equals, hashCode and toString, DATA_CLASS`(
+        version: String,
+    ) {
+        listOf("IdAndCount" to 2, "IdLabelCount" to 3, "MaybeId" to 2).forEach { (name, components) ->
+            val members = dataMembers(version, name)
+            assertEquals(components + 1 + 3, members.size, "$name members: $members")
+            members.forEach { (member, mark) -> assertEquals(GeneratedBy.DATA_CLASS, mark, "$name.$member") }
+        }
+        val named = CompilerFixtures.kotlinc(version).markEntries("IdAndCount").map { it.first }
+        assertTrue(named.any { it.startsWith("component1-") }, "component1 is mangled: $named")
+        assertTrue(named.any { it.startsWith("copy-") }, "copy is mangled: $named")
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `a plain class that writes the data-class names itself is unmarked, mangled or not`(version: String) {
+        listOf("PlainParts", "PlainMangledParts").forEach { name ->
+            val members = dataMembers(version, name)
+            assertTrue(members.size >= 6, "$name members: $members")
+            members.forEach { (member, mark) -> assertEquals(GeneratedBy.NONE, mark, "$name.$member") }
+        }
+    }
+
+    private fun stubExpectation(version: String): GeneratedBy =
+        if (CompilerFixtures.kotlincDefaultsToJvmDefaultEnable(version)) GeneratedBy.NONE else GeneratedBy.DEFAULT_IMPLS
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `a stub that boxes a value-class argument and unboxes its result, or returns the value class, is DEFAULT_IMPLS`(version: String) {
+        listOf("ValueStoreOfId", "IdStoreApiImpl").forEach { name ->
+            val entries = CompilerFixtures.kotlinc(version).markEntries(name)
+            val put = entries.single { it.first.startsWith("put-") }
+            val get = entries.single { it.first.startsWith("get-") }
+
+            assertEquals(stubExpectation(version), put.third, "$name.${put.first}")
+            assertEquals(stubExpectation(version), get.third, "$name.${get.first}")
+            assertEquals(GeneratedBy.NONE, entries.single { it.first == "put" }.third, "$name.put is a bridge")
+            assertEquals(GeneratedBy.NONE, entries.single { it.first == "get" }.third, "$name.get is a bridge")
+        }
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `a stub that drops a Unit result is DEFAULT_IMPLS, and an override that calls super is not`(version: String) {
+        val build = CompilerFixtures.kotlinc(version)
+
+        listOf("ValueStoreOfUnit", "UnitStoreApiImpl").forEach { name ->
+            assertEquals(stubExpectation(version), build.marks(name).of("put", "(Lkotlin/Unit;)V"), "$name.put")
+            assertEquals(stubExpectation(version), build.marks(name).of("get", "()Lkotlin/Unit;"), "$name.get")
+        }
+        assertEquals(GeneratedBy.NONE, build.marks("UnitStoreOverride").of("put", "(Lkotlin/Unit;)V"))
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `an overload the adopter wrote that boxes, drops or unboxes like a stub is unmarked`(version: String) {
+        val build = CompilerFixtures.kotlinc(version)
+
+        assertEquals(GeneratedBy.NONE, build.markEntries("OverloadById").single { it.first.startsWith("put-") }.third)
+        assertEquals(GeneratedBy.NONE, build.marks("OverloadDropsResult").of("put", "(I)V"))
+        assertEquals(GeneratedBy.NONE, build.marks("OverloadBoxesInt").of("put", "(I)Ljava/lang/Object;"))
+        if (!CompilerFixtures.kotlincDefaultsToJvmDefaultEnable(version)) {
+            assertEquals(GeneratedBy.NONE, build.markEntries("OverloadByIdApi\$DefaultImpls").single { it.first.startsWith("put-") }.third)
+            assertEquals(
+                GeneratedBy.NONE,
+                build.marks("OverloadDropsResultApi\$DefaultImpls").of("put", "(Lcom/example/target/kotlinc/OverloadDropsResultApi;I)V"),
+            )
+        }
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `a stub whose type argument is a variable an enclosing class or function declares is DEFAULT_IMPLS`(version: String) {
+        val build = CompilerFixtures.kotlinc(version)
+        val expected = stubExpectation(version)
+        val charSequence = "Ljava/lang/CharSequence;"
+
+        listOf("EnclosingStore\$Inner", "EnclosingMidStore\$Inner").forEach { name ->
+            assertEquals(expected, build.marks(name).of("put", "($charSequence)$charSequence"), "$name.put")
+            assertEquals(expected, build.marks(name).of("get", "()$charSequence"), "$name.get")
+        }
+        assertEquals(expected, build.marks("ValueClassesKt\$anonymousStore\$1").of("put", "($charSequence)$charSequence"), "anonymous put")
+        val number = "Ljava/lang/Number;"
+        assertEquals(expected, build.marks("ValueClassesKt\$localStore\$LocalStore").of("put", "($number)$number"), "local put")
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `an overload that boxes beside the real stub at a nullable type argument is unmarked`(version: String) {
+        val build = CompilerFixtures.kotlinc(version)
+        val integer = "Ljava/lang/Integer;"
+        val id = "Lcom/example/target/kotlinc/Id;"
+
+        assertEquals(GeneratedBy.NONE, build.marks("NullableIntOverload").of("put", "(I)$integer"))
+        assertEquals(stubExpectation(version), build.marks("NullableIntOverload").of("put", "($integer)$integer"))
+        assertEquals(
+            GeneratedBy.NONE,
+            build
+                .markEntries("NullableIdOverload")
+                .single {
+                    it.first.startsWith("put-") && it.second == "(I)$id"
+                }.third,
+        )
+        assertEquals(
+            stubExpectation(version),
+            build.markEntries("NullableIdOverload").single { it.first.startsWith("put-") && it.second == "($id)$id" }.third,
+        )
+        if (!CompilerFixtures.kotlincDefaultsToJvmDefaultEnable(version)) {
+            val api = "Lcom/example/target/kotlinc/NullableIntOverloadApi;"
+            assertEquals(GeneratedBy.NONE, build.marks("NullableIntOverloadApi\$DefaultImpls").of("put", "(${api}I)$integer"))
+            assertEquals(GeneratedBy.DEFAULT_IMPLS, build.marks("NullableIntOverloadApi\$DefaultImpls").of("put", "($api$integer)$integer"))
+        }
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `an overload that boxes for super with no stub beside it is unmarked`(version: String) {
+        val build = CompilerFixtures.kotlinc(version)
+        val integer = "Ljava/lang/Integer;"
+        val id = "Lcom/example/target/kotlinc/Id;"
+
+        assertEquals(GeneratedBy.NONE, build.marks("OverrideAndOverload").of("put", "(I)$integer"))
+        assertEquals(GeneratedBy.NONE, build.markEntries("AbstractOverrideAndOverload").single { it.second == "(I)$id" }.third)
+        assertEquals(GeneratedBy.NONE, build.markEntries("GenericBoundOverload").single { it.second == "(I)$id" }.third)
+        if (!CompilerFixtures.kotlincDefaultsToJvmDefaultEnable(version)) {
+            val api = "Lcom/example/target/kotlinc/OverrideAndOverloadApi;"
+            assertEquals(GeneratedBy.NONE, build.marks("OverrideAndOverloadApi\$DefaultImpls").of("put", "(${api}I)$integer"))
+        }
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `a stub kotlinc regenerates from a reified inline function is DEFAULT_IMPLS`(version: String) {
+        val charSequence = "Ljava/lang/CharSequence;"
+        val marks = CompilerFixtures.kotlinc(version).marks("ValueClassesKt\$callsInlinedStore\$\$inlined\$inlinedStore\$1")
+
+        assertEquals(stubExpectation(version), marks.of("put", "($charSequence)$charSequence"))
+        assertEquals(stubExpectation(version), marks.of("get", "()$charSequence"))
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `an overload whose type matches some type argument but not the called parameter is unmarked`(version: String) {
+        val build = CompilerFixtures.kotlinc(version)
+
+        assertEquals(GeneratedBy.NONE, build.markEntries("LogOverloadById").single { it.first.startsWith("log-") }.third)
+        assertEquals(GeneratedBy.NONE, build.marks("LogOverloadByInt").of("log", "(I)Ljava/lang/Object;"))
+        assertEquals(GeneratedBy.NONE, build.marks("LogOverloadByString").of("log", "(Ljava/lang/String;)Ljava/lang/Object;"))
+        assertEquals(GeneratedBy.NONE, build.marks("OverloadByString").of("put", "(Ljava/lang/String;)Ljava/lang/Object;"))
+        if (!CompilerFixtures.kotlincDefaultsToJvmDefaultEnable(version)) {
+            assertEquals(GeneratedBy.NONE, build.markEntries("LogOverloadApi\$DefaultImpls").single { it.first.startsWith("log-") }.third)
+        }
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `a value class's static for an inherited default is VALUE_CLASS, and its stub is DEFAULT_IMPLS`(version: String) {
+        val marks = CompilerFixtures.kotlinc(version).marks("GreetingId")
+
+        assertEquals(GeneratedBy.VALUE_CLASS, marks.of("greet-impl", "(I)$STRING"))
+        if (!CompilerFixtures.kotlincDefaultsToJvmDefaultEnable(
+                version,
+            )
+        ) {
+            assertEquals(GeneratedBy.DEFAULT_IMPLS, marks.of("greet", "()$STRING"))
+        }
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `a sub-interface's DefaultImpls forwarders that box, unbox or drop a Unit result are DEFAULT_IMPLS`(version: String) {
+        val build = CompilerFixtures.kotlinc(version)
+        val ids = build.markEntries("IdStoreApi\$DefaultImpls")
+
+        assertEquals(GeneratedBy.DEFAULT_IMPLS, ids.single { it.first.startsWith("put-") }.third)
+        assertEquals(GeneratedBy.DEFAULT_IMPLS, ids.single { it.first.startsWith("get-") }.third)
+        assertEquals(
+            GeneratedBy.DEFAULT_IMPLS,
+            build.marks("UnitStoreApi\$DefaultImpls").of("put", "(Lcom/example/target/kotlinc/UnitStoreApi;Lkotlin/Unit;)V"),
+        )
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `a suspend forwarder that returns Unit after the suspended check is DEFAULT_IMPLS only with its receiver cast, or under enable`(
+        version: String,
+    ) {
+        val build = CompilerFixtures.kotlinc(version)
+        val descriptor = "(Lcom/example/target/kotlinc/SuspendDefaultSub;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;"
+        val overrideDescriptor = "(Lcom/example/target/kotlinc/SuspendDefaultOverride;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;"
+
+        assertEquals(GeneratedBy.DEFAULT_IMPLS, build.marks("SuspendDefaultSub\$DefaultImpls").of("run", descriptor))
+        assertEquals(
+            if (CompilerFixtures.kotlincDefaultsToJvmDefaultEnable(version)) GeneratedBy.DEFAULT_IMPLS else GeneratedBy.NONE,
+            build.marks("SuspendDefaultOverride\$DefaultImpls").of("run", overrideDescriptor),
+            "under disable an override that calls super compiles to the same tail without the cast",
         )
     }
 }

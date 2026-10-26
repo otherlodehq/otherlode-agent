@@ -3310,7 +3310,7 @@ class ProtoPayloadCodecTest {
         val manifest = ProbeManifest(resource, shapes.map { origin(unreadShape = it) })
 
         assertEquals(manifest, ProtoPayloadCodec.decodeProbeManifest(ProtoPayloadCodec.encode(manifest)))
-        assertEquals(7, shapes.size)
+        assertEquals(8, shapes.size)
     }
 
     @Test

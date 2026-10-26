@@ -42,8 +42,9 @@ enum InitializationFailure {
 // values/valueOf/getEntries, a data class's componentN/copy and whichever of
 // equals/hashCode/toString the adopter did not override (the generated ones have no line-number
 // table), a $DefaultImpls method that only forwards to the interface's own default method, a Java
-// record's equals/hashCode/toString, an overload @JvmOverloads adds, or Scala's case-class
-// plumbing, static forwarders and object serialization. A branch probe carries the mark of the
+// record's equals/hashCode/toString, an overload @JvmOverloads adds, a Kotlin value class's
+// generated members, the kotlinx.serialization plugin's output, or Scala's case-class plumbing,
+// static forwarders and object serialization. A branch probe carries the mark of the
 // method it sits in. The server leaves a generated probe out of never-hit, stale-hit, and the call
 // graph by default, since the compiler will emit the method again regardless of what the adopter
 // does; its hit count is still evidence, so the probe itself is kept rather than dropped.
@@ -80,6 +81,19 @@ enum GeneratedBy {
   // A Scala object's private writeReplace, whose body only constructs a
   // scala.runtime.ModuleSerializationProxy for the object's class.
   SCALA_OBJECT = 9;
+  // A member of a Kotlin value class (a class that declares the synthetic box-impl and unbox-impl):
+  // the static equals-impl, equals-impl0, hashCode-impl and toString-impl when they have no
+  // line-number table, and the boxed equals, hashCode, toString or interface override whose body
+  // only reads the class's one field and calls the static method with its own name plus -impl, or
+  // its own name when that is already mangled, except a boxed equals, hashCode or toString whose
+  // static is not marked. Also the static m-impl whose body only boxes its argument and calls an
+  // interface default m the class inherits. The constructor-impl, the property getter and a member the
+  // adopter wrote are not marked.
+  VALUE_CLASS = 10;
+  // Output of the kotlinx.serialization compiler plugin: a $serializer class's members, a
+  // companion's serializer() and the lazy cached serializer. The agent marks it when the bytecode
+  // has the plugin's shape.
+  KOTLINX_SERIALIZATION = 11;
 }
 
 // The family of compiler output a probe's code belongs to when the agent could not read its body.
@@ -110,6 +124,10 @@ enum UnreadShape {
   // The collision side of the last equals check in a bucket of a switch on String.hashCode(),
   // when the agent cannot read the lowering.
   UNREAD_SHAPE_STRING_SWITCH = 7;
+  // A @Serializer(forClass = ...) object's serialize, deserialize and getDescriptor: the
+  // kotlinx.serialization plugin fills in the members the adopter did not write, and nothing in
+  // the bytecode tells which those are (ADR 0078).
+  UNREAD_SHAPE_KOTLINX_SERIALIZER_OBJECT = 8;
 }
 
 // Who sent a payload. DeltaBatch, ProbeManifest, StaticBaseline and ClassListing each carry one,

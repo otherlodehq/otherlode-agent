@@ -47,3 +47,13 @@ The research also found a hole in ADR 0026's rule. A plain class with a hand-wri
 - `GeneratedBy` gains two values, `VALUE_CLASS` and `KOTLINX_SERIALIZATION`. The testkit's enum gains them too. A server that does not name a value keeps it out of findings, since any non-zero mark is not judged, but labels it as ordinary code until it learns the name.
 - A class compiled without line numbers has its data-class and value-class members marked, as ADR 0026 accepts for `equals`, `hashCode` and `toString`.
 - An override that compiles to exactly a generated stub's bytes is marked, as ADR 0048 accepts.
+
+## Amended on 2026-10-26: settled while building the Kotlin shapes
+
+The review found that the stub and forwarder rules also matched overloads the adopter wrote with a `super` call, which compile to the same body. Bytecode alone separates them as follows.
+
+- **Types by position.** A stub's or forwarder's parameters and result must be the types the called `$DefaultImpls` method takes and returns once the caller's type arguments are put in. The called method's own generic signature (`<T:…>(LI<TT;>;TT;)TT;`) says which type argument each position takes. Type variables resolve through the class, its enclosing method and its outer classes. A position also matches through the stub's own signature, which covers a class kotlinc regenerates from a reified inline function.
+- **No boxing twin.** At a nullable type argument the signature reads as at the plain one. kotlinc then writes the stub that passes the box, so a candidate that boxes for a call another candidate makes without boxing is the adopter's.
+- **Open stubs, undeclared forwarders.** kotlinc writes a class's stub open and declares nothing in a sub-interface for the defaults it forwards. A stub must not be final, and a forwarder to a super-interface must not be one its sub-interface declares.
+- **The static for an inherited default.** A value class that inherits an interface default `m` gets a static `m-impl` that boxes and calls `m`. It is marked when the class has no boxed forwarder `m` of its own. Its line table cannot decide it, since kotlinc 2.1 and earlier give it the class declaration's lines.
+- **Open overloads stay marked.** An overload that is open compiles to a stub's exact bytes: one declared `open`, one that overrides another interface's member, or one the all-open or kotlin-spring plugin opens. Only `kotlin.Metadata`, which lists declared functions and not fake overrides, tells them apart. Whether to read it is open (STATUS).

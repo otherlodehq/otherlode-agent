@@ -44,6 +44,8 @@ enum class GeneratedBy {
     CASE_CLASS,
     STATIC_FORWARDER,
     SCALA_OBJECT,
+    VALUE_CLASS,
+    KOTLINX_SERIALIZATION,
 }
 
 /**
@@ -119,6 +121,9 @@ enum class UnreadShape {
 
     /** The collision side of a bucket in a string switch's `hashCode` lowering the agent cannot read. */
     STRING_SWITCH,
+
+    /** A `@Serializer(forClass = ...)` object's `serialize`, `deserialize` and `getDescriptor`, which the plugin may have filled in. */
+    KOTLINX_SERIALIZER_OBJECT,
 }
 
 /**
