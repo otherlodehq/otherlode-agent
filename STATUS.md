@@ -33,17 +33,6 @@ multi-tenant backend.
    make the collector's GHCR package public. Still unknown: whether a
    dropped Portal deployment frees its version. A `rehearsal/1-again` tag
    answers it.
-2a. **Move the docs token into the release environments.** The docs job
-   of this repo's and the collector's `release.yml` runs in the `release`
-   environment, which allows only release tags (the collector's `v*`, this
-   repo's `v*` and `rehearsal/*`). The token is still the org secret
-   `OTHERLODE_DEV_DOCS_TOKEN`, which every workflow of every repo it is
-   shared with can read. Set it as an environment secret in both repos:
-   `gh secret set OTHERLODE_DEV_DOCS_TOKEN --env release -R otherlodehq/otherlode-agent`
-   and the same with `otherlode-collector`. Then remove both repos from
-   the org secret's repository access, keeping `otherlode-server`, whose CI
-   still reads it. Without the token the docs job skips the sync to
-   otherlode.dev with only a notice.
 3. **The quickstart** in otherlode.dev's `start/` (that repo's ADR 0001).
    The agent's and collector's pages and the overview are written.
 4. **Review all customer copy.** Copy edits are pre-approved until
