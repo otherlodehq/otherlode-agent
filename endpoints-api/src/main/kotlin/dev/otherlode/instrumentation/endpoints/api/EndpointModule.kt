@@ -66,6 +66,18 @@ interface EndpointModule {
     fun classLoaderMatcher(): ElementMatcher<in ClassLoader> = any()
 
     /**
+     * A cheap check of the raw class file of a class being loaded, which the pipeline runs after
+     * [classLoaderMatcher] accepts the loader and before it asks [typeMatcher]. Returning false
+     * skips the class for this module with no class file parse.
+     *
+     * This must return true for every class [typeMatcher] could accept: it is a necessary
+     * condition only, so a false positive costs a parse and a false negative loses an endpoint.
+     * A module whose [typeMatcher] needs the class parsed overrides it with a byte search. The
+     * pipeline calls it only for a class it has the bytes of, and the default accepts every class.
+     */
+    fun classFileMayMatch(classFile: ByteArray): Boolean = true
+
+    /**
      * The form of [typeMatcher] the pipeline calls, given [classLoader], the loader defining the
      * class being matched (`null` for the bootstrap loader). A module that caches an answer per
      * loader overrides this, so the cache is keyed by the loader the class came from. The default

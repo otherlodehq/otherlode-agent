@@ -30,6 +30,8 @@ private val SERVLET_INTERFACES = NAMESPACES.map { "$it.servlet.Servlet" }.toSet(
 private val SKIPPED_SUPERTYPE_PREFIXES = listOf("java.", "jdk.", "sun.", "com.sun.", "kotlin.")
 private val PLATFORM_LOADER: ClassLoader = ClassLoader.getPlatformClassLoader()
 
+private val SERVICE_DESCRIPTOR_MARKER = "/servlet/ServletResponse;)".toByteArray(Charsets.US_ASCII)
+
 private fun isSkippedSupertype(name: String): Boolean = SKIPPED_SUPERTYPE_PREFIXES.any { name.startsWith(it) }
 
 /**
@@ -69,6 +71,21 @@ private fun serviceMethod(namespace: String): ElementMatcher.Junction<MethodDesc
         .and(not(isStatic()))
         .and(not(isBridge()))
 
+private fun indexOf(
+    haystack: ByteArray,
+    needle: ByteArray,
+): Int {
+    val last = haystack.size - needle.size
+    var start = 0
+    while (start <= last) {
+        var i = 0
+        while (i < needle.size && haystack[start + i] == needle[i]) i++
+        if (i == needle.size) return start
+        start++
+    }
+    return -1
+}
+
 /** Whether a loader can see a servlet API, looked up once per loader and held weakly. */
 private class ServletApiGate : ElementMatcher<ClassLoader?> {
     private val answers = Collections.synchronizedMap(WeakHashMap<ClassLoader, Boolean>())
@@ -105,6 +122,12 @@ class ServletModule : EndpointModule {
     private val supertypeCaches = SupertypeCaches(::SupertypeCache)
 
     override fun classLoaderMatcher(): ElementMatcher<in ClassLoader> = apiGate
+
+    /**
+     * Whether [classFile] holds the text `/servlet/ServletResponse;)`. Every method [serviceMethod]
+     * accepts has a descriptor that ends its arguments with it, stored as a constant pool entry.
+     */
+    override fun classFileMayMatch(classFile: ByteArray): Boolean = indexOf(classFile, SERVICE_DESCRIPTOR_MARKER) >= 0
 
     override fun typeMatcher(): ElementMatcher<in TypeDescription> = typeMatcher(null)
 

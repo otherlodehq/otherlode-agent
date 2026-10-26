@@ -192,7 +192,7 @@ class EndpointInstrumentation(
 
         // AgentBuilder.Default.makeRaw returns a ResettableClassFileTransformer; the interface
         // this chain ends on declares only the supertype.
-        val transformer = builder.makeRaw() as ResettableClassFileTransformer
+        val transformer = CurrentClassFileTransformer(builder.makeRaw() as ResettableClassFileTransformer)
         instrumentation.addTransformer(transformer, true)
 
         val handlerInterfaces = modules.flatMapTo(sortedSetOf()) { it.handlerInterfaces }
@@ -322,7 +322,8 @@ class EndpointInstrumentation(
          * The matcher [install] registers for [module], which calls [onMatched] with [module] when it
          * accepts a class: its [EndpointModule.classLoaderMatcher] first,
          * so a loader the module rejects never has a class parsed for it, then
-         * [EndpointModule.typeMatcher] for the defining loader.
+         * [EndpointModule.classFileMayMatch] on the class's bytes, when this thread is transforming that class, and
+         * last [EndpointModule.typeMatcher] for the defining loader.
          *
          * A matcher, loader or type, that throws cannot say whether the module wanted the class, so the module is
          * switched off as [OtherlodeEndpoints.KIND_TRANSFORM_FAILED] and answers no from then on.
@@ -346,6 +347,8 @@ class EndpointInstrumentation(
                 val matched =
                     try {
                         if (!loaderMatcher.matches(classLoader)) return@RawMatcher false
+                        val classFile = CurrentClassFile.bytesOf(typeDescription.internalName)
+                        if (classFile != null && !module.classFileMayMatch(classFile)) return@RawMatcher false
                         val typeMatcher: ElementMatcher<in TypeDescription> =
                             if (classLoader == null) {
                                 bootstrapMatcher.value

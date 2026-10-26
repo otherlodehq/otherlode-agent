@@ -179,6 +179,55 @@ class EndpointInstrumentationTest {
         assertEquals(1, registry.disabledModules().size)
     }
 
+    private class ClassFileGateModule(
+        private val mayMatch: Boolean,
+    ) : EndpointModule {
+        val consulted = java.util.concurrent.CopyOnWriteArrayList<String>()
+        override val name: String = "class-file-gate"
+
+        override fun classFileMayMatch(classFile: ByteArray): Boolean = mayMatch
+
+        override fun typeMatcher(): ElementMatcher<in TypeDescription> =
+            ElementMatcher { type ->
+                consulted += type.name
+                type.name == "com.example.framework.FakeRouter"
+            }
+
+        override fun transform(
+            builder: DynamicType.Builder<*>,
+            typeDescription: TypeDescription,
+            advice: AdviceBinder,
+            classLoader: ClassLoader?,
+        ): DynamicType.Builder<*> = builder.visit(advice.hook("dev.otherlode.endpoints.fake.FakeRouterAddRouteAdvice", named("addRoute")))
+    }
+
+    @Test
+    fun `a module whose class file check says no never has its type matcher consulted`() {
+        val registry = EndpointRegistry()
+        val module = ClassFileGateModule(mayMatch = false)
+        val router = install(registry, listOf(module), "com.example.framework.FakeRouter")
+        val addRoute = router.javaClass.getMethod("addRoute", String::class.java, String::class.java, Runnable::class.java)
+
+        addRoute.invoke(router, "GET", "/gated", Runnable {})
+
+        assertTrue("com.example.framework.FakeRouter" !in module.consulted)
+        assertTrue(registry.endpoints().none { it.verbatimTemplate == "/gated" })
+        assertTrue(registry.disabledModules().isEmpty())
+    }
+
+    @Test
+    fun `a module whose class file check says yes has its type matcher consulted and its advice woven`() {
+        val registry = EndpointRegistry()
+        val module = ClassFileGateModule(mayMatch = true)
+        val router = install(registry, listOf(module), "com.example.framework.FakeRouter")
+        val addRoute = router.javaClass.getMethod("addRoute", String::class.java, String::class.java, Runnable::class.java)
+
+        addRoute.invoke(router, "GET", "/gated", Runnable {})
+
+        assertTrue("com.example.framework.FakeRouter" in module.consulted)
+        assertTrue(registry.endpoints().any { it.verbatimTemplate == "/gated" })
+    }
+
     @Test
     fun `a module whose matcher throws leaves the class loadable and untouched`() {
         // A matcher that throws (a supertype walk hitting an unresolvable type, say) fails inside
