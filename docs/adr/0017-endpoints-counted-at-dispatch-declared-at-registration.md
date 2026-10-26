@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted, amended by server ADR 0080
 ---
 
 # Endpoints are counted at the framework's dispatch point and declared by its registration hooks
@@ -134,3 +134,7 @@ Amended 2026-10-24 in a grilling session after a security audit, on three points
 - **The functional-route verb is one of a fixed set.** On Spring 6 and 7 a request's method can be any token, and a functional route the walk did not register took it as the endpoint's verb. The dispatch advice still looks a request up under its own method, then under `*`, so a route declared with `PROPFIND` counts. An endpoint it creates at dispatch keeps `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS` and `TRACE` and takes `*` for any other method.
 - **Identities found at dispatch are capped per module.** A module may create at most 8,192 identities at dispatch, the size of the bridge's route prefix table. Past that, a new identity is dropped and the module logs one WARNING. An identity found at dispatch and declared later gives its place back. A module also binds at most 8,192 request-built keys at dispatch, since a bridge's raw paths can name one endpoint in many ways. Past that, the request still counts and the key is not kept. Identities declared at registration are not capped, since a partial declared list would let the server call an endpoint never called when it went undeclared. A dispatch-only identity was called, so the server never makes a never-called claim from one, and dropping it loses no claim. The OTel bridge is the module this guards most, since OpenTelemetry's `http.route` can hold a raw request path.
 - **A module failure's reason names the exception class only.** The reason went to the manifest and the log as `String.valueOf(exception)`, and an exception's message can hold request text such as a header value. A linkage error keeps its message, which names a framework class or member, and a servlet mapping outside the specification's forms keeps the mapping. The Spring WebFlux advices test for a preflight with Spring's own `CorsUtils.isPreFlightRequest`, which asks only whether a header is present, since Spring Security's firewall makes `getFirst` throw on a control character and that throw disabled the module for the life of the process. The Spring MVC advices, which must read the header, treat a refused read as a preflight.
+
+## Amended on 2026-10-26: no collector-side filter
+
+The narrowing to the adopter's code is not a collector-side filter on the handler class. The agent still reports every route the framework serves. The server counts a route whose handler lies outside the run's include rules apart from the service's own routes, and keeps its claim (server ADR 0080). A collector filter would drop routes before the server could show or count them.
