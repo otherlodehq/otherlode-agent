@@ -20,11 +20,18 @@ multi-tenant backend.
    +33% to +38%. On `5b28fcf` (run 40296149809) it is 16.9 s to 22.7 s
    (+34.5%), and the ceiling 18.3 s to 50.7 s (+177%). From 2026-10-13
    to 2026-10-18 runs read +17% to +23%, except 2026-10-14 at +35%. The
-   jump sits between `356ffd0` and `6644fe4`. The runner image also
-   moved: `ubuntu-latest` went to Ubuntu 26 from 2026-10-19. Run the
-   workflow by hand on both commits back to back to tell the two apart.
-   Then fix the regression, or move the target and both pages, and re-run
-   on the commit to be tagged.
+   jump sits between `356ffd0` and `6644fe4`, on the same runner image.
+   A local bisect (Docker on an arm64 Mac, PetClinic pinned to one CPU, 7
+   to 10 runs per variant) puts a step of about 0.5 to 0.9 s at `7d173ab`,
+   which adds `endpoints-servlet`: 356ffd0 +21%, 6644fe4 +26%, 6644fe4
+   with `disabledEndpointModules=servlet` +20%. The likely cost is
+   `ServletModule`'s type matcher (`ServletModule.kt:116`): its loader
+   gate passes the fat jar's loader, so `declaresMethod` reads the method
+   table of every class that loader defines before the supertype check
+   runs. Not profiled. The module explains about 5 to 8 points, not the
+   whole CI step of about 13. Make the matcher reject a class on its
+   supertypes before it reads methods, measure it the same way, then
+   re-run the workflow on the commit to be tagged and update both pages.
 2. **Cut the releases** (ADRs 0062 and 0063, collector ADR 0006). Cutting
    is Luke's call. Collector `v0.1.0` goes first, since the agent's
    `release.sh` refuses a release until it exists. Each needs its
