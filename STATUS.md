@@ -39,13 +39,11 @@ multi-tenant backend.
    the org secret's repository access, keeping `otherlode-server`, whose CI
    still reads it. Without the token the docs job skips the sync to
    otherlode.dev with only a notice.
-2b. **Luke: push the wire schema to the Buf Schema Registry.** Master
-   carries `DeltaBatch.flush_complete` (ADR 0077, `f4c058c`), and Actions
-   runs no job, so `buf.yml` never pushed it. From this repo's root, with
-   `BUF_TOKEN` set: `buf push --exclude-unnamed --label master`. Then the
-   collector and the server bump their bindings (see "The settled wait and
-   `flush_complete`" below); the collector's release, and so the agent's,
-   waits on that bump.
+2b. **Bump the collector's and the server's bindings** to the schema with
+   `DeltaBatch.flush_complete` (ADR 0077), pushed to the Buf Schema
+   Registry on 2026-10-26 (see "The settled wait and `flush_complete`"
+   below). The collector's release, and so the agent's, waits on that
+   bump.
 3. **The quickstart** in otherlode.dev's `start/` (that repo's ADR 0001).
    The agent's and collector's pages and the overview are written.
 4. **Review all customer copy.** Copy edits are pre-approved until
@@ -80,10 +78,9 @@ Static baseline follow-ups the first-copy change surfaced. Each only loses evide
 
 ### The settled wait and `flush_complete` (ADR 0077): agent built, bindings to bump
 
-The agent sets `DeltaBatch.flush_complete` and the testkit's `awaitSettled` waits per instance for two complete flushes. Left, in order:
-1. Luke: `buf push --exclude-unnamed --label master` from this repo, since Actions runs no job. This session had no Buf credentials.
-2. Collector: bump the bindings, with a redaction test that `flush_complete` passes and marks nothing stripped. Until then a collector built from master strips the field from an agent built from master and marks the run `fields_stripped`.
-3. Server: bump the bindings.
+The agent sets `DeltaBatch.flush_complete` and the testkit's `awaitSettled` waits per instance for two complete flushes. The schema is in the Buf Schema Registry as `buf.build/otherlode/otherlode` commit `d207ad116b064bfb98c4388a9fad93ea`, label `master`, pushed by hand on 2026-10-26 from `5b28fcf` since Actions runs no job. Left, in order:
+1. Collector: bump the bindings, with a redaction test that `flush_complete` passes and marks nothing stripped. Until then a collector built from master strips the field from an agent built from master and marks the run `fields_stripped`.
+2. Server: bump the bindings.
 
 ### Tooling: code principles, a refactoring playbook and a prose lint
 
