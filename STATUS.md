@@ -330,6 +330,14 @@ Open before any of this is built:
   output.
 
 
+### A merge check for pull requests that only delete what production never runs: after release
+
+Raised on 2026-10-26 by Luke, from Matt Pocock's idea of checking deterministically whether a PR can merge without review, under strict rules: it only reorganises code, leaves the module graph alone and does not lower test coverage. Those rules come from the diff and the build. Otherlode can add the one rule they cannot check: the PR changes or deletes no code that production ran.
+
+The shape it would take is a check, in the adopter's CI or their coding agent, that reads the deletion manifest above. For each method, branch or class the PR deletes or changes, it confirms that the server lists it as dead, for at least a window the adopter sets, on a scope that is complete (no stripped runs, no counts behind, no skipped class). Anything else fails the check. Otherlode supplies the observation and how long it has held, and the adopter's rule sets the threshold, so it stays inside ADR 0015.
+
+Open: whether this is a server API, a CLI over it or a GitHub check; how a diff maps to the agent's identifiers (methods and branch keys, not lines); and whether "changes" can be allowed at all, or only deletions. It needs the deletion manifest first, and a grill before any design.
+
 ### A transformer later in the chain replacing the agent's bytes
 
 The third failure past `onTransformation`, and the one ADR 0028 does not
