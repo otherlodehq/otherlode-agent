@@ -151,6 +151,16 @@ Known so far:
 - To inventory: the GitHub and Buf tokens CI uses, the WorkOS and GCP credentials behind the hosted server, and the
   `otherlode.dev` domain registration.
 
+### Docs: what deleting never-run code can still change
+
+Raised on 2026-10-26. A method that never ran can still matter by existing, so deleting it can change code that did run. `call-graph.md:79` calls `UNCALLED` "the strongest case for deletion" and says only to check for reflection first. Three cases it does not name:
+
+- A `Serializable` class without an explicit `serialVersionUID` gets one computed from its members, method signatures included, so a deletion breaks reading data serialized before it with `InvalidClassException`.
+- A framework that registers from metadata without calling the method: a lazy Spring `@Bean` method never requested never runs, yet deleting it changes what `@ConditionalOnMissingBean` and `@ConditionalOnBean` create elsewhere. The same holds for any handler registered by annotation and called only on an event.
+- Code that lists `getDeclaredMethods()` or `getDeclaredFields()` and acts on the list.
+
+To do: a short "Before you delete" section in `call-graph.md` naming these and saying that Otherlode observes execution, not existence. Customer copy, so Luke sees the draft first. The claims themselves are unaffected: each stays "never ran", which holds.
+
 ### HotSwap of a woven class with changed code: to grill
 
 Raised 2026-10-04 while landing ADR 0060. A woven class whose class file
@@ -335,6 +345,8 @@ Open before any of this is built:
 Raised on 2026-10-26 by Luke, from Matt Pocock's idea of checking deterministically whether a PR can merge without review, under strict rules: it only reorganises code, leaves the module graph alone and does not lower test coverage. Those rules come from the diff and the build. Otherlode can add the one rule they cannot check: the PR changes or deletes no code that production ran.
 
 The shape it would take is a check, in the adopter's CI or their coding agent, that reads the deletion manifest above. For each method, branch or class the PR deletes or changes, it confirms that the server lists it as dead, for at least a window the adopter sets, on a scope that is complete (no stripped runs, no counts behind, no skipped class). Anything else fails the check. Otherlode supplies the observation and how long it has held, and the adopter's rule sets the threshold, so it stays inside ADR 0015.
+
+Two of the existence cases in "Docs: what deleting never-run code can still change" could be hard rules of the check: refuse a deletion from a `Serializable` class without an explicit `serialVersionUID`, and from a method that carries a framework's registration annotation. A change, unlike a deletion, can alter code that ran through a renamed override, a changed constant or a reordered static initialiser, which is why deletion-only is the strong form.
 
 Open: whether this is a server API, a CLI over it or a GitHub check; how a diff maps to the agent's identifiers (methods and branch keys, not lines); and whether "changes" can be allowed at all, or only deletions. It needs the deletion manifest first, and a grill before any design.
 
