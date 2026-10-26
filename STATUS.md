@@ -16,22 +16,16 @@ multi-tenant backend.
 1. **Headline startup is past the 25% target.** `docs/site/overhead.md`
    and `benchmark-overhead/README.md` quote run 38944648115 on `1332f3f`
    (2026-10-16): narrow startup +21.7%, inside the README's 25% target.
-   Every scheduled `benchmark-overhead.yml` run since 2026-10-19 reads
-   +33% to +38%. On `5b28fcf` (run 40296149809) it is 16.9 s to 22.7 s
-   (+34.5%), and the ceiling 18.3 s to 50.7 s (+177%). From 2026-10-13
-   to 2026-10-18 runs read +17% to +23%, except 2026-10-14 at +35%. The
-   jump sits between `356ffd0` and `6644fe4`, on the same runner image.
-   A local bisect (Docker on an arm64 Mac, PetClinic pinned to one CPU, 7
-   to 10 runs per variant) puts a step of about 0.5 to 0.9 s at `7d173ab`,
-   which adds `endpoints-servlet`: 356ffd0 +21%, 6644fe4 +26%, 6644fe4
-   with `disabledEndpointModules=servlet` +20%. The likely cost is
-   `ServletModule`'s type matcher (`ServletModule.kt:116`): its loader
-   gate passes the fat jar's loader, so `declaresMethod` reads the method
-   table of every class that loader defines before the supertype check
-   runs. Not profiled. The module explains about 5 to 8 points, not the
-   whole CI step of about 13. Make the matcher reject a class on its
-   supertypes before it reads methods, measure it the same way, then
-   re-run the workflow on the commit to be tagged and update both pages.
+   Every scheduled `benchmark-overhead.yml` run from 2026-10-19 to
+   2026-10-26 read +33% to +38%. The plain-servlet module (`7d173ab`)
+   was about 0.5 s of that: it parsed every class a fat jar's loader
+   defines. The servlet module now skips a class whose bytes lack a
+   `service` descriptor (ADR 0074, amended 2026-10-26), which locally
+   took startup from +29.5% to +25.4% against +23.6% with the module
+   off. The module explained about 5 to 8 points of the CI step of about
+   13, so read the next scheduled run before deciding whether more is
+   needed. Then re-run the workflow on the commit to be tagged and update
+   both pages.
 2. **Cut the releases** (ADRs 0062 and 0063, collector ADR 0006). Cutting
    is Luke's call. Collector `v0.1.0` goes first, since the agent's
    `release.sh` refuses a release until it exists. Each needs its
@@ -62,6 +56,17 @@ deferrals, gzip, a collector config file, and agent-level redaction
 (the server STATUS's parked "Redaction in the agent", with its trigger).
 
 ## TODO
+
+### The JAX-RS module parses every class its loader gate passes
+
+`JaxRsModule`'s type matcher starts with `not(isInterface())`, so in a
+JAX-RS application the pool parses every class the JAX-RS loader defines,
+as the servlet module did before ADR 0074's 2026-10-26 amendment. A byte
+check like the servlet one is not sound as it stands: a resource can
+inherit its `@Path` and method annotations from an interface or a
+superclass, so its own class file need not name a JAX-RS type. Measure the
+cost on a Jersey or Quarkus service first, then find a necessary condition
+that holds for inherited annotations.
 
 ### Hardening from the 2026-10-24 grilling: landed, with open items
 
