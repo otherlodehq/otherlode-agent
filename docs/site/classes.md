@@ -252,7 +252,7 @@ Nothing is lost. A proxy reaches the method it overrides by calling `super`, so 
 
 ## Log lines
 
-Every line starts with `otherlode:`.
+Every message starts with `otherlode:`. In the JVM's default format, the logger puts the level in front, as in `WARNING: otherlode:`, below a line with the time and the class that logged it.
 
 | Level | Line (abridged) | Meaning |
 |---|---|---|

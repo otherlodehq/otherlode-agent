@@ -139,13 +139,13 @@ This check runs before the `includePackages` check, so a switched-off agent neve
 
 ## Confirm the agent is running
 
-The agent writes through the JVM's `System.Logger`, which prints to stderr unless your application routes it to its own logging. A healthy start prints one INFO line naming the endpoint modules it installed:
+The agent writes through the JVM's `System.Logger`, which prints to stderr unless your application routes it to its own logging. Each message starts with `otherlode:`. In the JVM's default format, the logger puts the level in front, as in `INFO: otherlode:`, below a line with the time and the class that logged it. A healthy start prints one INFO message naming the endpoint modules it installed:
 
 ```text
 otherlode: installing endpoint modules: javalin-6, javalin-7, jaxrs, jdk-httpserver, ktor-2, ktor-3, micronaut, micronaut-3, servlet, spring-webflux, spring-webmvc, vertx-web
 ```
 
-Beyond that line, the agent prints mostly problems, so the absence of an error is the first check. Look in the startup output for lines that start with `otherlode:`. These are the lines that mean the agent is not working:
+Beyond that line, the agent prints mostly problems, so the absence of an error is the first check. Look in the startup output for lines that contain `otherlode:`. These are the lines that mean the agent is not working:
 
 | Line | Meaning |
 |---|---|
