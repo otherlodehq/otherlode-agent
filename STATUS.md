@@ -76,17 +76,11 @@ keeps its line table and stays the adopter's, so the check's true outcome,
 which an unmanaged instance never takes, reads as an untaken branch. Rare:
 an entity with a hand-written `writeObject`.
 
-### Open overloads marked as stubs: to decide
+### Open overloads marked as stubs: to build
 
-An overload the adopter wrote that only calls `super`, and that is open,
-compiles to a `$DefaultImpls` stub's exact bytes and is marked
-`DEFAULT_IMPLS`: one declared `open`, one that overrides another
-interface's member (`override fun put(t: Int) = super<Store>.put(t)`), or
-any member the all-open or kotlin-spring plugin opens, which covers most
-Spring Boot Kotlin code (ADR 0078's amendment). Only `kotlin.Metadata`
-tells them apart: it lists declared functions and not fake overrides.
-ADR 0026 keeps the agent off metadata. Decide whether the stub rule reads
-it.
+ADR 0078's 2026-10-27 amendment: a `DEFAULT_IMPLS` stub or forwarder must
+start on its class's header line, so an open overload the adopter wrote,
+and a hand-written `override fun m() = super.m()`, stay the adopter's.
 
 ### Kotlin shapes still unmarked
 

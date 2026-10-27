@@ -65,3 +65,19 @@ The review found that the stub and forwarder rules also matched overloads the ad
 - **A companion, not another nested class.** The owner holds the companion in a static field under its simple name, and the candidate has kotlinc's companion outline: a final class that is no enum, abstract class or interface, whose constructors are a private no-argument one and at most one other, a synthetic one taking a `DefaultConstructorMarker` and carrying no `Deprecated` attribute. That held for 760 companion class files read across the six builds, the agent's own classes and expect/actual sources. A nested class, interface, enum or sealed class the adopter holds in a companion property of the same name, whether its backing field is private, `@JvmField` or `lateinit`, lacks that outline. An object with its own `INSTANCE` must itself be serializable.
 - **Lazy lambdas.** A lambda stored by `AASTORE` counts only when the next `PUTSTATIC` is `$childSerializers`.
 - **Limits.** The rule rests on the plugin having compiled the class: a `@Serializable` class built without it can hold a `serializer()` the adopter wrote, which is marked. An annotation with `SOURCE` retention is not in the class file, so the plugin's `serializer()` in a class it makes serializable is left unmarked. A final nested class whose only constructor is a private no-argument one, held in a companion property of its own name, passes the companion check.
+
+## Amended on 2026-10-27: open overloads are told apart by line
+
+Decided in a grill, from `javap` of stubs, forwarders and adopter overloads compiled with kotlinc 1.9.25, 2.1.21 and 2.2.21 under `-jvm-default=disable`. It settles the open-overload question the first amendment left.
+
+- **A stub starts on the class's header line.** kotlinc gives every class stub and every `$DefaultImpls` forwarder a first line-number entry on the line where its class's declaration starts: the `class` or `interface` line, or the first annotation above it, depending on the release. A forwarder also carries the closing brace's line. No method of the class starts on an earlier line. An adopter's own method starts on its own declaration line, which comes later.
+- **The rule.** Every `DEFAULT_IMPLS` stub and forwarder shape (the class stub, the sub-interface forwarder, the boxing and `Unit`-dropping variants and the suspend forwarder) is marked only when its first line entry equals the smallest first line entry of any method in its class. The value-class static `m-impl` keeps its own rule, since no source can name a method `m-impl`.
+- **No line table, still marked.** A class compiled without line numbers has nothing to compare, and its stubs and open overloads stay marked, as the first decision accepts for data-class and value-class members.
+- **The hand-written exact override is the adopter's.** ADR 0026 marked an override whose body is only `super.m()` under ADR 0048, since its bytes are a stub's. It sits on its own line, so the rule leaves it unmarked. Its claim says it never ran, which is true, and deleting it leaves the default to run.
+- **Limits.** A class written on one line, and a `$DefaultImpls` class whose earliest method is the adopter's overload, still have it marked. The second needs a sub-interface that inherits no default it does not override.
+
+Considered and rejected:
+
+- **Decode `kotlin.Metadata`.** Exact, but it brings back what ADR 0021 refused: a shaded library or a second protobuf decoder, and a metadata version that must keep pace with adopters' compilers.
+- **Compare with the constructor's first line.** kotlinc 2.1.21 starts a constructor on the `Name(` line when the header spans lines, while the stubs keep the header's first line.
+- **Keep the limit.** A bytecode tell exists, and the hidden overload is code the adopter wrote.
