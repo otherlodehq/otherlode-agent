@@ -92,7 +92,7 @@ class Harness(
         Files.createDirectories(settings.configDir)
         val runs = mutableListOf<RunRecord>()
         try {
-            listingCost = measureClassListing()
+            if (!settings.startupOnly) listingCost = measureClassListing()
         } catch (e: Exception) {
             failures += "class listing: ${e.message ?: e::class.simpleName}"
             writeResults(runs)
@@ -100,18 +100,27 @@ class Harness(
         }
         val collector = startCollector()
         try {
-            outer@ for (repeat in 1..settings.repeats) {
+            if (settings.startupOnly) {
+                // The job's first start is the coldest: nothing has read the image's files or started its JDK yet.
+                println("=== ${settings.config.id} warm-up start, not recorded ===")
+                try {
+                    startupOne(collector, Variant.NONE, 0)
+                } catch (e: Exception) {
+                    failures += "warm-up start: ${e.message ?: e::class.simpleName}"
+                }
+            }
+            outer@ for (repeat in 1..(if (failures.isEmpty()) settings.repeats else 0)) {
                 for (variant in rotatedVariants(repeat - 1)) {
                     println("=== ${settings.config.id} ${variant.id} repeat $repeat of ${settings.repeats} ===")
                     try {
-                        runs += runOne(collector, variant, repeat)
+                        runs += if (settings.startupOnly) startupOne(collector, variant, repeat) else runOne(collector, variant, repeat)
                     } catch (e: Exception) {
                         failures += "${variant.id} repeat $repeat: ${e.message ?: e::class.simpleName}"
                         break@outer
                     }
                 }
             }
-            if (failures.isEmpty()) failures += variantWarmthProblems(runs)
+            if (failures.isEmpty() && !settings.startupOnly) failures += variantWarmthProblems(runs)
         } finally {
             writeResults(runs)
             collector.stop()
@@ -190,10 +199,12 @@ class Harness(
         try {
             postgres.start()
 
+            val stealBefore = readHostStat(postgres)
             val t0 = System.nanoTime()
             petclinic.start()
             awaitHealthy(petclinic, t0)
             metrics["startupMs"] = (System.nanoTime() - t0) / 1_000_000.0
+            metrics += startupCpuAndSteal(petclinic, postgres, stealBefore)
             if (javaVersion == "unknown") javaVersion = exec(petclinic, "java", "-version").trim()
 
             metrics += warmup(petclinic, dir)
@@ -241,20 +252,7 @@ class Harness(
             LogScan.bootProcessSeconds(log)?.let { metrics["bootProcessSeconds"] = it }
                 ?: problems.add("PetClinic's log has no Started PetClinicApplication line")
             val metricsAfter = collectorMetrics(collector)
-            if (variant != Variant.NONE) {
-                problems += collectorProblems(metricsBefore, metricsAfter, expectBaseline = variant == Variant.AGENT_BASELINE)
-                val manifests = ManifestCounts.parse(collectorLog)
-                metrics["manifestProbes"] = manifests.probes.toDouble()
-                metrics["manifestEndpoints"] = manifests.endpoints.toDouble()
-                metrics["manifestSkippedClasses"] = manifests.skippedClasses.toDouble()
-                if (manifests.probes <= 0) problems += "the agent's manifests carried no probe: nothing was instrumented"
-                if (manifests.endpoints <= 0) problems += "the agent's manifests carried no endpoint"
-                if (manifests.disabledEndpointModules >
-                    0
-                ) {
-                    problems += "the agent disabled ${manifests.disabledEndpointModules} endpoint module(s)"
-                }
-            }
+            problems += deliveryProblems(variant, metricsBefore, metricsAfter, collectorLog, metrics)
             metrics["collectorDeltasAccepted"] = (metricsAfter.accepted("deltas") - metricsBefore.accepted("deltas")).toDouble()
             metrics["collectorManifestAccepted"] = (metricsAfter.accepted("manifest") - metricsBefore.accepted("manifest")).toDouble()
             metrics["collectorBaselineAccepted"] =
@@ -273,6 +271,140 @@ class Harness(
         } catch (e: Exception) {
             throw failed(e, metrics)
         }
+    }
+
+    /**
+     * What the collector saw of [variant]'s run, between [before] and [after], as problems that make
+     * the run invalid; the manifest counts go into [metrics]. The variant with no agent has none.
+     */
+    private fun deliveryProblems(
+        variant: Variant,
+        before: CollectorMetrics,
+        after: CollectorMetrics,
+        collectorLog: String,
+        metrics: MutableMap<String, Double>,
+    ): List<String> {
+        if (variant == Variant.NONE) return emptyList()
+        val problems = collectorProblems(before, after, expectBaseline = variant == Variant.AGENT_BASELINE).toMutableList()
+        val manifests = ManifestCounts.parse(collectorLog)
+        metrics["manifestProbes"] = manifests.probes.toDouble()
+        metrics["manifestEndpoints"] = manifests.endpoints.toDouble()
+        metrics["manifestSkippedClasses"] = manifests.skippedClasses.toDouble()
+        if (manifests.probes <= 0) problems += "the agent's manifests carried no probe: nothing was instrumented"
+        if (manifests.endpoints <= 0) problems += "the agent's manifests carried no endpoint"
+        if (manifests.disabledEndpointModules > 0) problems += "the agent disabled ${manifests.disabledEndpointModules} endpoint module(s)"
+        return problems
+    }
+
+    /**
+     * A startup-only repeat: starts Postgres and PetClinic as [runOne] does, records the startup
+     * metrics when PetClinic first answers 200, then stops PetClinic gracefully. There is no warmup
+     * and no window.
+     */
+    private fun startupOne(
+        collector: Box,
+        variant: Variant,
+        repeat: Int,
+    ): RunRecord {
+        val dir = settings.configDir.resolve("runs").resolve("${variant.id}-r$repeat")
+        Files.createDirectories(dir)
+        val metricsBefore = collectorMetrics(collector)
+        val collectorLogStart = collector.logs.length
+        val postgres =
+            PostgreSQLContainer("postgres:16.3")
+                .withNetwork(network)
+                .withNetworkAliases("postgres")
+                .withUsername(DB_USER)
+                .withPassword(DB_PASS)
+                .withDatabaseName("petclinic")
+                .withCreateContainerCmdModifier { it.hostConfig!!.withCpusetCpus(cpuSplit.support) }
+        val petclinic = petclinicContainer(variant)
+        val metrics = linkedMapOf<String, Double>()
+        var log = ""
+        try {
+            postgres.start()
+            val stealBefore = readHostStat(postgres)
+            val t0 = System.nanoTime()
+            petclinic.start()
+            awaitHealthy(petclinic, t0)
+            metrics["startupMs"] = (System.nanoTime() - t0) / 1_000_000.0
+            metrics += startupCpuAndSteal(petclinic, postgres, stealBefore)
+            if (javaVersion == "unknown") javaVersion = exec(petclinic, "java", "-version").trim()
+            exec(petclinic, "sh", "-c", "kill 1")
+            awaitExit(petclinic)
+            log = petclinic.logs
+        } catch (e: Exception) {
+            runCatching { log = petclinic.logs }
+            Files.writeString(dir.resolve("petclinic.log"), log)
+            throw failed(e, metrics)
+        } finally {
+            runCatching { petclinic.stop() }
+            runCatching { postgres.stop() }
+        }
+        Files.writeString(dir.resolve("petclinic.log"), log)
+        val collectorLog = collector.logs.let { if (it.length >= collectorLogStart) it.substring(collectorLogStart) else it }
+        Files.writeString(dir.resolve("collector.log"), collectorLog)
+        val problems = mutableListOf<String>()
+        if (LogScan.hasVerifyError(log)) problems += "PetClinic's log contains VerifyError"
+        agentErrors(log).takeIf { it.isNotEmpty() }?.let { problems += "the agent logged errors: ${it.joinToString(" | ")}" }
+        LogScan.bootProcessSeconds(log)?.let { metrics["bootProcessSeconds"] = it }
+            ?: problems.add("PetClinic's log has no Started PetClinicApplication line")
+        problems += deliveryProblems(variant, metricsBefore, collectorMetrics(collector), collectorLog, metrics)
+        if (problems.isNotEmpty()) throw InvalidRunException(problems.joinToString("; "))
+        return RunRecord(
+            settings.config,
+            variant,
+            repeat,
+            metrics,
+            if (variant ==
+                Variant.NONE
+            ) {
+                emptyList()
+            } else {
+                LogScan.skippedClasses(log)
+            },
+        )
+    }
+
+    /**
+     * `/proc/stat` as the Docker host's kernel reports it, read through [via], a running container,
+     * so a Docker Desktop VM is read as a Linux runner is. Null when it cannot be read.
+     */
+    private fun readHostStat(via: GenericContainer<*>): String? =
+        runCatching { via.execInContainer("cat", "/proc/stat").stdout }.getOrNull()
+
+    /** USER_HZ ticks a second, from `getconf CLK_TCK` on the host, or [ProcStat.DEFAULT_CLOCK_TICK] when that cannot be read. */
+    private val clockTick: Int by lazy {
+        runCatching {
+            val p = ProcessBuilder("getconf", "CLK_TCK").redirectErrorStream(true).start()
+            p.inputStream
+                .bufferedReader()
+                .readText()
+                .trim()
+                .toInt()
+                .also { p.waitFor() }
+        }.getOrDefault(ProcStat.DEFAULT_CLOCK_TICK)
+    }
+
+    /**
+     * The CPU the PetClinic container used since it started, from its cgroup, and the steal time of
+     * its pinned cores over the same interval, from two readings of `/proc/stat`. Steal is left out
+     * when either reading failed.
+     */
+    private fun startupCpuAndSteal(
+        petclinic: Box,
+        via: GenericContainer<*>,
+        stealBefore: String?,
+    ): Map<String, Double> {
+        val out = linkedMapOf<String, Double>()
+        out["startupCpuMs"] = startupCpuMs(CgroupCpu.parse(exec(petclinic, "cat", CPU_STAT)))
+        val stealAfter = readHostStat(via)
+        if (stealBefore != null && stealAfter != null) {
+            runCatching { ProcStat.stealMs(stealBefore, stealAfter, ProcStat.cores(cpuSplit.petclinic), clockTick) }
+                .onSuccess { out["startupStealMs"] = it }
+                .onFailure { println("No startup steal time: ${it.message}") }
+        }
+        return out
     }
 
     /**
@@ -468,7 +600,10 @@ class Harness(
     private fun writeResults(runs: List<RunRecord>) {
         val dir = settings.configDir
         Files.writeString(dir.resolve("runs.csv"), runsCsv(runs))
-        val summary = StringBuilder(summaryMarkdown(settings.config, runs))
+        val summary =
+            StringBuilder(
+                if (settings.startupOnly) startupSummaryMarkdown(settings.config, runs) else summaryMarkdown(settings.config, runs),
+            )
         summary.append(classListingSection(listingCost) { cpuSplit.petclinic })
         if (failures.isNotEmpty()) {
             summary.append("\n### Why the run is invalid\n\n").append(failures.joinToString("\n") { "- $it" }).append('\n')
@@ -503,12 +638,15 @@ class Harness(
                     .also { p.waitFor() }
             }.getOrDefault("unknown")
 
+        val hostCpuInfo = runCatching { CpuInfo.parse(Files.readString(Path.of("/proc/cpuinfo"))) }.getOrNull()
         val sha =
             MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(settings.agentJar)).joinToString("") { "%02x".format(it) }
         val props =
             linkedMapOf(
                 "runner.os" to "${System.getProperty("os.name")} ${System.getProperty("os.version")} ${System.getProperty("os.arch")}",
                 "runner.cpus" to Runtime.getRuntime().availableProcessors().toString(),
+                "runner.cpu.model" to (hostCpuInfo?.model ?: "unknown"),
+                "runner.cpu.count" to (hostCpuInfo?.count?.toString() ?: "unknown"),
                 "docker.cpus" to info.ncpu.toString(),
                 "cpuset.petclinic" to cpuSplit.petclinic,
                 "cpuset.k6" to cpuSplit.k6,
@@ -537,6 +675,7 @@ class Harness(
                 "config" to settings.config.id,
                 "includePackages" to settings.config.includePackages,
                 "repeats" to settings.repeats.toString(),
+                "startupOnly" to settings.startupOnly.toString(),
                 "warmupSeconds" to settings.warmupSeconds.toString(),
                 "warmupSliceSeconds" to settings.warmupSliceSeconds.toString(),
                 "warmupMinSeconds" to settings.warmupMinSeconds.toString(),

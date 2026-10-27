@@ -23,9 +23,10 @@ before any variant starts.
 Per run it records:
 
 - **Startup:** milliseconds from just before the container is created to the first 200 from
-  `/petclinic/actuator/health`, polled every 100 ms from the host, and Spring Boot's own "process
-  running for" seconds. Every variant, `none` included, has the agent jar copied in, so the copy
-  costs them all alike.
+  `/petclinic/actuator/health`, polled every 100 ms from the host, Spring Boot's own "process
+  running for" seconds, and the CPU the container used and the steal time of its cores over that
+  interval. Every variant, `none` included, has the agent jar copied in, so the copy costs them all
+  alike.
 - **k6:** throughput and request count, `http_req_duration` average, p95 and p99,
   `iteration_duration` average and p95, and the checks pass rate. Each request carries a `name`
   tag and the `url` system tag is off, so a path with an id in it does not start a metric series
@@ -73,6 +74,41 @@ Reaching the cap is not a failure by itself: the window's own rule (below) still
 window. Each run records `warmupSecondsUsed`, `warmupSteady` (1 when the rule ended it, 0 at the cap)
 and `warmupLastSliceThroughputPerSec`, and the summary shows the mean and range of `warmupSecondsUsed`
 per variant. The raw k6 output of each slice is kept as `warmup-slice-<n>.json` in the run's directory.
+
+## Startup only
+
+The time to first 200 is the number that moves most from night to night, because it is bound by the
+runner's CPU. GitHub's `ubuntu-latest` is mixed hardware: across 28 nightly runs the `none` JVM's
+boot ranged from 9 s to 19 s. The agent against `none` ratio holds across nights, but within one run
+the agent's boot swings more than `none`'s, so six repeats do not tell a small change from the
+runner's spread. `-PstartupOnly=true` measures startup alone, so many more repeats cost little: a
+repeat starts Postgres and PetClinic as a full run does, records the startup figures, and stops
+PetClinic gracefully. It has no warmup, no window and no class listing. The variants rotate as they
+do in a full run, and the collector runs, so the agent exports as it does there. One start of
+`none` before the first repeat is not recorded: it is the coldest of the job, since nothing has read
+the image's files yet.
+
+Results go to `benchmark-overhead/build/results/<config>-startup/`, with the same `runs.csv`,
+`metadata.properties` and `summary.md` files as a full run. The summary shows each variant's median
+with its interquartile range, and each agent variant's median against `none`'s as a change and a
+ratio. Four metrics:
+
+- `startupMs` and `bootProcessSeconds`, as in a full run.
+- `startupCpuMs`: the CPU the container used from its start to its first 200, from its cgroup's
+  `usage_usec`.
+- `startupStealMs`: the CPU time the hypervisor took from PetClinic's pinned cores over the same
+  interval, from the `steal` field of `/proc/stat`, read through a running container so a Docker
+  Desktop VM is read as a Linux runner is. It is left out when the reading fails. A hypervisor that
+  does not report steal to its guests shows 0 here, so a 0 says nothing was reported, not that
+  nothing was taken.
+
+Every run, startup-only or not, also records the runner's CPU model and count in
+`metadata.properties` as `runner.cpu.model` and `runner.cpu.count`, from `/proc/cpuinfo`. Both are
+`unknown` where that file has no `model name` line, as on arm64 Linux, or does not exist, as on
+macOS.
+
+In CI the `startup` job runs this on the headline config with 21 repeats and uploads the results as
+`overhead-headline-startup`. The dispatch input `startup_repeats` sets the count.
 
 ## Core pinning
 
@@ -137,6 +173,7 @@ git clone https://github.com/otherlodehq/otherlode-collector /path/to/otherlode-
 | `-PwarmupMinSeconds` | `90` | The least warmup before steadiness may end it. |
 | `-PwarmupSteadyDrift` | `0.03` | How far a slice's throughput may differ from the slice before it, as a fraction, and still count as steady. |
 | `-PwindowSeconds` | `180` | Length of the measured window. |
+| `-PstartupOnly` | `false` | `true` runs the startup-only mode above. |
 
 Give both paths absolute, as above, or relative to `benchmark-overhead/`: `-p` makes that Gradle's
 start directory, so a path relative to the repository root names nothing. The harness stops if
@@ -151,9 +188,10 @@ Docker's layer cache. The build pins PetClinic to commit `afc8fc1d3b8ec8de694144
 ## Run it in CI
 
 The `benchmark-overhead` workflow runs nightly on `master` at 03:17 UTC with the defaults, and by
-hand (`workflow_dispatch`), which takes `collector_ref` (default `master`) and `repeats` (default 6).
-It runs both configs in parallel on `ubuntu-latest` and uploads `benchmark-overhead/build/results`
-as an artifact, kept 90 days, even when a run fails. Each config's `summary.md` is added to the job
+hand (`workflow_dispatch`), which takes `collector_ref` (default `master`), `repeats` (default 6) and
+`startup_repeats` (default 21) and `startup_only` (default false, which skips both configs). It
+runs both configs, and the startup-only job, in parallel on
+`ubuntu-latest` and uploads `benchmark-overhead/build/results` as an artifact, kept 90 days, even when a run fails. Each config's `summary.md` is added to the job
 summary. Results live only in the run: nothing is committed. A run waits for one still in progress
 rather than overlapping it. GitHub disables a public repository's schedule after 60 days without
 activity, and the Actions tab re-enables it.
@@ -189,6 +227,9 @@ stay in the results directory, and the summary lists why under "Why the run is i
   Delta batches go out even when empty, as a heartbeat, so accepted deltas alone would not show
   that anything was instrumented.
 
+The startup-only mode applies the rules on PetClinic's log and the agent variant's rules. It has
+no window, so the k6, saturation and steadiness rules do not apply.
+
 For every agent run the harness also counts the classes the agent skipped, from the manifests, and
 names those it logged an `instrumentation failed for <class>` warning for. They are published
 beside the numbers and are not a failure. The summary marks with
@@ -201,7 +242,8 @@ Under `benchmark-overhead/build/results/<config>/`:
 - `runs.csv`: one row per run with every metric.
 - `summary.md`: per variant, each metric's median with its minimum and maximum, and the median's
   change against `none`; then the skipped classes and the class listing's cost.
-- `metadata.properties`: the runner's OS and CPU count, the PetClinic image's `java -version`, the
+- `metadata.properties`: the runner's OS, CPU count and CPU model (`runner.cpu.model`,
+  `runner.cpu.count`), whether the run was startup-only (`startupOnly`), the PetClinic image's `java -version`, the
   agent jar's SHA-256 and modification time, the agent repository's commit and whether its tree was
   dirty (a local jar can predate the commit), the class listing's `classListingColdCpuMs`,
   `classListingColdWallMs`, `classListingWarmCpuMs` and `classListingClasses`, the PetClinic commit, the collector

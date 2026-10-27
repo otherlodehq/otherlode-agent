@@ -43,6 +43,8 @@ object MetricNames {
             "cpuThrottledMs",
             "startupMs",
             "bootProcessSeconds",
+            "startupCpuMs",
+            "startupStealMs",
             "vmRssMiB",
             "vmHwmMiB",
             "classSpaceCommittedMiB",
@@ -96,7 +98,7 @@ fun percentChange(
     value: Double,
 ): Double? = if (baseline == 0.0) null else (value - baseline) / baseline * 100.0
 
-private fun num(v: Double): String =
+internal fun num(v: Double): String =
     if (v == Math.rint(v) &&
         Math.abs(v) < 1e15
     ) {
@@ -107,7 +109,7 @@ private fun num(v: Double): String =
 
 private fun fmt(s: Spread) = "${num(s.median)} (${num(s.min)} to ${num(s.max)})"
 
-private fun signed(v: Double): String {
+internal fun signed(v: Double): String {
     val text = String.format(Locale.ROOT, "%+.1f%%", v).replace("+-", "-")
     return if (text == "-0.0%" || text == "+0.0%") "0.0%" else text
 }

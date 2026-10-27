@@ -12,6 +12,13 @@ on:
       repeats:
         description: Runs per variant
         default: "6"
+      startup_repeats:
+        description: Runs per variant of the startup-only job
+        default: "21"
+      startup_only:
+        description: Run only the startup-only job
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -24,6 +31,7 @@ concurrency:
 jobs:
   benchmark:
     name: benchmark (${{ matrix.config }})
+    if: ${{ !inputs.startup_only }}
     runs-on: ubuntu-latest
     # A run is startup, a warmup of 90 to 600 s (it ends once throughput is steady), a 180 s window and teardown:
     # about six to fourteen minutes. 18 runs at the default 6 repeats, plus image builds. More repeats need a longer limit.
@@ -66,3 +74,44 @@ jobs:
       - name: Add the summary to the job page
         if: always()
         run: cat benchmark-overhead/build/results/${{ matrix.config }}/summary.md >> "$GITHUB_STEP_SUMMARY" || echo "No summary was written." >> "$GITHUB_STEP_SUMMARY"
+
+  startup:
+    name: startup (headline)
+    runs-on: ubuntu-latest
+    # Each start takes under a minute, and a repeat starts each of three variants once. 21 repeats at the default,
+    # plus one warm-up start and the image builds: about 80 minutes. More repeats need a longer limit.
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - run: ./gradlew shadowJar --no-daemon
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          repository: otherlodehq/otherlode-collector
+          ref: ${{ inputs.collector_ref || 'master' }}
+          path: otherlode-collector
+      - env:
+          REPEATS: ${{ inputs.startup_repeats || '21' }}
+        run: >-
+          ./gradlew -p benchmark-overhead test --no-daemon
+          -PagentJar="$(ls "$GITHUB_WORKSPACE"/build/libs/otherlode-agent-*.jar | grep -v -e -plain -e -jmh | head -n 1)"
+          -PcollectorDir="$GITHUB_WORKSPACE/otherlode-collector"
+          -Pconfig=headline
+          -PstartupOnly=true
+          -Prepeats="$REPEATS"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: overhead-headline-startup
+          path: benchmark-overhead/build/results
+          retention-days: 90
+      - name: Add the summary to the job page
+        if: always()
+        run: cat benchmark-overhead/build/results/headline-startup/summary.md >> "$GITHUB_STEP_SUMMARY" || echo "No summary was written." >> "$GITHUB_STEP_SUMMARY"

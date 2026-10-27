@@ -18,9 +18,10 @@ data class BenchSettings(
     val resultsDir: Path,
     val projectDir: Path,
     val agentRepoDir: Path,
+    val startupOnly: Boolean = false,
 ) {
-    /** Where this config's results land. */
-    val configDir: Path get() = resultsDir.resolve(config.id)
+    /** Where this config's results land: a startup-only run keeps its own directory. */
+    val configDir: Path get() = resultsDir.resolve(if (startupOnly) "${config.id}-startup" else config.id)
 
     companion object {
         fun fromSystemProperties(): BenchSettings {
@@ -47,6 +48,7 @@ data class BenchSettings(
                 resultsDir = Paths.get(prop("bench.resultsDir")),
                 projectDir = Paths.get(prop("bench.projectDir")),
                 agentRepoDir = Paths.get(prop("bench.agentRepoDir")),
+                startupOnly = prop("bench.startupOnly").toBooleanStrict(),
             )
         }
     }

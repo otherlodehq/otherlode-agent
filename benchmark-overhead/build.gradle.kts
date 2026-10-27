@@ -70,5 +70,6 @@ tasks.test {
     systemProperty("bench.warmupSliceSeconds", providers.gradleProperty("warmupSliceSeconds").orElse("30").get())
     systemProperty("bench.warmupMinSeconds", providers.gradleProperty("warmupMinSeconds").orElse("90").get())
     systemProperty("bench.warmupSteadyDrift", providers.gradleProperty("warmupSteadyDrift").orElse("0.03").get())
+    systemProperty("bench.startupOnly", providers.gradleProperty("startupOnly").orElse("false").get())
     systemProperty("bench.windowSeconds", providers.gradleProperty("windowSeconds").orElse("180").get())
 }
