@@ -71,19 +71,24 @@ private fun serviceMethod(namespace: String): ElementMatcher.Junction<MethodDesc
         .and(not(isStatic()))
         .and(not(isBridge()))
 
-private fun indexOf(
-    haystack: ByteArray,
-    needle: ByteArray,
-): Int {
-    val last = haystack.size - needle.size
-    var start = 0
-    while (start <= last) {
-        var i = 0
-        while (i < needle.size && haystack[start + i] == needle[i]) i++
-        if (i == needle.size) return start
-        start++
+private val MARKER_SHIFTS =
+    IntArray(256) { SERVICE_DESCRIPTOR_MARKER.size }.also { shifts ->
+        for (i in 0 until SERVICE_DESCRIPTOR_MARKER.size - 1) {
+            shifts[SERVICE_DESCRIPTOR_MARKER[i].toInt() and 0xff] = SERVICE_DESCRIPTOR_MARKER.size - 1 - i
+        }
     }
-    return -1
+
+private fun containsMarker(haystack: ByteArray): Boolean {
+    val marker = SERVICE_DESCRIPTOR_MARKER
+    val last = marker.size - 1
+    var start = 0
+    while (start <= haystack.size - marker.size) {
+        var i = last
+        while (i >= 0 && haystack[start + i] == marker[i]) i--
+        if (i < 0) return true
+        start += MARKER_SHIFTS[haystack[start + last].toInt() and 0xff]
+    }
+    return false
 }
 
 /** Whether a loader can see a servlet API, looked up once per loader and held weakly. */
@@ -127,7 +132,7 @@ class ServletModule : EndpointModule {
      * Whether [classFile] holds the text `/servlet/ServletResponse;)`. Every method [serviceMethod]
      * accepts has a descriptor that ends its arguments with it, stored as a constant pool entry.
      */
-    override fun classFileMayMatch(classFile: ByteArray): Boolean = indexOf(classFile, SERVICE_DESCRIPTOR_MARKER) >= 0
+    override fun classFileMayMatch(classFile: ByteArray): Boolean = containsMarker(classFile)
 
     override fun typeMatcher(): ElementMatcher<in TypeDescription> = typeMatcher(null)
 
