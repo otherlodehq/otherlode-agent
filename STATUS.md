@@ -15,17 +15,28 @@ multi-tenant backend.
 
 1. **Headline startup is past the 25% target.** `docs/site/overhead.md`
    and `benchmark-overhead/README.md` quote run 38944648115 on `1332f3f`
-   (2026-10-16): narrow startup +21.7%, inside the README's 25% target.
-   Every scheduled `benchmark-overhead.yml` run from 2026-10-19 to
-   2026-10-26 read +33% to +38%. The plain-servlet module (`7d173ab`)
-   was about 0.5 s of that: it parsed every class a fat jar's loader
-   defines. The servlet module now skips a class whose bytes lack a
-   `service` descriptor (ADR 0074, amended 2026-10-26), which locally
-   took startup from +29.5% to +25.4% against +23.6% with the module
-   off. The module explained about 5 to 8 points of the CI step of about
-   13, so read the next scheduled run before deciding whether more is
-   needed. Then re-run the workflow on the commit to be tagged and update
-   both pages.
+   (2026-10-16): narrow startup +21.7%. Scheduled runs since read +28%
+   to +38%, but the runner varies more than the agent does: the no-agent
+   startup ranges from 10 s to 20 s across nights, and one commit
+   (`8260d2e`) read +16.9%, +18.5% and +23.8% on three nights. Measured
+   locally on PetClinic in a container pinned to one core (M3 Pro, 7
+   interleaved runs, `scratchpad` harness of 2026-10-27), the agent's
+   startup cost is 1.61 s at `1332f3f` and 1.88 s at `6a48ee1`, over
+   7.27 s with no agent: +22.2% against +25.9%.
+   - The servlet module was the one large step: +0.61 s at `7d173ab`,
+     less 0.36 s from its service-descriptor gate (`b8a716e`) and 0.08 s
+     from a Horspool byte search (`6a48ee1`). It now costs 0.03 to
+     0.06 s, at the harness's noise floor.
+   - The rest, about 0.2 s, has no single cause: endpoint matching grew
+     0.12 s as modules were added (0.27 s with every module on at
+     `1332f3f`, 0.39 s now), and the rest of the agent 0.09 s. A
+     stricter servlet gate and an allocation-free class-name check each
+     measured nothing and were dropped.
+   Read the next scheduled run. If it stays over 25%, choose between
+   making the CI number steady first (the runner's spread is larger
+   than the gap) and restructuring endpoint matching so twelve modules
+   share one pass per class. Then re-run the workflow on the commit to
+   be tagged and update both pages.
 2. **Cut the releases** (ADRs 0062 and 0063, collector ADR 0006). Cutting
    is Luke's call. Collector `v0.1.0` goes first, since the agent's
    `release.sh` refuses a release until it exists. Each needs its
