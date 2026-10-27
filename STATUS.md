@@ -19,8 +19,9 @@ multi-tenant backend.
    to +38%, but the runner varies more than the agent does: the no-agent
    startup ranges from 10 s to 20 s across nights, and one commit
    (`8260d2e`) read +16.9%, +18.5% and +23.8% on three nights. Measured
-   locally on PetClinic in a container pinned to one core (M3 Pro, 7
-   interleaved runs, `scratchpad` harness of 2026-10-27), the agent's
+   locally (M3 Pro, the benchmark's PetClinic image run with
+   `--cpuset-cpus=0` beside a Postgres container, Spring's "process
+   running for", medians of 7 interleaved runs), the agent's
    startup cost is 1.61 s at `1332f3f` and 1.88 s at `6a48ee1`, over
    7.27 s with no agent: +22.2% against +25.9%.
    - The servlet module was the one large step: +0.61 s at `7d173ab`,
