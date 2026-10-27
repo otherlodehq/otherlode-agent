@@ -2485,6 +2485,53 @@ class ExportSchedulerTest {
     }
 
     @Test
+    fun `the plugin sentence names a Serializer forClass object and no Scala or structure cause`() {
+        val unreadShapeCounts = UnreadShapeCounts()
+        unreadShapeCounts.record(
+            "com.acme.ExternalSerializer",
+            null,
+            UnreadCause.PLUGIN_FILLED,
+            mapOf(UnreadShape.KOTLINX_SERIALIZER_OBJECT to 3),
+        )
+        val scheduler =
+            ExportScheduler(
+                config,
+                resource,
+                ProbeRegistry(),
+                EndpointRegistry(),
+                RecordingExporter(),
+                unreadShapeCounts = unreadShapeCounts,
+            )
+
+        val records = captureLogRecords(ExportScheduler::class.java.name) { scheduler.flush() }
+
+        val summary = records.single { it.message.contains("unread shape") }
+        assertTrue(summary.message.contains("3 kotlinx.serialization serializer objects"), summary.message)
+        assertTrue(
+            summary.message.contains("3 of them are in a class where a compiler plugin fills in the members the adopter did not write"),
+            summary.message,
+        )
+        assertTrue(summary.message.contains("@Serializer(forClass) object"), summary.message)
+        assertFalse(summary.message.contains("cannot tell"), summary.message)
+        assertFalse(summary.message.contains("no hand-written code takes"), summary.message)
+        assertFalse(summary.message.contains("A newer agent may read them"), summary.message)
+    }
+
+    @Test
+    fun `the unread-shape summary still says a newer agent may read them when a plugin-filled object sits beside another family`() {
+        val unreadShapeCounts = UnreadShapeCounts()
+        unreadShapeCounts.record("com.acme.ExternalSerializer", null, UnreadCause.PLUGIN_FILLED, mapOf(UnreadShape.KOTLINX_SERIALIZER_OBJECT to 3))
+        unreadShapeCounts.record("com.acme.Facade", null, UnreadCause.UNREAD_STRUCTURE, mapOf(UnreadShape.MULTIFILE_FACADE to 1))
+        val scheduler =
+            ExportScheduler(config, resource, ProbeRegistry(), EndpointRegistry(), RecordingExporter(), unreadShapeCounts = unreadShapeCounts)
+
+        val records = captureLogRecords(ExportScheduler::class.java.name) { scheduler.flush() }
+
+        val summary = records.single { it.message.contains("unread shape") }
+        assertTrue(summary.message.contains("A newer agent may read them"), summary.message)
+    }
+
+    @Test
     fun `the first flush that finds classes analysed from received bytes logs one INFO line with their count`() {
         val unreadShapeCounts = UnreadShapeCounts()
         unreadShapeCounts.recordReceivedBytesClass("com.acme.Foo")

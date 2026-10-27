@@ -18,6 +18,13 @@ object CompilerFixtures {
     /** The kotlinc releases in the matrix, oldest first, as `gradle.properties` lists them. */
     val kotlincVersions: List<String> get() = listProperty("otherlode.fixtures.kotlinc.versions")
 
+    /**
+     * The builds of the kotlinx.serialization fixtures, oldest first: one per kotlinc release, and
+     * after each release that still has the K1 frontend one more, `<release>-k1`, compiled under
+     * `-language-version 1.9`.
+     */
+    val kotlincSerializationKeys: List<String> get() = listProperty("otherlode.fixtures.kotlincSerialization.keys")
+
     /** The javac versions in the matrix, oldest first, as `gradle.properties` lists them. */
     val javacVersions: List<String> get() = listProperty("otherlode.fixtures.javac.versions")
 
@@ -45,6 +52,10 @@ object CompilerFixtures {
 
     /** The build of kotlinc release [version]. */
     fun kotlinc(version: String): Build = Build(File(requiredProperty("otherlode.fixtures.kotlinc.$version.dir")), KOTLIN_PACKAGE)
+
+    /** The kotlinx.serialization fixture build [key], one of [kotlincSerializationKeys]. */
+    fun kotlincSerialization(key: String): Build =
+        Build(File(requiredProperty("otherlode.fixtures.kotlincSerialization.$key.dir")), KOTLIN_PACKAGE)
 
     /** The build of javac [version]. */
     fun javac(version: String): Build = Build(File(requiredProperty("otherlode.fixtures.javac.$version.dir")), JAVA_PACKAGE)

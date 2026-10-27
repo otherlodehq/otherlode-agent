@@ -66,23 +66,10 @@ deferrals, gzip, a collector config file, and agent-level redaction
 
 ## TODO
 
-### Generated code read as the adopter's (ADRs 0078 and 0079): to build
+### JPA enhancer output read as the adopter's (ADR 0079): to build
 
-The Kotlin shapes (chunk 1) are built. Left, in order:
-
-1. **kotlinx.serialization (agent).** `GeneratedBy.KOTLINX_SERIALIZATION`;
-   the `$serializer`, `serializer()` and lazy-lambda rules; a
-   `@Serializer(forClass)` object's interface methods as the unread shape
-   `KOTLINX_SERIALIZER_OBJECT`. The plugin is a test-only dependency, and
-   the canary adds K1 mode on 2.x.
-2. **JPA enhancers (agent).** Ebean, EclipseLink and OpenJPA as ADR 0079
-   says, each pinned by an entity that library enhanced; `classes.md` and
-   `compatibility.md`.
-3. **Server.** `VALUE_CLASS`, `KOTLINX_SERIALIZATION` and the unread shape
-   `KOTLINX_SERIALIZER_OBJECT`: store constants, rendering, the UI's labels,
-   an unknown value rendering as `unknown`, and the bindings bump.
-
-Chunks 1 and 2 do not depend on each other.
+Ebean, EclipseLink and OpenJPA as ADR 0079 says, each pinned by an entity
+that library enhanced; `classes.md` and `compatibility.md`.
 
 ### Open overloads marked as stubs: to decide
 

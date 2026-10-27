@@ -397,7 +397,9 @@ class ExportScheduler(
         val parts = mutableListOf<String>()
         if (total > 0) parts += methodsSummary(total)
         if (outcomes > 0) parts += outcomesSummary(outcomes)
-        log.log(Level.WARNING, "otherlode: ${parts.joinToString(" ")} A newer agent may read them.")
+        val onlyPluginFilled = outcomes <= 0 && total == unreadShapeCounts.countOf(UnreadCause.PLUGIN_FILLED)
+        val newerAgent = if (onlyPluginFilled) "" else " A newer agent may read them."
+        log.log(Level.WARNING, "otherlode: ${parts.joinToString(" ")}$newerAgent")
     }
 
     private fun methodsSummary(total: Long): String {
@@ -426,11 +428,20 @@ class ExportScheduler(
                     "agent does not read, such as the plumbing of a Scala enum declared inside a class or a method of a Kotlin " +
                     "multi-file facade that is not a forwarder."
             }
+        val pluginFilled = unreadShapeCounts.countOf(UnreadCause.PLUGIN_FILLED)
+        val pluginFilledNote =
+            if (pluginFilled == 0L) {
+                ""
+            } else {
+                " ${count(pluginFilled, "of them is", "of them are")} in a class where a compiler plugin fills in the members the " +
+                    "adopter did not write and the bytecode does not tell them apart, such as a kotlinx.serialization " +
+                    "@Serializer(forClass) object."
+            }
         val classes = unreadShapeCounts.classes()
         return "${count(total, "method", "methods")} in ${count(classes.toLong(), "class", "classes")} " +
             "${if (total == 1L) "looks" else "look"} like compiler output this agent has not read, and " +
             "${if (total == 1L) "is reported as an unread shape" else "are reported as unread shapes"} rather than dead code " +
-            "($families).$releaseNote$versionBlindNote$structureNote"
+            "($families).$releaseNote$versionBlindNote$structureNote$pluginFilledNote"
     }
 
     private fun outcomesSummary(outcomes: Long): String {

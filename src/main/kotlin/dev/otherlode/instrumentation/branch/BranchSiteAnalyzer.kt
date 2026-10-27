@@ -3264,6 +3264,11 @@ object BranchSiteAnalyzer {
      * from the constructor and the type initializer, is [UnreadShape.MULTIFILE_FACADE], since a
      * facade holds no adopter code.
      *
+     * In a Kotlin class, with [includeSerialization], the kotlinx.serialization plugin's output is
+     * [GeneratedBy.KOTLINX_SERIALIZATION] and a `@Serializer(forClass)` object's interface methods
+     * are [UnreadShape.KOTLINX_SERIALIZER_OBJECT], as [KotlinxSerializationMarks] reads them. The
+     * cross-class method table turns it off, since it keeps only pass-throughs.
+     *
      * In a class that [isScalaClass], a static forwarder, a case class's and its companion's
      * plumbing and an object's `writeReplace` are marked as [ScalaGeneratedMethods] reads them,
      * with [lookup] reading a companion's partner class. They go in after every rule
@@ -3282,6 +3287,7 @@ object BranchSiteAnalyzer {
         isKotlinClass: Boolean,
         interfaceInternalNames: List<String>,
         lookup: (internalName: String) -> ByteArray?,
+        includeSerialization: Boolean = true,
         scalaLookup: (internalName: String) -> ByteArray? = lookup,
         scalaReleaseOf: ((internalName: String) -> String?)? = { null },
     ): GeneratedMarks {
@@ -3339,6 +3345,14 @@ object BranchSiteAnalyzer {
             for (key in stubs) result.putIfAbsent(key, GeneratedBy.DEFAULT_IMPLS)
         }
 
+        var serializationUnread: Map<Pair<String, String>, UnreadShape> = emptyMap()
+        if (includeSerialization && isKotlinClass) {
+            val serialization =
+                KotlinxSerializationMarks.of(classBytes, internalClassName, superInternalName, interfaceInternalNames, methodAccess, lookup)
+            for ((key, generatedBy) in serialization.generated) result.putIfAbsent(key, generatedBy)
+            serializationUnread = serialization.unread.filterKeys { it !in result }
+        }
+
         if (isScalaClass) {
             // No release function means the caller wants the marks alone, as the method table does.
             if (scalaReleaseOf == null) {
@@ -3367,7 +3381,12 @@ object BranchSiteAnalyzer {
                     .associateWith { UnreadShape.MULTIFILE_FACADE }
             return GeneratedMarks(result, unread, cause = UnreadCause.UNREAD_STRUCTURE.takeIf { unread.isNotEmpty() })
         }
-        return GeneratedMarks(result, valueClassForwarders = valueClass.forwarders)
+        return GeneratedMarks(
+            result,
+            serializationUnread,
+            cause = UnreadCause.PLUGIN_FILLED.takeIf { serializationUnread.isNotEmpty() },
+            valueClassForwarders = valueClass.forwarders,
+        )
     }
 
     /**
@@ -6017,6 +6036,7 @@ object BranchSiteAnalyzer {
                 lookup = lookup,
                 scalaReleaseOf = null,
                 scalaLookup = { null },
+                includeSerialization = false,
             ).passThroughKeys()
         return MethodTable(
             classAccess,

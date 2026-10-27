@@ -17,6 +17,12 @@ enum class UnreadCause {
      * plumbing is scalac's in a shape the rules do not read, whatever the release.
      */
     UNREAD_STRUCTURE,
+
+    /**
+     * The class holds members a compiler plugin fills in beside members the adopter wrote, and
+     * the bytecode does not tell them apart: a `@Serializer(forClass = ...)` object (ADR 0078).
+     */
+    PLUGIN_FILLED,
 }
 
 /**

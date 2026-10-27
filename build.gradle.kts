@@ -563,6 +563,18 @@ val kotlincSuspendsSource =
     project(":fixtures-kotlinc").file("src/main/kotlin/com/example/target/kotlinc/Suspends.kt")
 val kotlincMatrixClassesDirs =
     kotlincMatrix.associateWith { project(":fixtures-kotlinc").layout.buildDirectory.dir("classes/kotlinc/$it") }
+// The kotlinx.serialization fixtures (ADR 0078): one build per release and, for a release in
+// otherlode.matrix.kotlincK1, one more under -language-version 1.9, keyed "<release>-k1".
+val kotlincK1Matrix =
+    providers
+        .gradleProperty("otherlode.matrix.kotlincK1")
+        .get()
+        .split(",")
+        .toSet()
+val kotlincSerializationKeys =
+    kotlincMatrix.flatMap { version -> if (version in kotlincK1Matrix) listOf(version, "$version-k1") else listOf(version) }
+val kotlincSerializationClassesDirs =
+    kotlincSerializationKeys.associateWith { project(":fixtures-kotlinc").layout.buildDirectory.dir("classes/serialization/$it") }
 val javacMatrixClassesDirs =
     javacMatrix.associateWith { project(":fixtures-javac").layout.buildDirectory.dir("classes/javac/$it") }
 val scalacMatrix = providers.gradleProperty("otherlode.matrix.scalac").get().split(",")
@@ -604,6 +616,7 @@ tasks.test {
         "jvmDefaultDisable" to jvmDefaultDisableFixtureClassesDir,
         "classSam" to classSamFixtureClassesDir,
     ).plus(kotlincMatrixClassesDirs.map { (version, dir) -> "kotlinc$version" to dir })
+        .plus(kotlincSerializationClassesDirs.map { (key, dir) -> "kotlincSerialization$key" to dir })
         .plus(javacMatrixClassesDirs.map { (version, dir) -> "javac$version" to dir })
         .plus(scalacMatrixClassesDirs.map { (version, dir) -> "scalac$version" to dir })
         .forEach { (name, dir) ->
@@ -663,6 +676,10 @@ tasks.test {
         systemProperty("otherlode.fixtures.kotlinc.suspendsSource", kotlincSuspendsSource.absolutePath)
         kotlincMatrixClassesDirs.forEach { (version, dir) ->
             systemProperty("otherlode.fixtures.kotlinc.$version.dir", dir.get().asFile.absolutePath)
+        }
+        systemProperty("otherlode.fixtures.kotlincSerialization.keys", kotlincSerializationKeys.joinToString(","))
+        kotlincSerializationClassesDirs.forEach { (key, dir) ->
+            systemProperty("otherlode.fixtures.kotlincSerialization.$key.dir", dir.get().asFile.absolutePath)
         }
         javacMatrixClassesDirs.forEach { (version, dir) ->
             systemProperty("otherlode.fixtures.javac.$version.dir", dir.get().asFile.absolutePath)
