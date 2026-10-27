@@ -76,12 +76,6 @@ keeps its line table and stays the adopter's, so the check's true outcome,
 which an unmanaged instance never takes, reads as an untaken branch. Rare:
 an entity with a hand-written `writeObject`.
 
-### Open overloads marked as stubs: to build
-
-ADR 0078's 2026-10-27 amendment: a `DEFAULT_IMPLS` class stub must start
-on its class's header line, so an open overload the adopter wrote,
-and a hand-written `override fun m() = super.m()`, stay the adopter's.
-
 ### Kotlin shapes still unmarked
 
 Each is compiler output that reads as the adopter's code:

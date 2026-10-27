@@ -3995,9 +3995,14 @@ object BranchSiteAnalyzer {
      * Its types must be the ones the called method takes and returns once the class's type
      * arguments for that interface are put in, read through [lookup], as [matchesExpected] checks,
      * and it must not be final. kotlinc writes the stub open, and an overload the adopter wrote
-     * with a `super` call compiles to the same body, final by default. An open one is marked: one
-     * declared `open`, one that overrides another interface's member, or one an all-open compiler
-     * plugin opens. Only `kotlin.Metadata` tells those apart, and this rule does not read it. In a value class,
+     * with a `super` call compiles to the same body, final by default. An open one has the same
+     * bytes, and a line table tells it apart: kotlinc starts every stub on the line where its
+     * class's declaration starts, and an adopter's method on its own, later line. A method with a
+     * line table is a stub only when its first line is the smallest first line of any method in the
+     * class, leaving out `<clinit>` and the methods AspectJ weaves in on line 1. A method with no
+     * line table stays a stub. So does an adopter's method that starts on the smallest line: in a
+     * class written on one line, or in a class with no primary constructor and no stub, when no
+     * other method starts before it. In a value class,
      * where [ownIsValueClass] is true, the stub casts `this` to the interface first.
      *
      * The interface is one the class file lists itself. kotlinc names the direct interface's
@@ -4071,7 +4076,60 @@ object BranchSiteAnalyzer {
                 }
             }
         ClassReader(classBytes).accept(classVisitor, ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
-        return withoutBoxingTwins(candidates)
+        if (candidates.isEmpty()) return emptySet()
+        val firstLines = firstLineEntries(classBytes)
+        val headerLine = firstLines.values.minOrNull()
+        val onHeader = candidates.filter { candidate -> firstLines[candidate.key].let { it == null || it == headerLine } }
+        return withoutBoxingTwins(onHeader)
+    }
+
+    private const val AJ_SYNTHETIC_ATTRIBUTE = "org.aspectj.weaver.AjSynthetic"
+
+    /**
+     * The first line-number entry, by lowest bytecode offset, of each method in [classBytes] that
+     * has a line table. `<clinit>` and the methods AspectJ weaves in on line 1 are left out, since
+     * their first line says nothing about where the class is declared: an `ajc$` method, and one
+     * that carries AspectJ's `AjSynthetic` attribute, such as an aspect's `aspectOf`.
+     */
+    private fun firstLineEntries(classBytes: ByteArray): Map<Pair<String, String>, Int> {
+        val firstLines = mutableMapOf<Pair<String, String>, Int>()
+        ClassReader(classBytes).accept(
+            object : ClassVisitor(Opcodes.ASM9) {
+                override fun visitMethod(
+                    access: Int,
+                    name: String,
+                    descriptor: String,
+                    signature: String?,
+                    exceptions: Array<out String>?,
+                ): MethodVisitor? =
+                    if (name == "<clinit>" || name.startsWith("ajc$")) {
+                        null
+                    } else {
+                        object : MethodVisitor(Opcodes.ASM9) {
+                            private var woven = false
+                            private var firstLine: Int? = null
+
+                            override fun visitAttribute(attribute: Attribute) {
+                                if (attribute.type == AJ_SYNTHETIC_ATTRIBUTE) woven = true
+                            }
+
+                            override fun visitLineNumber(
+                                line: Int,
+                                start: Label,
+                            ) {
+                                if (firstLine == null) firstLine = line
+                            }
+
+                            override fun visitEnd() {
+                                val line = firstLine
+                                if (!woven && line != null) firstLines[name to descriptor] = line
+                            }
+                        }
+                    }
+            },
+            ClassReader.SKIP_FRAMES,
+        )
+        return firstLines
     }
 
     /**

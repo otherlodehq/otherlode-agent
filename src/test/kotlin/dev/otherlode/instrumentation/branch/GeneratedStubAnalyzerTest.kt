@@ -1,8 +1,11 @@
 package dev.otherlode.instrumentation.branch
 
 import dev.otherlode.export.GeneratedBy
+import net.bytebuddy.jar.asm.Attribute
+import net.bytebuddy.jar.asm.ByteVector
 import net.bytebuddy.jar.asm.ClassWriter
 import net.bytebuddy.jar.asm.Handle
+import net.bytebuddy.jar.asm.Label
 import net.bytebuddy.jar.asm.MethodVisitor
 import net.bytebuddy.jar.asm.Opcodes
 import net.bytebuddy.jar.asm.Type
@@ -166,6 +169,100 @@ class GeneratedStubAnalyzerTest {
 
     private fun markOfStub(bytes: ByteArray): GeneratedBy =
         BranchSiteAnalyzer.analyze(bytes, lookup) { _, _ -> true }.generatedBy("m", STUB_DESCRIPTOR)
+
+    /** AspectJ's empty method attribute that marks a member the weaver added. */
+    private class AjSynthetic : Attribute("org.aspectj.weaver.AjSynthetic") {
+        override fun write(
+            classWriter: ClassWriter,
+            code: ByteArray?,
+            codeLength: Int,
+            maxStack: Int,
+            maxLocals: Int,
+        ): ByteVector = ByteVector()
+    }
+
+    /**
+     * A Kotlin class with the forwarding `m` and an ordinary `other()`, each with a line-number
+     * entry at [stubLine] and [otherLine] when not null.
+     */
+    private fun linedClass(
+        stubLine: Int?,
+        otherLine: Int?,
+        woven: Boolean = false,
+    ): ByteArray {
+        val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
+        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC or Opcodes.ACC_FINAL, IMPL, null, "java/lang/Object", arrayOf(IFACE))
+        writer.visitAnnotation("Lkotlin/Metadata;", true).visitEnd()
+
+        fun method(
+            name: String,
+            descriptor: String,
+            line: Int?,
+            access: Int = Opcodes.ACC_PUBLIC,
+            body: (MethodVisitor) -> Unit,
+        ) {
+            val mv = writer.visitMethod(access, name, descriptor, null, null)
+            mv.visitCode()
+            if (line != null) {
+                val label = Label()
+                mv.visitLabel(label)
+                mv.visitLineNumber(line, label)
+            }
+            body(mv)
+            mv.visitMaxs(0, 0)
+            mv.visitEnd()
+        }
+        method("m", STUB_DESCRIPTOR, stubLine, body = forwardTo("$IFACE\$DefaultImpls"))
+        method("other", "()V", otherLine) { it.visitInsn(Opcodes.RETURN) }
+        if (woven) {
+            method("<clinit>", "()V", 1, Opcodes.ACC_STATIC) { it.visitInsn(Opcodes.RETURN) }
+            method("ajc\$preClinit", "()V", 1, Opcodes.ACC_PRIVATE or Opcodes.ACC_STATIC) { it.visitInsn(Opcodes.RETURN) }
+            val aspectOf = writer.visitMethod(Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC, "aspectOf", "()L$IMPL;", null, null)
+            aspectOf.visitAttribute(AjSynthetic())
+            aspectOf.visitCode()
+            val label = Label()
+            aspectOf.visitLabel(label)
+            aspectOf.visitLineNumber(1, label)
+            aspectOf.visitInsn(Opcodes.ACONST_NULL)
+            aspectOf.visitInsn(Opcodes.ARETURN)
+            aspectOf.visitMaxs(0, 0)
+            aspectOf.visitEnd()
+        }
+        writer.visitEnd()
+        return writer.toByteArray()
+    }
+
+    private fun markOfLinedStub(
+        stubLine: Int?,
+        otherLine: Int?,
+    ): GeneratedBy = markOfStub(linedClass(stubLine, otherLine))
+
+    @Test
+    fun `a stub keeps its mark when a type initializer or a method AspectJ weaves in sits on line 1`() {
+        assertEquals(GeneratedBy.DEFAULT_IMPLS, markOfStub(linedClass(stubLine = 3, otherLine = 7, woven = true)))
+        assertEquals(GeneratedBy.NONE, markOfStub(linedClass(stubLine = 7, otherLine = 3, woven = true)))
+    }
+
+    @Test
+    fun `a stub whose first line is the class's smallest is DEFAULT_IMPLS`() {
+        assertEquals(GeneratedBy.DEFAULT_IMPLS, markOfLinedStub(stubLine = 3, otherLine = 7))
+        assertEquals(GeneratedBy.DEFAULT_IMPLS, markOfLinedStub(stubLine = 3, otherLine = 3))
+    }
+
+    @Test
+    fun `a stub whose first line is later than the class's smallest is NONE`() {
+        assertEquals(GeneratedBy.NONE, markOfLinedStub(stubLine = 9, otherLine = 3))
+    }
+
+    @Test
+    fun `a stub with no line table in a class with lines stays DEFAULT_IMPLS`() {
+        assertEquals(GeneratedBy.DEFAULT_IMPLS, markOfLinedStub(stubLine = null, otherLine = 3))
+    }
+
+    @Test
+    fun `a class with no line tables keeps its stubs DEFAULT_IMPLS`() {
+        assertEquals(GeneratedBy.DEFAULT_IMPLS, markOfLinedStub(stubLine = null, otherLine = null))
+    }
 
     @Test
     fun `a Kotlin class method that loads this and its parameter and calls its interface's DefaultImpls is DEFAULT_IMPLS`() {

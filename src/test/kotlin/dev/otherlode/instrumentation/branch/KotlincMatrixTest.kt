@@ -449,14 +449,62 @@ class KotlincMatrixTest {
 
     @ParameterizedTest(name = "kotlinc {0}")
     @MethodSource("versions")
-    fun `an override that only calls super is the stub's body under jvm-default disable and is marked like one`(version: String) {
+    fun `an override that only calls super sits below the class header and is unmarked`(version: String) {
         val marks = CompilerFixtures.kotlinc(version).marks("SuperDescriber")
-        val expected =
-            if (CompilerFixtures.kotlincDefaultsToJvmDefaultEnable(version)) GeneratedBy.NONE else GeneratedBy.DEFAULT_IMPLS
 
-        assertEquals(expected, marks.of("plain", "()$STRING"), "under enable, super.plain() is an invokespecial on the interface")
+        assertEquals(GeneratedBy.NONE, marks.of("plain", "()$STRING"))
         assertEquals(GeneratedBy.NONE, marks.of("id", "()$STRING"))
     }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `an open overload beside a stub is unmarked and the stubs stay DEFAULT_IMPLS`(version: String) {
+        val marks = CompilerFixtures.kotlinc(version).marks("OverloadShelf")
+        val stub = stubExpected(version)
+
+        assertEquals(GeneratedBy.NONE, marks.of("put", "(I)Ljava/lang/Object;"), "the overload the adopter wrote: $marks")
+        assertEquals(stub, marks.of("size", "()I"))
+        assertEquals(stub, marks.of("put", "(Ljava/lang/Integer;)Ljava/lang/Object;"))
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `an open overload with no boxing stub beside it is unmarked by its line`(version: String) {
+        val marks = CompilerFixtures.kotlinc(version).marks("LoneOverload")
+
+        assertEquals(GeneratedBy.NONE, marks.of("put", "(I)Ljava/lang/Object;"), "the overload the adopter wrote: $marks")
+        assertEquals(stubExpected(version), marks.of("size", "()I"))
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `an override of another interface's member that only calls super is unmarked`(version: String) {
+        val marks = CompilerFixtures.kotlinc(version).marks("BothShelf")
+
+        assertEquals(setOf(GeneratedBy.NONE), marks.all("put").toSet())
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `a class whose header spans lines and carries an annotation keeps its stubs DEFAULT_IMPLS`(version: String) {
+        val marks = CompilerFixtures.kotlinc(version).marks("HeaderShelf")
+        val stub = stubExpected(version)
+
+        assertEquals(stub, marks.of("size", "()I"))
+        assertEquals(stub, marks.of("put", "(Ljava/lang/String;)Ljava/lang/Object;"))
+        assertEquals(GeneratedBy.NONE, marks.of("extra", "()I"))
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `an exact override in a class written on one line stays DEFAULT_IMPLS, the documented limit`(version: String) {
+        val marks = CompilerFixtures.kotlinc(version).marks("OneLineShelf")
+
+        assertEquals(stubExpected(version), marks.of("put", "(I)Ljava/lang/Object;"))
+    }
+
+    private fun stubExpected(version: String) =
+        if (CompilerFixtures.kotlincDefaultsToJvmDefaultEnable(version)) GeneratedBy.NONE else GeneratedBy.DEFAULT_IMPLS
 
     // --- default-filling methods ---
 
