@@ -103,6 +103,7 @@ evaluationDependsOn(":fixtures-scala2")
 evaluationDependsOn(":fixtures-kotlin-jvm-default-disable")
 evaluationDependsOn(":fixtures-kotlin-class-sam")
 evaluationDependsOn(":fixtures-probe-window")
+evaluationDependsOn(":fixtures-jpa")
 evaluationDependsOn(":demo-spring")
 evaluationDependsOn(":endpoints-ktor-3")
 
@@ -577,6 +578,21 @@ val kotlincSerializationClassesDirs =
     kotlincSerializationKeys.associateWith { project(":fixtures-kotlinc").layout.buildDirectory.dir("classes/serialization/$it") }
 val javacMatrixClassesDirs =
     javacMatrix.associateWith { project(":fixtures-javac").layout.buildDirectory.dir("classes/javac/$it") }
+// The entities Ebean, EclipseLink and OpenJPA enhanced (ADR 0079), by library, with the runtime
+// classpath each needs to define them.
+val jpaFixtureLibraries = listOf("ebean", "eclipselink", "openjpa")
+val jpaFixtureClassesDirs =
+    jpaFixtureLibraries.associateWith { project(":fixtures-jpa").layout.buildDirectory.dir("classes/$it") }
+val jpaFixtureRuntimeClasspaths =
+    jpaFixtureLibraries.associateWith {
+        project(":fixtures-jpa").configurations.named(
+            when (it) {
+                "ebean" -> "ebeanRuntime"
+                "eclipselink" -> "eclipseLinkRuntime"
+                else -> "openJpaRuntime"
+            },
+        )
+    }
 val scalacMatrix = providers.gradleProperty("otherlode.matrix.scalac").get().split(",")
 val scalacMatrixClassesDirs =
     scalacMatrix.associateWith { project(":fixtures-scalac").layout.buildDirectory.dir("classes/scalac/$it") }
@@ -607,6 +623,7 @@ tasks.test {
         ":fixtures-kotlinc:classes",
         ":fixtures-javac:classes",
         ":fixtures-scalac:classes",
+        ":fixtures-jpa:classes",
     )
     // A fixture build is not on the test classpath, so its classes are declared as inputs here:
     // otherwise a fixture change would recompile the fixture and leave the test task up to date.
@@ -619,6 +636,7 @@ tasks.test {
         .plus(kotlincSerializationClassesDirs.map { (key, dir) -> "kotlincSerialization$key" to dir })
         .plus(javacMatrixClassesDirs.map { (version, dir) -> "javac$version" to dir })
         .plus(scalacMatrixClassesDirs.map { (version, dir) -> "scalac$version" to dir })
+        .plus(jpaFixtureClassesDirs.map { (name, dir) -> "jpa$name" to dir })
         .forEach { (name, dir) ->
             inputs.dir(dir).withPropertyName("fixtureClasses.$name").withPathSensitivity(PathSensitivity.RELATIVE)
         }
@@ -672,6 +690,10 @@ tasks.test {
         }
         scalacMatrixVersionFiles.forEach { (version, file) ->
             systemProperty("otherlode.fixtures.scalac.$version.versionFile", file.get().asFile.absolutePath)
+        }
+        jpaFixtureClassesDirs.forEach { (name, dir) ->
+            systemProperty("otherlode.fixtures.jpa.$name.dir", dir.get().asFile.absolutePath)
+            systemProperty("otherlode.fixtures.jpa.$name.classpath", jpaFixtureRuntimeClasspaths.getValue(name).get().asPath)
         }
         systemProperty("otherlode.fixtures.kotlinc.suspendsSource", kotlincSuspendsSource.absolutePath)
         kotlincMatrixClassesDirs.forEach { (version, dir) ->

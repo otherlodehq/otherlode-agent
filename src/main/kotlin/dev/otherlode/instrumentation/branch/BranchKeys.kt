@@ -50,15 +50,18 @@ object BranchKeys {
     /**
      * Computes the branch key of every kept outcome of [sites], one class's analysed branch
      * sites, keyed by `(siteIndex, outcome offset)`. [className] is the class's own name, dotted.
+     * [reportedName] gives the method name a key digests from the method's real name and
+     * descriptor, so a method that reports under another name is keyed by that name.
      */
     fun compute(
         sites: List<BranchSite>,
         className: String,
+        reportedName: (name: String, descriptor: String) -> String = { name, _ -> name },
     ): Map<Pair<Int, Int>, String> {
         val keys = mutableMapOf<Pair<Int, Int>, String>()
         val classBytes = utf8(className)
-        for (nameable in nameableSites(sites)) {
-            val input = DigestInput(classBytes, nameable.site, nameable.fingerprint)
+        for (nameable in nameableSites(sites, reportedName)) {
+            val input = DigestInput(classBytes, nameable.site, nameable.fingerprint, reportedName)
             nameable.outcomeTokens.forEachIndexed { offset, outcomeToken ->
                 if (outcomeToken == null) return@forEachIndexed
                 keys[nameable.site.siteIndex to offset] = digest(DERIVATION_TAG_BYTES, input, outcomeToken)
@@ -70,16 +73,17 @@ object BranchKeys {
     /**
      * Computes the site key of every kept site of [sites], one class's analysed branch sites, keyed
      * by `siteIndex`. [className] is the class's own name, dotted. A site is missing from the
-     * result exactly when [compute] gives none of its outcomes a key.
+     * result exactly when [compute] gives none of its outcomes a key. [reportedName] is as for [compute].
      */
     fun computeSiteKeys(
         sites: List<BranchSite>,
         className: String,
+        reportedName: (name: String, descriptor: String) -> String = { name, _ -> name },
     ): Map<Int, String> {
         val classBytes = utf8(className)
-        return nameableSites(sites).associate { nameable ->
+        return nameableSites(sites, reportedName).associate { nameable ->
             nameable.site.siteIndex to
-                digest(SITE_DERIVATION_TAG_BYTES, DigestInput(classBytes, nameable.site, nameable.fingerprint), null)
+                digest(SITE_DERIVATION_TAG_BYTES, DigestInput(classBytes, nameable.site, nameable.fingerprint, reportedName), null)
         }
     }
 
@@ -93,11 +97,20 @@ object BranchKeys {
      * The kept sites of [sites] that can be named safely: each has a fingerprint, shares no
      * [CollisionIdentity] with another tracked site, dropped sites included, and has outcome tokens.
      */
-    private fun nameableSites(sites: List<BranchSite>): List<NameableSite> {
+    private fun nameableSites(
+        sites: List<BranchSite>,
+        reportedName: (name: String, descriptor: String) -> String,
+    ): List<NameableSite> {
         val collisionCounts = mutableMapOf<CollisionIdentity, Int>()
         for (site in sites) {
             val fingerprint = site.conditionFingerprint ?: continue
-            val identity = CollisionIdentity(site.methodName, site.methodDescriptor, fingerprint, site.inlinedFromClassName)
+            val identity =
+                CollisionIdentity(
+                    reportedName(site.methodName, site.methodDescriptor),
+                    site.methodDescriptor,
+                    fingerprint,
+                    site.inlinedFromClassName,
+                )
             collisionCounts[identity] = (collisionCounts[identity] ?: 0) + 1
         }
 
@@ -105,7 +118,13 @@ object BranchKeys {
         for (site in sites) {
             if (site.dropReason != null) continue
             val fingerprint = site.conditionFingerprint ?: continue
-            val identity = CollisionIdentity(site.methodName, site.methodDescriptor, fingerprint, site.inlinedFromClassName)
+            val identity =
+                CollisionIdentity(
+                    reportedName(site.methodName, site.methodDescriptor),
+                    site.methodDescriptor,
+                    fingerprint,
+                    site.inlinedFromClassName,
+                )
             if (collisionCounts.getValue(identity) > 1) continue
             val outcomeTokens = outcomeTokensOf(site) ?: continue
             nameable += NameableSite(site, fingerprint, outcomeTokens)
@@ -157,8 +176,9 @@ object BranchKeys {
         val className: ByteArray,
         site: BranchSite,
         fingerprint: String,
+        reportedName: (name: String, descriptor: String) -> String,
     ) {
-        val methodName = utf8(site.methodName)
+        val methodName = utf8(reportedName(site.methodName, site.methodDescriptor))
         val methodDescriptor = utf8(site.methodDescriptor)
         val origin = utf8(site.inlinedFromClassName ?: "")
         val fingerprint = utf8(fingerprint)

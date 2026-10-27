@@ -309,7 +309,7 @@ otherlode: com.acme.shop.Cart's bytecode could not be read; any method of it tha
 
 The agent could not read the class's bytes from its loader or from the bytes it received. Methods still count, with less detail. If you see this for ordinary classes, report the class and its loader.
 
-After the first flush, one INFO line counts branch sites left without a probe across the process and splits the count by reason: inlined from code outside your include rules, coroutine machinery, switch lowering, and code-size limits. Most of those are deliberate. [Methods and branches](methods-and-branches) explains what the agent leaves out and why.
+After the first flush, one INFO line counts branch sites left without a probe across the process and splits the count by reason: inlined from code outside your include rules, coroutine machinery, switch lowering, code-size limits, and checks EclipseLink's weaving adds. Most of those are deliberate. [Methods and branches](methods-and-branches) explains what the agent leaves out and why.
 
 ## A method a framework calls reads as uncalled
 

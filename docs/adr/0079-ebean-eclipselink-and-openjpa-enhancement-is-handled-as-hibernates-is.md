@@ -41,3 +41,12 @@ Two cases go past added methods:
 - An adopter's code compiled without line numbers loses the line-table guard. An EclipseLink `_persistence_` method or an OpenJPA list name the adopter wrote would then be left out.
 - The static baseline renames OpenJPA accessors only for a class that is already enhanced on disk, which is where the mapping applies.
 - Each rule is checked against an entity enhanced by each library in the test suite, as ADR 0047's is.
+
+## Amended on 2026-10-27: settled while building
+
+- **EclipseLink's woven checks are dropped sites.** A woven check gets no branch probe, with the drop reason `JPA_WEAVING`, counted in the first-flush INFO line. A branch probe carries its method's mark, and the method stays the adopter's. Rejected: a per-site mark, which needs a `GeneratedBy` value for an enhancer and a wire change for no gain, since a dropped site already makes no claim.
+- **OpenJPA's list is longer.** It also holds `writeObject` and `readObject`, which the enhancer adds to a serializable entity that lacks them, and `readExternalFields` and `writeExternalFields`. `readExternal` and `writeExternal` count only beside `pcReadUnmanaged` and `pcWriteUnmanaged`, since the enhancer adds them together and refuses an entity that declares its own. `pcVersionInit` is a field in 4.1.1, not a method. Every entry needs no line-number table.
+- **Ebean's `equals` and `hashCode`.** Ebean writes them with line numbers, and with `synthetic` off they carry no `ACC_SYNTHETIC` flag, so an `equals(Object)` or `hashCode()` that calls the class's own `_ebean_getIdentity` is the enhancer's.
+- **A moved OpenJPA accessor takes its wrapper's outside caller.** The enhancer moves the adopter's runtime-visible method annotations to the wrapper, and only the wrapper overrides a supertype's method, so the moved method reports the wrapper's callback annotation and overridden type.
+- **The wrapper rule needs a line table on `pc<m>`.** Without it, a class compiled without line numbers could match an adopter's own `m` and `pc<m>`.
+- **Build time only for the woven checks and the rename.** The agent reads a class's shape from its class file. Under load-time enhancement that file predates the enhancer, so neither rule applies. Added methods still get no probe, since only methods the class file declares are probed. An EclipseLink-woven method then fails to pair and loses its branch probes. An OpenJPA property-access wrapper can pair with the adopter's getter and report the wrong outcome; STATUS holds that as open work.

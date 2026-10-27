@@ -11,6 +11,7 @@ include("fixtures-scala2")
 include("fixtures-kotlin-jvm-default-disable")
 include("fixtures-kotlin-class-sam")
 include("fixtures-probe-window")
+include("fixtures-jpa")
 include("framework-markers")
 
 include("fixtures-kotlinc")

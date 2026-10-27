@@ -91,14 +91,18 @@ data class KeptBranchSite(
          * listed, and neither is a throwing default or a [BranchSite.unprobedOutcome], whose
          * branch index stays unused. [guards] lists a site's outcomes in probed order, and
          * the branch keys by outcome offset.
+         *
+         * [reportedName] gives the name a method's keys digest, from its real name and descriptor;
+         * see [BranchKeys.compute].
          */
         internal fun of(
             sites: List<BranchSite>,
             className: String,
             guards: Map<Int, SiteGuards> = emptyMap(),
+            reportedName: (name: String, descriptor: String) -> String = { name, _ -> name },
         ): List<KeptBranchSite> {
-            val branchKeys = BranchKeys.compute(sites, className)
-            val siteKeys = BranchKeys.computeSiteKeys(sites, className)
+            val branchKeys = BranchKeys.compute(sites, className, reportedName)
+            val siteKeys = BranchKeys.computeSiteKeys(sites, className, reportedName)
             val firstBranchIndexes = firstBranchIndexes(sites)
             val kept = mutableListOf<KeptBranchSite>()
             for ((position, site) in sites.withIndex()) {

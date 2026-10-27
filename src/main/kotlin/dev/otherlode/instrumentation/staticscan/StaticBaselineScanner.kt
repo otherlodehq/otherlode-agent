@@ -6,6 +6,7 @@ import dev.otherlode.export.DeclaredMethod
 import dev.otherlode.export.KotlinKind
 import dev.otherlode.export.UnprobedClass
 import dev.otherlode.export.UnreadableClass
+import dev.otherlode.instrumentation.JpaEnhancement
 import dev.otherlode.instrumentation.ScalaClassDetector
 import dev.otherlode.instrumentation.SubroutineInliner
 import dev.otherlode.instrumentation.TypeMatchPolicy
@@ -360,7 +361,11 @@ class StaticBaselineScanner(
                 null
             }
         val isScalaClass = classBytes?.let(ScalaClassDetector::isScalaClass) ?: false
-        val methods = typeDescription.declaredMethods.filter(TypeMatchPolicy.methodMatcher(isScalaClass))
+        val enhancement = classBytes?.let(JpaEnhancement::of) ?: JpaEnhancement.NONE
+        val methods =
+            typeDescription.declaredMethods
+                .filter(TypeMatchPolicy.methodMatcher(isScalaClass))
+                .filterNot { enhancement.isUnprobed(it.internalName, it.descriptor) }
         val eligible = methods.map { it.internalName to it.descriptor }.toSet()
         val analysis =
             if (classBytes != null) {
@@ -383,7 +388,7 @@ class StaticBaselineScanner(
                 val sourceSignature = analysis.sourceSignatureOf(it.internalName, it.descriptor)
                 val getterTarget = getterTargets[it.internalName to it.descriptor]
                 DeclaredMethod(
-                    it.internalName,
+                    analysis.reportedNameOf(it.internalName, it.descriptor),
                     it.descriptor,
                     analysis.isInline(it.internalName, it.descriptor),
                     analysis.callsOf(it.internalName, it.descriptor),

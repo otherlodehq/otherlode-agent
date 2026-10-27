@@ -502,6 +502,15 @@ object TypeMatchPolicy {
     fun isEnhancementMethod(name: String): Boolean = name.startsWith(ENHANCEMENT_METHOD_PREFIX)
 
     /**
+     * Whether a method named [name] that its owner's class file does not declare is one an
+     * enhancer adds when it runs after the class file was written: Hibernate's
+     * ([isEnhancementMethod]) or Ebean's `_ebean_` members. Nothing probes such a name, so an edge
+     * to it could never resolve. EclipseLink's and OpenJPA's names are not unique enough to drop
+     * without the class file showing the enhancer.
+     */
+    fun isUndeclaredEnhancementName(name: String): Boolean = isEnhancementMethod(name) || JpaEnhancement.isEbeanName(name)
+
+    /**
      * Whether a synthetic method named [name] is a lambda body worth a probe. See [methodMatcher].
      *
      * Also used by [dev.otherlode.instrumentation.branch.BranchSiteAnalyzer] to tell

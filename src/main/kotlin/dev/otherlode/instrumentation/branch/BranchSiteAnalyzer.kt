@@ -8,6 +8,7 @@ import dev.otherlode.export.GeneratedBy
 import dev.otherlode.export.KotlinKind
 import dev.otherlode.export.UnreadShape
 import dev.otherlode.instrumentation.CallbackAnnotations
+import dev.otherlode.instrumentation.JpaEnhancement
 import dev.otherlode.instrumentation.ScalaClassDetector
 import dev.otherlode.instrumentation.TypeMatchPolicy
 import dev.otherlode.instrumentation.interned
@@ -158,12 +159,28 @@ object BranchSiteAnalyzer {
         private val overriddenOutsideTypes: Map<Pair<String, String>, String> = emptyMap(),
         private val callbackAnnotations: Map<Pair<String, String>, String> = emptyMap(),
         private val inheritedCallbackAnnotations: Map<Pair<String, String>, String> = emptyMap(),
+        /**
+         * The name an OpenJPA accessor the enhancer moved to `pc<name>` reports under, by its real
+         * name and descriptor; see [JpaEnhancement.reportedNames]. Every other method reports under
+         * its own name.
+         */
+        private val reportedNames: Map<Pair<String, String>, String> = emptyMap(),
     ) {
+        /**
+         * The name [name]/[descriptor] reports under in a manifest or a baseline: the adopter's name
+         * for an OpenJPA accessor moved to `pc<name>`, and [name] for every other method. The other
+         * accessors on this class take the real name.
+         */
+        fun reportedNameOf(
+            name: String,
+            descriptor: String,
+        ): String = reportedNames[name to descriptor] ?: name
+
         /**
          * The callback annotation [name]/[descriptor] carries, dotted and as written on the method
          * or on one of its parameters, or null. A method that is a constructor or `<clinit>`, one
-         * that gets no probe, and every method when [analyze] was not asked for outside callers,
-         * has none.
+         * that gets no probe other than an OpenJPA wrapper, and every method when [analyze] was not
+         * asked for outside callers, has none. A moved OpenJPA accessor takes its wrapper's.
          */
         fun callbackAnnotationOf(
             name: String,
@@ -174,7 +191,8 @@ object BranchSiteAnalyzer {
          * The callback annotation [name]/[descriptor] inherits from a method it overrides, dotted and
          * as written on that supertype method, or null. It is null for a method with a callback
          * annotation of its own, which an inherited one never replaces, for a method that gets no
-         * probe, and for every method when [analyze] was not asked for outside callers.
+         * probe other than an OpenJPA wrapper, and for every method when [analyze] was not asked for
+         * outside callers. A moved OpenJPA accessor takes its wrapper's.
          */
         fun inheritedCallbackAnnotationOf(
             name: String,
@@ -185,8 +203,8 @@ object BranchSiteAnalyzer {
          * The out-of-scope type whose method [name]/[descriptor] overrides or implements, dotted, or
          * null. It is the type [OverrideWalk] finds for the method's own name and descriptor, or,
          * when there is none, the type its bridge's match gives. Always null for a method that gets
-         * no probe, for a bridge, and for every method when [analyze] was not asked for outside
-         * callers.
+         * no probe other than an OpenJPA wrapper, for a bridge, and for every method when [analyze]
+         * was not asked for outside callers. A moved OpenJPA accessor takes its wrapper's.
          */
         fun overriddenOutsideTypeOf(
             name: String,
@@ -209,7 +227,9 @@ object BranchSiteAnalyzer {
          * numbering both the manifest's BRANCH and METHOD probes and the static baseline's declared
          * methods use.
          */
-        val keptSites: List<KeptBranchSite> by lazy { KeptBranchSite.of(sites, className, siteGuards) }
+        val keptSites: List<KeptBranchSite> by lazy {
+            KeptBranchSite.of(sites, className, siteGuards) { name, descriptor -> reportedNames[name to descriptor] ?: name }
+        }
 
         private val keptSitesByMethod by lazy { keptSites.groupBy { it.site.methodName to it.site.methodDescriptor } }
 
@@ -811,6 +831,8 @@ object BranchSiteAnalyzer {
         methodFilter: (name: String, descriptor: String) -> Boolean,
     ): Analysis {
         val readClass = readOnce(lookup)
+        val jpa = JpaEnhancement.of(classReader)
+        val wrapperKeys = jpa.reportedNames.map { (moved, name) -> name to moved.second }.toSet()
         var fingerprints: ConditionFingerprinter.FingerprintCollection? = null
         val sites = mutableListOf<BranchSite>()
         val firstLines = mutableMapOf<Pair<String, String>, Int>()
@@ -948,7 +970,9 @@ object BranchSiteAnalyzer {
                             }
                         }
                     val main =
-                        if (outsideCallers && (name to descriptor) in eligibleMethodKeys && name != "<init>" && name != "<clinit>") {
+                        if (outsideCallers && (name to descriptor).let { it in eligibleMethodKeys || it in wrapperKeys } &&
+                            name != "<init>" && name != "<clinit>"
+                        ) {
                             AnnotationRecorder(named, callbackAnnotations) { annotationsByMethod[name to descriptor] = it }
                         } else {
                             named
@@ -981,7 +1005,7 @@ object BranchSiteAnalyzer {
                     val localNamesForMethod = localNames.getOrPut(name to descriptor) { mutableMapOf() }
                     val defaultShaped = isDefaultShaped(name, descriptor)
                     if (defaultShaped) defaultShapedNames += name to descriptor
-                    val eligible = methodFilter(name, descriptor)
+                    val eligible = methodFilter(name, descriptor) && !jpa.isUnprobed(name, descriptor)
                     val isTypeInitializer = name == "<clinit>" && descriptor == "()V"
                     if (eligible) eligibleMethodKeys += name to descriptor
                     val candidatesForMethod = rawCandidatesByMethod.getOrPut(name to descriptor) { mutableListOf() }
@@ -1027,6 +1051,7 @@ object BranchSiteAnalyzer {
                             descriptor = descriptor,
                             isStatic = access and Opcodes.ACC_STATIC != 0,
                             eligible = eligible,
+                            weavedBranches = jpa.isPersistenceWeaved && jpa.hasLineNumbers(name, descriptor),
                             defaultShaped = defaultShaped,
                             ownerInternalName = internalClassName,
                             ownerSuperInternalName = superInternalName,
@@ -1142,6 +1167,7 @@ object BranchSiteAnalyzer {
                 forwarderKeys = generatedMarks.passThroughKeys(),
                 classAccess = classAccess,
                 superInternalName = superInternalName,
+                enhancement = jpa,
             )
         val references =
             placeReferences(
@@ -1159,6 +1185,7 @@ object BranchSiteAnalyzer {
         val lambdaBodies = findLambdaBodies(internalClassName, methodAccess, rawCandidatesByMethod, eligibleMethodKeys, isScalaClass)
         val bodyClass = BodyKindRule.classify(hasEnclosingMethod, superInternalName, ownInnerClassEntry, isKotlinClass)
         val shouldWalk = outsideCallers && eligibleMethodKeys.isNotEmpty()
+        val outsideCallerKeys = eligibleMethodKeys + wrapperKeys
         val overrideWalk =
             OverrideWalk(
                 includePackages,
@@ -1180,7 +1207,7 @@ object BranchSiteAnalyzer {
                     superInternalName,
                     interfaceInternalNames,
                     methodAccess,
-                    eligibleMethodKeys,
+                    outsideCallerKeys,
                     sameClassCallees,
                 )
             } else {
@@ -1206,7 +1233,7 @@ object BranchSiteAnalyzer {
                     superInternalName,
                     interfaceInternalNames,
                     methodAccess,
-                    eligibleMethodKeys,
+                    outsideCallerKeys,
                     OverrideWalk.OwnLabels({ annotationsByMethod[it] }, { it in callbackAnnotationByMethod }),
                     callbackFinder,
                     sameClassCallees,
@@ -1252,9 +1279,10 @@ object BranchSiteAnalyzer {
             generatedMarks.cause,
             sizeGuard,
             trackedSequencesByMethod,
-            overriddenOutsideTypes,
-            callbackAnnotationByMethod,
-            inheritedCallbackAnnotations,
+            jpa.fromWrappers(overriddenOutsideTypes),
+            jpa.fromWrappers(callbackAnnotationByMethod),
+            jpa.fromWrappers(inheritedCallbackAnnotations),
+            jpa.reportedNames,
         )
     }
 
@@ -1903,6 +1931,7 @@ object BranchSiteAnalyzer {
         forwarderKeys: Set<Pair<String, String>> = emptySet(),
         classAccess: Int,
         superInternalName: String?,
+        enhancement: JpaEnhancement = JpaEnhancement.NONE,
     ): ResolvedCalls {
         val crossClassMethodTables = mutableMapOf<String, MethodTable?>()
 
@@ -1936,6 +1965,19 @@ object BranchSiteAnalyzer {
         }
 
         val dottedClassName = internalClassName.replace('/', '.')
+
+        // The name an edge to [dottedOwner]'s method carries: an OpenJPA accessor the enhancer moved
+        // to pc<name> is named for the adopter's <name>.
+        fun reportedName(
+            dottedOwner: String,
+            name: String,
+            descriptor: String,
+        ): String =
+            if (dottedOwner == dottedClassName) {
+                enhancement.reportedName(name, descriptor)
+            } else {
+                methodTableFor(dottedOwner.replace('.', '/'))?.enhancement?.reportedName(name, descriptor) ?: name
+            }
 
         val reachedPassThroughs = mutableSetOf<Pair<String, String>>()
         val referencesByMethod = mutableMapOf<Pair<String, String>, Set<String>>()
@@ -1995,7 +2037,7 @@ object BranchSiteAnalyzer {
                 val captured = if (capturedCount == 0) 0 else capturedCount.coerceAtMost(parseParameterDescriptors(descriptor).size)
                 return CallEdge(
                     owner.interned(),
-                    name.interned(),
+                    reportedName(owner, name, descriptor).interned(),
                     descriptor.interned(),
                     virtual,
                     kind,
@@ -2133,7 +2175,7 @@ object BranchSiteAnalyzer {
                     // Under runtime enhancement the owner's class file predates the enhancer, so an
                     // enhancement method it calls is not declared there. Nothing probes that name,
                     // so an edge to it could never resolve. See ADR 0047.
-                    if (!TypeMatchPolicy.isEnhancementMethod(name)) {
+                    if (!TypeMatchPolicy.isUndeclaredEnhancementName(name)) {
                         edges += edge(dottedOwner, name, descriptor, virtualRaw, kind, capturedCount, implementedInterface)
                     }
                     return
@@ -2156,7 +2198,7 @@ object BranchSiteAnalyzer {
                 }
                 val overridable = virtualRaw && access and NON_VIRTUAL_FLAGS == 0 && table.classAccess and Opcodes.ACC_FINAL == 0
                 if (declaredWithBody && !isConstructorOrInitializer &&
-                    wouldNotBeProbedByMethodTier(access, name, table.isScalaClass, table.superInternalName)
+                    wouldNotBeProbedByMethodTier(access, name, descriptor, table)
                 ) {
                     references += table.rawReferencesByMethod[name to descriptor].orEmpty()
                     table.rawCandidatesByMethod[name to descriptor].orEmpty().forEach(::visitInside)
@@ -2195,12 +2237,12 @@ object BranchSiteAnalyzer {
                         val (bodyName, bodyDescriptor) = bodyKey
                         if (bodyName == "<init>" || bodyName == "<clinit>") continue
                         if (bodyAccess and BODYLESS_FLAGS != 0) continue
-                        if (wouldNotBeProbedByMethodTier(bodyAccess, bodyName, table.isScalaClass, table.superInternalName)) continue
+                        if (wouldNotBeProbedByMethodTier(bodyAccess, bodyName, bodyDescriptor, table)) continue
                         val bodyNonVirtual = bodyAccess and NON_VIRTUAL_FLAGS != 0
                         edges +=
                             CallEdge(
                                 dottedOwner.interned(),
-                                bodyName.interned(),
+                                table.enhancement.reportedName(bodyName, bodyDescriptor).interned(),
                                 bodyDescriptor.interned(),
                                 !bodyNonVirtual,
                                 CallEdgeKind.CREATES,
@@ -2241,7 +2283,11 @@ object BranchSiteAnalyzer {
             val passThroughForwarders = methodKey !in forwarderKeys
             val edges = walk(rawCandidatesByMethod[methodKey].orEmpty(), references, reachedPassThroughs, passThroughForwarders, guardOf)
             val (selfName, selfDescriptor) = methodKey
-            return edges.filterNot { it.className == dottedClassName && it.methodName == selfName && it.methodDescriptor == selfDescriptor }
+            val selfReportedName = enhancement.reportedName(selfName, selfDescriptor)
+            return edges.filterNot {
+                it.className == dottedClassName && it.methodName == selfReportedName &&
+                    it.methodDescriptor == selfDescriptor
+            }
         }
 
         val edgesByMethod = eligibleMethodKeys.associateWith(::resolveOne)
@@ -2434,26 +2480,29 @@ object BranchSiteAnalyzer {
     private const val BODYLESS_FLAGS = Opcodes.ACC_ABSTRACT or Opcodes.ACC_NATIVE
 
     /**
-     * Whether the method tier would not probe a declared method with these [access] flags and
-     * [name], owned by a Scala class when [isScalaClass] is true and by a class whose direct
-     * superclass is [superInternalName]: a bridge, always, a Hibernate enhancement method, a
-     * suspend lambda's `create` or `invoke`, or a synthetic method that is not a lambda body the
-     * method tier does probe. Mirrors [TypeMatchPolicy.methodMatcher]'s own handling of those
+     * Whether the method tier would not probe the declared method [name]/[descriptor] with these
+     * [access] flags, which [table]'s class owns: a bridge, always, an enhancement method (Hibernate's
+     * by name, the others by what [JpaEnhancement] read from the class), a suspend lambda's
+     * `create` or `invoke`, or a synthetic method that is not a lambda body the method tier does
+     * probe. Mirrors [TypeMatchPolicy.methodMatcher]'s own handling of those
      * exactly, so a method resolved as a cross-class pass-through here is never one the method tier
      * also probes in its own right.
      */
     private fun wouldNotBeProbedByMethodTier(
         access: Int,
         name: String,
-        isScalaClass: Boolean,
-        superInternalName: String?,
+        descriptor: String,
+        table: MethodTable,
     ): Boolean {
         if (access and Opcodes.ACC_BRIDGE != 0) return true
-        if (TypeMatchPolicy.isEnhancementMethod(name)) return true
-        if (TypeMatchPolicy.isSuspendLambdaEntry(name, access and Opcodes.ACC_STATIC != 0) { superInternalName?.replace('/', '.') }) {
+        if (TypeMatchPolicy.isEnhancementMethod(name) || table.enhancement.isUnprobed(name, descriptor)) return true
+        if (TypeMatchPolicy.isSuspendLambdaEntry(name, access and Opcodes.ACC_STATIC != 0) {
+                table.superInternalName?.replace('/', '.')
+            }
+        ) {
             return true
         }
-        if (access and Opcodes.ACC_SYNTHETIC != 0) return !TypeMatchPolicy.isProbedLambdaBody(name, isScalaClass)
+        if (access and Opcodes.ACC_SYNTHETIC != 0) return !TypeMatchPolicy.isProbedLambdaBody(name, table.isScalaClass)
         return false
     }
 
@@ -2500,6 +2549,12 @@ object BranchSiteAnalyzer {
         data object Iand : RecentInsn
 
         data object Dup : RecentInsn
+
+        /** Any call other than the coroutine marker's: the callee's [name] and [descriptor]. */
+        data class Invoke(
+            val name: String,
+            val descriptor: String,
+        ) : RecentInsn
 
         /** `INVOKESTATIC IntrinsicsKt.getCOROUTINE_SUSPENDED()`, matched by owner suffix. */
         data object SuspendedMarkerCall : RecentInsn
@@ -2704,6 +2759,12 @@ object BranchSiteAnalyzer {
         private val descriptor: String,
         private val isStatic: Boolean,
         private val eligible: Boolean,
+        /**
+         * Whether EclipseLink's weaving may sit before this method's first line-number entry: the
+         * class is a `PersistenceWeaved` one and the method has a line-number table. See
+         * [JpaEnhancement.readsWeavedState].
+         */
+        private val weavedBranches: Boolean,
         private val defaultShaped: Boolean,
         private val ownerInternalName: String,
         /** The class's own direct superclass, in internal form; null only for `java.lang.Object`. */
@@ -2727,6 +2788,7 @@ object BranchSiteAnalyzer {
         instructionOrdinal: () -> Int,
     ) : CallCandidateMethodVisitor(ownerInternalName, candidatesForMethod, referencesForMethod, instructionOrdinal) {
         private var currentLine = -1
+        private var lineSeen = false
         private var lastLabel: Label? = null
         private val inlineMarkerName = "\$i\$f\$$name"
         private var nextMethodOrdinal = 0
@@ -2824,6 +2886,7 @@ object BranchSiteAnalyzer {
             start: Label,
         ) {
             currentLine = line
+            lineSeen = true
             onLineNumberSeen()
             if (eligible) firstLines.putIfAbsent(name to descriptor, line)
         }
@@ -2846,7 +2909,11 @@ object BranchSiteAnalyzer {
             }
             if (eligible && ConditionalJump.isTracked(opcode)) {
                 val machinery = suspendShaped && isCoroutineMachineryJump(opcode)
-                recordSite(coroutineMachinery = machinery, unreadMachinery = suspendShaped && !machinery && isFedByMachinery())
+                recordSite(
+                    coroutineMachinery = machinery,
+                    unreadMachinery = suspendShaped && !machinery && isFedByMachinery(),
+                    jpaWeaving = !machinery && isWeavedJump(opcode),
+                )
             }
             pendingSuspendedMarkerCall = false
             pushInsn(RecentInsn.Other)
@@ -2917,6 +2984,25 @@ object BranchSiteAnalyzer {
                 }
             }
 
+        /**
+         * Whether the jump about to be visited is one EclipseLink's weaving put before the method's
+         * first line-number entry: a test of one operand that is a `_persistence_` field, the result
+         * of a `_persistence_` call, or `isInstantiated()` on a `_persistence_*_vh` field. A test of
+         * two operands, and a switch, is never read as woven.
+         */
+        private fun isWeavedJump(opcode: Int): Boolean {
+            val oneOperand = opcode in Opcodes.IFEQ..Opcodes.IFLE || opcode == Opcodes.IFNULL || opcode == Opcodes.IFNONNULL
+            return weavedBranches && !lineSeen && oneOperand &&
+                JpaEnhancement.readsWeavedState(wovenOperand(recentInsn1), wovenOperand(recentInsn2))
+        }
+
+        private fun wovenOperand(insn: RecentInsn): JpaEnhancement.WovenOperand =
+            when (insn) {
+                is RecentInsn.GetField -> JpaEnhancement.WovenOperand.FieldRead(insn.name)
+                is RecentInsn.Invoke -> JpaEnhancement.WovenOperand.Call(insn.name, insn.descriptor)
+                else -> JpaEnhancement.WovenOperand.Other
+            }
+
         /** Whether the jump or switch about to be visited takes an operand from the coroutine state machine; see [CoroutineShapes.isFedByMachinery]. */
         private fun isFedByMachinery(): Boolean =
             CoroutineShapes.isFedByMachinery(
@@ -2941,14 +3027,32 @@ object BranchSiteAnalyzer {
          *
          * [unreadMachinery] marks a site that is kept as an unread shape of
          * [UnreadShape.COROUTINE_MACHINERY]; a site dropped for any reason carries no outcome to mark.
+         *
+         * [jpaWeaving] drops a site EclipseLink's weaving added, with [BranchDropReason.JPA_WEAVING].
          */
         private fun recordSite(
             outcomeCount: Int = 2,
             isSwitch: Boolean = false,
             coroutineMachinery: Boolean = false,
             unreadMachinery: Boolean = false,
+            jpaWeaving: Boolean = false,
         ) {
             val ordinal = nextMethodOrdinal++
+            if (jpaWeaving) {
+                onSiteDropped(ordinal)
+                sites +=
+                    BranchSite(
+                        name,
+                        descriptor,
+                        currentLine,
+                        nextSiteIndex(),
+                        outcomeCount,
+                        dropReason = BranchDropReason.JPA_WEAVING,
+                        isSwitch = isSwitch,
+                    )
+                onSiteIndexUsed()
+                return
+            }
             if (coroutineMachinery) {
                 onSiteDropped(ordinal)
                 sites +=
@@ -3109,7 +3213,7 @@ object BranchSiteAnalyzer {
             val isCoroutineSuspendedCall =
                 opcode == Opcodes.INVOKESTATIC && methodName == "getCOROUTINE_SUSPENDED" && owner.endsWith("/IntrinsicsKt")
             pendingSuspendedMarkerCall = isCoroutineSuspendedCall
-            pushInsn(if (isCoroutineSuspendedCall) RecentInsn.SuspendedMarkerCall else RecentInsn.Other)
+            pushInsn(if (isCoroutineSuspendedCall) RecentInsn.SuspendedMarkerCall else RecentInsn.Invoke(methodName, methodDescriptor))
             if (defaultShaped) resetMaskPhase()
             super.visitMethodInsn(opcode, owner, methodName, methodDescriptor, isInterface)
         }
@@ -5880,6 +5984,7 @@ object BranchSiteAnalyzer {
         val interfaceInternalNames: List<String> = emptyList(),
         val kotlinKind: KotlinKind = KotlinKind.NONE,
         val forwarderKeys: Set<Pair<String, String>> = emptySet(),
+        val enhancement: JpaEnhancement = JpaEnhancement.NONE,
     ) {
         /**
          * A body class the type matcher turns away by [TypeMatchPolicy.isTurnedAwayByShape], so
@@ -6018,7 +6123,8 @@ object BranchSiteAnalyzer {
                 }
             }
 
-        ClassReader(classBytes).accept(classVisitor, ClassReader.SKIP_FRAMES)
+        val reader = ClassReader(classBytes)
+        reader.accept(classVisitor, ClassReader.SKIP_FRAMES)
         // A method with any line number carries a line-number table, which is all the data-class
         // and value-class rules in computeGeneratedBy ask of methodsWithLineNumbers. Only the
         // pass-throughs are kept. Scala's rules read no other class here.
@@ -6052,6 +6158,7 @@ object BranchSiteAnalyzer {
             interfaceInternalNames.internedAll(),
             kotlinKind,
             forwarderKeys.mapTo(LinkedHashSet()) { it.first.interned() to it.second.interned() },
+            JpaEnhancement.of(reader),
         )
     }
 }

@@ -371,11 +371,13 @@ class ExportScheduler(
             val coroutineMachinery = branchDropCounts.countOf(BranchDropReason.COROUTINE_MACHINERY)
             val switchLowering = branchDropCounts.countOf(BranchDropReason.SWITCH_LOWERING)
             val sizeGuard = branchDropCounts.countOf(BranchDropReason.SIZE_GUARD)
+            val jpaWeaving = branchDropCounts.countOf(BranchDropReason.JPA_WEAVING)
             log.log(
                 Level.INFO,
                 "otherlode: left $total branch sites in ${branchDropCounts.classesWithDrops()} classes without a probe: " +
                     "$inlinedOutOfScope inlined from out-of-scope code, $coroutineMachinery coroutine machinery, " +
-                    "$switchLowering switch lowering, $sizeGuard in methods whose branch probes would cross a code-size limit",
+                    "$switchLowering switch lowering, $sizeGuard in methods whose branch probes would cross a code-size limit, " +
+                    "$jpaWeaving added by EclipseLink's weaving",
             )
         }
     }

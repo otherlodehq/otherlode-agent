@@ -42,6 +42,14 @@ Code from any other compiler, or from a release that changed a shape, is probed 
 
 On the first flush that finds an unread shape, the agent logs one WARNING that counts them by family and names each Scala 3 release it has not read. A scheduled CI job compiles the fixtures with the newest release of each compiler every week. A changed shape fails that build before it reaches a report.
 
+## JPA enhancers
+
+The agent reads classes that Hibernate, Ebean, EclipseLink and OpenJPA enhanced. See [methods and branches](methods-and-branches#methods-a-jpa-enhancer-adds). The rules are checked against entities that Ebean 19.7, EclipseLink 4.0 and OpenJPA 4.1 enhanced at build time.
+
+Enhance OpenJPA entities that use property access at build time. When OpenJPA enhances one as it loads, the agent can read a check in OpenJPA's wrapper as a branch in your getter or setter, and report the wrong outcome as untaken.
+
+OpenJPA's `openjpa.RuntimeUnenhancedClasses=supported` is not supported. OpenJPA then retransforms a class with its own bytes, which discards the agent's probes. Enhance the entities at build time instead.
+
 ## Frameworks
 
 The agent counts HTTP endpoints for Spring MVC and Spring WebFlux, each with its functional routes, Javalin 6 and 7, Micronaut 3, 4 and 5, Ktor 2 and 3, Vert.x Web 4.5 to 5, JAX-RS (`javax` and `jakarta`), plain servlets (`javax.servlet` and `jakarta.servlet`, from Servlet 4.0, on Tomcat, Jetty and Undertow) and the JDK `HttpServer`. The versions of each are on [endpoints](endpoints).

@@ -2165,6 +2165,23 @@ class ExportSchedulerTest {
     }
 
     @Test
+    fun `the first-flush INFO summary counts the checks EclipseLink's weaving added`() {
+        val branchDropCounts = BranchDropCounts()
+        branchDropCounts.record(mapOf(BranchDropReason.JPA_WEAVING to 3))
+        val scheduler =
+            ExportScheduler(config, resource, ProbeRegistry(), EndpointRegistry(), RecordingExporter(), branchDropCounts = branchDropCounts)
+
+        val records = captureLogRecords(ExportScheduler::class.java.name) { scheduler.flush() }
+
+        val summary = records.single { it.message.contains("branch sites") }
+        assertEquals(
+            "otherlode: left 3 branch sites in 1 classes without a probe: 0 inlined from out-of-scope code, 0 coroutine machinery, " +
+                "0 switch lowering, 0 in methods whose branch probes would cross a code-size limit, 3 added by EclipseLink's weaving",
+            summary.message,
+        )
+    }
+
+    @Test
     fun `the branch drop summary is logged only once, not on a second flush`() {
         val branchDropCounts = BranchDropCounts()
         branchDropCounts.record(mapOf(BranchDropReason.INLINED_OUT_OF_SCOPE to 1))
@@ -2520,10 +2537,22 @@ class ExportSchedulerTest {
     @Test
     fun `the unread-shape summary still says a newer agent may read them when a plugin-filled object sits beside another family`() {
         val unreadShapeCounts = UnreadShapeCounts()
-        unreadShapeCounts.record("com.acme.ExternalSerializer", null, UnreadCause.PLUGIN_FILLED, mapOf(UnreadShape.KOTLINX_SERIALIZER_OBJECT to 3))
+        unreadShapeCounts.record(
+            "com.acme.ExternalSerializer",
+            null,
+            UnreadCause.PLUGIN_FILLED,
+            mapOf(UnreadShape.KOTLINX_SERIALIZER_OBJECT to 3),
+        )
         unreadShapeCounts.record("com.acme.Facade", null, UnreadCause.UNREAD_STRUCTURE, mapOf(UnreadShape.MULTIFILE_FACADE to 1))
         val scheduler =
-            ExportScheduler(config, resource, ProbeRegistry(), EndpointRegistry(), RecordingExporter(), unreadShapeCounts = unreadShapeCounts)
+            ExportScheduler(
+                config,
+                resource,
+                ProbeRegistry(),
+                EndpointRegistry(),
+                RecordingExporter(),
+                unreadShapeCounts = unreadShapeCounts,
+            )
 
         val records = captureLogRecords(ExportScheduler::class.java.name) { scheduler.flush() }
 
@@ -3736,13 +3765,29 @@ class ExportSchedulerTest {
         val marked = attempts.indices.filter { attempts[it].batch.flushComplete }
         val last = attempts.lastIndex
         return when {
-            marked.size > 1 -> "more than one batch carries flush_complete: $marked"
-            marked.isNotEmpty() && marked.single() != last -> "batch ${marked.single()} carries it but the last batch is $last"
-            marked.isNotEmpty() && attempts.dropLast(1).any { it.failure != null } ->
+            marked.size > 1 -> {
+                "more than one batch carries flush_complete: $marked"
+            }
+
+            marked.isNotEmpty() && marked.single() != last -> {
+                "batch ${marked.single()} carries it but the last batch is $last"
+            }
+
+            marked.isNotEmpty() && attempts.dropLast(1).any { it.failure != null } -> {
                 "a batch carries it after an earlier batch was not confirmed"
-            marked.isEmpty() && attempts.all { it.failure == null } -> "every batch was confirmed and none carries it"
-            final && marked.isNotEmpty() && !attempts[last].batch.finalFlush -> "a shutdown flush marks a batch that is not final_flush"
-            else -> null
+            }
+
+            marked.isEmpty() && attempts.all { it.failure == null } -> {
+                "every batch was confirmed and none carries it"
+            }
+
+            final && marked.isNotEmpty() && !attempts[last].batch.finalFlush -> {
+                "a shutdown flush marks a batch that is not final_flush"
+            }
+
+            else -> {
+                null
+            }
         }
     }
 

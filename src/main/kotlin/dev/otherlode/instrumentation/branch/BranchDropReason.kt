@@ -33,4 +33,11 @@ enum class BranchDropReason {
      * and loses every branch probe.
      */
     SIZE_GUARD,
+
+    /**
+     * The site is a check EclipseLink's weaving put before the first line-number entry of the
+     * adopter's own method, such as a getter's test of `_persistence_listener`. The method keeps its
+     * probe and its other branch probes.
+     */
+    JPA_WEAVING,
 }

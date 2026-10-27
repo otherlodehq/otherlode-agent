@@ -30,11 +30,30 @@ These get no entry probe:
 | Abstract and native methods | There is no body to count in. |
 | Bridge methods | A call with the exact signature never enters the bridge, so it would read zero forever. |
 | Other synthetic methods, such as `access$` accessors, enum `$values` and Kotlin's `$default` | They hold no code of yours. A `$default` method gets optional-argument probes instead. See [Optional arguments](#optional-arguments). |
-| Hibernate enhancement methods, named `$$_hibernate_...` | Hibernate's bytecode enhancement adds them to an entity. They stand for nothing in your source. |
+| Methods a JPA enhancer adds to an entity | Hibernate, Ebean, EclipseLink and OpenJPA add them to the class you wrote. They stand for nothing in your source. See [Methods a JPA enhancer adds](#methods-a-jpa-enhancer-adds). |
 | A suspend lambda's `create` and `invoke` | Which of the two runs depends on how a coroutine library starts the lambda, not on your code. `invokeSuspend` carries the count. |
 | A suspend function's continuation class, a framework-generated proxy and similar classes | They have no probes at all. See [classes](classes). |
 
 A call into a method that is left out counts toward the method it forwards to. See the [call graph](call-graph).
+
+### Methods a JPA enhancer adds
+
+A JPA enhancer rewrites your entity class, at build time or when the class loads. The agent leaves out what the enhancer added, so those methods never read as code you could delete. It recognises Hibernate by the method name, and Ebean, EclipseLink and OpenJPA by the enhancer's marker among the class's direct interfaces:
+
+| Library | Marker interface | What the agent leaves out |
+|---|---|---|
+| Hibernate | none; the name is enough | Methods named `$$_hibernate_...`. |
+| Ebean | `io.ebean.bean.EntityBean` | Methods named `_ebean_...`, the constructor that takes an `EntityBean`, `toString(ToStringBuilder)`, and the `toString()`, `equals()` and `hashCode()` Ebean adds. A `toString()`, `equals()` or `hashCode()` you wrote keeps its probe. |
+| EclipseLink | `org.eclipse.persistence.internal.weaving.PersistenceWeaved` | Methods named `_persistence_...` that have no line-number table, and the constructor that takes a `PersistenceObject`. A `_persistence_` method you wrote has line numbers and keeps its probe. |
+| OpenJPA | `org.apache.openjpa.enhance.PersistenceCapable` | The fixed set of methods OpenJPA 4.1 adds without a line-number table, such as `pcReplaceField`, `pcProvideField` and, on a serializable entity, `writeObject` and `readObject`. A static `pcGet<field>` or `pcSet<field>` for a field the class declares. A method of yours called `pcRate()` keeps its probe. |
+
+A call from your code to one of these methods counts toward what the method calls, like any left-out method.
+
+With property access, EclipseLink also puts a check into your getter or setter before its first line, such as a test of `_persistence_listener`. When the weaving ran at build time, that check gets no branch probe, and every branch you wrote in the method is probed as usual. When EclipseLink weaves at load time, a getter or setter it changed keeps its entry probe and gets no branch probes.
+
+With property access, OpenJPA moves your getter or setter `getId` to `pcgetId` and puts a wrapper named `getId` in its place. When the enhancer ran at build time, the wrapper gets no probe, and the moved method reports under the name you wrote, so a probe, a call edge and the static baseline all say `getId`. Enhance OpenJPA entities that use property access at build time; see [compatibility](compatibility#jpa-enhancers).
+
+The agent probes the methods the class file on disk declares. A method an enhancer adds as the class loads is not in that file, so it gets no probe.
 
 ### What the agent records about a method
 
@@ -80,13 +99,14 @@ The agent leaves a site without a probe when it is not code you wrote. The site 
 | A switch's added throwing default | The default that only throws `MatchException`, `IncompatibleClassChangeError` or `NoWhenBranchMatchedException` for an exhaustive `when`. Your source has no such default. |
 | The collision side of a string `when` | In a Kotlin `when` or Scala `match` over strings, the not-equal side of the last `equals` check in a hash bucket. Only a different string with the same hash code reaches it. |
 | A method too large to weave | See [Large methods](#large-methods). |
+| A check EclipseLink's weaving adds | A test of EclipseLink's `_persistence_` state before the first line of your getter or setter. See [Methods a JPA enhancer adds](#methods-a-jpa-enhancer-adds). |
 
 An inlined copy whose inline function is in scope is kept. Its line is the line in the inline function's own file, and the outcome carries the name of the class it was copied from. The testkit shows that class as `ProbeRef.inlinedFromClassName`. A copy from the same class counts too.
 
 The agent logs one INFO line on the first flush that finds any dropped site:
 
 ```text
-otherlode: left 41 branch sites in 12 classes without a probe: 30 inlined from out-of-scope code, 6 coroutine machinery, 4 switch lowering, 1 in methods whose branch probes would cross a code-size limit
+otherlode: left 41 branch sites in 12 classes without a probe: 30 inlined from out-of-scope code, 6 coroutine machinery, 4 switch lowering, 1 in methods whose branch probes would cross a code-size limit, 0 added by EclipseLink's weaving
 ```
 
 A class compiled without debug information has no source mapping, so the agent cannot recognize an inlined copy, and a copy reads as the caller's own code. A Kotlin class with no line-number table also gets one WARNING. Stripped debug information usually removes the local variable table too, and the agent then cannot recognize the class's inline functions either. Coroutine recognition does not need debug information.

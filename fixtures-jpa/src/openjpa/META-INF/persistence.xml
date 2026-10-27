@@ -1,0 +1,10 @@
+<persistence xmlns="https://jakarta.ee/xml/ns/persistence" version="3.0">
+  <persistence-unit name="fixture">
+    <class>com.example.target.jpa.openjpa.OjCustomer</class>
+    <class>com.example.target.jpa.openjpa.OjAccount</class>
+    <class>com.example.target.jpa.openjpa.OjSerial</class>
+    <class>com.example.target.jpa.openjpa.OjNote</class>
+    <class>com.example.target.jpa.openjpa.OjHook</class>
+    <exclude-unlisted-classes>true</exclude-unlisted-classes>
+  </persistence-unit>
+</persistence>

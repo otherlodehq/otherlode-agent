@@ -66,10 +66,26 @@ deferrals, gzip, a collector config file, and agent-level redaction
 
 ## TODO
 
-### JPA enhancer output read as the adopter's (ADR 0079): to build
+### OpenJPA property access enhanced at load time reads a wrong outcome: to fix
 
-Ebean, EclipseLink and OpenJPA as ADR 0079 says, each pinned by an entity
-that library enhanced; `classes.md` and `compatibility.md`.
+The agent reads branches from the class file and pairs them with the
+received bytes. When OpenJPA enhances a property-access entity as it loads,
+the class file's `getNote` (one `ifnonnull note`) pairs with OpenJPA's
+wrapper (`ifnonnull pcStateManager`). After `setNote("x"); getNote()` the
+agent records the `note == null` outcome, so the real one reads as never
+taken: a false claim. EclipseLink's load-time weaving fails to pair instead
+and loses the method's branch probes. This predates ADR 0079; its build-time
+rules do not reach it. `compatibility.md` tells readers to enhance OpenJPA
+property-access entities at build time until this is fixed.
+
+### OpenJPA's checks in an adopter's writeObject: to decide
+
+In a serializable OpenJPA entity whose `writeObject` the adopter wrote, the
+enhancer adds a `pcSerializing` check before each `return`. The method
+keeps its line table and stays the adopter's, so an outcome of that check
+that never happens reads as an untaken branch. Read from `PCEnhancer`
+(`modifyWriteObjectMethod`), not run. Rare: an entity with a hand-written
+`writeObject`.
 
 ### Open overloads marked as stubs: to decide
 

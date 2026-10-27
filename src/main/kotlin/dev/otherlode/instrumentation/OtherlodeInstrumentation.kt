@@ -633,7 +633,7 @@ class OtherlodeInstrumentation(
                     val paired = pairing.isPaired(it.name, it.descriptor)
                     ProbeMeta(
                         ProbeKind.METHOD,
-                        it.name.interned(),
+                        analysis.reportedNameOf(it.name, it.descriptor).interned(),
                         it.descriptor.interned(),
                         line = analysis.firstLineOf(it.name, it.descriptor),
                         inline = analysis.isInline(it.name, it.descriptor),
@@ -673,7 +673,7 @@ class OtherlodeInstrumentation(
                 kept.outcomes.map { outcome ->
                     ProbeMeta(
                         ProbeKind.BRANCH,
-                        site.methodName.interned(),
+                        analysis.reportedNameOf(site.methodName, site.methodDescriptor).interned(),
                         site.methodDescriptor.interned(),
                         site.line,
                         branchIndex = outcome.branchIndex,
@@ -854,6 +854,7 @@ class OtherlodeInstrumentation(
         // this class at all (methodMatcher's isScalaClass), which the class file says.
         val isScalaClass = analysedBytes?.let(ScalaClassDetector::isScalaClass) ?: false
         val methodMatcher = methodMatcher(isScalaClass)
+        val enhancement = source.analysedReader?.let(JpaEnhancement::of) ?: JpaEnhancement.NONE
         val analysedMethods =
             (
                 if (source.receivedDiffers) {
@@ -861,7 +862,8 @@ class OtherlodeInstrumentation(
                 } else {
                     typeDescription.declaredMethods.filter(methodMatcher)
                 }
-            ).map { ProbedMethod(it.internalName, it.descriptor, it.isStatic) }
+            ).filterNot { enhancement.isUnprobed(it.internalName, it.descriptor) }
+                .map { ProbedMethod(it.internalName, it.descriptor, it.isStatic) }
         val receivedMethods =
             if (source.receivedDiffers) typeDescription.declaredMethods.mapTo(HashSet()) { it.internalName to it.descriptor } else null
         val analysis =
@@ -1284,11 +1286,13 @@ class OtherlodeInstrumentation(
         val coroutineMachinery = dropsByReason[BranchDropReason.COROUTINE_MACHINERY] ?: 0
         val switchLowering = dropsByReason[BranchDropReason.SWITCH_LOWERING] ?: 0
         val sizeGuard = dropsByReason[BranchDropReason.SIZE_GUARD] ?: 0
+        val jpaWeaving = dropsByReason[BranchDropReason.JPA_WEAVING] ?: 0
         log.log(
             Level.DEBUG,
             "otherlode: $typeName left $total branch sites without a probe: " +
                 "$inlinedOutOfScope inlined from out-of-scope code, $coroutineMachinery coroutine machinery, " +
-                "$switchLowering switch lowering, $sizeGuard in methods whose branch probes would cross a code-size limit",
+                "$switchLowering switch lowering, $sizeGuard in methods whose branch probes would cross a code-size limit, " +
+                "$jpaWeaving added by EclipseLink's weaving",
         )
     }
 
