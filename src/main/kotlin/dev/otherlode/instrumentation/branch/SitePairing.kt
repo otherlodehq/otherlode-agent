@@ -43,6 +43,23 @@ class SitePairing private constructor(
     ): Boolean = (name to descriptor) !in unpairedMethods
 
     /**
+     * This pairing with each of [methods] left unpaired, whatever the bytes held. [classFileOrder]
+     * lists the methods this pairing was asked about in class-file order, and [unpairedMethods]
+     * keeps that order.
+     */
+    fun withUnpaired(
+        methods: Collection<Pair<String, String>>,
+        classFileOrder: List<Pair<String, String>>,
+    ): SitePairing {
+        if (methods.isEmpty()) return this
+        val added = methods.toSet()
+        return SitePairing(
+            classFileOrder.filterTo(LinkedHashSet()) { it in unpairedMethods || it in added },
+            swappedOrdinalsByMethod - added,
+        )
+    }
+
+    /**
      * The per-method ordinals of [name]/[descriptor]'s conditionals that arrive inverted in the
      * received bytes. Empty for an unpaired method and for one with nothing inverted.
      */

@@ -583,6 +583,8 @@ val javacMatrixClassesDirs =
 val jpaFixtureLibraries = listOf("ebean", "eclipselink", "openjpa")
 val jpaFixtureClassesDirs =
     jpaFixtureLibraries.associateWith { project(":fixtures-jpa").layout.buildDirectory.dir("classes/$it") }
+val jpaFixtureRawDirs =
+    jpaFixtureLibraries.associateWith { project(":fixtures-jpa").layout.buildDirectory.dir("raw/$it") }
 val jpaFixtureRuntimeClasspaths =
     jpaFixtureLibraries.associateWith {
         project(":fixtures-jpa").configurations.named(
@@ -693,6 +695,13 @@ tasks.test {
         }
         jpaFixtureClassesDirs.forEach { (name, dir) ->
             systemProperty("otherlode.fixtures.jpa.$name.dir", dir.get().asFile.absolutePath)
+            systemProperty(
+                "otherlode.fixtures.jpa.$name.rawDir",
+                jpaFixtureRawDirs
+                    .getValue(name)
+                    .get()
+                    .asFile.absolutePath,
+            )
             systemProperty("otherlode.fixtures.jpa.$name.classpath", jpaFixtureRuntimeClasspaths.getValue(name).get().asPath)
         }
         systemProperty("otherlode.fixtures.kotlinc.suspendsSource", kotlincSuspendsSource.absolutePath)

@@ -51,7 +51,7 @@ A call from your code to one of these methods counts toward what the method call
 
 With property access, EclipseLink also puts a check into your getter or setter before its first line, such as a test of `_persistence_listener`. When the weaving ran at build time, that check gets no branch probe, and every branch you wrote in the method is probed as usual. When EclipseLink weaves at load time, a getter or setter it changed keeps its entry probe and gets no branch probes.
 
-With property access, OpenJPA moves your getter or setter `getId` to `pcgetId` and puts a wrapper named `getId` in its place. When the enhancer ran at build time, the wrapper gets no probe, and the moved method reports under the name you wrote, so a probe, a call edge and the static baseline all say `getId`. Enhance OpenJPA entities that use property access at build time; see [compatibility](compatibility#jpa-enhancers).
+With property access, OpenJPA moves your getter or setter `getId` to `pcgetId` and puts a wrapper named `getId` in its place. When the enhancer ran at build time, the wrapper gets no probe, and the moved method reports under the name you wrote, so a probe, a call edge and the static baseline all say `getId`. When OpenJPA enhances the class as it loads, a wrapper keeps its entry probe and gets no branch probes, as EclipseLink's woven methods do. Enhance OpenJPA entities that use property access at build time to keep the branches you wrote; see [compatibility](compatibility#jpa-enhancers).
 
 The agent probes the methods the class file on disk declares. A method an enhancer adds as the class loads is not in that file, so it gets no probe.
 

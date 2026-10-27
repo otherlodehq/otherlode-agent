@@ -150,6 +150,46 @@ internal class JpaEnhancement private constructor(
          */
         fun isEbeanName(name: String): Boolean = name.startsWith(EBEAN_PREFIX)
 
+        /**
+         * The methods of [classFile] that OpenJPA wrapped in [received] as the class loaded: each
+         * `m` for which [received] declares `pc<m>` with the same descriptor and [classFile] does
+         * not. Empty when [received]'s direct interfaces do not name OpenJPA's marker. No line table
+         * is read, so a class compiled without line numbers is covered too.
+         */
+        fun loadTimeWrappers(
+            classFile: ByteArray,
+            received: ByteArray,
+        ): Set<Pair<String, String>> {
+            val receivedReader = ClassReader(received)
+            if (PERSISTENCE_CAPABLE !in receivedReader.interfaces) return emptySet()
+            val inReceived = declaredMethods(receivedReader)
+            val inClassFile = declaredMethods(ClassReader(classFile))
+            return inClassFile.filterTo(HashSet()) { (name, descriptor) ->
+                val moved = (OPENJPA_PREFIX + name) to descriptor
+                moved in inReceived && moved !in inClassFile
+            }
+        }
+
+        private fun declaredMethods(reader: ClassReader): Set<Pair<String, String>> {
+            val methods = HashSet<Pair<String, String>>()
+            reader.accept(
+                object : ClassVisitor(Opcodes.ASM9) {
+                    override fun visitMethod(
+                        access: Int,
+                        name: String,
+                        descriptor: String,
+                        signature: String?,
+                        exceptions: Array<out String>?,
+                    ): MethodVisitor? {
+                        methods += name to descriptor
+                        return null
+                    }
+                },
+                ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES,
+            )
+            return methods
+        }
+
         /** What [classBytes] holds of an enhancer's work; see [of]. */
         fun of(classBytes: ByteArray): JpaEnhancement = of(ClassReader(classBytes))
 

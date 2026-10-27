@@ -45,6 +45,7 @@ the section being read.
 
 ### Fixed
 
+- An OpenJPA entity with property access that OpenJPA enhances as it loads no longer reports a wrong outcome for a getter or setter. The wrapper keeps its entry probe and gets no branch probes, as EclipseLink's woven methods do, and a branch you wrote in it is not reported.
 - A plain Kotlin class that writes `component1`, `component2`, `copy`, `equals`, `hashCode` and `toString` itself no longer has `component1`, `component2` and `copy` marked `DATA_CLASS`. The rule marks `componentN` and `copy` only when they have no line-number table, as it already did for the other three.
 - An overload a Kotlin class or interface writes that only calls `super`, such as `fun put(t: Int): Any = super.put(t)` or `fun log(a: String): Any? = super.log(a)` beside the interface's own `put` and `log`, is no longer marked `DEFAULT_IMPLS`. A stub's parameters and result must be the types the interface method takes and returns once the class's type arguments are put in, a class's stub must be open, and a forwarder to a super-interface must not be one its sub-interface declares. An open overload, including one the all-open or kotlin-spring plugin opens, is still marked.
 - A CORS preflight whose `Origin` holds a character Spring Security's firewall refuses no longer disables the Spring WebFlux or Spring MVC module.

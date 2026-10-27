@@ -876,12 +876,36 @@ class OtherlodeInstrumentation(
             )
         val pairing =
             if (source.receivedDiffers) {
-                SitePairing.of(analysedBytes!!, source.received!!, analysedMethods.map { it.key })
+                val keys = analysedMethods.map { it.key }
+                SitePairing
+                    .of(
+                        analysedBytes!!,
+                        source.received!!,
+                        keys,
+                    ).withUnpaired(loadTimeWrappers(analysedBytes, source.received, keys), keys)
             } else {
                 SitePairing.IDENTICAL
             }
         return ClassFileView(analysedMethods, receivedMethods, analysis, pairing)
     }
+
+    /**
+     * The members of [methods] that OpenJPA wrapped in [received] after [classFile] was written
+     * ([JpaEnhancement.loadTimeWrappers]). A wrapper's sites would pair with the adopter's in the
+     * class file, so they get no branch probes. When either form cannot be read, every one of
+     * [methods] counts, so none of them pairs.
+     */
+    private fun loadTimeWrappers(
+        classFile: ByteArray,
+        received: ByteArray,
+        methods: Collection<Pair<String, String>>,
+    ): List<Pair<String, String>> =
+        try {
+            val wrappers = JpaEnhancement.loadTimeWrappers(classFile, received)
+            methods.filter { it in wrappers }
+        } catch (_: RuntimeException) {
+            methods.toList()
+        }
 
     /**
      * Weaves an already-loaded class this agent wove before, for another agent's retransformation

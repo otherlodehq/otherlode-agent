@@ -43,6 +43,7 @@ class JpaEnhancementTest {
         fun library(name: String): Library =
             Library(
                 File(System.getProperty("otherlode.fixtures.jpa.$name.dir") ?: error("run the tests through the root Gradle build")),
+                File(System.getProperty("otherlode.fixtures.jpa.$name.rawDir") ?: error("run the tests through the root Gradle build")),
                 (System.getProperty("otherlode.fixtures.jpa.$name.classpath") ?: error("run the tests through the root Gradle build"))
                     .split(File.pathSeparator)
                     .filter { it.isNotEmpty() }
@@ -53,8 +54,34 @@ class JpaEnhancementTest {
     /** One library's enhanced class directory and the runtime classpath its entities need. */
     private class Library(
         val directory: File,
+        val rawDirectory: File,
         val runtime: List<File>,
     ) {
+        /**
+         * A loader that serves [internalName]'s raw class file as the resource and defines [defined]
+         * for it, as a library that enhances at load time does. Its other classes come from the raw
+         * directory.
+         */
+        fun loadTimeLoader(
+            internalName: String,
+            defined: ByteArray = classBytes(internalName),
+            classFileDirectory: File = rawDirectory,
+        ): FixtureClassLoader {
+            val urls = (listOf(classFileDirectory, rawDirectory) + runtime).map { it.toURI().toURL() }.toTypedArray()
+            val path = "$internalName.class"
+            val source = java.security.CodeSource(classFileDirectory.toURI().toURL(), null as Array<java.security.cert.Certificate>?)
+            return object : FixtureClassLoader(urls, JpaEnhancementTest::class.java.classLoader) {
+                override fun findClass(name: String): Class<*> =
+                    if (name.replace('.', '/') + ".class" == path) {
+                        defineClass(name, defined, 0, defined.size, source)
+                    } else {
+                        super.findClass(name)
+                    }
+            }
+        }
+
+        fun rawClassBytes(internalName: String): ByteArray = File(rawDirectory, "$internalName.class").readBytes()
+
         fun loader(
             resourceOverrides: Map<String, ByteArray> = emptyMap(),
             hidden: Set<String> = emptySet(),
@@ -416,6 +443,139 @@ class JpaEnhancementTest {
         assertEquals(4, reported.size)
         assertEquals(expected, reported)
         assertTrue(realName.values.none { it in reported }, "the real name would give other keys")
+    }
+
+    private class Counted(
+        val probes: List<ProbeLocation>,
+        private val hits: Map<Pair<Int, Int>, Long>,
+    ) {
+        fun hits(probe: ProbeLocation): Long = hits[probe.classId to probe.probeIndex] ?: 0
+    }
+
+    /**
+     * Loads [simpleName] as a load-time enhancer would, runs [exercise] on an instance, and returns
+     * the probes and their hit counts. With [definedBytes] given, those bytes are defined instead of
+     * the enhanced class.
+     */
+    private fun loadedAtLoadTime(
+        simpleName: String,
+        definedBytes: (Library, String) -> ByteArray = { library, internalName -> library.classBytes(internalName) },
+        classFileBytes: ((Library, String) -> ByteArray)? = null,
+        retransform: Boolean = false,
+        exercise: (Class<*>, Any) -> Unit,
+    ): Counted {
+        val library = library("openjpa")
+        val className = "$openJpa.$simpleName"
+        val internalName = className.replace('.', '/')
+        val registry = ProbeRegistry()
+        val otherlode = OtherlodeInstrumentation(AgentConfig.parse("includePackages=$PACKAGE"), registry)
+        installedOtherlode = otherlode
+        val instrumentation = ByteBuddyAgent.install()
+        installedTransformer = otherlode.install(instrumentation)
+        val classFileDirectory =
+            classFileBytes?.let { bytesOf ->
+                kotlin.io.path
+                    .createTempDirectory("otherlode-jpa-class-file")
+                    .toFile()
+                    .also { directory ->
+                        directory.deleteOnExit()
+                        File(directory, "$internalName.class").apply { parentFile.mkdirs() }.writeBytes(bytesOf(library, internalName))
+                    }
+            } ?: library.rawDirectory
+        val loader = library.loadTimeLoader(internalName, definedBytes(library, internalName), classFileDirectory)
+        val type = Class.forName(className, true, loader)
+        if (retransform) instrumentation.retransformClasses(type)
+        exercise(type, type.getDeclaredConstructor().newInstance())
+        val probes = registry.manifest(RESOURCE).probes.filter { it.className == className }
+        val hits =
+            registry
+                .computeDeltaBatch(RESOURCE)
+                .batch.deltas
+                .associate { (it.classId to it.probeIndex) to it.hitsTotal }
+        return Counted(probes, hits)
+    }
+
+    private fun Counted.assertWrappersKeepOnlyTheirEntryProbe(
+        getter: String,
+        setter: String,
+        value: Any?,
+    ) {
+        for (name in listOf(getter, setter)) {
+            assertEquals(emptyList(), probes.filter { it.kind == ProbeKind.BRANCH && it.methodName == name }, "$name has no branch probe")
+            assertEquals(1, probes.count { it.kind == ProbeKind.METHOD && it.methodName == name }, "$name keeps its entry probe")
+        }
+        for (name in listOf(getter, setter)) {
+            val entry = probes.single { it.kind == ProbeKind.METHOD && it.methodName == name }
+            assertEquals(1, hits(entry), "$name was called once ($value)")
+        }
+    }
+
+    @Test
+    fun `an openjpa wrapper enhanced at load time counts its calls on its entry probe`() {
+        val counted =
+            loadedAtLoadTime("OjNote") { type, instance ->
+                type.getMethod("setNote", String::class.java).invoke(instance, "x")
+                assertEquals("x", type.getMethod("getNote").invoke(instance))
+            }
+
+        counted.assertWrappersKeepOnlyTheirEntryProbe("getNote", "setNote", "x")
+    }
+
+    @Test
+    fun `an openjpa wrapper enhanced at load time gets no branch probes for the adopter's own branches either`() {
+        val counted =
+            loadedAtLoadTime("OjLabel") { type, instance ->
+                type.getMethod("setLabel", String::class.java).invoke(instance, "x")
+                assertEquals("x", type.getMethod("getLabel").invoke(instance))
+            }
+
+        counted.assertWrappersKeepOnlyTheirEntryProbe("getLabel", "setLabel", "x")
+    }
+
+    @Test
+    fun `an openjpa wrapper enhanced at load time gets no branch probes when neither form has line numbers`() {
+        val counted =
+            loadedAtLoadTime(
+                "OjLabel",
+                definedBytes = { library, internalName -> withoutDebugInfo(library.classBytes(internalName)) },
+                classFileBytes = { library, internalName -> withoutDebugInfo(library.rawClassBytes(internalName)) },
+            ) { type, instance ->
+                type.getMethod("setLabel", String::class.java).invoke(instance, "x")
+                assertEquals("x", type.getMethod("getLabel").invoke(instance))
+            }
+
+        counted.assertWrappersKeepOnlyTheirEntryProbe("getLabel", "setLabel", "x")
+    }
+
+    @Test
+    fun `an openjpa wrapper enhanced at load time stays unpaired after a retransformation`() {
+        val counted =
+            loadedAtLoadTime("OjLabel", retransform = true) { type, instance ->
+                type.getMethod("setLabel", String::class.java).invoke(instance, "x")
+                assertEquals("x", type.getMethod("getLabel").invoke(instance))
+            }
+
+        counted.assertWrappersKeepOnlyTheirEntryProbe("getLabel", "setLabel", "x")
+    }
+
+    @Test
+    fun `a class with no enhancer marker in either form keeps its branch pairing when the received bytes differ`() {
+        val counted =
+            loadedAtLoadTime(
+                "OjAccount",
+                definedBytes = { library, internalName -> withoutDebugInfo(library.rawClassBytes(internalName)) },
+            ) { type, instance ->
+                type.getMethod("setOwner", String::class.java).invoke(instance, "x")
+            }
+
+        assertEquals(4, counted.probes.count { it.kind == ProbeKind.BRANCH && it.methodName == "setOwner" })
+    }
+
+    /** [bytes] without their line-number tables, so they differ from the class file and keep every branch. */
+    private fun withoutDebugInfo(bytes: ByteArray): ByteArray {
+        val writer = ClassWriter(0)
+        ClassReader(bytes).accept(writer, ClassReader.SKIP_DEBUG)
+        return writer.toByteArray()
     }
 
     /** [bytes] without the Ebean marker and every member that starts with `_ebean_`, as a class file on disk predating the enhancer. */

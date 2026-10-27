@@ -493,6 +493,36 @@ class JpaEnhancementRulesTest {
     }
 
     @Test
+    fun `a method openjpa wrapped as the class loaded is one whose pc twin only the received bytes declare`() {
+        val classFile =
+            forge(
+                emptyList(),
+                listOf(
+                    Method("getId", "()Ljava/lang/Long;", line = true),
+                    Method("rate", "()I", line = true),
+                    Method("pcrate", "()I", line = true),
+                    Method("getName", "()Ljava/lang/String;", line = true),
+                ),
+            )
+        val enhanced =
+            listOf(
+                Method("getId", "()Ljava/lang/Long;"),
+                Method("pcgetId", "()Ljava/lang/Long;", Opcodes.ACC_PROTECTED),
+                Method("rate", "()I", line = true),
+                Method("pcrate", "()I", line = true),
+                Method("getName", "()Ljava/lang/String;"),
+                Method("pcgetName", "()Ljava/lang/Integer;", Opcodes.ACC_PROTECTED),
+            )
+
+        assertEquals(
+            setOf("getId" to "()Ljava/lang/Long;"),
+            JpaEnhancement.loadTimeWrappers(classFile, forge(listOf(PERSISTENCE_CAPABLE), enhanced)),
+            "a pc twin the class file already declares, or one with another descriptor, is no wrapper",
+        )
+        assertEquals(emptySet(), JpaEnhancement.loadTimeWrappers(classFile, forge(emptyList(), enhanced)), "no marker, no wrapper")
+    }
+
+    @Test
     fun `an enhancer method is not eligible for the analyser even when the caller's filter accepts it`() {
         val bytes =
             forge(

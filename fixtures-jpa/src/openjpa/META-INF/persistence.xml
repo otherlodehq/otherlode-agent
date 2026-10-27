@@ -4,6 +4,7 @@
     <class>com.example.target.jpa.openjpa.OjAccount</class>
     <class>com.example.target.jpa.openjpa.OjSerial</class>
     <class>com.example.target.jpa.openjpa.OjNote</class>
+    <class>com.example.target.jpa.openjpa.OjLabel</class>
     <class>com.example.target.jpa.openjpa.OjHook</class>
     <exclude-unlisted-classes>true</exclude-unlisted-classes>
   </persistence-unit>
