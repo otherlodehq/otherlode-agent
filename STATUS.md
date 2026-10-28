@@ -98,13 +98,6 @@ Static baseline follow-ups the first-copy change surfaced. Each only loses evide
 - A jar whose manifest cannot be read is still scanned; the JDK drops such a jar. `Class-Path` entries are split on single spaces and resolved as file paths, where the JDK tokenises and resolves URLs.
 - Cross-class reads can take a shadowed copy's tables from the referencing root's locator.
 
-### The benchmark's ceiling job fails some nights
-
-`benchmark-overhead.yml`'s ceiling job failed on 2026-10-23 (run
-39925722950) and 2026-10-25 (run 40176739802) with `InvalidRunException:
-The overhead run is invalid`; the runs between passed. Find what makes a
-run invalid before the release run of checklist item 1 depends on it.
-
 ### Tooling: code principles, a refactoring playbook and a prose lint
 
 From the comparison with pstack's poteto-mode (`cursor/plugins`, `190d287`).

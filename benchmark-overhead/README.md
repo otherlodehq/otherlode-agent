@@ -208,7 +208,8 @@ stay in the results directory, and the summary lists why under "Why the run is i
 - The k6 checks pass rate is below 1.0. The script checks every response's status.
 - PetClinic was not saturated: its container averaged under 90% of its pinned cores over the window
   (`cpuCoresAvg`), so the closed loop was limited by k6 or Postgres and its throughput would not
-  describe PetClinic. CPU per request is still valid in such a run, but the run fails regardless.
+  describe PetClinic. CPU per request is still valid in such a run, but the run fails regardless,
+  after the one repeat per run that may run again (below).
 - A variant's windows were not steady: the median over its repeats of the last third's request
   count divided by the first third's lies above 1.10, so the JIT was still compiling when
   measurement began (raise `-PwarmupSeconds` if the warmups hit their cap; lower
@@ -227,6 +228,13 @@ stay in the results directory, and the summary lists why under "Why the run is i
   Delta batches go out even when empty, as a heartbeat, so accepted deltas alone would not show
   that anything was instrumented.
 
+A repeat whose only problem is saturation runs once more, since one repeat can dip under the 90%
+floor by chance on a noisy runner. One repeat per run may do so. The discarded attempt keeps its
+run directory as `<variant>-r<repeat>-attempt1`, stays out of `runs.csv` and the medians, and the
+summary lists it with its problem under "Repeats that ran again". A second attempt that fails, or a
+saturation failure after the run's one retry, fails the run and names every attempt of that repeat.
+Any other problem fails the repeat at once.
+
 The startup-only mode applies the rules on PetClinic's log and the agent variant's rules. It has
 no window, so the k6, saturation and steadiness rules do not apply.
 
@@ -241,7 +249,8 @@ Under `benchmark-overhead/build/results/<config>/`:
 
 - `runs.csv`: one row per run with every metric.
 - `summary.md`: per variant, each metric's median with its minimum and maximum, and the median's
-  change against `none`; then the skipped classes and the class listing's cost.
+  change against `none`; then any repeats that ran again, the skipped classes and the class listing's
+  cost.
 - `metadata.properties`: the runner's OS, CPU count and CPU model (`runner.cpu.model`,
   `runner.cpu.count`), whether the run was startup-only (`startupOnly`), the PetClinic image's `java -version`, the
   agent jar's SHA-256 and modification time, the agent repository's commit and whether its tree was
@@ -249,7 +258,7 @@ Under `benchmark-overhead/build/results/<config>/`:
   `classListingColdWallMs`, `classListingWarmCpuMs` and `classListingClasses`, the PetClinic commit, the collector
   directory's commit, resolved image digests, and the repeats, window and warmup settings used.
 - `runs/<variant>-r<N>/`: the raw k6 JSON and log, the JFR file, PetClinic's log, and the
-  collector's log lines from the run.
+  collector's log lines from the run. A discarded attempt's are in `runs/<variant>-r<N>-attempt1/`.
 
 ## Latest numbers
 

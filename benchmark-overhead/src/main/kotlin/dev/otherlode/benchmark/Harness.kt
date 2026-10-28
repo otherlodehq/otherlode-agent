@@ -25,7 +25,7 @@ class Box(
 ) : GenericContainer<Box>(image)
 
 /** A run broke one of the validity rules. The build fails with this. */
-class InvalidRunException(
+open class InvalidRunException(
     message: String,
 ) : RuntimeException(message)
 
@@ -84,6 +84,7 @@ class Harness(
     private var javaVersion: String = "unknown"
     private var listingCost: ClassListingCost? = null
     private val failures = mutableListOf<String>()
+    private val discarded = mutableListOf<DiscardedAttempt>()
 
     /** Runs the whole matrix, writes the results, and throws if any run was invalid. */
     fun runAll() {
@@ -113,9 +114,17 @@ class Harness(
                 for (variant in rotatedVariants(repeat - 1)) {
                     println("=== ${settings.config.id} ${variant.id} repeat $repeat of ${settings.repeats} ===")
                     try {
-                        runs += if (settings.startupOnly) startupOne(collector, variant, repeat) else runOne(collector, variant, repeat)
+                        runs +=
+                            if (settings.startupOnly) {
+                                startupOne(collector, variant, repeat)
+                            } else {
+                                attemptRepeat(variant.id, repeat, discarded) { runOneKeeping(collector, variant, repeat, it) }
+                            }
                     } catch (e: Exception) {
-                        failures += "${variant.id} repeat $repeat: ${e.message ?: e::class.simpleName}"
+                        val detail = e.message ?: e::class.simpleName.orEmpty()
+                        val retried = discarded.any { it.variantId == variant.id && it.repeat == repeat }
+                        val named = if (retried && !detail.startsWith("attempt ")) "attempt $MAX_ATTEMPTS: $detail" else detail
+                        failures += "${variant.id} repeat $repeat: $named"
                         break@outer
                     }
                 }
@@ -174,6 +183,24 @@ class Harness(
         check(res.statusCode() == 200) { "GET $url answered ${res.statusCode()}" }
         return CollectorMetrics.parse(res.body())
     }
+
+    /** [runOne]. When it fails on environmental problems only and another attempt can follow, its run directory moves to `-attemptN`. */
+    private fun runOneKeeping(
+        collector: Box,
+        variant: Variant,
+        repeat: Int,
+        attempt: Int,
+    ): RunRecord =
+        try {
+            runOne(collector, variant, repeat)
+        } catch (e: EnvironmentalRunException) {
+            val runs = settings.configDir.resolve("runs")
+            val dir = runs.resolve("${variant.id}-r$repeat")
+            if (attempt < MAX_ATTEMPTS && Files.exists(dir)) {
+                Files.move(dir, runs.resolve("${variant.id}-r$repeat-attempt$attempt"))
+            }
+            throw e
+        }
 
     private fun runOne(
         collector: Box,
@@ -264,7 +291,10 @@ class Harness(
             if (checks < 1.0) problems += "k6 checks pass rate was $checks, below 1.0"
             warmthProblem(metrics)?.let { problems += it }
             metrics["cpuCoresAvg"]?.let { saturationProblem(it, cpuSplit.petclinicCores)?.let { p -> problems += p } }
-            if (problems.isNotEmpty()) throw InvalidRunException(problems.joinToString("; "))
+            if (problems.isNotEmpty()) {
+                val message = problems.joinToString("; ")
+                throw if (isEnvironmental(problems)) EnvironmentalRunException(message) else InvalidRunException(message)
+            }
 
             val skipped = if (variant == Variant.NONE) emptyList() else LogScan.skippedClasses(log)
             RunRecord(settings.config, variant, repeat, metrics, skipped)
@@ -416,7 +446,8 @@ class Harness(
         metrics: MutableMap<String, Double>,
     ): InvalidRunException {
         val message = if (e is InvalidRunException) e.message else "${e::class.simpleName}: ${e.message}"
-        return InvalidRunException(listOfNotNull(message, driftNote(metrics)).joinToString("; "))
+        val full = listOfNotNull(message, driftNote(metrics)).joinToString("; ")
+        return if (e is EnvironmentalRunException) EnvironmentalRunException(full) else InvalidRunException(full)
     }
 
     /** What a failed run's window drift adds to its failure, when the window ran and its drift lay past [MAX_WINDOW_DRIFT]. */
@@ -604,6 +635,7 @@ class Harness(
             StringBuilder(
                 if (settings.startupOnly) startupSummaryMarkdown(settings.config, runs) else summaryMarkdown(settings.config, runs),
             )
+        summary.append(retriesSection(discarded))
         summary.append(classListingSection(listingCost) { cpuSplit.petclinic })
         if (failures.isNotEmpty()) {
             summary.append("\n### Why the run is invalid\n\n").append(failures.joinToString("\n") { "- $it" }).append('\n')
