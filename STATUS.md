@@ -191,8 +191,6 @@ development convenience.
 
 ### Endpoint follow-ups
 
-- `endpoints-ktor-3` compiles against Ktor 3.5.2, its newest supported
-  release; ADR 0017 says the oldest.
 - A handler from Spring's Kotlin DSLs (`router {}`, `coRouter {}`) gets no
   join. Unwrapping to the adopter's lambda waits on reading its compiled
   shape.

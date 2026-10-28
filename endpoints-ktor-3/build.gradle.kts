@@ -13,10 +13,10 @@ repositories {
 
 val kotlinVersion = "2.2.21"
 val byteBuddyVersion = "1.18.12"
-val ktorVersion = "3.5.2"
+val ktorVersion = "3.0.3"
 
 // The Ktor release the default test suite runs against. The weekly framework canary sets it to the
-// newest 3.x; compileOnly stays on ktorVersion and the ktor3_0Test suite stays on its 3.0.3 floor.
+// newest 3.x; compileOnly stays on ktorVersion, the 3.0.3 floor, as does the ktor3_0Test suite.
 val ktorTestVersion = providers.gradleProperty("otherlode.framework.ktor3").getOrElse("3.5.2")
 
 dependencies {
@@ -35,11 +35,10 @@ dependencies {
     // dependency once this module's classes are merged into the shaded agent jar.
     compileOnly("net.bytebuddy:byte-buddy:$byteBuddyVersion")
 
-    // Compiled against the latest Ktor 3.x version, per this project's no-muzzle version-drift
-    // policy (see CLAUDE.md's "Endpoint instrumentation" status entry): a module builds against
-    // its own version and disables itself on a LinkageError against a version it does not
-    // actually match. Never `implementation`: Ktor must never be shaded into the agent jar, since
-    // it belongs to the target application, not to this agent.
+    // Compiled against Ktor 3.0.3, the oldest 3.x release the module supports (ADR 0017): a
+    // module disables itself on a LinkageError against a version it does not match, and
+    // compiling against the floor keeps a newer-only reference out. Never `implementation`: Ktor
+    // must never be shaded into the agent jar, since it belongs to the target application.
     compileOnly("io.ktor:ktor-server-core-jvm:$ktorVersion")
 
     // Gives EndpointRegistry, EndpointInstrumentation, and BootstrapHolder to Ktor3TestAgent and
@@ -52,7 +51,7 @@ dependencies {
     // Ktor3TestAgent holds between its own premain install and Ktor3ModuleTest's teardown.
     testImplementation("net.bytebuddy:byte-buddy:$byteBuddyVersion")
 
-    // The default test suite runs against Ktor 3.5.2, the version this module compiles against.
+    // The default test suite runs against Ktor 3.5.2, the newest 3.x release this module supports.
     // ktor-server-cio-jvm is the embedded engine the test starts a real server with.
     testImplementation("io.ktor:ktor-server-core-jvm:$ktorTestVersion")
     testImplementation("io.ktor:ktor-server-cio-jvm:$ktorTestVersion")
