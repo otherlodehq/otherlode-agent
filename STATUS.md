@@ -90,8 +90,6 @@ Each is compiler output that reads as the adopter's code:
 
 ### Hardening follow-ups
 
-- **ADR 0009's list of the collector's 400 reasons** (line 17) leaves out the 1024-byte identity cap, and its 413 note leaves out the element limits (collector ADR 0008).
-
 Static baseline follow-ups the first-copy change surfaced. Each only loses evidence:
 - A Spring Boot jar's `BOOT-INF/classes` copies rank at the jar's place on the classpath, but at runtime the launcher's class loader asks its parent first, so a flat root later on the classpath wins. Classifying all flat roots first, then each jar's nested entries, would match.
 - A class held only under `META-INF/versions/N/` of an earlier multi-release jar marks no name, so a later root's base copy is kept.
