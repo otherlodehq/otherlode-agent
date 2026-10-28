@@ -43,11 +43,11 @@ The system property and environment variable names come from the option name. Th
 
 | Option | Default | Accepted values | If the value is invalid |
 |---|---|---|---|
-| `serviceName` | The first of OpenTelemetry's settings, [service-name detection](#service-name-detection), then `unknown_service:java` | Any text up to 1024 bytes, except `.` and `..` | `.`, `..` and a longer value are skipped with a warning, and the next source gives the name |
-| `serviceNamespace` | None, which is the unspecified namespace | Any text up to 1024 bytes, except `.` and `..` | `.`, `..` and a longer value are skipped with a warning, and the next source gives the namespace |
-| `serviceVersion` | OpenTelemetry's `service.version`, else none | Any text up to 1024 bytes | A longer value is skipped with a warning, and the next source gives the version |
-| `serviceInstanceId` | A random UUID, new for each process | Any text up to 1024 bytes | A longer value is skipped with a warning, and the next source gives the ID, else the random UUID |
-| `environment` | OpenTelemetry's `deployment.environment.name`, then `deployment.environment`, then `test` when `testRun` is on, else none | Any text up to 1024 bytes | A longer value is skipped with a warning, and the next source gives the environment |
+| `serviceName` | The first of OpenTelemetry's settings, [service-name detection](#service-name-detection), then `unknown_service:java` | Any text up to 1024 bytes, except `.`, `..` and text with a NUL character | `.`, `..`, a NUL character and a longer value are skipped with a warning, and the next source gives the name |
+| `serviceNamespace` | None, which is the unspecified namespace | Any text up to 1024 bytes, except `.`, `..` and text with a NUL character | `.`, `..`, a NUL character and a longer value are skipped with a warning, and the next source gives the namespace |
+| `serviceVersion` | OpenTelemetry's `service.version`, else none | Any text up to 1024 bytes, with no NUL character | A longer value or one with a NUL character is skipped with a warning, and the next source gives the version |
+| `serviceInstanceId` | A random UUID, new for each process | Any text up to 1024 bytes, with no NUL character | A longer value or one with a NUL character is skipped with a warning, and the next source gives the ID, else the random UUID |
+| `environment` | OpenTelemetry's `deployment.environment.name`, then `deployment.environment`, then `test` when `testRun` is on, else none | Any text up to 1024 bytes, with no NUL character | A longer value or one with a NUL character is skipped with a warning, and the next source gives the environment |
 | `exportUrl` | `http://localhost:4319` | An absolute `http` or `https` URL with a host, and with no query string or fragment. A path is allowed | ERROR, and the agent is off for this JVM |
 | `authToken` | None | Visible ASCII characters only, `!` to `~` | ERROR, and the agent is off for this JVM |
 | `flushIntervalSeconds` | `60` | A whole number of seconds from `1` to `86400` | Warning, and the default is used |
@@ -246,7 +246,7 @@ At each step, the first value that is not blank wins. A service is known by its 
 
 A service name or namespace of `.` or `..` is skipped with a warning, as if it were blank, and the next source gives the value. Otherlode shows a service at a URL path that holds both values, and browsers drop `.` and `..` path segments, so neither value can name a service. The check covers every source of a name or a namespace, including OpenTelemetry's and detection.
 
-The name, namespace, version, environment and instance ID each hold at most 1024 bytes in UTF-8, which is the collector's limit. The collector refuses every payload that carries a longer value. The agent skips a longer value with a warning that names its source and the limit, never the value, and the next source gives the value. An instance ID that every source skips falls back to the random UUID. Multi-byte characters count by their bytes, so 512 characters of two bytes each fit and 513 do not.
+The name, namespace, version, environment and instance ID each hold at most 1024 bytes in UTF-8, which is the collector's limit. The collector refuses every payload that carries a longer value. The agent skips a longer value with a warning that names its source and the limit, never the value, and the next source gives the value. The collector also refuses a NUL character in any of these values, and the agent skips such a value the same way, with a warning that names its source. An instance ID that every source skips falls back to the random UUID. Multi-byte characters count by their bytes, so 512 characters of two bytes each fit and 513 do not.
 
 The agent never reads the instance ID from OpenTelemetry's `service.instance.id`. Many deployment templates give every replica the same value there, and Otherlode counts instances by that ID, so the replicas would read as one instance. Set `serviceInstanceId` yourself to pin the ID, for example to a pod name or to a name for a test task.
 

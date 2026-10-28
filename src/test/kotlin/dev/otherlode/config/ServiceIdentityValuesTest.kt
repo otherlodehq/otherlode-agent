@@ -108,6 +108,48 @@ class ServiceIdentityValuesTest {
         assertEquals(".", parse("serviceInstanceId=.").serviceInstanceId)
     }
 
+    @Test
+    fun `a value holding a NUL is skipped with a warning naming the source and not the value`() {
+        val value = "pay\u0000ments"
+        val warnings = warningsFrom { assertNull(ServiceIdentityValues.usable(value, "the agent option serviceName")) }
+
+        assertEquals(1, warnings.size, "$warnings")
+        assertTrue(warnings.single().contains("the agent option serviceName"), "$warnings")
+        assertTrue(!warnings.single().contains("pay") && !warnings.single().contains("\u0000"), "$warnings")
+        assertNull(ServiceIdentityValues.withinLimit(value, "source"))
+    }
+
+    @Test
+    fun `a NUL in the first source of each identity value falls through to the next source`() {
+        val nul = "a\u0000b"
+        val config =
+            parse(
+                "serviceName=$nul,serviceNamespace=$nul,serviceVersion=$nul,serviceInstanceId=$nul,environment=$nul",
+                properties =
+                    mapOf(
+                        "otherlode.service.name" to "name",
+                        "otherlode.service.namespace" to "ns",
+                        "otherlode.service.version" to "1.0",
+                        "otherlode.service.instance.id" to "i-1",
+                        "otherlode.environment" to "prod",
+                    ),
+            )
+
+        assertEquals("name", config.serviceName)
+        assertEquals("ns", config.serviceNamespace)
+        assertEquals("1.0", config.serviceVersion)
+        assertEquals("i-1", config.serviceInstanceId)
+        assertEquals("prod", config.environment)
+    }
+
+    @Test
+    fun `a NUL in an OpenTelemetry attribute is skipped`() {
+        val config = parse(env = mapOf("OTEL_RESOURCE_ATTRIBUTES" to "service.name=a\u0000b,service.version=1\u00002"))
+
+        assertEquals("unknown_service:java", config.serviceName)
+        assertNull(config.serviceVersion)
+    }
+
     private fun warningsFrom(block: () -> Unit): List<String> {
         val records = mutableListOf<LogRecord>()
         val handler =
