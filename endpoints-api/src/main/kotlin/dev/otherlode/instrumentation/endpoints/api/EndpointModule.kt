@@ -52,6 +52,14 @@ interface EndpointModule {
      */
     val weaveFailureLeavesNothingPartial: Boolean get() = false
 
+    /**
+     * The binary names (`Class.getName()` form) of every class [typeMatcher] can accept, for any
+     * loader, or `null` when the module can match a class of any name. The pipeline never offers
+     * the module a class whose name is not in the set, so a name missing from it loses that
+     * class's hooks.
+     */
+    val typeNames: Set<String>? get() = null
+
     fun typeMatcher(): ElementMatcher<in TypeDescription>
 
     /**

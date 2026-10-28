@@ -35,7 +35,9 @@ private const val ADVICE_PACKAGE = "dev.otherlode.endpoints.ktor3"
 class Ktor3Module : EndpointModule {
     override val name: String = "ktor-3"
 
-    override fun typeMatcher(): ElementMatcher<in TypeDescription> = namedOneOf(ROUTING_NODE, ROUTING_ROOT)
+    override val typeNames: Set<String> = setOf(ROUTING_NODE, ROUTING_ROOT)
+
+    override fun typeMatcher(): ElementMatcher<in TypeDescription> = namedOneOf(*typeNames.toTypedArray())
 
     override fun transform(
         builder: DynamicType.Builder<*>,

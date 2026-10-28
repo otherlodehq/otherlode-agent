@@ -62,8 +62,9 @@ internal val PREFIXER_NAMES: List<String> =
 class OtelBridgeModule : EndpointModule {
     override val name: String = "otel"
 
-    override fun typeMatcher(): ElementMatcher<in TypeDescription> =
-        namedOneOf(UNSHADED_EXTRACTOR_NAME, SHADED_EXTRACTOR_NAME, *PREFIXER_NAMES.toTypedArray())
+    override val typeNames: Set<String> = setOf(UNSHADED_EXTRACTOR_NAME, SHADED_EXTRACTOR_NAME) + PREFIXER_NAMES
+
+    override fun typeMatcher(): ElementMatcher<in TypeDescription> = namedOneOf(*typeNames.toTypedArray())
 
     override fun transform(
         builder: DynamicType.Builder<*>,

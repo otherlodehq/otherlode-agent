@@ -36,9 +36,12 @@ private const val ADVICE_PACKAGE = "dev.otherlode.endpoints.ktor2"
 class Ktor2Module : EndpointModule {
     override val name: String = "ktor-2"
 
+    override val typeNames: Set<String> = setOf(ROUTE, ROUTING)
+
     // Ktor 3 turned `Route` and `Routing` into interfaces whose `handle` is abstract and which
     // declare no `executeResult`, so only the Ktor 2 classes match.
-    override fun typeMatcher(): ElementMatcher<in TypeDescription> = namedOneOf<TypeDescription>(ROUTE, ROUTING).and(not(isInterface()))
+    override fun typeMatcher(): ElementMatcher<in TypeDescription> =
+        namedOneOf<TypeDescription>(*typeNames.toTypedArray()).and(not(isInterface()))
 
     override fun transform(
         builder: DynamicType.Builder<*>,

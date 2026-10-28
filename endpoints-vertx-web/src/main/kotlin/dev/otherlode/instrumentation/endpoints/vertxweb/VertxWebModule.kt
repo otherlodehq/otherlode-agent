@@ -47,7 +47,9 @@ class VertxWebModule : EndpointModule {
     private val walk = RouterWalk(graph)
     private val declareRoutes: (Any) -> List<Any> = walk::declare
 
-    override fun typeMatcher(): ElementMatcher<in TypeDescription> = namedOneOf<TypeDescription>(ROUTER_IMPL, ROUTE_IMPL, ROUTE_STATE)
+    override val typeNames: Set<String> = setOf(ROUTER_IMPL, ROUTE_IMPL, ROUTE_STATE)
+
+    override fun typeMatcher(): ElementMatcher<in TypeDescription> = namedOneOf<TypeDescription>(*typeNames.toTypedArray())
 
     override fun transform(
         builder: DynamicType.Builder<*>,

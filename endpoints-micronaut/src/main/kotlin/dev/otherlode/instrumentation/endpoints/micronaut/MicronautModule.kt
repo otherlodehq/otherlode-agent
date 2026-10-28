@@ -89,6 +89,8 @@ class MicronautModule : EndpointModule {
             },
         )
 
+    override val typeNames: Set<String> = setOf(DEFAULT_ROUTER, ROUTE_EXECUTOR)
+
     override fun typeMatcher(): ElementMatcher<in TypeDescription> = named<TypeDescription>(DEFAULT_ROUTER).and(ROUTER_SHAPE)
 
     override fun typeMatcher(classLoader: ClassLoader?): ElementMatcher<in TypeDescription> {
@@ -97,6 +99,7 @@ class MicronautModule : EndpointModule {
         val router = typeMatcher()
         return ElementMatcher { type ->
             when (type.name) {
+                !in typeNames -> false
                 DEFAULT_ROUTER -> router.matches(type)
                 ROUTE_EXECUTOR -> routeExecutorIsMicronaut4.value
                 else -> false

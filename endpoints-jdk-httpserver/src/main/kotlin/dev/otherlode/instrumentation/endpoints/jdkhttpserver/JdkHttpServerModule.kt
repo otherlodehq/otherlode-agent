@@ -54,7 +54,9 @@ class JdkHttpServerModule : EndpointModule {
     /** A handler passed to `createContext` or `setHandler` as a lambda or method reference is an `HttpHandler` lambda. */
     override val handlerInterfaces: Set<String> = setOf("com.sun.net.httpserver.HttpHandler")
 
-    override fun typeMatcher(): ElementMatcher<in TypeDescription> = namedOneOf(SERVER_IMPL, HTTP_CONTEXT_IMPL, CONTEXT_LIST)
+    override val typeNames: Set<String> = setOf(SERVER_IMPL, HTTP_CONTEXT_IMPL, CONTEXT_LIST)
+
+    override fun typeMatcher(): ElementMatcher<in TypeDescription> = namedOneOf(*typeNames.toTypedArray())
 
     override fun transform(
         builder: DynamicType.Builder<*>,

@@ -138,3 +138,13 @@ Amended 2026-10-24 in a grilling session after a security audit, on three points
 ## Amended on 2026-10-26: no collector-side filter
 
 The narrowing to the adopter's code is not a collector-side filter on the handler class. The agent still reports every route the framework serves. The server counts a route whose handler lies outside the run's include rules apart from the service's own routes, and keeps its claim (server ADR 0080). A collector filter would drop routes before the server could show or count them.
+
+## Amended on 2026-10-28: one pass per class decides which modules see it
+
+Decided from the startup measurements. Every class the JVM loaded went through ByteBuddy's endpoint transformer: a type pool and a description per class, the ignore matcher, then every module's matcher. On PetClinic that cost about 0.3 s of startup for some 16,000 classes, of which a handful are woven. Ten of the twelve modules match only classes they name.
+
+- **A module names the classes it can match.** `EndpointModule.typeNames` holds the binary name of every class the module's type matcher can accept, or `null` when the module can match a class of any name, as servlet and JAX-RS can. A module whose matcher is a list of names builds it from the set. A module whose matcher branches on the name rejects a name outside the set first, so a branch the set leaves out fails the module's own matcher tests.
+- **One pass per class finds the candidate modules before ByteBuddy runs.** A module is a candidate when its set is `null` or holds the class's name, its loader gate accepts the loader, and its class file check accepts the bytes. A class with no candidate is returned unchanged and ByteBuddy never sees it. A check that throws makes its module a candidate, so the module's own matcher runs the check again and switches the module off as before. Each module's matcher answers no at once for a class it is not a candidate for.
+- A name missing from a set loses that class's hooks without a report, which is why the set and the matcher are built from one source. Over 12 interleaved local runs this took 0.19 s off PetClinic's startup.
+
+Considered: one merged matcher over all modules inside ByteBuddy. Rejected: ByteBuddy's own per-class work, not the modules' matchers, held most of the cost, so a merged matcher would have saved little. Package prefixes in place of exact names were measured too; they passed 423 classes to ByteBuddy and saved less than half as much.

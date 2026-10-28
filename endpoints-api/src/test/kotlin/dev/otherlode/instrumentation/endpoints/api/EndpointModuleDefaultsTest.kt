@@ -8,6 +8,7 @@ import net.bytebuddy.pool.TypePool
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
 
 /**
  * Pins what an [EndpointModule] that implements only the two required members inherits.
@@ -41,6 +42,11 @@ class EndpointModuleDefaultsTest {
     @Test
     fun `a module that names no boot module needs no read edge to the seam`() {
         assertEquals(emptySet(), MinimalModule().bootModulesNeedingSeamRead)
+    }
+
+    @Test
+    fun `a module that names no types can match a class of any name`() {
+        assertNull(MinimalModule().typeNames)
     }
 
     @Test

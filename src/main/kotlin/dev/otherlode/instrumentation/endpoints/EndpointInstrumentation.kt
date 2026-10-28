@@ -192,7 +192,7 @@ class EndpointInstrumentation(
 
         // AgentBuilder.Default.makeRaw returns a ResettableClassFileTransformer; the interface
         // this chain ends on declares only the supertype.
-        val transformer = CurrentClassFileTransformer(builder.makeRaw() as ResettableClassFileTransformer)
+        val transformer = CurrentClassFileTransformer(builder.makeRaw() as ResettableClassFileTransformer, EndpointPreFilter(modules))
         instrumentation.addTransformer(transformer, true)
 
         val handlerInterfaces = modules.flatMapTo(sortedSetOf()) { it.handlerInterfaces }
@@ -320,7 +320,8 @@ class EndpointInstrumentation(
 
         /**
          * The matcher [install] registers for [module], which calls [onMatched] with [module] when it
-         * accepts a class: its [EndpointModule.classLoaderMatcher] first,
+         * accepts a class: first false at once when the pre-filter recorded candidates for this class
+         * and [module] is not among them, then its [EndpointModule.classLoaderMatcher],
          * so a loader the module rejects never has a class parsed for it, then
          * [EndpointModule.classFileMayMatch] on the class's bytes, when this thread is transforming that class, and
          * last [EndpointModule.typeMatcher] for the defining loader.
@@ -331,8 +332,8 @@ class EndpointInstrumentation(
          * transform call, and an exception from one would abort the weave for all of them.
          *
          * The type matcher is built once for each loader and kept weakly by it, since the default
-         * form builds a new `namedOneOf` for every call and this runs for every class the JVM
-         * loads. A module's matcher must therefore not hold the loader it was built for.
+         * form builds a new `namedOneOf` for every call and this runs for every class the
+         * pre-filter passes. A module's matcher must therefore not hold the loader it was built for.
          */
         fun rawMatcher(
             module: EndpointModule,
@@ -343,6 +344,8 @@ class EndpointInstrumentation(
             val bootstrapMatcher = lazy(LazyThreadSafetyMode.PUBLICATION) { module.typeMatcher(null) }
             val failed = AtomicBoolean(false)
             return AgentBuilder.RawMatcher { typeDescription, classLoader, _, _, _ ->
+                val candidates = CurrentClassFile.candidatesOf(typeDescription.internalName)
+                if (candidates != null && module !in candidates) return@RawMatcher false
                 if (failed.get()) return@RawMatcher false
                 val matched =
                     try {

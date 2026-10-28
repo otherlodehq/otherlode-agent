@@ -583,6 +583,70 @@ class EndpointInstrumentationTest {
     }
 
     @Test
+    fun `a module whose class file check throws is switched off and does not stop another module weaving the class`() {
+        val registry = EndpointRegistry()
+        val moduleName = "throwing-byte-check-${System.nanoTime()}"
+        val throwing =
+            object : EndpointModule {
+                override val name: String = moduleName
+
+                override fun classFileMayMatch(classFile: ByteArray): Boolean = throw IllegalStateException("simulated byte search failure")
+
+                override fun typeMatcher(): ElementMatcher<in TypeDescription> = none()
+
+                override fun transform(
+                    builder: DynamicType.Builder<*>,
+                    typeDescription: TypeDescription,
+                    advice: AdviceBinder,
+                    classLoader: ClassLoader?,
+                ): DynamicType.Builder<*> = builder
+            }
+        val bystander = DeclaringModule(template = "/bystander", moduleName = "z-declaring-${System.nanoTime()}")
+
+        install(registry, listOf(throwing, bystander), "com.example.framework.FakeRouter")
+
+        assertEquals(DisabledEndpointModuleKind.TRANSFORM_FAILED, registry.disabledModules().single { it.module == moduleName }.kind)
+        assertEquals(listOf("/bystander"), registry.endpoints().map { it.verbatimTemplate })
+    }
+
+    private class NamedModule(
+        override val typeNames: Set<String>?,
+    ) : EndpointModule {
+        override val name: String = "named-${System.nanoTime()}"
+
+        override fun typeMatcher(): ElementMatcher<in TypeDescription> = named("com.example.framework.FakeRouter")
+
+        override fun transform(
+            builder: DynamicType.Builder<*>,
+            typeDescription: TypeDescription,
+            advice: AdviceBinder,
+            classLoader: ClassLoader?,
+        ): DynamicType.Builder<*> = builder.visit(advice.hook("dev.otherlode.endpoints.fake.FakeRouterAddRouteAdvice", named("addRoute")))
+    }
+
+    @Test
+    fun `a module whose name set holds the class is woven through the pipeline`() {
+        val registry = EndpointRegistry()
+        val router = install(registry, listOf(NamedModule(setOf("com.example.framework.FakeRouter"))), "com.example.framework.FakeRouter")
+        val addRoute = router.javaClass.getMethod("addRoute", String::class.java, String::class.java, Runnable::class.java)
+
+        addRoute.invoke(router, "GET", "/named", Runnable {})
+
+        assertTrue(registry.endpoints().any { it.verbatimTemplate == "/named" })
+    }
+
+    @Test
+    fun `a module whose name set lacks the class is never offered it`() {
+        val registry = EndpointRegistry()
+        val router = install(registry, listOf(NamedModule(setOf("com.example.framework.Other"))), "com.example.framework.FakeRouter")
+        val addRoute = router.javaClass.getMethod("addRoute", String::class.java, String::class.java, Runnable::class.java)
+
+        addRoute.invoke(router, "GET", "/unnamed", Runnable {})
+
+        assertTrue(registry.endpoints().none { it.verbatimTemplate == "/unnamed" })
+    }
+
+    @Test
     fun `a module whose matcher threw is not asked about another class`() {
         val registry = EndpointRegistry()
         val throwing = ThrowingMatcherModule("throwing-once-${System.nanoTime()}")

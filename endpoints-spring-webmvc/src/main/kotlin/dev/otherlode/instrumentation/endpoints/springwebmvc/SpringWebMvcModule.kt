@@ -94,8 +94,8 @@ class SpringWebMvcModule : EndpointModule {
      */
     override val handlerInterfaces: Set<String> = setOf(FUNCTIONAL_ROUTE_STACK.handlerFunctionClass)
 
-    override fun typeMatcher(): ElementMatcher<in TypeDescription> =
-        namedOneOf(
+    override val typeNames: Set<String> =
+        setOf(
             HANDLER_METHOD_MAPPING,
             REQUEST_MAPPING_HANDLER_MAPPING,
             URL_HANDLER_MAPPING,
@@ -103,6 +103,8 @@ class SpringWebMvcModule : EndpointModule {
             ROUTER_FUNCTION_MAPPING,
             PATH_RESOURCE_LOOKUP_FUNCTION,
         )
+
+    override fun typeMatcher(): ElementMatcher<in TypeDescription> = namedOneOf(*typeNames.toTypedArray())
 
     override fun transform(
         builder: DynamicType.Builder<*>,

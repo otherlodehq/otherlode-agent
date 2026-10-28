@@ -103,6 +103,9 @@ class Micronaut3Module : EndpointModule {
             },
         )
 
+    override val typeNames: Set<String> =
+        setOf(DEFAULT_ROUTER, ROUTING_IN_BOUND_HANDLER, SERVLET_HTTP_HANDLER, LAMBDA_CONTAINER_HANDLER)
+
     override fun typeMatcher(): ElementMatcher<in TypeDescription> = named<TypeDescription>(DEFAULT_ROUTER).and(ROUTER_SHAPE)
 
     override fun typeMatcher(classLoader: ClassLoader?): ElementMatcher<in TypeDescription> {
@@ -111,6 +114,7 @@ class Micronaut3Module : EndpointModule {
         val router = typeMatcher()
         return ElementMatcher { type ->
             when (type.name) {
+                !in typeNames -> false
                 DEFAULT_ROUTER -> router.matches(type)
                 ROUTING_IN_BOUND_HANDLER, SERVLET_HTTP_HANDLER, LAMBDA_CONTAINER_HANDLER -> routerIsMicronaut3.value
                 else -> false

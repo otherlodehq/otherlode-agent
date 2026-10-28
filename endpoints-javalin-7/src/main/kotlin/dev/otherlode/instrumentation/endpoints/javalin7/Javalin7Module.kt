@@ -60,6 +60,8 @@ class Javalin7Module : EndpointModule {
 
     override val handlerInterfaces: Set<String> = setOf(HANDLER)
 
+    override val typeNames: Set<String> = setOf(PARSED_ENDPOINT, API_BUILDER)
+
     override fun typeMatcher(): ElementMatcher<in TypeDescription> = named<TypeDescription>(PARSED_ENDPOINT).and(JAVALIN_7_PARSED_ENDPOINT)
 
     override fun typeMatcher(classLoader: ClassLoader?): ElementMatcher<in TypeDescription> {
@@ -68,6 +70,7 @@ class Javalin7Module : EndpointModule {
         val parsedEndpoint = typeMatcher()
         return ElementMatcher { type ->
             when (type.name) {
+                !in typeNames -> false
                 PARSED_ENDPOINT -> parsedEndpoint.matches(type)
                 API_BUILDER -> apiBuilderIsJavalin7.value
                 else -> false
