@@ -948,4 +948,159 @@ class KotlincMatrixTest {
             "under disable an override that calls super compiles to the same tail without the cast",
         )
     }
+
+    // --- value-class statics, casts and null-guarded boxes (ADR 0078) ---
+
+    private fun CompilerFixtures.Build.markOf(
+        simpleName: String,
+        namePrefix: String,
+        descriptor: String,
+    ): GeneratedBy = markEntries(simpleName).single { it.first.startsWith(namePrefix) && it.second == descriptor }.third
+
+    private fun CompilerFixtures.Build.markNamed(
+        simpleName: String,
+        name: String,
+        descriptor: String,
+    ): GeneratedBy = markEntries(simpleName).single { it.first == name && it.second == descriptor }.third
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `a value class's static for an inherited default that null-checks a parameter is VALUE_CLASS`(version: String) {
+        val build = CompilerFixtures.kotlinc(version)
+
+        assertEquals(GeneratedBy.VALUE_CLASS, build.markNamed("GreetingByInt", "greet-impl", "(I$STRING)$STRING"))
+        assertEquals(GeneratedBy.VALUE_CLASS, build.markNamed("GreetingByString", "greet-impl", "($STRING$STRING)$STRING"))
+        assertEquals(GeneratedBy.VALUE_CLASS, build.markNamed("StringEchoing", "echo-impl", "(I$STRING)$STRING"))
+        assertEquals(GeneratedBy.VALUE_CLASS, build.markNamed("ItemOwner", "put-impl", "(I$STRING)$STRING"))
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `a value class's static for an inherited default whose name carries the hash is VALUE_CLASS`(version: String) {
+        val build = CompilerFixtures.kotlinc(version)
+
+        assertEquals(GeneratedBy.VALUE_CLASS, build.markOf("TaggedId", "tag-", "(I$STRING)$STRING"))
+        assertEquals(GeneratedBy.VALUE_CLASS, build.markOf("MakerId", "make-", "(I)$STRING"))
+        assertEquals(GeneratedBy.VALUE_CLASS, build.markOf("IdTakerLabel", "take-", "(${STRING}I)I"))
+        assertEquals(GeneratedBy.VALUE_CLASS, build.markOf("IdEchoing", "echo-", "(II)I"))
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `a value class's static for an inherited default that casts a generic result or an argument is VALUE_CLASS`(version: String) {
+        val build = CompilerFixtures.kotlinc(version)
+
+        assertEquals(GeneratedBy.VALUE_CLASS, build.markNamed("StringSource", "get-impl", "(I)$STRING"))
+        assertEquals(GeneratedBy.VALUE_CLASS, build.markNamed("ItemOwner", "get-impl", "(I)$STRING"))
+        assertEquals(GeneratedBy.VALUE_CLASS, build.markNamed("ItemOwner", "getItem-impl", "(I)$STRING"))
+        assertEquals(GeneratedBy.VALUE_CLASS, build.markNamed("IntEchoing", "echo-impl", "(II)Ljava/lang/Integer;"))
+        assertEquals(GeneratedBy.VALUE_CLASS, build.markOf("SpreadValue", "m-", "(J$STRING${STRING}J$STRING$STRING)$STRING"))
+        assertEquals(GeneratedBy.VALUE_CLASS, build.markOf("MidValue", "f-impl", "(I$STRING)I"))
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `a value class's static for an inherited default that unboxes null-safely or boxes null-safely is VALUE_CLASS`(version: String) {
+        val build = CompilerFixtures.kotlinc(version)
+
+        assertEquals(GeneratedBy.VALUE_CLASS, build.markOf("LabelSource", "get-", "(I)$STRING"))
+        assertEquals(GeneratedBy.VALUE_CLASS, build.markOf("LabelTakesValue", "take-", "(I$STRING)I"))
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `a static an adopter writes beside an inherited default stays unmarked, and so do the members that call it`(version: String) {
+        val build = CompilerFixtures.kotlinc(version)
+
+        assertEquals(GeneratedBy.NONE, build.markNamed("BacktickGreeting", "greet-impl-impl", "(I$STRING)$STRING"))
+        assertEquals(GeneratedBy.VALUE_CLASS, build.markNamed("BacktickGreeting", "greet-impl", "(I$STRING)$STRING"))
+        assertEquals(GeneratedBy.NONE, build.markNamed("MemberCalls", "greetAgain-impl", "(I$STRING)$STRING"))
+        assertEquals(GeneratedBy.NONE, build.markNamed("MemberCalls", "greetPrivately-impl", "(I$STRING)$STRING"))
+        assertEquals(GeneratedBy.NONE, build.markNamed("MemberCalls", "echoAgain-impl", "(I$STRING)$STRING"))
+        assertEquals(GeneratedBy.NONE, build.markOf("MemberCalls", "tagAgain-", "(I$STRING)$STRING"))
+        assertEquals(GeneratedBy.NONE, build.markNamed("OverrideGreeting", "greet-impl", "(I$STRING)$STRING"))
+        assertEquals(GeneratedBy.NONE, build.markNamed("OverrideEchoing", "echo-impl", "(I$STRING)$STRING"))
+        assertEquals(GeneratedBy.NONE, build.markOf("OverrideTags", "tag-", "(I$STRING)$STRING"))
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `a stub that casts an argument or a boxed primitive to the bound of its type variable is DEFAULT_IMPLS`(version: String) {
+        val build = CompilerFixtures.kotlinc(version)
+        val expected = stubExpectation(version)
+
+        assertEquals(expected, build.marks("MidOfString").of("f", "($STRING)I"))
+        assertEquals(expected, build.marks("MidNullableOfString").of("f", "($STRING)I"))
+        assertEquals(expected, build.marks("MidReturnsString").of("pick", "($STRING)$STRING"))
+        assertEquals(expected, build.marks("IntMid").of("f", "(I)I"))
+        assertEquals(expected, build.marks("MidValue").of("f", "($STRING)I"))
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `a stub that boxes or unboxes null-safely at a value class over a reference is DEFAULT_IMPLS`(version: String) {
+        val build = CompilerFixtures.kotlinc(version)
+        val expected = stubExpectation(version)
+
+        assertEquals(expected, build.markOf("LabelHolds", "get-", "()$STRING"))
+        assertEquals(expected, build.markOf("LabelHolds", "getItem-", "()$STRING"))
+        assertEquals(expected, build.markOf("LabelHolds", "put-", "($STRING)$STRING"))
+        assertEquals(expected, build.markOf("LabelTakes", "take-", "($STRING)I"))
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `an override that calls super and compiles to a stub's bytes is unmarked`(version: String) {
+        val build = CompilerFixtures.kotlinc(version)
+
+        assertEquals(GeneratedBy.NONE, build.marks("OverrideMidNullable").of("f", "($STRING)I"))
+        assertEquals(GeneratedBy.NONE, build.marks("OverloadMidNullable").of("f", "($STRING)I"))
+        assertEquals(GeneratedBy.NONE, build.markOf("LabelHoldsOverride", "get-", "()$STRING"))
+        assertEquals(GeneratedBy.NONE, build.markOf("LabelHoldsOverride", "getItem-", "()$STRING"))
+        assertEquals(GeneratedBy.NONE, build.markOf("LabelTakesOverride", "take-", "($STRING)I"))
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `a sub-interface's DefaultImpls forwarder that casts, or boxes or unboxes null-safely, is DEFAULT_IMPLS`(version: String) {
+        if (CompilerFixtures.kotlincDefaultsToJvmDefaultEnable(version)) return
+        val build = CompilerFixtures.kotlinc(version)
+        val midApi = "Lcom/example/target/kotlinc/MidApi;"
+        val holds = "Lcom/example/target/kotlinc/LabelHoldsApi;"
+        val takes = "Lcom/example/target/kotlinc/LabelTakesApi;"
+
+        assertEquals(GeneratedBy.DEFAULT_IMPLS, build.marks("MidApi\$DefaultImpls").of("f", "($midApi$STRING)I"))
+        assertEquals(GeneratedBy.DEFAULT_IMPLS, build.markOf("LabelHoldsApi\$DefaultImpls", "get-", "($holds)$STRING"))
+        assertEquals(GeneratedBy.DEFAULT_IMPLS, build.markOf("LabelHoldsApi\$DefaultImpls", "getItem-", "($holds)$STRING"))
+        assertEquals(GeneratedBy.DEFAULT_IMPLS, build.markOf("LabelHoldsApi\$DefaultImpls", "put-", "($holds$STRING)$STRING"))
+        assertEquals(GeneratedBy.DEFAULT_IMPLS, build.markOf("LabelTakesApi\$DefaultImpls", "take-", "($takes$STRING)I"))
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `an override that reaches the default through the interface has a static with a default's body and stays unmarked`(
+        version: String,
+    ) {
+        val build = CompilerFixtures.kotlinc(version)
+        val pair = "(I$STRING$STRING)$STRING"
+
+        assertEquals(GeneratedBy.NONE, build.markNamed("Adapter", "m-OocRtvI", pair), "the override")
+        assertEquals(GeneratedBy.VALUE_CLASS, build.markNamed("Adapter", "m-H71NLlU", pair), "kotlinc's inherited static")
+        assertEquals(GeneratedBy.NONE, build.markNamed("TakeAdapter", "take-fQMbgJc", "(I$STRING$STRING)I"), "the override")
+        assertEquals(GeneratedBy.VALUE_CLASS, build.markNamed("TakeAdapter", "take-NWzkCTk", "(I$STRING$STRING)I"))
+        assertEquals(GeneratedBy.NONE, build.markNamed("OverrideSelf", "put-impl", "(I$STRING)$STRING"), "the recursive override")
+        assertEquals(GeneratedBy.VALUE_CLASS, build.markNamed("OverrideSelf", "get-impl", "(I)$STRING"))
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `an overload whose static is final or private and has a default's body stays unmarked`(version: String) {
+        val build = CompilerFixtures.kotlinc(version)
+        val pair = "(I$STRING$STRING)$STRING"
+
+        assertEquals(GeneratedBy.NONE, build.markNamed("OverloadPair", "m-H71NLlU", pair), "the final static")
+        assertEquals(GeneratedBy.VALUE_CLASS, build.markNamed("OverloadPair", "m-51z027c", pair), "kotlinc's inherited static")
+        assertEquals(GeneratedBy.NONE, build.markNamed("PrivateOverloadPair", "m-H71NLlU", pair), "the private static")
+        assertEquals(GeneratedBy.VALUE_CLASS, build.markNamed("PrivateOverloadPair", "m-51z027c", pair))
+    }
 }

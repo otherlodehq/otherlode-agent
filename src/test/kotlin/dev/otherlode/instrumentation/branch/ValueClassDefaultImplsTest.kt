@@ -69,4 +69,65 @@ class ValueClassDefaultImplsTest {
 
         assertEquals(GeneratedBy.NONE, marks("DisabledSuspendOverride\$DefaultImpls").getValue("run" to descriptor))
     }
+
+    @Test
+    fun `a sub-interface's forwarder that casts an argument to the bound of its type variable is DEFAULT_IMPLS`() {
+        val descriptor = "($PACKAGE/DisabledMidApi;Ljava/lang/String;)I"
+
+        assertEquals(GeneratedBy.DEFAULT_IMPLS, marks("DisabledMidApi\$DefaultImpls").getValue("f" to descriptor))
+    }
+
+    @Test
+    fun `an override that calls super and casts the same way is NONE`() {
+        val descriptor = "($PACKAGE/DisabledMidOverride;Ljava/lang/String;)I"
+
+        assertEquals(GeneratedBy.NONE, marks("DisabledMidOverride\$DefaultImpls").getValue("f" to descriptor))
+    }
+
+    @Test
+    fun `a sub-interface's forwarder that boxes or unboxes null-safely at a value class over a reference is DEFAULT_IMPLS`() {
+        val holds = marks("DisabledLabelHoldsApi\$DefaultImpls")
+        val takes = marks("DisabledLabelTakesApi\$DefaultImpls")
+
+        assertEquals(listOf(GeneratedBy.DEFAULT_IMPLS), holds.withPrefix("get-"))
+        assertEquals(listOf(GeneratedBy.DEFAULT_IMPLS), holds.withPrefix("getItem-"))
+        assertEquals(listOf(GeneratedBy.DEFAULT_IMPLS), holds.withPrefix("put-"))
+        assertEquals(listOf(GeneratedBy.DEFAULT_IMPLS), takes.withPrefix("take-"))
+    }
+
+    @Test
+    fun `an override that calls super and unboxes null-safely is NONE`() {
+        val overrides = marks("DisabledLabelHoldsOverride\$DefaultImpls")
+
+        assertEquals(listOf(GeneratedBy.NONE), overrides.withPrefix("get-"))
+    }
+
+    @Test
+    fun `a value class's static for an inherited default that casts, boxes or unboxes null-safely is VALUE_CLASS`() {
+        val mid = marks("DisabledMidValue")
+        val holds = marks("DisabledLabelHoldsValue")
+        val takes = marks("DisabledLabelTakesValue")
+
+        assertEquals(GeneratedBy.VALUE_CLASS, mid.getValue("f-impl" to "(ILjava/lang/String;)I"))
+        assertEquals(
+            GeneratedBy.VALUE_CLASS,
+            holds
+                .filterKeys {
+                    it.first.startsWith("get-") && it.second == "(I)Ljava/lang/String;"
+                }.values
+                .single(),
+        )
+        assertEquals(
+            GeneratedBy.VALUE_CLASS,
+            holds
+                .filterKeys {
+                    it.first.startsWith("getItem-") && it.second == "(I)Ljava/lang/String;"
+                }.values
+                .single(),
+        )
+        assertEquals(
+            GeneratedBy.VALUE_CLASS,
+            takes.filterKeys { it.first.startsWith("take-") && it.second == "(ILjava/lang/String;)I" }.values.single(),
+        )
+    }
 }

@@ -28,3 +28,56 @@ interface DisabledSuspendSub : DisabledSuspend
 interface DisabledSuspendOverride : DisabledSuspend {
     override suspend fun run() = super.run()
 }
+
+@JvmInline
+value class DisabledLabel(
+    val s: String,
+)
+
+/** A default at a type variable with a bound, fixed by a sub-interface and a value class at `String`. */
+interface DisabledMid<T : CharSequence> {
+    fun f(t: T): Int = t.length
+}
+
+interface DisabledMidApi : DisabledMid<String>
+
+@JvmInline
+value class DisabledMidValue(
+    val v: Int,
+) : DisabledMid<String>
+
+/** Defaults fixed by sub-interfaces and value classes at a value class over a reference. */
+interface DisabledHolds<T> {
+    fun get(): T? = null
+
+    fun put(t: T): T = t
+
+    val item: T? get() = null
+}
+
+interface DisabledTakes<T> {
+    fun take(t: T?): Int = if (t == null) 0 else 1
+}
+
+interface DisabledLabelHoldsApi : DisabledHolds<DisabledLabel>
+
+interface DisabledLabelTakesApi : DisabledTakes<DisabledLabel>
+
+@JvmInline
+value class DisabledLabelHoldsValue(
+    val v: Int,
+) : DisabledHolds<DisabledLabel>
+
+@JvmInline
+value class DisabledLabelTakesValue(
+    val v: Int,
+) : DisabledTakes<DisabledLabel>
+
+/** Overrides the defaults only to call `super`, in a sub-interface, which declares the methods. */
+interface DisabledMidOverride : DisabledMid<String> {
+    override fun f(t: String): Int = super.f(t)
+}
+
+interface DisabledLabelHoldsOverride : DisabledHolds<DisabledLabel> {
+    override fun get(): DisabledLabel? = super.get()
+}

@@ -3425,7 +3425,8 @@ object BranchSiteAnalyzer {
 
         markDataClassMembers(internalClassName, methodAccess, methodsWithLineNumbers, result)
 
-        val valueClass = valueClassMarks(classBytes, internalClassName, methodAccess, methodsWithLineNumbers)
+        val valueClass =
+            valueClassMarks(classBytes, internalClassName, methodAccess, methodsWithLineNumbers, interfaceInternalNames, lookup)
         for (key in valueClass.marked) result.putIfAbsent(key, GeneratedBy.VALUE_CLASS)
 
         if (kotlinKind == KotlinKind.MULTIFILE_CLASS_FACADE) {
@@ -3836,8 +3837,8 @@ object BranchSiteAnalyzer {
      * fixes a type argument at a primitive, the call returns the primitive and the forwarder boxes
      * it with its box type's `valueOf` for its own return (kotlinc 2.2.21 to 2.4.20, and earlier
      * under `all-compatibility`). Labels, line numbers, frames and other pseudo-instructions are
-     * ignored; any other instruction, a `checkcast` included, means the method is not a forwarder
-     * to the interface.
+     * ignored; any other instruction means the method is not a forwarder to the interface. Calls to
+     * the interface itself take no `checkcast` on an argument.
      *
      * Under `-jvm-default=disable`, the default up to kotlinc 2.1 and an explicit choice after, a
      * sub-interface that inherits a default gets a `$DefaultImpls` method forwarding to the
@@ -3859,9 +3860,14 @@ object BranchSiteAnalyzer {
      * A forwarder's name may be the called name plus `-` and seven characters, which kotlinc adds
      * when a parameter or the result is a value class. Such a forwarder boxes an argument with
      * `box-impl` of a value class that [isValueClass] accepts, and unboxes the result with
-     * `checkcast` and `unbox-impl`. It may drop a `Unit` result with `pop` and return `void`. A
-     * suspend forwarder may end with the suspended-marker check that returns `Unit`: `dup`, a call
-     * to `getCOROUTINE_SUSPENDED`, `if_acmpne`, `areturn`, then `pop` and `Unit.INSTANCE`. When it
+     * `checkcast` and `unbox-impl`. It may drop a `Unit` result with `pop` and return `void`. When
+     * the value class wraps a reference, the forwarder may box an argument and unbox the result
+     * behind a null check (`dup; ifnull; <call>; goto; pop; aconst_null`), as kotlinc does at a
+     * nullable use of the type argument. When the called method takes a type variable that erases
+     * to a bound the forwarder's own type narrows, the forwarder may cast that argument to the
+     * bound with one `checkcast` after its load, as [matchesExpected] checks. A suspend forwarder
+     * may end with the suspended-marker check that returns `Unit`: `dup`, a call to
+     * `getCOROUTINE_SUSPENDED`, `if_acmpne`, `areturn`, then `pop` and `Unit.INSTANCE`. When it
      * forwards to a super-interface's `$DefaultImpls` it must also cast its receiver, since an
      * adopter's `override suspend fun run() = super.run()` compiles to the same tail without the cast.
      * Its types must be the ones the called method takes and returns once the sub-interface's type
@@ -3929,6 +3935,7 @@ object BranchSiteAnalyzer {
                         isValueClass = isValueClass,
                         allowDroppedResult = true,
                         allowSuspendTail = descriptor.endsWith(CONTINUATION_RETURNS_OBJECT),
+                        allowArgumentCasts = true,
                     ) { match ->
                         val forwards =
                             if (match.calledOwner == interfaceInternalName) {
@@ -3937,6 +3944,7 @@ object BranchSiteAnalyzer {
                                 // argument at one, and boxes it for its own erased return.
                                 !match.cast &&
                                     match.boxed.isEmpty() &&
+                                    match.argumentCasts.isEmpty() &&
                                     match.receiverCast == null &&
                                     !match.dropped &&
                                     match.returnUnboxed == null &&
@@ -3991,10 +3999,13 @@ object BranchSiteAnalyzer {
      * type's `valueOf` before the call, and returns the box type through the same cast; any other
      * primitive must match exactly. At a value class, the stub's name adds `-` and seven characters,
      * and the stub boxes the argument with `box-impl` of a class [isValueClass] accepts and unboxes
-     * the result with `checkcast` and `unbox-impl`. At `Unit` the stub drops the result with `pop`.
-     * Its types must be the ones the called method takes and returns once the class's type
-     * arguments for that interface are put in, read through [lookup], as [matchesExpected] checks,
-     * and it must not be final. kotlinc writes the stub open, and an overload the adopter wrote
+     * the result with `checkcast` and `unbox-impl`, behind a null check where the value class wraps
+     * a reference. At `Unit` the stub drops the result with `pop`. Where the called method takes a
+     * type variable that erases to a bound the stub's own type narrows (`Mid<T : CharSequence>` at
+     * `String`), the stub casts the argument to the bound with one `checkcast` after its load, or
+     * after its box type's `valueOf`. Its types must be the ones the called method takes and
+     * returns once the class's type arguments for that interface are put in, read through
+     * [lookup], as [matchesExpected] checks, and it must not be final. kotlinc writes the stub open, and an overload the adopter wrote
      * with a `super` call compiles to the same body, final by default. An open one has the same
      * bytes, and a line table tells it apart: kotlinc starts every stub on the line where its
      * class's declaration starts, and an adopter's method on its own, later line. A method with a
@@ -4052,6 +4063,7 @@ object BranchSiteAnalyzer {
                         allowReceiverCast = ownIsValueClass,
                         isValueClass = isValueClass,
                         allowDroppedResult = true,
+                        allowArgumentCasts = true,
                     ) { match ->
                         // Load 0 is `this`, so the stub's parameter i is load i + 1 and the called
                         // method's parameter i + 1, after the interface.
@@ -4143,7 +4155,9 @@ object BranchSiteAnalyzer {
      * result away with `pop`, and [suspendTail] that it ended with the suspend marker check that
      * returns `Unit`. [boxedInto] holds, by the same positions as [boxed], the internal name of the
      * box type or value class each load was boxed into, and [unboxedFrom] the value class the
-     * result was cast to before `unbox-impl`.
+     * result was cast to before `unbox-impl`. [argumentCasts] holds the internal name each
+     * position's load was cast to. A `box-impl` or `unbox-impl` behind a null check is recorded like
+     * one without.
      */
     private class ForwarderMatch(
         val calledOwner: String,
@@ -4158,6 +4172,7 @@ object BranchSiteAnalyzer {
         val boxedInto: Map<Int, String> = emptyMap(),
         val unboxedFrom: String? = null,
         val calledName: String = "",
+        val argumentCasts: Map<Int, String> = emptyMap(),
     )
 
     /**
@@ -4393,9 +4408,11 @@ object BranchSiteAnalyzer {
      * call takes the super-interface, and is not checked. A position also matches when the stub's
      * own generic signature, [ownGeneric], erases to the expected type: in a class kotlinc
      * regenerates from a reified inline function, the signatures name the concrete type and the
-     * descriptors keep its bound. An overload the adopter wrote with a `super` call usually differs
-     * at some position. The rules that call this turn away most that do not; see [defaultImplsStubs]
-     * for the open ones they cannot.
+     * descriptors keep its bound. An argument the body cast must be cast to the type the called
+     * method takes there, at a position where its generic signature has a type variable, and the
+     * stub's own type there must be another type, and the cast is never to `Object`. An overload
+     * the adopter wrote with a `super` call usually differs at some position. The rules that call
+     * this turn away most that do not; see [defaultImplsStubs] for the open ones they cannot.
      */
     private fun matchesExpected(
         ownParameters: Array<Type>,
@@ -4406,6 +4423,18 @@ object BranchSiteAnalyzer {
         firstIsReceiver: Boolean = false,
         ownGeneric: ExpectedTypes? = null,
     ): Boolean {
+        val calledParameters = Type.getArgumentTypes(match.calledDescriptor)
+        val castsFit =
+            match.argumentCasts.all { (position, castType) ->
+                val called = calledParameters.getOrNull(position) ?: return@all false
+                val own = ownParameters.getOrNull(position - offset) ?: return@all false
+                position - 1 in expected.variableParameters &&
+                    called.sort in REFERENCE_SORTS &&
+                    called.descriptor != OBJECT_DESCRIPTOR &&
+                    Type.getObjectType(castType).descriptor == called.descriptor &&
+                    own.descriptor != called.descriptor
+            }
+        if (!castsFit) return false
         val parametersMatch =
             ownParameters.indices.all { index ->
                 if (firstIsReceiver && index == 0) return@all true
@@ -4434,6 +4463,7 @@ object BranchSiteAnalyzer {
     private class ExpectedTypes(
         val parameters: List<String>,
         val returnType: String,
+        val variableParameters: Set<Int> = emptySet(),
     )
 
     /**
@@ -4507,7 +4537,9 @@ object BranchSiteAnalyzer {
                     else -> OBJECT_DESCRIPTOR
                 }
             }
-        return ExpectedTypes(method.parameters.drop(1).map { erase(it) }, erase(method.returnType))
+        val parameters = method.parameters.drop(1)
+        val variables = parameters.indices.filterTo(mutableSetOf()) { parameters[it].variable != null }
+        return ExpectedTypes(parameters.map { erase(it) }, erase(method.returnType), variables)
     }
 
     /** [type] erased, with each type variable read as the erasure of its bound in [bounds], or `Object`. */
@@ -5054,9 +5086,13 @@ object BranchSiteAnalyzer {
      * `Intrinsics.checkNotNullParameter` or `checkParameterIsNotNull`. Labels, line numbers, frames
      * and other pseudo-instructions are ignored. With [isValueClass], a load may also be boxed by
      * `box-impl` of a class it accepts, and the result cast to such a class and read with
-     * `unbox-impl`. With [allowDroppedResult], the result may be dropped with `pop` before a `void`
-     * return, and with [allowSuspendTail] it may end with the suspended-marker check that returns
-     * `Unit`. See [defaultImplsForwarders] and [multifileFacadeForwarders].
+     * `unbox-impl`; with [allowBoxing] too, a reference load may be boxed and the result unboxed
+     * behind a null check (see [guardCall]). With [allowDroppedResult], the result may be dropped
+     * with `pop` before a `void` return, and with [allowSuspendTail] it may end with the
+     * suspended-marker check that returns `Unit`. With [allowArgumentCasts], one `checkcast` may
+     * follow the load of an argument after the first, or its box type's `valueOf`: the match records
+     * it, and [matchesExpected] checks it against the called method's signature. See
+     * [defaultImplsForwarders] and [multifileFacadeForwarders].
      */
     private class ForwarderShapeVisitor(
         private val expectedLoads: List<Pair<Int, Int>>,
@@ -5068,9 +5104,17 @@ object BranchSiteAnalyzer {
         private val isValueClass: (String) -> Boolean = { false },
         private val allowDroppedResult: Boolean = false,
         private val allowSuspendTail: Boolean = false,
+        private val allowArgumentCasts: Boolean = false,
         private val onForwarder: (ForwarderMatch) -> Unit,
     ) : MethodVisitor(Opcodes.ASM9) {
         private var cast = false
+        private val argumentCasts = mutableMapOf<Int, String>()
+        private var castable = -1
+        private var guardStage = 0
+        private var guardIsResult = false
+        private var guardPosition = -1
+        private var guardNull: Label? = null
+        private var guardEnd: Label? = null
         private var pendingUnbox: String? = null
         private var returnUnboxed: String? = null
         private var dropped = false
@@ -5094,16 +5138,56 @@ object BranchSiteAnalyzer {
             broken = true
         }
 
+        /** The position of the reference load or primitive box the previous instruction produced, or -1; clears it. */
+        private fun takeCastable(): Int = castable.also { castable = -1 }
+
+        /**
+         * A value class's null-guarded conversion is `dup; ifnull L1; <call>; goto L2; L1: pop;
+         * aconst_null; L2:`. [guardStage] counts how far a body is through it: 1 after `dup`, 2 after
+         * `ifnull`, 3 after the call, 4 after `goto`, 5 after L1, 6 after `pop` and 7 after
+         * `aconst_null`. The label L2 ends it. An argument's call is `box-impl` of a value class over
+         * a reference and a result's is `unbox-impl`, after the `checkcast` that sets [pendingUnbox].
+         */
+        private fun guardCall(
+            opcode: Int,
+            owner: String,
+            name: String,
+            descriptor: String,
+        ) {
+            if (guardStage != 2) return reject()
+            if (guardIsResult) {
+                val unboxType = pendingUnbox
+                val reference = descriptor.startsWith("()L") || descriptor.startsWith("()[")
+                val unboxes =
+                    unboxType != null && opcode == Opcodes.INVOKEVIRTUAL && owner == unboxType && name == VALUE_CLASS_UNBOX && reference
+                if (!unboxes) return reject()
+                returnUnboxed = descriptor.substring(2)
+                unboxedFrom = unboxType
+                pendingUnbox = null
+            } else {
+                val underlying = valueClassBoxedType(isValueClass, opcode, owner, name, descriptor)
+                val load = pushed.lastOrNull() as? Pushed.Load
+                val atGuard = load != null && load.opcode == Opcodes.ALOAD && pushed.size - 1 == guardPosition && guardPosition !in boxed
+                if (underlying == null || !(underlying.startsWith("L") || underlying.startsWith("[")) || !atGuard) return reject()
+                boxed[guardPosition] = underlying
+                boxedInto[guardPosition] = owner
+            }
+            guardStage = 3
+        }
+
         override fun visitVarInsn(
             opcode: Int,
             varIndex: Int,
         ) {
-            if (invoked || opcode !in Opcodes.ILOAD..Opcodes.ALOAD) return reject()
+            castable = -1
+            if (guardStage != 0 || invoked || opcode !in Opcodes.ILOAD..Opcodes.ALOAD) return reject()
             pushed += Pushed.Load(opcode, varIndex)
+            if (opcode == Opcodes.ALOAD) castable = pushed.size - 1
         }
 
         override fun visitLdcInsn(value: Any?) {
-            if (invoked || !allowNullChecks || value !is String) return reject()
+            castable = -1
+            if (guardStage != 0 || invoked || !allowNullChecks || value !is String) return reject()
             pushed += Pushed.StringConstant
         }
 
@@ -5114,6 +5198,8 @@ object BranchSiteAnalyzer {
             descriptor: String,
             isInterface: Boolean,
         ) {
+            castable = -1
+            if (guardStage != 0) return guardCall(opcode, owner, name, descriptor)
             if (tailStage != 0) {
                 val checksSuspended =
                     tailStage == 1 &&
@@ -5166,6 +5252,7 @@ object BranchSiteAnalyzer {
                 if (load == null || load.opcode != loadOpcodeFor(boxing)) return reject()
                 if (boxed.put(pushed.size - 1, boxing) != null) return reject()
                 boxedInto[pushed.size - 1] = if (name == VALUE_CLASS_BOX) owner else BOX_TYPES.getValue(boxing)
+                if (name != VALUE_CLASS_BOX) castable = pushed.size - 1
                 return
             }
             if (!isForwardingCall(opcode, owner, name, descriptor)) return reject()
@@ -5177,6 +5264,28 @@ object BranchSiteAnalyzer {
         }
 
         override fun visitInsn(opcode: Int) {
+            val castFrom = takeCastable()
+            if (guardStage != 0) {
+                when {
+                    guardStage == 5 && opcode == Opcodes.POP -> guardStage = 6
+                    guardStage == 6 && opcode == Opcodes.ACONST_NULL -> guardStage = 7
+                    else -> reject()
+                }
+                return
+            }
+            if (allowBoxing && opcode == Opcodes.DUP && guardStage == 0) {
+                if (!invoked && castFrom >= 1) {
+                    guardStage = 1
+                    guardIsResult = false
+                    guardPosition = castFrom
+                    return
+                }
+                if (invoked && !returned && pendingUnbox != null && tailStage == 0) {
+                    guardStage = 1
+                    guardIsResult = true
+                    return
+                }
+            }
             if (tailStage != 0) {
                 when {
                     tailStage == 3 && opcode == Opcodes.ARETURN -> {
@@ -5221,9 +5330,14 @@ object BranchSiteAnalyzer {
             opcode: Int,
             type: String,
         ) {
-            if (tailStage != 0) return reject()
+            val castFrom = takeCastable()
+            if (tailStage != 0 || guardStage != 0) return reject()
             if (allowReceiverCast && opcode == Opcodes.CHECKCAST && !invoked && pushed.size == 1 && receiverCast == null) {
                 receiverCast = type
+                return
+            }
+            if (allowArgumentCasts && opcode == Opcodes.CHECKCAST && !invoked && castFrom >= 1 && castFrom !in argumentCasts) {
+                argumentCasts[castFrom] = type
                 return
             }
             val castsToValueClass =
@@ -5243,6 +5357,7 @@ object BranchSiteAnalyzer {
             name: String,
             descriptor: String,
         ) {
+            castable = -1
             val readsUnit =
                 tailStage == 6 &&
                     opcode == Opcodes.GETSTATIC &&
@@ -5264,12 +5379,25 @@ object BranchSiteAnalyzer {
             opcode: Int,
             label: Label,
         ) {
-            if (tailStage != 2 || opcode != Opcodes.IF_ACMPNE) return reject()
+            castable = -1
+            if (guardStage == 1 && opcode == Opcodes.IFNULL) {
+                guardNull = label
+                guardStage = 2
+                return
+            }
+            if (guardStage == 3 && opcode == Opcodes.GOTO) {
+                guardEnd = label
+                guardStage = 4
+                return
+            }
+            if (guardStage != 0 || tailStage != 2 || opcode != Opcodes.IF_ACMPNE) return reject()
             tailLabel = label
             tailStage = 3
         }
 
         override fun visitLabel(label: Label) {
+            if (guardStage == 4 && label == guardNull) guardStage = 5
+            if (guardStage == 7 && label == guardEnd) guardStage = 0
             if (tailStage == 4 && label == tailLabel) tailStage = 5
         }
 
@@ -5304,7 +5432,7 @@ object BranchSiteAnalyzer {
         ) = reject()
 
         override fun visitEnd() {
-            if (!broken && invoked &&
+            if (!broken && invoked && guardStage == 0 &&
                 returned && pendingUnbox == null && (tailStage == 0 || tailStage == 8)
             ) {
                 onForwarder(
@@ -5321,6 +5449,7 @@ object BranchSiteAnalyzer {
                         boxedInto,
                         unboxedFrom,
                         calledName,
+                        argumentCasts,
                     ),
                 )
             }
@@ -5502,17 +5631,24 @@ object BranchSiteAnalyzer {
      * the property getter and the statics that hold an adopter's member stay unmarked.
      *
      * A value class that inherits an interface's default method `m` without overriding it gets a
-     * static `m-impl` that boxes its first argument with `box-impl`, loads the rest and calls `m` on
-     * the boxed value with `invokevirtual`. When the class has no boxed forwarder `m` of its own
-     * calling it, it is marked and is a pass-through to `m`: a member `m` the adopter declares always
-     * gets that forwarder. Its line table cannot decide it, since kotlinc 2.1 and earlier give it the
-     * class declaration's lines.
+     * static `N` that boxes its first argument with `box-impl`, loads the rest and calls `m` on
+     * the boxed value with `invokevirtual`. `N` is `m` plus `-impl`, or carries a mangle hash:
+     * `m` itself or `m` plus `-` and the hash. It is marked when it is neither final nor synthetic,
+     * no instance method of the class calls it, and [forwardsToInheritedDefault] accepts its body.
+     * An instance method that calls `N` is the forwarder of a member the adopter declared, and
+     * kotlinc writes none for an inherited default: on 1.9 and 2.1 its stub calls `$DefaultImpls`,
+     * and from 2.2 the stub is a bridge. An adopter's override can compile to the same body as an
+     * inherited default's static, with null checks in its forwarder. Every other static an adopter
+     * declares in a value class is final or calls a static `-impl`. A line table cannot decide it,
+     * since kotlinc 2.1 and earlier give the static the class declaration's lines.
      */
     private fun valueClassMarks(
         classBytes: ByteArray,
         internalClassName: String,
         methodAccess: Map<Pair<String, String>, Int>,
         methodsWithLineNumbers: Set<Pair<String, String>>,
+        interfaceInternalNames: List<String>,
+        lookup: (internalName: String) -> ByteArray?,
     ): ValueClassMarks {
         val none = ValueClassMarks(emptySet(), emptySet())
         if (!isValueClassShape(internalClassName, methodAccess)) return none
@@ -5525,7 +5661,7 @@ object BranchSiteAnalyzer {
 
         val fields = mutableListOf<Pair<String, String>>()
         val bodies = mutableListOf<Triple<String, String, List<String>>>()
-        val staticBodies = mutableListOf<Triple<String, String, List<String>>>()
+        val staticBodies = mutableListOf<Triple<String, String, List<BodyOp>>>()
         val classVisitor =
             object : ClassVisitor(Opcodes.ASM9) {
                 override fun visitField(
@@ -5546,8 +5682,10 @@ object BranchSiteAnalyzer {
                     if (access and (BODYLESS_FLAGS or Opcodes.ACC_SYNTHETIC or Opcodes.ACC_BRIDGE) != 0) return null
                     if (name.startsWith("<")) return null
                     if (access and Opcodes.ACC_STATIC != 0) {
-                        val inherited = name.endsWith(IMPL_SUFFIX) && name !in VALUE_CLASS_STATICS && name != VALUE_CLASS_CONSTRUCTOR
-                        return if (inherited) InstructionTokenVisitor { staticBodies += Triple(name, descriptor, it) } else null
+                        val named = name.endsWith(IMPL_SUFFIX) || isMangled(name)
+                        val inherited =
+                            named && access and Opcodes.ACC_FINAL == 0 && name !in VALUE_CLASS_STATICS && name != VALUE_CLASS_CONSTRUCTOR
+                        return if (inherited) BodyRecorder { staticBodies += Triple(name, descriptor, it) } else null
                     }
                     return InstructionTokenVisitor { bodies += Triple(name, descriptor, it) }
                 }
@@ -5578,30 +5716,560 @@ object BranchSiteAnalyzer {
             if (tokens == expected && !forwardsToAdopter) forwarders += name to descriptor
         }
 
-        val boxedForwarderTargets = forwarders.mapTo(mutableSetOf()) { (name, _) -> if (isMangled(name)) name else name + IMPL_SUFFIX }
-        for ((name, descriptor, tokens) in staticBodies) {
-            if (name in boxedForwarderTargets) continue
-            val parameters = parseParameterDescriptors(descriptor)
-            val underlying = parameters.firstOrNull() ?: continue
-            if (underlying != field.second) continue
-            val member = name.removeSuffix(IMPL_SUFFIX)
-            val rest = parameters.drop(1)
-            val returnType = returnTypeOf(descriptor)
-            var slot = slotWidth(underlying)
-            val expected =
-                buildList {
-                    add("load:${loadOpcodeFor(underlying)}:0")
-                    add("call:${Opcodes.INVOKESTATIC}:$internalClassName.$VALUE_CLASS_BOX($underlying)L$internalClassName;")
-                    for (type in rest) {
-                        add("load:${loadOpcodeFor(type)}:$slot")
-                        slot += slotWidth(type)
-                    }
-                    add("call:${Opcodes.INVOKEVIRTUAL}:$internalClassName.$member(${rest.joinToString("")})$returnType")
-                    add("return:${Type.getReturnType(descriptor).getOpcode(Opcodes.IRETURN)}")
+        val ownStaticCall = "call:${Opcodes.INVOKESTATIC}:$internalClassName."
+        val calledStatics =
+            bodies
+                .flatMap { (_, _, tokens) -> tokens }
+                .filter { it.startsWith(ownStaticCall) }
+                .mapTo(mutableSetOf()) { it.removePrefix(ownStaticCall) }
+        val isValueClass = valueClassTest(lookup)
+        val scope by lazy { scopeOf(classBytes, lookup) }
+        for ((name, descriptor, ops) in staticBodies) {
+            if (name + descriptor in calledStatics) continue
+            val accepted =
+                forwardsToInheritedDefault(
+                    internalClassName,
+                    field.second,
+                    name,
+                    descriptor,
+                    ops,
+                    isValueClass,
+                ) { member, calledDescriptor ->
+                    inheritedMethodTypes(scope, interfaceInternalNames, member, calledDescriptor, lookup)
                 }
-            if (tokens == expected) forwarders += name to descriptor
+            if (accepted) forwarders += name to descriptor
         }
         return ValueClassMarks(marked + forwarders, forwarders)
+    }
+
+    /** One instruction of a body, or a label, as [BodyRecorder] records it. */
+    private sealed interface BodyOp {
+        data class Load(
+            val opcode: Int,
+            val slot: Int,
+        ) : BodyOp
+
+        data class StringConstant(
+            val value: Any?,
+        ) : BodyOp
+
+        data class Call(
+            val opcode: Int,
+            val owner: String,
+            val name: String,
+            val descriptor: String,
+        ) : BodyOp
+
+        data class TypeOp(
+            val opcode: Int,
+            val type: String,
+        ) : BodyOp
+
+        data class Jump(
+            val opcode: Int,
+            val target: Label,
+        ) : BodyOp
+
+        data class Mark(
+            val label: Label,
+        ) : BodyOp
+
+        data class Simple(
+            val opcode: Int,
+        ) : BodyOp
+
+        data object Other : BodyOp
+    }
+
+    /**
+     * Records a method body as a list of [BodyOp] and hands it to [onBody] at its end. A class read
+     * with `SKIP_DEBUG` has no line-number labels, so a [BodyOp.Mark] is a jump target.
+     */
+    private class BodyRecorder(
+        private val onBody: (List<BodyOp>) -> Unit,
+    ) : MethodVisitor(Opcodes.ASM9) {
+        private val ops = mutableListOf<BodyOp>()
+
+        override fun visitVarInsn(
+            opcode: Int,
+            varIndex: Int,
+        ) {
+            ops += if (opcode in Opcodes.ILOAD..Opcodes.ALOAD) BodyOp.Load(opcode, varIndex) else BodyOp.Other
+        }
+
+        override fun visitLdcInsn(value: Any?) {
+            ops += BodyOp.StringConstant(value)
+        }
+
+        override fun visitMethodInsn(
+            opcode: Int,
+            owner: String,
+            name: String,
+            descriptor: String,
+            isInterface: Boolean,
+        ) {
+            ops += BodyOp.Call(opcode, owner, name, descriptor)
+        }
+
+        override fun visitTypeInsn(
+            opcode: Int,
+            type: String,
+        ) {
+            ops += BodyOp.TypeOp(opcode, type)
+        }
+
+        override fun visitJumpInsn(
+            opcode: Int,
+            label: Label,
+        ) {
+            ops += BodyOp.Jump(opcode, label)
+        }
+
+        override fun visitLabel(label: Label) {
+            ops += BodyOp.Mark(label)
+        }
+
+        override fun visitInsn(opcode: Int) {
+            ops += BodyOp.Simple(opcode)
+        }
+
+        override fun visitIntInsn(
+            opcode: Int,
+            operand: Int,
+        ) {
+            ops += BodyOp.Other
+        }
+
+        override fun visitFieldInsn(
+            opcode: Int,
+            owner: String,
+            name: String,
+            descriptor: String,
+        ) {
+            ops += BodyOp.Other
+        }
+
+        override fun visitIincInsn(
+            varIndex: Int,
+            increment: Int,
+        ) {
+            ops += BodyOp.Other
+        }
+
+        override fun visitInvokeDynamicInsn(
+            name: String,
+            descriptor: String,
+            bootstrapMethodHandle: Handle,
+            vararg bootstrapMethodArguments: Any?,
+        ) {
+            ops += BodyOp.Other
+        }
+
+        override fun visitTableSwitchInsn(
+            min: Int,
+            max: Int,
+            dflt: Label,
+            vararg labels: Label,
+        ) {
+            ops += BodyOp.Other
+        }
+
+        override fun visitLookupSwitchInsn(
+            dflt: Label,
+            keys: IntArray,
+            labels: Array<out Label>,
+        ) {
+            ops += BodyOp.Other
+        }
+
+        override fun visitMultiANewArrayInsn(
+            descriptor: String,
+            numDimensions: Int,
+        ) {
+            ops += BodyOp.Other
+        }
+
+        override fun visitTryCatchBlock(
+            start: Label,
+            end: Label,
+            handler: Label,
+            type: String?,
+        ) {
+            ops += BodyOp.Other
+        }
+
+        override fun visitEnd() {
+            onBody(ops)
+        }
+    }
+
+    /** What a [BodyOp] list shows an argument or a result went through between its load and the call. */
+    private sealed interface Conversion {
+        data object None : Conversion
+
+        data class ValueOf(
+            val primitive: String,
+        ) : Conversion
+
+        data class BoxImpl(
+            val valueClass: String,
+            val underlying: String,
+        ) : Conversion
+
+        data class Cast(
+            val type: String,
+        ) : Conversion
+
+        data class Unbox(
+            val valueClass: String,
+            val underlying: String,
+        ) : Conversion
+    }
+
+    /**
+     * Whether [ops] is the body of a value class's static for an inherited interface default: the
+     * static [name] of [descriptor] in the value class [internalClassName] over [underlying]. In
+     * order, it has:
+     *
+     * - one null check per non-null reference parameter after the first, in parameter order
+     *   (`aload`, `ldc`, `Intrinsics.checkNotNullParameter`);
+     * - load 0 and `box-impl` of the class;
+     * - each further parameter loaded in order, each followed by at most one conversion: its box
+     *   type's `valueOf`, a value class's `box-impl`, the null-guarded `box-impl`, or a `checkcast`;
+     * - `invokevirtual` of the class's own `m` with the erased descriptor of an interface method
+     *   `m` the class inherits;
+     * - the result returned as is, or after a `checkcast` to the static's return type, a
+     *   `checkcast` and `unbox-impl`, or the null-guarded unbox;
+     * - one return.
+     *
+     * `N` is `m` plus `-impl`, `m` when it carries a mangle hash, or `m` plus `-` and a hash.
+     * [typesOf] gives the types the interface method takes and returns at the class's type
+     * arguments. Each position of the static must be that type, and a conversion appears only
+     * where it differs from the call's. The `ldc` text is not checked.
+     */
+    private fun forwardsToInheritedDefault(
+        internalClassName: String,
+        underlying: String,
+        name: String,
+        descriptor: String,
+        ops: List<BodyOp>,
+        isValueClass: (String) -> Boolean,
+        typesOf: (member: String, calledDescriptor: String) -> ExpectedTypes?,
+    ): Boolean {
+        val parameters = parseParameterDescriptors(descriptor)
+        if (parameters.firstOrNull() != underlying) return false
+        val slots = IntArray(parameters.size)
+        var nextSlot = 0
+        parameters.forEachIndexed { index, type ->
+            slots[index] = nextSlot
+            nextSlot += slotWidth(type)
+        }
+        val ownReturn = returnTypeOf(descriptor)
+        var at = 0
+
+        fun isReference(type: String) = type.startsWith("L") || type.startsWith("[")
+
+        var lastChecked = 0
+        while (ops.getOrNull(at) is BodyOp.Load && ops.getOrNull(at + 1) is BodyOp.StringConstant) {
+            val load = ops[at] as BodyOp.Load
+            val constant = ops[at + 1] as BodyOp.StringConstant
+            val call = ops.getOrNull(at + 2) as? BodyOp.Call ?: return false
+            val index = slots.indexOf(load.slot)
+            val checks =
+                load.opcode == Opcodes.ALOAD && index > lastChecked && isReference(parameters[index]) && constant.value is String &&
+                    call.opcode == Opcodes.INVOKESTATIC && call.owner.endsWith(INTRINSICS_SUFFIX) &&
+                    call.name in parameterNullCheckNames && call.descriptor == NULL_CHECK_DESCRIPTOR
+            if (!checks) return false
+            lastChecked = index
+            at += 3
+        }
+
+        if (ops.getOrNull(at++) != BodyOp.Load(loadOpcodeFor(underlying), 0)) return false
+        val selfBox = BodyOp.Call(Opcodes.INVOKESTATIC, internalClassName, VALUE_CLASS_BOX, "($underlying)L$internalClassName;")
+        if (ops.getOrNull(at++) != selfBox) return false
+
+        fun guarded(
+            start: Int,
+            isCall: (BodyOp.Call) -> Boolean,
+        ): Boolean {
+            val jump = ops.getOrNull(start + 1) as? BodyOp.Jump ?: return false
+            val goto = ops.getOrNull(start + 3) as? BodyOp.Jump ?: return false
+            val call = ops.getOrNull(start + 2) as? BodyOp.Call ?: return false
+            return ops.getOrNull(start) == BodyOp.Simple(Opcodes.DUP) &&
+                jump.opcode == Opcodes.IFNULL && isCall(call) && goto.opcode == Opcodes.GOTO &&
+                ops.getOrNull(start + 4) == BodyOp.Mark(jump.target) &&
+                ops.getOrNull(start + 5) == BodyOp.Simple(Opcodes.POP) &&
+                ops.getOrNull(start + 6) == BodyOp.Simple(Opcodes.ACONST_NULL) &&
+                ops.getOrNull(start + 7) == BodyOp.Mark(goto.target)
+        }
+
+        val conversions = mutableListOf<Conversion>()
+        for (index in 1 until parameters.size) {
+            val type = parameters[index]
+            if (ops.getOrNull(at++) != BodyOp.Load(loadOpcodeFor(type), slots[index])) return false
+            val next = ops.getOrNull(at)
+            val call = next as? BodyOp.Call
+            val primitive = call?.let { boxedPrimitive(it.opcode, it.owner, it.name, it.descriptor) }
+            val boxedType = call?.let { valueClassBoxedType(isValueClass, it.opcode, it.owner, it.name, it.descriptor) }
+            when {
+                primitive != null && call.name == "valueOf" && primitive == type -> {
+                    conversions += Conversion.ValueOf(primitive)
+                    at += 1
+                }
+
+                boxedType != null && boxedType == type -> {
+                    conversions += Conversion.BoxImpl(call.owner, boxedType)
+                    at += 1
+                }
+
+                next == BodyOp.Simple(Opcodes.DUP) && isReference(type) -> {
+                    var owner: String? = null
+                    val shaped =
+                        guarded(at) {
+                            owner = it.owner
+                            valueClassBoxedType(isValueClass, it.opcode, it.owner, it.name, it.descriptor) == type
+                        }
+                    val valueClass = owner
+                    if (!shaped || valueClass == null) return false
+                    conversions += Conversion.BoxImpl(valueClass, type)
+                    at += 8
+                }
+
+                next is BodyOp.TypeOp && next.opcode == Opcodes.CHECKCAST -> {
+                    conversions += Conversion.Cast(next.type)
+                    at += 1
+                }
+
+                else -> {
+                    conversions += Conversion.None
+                }
+            }
+        }
+
+        val invoke = ops.getOrNull(at++) as? BodyOp.Call ?: return false
+        if (invoke.opcode != Opcodes.INVOKEVIRTUAL || invoke.owner != internalClassName) return false
+        val member = invoke.name
+        val namesStatic = name == member + IMPL_SUFFIX || (name == member && isMangled(member)) || isMangledForm(name, member)
+        if (!namesStatic) return false
+        val calledParameters = parseParameterDescriptors(invoke.descriptor)
+        if (calledParameters.size != parameters.size - 1) return false
+
+        val result: Conversion
+        val next = ops.getOrNull(at)
+        if (next is BodyOp.TypeOp && next.opcode == Opcodes.CHECKCAST) {
+            val after = ops.getOrNull(at + 1)
+            val unboxCall = after as? BodyOp.Call
+            val plainUnbox =
+                unboxCall != null && unboxCall.opcode == Opcodes.INVOKEVIRTUAL && unboxCall.owner == next.type &&
+                    unboxCall.name == VALUE_CLASS_UNBOX && unboxCall.descriptor.startsWith("()")
+            when {
+                after is BodyOp.Simple && after.opcode in Opcodes.IRETURN..Opcodes.RETURN -> {
+                    result = Conversion.Cast(next.type)
+                    at += 1
+                }
+
+                plainUnbox && isValueClass(next.type) -> {
+                    result = Conversion.Unbox(next.type, unboxCall.descriptor.substring(2))
+                    at += 2
+                }
+
+                after == BodyOp.Simple(Opcodes.DUP) -> {
+                    var unboxed: String? = null
+                    val shaped =
+                        guarded(at + 1) {
+                            unboxed = it.descriptor.substring(2).takeIf { _ -> it.descriptor.startsWith("()") }
+                            it.opcode == Opcodes.INVOKEVIRTUAL && it.owner == next.type && it.name == VALUE_CLASS_UNBOX
+                        }
+                    val underlyingResult = unboxed
+                    if (!shaped || underlyingResult == null || !isReference(underlyingResult) || !isValueClass(next.type)) return false
+                    result = Conversion.Unbox(next.type, underlyingResult)
+                    at += 9
+                }
+
+                else -> {
+                    return false
+                }
+            }
+        } else {
+            result = Conversion.None
+        }
+        val last = ops.getOrNull(at++) as? BodyOp.Simple ?: return false
+        if (last.opcode != Type.getReturnType(descriptor).getOpcode(Opcodes.IRETURN) || at != ops.size) return false
+
+        val expected = typesOf(member, invoke.descriptor) ?: return false
+        if (expected.parameters.size != calledParameters.size) return false
+        val calledReturn = returnTypeOf(invoke.descriptor)
+        val parametersFit =
+            calledParameters.indices.all { index ->
+                val own = parameters[index + 1]
+                val called = calledParameters[index]
+                val wanted = expected.parameters[index]
+                when (val conversion = conversions[index]) {
+                    is Conversion.None -> {
+                        own == wanted && (own == called || called == OBJECT_DESCRIPTOR)
+                    }
+
+                    is Conversion.ValueOf -> {
+                        wanted == "L${BOX_TYPES.getValue(conversion.primitive)};" && wanted != called && isReference(called)
+                    }
+
+                    is Conversion.BoxImpl -> {
+                        wanted == "L${conversion.valueClass};" && wanted != called && isReference(called)
+                    }
+
+                    is Conversion.Cast -> {
+                        own == wanted && own != called && called != OBJECT_DESCRIPTOR &&
+                            Type.getObjectType(conversion.type).descriptor == called
+                    }
+
+                    is Conversion.Unbox -> {
+                        false
+                    }
+                }
+            }
+        if (!parametersFit) return false
+        return when (result) {
+            is Conversion.None -> {
+                ownReturn == calledReturn && ownReturn == expected.returnType
+            }
+
+            is Conversion.Cast -> {
+                Type.getObjectType(result.type).descriptor == ownReturn && ownReturn == expected.returnType && ownReturn != calledReturn
+            }
+
+            is Conversion.Unbox -> {
+                expected.returnType == "L${result.valueClass};" && expected.returnType != calledReturn && result.underlying == ownReturn
+            }
+
+            else -> {
+                false
+            }
+        }
+    }
+
+    private const val NULL_CHECK_DESCRIPTOR = "(Ljava/lang/Object;Ljava/lang/String;)V"
+
+    /** What [inheritedMethodTypes] reads from one interface: its generic signature, its interfaces and one method. */
+    private class InterfaceShape(
+        val signature: String?,
+        val interfaces: List<String>,
+        val found: Boolean,
+        val methodSignature: String?,
+    )
+
+    private fun readInterfaceShape(
+        bytes: ByteArray,
+        name: String,
+        descriptor: String,
+    ): InterfaceShape? {
+        var signature: String? = null
+        var interfaces: List<String> = emptyList()
+        var found = false
+        var methodSignature: String? = null
+        try {
+            ClassReader(bytes).accept(
+                object : ClassVisitor(Opcodes.ASM9) {
+                    override fun visit(
+                        version: Int,
+                        access: Int,
+                        className: String,
+                        classSignature: String?,
+                        superName: String?,
+                        implemented: Array<out String>?,
+                    ) {
+                        signature = classSignature
+                        interfaces = implemented?.toList() ?: emptyList()
+                    }
+
+                    override fun visitMethod(
+                        access: Int,
+                        methodName: String,
+                        methodDescriptor: String,
+                        signature: String?,
+                        exceptions: Array<out String>?,
+                    ): MethodVisitor? {
+                        if (methodName == name && methodDescriptor == descriptor && access and Opcodes.ACC_STATIC == 0) {
+                            found = true
+                            methodSignature = signature
+                        }
+                        return null
+                    }
+                },
+                ClassReader.SKIP_CODE or ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES,
+            )
+        } catch (_: Exception) {
+            return null
+        }
+        return InterfaceShape(signature, interfaces, found, methodSignature)
+    }
+
+    /**
+     * The types the interface method [name] with erased [descriptor] takes and returns, erased, at
+     * the type arguments the class with [scope] gives its [interfaces], searched through their
+     * super-interfaces. A type variable reads as the erasure of the argument the class, or the
+     * interface above, binds it to, then as the erasure of its own bound. Null when no interface
+     * declares the method, one cannot be read, or an interface's type arguments do not pair with
+     * its type variables.
+     */
+    private fun inheritedMethodTypes(
+        scope: TypeScope,
+        interfaces: List<String>,
+        name: String,
+        descriptor: String,
+        lookup: (internalName: String) -> ByteArray?,
+    ): ExpectedTypes? {
+        fun erase(
+            type: SignatureType,
+            variables: Map<String, String>,
+            own: Map<String, SignatureType>,
+            depth: Int = 0,
+        ): String =
+            type.erasure { variable ->
+                variables[variable]
+                    ?: own[variable]?.takeIf { depth <= MAX_TYPE_VARIABLE_DEPTH }?.let { erase(it, variables, own, depth + 1) }
+                    ?: OBJECT_DESCRIPTOR
+            }
+
+        fun search(
+            interfaceName: String,
+            arguments: List<String>,
+            depth: Int,
+        ): ExpectedTypes? {
+            if (depth > MAX_ENCLOSING_SCOPES) return null
+            val bytes =
+                try {
+                    lookup(interfaceName)
+                } catch (_: Exception) {
+                    null
+                } ?: return null
+            val shape = readInterfaceShape(bytes, name, descriptor) ?: return null
+            val classSignature = shape.signature?.let { parseClassSignature(it) }
+            val formals = classSignature?.formals?.keys?.toList() ?: emptyList()
+            if (formals.size != arguments.size) return null
+            val variables = formals.zip(arguments).toMap()
+            if (shape.found) {
+                val method = shape.methodSignature?.let { parseMethodSignature(it) }
+                if (method == null) {
+                    val called = Type.getMethodType(descriptor)
+                    return ExpectedTypes(called.argumentTypes.map { it.descriptor }, called.returnType.descriptor)
+                }
+                return ExpectedTypes(
+                    method.parameters.map { erase(it, variables, method.formals) },
+                    erase(method.returnType, variables, method.formals),
+                )
+            }
+            for (superName in shape.interfaces) {
+                val superArguments =
+                    classSignature?.interfaceArguments?.get(superName)?.map { erase(it, variables, emptyMap()) } ?: emptyList()
+                search(superName, superArguments, depth + 1)?.let { return it }
+            }
+            return null
+        }
+        for (interfaceName in interfaces) {
+            val arguments = scope.interfaceArguments[interfaceName]?.map { eraseIn(it, scope.bounds) } ?: emptyList()
+            search(interfaceName, arguments, 0)?.let { return it }
+        }
+        return null
     }
 
     /**

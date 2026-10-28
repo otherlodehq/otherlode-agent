@@ -77,16 +77,11 @@ an entity with a hand-written `writeObject`.
 
 ### Kotlin shapes still unmarked
 
-Each is compiler output that reads as the adopter's code:
-- A value class's static for an inherited interface default whose body
-  also checks a parameter for null, carries kotlinc's hash in place of
-  `-impl`, or casts a generic result.
-- A stub that casts an argument before the call (`class C : Mid<String>`
-  where `Mid<T : CharSequence>`), and `get-<hash>` for a value-class type
-  argument such as `Label`.
-- A stub kotlinc writes with a wrong hash in a build that mixes a
-  `-jvm-default=disable` library with an `all` or `all-compatibility`
-  consumer: it calls a `$DefaultImpls` method that does not exist.
+A stub kotlinc writes with a wrong hash in a build that mixes a
+`-jvm-default=disable` library with an `all` or `all-compatibility`
+consumer reads as the adopter's code: it calls a `$DefaultImpls` method
+that does not exist. To decide: whether to mark a stub that would throw
+`NoSuchMethodError`.
 
 ### Hardening follow-ups
 
