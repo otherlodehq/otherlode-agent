@@ -13,33 +13,18 @@ the collector as open source. `otherlode-server` stays closed source and
 hosted (server ADR 0001), so every adopter's collector forwards to one
 multi-tenant backend.
 
-1. **Headline startup is past the 25% target.** `docs/site/overhead.md`
-   and `benchmark-overhead/README.md` quote run 38944648115 on `1332f3f`
+1. **Quote the steady startup figure.** `docs/site/overhead.md` and
+   `benchmark-overhead/README.md` quote run 38944648115 on `1332f3f`
    (2026-10-16): narrow startup +21.7%, from 6 repeats on a runner whose
    no-agent startup ranges from 9 s to 19 s across nights. The
-   startup-only job (`f54d9a8`, 21 repeats per variant) is steady: on
-   `f54d9a8` it read +25.5% on an AMD EPYC 7763 (run 40604262835) and
-   +25.2% on an Intel Xeon Platinum 8573C (run 40636604504). Each
-   variant's interquartile range is under 2% wide. Startup CPU time is
-   within 4% of wall time and steal reads 0, so the spread across nights
-   is the runner's CPU model. Measured locally (M3 Pro, the benchmark's
-   PetClinic image run with `--cpuset-cpus=0` beside a Postgres
-   container, Spring's "process running for", medians of 7 interleaved
-   runs), the agent's startup cost is 1.61 s at `1332f3f` and 1.88 s at
-   `6a48ee1`, over 7.27 s with no agent: +22.2% against +25.9%.
-   - The servlet module was the one large step: +0.61 s at `7d173ab`,
-     less 0.36 s from its service-descriptor gate (`b8a716e`) and 0.08 s
-     from a Horspool byte search (`6a48ee1`). It now costs 0.03 to
-     0.06 s, at the harness's noise floor.
-   - The rest, about 0.2 s, has no single cause: endpoint matching grew
-     0.12 s as modules were added (0.27 s with every module on at
-     `1332f3f`, 0.39 s now), and the rest of the agent 0.09 s. A
-     stricter servlet gate and an allocation-free class-name check each
-     measured nothing and were dropped.
-   Choose between restructuring endpoint matching so twelve modules
-   share one pass per class, and moving the target. Then re-run the
-   startup-only job on the commit to be tagged and update both pages
-   from it.
+   startup-only job (21 repeats per variant) is steady: each variant's
+   interquartile range is a few percent wide, startup CPU time is within
+   4% of wall time and steal reads 0, so the spread across nights is the
+   runner's CPU model. On an AMD EPYC 7763 it read +25.5% on `f54d9a8`
+   (run 40604262835) and +21.9% on `a6009fc` (run 40710245098), whose
+   endpoint pre-filter keeps ByteBuddy off the classes no endpoint module
+   can match (ADR 0017, amended 2026-10-28). Re-run the startup-only job
+   on the commit to be tagged and update both pages from it.
 2. **Cut the releases** (ADRs 0062 and 0063, collector ADR 0006). Cutting
    is Luke's call. Collector `v0.1.0` goes first, since the agent's
    `release.sh` refuses a release until it exists. Each needs its
