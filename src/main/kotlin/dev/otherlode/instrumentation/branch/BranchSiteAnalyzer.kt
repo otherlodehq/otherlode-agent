@@ -1378,11 +1378,19 @@ object BranchSiteAnalyzer {
     /**
      * The generated forwarders a call passes through: a call into one records edges to what the
      * forwarder calls. Each only moves its arguments on to another method. A Scala static forwarder
-     * is one too. `ENUM`, `DATA_CLASS`, `RECORD`, `CASE_CLASS` and `SCALA_OBJECT` methods do work
-     * of their own, so a call into one stays an edge.
+     * and a trait forwarder are too, and so is a Scala value class's boxed method, which
+     * [GeneratedMarks.passThroughKeys] adds, since its mark is shared with methods that do work.
+     * `ENUM`, `DATA_CLASS`, `RECORD`, `CASE_CLASS` and `SCALA_OBJECT` methods do work of their own,
+     * so a call into one stays an edge.
      */
     private val PASS_THROUGH_FORWARDERS =
-        setOf(GeneratedBy.JVM_OVERLOADS, GeneratedBy.MULTIFILE_FACADE, GeneratedBy.DEFAULT_IMPLS, GeneratedBy.STATIC_FORWARDER)
+        setOf(
+            GeneratedBy.JVM_OVERLOADS,
+            GeneratedBy.MULTIFILE_FACADE,
+            GeneratedBy.DEFAULT_IMPLS,
+            GeneratedBy.STATIC_FORWARDER,
+            GeneratedBy.TRAIT_FORWARDER,
+        )
 
     /**
      * Runs [GuardAnalysis] over each recorded method that has at least one kept site. A method
@@ -3462,7 +3470,9 @@ object BranchSiteAnalyzer {
             // No release function means the caller wants the marks alone, as the method table does.
             if (scalaReleaseOf == null) {
                 for ((key, generatedBy) in ScalaGeneratedMethods.of(classBytes, scalaLookup)) result.putIfAbsent(key, generatedBy)
-                return GeneratedMarks(result)
+                val forwarders = ScalaGeneratedMethods.forwarders(classBytes, lookup)
+                for ((key, generatedBy) in forwarders.generated) result.putIfAbsent(key, generatedBy)
+                return GeneratedMarks(result, scalaPassThrough = forwarders.passThrough)
             }
             val scala = ScalaGeneratedMethods.analyse(classBytes, lookup, scalaReleaseOf)
             for ((key, generatedBy) in scala.generated) result.putIfAbsent(key, generatedBy)
@@ -3472,6 +3482,7 @@ object BranchSiteAnalyzer {
                 unread,
                 scala.unreadRelease.takeIf { unread.isNotEmpty() },
                 scala.cause.takeIf { unread.isNotEmpty() },
+                scalaPassThrough = scala.passThrough,
             )
         }
         if (kotlinKind == KotlinKind.MULTIFILE_CLASS_FACADE) {
@@ -3505,10 +3516,11 @@ object BranchSiteAnalyzer {
         val unreadRelease: String? = null,
         val cause: UnreadCause? = null,
         private val valueClassForwarders: Set<Pair<String, String>> = emptySet(),
+        private val scalaPassThrough: Set<Pair<String, String>> = emptySet(),
     ) {
-        /** The methods a call passes through: the [PASS_THROUGH_FORWARDERS] and a value class's boxed forwarders. */
+        /** The methods a call passes through: the [PASS_THROUGH_FORWARDERS] and the boxed forwarders of a Kotlin or a Scala value class. */
         fun passThroughKeys(): Set<Pair<String, String>> =
-            generated.filterValues { it in PASS_THROUGH_FORWARDERS }.keys + valueClassForwarders
+            generated.filterValues { it in PASS_THROUGH_FORWARDERS }.keys + valueClassForwarders + scalaPassThrough
     }
 
     private const val ACTIVITY_INTERFACE_DESCRIPTOR = "L${CallbackAnnotations.ACTIVITY_INTERFACE};"
@@ -6853,7 +6865,7 @@ object BranchSiteAnalyzer {
         reader.accept(classVisitor, ClassReader.SKIP_FRAMES)
         // A method with any line number carries a line-number table, which is all the data-class
         // and value-class rules in computeGeneratedBy ask of methodsWithLineNumbers. Only the
-        // pass-throughs are kept. Scala's rules read no other class here.
+        // pass-throughs are kept.
         val forwarderKeys =
             computeGeneratedBy(
                 classBytes,

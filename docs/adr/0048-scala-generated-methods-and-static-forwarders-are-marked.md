@@ -125,6 +125,7 @@ shape.
   `unapply` past 22 elements, so there is nothing to recognise there.)
 - Amended on 2026-10-03 by ADR 0052: the shapes this record reads are read from the class file, not the received bytes, so an earlier transformer such as JaCoCo leaves them unchanged.
 - Amended on 2026-10-15 by ADR 0054: Java-compatible enums, enums extending a class, enums declared inside a class and local enums are read, with a local enum's companion paired through its cases.
+- Amended on 2026-10-31 by ADR 0080: a Scala value class's boxed forwarders, its `hashCode` and `equals`, and a case value class's plumbing on both sides are marked, and a trait's forwarders are marked `TRAIT_FORWARDER`.
 
 ## Amended on 2026-10-03: every release's bodies, keyed on the release where it is known
 

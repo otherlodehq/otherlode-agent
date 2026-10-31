@@ -78,7 +78,12 @@ class ScalacMatrixTest {
         method: Method,
     ): Boolean =
         version.startsWith("2.12.") &&
-            (method.name == "productElementName" || method.name == "productElementNames" || method.name == "writeReplace")
+            (
+                method.name == "productElementName" ||
+                    method.name == "productElementNames" ||
+                    method.name == "productElementName\$extension" ||
+                    method.name == "writeReplace"
+            )
 
     /** Whether [method] is one release [version] writes and the baseline of its line does not. */
     private fun addedIn(
@@ -106,9 +111,16 @@ class ScalacMatrixTest {
             method
         }
 
+    /** Scala 2.12 numbers the `$extension` method of an overloaded value-class method (`plus$extension0`); the baseline does not. */
+    private fun overloadedExtension(
+        version: String,
+        method: Method,
+    ): Method =
+        if (version.startsWith("2.12.")) method.copy(name = method.name.replace(Regex("\\\$extension\\d+$")) { "\$extension" }) else method
+
     private fun differences(version: String): List<String> {
         val baseline = marksOf(CompilerFixtures.scalaBaseline(version)).mapKeys { inReleaseTerms(version, it.key) }
-        val actual = marksOf(CompilerFixtures.scalac(version))
+        val actual = marksOf(CompilerFixtures.scalac(version)).mapKeys { overloadedExtension(version, it.key) }
         val findings = mutableListOf<String>()
         // A method only one build has is a finding only when it is marked: releases name lambdas and
         // anonymous classes' constructors differently (3.3.3 and 3.4.0 against 3.3.4), and an
@@ -211,8 +223,9 @@ class ScalacMatrixTest {
      * The methods every Scala 3 build reports as unread shapes when no `.tasty` file can be read,
      * as `Owner.name`: the fixtures' hand-written methods inside an outline (`toString` of
      * `Written`, `Multi`, `Svc`, `BodyVal` and `HandCopy`, `HandCopy.hashCode`, the lookalikes
-     * of `CaseLookalikes.scala`, and the hand-written `ordinal` in the companion of the local enum
-     * `Door` in `LocalEnums.scala`), which with no compiler named cannot be told from scalac's.
+     * of `CaseLookalikes.scala`, the hand-written `ordinal` in the companion of the local enum
+     * `Door` in `LocalEnums.scala`, and `toString$extension` of the case value class `Label`, whose
+     * `toString` is its own, `Almost`'s methods and `WrappingGreeter.greet`), which with no compiler named cannot be told from scalac's.
      */
     private val scala3VersionBlindUnread =
         setOf(
@@ -228,6 +241,10 @@ class ScalacMatrixTest {
             "Lie.productArity",
             "Lie.productElement",
             "Lie.productElementName",
+            "Almost\$.hashCode\$extension",
+            "Almost.twice",
+            "Label\$.toString\$extension",
+            "WrappingGreeter.greet",
             "Lie2\$.fromProduct",
             "Lie2.equals",
             "Lie2.hashCode",
@@ -248,7 +265,8 @@ class ScalacMatrixTest {
      * no compiler, so the rules are version-blind. Three groups:
      *
      * - The adopter's own overrides of plumbing, which scalac 2 cannot be told apart from: `toString`
-     *   of `Written`, `Multi`, `Svc`, `BodyVal` and `HandCopy`, `HandCopy.hashCode`, and the
+     *   of `Written`, `Multi`, `Svc`, `BodyVal` and `HandCopy`, `HandCopy.hashCode`, `toString$extension`
+     *   of the case value class `Label`, and the
      *   lookalikes of `CaseLookalikes.scala` (`Lie`, `Lie2`, `E3`, `NoCanEqual`, `UC2`, `FZC`, and
      *   `U0$.unapply`), each hand-written in or near scalac's shape.
      * - `Q`, whose element overrides a supertype's `val`: scalac's own plumbing for it, which the
@@ -262,6 +280,10 @@ class ScalacMatrixTest {
             "FZC.canEqual",
             "HandCopy.toString",
             "HandCopy.hashCode",
+            "Almost\$.hashCode\$extension",
+            "Almost.twice",
+            "Label\$.toString\$extension",
+            "WrappingGreeter.greet",
             "Lie.productArity",
             "Lie.productElement",
             "Lie.productElementName",

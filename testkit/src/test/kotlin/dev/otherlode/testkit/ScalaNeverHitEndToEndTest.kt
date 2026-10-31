@@ -71,7 +71,8 @@ class ScalaNeverHitEndToEndTest {
         return FixtureClassLoader(files.map { it.toURI().toURL() }.toTypedArray(), javaClass.classLoader, "$PACKAGE.")
     }
 
-    private fun `neverHit leaves out Scala's generated methods and lists each object method once`(module: String) {
+    /** Starts a collector and an agent over fixture module [module], and returns the loader and the collector. */
+    private fun startAgent(module: String): Pair<FixtureClassLoader, OtherlodeTestCollector> {
         val target = OtherlodeTestCollector.start()
         collector = target
         val registry = ProbeRegistry()
@@ -86,12 +87,6 @@ class ScalaNeverHitEndToEndTest {
         val otherlode = OtherlodeInstrumentation(config, registry)
         installedOtherlode = otherlode
         installedTransformer = otherlode.install(ByteBuddyAgent.install())
-
-        val loader = fixtureLoader(module)
-        val driver = Class.forName("$PACKAGE.Driver", true, loader)
-        driver.getMethod("callCaseClassApply").invoke(null)
-        driver.getMethod("callSimpleAllOmitted").invoke(null)
-
         val exportScheduler =
             ExportScheduler(
                 config,
@@ -102,9 +97,26 @@ class ScalaNeverHitEndToEndTest {
                 verifierWatch = watchedVerifier(),
             )
         scheduler = exportScheduler
-        exportScheduler.start()
-        target.awaitProbe("$PACKAGE.Driver\$", "callSimpleNoneOmitted", Duration.ofSeconds(10))
+        return fixtureLoader(module) to target
+    }
+
+    /** Flushes what the agent recorded and waits until [target] holds it. */
+    private fun settle(
+        target: OtherlodeTestCollector,
+        className: String,
+        methodName: String,
+    ) {
+        scheduler!!.start()
+        target.awaitProbe("$PACKAGE.$className", methodName, Duration.ofSeconds(10))
         target.awaitSettled(Duration.ofSeconds(10))
+    }
+
+    private fun `neverHit leaves out Scala's generated methods and lists each object method once`(module: String) {
+        val (loader, target) = startAgent(module)
+        val driver = Class.forName("$PACKAGE.Driver", true, loader)
+        driver.getMethod("callCaseClassApply").invoke(null)
+        driver.getMethod("callSimpleAllOmitted").invoke(null)
+        settle(target, "Driver\$", "callSimpleNoneOmitted")
 
         val rows = target.neverHit()
         assertTrue(
@@ -131,6 +143,54 @@ class ScalaNeverHitEndToEndTest {
             assertEquals("$PACKAGE.Driver\$", rows.single { it.methodName == name }.className)
         }
     }
+
+    private fun `neverHit leaves out a value class's boxed methods and a trait's forwarders`(module: String) {
+        val (loader, target) = startAgent(module)
+        val driver = Class.forName("$PACKAGE.ValueDriver", true, loader)
+        driver.getMethod("doubledUnboxed").invoke(null)
+        driver.getMethod("scaledUnboxed").invoke(null)
+        driver.getMethod("copiedUnboxed").invoke(null)
+        for (name in listOf("Greeter", "Greets", "ValueSyntax\$RichInt", "Weight", "Meters", "Meters\$")) {
+            Class.forName("$PACKAGE.$name", true, loader)
+        }
+        settle(target, "ValueDriver", "doubledUnboxed")
+
+        val rows = target.neverHit()
+
+        fun namesOf(className: String) = rows.filter { it.className == "$PACKAGE.$className" }.mapTo(mutableSetOf()) { it.methodName }
+
+        assertEquals(
+            emptySet(),
+            namesOf("ValueSyntax\$RichInt") intersect setOf("doubled", "hashCode", "equals"),
+            "the boxed methods of a value class whose extension methods ran are no rows",
+        )
+        assertEquals(emptySet(), namesOf("ValueSyntax\$RichInt\$") intersect setOf("hashCode\$extension", "equals\$extension"))
+        assertEquals(emptySet(), namesOf("Weight") intersect setOf("scaled", "hashCode", "equals"))
+        assertEquals(emptySet(), namesOf("Meters") intersect PLUMBING)
+        assertEquals(
+            emptySet(),
+            namesOf("Meters\$") intersect (PLUMBING + setOf("copy\$extension", "hashCode\$extension", "_1\$extension")),
+        )
+        assertEquals(
+            emptySet(),
+            namesOf("Greeter") intersect setOf("greet", "total", "ping"),
+            "a class's forwarder to a trait's method is no row: ${rows.filter { it.className == "$PACKAGE.Greeter" }}",
+        )
+        assertEquals(emptySet(), namesOf("Greets") intersect setOf("greet\$", "total\$", "ping\$"))
+        assertEquals(
+            setOf("greet", "total", "ping"),
+            namesOf("Greets") intersect setOf("greet", "total", "ping"),
+            "the trait's default methods hold the code and never ran",
+        )
+    }
+
+    @Test
+    fun `scala 3 - neverHit leaves out a value class's boxed methods and a trait's forwarders`() =
+        `neverHit leaves out a value class's boxed methods and a trait's forwarders`("scala3")
+
+    @Test
+    fun `scala 2 - neverHit leaves out a value class's boxed methods and a trait's forwarders`() =
+        `neverHit leaves out a value class's boxed methods and a trait's forwarders`("scala2")
 
     @Test
     fun `scala 3 - neverHit leaves out Scala's generated methods and lists each object method once`() =

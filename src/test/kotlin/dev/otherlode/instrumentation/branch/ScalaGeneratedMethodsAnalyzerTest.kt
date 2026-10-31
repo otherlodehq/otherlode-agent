@@ -1731,14 +1731,18 @@ class ScalaGeneratedMethodsAnalyzerTest {
     }
 
     @Test
-    fun `scala 3 - an override or forwarder the JVM knows as valueOf, beside scalac's valueOf, is the adopter's on a read release`() {
+    fun `scala 3 - beside scalac's valueOf an override is the adopter's and a mixed-in trait's forwarder is TRAIT_FORWARDER`() {
         for (version in listOf("3.3.4") + scala3Versions) {
             val build = if (version == "3.3.4") CompilerFixtures.scalaBaseline(version) else CompilerFixtures.scalac(version)
             for ((enumName, _, adopters) in valueOfBesideAdopters) {
                 val analysis = analyzeWith(build.classBytes("$enumName\$"), build.lookup, tastyOf(enumName, "Scala $version"))
                 val label = "scalac $version $enumName.valueOf$adopters"
 
-                assertEquals(GeneratedBy.NONE, analysis.generatedBy("valueOf", adopters), label)
+                assertEquals(
+                    if (enumName == "WideMixed") GeneratedBy.TRAIT_FORWARDER else GeneratedBy.NONE,
+                    analysis.generatedBy("valueOf", adopters),
+                    label,
+                )
                 assertEquals(UnreadShape.NONE, analysis.unreadShape("valueOf", adopters), label)
                 assertNull(analysis.unreadRelease, label)
             }

@@ -416,7 +416,7 @@ What produced a method, read from the bytecode alone.
 |---|---|
 | `ENUM` | An enum's `values`, `valueOf` or `getEntries`. |
 | `DATA_CLASS` | A Kotlin data class's `componentN` and `copy`, and whichever of `equals`, `hashCode` and `toString` you did not write. |
-| `VALUE_CLASS` | A Kotlin value class's `equals-impl`, `equals-impl0`, `hashCode-impl` and `toString-impl` that the compiler wrote, the boxed methods that only forward to a static, and the static whose body only calls an interface default the class inherits. |
+| `VALUE_CLASS` | A Kotlin value class's `equals-impl`, `equals-impl0`, `hashCode-impl` and `toString-impl` that the compiler wrote, the boxed methods that only forward to a static, and the static whose body only calls an interface default the class inherits. A Scala value class's boxed methods that only forward to the companion's `$extension` method, and the companion's `hashCode$extension` and `equals$extension`. |
 | `KOTLINX_SERIALIZATION` | Code the kotlinx.serialization compiler plugin generates. |
 | `DEFAULT_IMPLS` | A `$DefaultImpls` method that only forwards to the interface's own default method, and a class's stub that only forwards to `$DefaultImpls`. |
 | `RECORD` | A Java record's `equals`, `hashCode` or `toString`. |
@@ -425,6 +425,7 @@ What produced a method, read from the bytecode alone.
 | `CASE_CLASS` | A Scala case class's plumbing, or its companion's. |
 | `STATIC_FORWARDER` | A static forwarder that scalac adds for an object's method. |
 | `SCALA_OBJECT` | A Scala object's `writeReplace`. |
+| `TRAIT_FORWARDER` | A Scala class's method that only calls a trait's static `m$`, and the trait's `m$` that only calls its default method. |
 
 ### RoutineKind
 
@@ -450,6 +451,8 @@ The family of compiler output a probe's code belongs to when the agent could not
 | `COROUTINE_MACHINERY` | A jump or switch in a suspend-shaped method that matches no coroutine shape the agent reads. |
 | `STRING_SWITCH` | The collision side of a bucket in a string switch's `hashCode` lowering that the agent cannot read. |
 | `KOTLINX_SERIALIZER_OBJECT` | A `@Serializer(forClass = ...)` object's `serialize`, `deserialize` and `getDescriptor`, which the plugin may have filled in. |
+| `VALUE_CLASS` | A Scala value class's boxed method, or its companion's `hashCode$extension` or `equals$extension`, whose body the agent has not read. |
+| `TRAIT_FORWARDER` | A Scala class's method with a trait's static `m$` twin, or a trait's static `m$`, whose body the agent has not read. |
 
 ### OutsideCallerKind
 

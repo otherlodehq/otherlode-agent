@@ -76,6 +76,10 @@ internal object ScalaGeneratedMethods {
     private const val THROWABLE = "java/lang/Throwable"
     private const val VALUES_FIELD = "\$values"
     private const val CONCAT_DESCRIPTOR = "(Ljava/lang/String;)Ljava/lang/String;"
+    private const val EXTENSION = "\$extension"
+    private const val NONE_OBJECT = "scala/None\$"
+    private const val SOME = "scala/Some"
+    private const val OPTION_DESCRIPTOR = "Lscala/Option;"
 
     /** The flags scalac gives the static field of each enum case in the enum's companion, `ACC_ENUM` aside. */
     private const val PLAIN_CASE_FIELD_FLAGS = Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC or Opcodes.ACC_FINAL
@@ -149,12 +153,34 @@ internal object ScalaGeneratedMethods {
     fun of(
         classBytes: ByteArray,
         lookup: (internalName: String) -> ByteArray?,
-    ): Map<Pair<String, String>, GeneratedBy> = marksOf(readShape(classBytes), lookup)
+    ): Map<Pair<String, String>, GeneratedBy> = marksOf(readShape(classBytes), lookup).generated
+
+    /**
+     * The forwarders of the Scala class [classBytes] and nothing else: a value class's boxed
+     * methods and a trait's forwarders, as [of] marks them, and the methods a call passes through.
+     * [lookup] reads the value class's companion and the traits the class has as supertypes.
+     */
+    fun forwarders(
+        classBytes: ByteArray,
+        lookup: (internalName: String) -> ByteArray?,
+    ): Forwarders {
+        val shape = readShape(classBytes)
+        val marks = forwarderMarks(shape, lookup)
+        return Forwarders(marks.generated, marks.passThrough)
+    }
+
+    /** What [forwarders] found: the marked methods ([generated]) and those a call passes through ([passThrough]). */
+    class Forwarders(
+        val generated: Map<Pair<String, String>, GeneratedBy>,
+        val passThrough: Set<Pair<String, String>>,
+    )
 
     /**
      * What [analyse] found in one Scala class: its generated methods ([generated], what [of]
      * returns), and the methods that sit in an outline of compiler output but match none of the
-     * shapes read ([unread], by family). [unreadRelease] is the Scala 3 release that compiled the
+     * shapes read ([unread], by family). [passThrough] is the subset of the forwarders that a call
+     * passes through and that [generated] cannot tell from the rest: a value class's boxed methods.
+     * [unreadRelease] is the Scala 3 release that compiled the
      * class when [unread] holds methods because that release is not on the read list, and null when
      * the class names no compiler (Scala 2, or Scala 3 with no readable `.tasty`) or the unread
      * methods are none. A method is in one map at most.
@@ -165,6 +191,7 @@ internal object ScalaGeneratedMethods {
         val unreadRelease: String?,
         /** Why [unread] holds methods; null when it holds none. */
         val cause: UnreadCause? = null,
+        val passThrough: Set<Pair<String, String>> = emptySet(),
     )
 
     /**
@@ -186,26 +213,44 @@ internal object ScalaGeneratedMethods {
         releaseOf: (internalName: String) -> String?,
     ): Result {
         val shape = readShape(classBytes)
-        val generated = marksOf(shape, lookup)
-        val candidates = outlineOf(shape, lookup, generated)
-        if (candidates.isEmpty()) return Result(generated, emptyMap(), null)
-        if (!shape.isScala3) return Result(generated, candidates, null, UnreadCause.VERSION_BLIND)
+        val sides = valueSidesOf(shape, lookup)
+        val marks = marksOf(shape, lookup, sides)
+        val generated = marks.generated
+        val base = outlineOf(shape, lookup, generated, sides)
+        val forwarders = mayHaveForwarders(shape, sides, generated)
+        if (base.isEmpty() && !forwarders) return Result(generated, emptyMap(), null, passThrough = marks.passThrough)
+
+        fun withForwarders() = if (forwarders) forwarderOutlineOf(shape, lookup, generated, sides) + base else base
+
+        if (!shape.isScala3) {
+            val candidates = withForwarders()
+            return Result(generated, candidates, null, UnreadCause.VERSION_BLIND.takeIf { candidates.isNotEmpty() }, marks.passThrough)
+        }
         val release = releaseOf(shape.internalName)
         return when {
             release == null -> {
-                Result(generated, candidates, null, UnreadCause.VERSION_BLIND)
+                val candidates = withForwarders()
+                Result(generated, candidates, null, UnreadCause.VERSION_BLIND.takeIf { candidates.isNotEmpty() }, marks.passThrough)
             }
 
             ScalaReleases.isRead(release) -> {
                 val enumCase = shape.isEnumCaseClass(lookup)
                 val pairing = if (enumCase) null else pairEnumCompanion(shape, lookup)
                 val accessors = pairing?.let { enumCaseAccessorKeys(shape, it.enumClass, lookup) }.orEmpty()
-                val held = candidates.filterKeys { enumCase || (pairing != null && (isRefusedInEnumCompanion(it) || it in accessors)) }
-                Result(generated, held, null, UnreadCause.UNREAD_STRUCTURE.takeIf { held.isNotEmpty() })
+                val held =
+                    (if (enumCase) withForwarders() else base).filterKeys {
+                        enumCase || (pairing != null && (isRefusedInEnumCompanion(it) || it in accessors))
+                    }
+                Result(generated, held, null, UnreadCause.UNREAD_STRUCTURE.takeIf { held.isNotEmpty() }, marks.passThrough)
             }
 
             else -> {
-                Result(generated, candidates, release, UnreadCause.UNREAD_RELEASE)
+                val candidates = withForwarders()
+                if (candidates.isEmpty()) {
+                    Result(generated, candidates, null, passThrough = marks.passThrough)
+                } else {
+                    Result(generated, candidates, release, UnreadCause.UNREAD_RELEASE, marks.passThrough)
+                }
             }
         }
     }
@@ -304,10 +349,809 @@ internal object ScalaGeneratedMethods {
     private val ClassShape.isSerializable: Boolean
         get() = "java/io/Serializable" in interfaces || "scala/Serializable" in interfaces
 
+    /**
+     * A Scala value class: a final class that extends `Object`, declares one instance field and has
+     * a companion module class declaring `$extension` methods. scalac puts the body of each of the
+     * class's methods in the companion, as `<name>$extension` taking the field's value first, and
+     * keeps a boxed method of the same name in the class that calls it. [isCase] is true for a case
+     * class, whose plumbing is such a pair too.
+     */
+    private class ValueClass(
+        val shape: ClassShape,
+        val companion: ClassShape,
+        val field: FieldShape,
+    ) {
+        val name: String get() = shape.internalName
+        val moduleName: String get() = companion.internalName
+        val type: Type = Type.getType(field.descriptor)
+        val isCase: Boolean = CASE_CLASS_SIGNATURE.all { shape.methods[it]?.isStatic == false }
+
+        /** Whether Scala 2.12 may have written this class; see [CaseClass.mayBeScala212]. */
+        val mayBeScala212: Boolean get() = !shape.isScala3 && PRODUCT_ELEMENT_NAME !in shape.methods
+
+        /** `getstatic <Companion>.MODULE$`. */
+        val module: Insn = Insn.Field(Opcodes.GETSTATIC, moduleName, MODULE_FIELD, "L$moduleName;")
+
+        /**
+         * The one instruction that reads the field from `this`: `getfield`, or a call to a method of
+         * the class that is only `aload_0; getfield; return` (the accessor of a public `val`, or the
+         * mangled one scalac adds for a private one).
+         */
+        val reads: List<Insn> =
+            listOf(Insn.Field(Opcodes.GETFIELD, shape.internalName, field.name, field.descriptor)) +
+                shape.methods
+                    .filter { (key, method) ->
+                        !method.isStatic &&
+                            key.second == "()${field.descriptor}" &&
+                            method.body ==
+                            listOf(
+                                aload(0),
+                                Insn.Field(Opcodes.GETFIELD, shape.internalName, field.name, field.descriptor),
+                                Insn.Plain(type.getOpcode(Opcodes.IRETURN)),
+                            )
+                    }.keys
+                    .flatMap { (accessor, descriptor) ->
+                        listOf(
+                            Insn.Call(Opcodes.INVOKEVIRTUAL, shape.internalName, accessor, descriptor),
+                            Insn.Call(Opcodes.INVOKESPECIAL, shape.internalName, accessor, descriptor),
+                        )
+                    }
+
+        /** A load of the value parameter or of a local with the field's type. */
+        fun load(slot: Int): Insn = Insn.Var(type.getOpcode(Opcodes.ILOAD), slot)
+
+        /** The return for the field's type. */
+        fun back(): Insn = Insn.Plain(type.getOpcode(Opcodes.IRETURN))
+
+        /** The class an instance of the field's type is tested against in Scala 2's `canEqual$extension`. */
+        val boxedType: String get() = boxedName(type) ?: type.internalName
+    }
+
+    /** The value class [shape] is, and the one it is the companion of; each null when [shape] is neither. */
+    private class ValueSides(
+        val boxed: ValueClass?,
+        val companion: ValueClass?,
+    )
+
+    private fun valueSidesOf(
+        shape: ClassShape,
+        lookup: (String) -> ByteArray?,
+    ): ValueSides = ValueSides(valueClassOf(shape, lookup), valueClassCompanionOf(shape, lookup))
+
+    /**
+     * Whether [shape] has the structure of a class that [forwarderOutlineOf] may list: a value
+     * class or its companion, a trait with a static `m$`, or a class with an unmarked method `m`
+     * that calls a static `m$` and lists an interface.
+     */
+    private fun mayHaveForwarders(
+        shape: ClassShape,
+        sides: ValueSides,
+        generated: Map<Pair<String, String>, GeneratedBy>,
+    ): Boolean =
+        sides.boxed != null ||
+            sides.companion != null ||
+            if (shape.access and Opcodes.ACC_INTERFACE != 0) {
+                shape.methods.any { (key, method) -> key !in generated && method.isStatic && key.first.endsWith("$") }
+            } else {
+                shape.interfaces.isNotEmpty() &&
+                    shape.methods.any { (key, method) ->
+                        key !in generated &&
+                            !method.isStatic &&
+                            method.code.orEmpty().any { it is Insn.Call && it.opcode == Opcodes.INVOKESTATIC && it.name == key.first + "$" }
+                    }
+            }
+
+    /** The value class [shape] is, when its companion can be read, else null. */
+    private fun valueClassOf(
+        shape: ClassShape,
+        lookup: (String) -> ByteArray?,
+    ): ValueClass? {
+        if (!shape.isScala || !shape.isFinal || shape.internalName.endsWith("$")) return null
+        val module = "${shape.internalName}$"
+        val first = Insn.Field(Opcodes.GETSTATIC, module, MODULE_FIELD, "L$module;")
+        if (shape.methods.none { (_, method) -> !method.isStatic && method.body?.firstOrNull() == first }) return null
+        return readClass(module, lookup)?.let { valueClassFrom(shape, it) }
+    }
+
+    /** The value class that [companion] belongs to, when its partner can be read, else null. */
+    private fun valueClassCompanionOf(
+        companion: ClassShape,
+        lookup: (String) -> ByteArray?,
+    ): ValueClass? {
+        if (!companion.isModuleClass ||
+            companion.methods.none { (key, method) -> !method.isStatic && key.first.endsWith(EXTENSION) }
+        ) {
+            return null
+        }
+        return readClass(companion.internalName.removeSuffix("$"), lookup)?.let { valueClassFrom(it, companion) }
+    }
+
+    private fun valueClassFrom(
+        shape: ClassShape,
+        companion: ClassShape,
+    ): ValueClass? {
+        if (!shape.isScala || !shape.isFinal || shape.superName != OBJECT) return null
+        val field = shape.fields.filter { it.access and Opcodes.ACC_STATIC == 0 }.singleOrNull() ?: return null
+        val hasExtension = companion.methods.any { (key, method) -> !method.isStatic && key.first.endsWith(EXTENSION) }
+        return if (companion.isModuleClass && hasExtension) ValueClass(shape, companion, field) else null
+    }
+
+    /**
+     * The forwarders of [shape]: those of a value class (see [valueClassForwarders]) and of a class
+     * or trait that mixes a trait in (see [traitForwarders]). The value class's are also the
+     * methods a call passes through, which the mark alone does not tell from a method that does work.
+     */
+    private fun forwarderMarks(
+        shape: ClassShape,
+        lookup: (String) -> ByteArray?,
+        sides: ValueSides = valueSidesOf(shape, lookup),
+    ): Marks {
+        val generated = LinkedHashMap<Pair<String, String>, GeneratedBy>()
+        val passThrough = LinkedHashSet<Pair<String, String>>()
+        sides.boxed?.let { valueClass ->
+            for ((key, mark) in valueClassForwarders(valueClass)) {
+                generated[key] = mark
+                passThrough += key
+            }
+        }
+        for (key in traitForwarders(shape, lookup)) generated.putIfAbsent(key, GeneratedBy.TRAIT_FORWARDER)
+        return Marks(generated, passThrough)
+    }
+
+    /** The name of a Scala default-argument getter, which ADR 0023 treats on its own. */
+    private val DEFAULT_GETTER_NAME = Regex(".*\\\$default\\\$\\d+")
+
+    /**
+     * The boxed methods of the value class [valueClass] that only forward: an instance method whose
+     * body is exactly `getstatic <Companion>.MODULE$`, `aload_0`, the read of the field, each
+     * parameter loaded in order, `invokevirtual <Companion>.<name>$extension`, which scalac 2.12
+     * suffixes with a number for an overload, taking the field's
+     * type and then the method's own parameter types, and the return; the companion declares that
+     * method. A case value class's plumbing ([isCasePlumbing]) is [GeneratedBy.CASE_CLASS], every
+     * other forwarder [GeneratedBy.VALUE_CLASS]. The companion's method holds the code and is never
+     * marked here. Read from `javap -c` over `RichInt`, `Weight`, `Flag`, `Meters` and `Label`.
+     */
+    private fun valueClassForwarders(valueClass: ValueClass): Map<Pair<String, String>, GeneratedBy> {
+        val result = LinkedHashMap<Pair<String, String>, GeneratedBy>()
+        for ((key, method) in valueClass.shape.methods) {
+            val (name, descriptor) = key
+            if (method.isStatic || name == "<init>" || name == "<clinit>") continue
+            val body = method.body ?: continue
+            val targetDescriptor = "(${valueClass.type}${parameterPart(descriptor)})${Type.getReturnType(descriptor)}"
+            val call = body.getOrNull(body.size - 2) as? Insn.Call ?: continue
+            if (call.opcode != Opcodes.INVOKEVIRTUAL || call.owner != valueClass.moduleName || call.descriptor != targetDescriptor) continue
+            val target = call.name
+            if (!isExtensionOf(name, target) || valueClass.companion.methods[target to targetDescriptor]?.isStatic != false) continue
+            val tail =
+                parameterLoads(descriptor, 1) +
+                    call +
+                    Insn.Plain(Type.getReturnType(descriptor).getOpcode(Opcodes.IRETURN))
+            if (valueClass.reads.none { read -> body == listOf(valueClass.module, aload(0), read) + tail }) continue
+            result[key] = if (valueClass.isCase && isCasePlumbing(valueClass, key)) GeneratedBy.CASE_CLASS else GeneratedBy.VALUE_CLASS
+        }
+        return result
+    }
+
+    /**
+     * Whether [target] is the name scalac gives the `$extension` method of the value-class method
+     * [name]: `name$extension`, or in Scala 2.12 `name$extension` and a number when [name] is overloaded.
+     */
+    private fun isExtensionOf(
+        name: String,
+        target: String,
+    ): Boolean = target.startsWith(name + EXTENSION) && target.drop(name.length + EXTENSION.length).all(Char::isDigit)
+
+    /** Whether [key] is one of the members scalac writes for a case class, as the boxed side of [valueClass] has it. */
+    private fun isCasePlumbing(
+        valueClass: ValueClass,
+        key: Pair<String, String>,
+    ): Boolean {
+        val (name, descriptor) = key
+        val element = valueClass.type.descriptor
+        val string = "L$STRING;"
+        return when (name) {
+            "canEqual" -> descriptor == "(L$OBJECT;)Z"
+            "equals" -> descriptor == "(L$OBJECT;)Z"
+            "hashCode", "productArity" -> descriptor == "()I"
+            "toString", "productPrefix" -> descriptor == "()$string"
+            "productElement" -> descriptor == "(I)L$OBJECT;"
+            "productElementName" -> descriptor == "(I)$string"
+            "productIterator", "productElementNames" -> descriptor == "()$ITERATOR"
+            "copy" -> descriptor == "($element)$element"
+            else -> descriptor == "()$element" && (name == "_1" || name == "copy\$default\$1")
+        }
+    }
+
+    /**
+     * The companion methods of [valueClass] that are scalac's. A `hashCode$extension` and an
+     * `equals$extension` whose bodies are the ones scalac writes ([matchesHashCodeExtension] and
+     * [matchesEqualsExtension]) are [GeneratedBy.VALUE_CLASS], or [GeneratedBy.CASE_CLASS] in a
+     * case class. The rest of a case class's companion plumbing is [GeneratedBy.CASE_CLASS]:
+     * see [matchesCaseExtension]. The class's own `m$extension` is never marked.
+     */
+    private fun valueClassCompanionMarks(valueClass: ValueClass): Map<Pair<String, String>, GeneratedBy> {
+        val element = valueClass.type.descriptor
+        val mark = if (valueClass.isCase) GeneratedBy.CASE_CLASS else GeneratedBy.VALUE_CLASS
+        val result = LinkedHashMap<Pair<String, String>, GeneratedBy>()
+        for ((key, method) in valueClass.companion.methods) {
+            if (method.isStatic) continue
+            val body = method.body ?: continue
+            val (name, descriptor) = key
+            val matched =
+                when {
+                    name == "hashCode$EXTENSION" && descriptor == "($element)I" -> matchesHashCodeExtension(valueClass, body)
+                    name == "equals$EXTENSION" && descriptor == "(${element}L$OBJECT;)Z" -> matchesEqualsExtension(valueClass, body)
+                    valueClass.isCase -> matchesCaseExtension(valueClass, name, descriptor, body)
+                    else -> false
+                }
+            if (matched) result[key] = mark
+        }
+        return result
+    }
+
+    /**
+     * The `hashCode$extension` of a value class over a field of type T, read from `javap -c` over
+     * a value class of each primitive type, a `String`, a type parameter and an array:
+     *
+     * - a primitive: `load; Box.hashCode(T); ireturn` (Scala 2); `load; BoxesRunTime.boxTo...;
+     *   Box.hashCode(); ireturn` (Scala 3); Scala 3.10.0 also writes `load; ireturn` for an `int`,
+     *   `short`, `byte` or `char`, and for a `boolean` `load; ifeq; 1231; ireturn; 1237; ireturn`.
+     * - a reference: `aload; <Type>.hashCode(); ireturn` with the field's class or `Object` as the
+     *   owner; Scala 3.10.0 writes `Objects.hashCode(Object)` instead.
+     */
+    private fun matchesHashCodeExtension(
+        valueClass: ValueClass,
+        body: List<Insn>,
+    ): Boolean {
+        val type = valueClass.type
+        val load = valueClass.load(1)
+        val done = Insn.Plain(Opcodes.IRETURN)
+        val hashCode = "hashCode"
+        val alternatives = mutableListOf<List<Insn>>()
+        val boxed = boxedName(type)
+        if (boxed == null) {
+            val owners = if (type.sort == Type.OBJECT) listOf(type.internalName, OBJECT) else listOf(OBJECT)
+            for (owner in owners) alternatives += listOf(load, Insn.Call(Opcodes.INVOKEVIRTUAL, owner, hashCode, "()I"), done)
+            alternatives += listOf(load, Insn.Call(Opcodes.INVOKESTATIC, OBJECTS, hashCode, "(L$OBJECT;)I"), done)
+        } else {
+            alternatives += listOf(load, Insn.Call(Opcodes.INVOKESTATIC, boxed, hashCode, "($type)I"), done)
+            alternatives +=
+                listOf(
+                    load,
+                    Insn.Call(Opcodes.INVOKESTATIC, BOXES, "boxTo${boxed.substringAfterLast('/')}", "($type)L$boxed;"),
+                    Insn.Call(Opcodes.INVOKEVIRTUAL, boxed, hashCode, "()I"),
+                    done,
+                )
+            when (type.sort) {
+                Type.INT, Type.SHORT, Type.BYTE, Type.CHAR -> {
+                    alternatives += listOf(load, done)
+                }
+
+                Type.BOOLEAN -> {
+                    alternatives +=
+                        listOf(load, Insn.Jump(Opcodes.IFEQ, 4), Insn.IntConstant(1231), done, Insn.IntConstant(1237), done)
+                }
+            }
+        }
+        return body in alternatives
+    }
+
+    /**
+     * The `equals$extension(T, Object)` of a value class over a field of type T, with the other
+     * object in slot `1 + size(T)`. Scala 3.3.4:
+     *
+     * ```
+     * aload o; astore a; aload a; instanceof X; ifeq NO
+     * aload a; ifnonnull SOME; aconst_null; [unbox T | checkcast T]; goto JOIN
+     * SOME: aload a; checkcast X; invokevirtual X.<field>()T
+     * JOIN: store v; [load v; store c]            (the copy: 3.7.3 to 3.8.3, and 3.10.0)
+     * load T; load v; <compare>; iconst_1; goto END; MISS: iconst_0; END: ireturn
+     * NO: iconst_0; ireturn
+     * ```
+     *
+     * Scala 2.13.15 tests `instanceof X` through a pair of jumps, reads the other object from the
+     * parameter with a null check only for a reference field, and ends at one `ireturn`; see the
+     * body below. The comparison is `if_icmpne`, `lcmp`, `dcmpl` or `fcmpl` then `ifne`,
+     * `if_acmpne` for an array, `BoxesRunTime.equals` for a type parameter, and for a `String` the
+     * null-safe `Object.equals` that case classes get, or `Objects.equals` in Scala 3.3.8, 3.8.4 and later.
+     */
+    private fun matchesEqualsExtension(
+        valueClass: ValueClass,
+        body: List<Insn>,
+    ): Boolean {
+        val type = valueClass.type
+        val other = 1 + type.size
+        val m = Match(body, firstLocal = other + 1)
+        val scala3 = valueClass.companion.isScala3
+        val store = type.getOpcode(Opcodes.ISTORE)
+        val load = type.getOpcode(Opcodes.ILOAD)
+        val self = valueClass.name
+        if (scala3) {
+            m.step(aload(other))
+            m.store(Opcodes.ASTORE, "a")
+            m.load(Opcodes.ALOAD, "a")
+            m.step(Insn.TypeOperand(Opcodes.INSTANCEOF, self))
+            m.jump(Opcodes.IFEQ, "no")
+            m.load(Opcodes.ALOAD, "a")
+            m.jump(Opcodes.IFNONNULL, "some")
+            m.step(Insn.Plain(Opcodes.ACONST_NULL))
+            when (type.sort) {
+                in Type.BOOLEAN..Type.DOUBLE -> m.step(unbox(type))
+                Type.ARRAY -> m.step(Insn.TypeOperand(Opcodes.CHECKCAST, type.internalName))
+            }
+            m.jump(Opcodes.GOTO, "join")
+            m.label("some")
+            m.load(Opcodes.ALOAD, "a")
+            m.step(Insn.TypeOperand(Opcodes.CHECKCAST, self))
+            m.take { insn -> insn.takeIf { it in valueClass.reads } }
+            m.label("join")
+            m.store(store, "v")
+            val copied =
+                m.optional {
+                    load(load, "v")
+                    store(store, "c")
+                    true
+                } == true
+            m.step(valueClass.load(1))
+            m.load(load, if (copied) "c" else "v")
+            m.compareValues(type, "miss", objectsEquals = true)
+            m.step(Insn.IntConstant(1))
+            m.jump(Opcodes.GOTO, "end")
+            m.label("miss")
+            m.step(Insn.IntConstant(0))
+            m.label("end")
+            m.step(Insn.Plain(Opcodes.IRETURN))
+            m.label("no")
+            m.step(Insn.IntConstant(0))
+            m.step(Insn.Plain(Opcodes.IRETURN))
+        } else {
+            m.step(aload(other))
+            m.store(Opcodes.ASTORE, "a")
+            m.load(Opcodes.ALOAD, "a")
+            m.step(Insn.TypeOperand(Opcodes.INSTANCEOF, self))
+            m.jump(Opcodes.IFEQ, "no")
+            m.step(Insn.IntConstant(1))
+            m.jump(Opcodes.GOTO, "test")
+            m.label("no")
+            m.jump(Opcodes.GOTO, "no2")
+            m.label("no2")
+            m.step(Insn.IntConstant(0))
+            m.jump(Opcodes.GOTO, "test")
+            m.label("test")
+            m.jump(Opcodes.IFEQ, "false")
+            m.step(aload(other))
+            val nullChecked = type.sort == Type.OBJECT || type.sort == Type.ARRAY
+            if (nullChecked) {
+                m.jump(Opcodes.IFNONNULL, "some")
+                m.step(Insn.Plain(Opcodes.ACONST_NULL))
+                m.jump(Opcodes.GOTO, "join")
+                m.label("some")
+                m.step(aload(other))
+            }
+            m.step(Insn.TypeOperand(Opcodes.CHECKCAST, self))
+            m.take { insn -> insn.takeIf { it in valueClass.reads } }
+            if (nullChecked) m.label("join")
+            m.store(store, "v")
+            m.step(valueClass.load(1))
+            m.load(load, "v")
+            m.compareValues(type, "false", objectsEquals = false)
+            m.step(Insn.IntConstant(1))
+            m.jump(Opcodes.GOTO, "end")
+            m.label("false")
+            m.step(Insn.IntConstant(0))
+            m.label("end")
+            m.step(Insn.Plain(Opcodes.IRETURN))
+        }
+        return m.matched
+    }
+
+    /**
+     * The comparison that ends `equals$extension`'s test, with both operands of [type] on the
+     * stack, jumping to [fail] when they differ.
+     */
+    private fun Match.compareValues(
+        type: Type,
+        fail: String,
+        objectsEquals: Boolean,
+    ) {
+        when (type.sort) {
+            Type.INT, Type.BOOLEAN, Type.CHAR, Type.BYTE, Type.SHORT -> {
+                jump(Opcodes.IF_ICMPNE, fail)
+            }
+
+            Type.LONG, Type.DOUBLE, Type.FLOAT -> {
+                step(
+                    Insn.Plain(
+                        if (type.sort ==
+                            Type.LONG
+                        ) {
+                            Opcodes.LCMP
+                        } else if (type.sort == Type.DOUBLE) {
+                            Opcodes.DCMPL
+                        } else {
+                            Opcodes.FCMPL
+                        },
+                    ),
+                )
+                jump(Opcodes.IFNE, fail)
+            }
+
+            Type.ARRAY -> {
+                jump(Opcodes.IF_ACMPNE, fail)
+            }
+
+            Type.OBJECT -> {
+                either(
+                    {
+                        step(Insn.Call(Opcodes.INVOKESTATIC, BOXES, "equals", "(L$OBJECT;L$OBJECT;)Z"))
+                        jump(Opcodes.IFEQ, fail)
+                    },
+                    {
+                        if (objectsEquals) {
+                            either(
+                                {
+                                    step(Insn.Call(Opcodes.INVOKESTATIC, OBJECTS, "equals", "(L$OBJECT;L$OBJECT;)Z"))
+                                    jump(Opcodes.IFEQ, fail)
+                                },
+                                { nullSafeEquals(0, fail) },
+                            )
+                        } else {
+                            nullSafeEquals(0, fail)
+                        }
+                    },
+                )
+            }
+
+            else -> {
+                fail()
+            }
+        }
+    }
+
+    /**
+     * The plumbing a case value class's companion holds besides `hashCode$extension` and
+     * `equals$extension`, for a field of type T and the class `X` (`javap -c` over `Meters` and
+     * `Label`): `apply(T)T` and, in Scala 3, `unapply(T)T` are `load; return`; Scala 2's
+     * `unapply(T)Option` builds `Some(value)` behind a test of a new `X` that is never null. `copy$extension(T, T)T`
+     * returns its second parameter, and `copy$default$1$extension(T)T` and Scala 3's
+     * `_1$extension(T)T` their first. `canEqual$extension` tests its argument against `X` (Scala 3) or
+     * against the field's class (Scala 2), `productArity$extension` is 1, `productPrefix$extension`
+     * the class's name, and `toString$extension` and Scala 2's `productIterator$extension` run
+     * `ScalaRunTime` on a new `X`. `productElement$extension` and `productElementName$extension` are
+     * [matchesIndexedExtension].
+     */
+    private fun matchesCaseExtension(
+        valueClass: ValueClass,
+        name: String,
+        descriptor: String,
+        body: List<Insn>,
+    ): Boolean {
+        val type = valueClass.type
+        val element = type.descriptor
+        val size = type.size
+        val scala3 = valueClass.companion.isScala3
+        val string = "L$STRING;"
+        val first = valueClass.load(1)
+        return when (name) {
+            "apply" -> {
+                descriptor == "($element)$element" && body == listOf(first, valueClass.back())
+            }
+
+            "unapply" -> {
+                when (descriptor) {
+                    "($element)$element" -> scala3 && body == listOf(first, valueClass.back())
+                    "($element)$OPTION_DESCRIPTOR" -> !scala3 && matchesUnapplyExtension(valueClass, body)
+                    else -> false
+                }
+            }
+
+            "canEqual$EXTENSION" -> {
+                descriptor == "(${element}L$OBJECT;)Z" &&
+                    body ==
+                    listOf(
+                        aload(1 + size),
+                        Insn.TypeOperand(Opcodes.INSTANCEOF, if (scala3) valueClass.name else valueClass.boxedType),
+                        Insn.Plain(Opcodes.IRETURN),
+                    )
+            }
+
+            "productArity$EXTENSION" -> {
+                descriptor == "($element)I" && body == listOf(Insn.IntConstant(1), Insn.Plain(Opcodes.IRETURN))
+            }
+
+            "productPrefix$EXTENSION" -> {
+                descriptor == "($element)$string" && body == listOf(Insn.Constant(valueClass.shape.sourceName), areturn())
+            }
+
+            "toString$EXTENSION" -> {
+                descriptor == "($element)$string" && body == runtimeCallOnNew(valueClass, "_toString", "(L$PRODUCT;)$string")
+            }
+
+            "productIterator$EXTENSION" -> {
+                !scala3 && descriptor == "($element)$ITERATOR" &&
+                    body == runtimeCallOnNew(valueClass, "typedProductIterator", "(L$PRODUCT;)$ITERATOR")
+            }
+
+            "productElement$EXTENSION" -> {
+                descriptor == "(${element}I)L$OBJECT;" && matchesIndexedExtension(valueClass, body, names = false)
+            }
+
+            "productElementName$EXTENSION" -> {
+                descriptor == "(${element}I)$string" && matchesIndexedExtension(valueClass, body, names = true)
+            }
+
+            "copy$EXTENSION" -> {
+                descriptor == "($element$element)$element" && body == listOf(valueClass.load(1 + size), valueClass.back())
+            }
+
+            "copy\$default\$1$EXTENSION" -> {
+                descriptor == "($element)$element" && body == listOf(first, valueClass.back())
+            }
+
+            "_1$EXTENSION" -> {
+                scala3 && descriptor == "($element)$element" && body == listOf(first, valueClass.back())
+            }
+
+            else -> {
+                false
+            }
+        }
+    }
+
+    /** `getstatic ScalaRunTime$.MODULE$; new X; dup; load; invokespecial X.<init>(T)V; invokevirtual ScalaRunTime$.<name>; return`. */
+    private fun runtimeCallOnNew(
+        valueClass: ValueClass,
+        name: String,
+        descriptor: String,
+    ): List<Insn> =
+        listOf(
+            Insn.Field(Opcodes.GETSTATIC, RUNTIME, MODULE_FIELD, "L$RUNTIME;"),
+            Insn.TypeOperand(Opcodes.NEW, valueClass.name),
+            Insn.Plain(Opcodes.DUP),
+            valueClass.load(1),
+            Insn.Call(Opcodes.INVOKESPECIAL, valueClass.name, "<init>", "(${valueClass.type})V"),
+            Insn.Call(Opcodes.INVOKEVIRTUAL, RUNTIME, name, descriptor),
+            Insn.Plain(Type.getReturnType(descriptor).getOpcode(Opcodes.IRETURN)),
+        )
+
+    /**
+     * Scala 2's `unapply(T)Option` of a case value class: `new X; dup; load; invokespecial
+     * X.<init>(T)V; ifnonnull SOME; getstatic None$.MODULE$; areturn; SOME: new Some; dup; load; box;
+     * invokespecial Some.<init>(Object)V; areturn`.
+     */
+    private fun matchesUnapplyExtension(
+        valueClass: ValueClass,
+        body: List<Insn>,
+    ): Boolean {
+        val m = Match(body)
+        m.step(Insn.TypeOperand(Opcodes.NEW, valueClass.name))
+        m.step(Insn.Plain(Opcodes.DUP))
+        m.step(valueClass.load(1))
+        m.step(Insn.Call(Opcodes.INVOKESPECIAL, valueClass.name, "<init>", "(${valueClass.type})V"))
+        m.jump(Opcodes.IFNONNULL, "some")
+        m.step(Insn.Field(Opcodes.GETSTATIC, NONE_OBJECT, MODULE_FIELD, "L$NONE_OBJECT;"))
+        m.step(areturn())
+        m.label("some")
+        m.step(Insn.TypeOperand(Opcodes.NEW, SOME))
+        m.step(Insn.Plain(Opcodes.DUP))
+        m.step(valueClass.load(1))
+        m.box(valueClass.type)
+        m.step(Insn.Call(Opcodes.INVOKESPECIAL, SOME, "<init>", "(L$OBJECT;)V"))
+        m.step(areturn())
+        return m.matched
+    }
+
+    /**
+     * `productElement$extension(T, int)` ([names] false) or `productElementName$extension` ([names]
+     * true) of a case value class, which has the one element at index 0. It is the shape of
+     * [matchesIndexed] with the index in slot `1 + size(T)` and the value read from slot 1: in
+     * Scala 3 `aload_0; load; invokevirtual <Companion>._1$extension(T)T`, then the box and
+     * `areturn`, or `goto SHARED` for a primitive that is boxed once at the end; in Scala 2 `load`
+     * and the box. The out-of-range case is [matchesIndexed]'s, with the same four wordings.
+     */
+    private fun matchesIndexedExtension(
+        valueClass: ValueClass,
+        body: List<Insn>,
+        names: Boolean,
+    ): Boolean {
+        val type = valueClass.type
+        val index = 1 + type.size
+        val scala3 = valueClass.companion.isScala3
+        return listOf(true, false).any { tableSwitch ->
+            if (!scala3 && !tableSwitch) return@any false
+            val m = Match(body, firstLocal = index + 1)
+            m.step(Insn.Var(Opcodes.ILOAD, index))
+            m.store(Opcodes.ISTORE, "k")
+            var shared = false
+            val caseBody = {
+                if (names) {
+                    m.step(Insn.Constant(valueClass.field.name))
+                    m.step(areturn())
+                } else {
+                    if (scala3) {
+                        m.step(aload(0))
+                        m.step(valueClass.load(1))
+                        m.step(
+                            Insn.Call(
+                                Opcodes.INVOKEVIRTUAL,
+                                valueClass.moduleName,
+                                "_1$EXTENSION",
+                                "(${valueClass.type})${valueClass.type}",
+                            ),
+                        )
+                    } else {
+                        m.step(valueClass.load(1))
+                    }
+                    val boxed =
+                        m.optional {
+                            box(type)
+                            step(areturn())
+                            true
+                        }
+                    if (boxed == null) {
+                        if (!scala3 || type.sort !in Type.BOOLEAN..Type.DOUBLE) m.fail()
+                        shared = true
+                        m.jump(Opcodes.GOTO, "shared")
+                    }
+                }
+            }
+            if (tableSwitch) {
+                m.load(Opcodes.ILOAD, "k")
+                m.tableSwitch(0, listOf("case0"), "default")
+                m.label("case0")
+                caseBody()
+            } else {
+                m.step(Insn.IntConstant(0))
+                m.load(Opcodes.ILOAD, "k")
+                m.jump(Opcodes.IF_ICMPNE, "default")
+                caseBody()
+            }
+            m.label("default")
+            if (scala3) {
+                m.step(Insn.TypeOperand(Opcodes.NEW, OUT_OF_BOUNDS))
+                m.step(Insn.Plain(Opcodes.DUP))
+                m.step(Insn.Var(Opcodes.ILOAD, index))
+                m.either(
+                    {
+                        step(Insn.Call(Opcodes.INVOKESTATIC, BOXES, "boxToInteger", "(I)Ljava/lang/Integer;"))
+                        step(Insn.Call(Opcodes.INVOKEVIRTUAL, INTEGER, "toString", "()L$STRING;"))
+                        step(Insn.Call(Opcodes.INVOKESPECIAL, OUT_OF_BOUNDS, "<init>", "(L$STRING;)V"))
+                    },
+                    { step(Insn.Call(Opcodes.INVOKESPECIAL, OUT_OF_BOUNDS, "<init>", "(I)V")) },
+                )
+                m.step(Insn.Plain(Opcodes.ATHROW))
+                if (shared) m.optional { step(Insn.Plain(Opcodes.ATHROW)) }
+            } else {
+                val ioobe: Match.() -> Unit = {
+                    step(Insn.Var(Opcodes.ILOAD, index))
+                    step(Insn.Call(Opcodes.INVOKESTATIC, STATICS, "ioobe", "(I)L$OBJECT;"))
+                    if (names) step(Insn.TypeOperand(Opcodes.CHECKCAST, STRING))
+                    step(areturn())
+                }
+                val scala212: Match.() -> Unit = {
+                    step(Insn.TypeOperand(Opcodes.NEW, OUT_OF_BOUNDS))
+                    step(Insn.Plain(Opcodes.DUP))
+                    step(Insn.Var(Opcodes.ILOAD, index))
+                    step(Insn.Call(Opcodes.INVOKESTATIC, INTEGER, "toString", "(I)L$STRING;"))
+                    step(Insn.Call(Opcodes.INVOKESPECIAL, OUT_OF_BOUNDS, "<init>", "(L$STRING;)V"))
+                    step(Insn.Plain(Opcodes.ATHROW))
+                }
+                if (!names && valueClass.mayBeScala212) m.either(ioobe, scala212) else m.ioobe()
+            }
+            if (shared) {
+                m.label("shared")
+                m.box(type)
+                m.step(areturn())
+            }
+            m.matched
+        }
+    }
+
+    /**
+     * The forwarders scalac writes for a trait's concrete method. In a class that has the trait
+     * T as a supertype, an instance method `m` is marked when its body is exactly `aload_0`, each
+     * parameter loaded in order, `invokestatic T.m$` taking T and then the method's parameter types
+     * and returning its type, and the return; T is an interface that declares that static method
+     * and a default method `m` with the same descriptor as the class's. In a trait, the static
+     * `m$` is marked when its body is exactly each parameter loaded in order, T first,
+     * `invokespecial T.m` and the return. The trait's default `m` holds the code and is never
+     * marked here. Scala 3 before 3.8 writes the class's forwarder as a bridge. A default-argument
+     * getter (`m$default$N`) is left to ADR 0023.
+     */
+    private fun traitForwarders(
+        shape: ClassShape,
+        lookup: (String) -> ByteArray?,
+    ): Set<Pair<String, String>> {
+        if (shape.access and Opcodes.ACC_INTERFACE != 0) return traitEntries(shape)
+        val result = mutableSetOf<Pair<String, String>>()
+        var supertypes: Set<String>? = null
+        for ((key, method) in shape.methods) {
+            val (name, descriptor) = key
+            if (method.isStatic || name == "<init>" || DEFAULT_GETTER_NAME.matches(name)) continue
+            val body = method.body ?: continue
+            val call = body.getOrNull(body.size - 2) as? Insn.Call ?: continue
+            val trait = call.owner
+            val entryName = "$name$"
+            val entryDescriptor = "(L$trait;${parameterPart(descriptor)})${Type.getReturnType(descriptor)}"
+            val expected =
+                listOf(aload(0)) + parameterLoads(descriptor, 1) +
+                    Insn.Call(Opcodes.INVOKESTATIC, trait, entryName, entryDescriptor) +
+                    Insn.Plain(Type.getReturnType(descriptor).getOpcode(Opcodes.IRETURN))
+            if (body != expected) continue
+            val known = supertypes ?: supertypesOf(shape, lookup).also { supertypes = it }
+            if (trait !in known) continue
+            val declared = readClass(trait, lookup, bodiesOf = emptySet()) ?: continue
+            val entry = declared.methods[entryName to entryDescriptor]
+            val default = declared.methods[key]
+            if (declared.access and Opcodes.ACC_INTERFACE != 0 &&
+                entry?.isStatic == true &&
+                default != null &&
+                !default.isStatic &&
+                default.access and Opcodes.ACC_ABSTRACT == 0
+            ) {
+                result += key
+            }
+        }
+        return result
+    }
+
+    /** The static `m$` of the trait [shape] that only calls its default `m`; see [traitForwarders]. */
+    private fun traitEntries(shape: ClassShape): Set<Pair<String, String>> =
+        shape.methods
+            .filter { (key, method) ->
+                val (name, descriptor) = key
+                val parameters = Type.getArgumentTypes(descriptor)
+                val body = method.body
+                if (!method.isStatic || body == null || !name.endsWith("$") || name.length < 2 || parameters.isEmpty()) {
+                    false
+                } else {
+                    val base = name.dropLast(1)
+                    val defaultDescriptor = "(${parameterPart(
+                        descriptor,
+                    ).removePrefix(parameters[0].descriptor)})${Type.getReturnType(descriptor)}"
+                    val default = shape.methods[base to defaultDescriptor]
+                    parameters[0].descriptor == "L${shape.internalName};" &&
+                        !DEFAULT_GETTER_NAME.matches(base) &&
+                        default != null &&
+                        !default.isStatic &&
+                        default.access and Opcodes.ACC_ABSTRACT == 0 &&
+                        body ==
+                        parameterLoads(descriptor, 0) +
+                        Insn.Call(Opcodes.INVOKESPECIAL, shape.internalName, base, defaultDescriptor) +
+                        Insn.Plain(Type.getReturnType(descriptor).getOpcode(Opcodes.IRETURN))
+                }
+            }.keys
+
+    /** Every superclass and interface of [shape], by internal name, as far as [lookup] reads them. */
+    private fun supertypesOf(
+        shape: ClassShape,
+        lookup: (String) -> ByteArray?,
+    ): Set<String> {
+        val seen = LinkedHashSet<String>()
+        val queue = ArrayDeque(listOfNotNull(shape.superName) + shape.interfaces)
+        while (queue.isNotEmpty() && seen.size < MAX_SUPERTYPES) {
+            val name = queue.removeFirst()
+            if (!seen.add(name)) continue
+            val header = readClass(name, lookup, bodiesOf = emptySet()) ?: continue
+            header.superName?.let(queue::add)
+            queue.addAll(header.interfaces)
+        }
+        return seen
+    }
+
+    private const val MAX_SUPERTYPES = 64
+
+    /** The marks of one class, and the methods among them that a call passes through and [generated] cannot tell apart. */
+    private class Marks(
+        val generated: Map<Pair<String, String>, GeneratedBy>,
+        val passThrough: Set<Pair<String, String>>,
+    )
+
     private fun marksOf(
         shape: ClassShape,
         lookup: (internalName: String) -> ByteArray?,
-    ): Map<Pair<String, String>, GeneratedBy> {
+        sides: ValueSides = valueSidesOf(shape, lookup),
+    ): Marks {
         val result = mutableMapOf<Pair<String, String>, GeneratedBy>()
         for (key in shape.staticForwarders()) result.putIfAbsent(key, GeneratedBy.STATIC_FORWARDER)
         for (key in enumPlumbing(shape, lookup)) result.putIfAbsent(key, GeneratedBy.ENUM)
@@ -325,13 +1169,18 @@ internal object ScalaGeneratedMethods {
                 for (key in companionPlumbing(shape, case)) result.putIfAbsent(key, GeneratedBy.CASE_CLASS)
             }
         }
+        val forwarders = forwarderMarks(shape, lookup, sides)
+        for ((key, mark) in forwarders.generated) result.putIfAbsent(key, mark)
+        sides.companion?.let { valueClass ->
+            for ((key, mark) in valueClassCompanionMarks(valueClass)) result.putIfAbsent(key, mark)
+        }
         if (shape.isModuleClass && shape.writeReplaceMatches()) result.putIfAbsent(WRITE_REPLACE, GeneratedBy.SCALA_OBJECT)
         // Scala 2.12 writes the readResolve and no writeReplace; 2.13 the reverse, and Scala 3 neither.
         // A hand-written writeReplace beside 2.12's readResolve does not make it the adopter's.
         if (!shape.isScala3 && shape.isModuleClass && !shape.writeReplaceMatches() && shape.readResolveMatches()) {
             result.putIfAbsent(READ_RESOLVE, GeneratedBy.SCALA_OBJECT)
         }
-        return result
+        return Marks(result, forwarders.passThrough)
     }
 
     /**
@@ -355,6 +1204,7 @@ internal object ScalaGeneratedMethods {
         shape: ClassShape,
         lookup: (String) -> ByteArray?,
         generated: Map<Pair<String, String>, GeneratedBy>,
+        sides: ValueSides,
     ): Map<Pair<String, String>, UnreadShape> {
         val open = shape.methods.filterKeys { it !in generated }
         if (open.isEmpty()) return emptyMap()
@@ -370,6 +1220,8 @@ internal object ScalaGeneratedMethods {
         add(staticForwarderOutline(shape, open, lookup), UnreadShape.STATIC_FORWARDER, static = true)
         add(enumOutline(shape, lookup, generated), UnreadShape.SCALA_ENUM)
         caseClassOf(shape)?.let { add(caseClassOutline(it), UnreadShape.CASE_CLASS) }
+        sides.boxed?.takeIf { it.isCase }?.let { add(valueCaseOutline(it), UnreadShape.CASE_CLASS) }
+        sides.companion?.takeIf { it.isCase }?.let { add(valueCaseCompanionOutline(it), UnreadShape.CASE_CLASS) }
         if (shape.internalName.endsWith("$") && open.any { (key, method) -> !method.isStatic && key.first in COMPANION_METHODS }) {
             readClass(partnerName(shape), lookup)?.let(::caseClassOf)?.takeIf { !it.isObject }?.let { partner ->
                 add(companionOutline(shape, partner), UnreadShape.CASE_CLASS)
@@ -382,6 +1234,34 @@ internal object ScalaGeneratedMethods {
             add(listOf(WRITE_REPLACE), UnreadShape.SCALA_OBJECT)
             if (!shape.isScala3 && !shape.writeReplaceMatches()) add(listOf(READ_RESOLVE), UnreadShape.SCALA_OBJECT)
         }
+        return result
+    }
+
+    /**
+     * The outlines of the value-class and trait-forwarder families in [shape], for the methods
+     * [generated] left unmarked. [outlineOf] leaves them out, since a Scala 3 class from a read
+     * release holds hand-written code there.
+     */
+    private fun forwarderOutlineOf(
+        shape: ClassShape,
+        lookup: (String) -> ByteArray?,
+        generated: Map<Pair<String, String>, GeneratedBy>,
+        sides: ValueSides,
+    ): Map<Pair<String, String>, UnreadShape> {
+        val open = shape.methods.filterKeys { it !in generated }
+        val result = LinkedHashMap<Pair<String, String>, UnreadShape>()
+
+        fun add(
+            keys: Collection<Pair<String, String>>,
+            family: UnreadShape,
+            static: Boolean = false,
+        ) {
+            for (key in keys) if (open[key]?.isStatic == static) result.putIfAbsent(key, family)
+        }
+        sides.boxed?.let { add(valueClassBoxedOutline(it), UnreadShape.VALUE_CLASS) }
+        sides.companion?.let { add(valueClassCompanionOutline(it), UnreadShape.VALUE_CLASS) }
+        add(traitForwarderOutline(shape, lookup), UnreadShape.TRAIT_FORWARDER)
+        add(traitEntryOutline(shape), UnreadShape.TRAIT_FORWARDER, static = true)
         return result
     }
 
@@ -539,6 +1419,133 @@ internal object ScalaGeneratedMethods {
                     .filter { (name, descriptor) -> pattern.matches(name) && descriptor.startsWith("()") }
         }
         return keys
+    }
+
+    /**
+     * The boxed methods of [valueClass] whose companion declares the instance method `m$extension`,
+     * or one with a numbered suffix as scalac 2.12 writes for an overload, taking the field's type and
+     * then the method's parameters, whatever their bodies.
+     */
+    private fun valueClassBoxedOutline(valueClass: ValueClass): List<Pair<String, String>> =
+        valueClass.shape.methods.keys.filter { (name, descriptor) ->
+            val method = valueClass.shape.methods.getValue(name to descriptor)
+            val targetDescriptor = "(${valueClass.type}${parameterPart(descriptor)})${Type.getReturnType(descriptor)}"
+            !method.isStatic &&
+                name != "<init>" &&
+                name != "<clinit>" &&
+                valueClass.companion.methods.any { (target, extension) ->
+                    !extension.isStatic && target.second == targetDescriptor && isExtensionOf(name, target.first)
+                }
+        }
+
+    /** The `hashCode$extension` and `equals$extension` of the companion of [valueClass], whatever their bodies. */
+    private fun valueClassCompanionOutline(valueClass: ValueClass): List<Pair<String, String>> {
+        val element = valueClass.type.descriptor
+        return listOf("hashCode$EXTENSION" to "($element)I", "equals$EXTENSION" to "(${element}L$OBJECT;)Z")
+    }
+
+    /**
+     * The instance methods of [shape] that a trait forwarder could be, whatever their bodies: a
+     * method of a class with an interface among the supertypes its own interfaces lead to that
+     * declares the static `m$` taking that interface and the method's parameters, and a default `m`
+     * with the method's descriptor, and whose body calls that `m$`. A method with a body of its own
+     * is not in the outline. A default-argument getter is left out.
+     */
+    private fun traitForwarderOutline(
+        shape: ClassShape,
+        lookup: (String) -> ByteArray?,
+    ): List<Pair<String, String>> {
+        if (shape.access and Opcodes.ACC_INTERFACE != 0 || shape.interfaces.isEmpty()) return emptyList()
+        val traits = mutableListOf<ClassShape>()
+        val seen = LinkedHashSet<String>()
+        val queue = ArrayDeque(shape.interfaces)
+        while (queue.isNotEmpty() && seen.size < MAX_SUPERTYPES) {
+            val name = queue.removeFirst()
+            if (!seen.add(name)) continue
+            val header = readClass(name, lookup, bodiesOf = emptySet()) ?: continue
+            if (header.access and Opcodes.ACC_INTERFACE == 0) continue
+            traits += header
+            queue.addAll(header.interfaces)
+        }
+        if (traits.isEmpty()) return emptyList()
+        return shape.methods.keys.filter { key ->
+            val (name, descriptor) = key
+            !shape.methods.getValue(key).isStatic &&
+                name != "<init>" &&
+                !DEFAULT_GETTER_NAME.matches(name) &&
+                traits.any { trait ->
+                    val entryDescriptor = "(L${trait.internalName};${parameterPart(descriptor)})${Type.getReturnType(descriptor)}"
+                    val default = trait.methods[key]
+                    trait.methods["$name$" to entryDescriptor]?.isStatic == true &&
+                        default != null &&
+                        !default.isStatic &&
+                        default.access and Opcodes.ACC_ABSTRACT == 0 &&
+                        shape.methods
+                            .getValue(
+                                key,
+                            ).code
+                            ?.contains(Insn.Call(Opcodes.INVOKESTATIC, trait.internalName, "$name$", entryDescriptor)) ==
+                        true
+                }
+        }
+    }
+
+    /** The static `m$` of the trait [shape] that has a default `m` twin, whatever its body; see [traitEntries]. */
+    private fun traitEntryOutline(shape: ClassShape): List<Pair<String, String>> {
+        if (shape.access and Opcodes.ACC_INTERFACE == 0) return emptyList()
+        return shape.methods.keys.filter { key ->
+            val (name, descriptor) = key
+            val parameters = Type.getArgumentTypes(descriptor)
+            if (!shape.methods.getValue(key).isStatic || !name.endsWith("$") || name.length < 2 || parameters.isEmpty()) {
+                false
+            } else {
+                val base = name.dropLast(1)
+                val twin = "(${parameterPart(descriptor).removePrefix(parameters[0].descriptor)})${Type.getReturnType(descriptor)}"
+                val default = shape.methods[base to twin]
+                parameters[0].descriptor == "L${shape.internalName};" &&
+                    !DEFAULT_GETTER_NAME.matches(base) &&
+                    default != null &&
+                    !default.isStatic &&
+                    default.access and Opcodes.ACC_ABSTRACT == 0
+            }
+        }
+    }
+
+    /**
+     * The members a case value class has beside those [caseClassOutline] lists, whatever their
+     * bodies: `copy` and its default getter, which take and return the field's type.
+     */
+    private fun valueCaseOutline(valueClass: ValueClass): List<Pair<String, String>> {
+        val element = valueClass.type.descriptor
+        return listOf("copy" to "($element)$element", "copy\$default\$1" to "()$element")
+    }
+
+    /**
+     * The members scalac writes in the companion of a case value class, whatever their bodies: the
+     * `$extension` twin of each member of the class, and `apply` and `unapply` taking and returning
+     * the field's type (Scala 2's `unapply` returns an `Option`). A twin the Scala version does not
+     * write is not in the class and so not in the outline.
+     */
+    private fun valueCaseCompanionOutline(valueClass: ValueClass): List<Pair<String, String>> {
+        val element = valueClass.type.descriptor
+        val scala3 = valueClass.companion.isScala3
+        val objectType = "L$OBJECT;"
+        val string = "L$STRING;"
+        return listOf(
+            "apply" to "($element)$element",
+            "unapply" to if (scala3) "($element)$element" else "($element)$OPTION_DESCRIPTOR",
+            "hashCode$EXTENSION" to "($element)I",
+            "equals$EXTENSION" to "($element$objectType)Z",
+            "toString$EXTENSION" to "($element)$string",
+            "canEqual$EXTENSION" to "($element$objectType)Z",
+            "productArity$EXTENSION" to "($element)I",
+            "productPrefix$EXTENSION" to "($element)$string",
+            "productElement$EXTENSION" to "(${element}I)$objectType",
+            "productElementName$EXTENSION" to "(${element}I)$string",
+            "copy$EXTENSION" to "($element$element)$element",
+            "copy\$default\$1$EXTENSION" to "($element)$element",
+            if (scala3) "_1$EXTENSION" to "($element)$element" else "productIterator$EXTENSION" to "($element)$ITERATOR",
+        )
     }
 
     /** The members scalac writes in the companion of the case class [partner], whatever their bodies. */

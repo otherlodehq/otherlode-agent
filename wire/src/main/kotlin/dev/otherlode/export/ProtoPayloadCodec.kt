@@ -833,6 +833,8 @@ object ProtoPayloadCodec {
             UnreadShape.COROUTINE_MACHINERY -> ProtoUnreadShape.UNREAD_SHAPE_COROUTINE_MACHINERY
             UnreadShape.STRING_SWITCH -> ProtoUnreadShape.UNREAD_SHAPE_STRING_SWITCH
             UnreadShape.KOTLINX_SERIALIZER_OBJECT -> ProtoUnreadShape.UNREAD_SHAPE_KOTLINX_SERIALIZER_OBJECT
+            UnreadShape.VALUE_CLASS -> ProtoUnreadShape.UNREAD_SHAPE_VALUE_CLASS
+            UnreadShape.TRAIT_FORWARDER -> ProtoUnreadShape.UNREAD_SHAPE_TRAIT_FORWARDER
         }
 
     private fun fromProto(unreadShape: ProtoUnreadShape): UnreadShape =
@@ -846,6 +848,8 @@ object ProtoPayloadCodec {
             ProtoUnreadShape.UNREAD_SHAPE_COROUTINE_MACHINERY -> UnreadShape.COROUTINE_MACHINERY
             ProtoUnreadShape.UNREAD_SHAPE_STRING_SWITCH -> UnreadShape.STRING_SWITCH
             ProtoUnreadShape.UNREAD_SHAPE_KOTLINX_SERIALIZER_OBJECT -> UnreadShape.KOTLINX_SERIALIZER_OBJECT
+            ProtoUnreadShape.UNREAD_SHAPE_VALUE_CLASS -> UnreadShape.VALUE_CLASS
+            ProtoUnreadShape.UNREAD_SHAPE_TRAIT_FORWARDER -> UnreadShape.TRAIT_FORWARDER
             ProtoUnreadShape.UNRECOGNIZED -> throw IllegalArgumentException("unrecognized unread shape on the wire: $unreadShape")
         }
 
@@ -863,6 +867,7 @@ object ProtoPayloadCodec {
             GeneratedBy.SCALA_OBJECT -> ProtoGeneratedBy.SCALA_OBJECT
             GeneratedBy.VALUE_CLASS -> ProtoGeneratedBy.VALUE_CLASS
             GeneratedBy.KOTLINX_SERIALIZATION -> ProtoGeneratedBy.KOTLINX_SERIALIZATION
+            GeneratedBy.TRAIT_FORWARDER -> ProtoGeneratedBy.TRAIT_FORWARDER
         }
 
     // Never written inside an origin oneof, but a peer can still set the oneof to its zero value, so it
@@ -881,6 +886,7 @@ object ProtoPayloadCodec {
             ProtoGeneratedBy.SCALA_OBJECT -> GeneratedBy.SCALA_OBJECT
             ProtoGeneratedBy.VALUE_CLASS -> GeneratedBy.VALUE_CLASS
             ProtoGeneratedBy.KOTLINX_SERIALIZATION -> GeneratedBy.KOTLINX_SERIALIZATION
+            ProtoGeneratedBy.TRAIT_FORWARDER -> GeneratedBy.TRAIT_FORWARDER
             ProtoGeneratedBy.UNRECOGNIZED -> throw IllegalArgumentException("unrecognized generated-by reason on the wire: $generatedBy")
         }
 

@@ -26,3 +26,7 @@ Constructor defaults cross a class boundary. The getter `$lessinit$greater$defau
 - Scala 2.13 emits `apply$default$N` for the `Cc()` path and inlines `apply` at the call site, so that target is never hit and the constructor getters count only `new Cc()` omissions. Scala 3 routes both paths through the constructor getters. Documented, not corrected.
 - A constructor's static forwarder on the class itself (`Cc.$lessinit$greater$default$N`) resolves in class to the same `<init>` the module getter resolves to across the boundary, so one parameter can carry two omission probes. An optional parameter's omission total is therefore the sum over every omission probe that names it, within one instance; a consumer that judges each probe on its own reports the forwarder's zero as "always supplied" beside the module getter's "never supplied".
 - The static baseline is unchanged: a getter is a declared method and never-loaded claims are class-level.
+
+## Amended on 2026-10-31 by ADR 0080
+
+A trait's forwarder `t$` is marked `TRAIT_FORWARDER` by its body, and so is the forwarder each class that mixes the trait in gets. The collector name policy this record named was never built. The static default-getter accessor `t$default$N$` is unchanged.

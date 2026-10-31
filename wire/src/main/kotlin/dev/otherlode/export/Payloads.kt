@@ -25,7 +25,9 @@ enum class ProbeKind { METHOD, BRANCH, OPTIONAL_ARGUMENT, INITIALIZER_RETURNED, 
  * adds, whose body only forwards to its own class's `$default` twin, or a function of a multi-file
  * facade, whose body only forwards to the same function on a part class. Scala adds a case class's
  * and its companion's plumbing ([CASE_CLASS]), a static forwarder to an object's method
- * ([STATIC_FORWARDER]) and an object's `writeReplace` ([SCALA_OBJECT]). Set on a [ProbeKind.METHOD]
+ * ([STATIC_FORWARDER]) and an object's `writeReplace` ([SCALA_OBJECT]), a value class's boxed
+ * forwarders and `$extension` plumbing ([VALUE_CLASS]), and the forwarders to a trait's concrete
+ * methods ([TRAIT_FORWARDER]). Set on a [ProbeKind.METHOD]
  * probe and a [DeclaredMethod], on a [ProbeKind.BRANCH] probe as the mark of the method it sits in,
  * and on a [ProbeKind.OPTIONAL_ARGUMENT] probe as its target's own mark. A collector leaves a
  * generated probe out of never-hit, stale-hit, the call graph and the two optional-parameter
@@ -46,6 +48,7 @@ enum class GeneratedBy {
     SCALA_OBJECT,
     VALUE_CLASS,
     KOTLINX_SERIALIZATION,
+    TRAIT_FORWARDER,
 }
 
 /**
@@ -124,6 +127,8 @@ enum class UnreadShape {
 
     /** A `@Serializer(forClass = ...)` object's `serialize`, `deserialize` and `getDescriptor`, which the plugin may have filled in. */
     KOTLINX_SERIALIZER_OBJECT,
+    VALUE_CLASS,
+    TRAIT_FORWARDER,
 }
 
 /**

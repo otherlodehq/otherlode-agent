@@ -71,7 +71,9 @@ enum GeneratedBy {
   // productElement and its Name variants, productIterator, productPrefix, Scala 3's _1, _2 and on,
   // and Scala 2's <name>$access$<n>), and its companion's apply, unapply, toString and fromProduct,
   // each marked only when its body is the one scalac writes for that member of that class. A field
-  // accessor and a member the adopter wrote with any other body are not marked.
+  // accessor and a member the adopter wrote with any other body are not marked. For a case class
+  // that is a value class, the same members of the class forward to the companion's m$extension
+  // methods, and those methods, with the companion's apply and unapply, are marked too.
   CASE_CLASS = 7;
   // A static method scalac puts on an object's own class, or on a case class for its companion's
   // methods. Its body only reads the object's MODULE$ field, loads its arguments, calls the method
@@ -89,11 +91,21 @@ enum GeneratedBy {
   // static is not marked. Also the static m-impl whose body only boxes its argument and calls an
   // interface default m the class inherits. The constructor-impl, the property getter and a member the
   // adopter wrote are not marked.
+  // In a Scala value class (a final class with one field whose companion declares m$extension
+  // methods), the boxed method whose body only reads the field and calls the companion's
+  // m$extension, and the companion's hashCode$extension and equals$extension when their bodies
+  // are the ones scalac writes. The adopter's own m$extension holds the code and is not marked.
   VALUE_CLASS = 10;
   // Output of the kotlinx.serialization compiler plugin: a $serializer class's members, a
   // companion's serializer() and the lazy cached serializer. The agent marks it when the bytecode
   // has the plugin's shape.
   KOTLINX_SERIALIZATION = 11;
+  // The forwarders scalac writes for a trait's concrete method. In a class that has the trait as a
+  // supertype, an instance method m whose body only loads this and its arguments, calls the
+  // trait's static m$ and returns. In the trait, the static m$ whose body only loads its arguments,
+  // calls the trait's default method m with invokespecial and returns. The default method m holds
+  // the code and is not marked.
+  TRAIT_FORWARDER = 12;
 }
 
 // The family of compiler output a probe's code belongs to when the agent could not read its body.
@@ -128,6 +140,14 @@ enum UnreadShape {
   // kotlinx.serialization plugin fills in the members the adopter did not write, and nothing in
   // the bytecode tells which those are (ADR 0078).
   UNREAD_SHAPE_KOTLINX_SERIALIZER_OBJECT = 8;
+  // A Scala value class's boxed method, or its companion's hashCode$extension or equals$extension,
+  // in the outline GeneratedBy.VALUE_CLASS reads but with a body the agent has not read for that
+  // compiler.
+  UNREAD_SHAPE_VALUE_CLASS = 9;
+  // A class's method that has a trait's static m$ twin and default m, or a trait's static m$ that
+  // has a default m twin, in the outline GeneratedBy.TRAIT_FORWARDER reads but with a body the
+  // agent has not read for that compiler.
+  UNREAD_SHAPE_TRAIT_FORWARDER = 10;
 }
 
 // Who sent a payload. DeltaBatch, ProbeManifest, StaticBaseline and ClassListing each carry one,

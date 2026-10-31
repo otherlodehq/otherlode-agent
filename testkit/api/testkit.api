@@ -172,6 +172,7 @@ public final class dev/otherlode/testkit/GeneratedBy : java/lang/Enum {
 	public static final field RECORD Ldev/otherlode/testkit/GeneratedBy;
 	public static final field SCALA_OBJECT Ldev/otherlode/testkit/GeneratedBy;
 	public static final field STATIC_FORWARDER Ldev/otherlode/testkit/GeneratedBy;
+	public static final field TRAIT_FORWARDER Ldev/otherlode/testkit/GeneratedBy;
 	public static final field VALUE_CLASS Ldev/otherlode/testkit/GeneratedBy;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
 	public static fun valueOf (Ljava/lang/String;)Ldev/otherlode/testkit/GeneratedBy;
@@ -396,6 +397,8 @@ public final class dev/otherlode/testkit/UnreadShape : java/lang/Enum {
 	public static final field SCALA_OBJECT Ldev/otherlode/testkit/UnreadShape;
 	public static final field STATIC_FORWARDER Ldev/otherlode/testkit/UnreadShape;
 	public static final field STRING_SWITCH Ldev/otherlode/testkit/UnreadShape;
+	public static final field TRAIT_FORWARDER Ldev/otherlode/testkit/UnreadShape;
+	public static final field VALUE_CLASS Ldev/otherlode/testkit/UnreadShape;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
 	public static fun valueOf (Ljava/lang/String;)Ldev/otherlode/testkit/UnreadShape;
 	public static fun values ()[Ldev/otherlode/testkit/UnreadShape;

@@ -3304,13 +3304,31 @@ class ProtoPayloadCodecTest {
     }
 
     @Test
+    fun `every generated-by value round-trips through a probe location and a declared method`() {
+        val resource = ResourceAttributes("checkout", "1.0.0", "", null, "run-1")
+        val marks = GeneratedBy.entries
+        val manifest = ProbeManifest(resource, marks.map { origin(generatedBy = it) })
+        val baseline =
+            StaticBaseline(
+                resource,
+                listOf(DeclaredClass("com.example.Foo", methods = marks.map { DeclaredMethod("m", "()V", generatedBy = it) })),
+                scannedAt = 1L,
+            )
+
+        assertEquals(manifest, ProtoPayloadCodec.decodeProbeManifest(ProtoPayloadCodec.encode(manifest)))
+        assertEquals(baseline, ProtoPayloadCodec.decodeStaticBaseline(ProtoPayloadCodec.encode(baseline)))
+        assertEquals(13, marks.size)
+        assertEquals(12, ProtoGeneratedBy.TRAIT_FORWARDER_VALUE)
+    }
+
+    @Test
     fun `every unread shape round-trips through a probe location`() {
         val resource = ResourceAttributes("checkout", "1.0.0", "", null, "run-1")
         val shapes = UnreadShape.entries.filter { it != UnreadShape.NONE }
         val manifest = ProbeManifest(resource, shapes.map { origin(unreadShape = it) })
 
         assertEquals(manifest, ProtoPayloadCodec.decodeProbeManifest(ProtoPayloadCodec.encode(manifest)))
-        assertEquals(8, shapes.size)
+        assertEquals(10, shapes.size)
     }
 
     @Test

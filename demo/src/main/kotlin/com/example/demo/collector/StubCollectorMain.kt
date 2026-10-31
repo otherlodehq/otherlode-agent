@@ -1035,6 +1035,8 @@ private fun unreadText(shape: UnreadShape): String =
         UnreadShape.UNREAD_SHAPE_COROUTINE_MACHINERY -> "coroutine machinery"
         UnreadShape.UNREAD_SHAPE_STRING_SWITCH -> "string switch"
         UnreadShape.UNREAD_SHAPE_KOTLINX_SERIALIZER_OBJECT -> "kotlinx serializer object"
+        UnreadShape.UNREAD_SHAPE_VALUE_CLASS -> "value class"
+        UnreadShape.UNREAD_SHAPE_TRAIT_FORWARDER -> "trait forwarder"
         else -> shape.name
     }
 

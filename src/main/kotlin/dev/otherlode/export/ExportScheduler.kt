@@ -520,6 +520,8 @@ class ExportScheduler(
             UnreadShape.COROUTINE_MACHINERY -> "coroutine machinery"
             UnreadShape.STRING_SWITCH -> "string switch lowering"
             UnreadShape.KOTLINX_SERIALIZER_OBJECT -> "kotlinx.serialization serializer objects"
+            UnreadShape.VALUE_CLASS -> "Scala value class forwarders"
+            UnreadShape.TRAIT_FORWARDER -> "Scala trait forwarders"
         }
 
     /**

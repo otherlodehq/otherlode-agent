@@ -35,9 +35,23 @@ class ResultEnumsTest {
     }
 
     @Test
+    fun `the trait forwarder mark maps between the wire and the testkit`() {
+        assertEquals(GeneratedBy.TRAIT_FORWARDER, WireGeneratedBy.TRAIT_FORWARDER.toTestkit())
+        assertEquals(WireGeneratedBy.TRAIT_FORWARDER, GeneratedBy.TRAIT_FORWARDER.toWire())
+    }
+
+    @Test
     fun `the kotlinx serializer object unread shape maps between the wire and the testkit`() {
         assertEquals(UnreadShape.KOTLINX_SERIALIZER_OBJECT, WireUnreadShape.KOTLINX_SERIALIZER_OBJECT.toTestkit())
         assertEquals(WireUnreadShape.KOTLINX_SERIALIZER_OBJECT, UnreadShape.KOTLINX_SERIALIZER_OBJECT.toWire())
+    }
+
+    @Test
+    fun `the Scala value class and trait forwarder unread shapes map between the wire and the testkit`() {
+        assertEquals(UnreadShape.VALUE_CLASS, WireUnreadShape.VALUE_CLASS.toTestkit())
+        assertEquals(WireUnreadShape.VALUE_CLASS, UnreadShape.VALUE_CLASS.toWire())
+        assertEquals(UnreadShape.TRAIT_FORWARDER, WireUnreadShape.TRAIT_FORWARDER.toTestkit())
+        assertEquals(WireUnreadShape.TRAIT_FORWARDER, UnreadShape.TRAIT_FORWARDER.toWire())
     }
 
     @Test
