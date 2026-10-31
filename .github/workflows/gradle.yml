@@ -36,7 +36,7 @@ jobs:
             25
             ${{ matrix.test-jdk }}
             21
-      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
       # `build` runs every module's tests, shadowJar, and verifyAgentJar. otherlode.testJdk picks the
       # JVM the tests run on; compilation stays on the JDK 21 toolchain.
       - run: >-
@@ -74,7 +74,7 @@ jobs:
             17
             25
             21
-      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
       # The init script applies the `jacoco` plugin to every Java project, so every test JVM runs
       # with JaCoCo's agent beside Otherlode's, the way an adopter's test task does. `check` rather
       # than `test`, so every test suite runs that way.
