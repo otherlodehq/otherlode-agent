@@ -97,7 +97,7 @@ On the network, a flush is one POST per payload at most every interval. Payload 
 
 One feature is off by default and costs something when on.
 
-The static baseline (`staticBaselineEnabled=true`) walks the classpath's bytecode for every class under `includePackages`, on a background thread named `otherlode-static-baseline-scan`. It does not run in `premain`, so it does not add to the time before `main`. It does compete with your application for CPU while it runs, and the cost scales with classpath size, not with traffic. It runs once per process. See [classes](classes) for what it reports and what it cannot see.
+The static baseline (`staticBaselineEnabled=true`) walks the classpath's bytecode for every class under `includePackages`, on a background thread named `otherlode-static-baseline-scan`. It does not run in `premain`, so it does not add to the time before `main`. It does compete with your application for CPU while it runs, and the cost scales with classpath size, not with traffic. In the startup-only run, the narrow rules with the static baseline on took startup from 18.3 s to 23.0 s on one core (+26.1%), against +21.2% with it off. It runs once per process. See [classes](classes) for what it reports and what it cannot see.
 
 ## What to do about it
 
