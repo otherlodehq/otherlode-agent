@@ -45,6 +45,7 @@ the section being read.
 
 ### Fixed
 
+- The testkit's `neverCalled()` leaves out an endpoint whose endpoint module every instance that reported it switched off, as Otherlode does.
 - Kotlin 1.9 and 2.0 projects compile against the testkit. Its classes carry Kotlin 2.0 metadata, and it depends on kotlin-stdlib 2.0.21, where they carried 2.2 metadata and kotlin-stdlib 2.2.21, which Kotlin 2.0 and earlier cannot read.
 - A class confirmed by a probe hit no longer keeps the stack of the thread that loaded it for the life of the process. Each stack frame is also stored once, however many classes load under it. On the Spring Boot demo with Spring's own classes in scope, the stacks held 9 MB of heap.
 - The static baseline searches the classpath as the JVM does in four more cases. A Spring Boot jar's `BOOT-INF/classes/` and a WAR's `WEB-INF/classes/` rank after every flat classpath entry. A class a multi-release jar holds only under `META-INF/versions/N/`, for an N the JVM reads, keeps its name from a later copy. A jar whose manifest cannot be read is left out with a warning, and a `Class-Path` is split and resolved as URLs relative to the jar, as the JDK does it. A cross-class read takes the copy of the class the JVM loads.

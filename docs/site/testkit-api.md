@@ -134,7 +134,7 @@ A query that reads no zero count keeps answering: `wasHit`, `hitCount`, `omissio
 |---|---|
 | `wasCalled(verb, routeTemplate): Boolean` | `true` if the summed call count is above zero. |
 | `callCount(verb, routeTemplate): Long` | The count summed over instances, each instance's highest delivered total. |
-| `neverCalled(): List<EndpointRef>` | Every endpoint with a summed count of zero, sorted by route template, then verb, then path, regex and servlet pattern in that order, leaving out one whose handler class failed to initialise. Refuses while an instance's zero counts are not evidence. |
+| `neverCalled(): List<EndpointRef>` | Every endpoint with a summed count of zero, sorted by route template, then verb, then path, regex and servlet pattern in that order, leaving out one whose handler class failed to initialise and one whose endpoint module every reporting instance switched off. Refuses while an instance's zero counts are not evidence. |
 | `endpoints(): List<EndpointRef>` | Every endpoint any instance reported, sorted the same way. |
 | `disabledEndpointModules(): List<DisabledEndpointModule>` | The endpoint modules that are not instrumenting: those that switched themselves off, such as on a framework version the agent does not support, and those the agent's configuration kept off. Sorted by module name. |
 

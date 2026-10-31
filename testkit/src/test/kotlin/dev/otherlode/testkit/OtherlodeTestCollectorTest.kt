@@ -184,12 +184,13 @@ class OtherlodeTestCollectorTest {
         handlerClass: String? = null,
         handlerMethod: String? = null,
         templateKind: EndpointTemplateKind = EndpointTemplateKind.PATH,
+        framework: String = "jdk-httpserver",
     ) = EndpointLocation(
         endpointId = endpointId,
         verb = verb,
         routeTemplate = routeTemplate,
         verbatimTemplate = routeTemplate,
-        framework = "jdk-httpserver",
+        framework = framework,
         discoverySource = EndpointDiscoverySource.REGISTRATION,
         handlerClass = handlerClass,
         handlerMethod = handlerMethod,
@@ -1797,6 +1798,49 @@ class OtherlodeTestCollectorTest {
         assertFailsWith<TimeoutException> {
             target.awaitEndpoint("GET", "/never", Duration.ofMillis(150))
         }
+    }
+
+    @Test
+    fun `neverCalled leaves out an endpoint whose framework module the only reporting instance disabled`() {
+        val target = startCollector()
+        val exporter = exporterFor(target)
+        val resource = ResourceAttributes("svc", null, "i-1", null, "run-1")
+        exporter.exportManifest(
+            watchedManifest(
+                resource,
+                emptyList(),
+                endpoints = listOf(endpoint(0, "GET", "/x", framework = "spring-webmvc")),
+                disabledEndpointModules =
+                    listOf(DisabledEndpointModule("spring-webmvc", "advice threw", 1L, DisabledEndpointModuleKind.ADVICE_FAILED)),
+            ),
+        )
+        exporter.exportDeltaBatch(DeltaBatch(resource, emptyList()))
+
+        assertEquals(emptyList(), target.neverCalled().map { it.verb to it.routeTemplate })
+        assertEquals(listOf("GET" to "/x"), target.endpoints().map { it.verb to it.routeTemplate })
+    }
+
+    @Test
+    fun `neverCalled keeps an endpoint that an instance with the module on reported`() {
+        val target = startCollector()
+        val exporter = exporterFor(target)
+        val endpoints = listOf(endpoint(0, "GET", "/x", framework = "spring-webmvc"))
+        exporter.exportManifest(
+            watchedManifest(
+                ResourceAttributes("svc", null, "i-1", null, "run-1"),
+                emptyList(),
+                endpoints = endpoints,
+                disabledEndpointModules =
+                    listOf(DisabledEndpointModule("spring-webmvc", "advice threw", 1L, DisabledEndpointModuleKind.ADVICE_FAILED)),
+            ),
+        )
+        exporter.exportManifest(
+            watchedManifest(ResourceAttributes("svc", null, "i-2", null, "run-1"), emptyList(), endpoints = endpoints),
+        )
+        exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("svc", null, "i-1", null, "run-1"), emptyList()))
+        exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("svc", null, "i-2", null, "run-1"), emptyList()))
+
+        assertEquals(listOf("GET" to "/x"), target.neverCalled().map { it.verb to it.routeTemplate })
     }
 
     @Test

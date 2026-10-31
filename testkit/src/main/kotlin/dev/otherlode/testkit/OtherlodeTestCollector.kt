@@ -505,6 +505,8 @@ public class OtherlodeTestCollector internal constructor(
     /** Every `(instance, endpoint_id)` ever reported for an identity, so [callCount] can sum each instance's latest total. */
     private val endpointKeysByIdentity = ConcurrentHashMap<EndpointIdentity, MutableSet<InstanceEndpointKey>>()
     private val endpointHitsByKey = ConcurrentHashMap<InstanceEndpointKey, Long>()
+    private val endpointFrameworkByKey = ConcurrentHashMap<InstanceEndpointKey, String>()
+    private val disabledModuleNamesByInstance = ConcurrentHashMap<String, MutableSet<String>>()
     private val disabledEndpointModulesByName = ConcurrentHashMap<String, DisabledEndpointModule>()
 
     // Dependency usage. Everything is per instance: dependency_id and class_id are assigned by each
@@ -2405,7 +2407,8 @@ public class OtherlodeTestCollector internal constructor(
      * summed call count is zero, sorted by route template, then verb, then path, regex and servlet pattern in that order. An endpoint discovered by
      * dispatch was called, so it appears here only until its first count arrives. An endpoint whose
      * handler class failed to initialise ([failedToInitialize]) is left out, since nothing could
-     * dispatch to it. Throws [IllegalStateException] while an instance's zero counts are not
+     * dispatch to it. So is one whose framework module every reporting instance switched off
+     * ([disabledEndpointModules]). Throws [IllegalStateException] while an instance's zero counts are not
      * evidence, as [neverHit] does.
      */
     public fun neverCalled(): List<EndpointRef> =
@@ -2413,10 +2416,20 @@ public class OtherlodeTestCollector internal constructor(
             val failedToInitialize = failedToInitializeNames()
             endpointRefsByIdentity
                 .filterKeys { identity -> (endpointKeysByIdentity[identity]?.sumOf { endpointHitsByKey[it] ?: 0L } ?: 0L) <= 0L }
+                .filterKeys { identity -> !endpointModuleDisabledEverywhere(identity) }
                 .values
                 .filter { it.handlerClass !in failedToInitialize }
                 .sortedWith(compareBy({ it.routeTemplate }, { it.verb }, { it.isServletPatternTemplate }, { it.isRegexTemplate }))
         }
+
+    private fun endpointModuleDisabledEverywhere(identity: EndpointIdentity): Boolean {
+        val keys = endpointKeysByIdentity[identity].orEmpty()
+        return keys.isNotEmpty() &&
+            keys.all { key ->
+                val framework = endpointFrameworkByKey[key]
+                framework != null && framework in disabledModuleNamesByInstance[key.serviceInstanceId].orEmpty()
+            }
+    }
 
     /** Every endpoint any instance ever reported, sorted by route template, then verb, then path, regex and servlet pattern in that order. */
     public fun endpoints(): List<EndpointRef> =
@@ -2915,6 +2928,7 @@ public class OtherlodeTestCollector internal constructor(
                         )
                     val key = InstanceEndpointKey(instanceId, endpointLocation.endpointId)
                     endpointKeysByIdentity.computeIfAbsent(identity) { ConcurrentHashMap.newKeySet() }.add(key)
+                    endpointFrameworkByKey[key] = endpointLocation.framework
                     // Upserts unconditionally: a re-delivered record carries a newer handler join or
                     // discovery source, and the latest delivery, from any instance, wins.
                     endpointRefsByIdentity[identity] =
@@ -2932,6 +2946,7 @@ public class OtherlodeTestCollector internal constructor(
                         )
                 }
                 for (module in manifest.disabledEndpointModules) {
+                    disabledModuleNamesByInstance.computeIfAbsent(instanceId) { ConcurrentHashMap.newKeySet() }.add(module.module)
                     disabledEndpointModulesByName.putIfAbsent(
                         module.module,
                         DisabledEndpointModule(module.module, module.reason, module.kind.toTestkit()),
