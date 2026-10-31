@@ -100,13 +100,7 @@ Each lands in every repo as a shared path.
   test before moving anything, and revert a reshape that leaves the code no
   easier to read.
 
-### The class listing's cost on demo-spring and a large classpath
-
-The overhead page states the listing's cost on PetClinic's jar from run
-38949019169: a first call measured in a JVM of its own on one runner core
-took about 100 ms of CPU with the narrow rules and 210 ms with
-`org.springframework`. The harness measures it on every run. Measure it
-still on demo-spring and on a large classpath.
+### The class listing's gaps
 
 Known gaps in what it lists, all rare, all listing less than the JVM loads:
 
