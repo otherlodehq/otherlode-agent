@@ -1,6 +1,8 @@
 package dev.otherlode.dependencies
 
 import dev.otherlode.dependencies.TestJars.classEntry
+import org.junit.jupiter.api.condition.EnabledOnJre
+import org.junit.jupiter.api.condition.JRE
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.nio.file.Files
@@ -45,6 +47,17 @@ class ClasspathWalkerTest {
             jarFile: JarFile,
             cause: Exception,
         ) = record("unnamed", jar)
+
+        override fun jarWithIgnoredClassPath(
+            jar: File,
+            jarFile: JarFile,
+        ) = record("ignored", jar)
+
+        override fun libraryJarWithIgnoredClassPath(
+            application: File,
+            jar: File,
+            jarFile: JarFile,
+        ) = record("libignored", jar)
 
         override fun directory(directory: File) = record("dir", directory)
 
@@ -537,6 +550,125 @@ class ClasspathWalkerTest {
         val after = jar("after.jar")
 
         assertEquals(listOf("unreadable:dropped.jar", "jar:after.jar"), walk(dropped, after))
+    }
+
+    private fun indexedJar(relative: String): Path =
+        TestJars.write(
+            dir.resolve(relative),
+            listOf(classEntry("a.A"), "META-INF/INDEX.LIST" to "JarIndex-Version: 1.0\n\ndep.jar\n".toByteArray()),
+            mapOf("Class-Path" to "dep.jar unknown:thing"),
+        )
+
+    @Test
+    @EnabledOnJre(JRE.JAVA_17)
+    fun `on JDK 17 a jar with an index and a bad Class-Path token goes to the ignored callback and names nothing`() {
+        val indexed = indexedJar("indexed.jar")
+        jar("dep.jar")
+        val after = jar("after.jar")
+
+        assertEquals(listOf("ignored:indexed.jar", "jar:after.jar"), walk(indexed, after))
+    }
+
+    @Test
+    @EnabledOnJre(JRE.JAVA_17)
+    fun `the ignored callback reads the jar as a plain jar unless a visitor overrides it`() {
+        val indexed = indexedJar("indexed.jar")
+        val events = mutableListOf<String>()
+        val visitor =
+            object : ClasspathVisitor {
+                override fun jar(
+                    jar: File,
+                    jarFile: JarFile,
+                ) {
+                    events += "jar:${jar.name}"
+                }
+
+                override fun directory(directory: File) = Unit
+
+                override fun explodedApplication(
+                    root: File,
+                    manifest: Manifest,
+                ) = Unit
+
+                override fun libraryJar(
+                    application: File,
+                    jar: File,
+                    jarFile: JarFile,
+                ) = Unit
+
+                override fun unreadable(
+                    location: String,
+                    cause: Exception,
+                ) {
+                    events += "unreadable:$location"
+                }
+            }
+
+        ClasspathWalker(JarClassifier(emptyList(), emptyList())).walk(listOf(indexed.toString()), visitor)
+
+        assertEquals(listOf("jar:indexed.jar"), events)
+    }
+
+    @Test
+    fun `a jar with an index and a bad Class-Path token never reaches the ignored callback when the JDK drops it`() {
+        val feature = Runtime.version().feature()
+        val indexed = indexedJar("indexed.jar")
+
+        val events = walk(indexed)
+
+        assertEquals(if (feature == 17) listOf("ignored:indexed.jar") else listOf("unreadable:indexed.jar"), events)
+    }
+
+    @Test
+    fun `a library jar with an index and a bad Class-Path token goes to the library ignored callback on JDK 17 and is unreadable after`() {
+        val app = explodedApplication("app")
+        Files.createDirectories(app.resolve("BOOT-INF/lib"))
+        indexedJar("app/BOOT-INF/lib/a.jar")
+        val kept = if (Runtime.version().feature() == 17) "libignored" else "unreadable"
+
+        assertEquals(listOf("app:app", "$kept:app/BOOT-INF/lib/a.jar"), walk(app))
+    }
+
+    @Test
+    @EnabledOnJre(JRE.JAVA_17)
+    fun `the library ignored callback reads the jar as a library jar unless a visitor overrides it`() {
+        val app = explodedApplication("app")
+        Files.createDirectories(app.resolve("BOOT-INF/lib"))
+        indexedJar("app/BOOT-INF/lib/a.jar")
+        val events = mutableListOf<String>()
+        val visitor =
+            object : ClasspathVisitor {
+                override fun jar(
+                    jar: File,
+                    jarFile: JarFile,
+                ) = Unit
+
+                override fun directory(directory: File) = Unit
+
+                override fun explodedApplication(
+                    root: File,
+                    manifest: Manifest,
+                ) = Unit
+
+                override fun libraryJar(
+                    application: File,
+                    jar: File,
+                    jarFile: JarFile,
+                ) {
+                    events += "lib:${jar.name}"
+                }
+
+                override fun unreadable(
+                    location: String,
+                    cause: Exception,
+                ) {
+                    events += "unreadable:$location"
+                }
+            }
+
+        ClasspathWalker(JarClassifier(emptyList(), emptyList())).walk(listOf(app.toString()), visitor)
+
+        assertEquals(listOf("lib:a.jar"), events)
     }
 
     @Test

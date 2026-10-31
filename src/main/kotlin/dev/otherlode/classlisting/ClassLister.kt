@@ -124,11 +124,32 @@ class ClassLister(
             jar: File,
             jarFile: JarFile,
             cause: Exception,
+        ) = addJarClasses(jarFile, names)
+
+        override fun jarWithIgnoredClassPath(
+            jar: File,
+            jarFile: JarFile,
         ) {
-            // Java 17 keeps such a jar when it has an index, and then loads the classes the index
-            // maps to other jars, which the listing cannot follow.
-            if (jarFile.getEntry(INDEX_LIST) != null) throw ListingFailed(jar.path, cause)
-            addJarClasses(jarFile, names)
+            refuseIndex(jar, jarFile)
+            jar(jar, jarFile)
+        }
+
+        override fun libraryJarWithIgnoredClassPath(
+            application: File,
+            jar: File,
+            jarFile: JarFile,
+        ) {
+            refuseIndex(jar, jarFile)
+            libraryJar(application, jar, jarFile)
+        }
+
+        private fun refuseIndex(
+            jar: File,
+            jarFile: JarFile,
+        ) {
+            if (jarFile.getEntry(INDEX_LIST) != null) {
+                throw ListingFailed(jar.path, IOException("the jar holds $INDEX_LIST, which the listing does not follow"))
+            }
         }
 
         override fun directory(directory: File) {

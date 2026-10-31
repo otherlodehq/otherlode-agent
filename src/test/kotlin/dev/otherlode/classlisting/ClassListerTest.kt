@@ -3,6 +3,9 @@ package dev.otherlode.classlisting
 import dev.otherlode.dependencies.RawZip
 import dev.otherlode.dependencies.TestJars
 import dev.otherlode.dependencies.TestJars.classEntry
+import org.junit.jupiter.api.condition.DisabledOnJre
+import org.junit.jupiter.api.condition.EnabledOnJre
+import org.junit.jupiter.api.condition.JRE
 import org.junit.jupiter.api.io.TempDir
 import java.io.File
 import java.nio.file.Files
@@ -399,8 +402,7 @@ class ClassListerTest {
         assertTrue(named.toFile().exists())
     }
 
-    @Test
-    fun `a jar with a Class-Path token that is not a valid URL and an index gives no listing`() {
+    private fun indexedJarWithBadToken(): Path {
         val bad =
             TestJars.write(
                 dir.resolve("indexed.jar"),
@@ -408,6 +410,13 @@ class ClassListerTest {
                 mapOf("Class-Path" to "named.jar unknown:thing"),
             )
         TestJars.write(dir.resolve("named.jar"), listOf(classEntry("com.acme.Named")))
+        return bad
+    }
+
+    @Test
+    @EnabledOnJre(JRE.JAVA_17)
+    fun `on JDK 17 a jar with a Class-Path token that is not a valid URL and an index gives no listing`() {
+        val bad = indexedJarWithBadToken()
         var listed: List<String>? = listOf("unset")
 
         val warnings = warningsFrom { listed = lister(classPath(bad)).list() }
@@ -415,6 +424,38 @@ class ClassListerTest {
         assertNull(listed)
         assertEquals(1, warnings.size, warnings.toString())
         assertTrue(bad.toString() in warnings.single().message, warnings.single().message)
+    }
+
+    @Test
+    @EnabledOnJre(JRE.JAVA_17)
+    fun `on JDK 17 a Spring Boot library jar with a bad Class-Path token and an index gives no listing`() {
+        val app = Files.createDirectories(dir.resolve("app"))
+        Files.createDirectories(app.resolve("META-INF"))
+        Files.write(app.resolve("META-INF/MANIFEST.MF"), "Manifest-Version: 1.0\nSpring-Boot-Lib: BOOT-INF/lib/\n\n".toByteArray())
+        Files.createDirectories(app.resolve("BOOT-INF/lib"))
+        TestJars.write(
+            app.resolve("BOOT-INF/lib/a.jar"),
+            listOf(classEntry("com.acme.Bad"), "META-INF/INDEX.LIST" to "JarIndex-Version: 1.0\n\nb.jar\ncom/acme\n".toByteArray()),
+            mapOf("Class-Path" to "b.jar unknown:thing"),
+        )
+        var listed: List<String>? = listOf("unset")
+
+        val warnings = warningsFrom { listed = lister(classPath(app)).list() }
+
+        assertNull(listed)
+        assertEquals(1, warnings.size, warnings.toString())
+    }
+
+    @Test
+    @DisabledOnJre(JRE.JAVA_17)
+    fun `from JDK 18 a jar with a Class-Path token that is not a valid URL and an index lists its own classes`() {
+        val bad = indexedJarWithBadToken()
+        lateinit var listed: List<String>
+
+        val warnings = warningsFrom { listed = lister(classPath(bad)).list() ?: error("no listing") }
+
+        assertEquals(listOf("com.acme.Bad"), listed)
+        assertEquals(emptyList(), warnings)
     }
 
     @Test

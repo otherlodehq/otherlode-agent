@@ -47,6 +47,28 @@ internal interface ClasspathVisitor {
     ) = unreadable(jar.path, cause)
 
     /**
+     * A jar the system loader keeps although a `Class-Path` token is not a valid URL, because on
+     * Java 17 the JDK reads the jar's `META-INF/INDEX.LIST` instead of the attribute. The
+     * loader follows none of its `Class-Path` entries, and loads the classes the index maps to other
+     * jars. The default reads the jar as [jar].
+     */
+    fun jarWithIgnoredClassPath(
+        jar: File,
+        jarFile: JarFile,
+    ) = jar(jar, jarFile)
+
+    /**
+     * A jar of the exploded Spring Boot application at [application] that the JDK keeps although a
+     * `Class-Path` token is not a valid URL, on the same terms as [jarWithIgnoredClassPath]. The
+     * default reads the jar as [libraryJar].
+     */
+    fun libraryJarWithIgnoredClassPath(
+        application: File,
+        jar: File,
+        jarFile: JarFile,
+    ) = libraryJar(application, jar, jarFile)
+
+    /**
      * A directory on the classpath or named by a `Class-Path` whose `META-INF/MANIFEST.MF` cannot
      * be read. The JDK never reads a directory's manifest, so it loads the directory's classes as
      * from any other, but the walker cannot tell whether it is an exploded Spring Boot application.
@@ -197,8 +219,9 @@ internal class ClasspathWalker(
      * JDK decides whether it drops the jar ([jdkLoadsFrom]). A dropped jar is not read and names
      * none; it is reported as unreadable, through [ClasspathVisitor.jarWithInvalidClassPath] for a
      * bad token on the system loader. A kept jar of the system loader with an unreadable manifest
-     * goes to [ClasspathVisitor.jarWithUnreadableManifest]. One kept despite a bad token is read and
-     * names none. When [read] fails, the `Class-Path` is still followed, since the JDK needs only the
+     * goes to [ClasspathVisitor.jarWithUnreadableManifest]. One kept despite a bad token names none.
+     * On the system loader it goes to [ClasspathVisitor.jarWithIgnoredClassPath], and otherwise it
+     * is read. When [read] fails, the `Class-Path` is still followed, since the JDK needs only the
      * manifest to follow it.
      */
     private fun readJar(
@@ -216,7 +239,11 @@ internal class ClasspathWalker(
                 }
 
                 is ManifestRead.KeptInvalidClassPath -> {
-                    attempt(jar, visitor) { read(jarFile) }
+                    if (application == null) {
+                        attempt(jar, visitor) { visitor.jarWithIgnoredClassPath(jar, jarFile) }
+                    } else {
+                        attempt(jar, visitor) { visitor.libraryJarWithIgnoredClassPath(application, jar, jarFile) }
+                    }
                 }
 
                 is ManifestRead.KeptUnreadable -> {
