@@ -91,7 +91,7 @@ Static baseline follow-ups the first-copy change surfaced. Each only loses evide
 - A jar whose manifest cannot be read is still scanned; the JDK drops such a jar. `Class-Path` entries are split on single spaces and resolved as file paths, where the JDK tokenises and resolves URLs.
 - Cross-class reads can take a shadowed copy's tables from the referencing root's locator.
 
-### Tooling: code principles, a refactoring playbook and a prose lint
+### Tooling: code principles and a refactoring playbook
 
 From the comparison with pstack's poteto-mode (`cursor/plugins`, `190d287`).
 Each lands in every repo as a shared path.
@@ -106,9 +106,6 @@ Each lands in every repo as a shared path.
 - A Refactoring playbook: pin current behaviour with a characterisation
   test before moving anything, and revert a reshape that leaves the code no
   easier to read.
-- A lint for the rules repeated in prose across the skills and `CLAUDE.md`
-  files (no em dashes, no semicolons in prose, no session ids), run as a
-  hook or in the `Claude config` workflow, so the prose can drop them.
 
 ### The class listing's cost on demo-spring and a large classpath
 
