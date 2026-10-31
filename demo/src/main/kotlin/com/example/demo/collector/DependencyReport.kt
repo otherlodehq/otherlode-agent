@@ -8,8 +8,14 @@ internal data class DependencyIdentityView(
     val artifactId: String,
     val version: String,
 ) {
-    /** `group:artifact`, the cross-instance name. The group is empty for a filename-derived identity. */
-    val key: String get() = "$groupId:$artifactId"
+    /**
+     * `group:artifact`, the cross-instance name, with `\`, `:` and `,` in either id escaped by a
+     * backslash as the server escapes them (its ADR 0086). The group is empty for a filename-derived
+     * identity.
+     */
+    val key: String get() = "${escape(groupId)}:${escape(artifactId)}"
+
+    private fun escape(id: String) = id.replace("\\", "\\\\").replace(":", "\\:").replace(",", "\\,")
 }
 
 /** One instance's `DependencyLocation`, with that instance's own [dependencyId]. */
@@ -20,7 +26,7 @@ internal data class DependencyView(
     val classCount: Int?,
     val location: String,
 ) {
-    /** The sorted `group:artifact` pairs, which name the dependency across instances. */
+    /** The distinct [DependencyIdentityView.key]s, sorted and joined with `,`, which name the dependency across instances. */
     val identityKey: String get() =
         identities
             .map { it.key }

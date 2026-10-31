@@ -367,7 +367,7 @@ Returned by `neverSupplied` and `alwaysSupplied`. It names the function the para
 
 | Field | Type | Meaning |
 |---|---|---|
-| `identityKey` | `String` | The identities of the dependency joined with commas, such as `com.fasterxml.jackson.core:jackson-databind`. An identity read from a file name has no group and reads `:commons-lang3`. |
+| `identityKey` | `String` | The identities of the dependency joined with commas, such as `com.fasterxml.jackson.core:jackson-databind`. An identity read from a file name has no group and reads `:commons-lang3`. A `\`, `:` or `,` inside a group or artifact id is escaped with a backslash, as Otherlode escapes it. |
 | `status` | `DependencyUsage` | What the dependency rules say. |
 | `identities` | `List<DependencyIdentityRef>` | Every `groupId:artifactId` the dependency carries. A shaded jar carries several. |
 | `loadedClassesTotal` | `Long` | The largest count of distinct loaded classes any one instance reported. |

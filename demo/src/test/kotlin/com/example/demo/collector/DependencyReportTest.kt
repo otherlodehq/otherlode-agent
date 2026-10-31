@@ -7,6 +7,17 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class DependencyReportTest {
+    @Test
+    fun `identity keys escape their separators so different identities never share one`() {
+        fun key(vararg ids: Pair<String, String>) =
+            jackson.copy(identities = ids.map { (g, a) -> DependencyIdentityView(g, a, "1") }).identityKey
+
+        assertEquals("tools.jackson.core:jackson-databind", jackson.identityKey)
+        assertTrue(key("a:b" to "c") != key("a" to "b:c"))
+        assertTrue(key("org.x" to "a", "org.y" to "b") != key("org.x" to "a,org.y:b"))
+        assertEquals("a\\\\b:c\\:d\\,e", key("a\\b" to "c:d,e"))
+    }
+
     private val jackson =
         DependencyView(
             dependencyId = 1,

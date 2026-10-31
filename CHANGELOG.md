@@ -34,6 +34,7 @@ the section being read.
 
 ### Changed
 
+- The testkit's `DependencyRef.identityKey` escapes a `\`, `:` or `,` inside a group or artifact id with a backslash, as Otherlode does, so two different dependencies never share a key.
 - The warning that the `authToken` is sent unencrypted is not logged when the plain `http://` `exportUrl` names `localhost`, an IPv4 address from `127.0.0.0` to `127.255.255.255` or `[::1]`. The agent reads the host as written and never resolves a name. The default `exportUrl` is `http://localhost:4319`, so a token with no `exportUrl` no longer logs it.
 - A JAX-RS resource class's routes are reported once the agent has seen the class defined or a route of it called. A resource class the JVM never defines reports no routes, and the agent logs a `WARNING` naming it (ADR 0028).
 - Every chunk of a delta batch, manifest, static baseline and class listing closes at 8 MiB of encoded bytes or 90% of the collector's element limit for its kind, as well as at its entry cap. A class too large to send alone is reported as skipped in the manifest, and its hits are not sent. A static baseline that holds such a class is not sent at all, and the agent logs one WARNING that names the class.
