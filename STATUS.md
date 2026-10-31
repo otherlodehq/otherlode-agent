@@ -13,18 +13,12 @@ the collector as open source. `otherlode-server` stays closed source and
 hosted (server ADR 0001), so every adopter's collector forwards to one
 multi-tenant backend.
 
-1. **Quote the steady startup figure.** `docs/site/overhead.md` and
-   `benchmark-overhead/README.md` quote run 38944648115 on `1332f3f`
-   (2026-10-16): narrow startup +21.7%, from 6 repeats on a runner whose
-   no-agent startup ranges from 9 s to 19 s across nights. The
-   startup-only job (21 repeats per variant) is steady: each variant's
-   interquartile range is a few percent wide, startup CPU time is within
-   4% of wall time and steal reads 0, so the spread across nights is the
-   runner's CPU model. On an AMD EPYC 7763 it read +25.5% on `f54d9a8`
-   (run 40604262835) and +21.9% on `a6009fc` (run 40710245098), whose
-   endpoint pre-filter keeps ByteBuddy off the classes no endpoint module
-   can match (ADR 0017, amended 2026-10-28). Re-run the startup-only job
-   on the commit to be tagged and update both pages from it.
+1. **The startup figure.** `docs/site/overhead.md` and
+   `benchmark-overhead/README.md` quote the startup-only job's run
+   41236248477 on `b42e026` (2026-10-31): narrow startup +21.2%, 21
+   repeats per variant. If code that runs at class load or in `premain`
+   changes before the tag, re-run that job on the tagged commit and
+   update both pages.
 2. **Cut the releases** (ADRs 0062 and 0063, collector ADR 0006). Cutting
    is Luke's call. Collector `v0.1.0` goes first, since the agent's
    `release.sh` refuses a release until it exists. Each needs its
@@ -41,9 +35,7 @@ multi-tenant backend.
    the Maven Central download, the `ghcr.io/otherlodehq/otherlode-collector`
    image, `https://app.otherlode.dev` and `https://ingest.otherlode.dev`.
    Its links to the agent's and collector's pages resolve once their first
-   releases sync. It tells readers to ignore the agent's plain-http token
-   warning on `localhost`; exempting loopback addresses in the agent
-   would remove that sentence.
+   releases sync.
 4. **Neither release workflow has run in full.** The collector's
    `release.yml` has never run, so its GHCR multi-arch push, the
    attestation `deploy.md` tells users to verify, its GitHub release and

@@ -278,7 +278,18 @@ lies inside `none`'s own spread.
 | RSS | +76 MiB (+7.4%) | +303 MiB (+29.5%) |
 | minimum heap used | +10 MiB | +122 MiB |
 | metaspace | +19 MiB | +23 MiB |
-| startup | 17.0 s to 20.7 s (+21.7%) | 13.5 s to 36.0 s (+166%) |
+| startup | 18.3 s to 22.2 s (+21.2%) | 13.5 s to 36.0 s (+166%) |
+
+The headline's startup comes from the startup-only job, workflow run 41236248477 on 2026-10-31,
+agent at `b42e026`, on an AMD EPYC 7763 (4 vCPU) with PetClinic on one pinned core. 21 repeats
+per variant, steal 0. Medians, with the interquartile range:
+
+| | `none` | `agent` | `agent-baseline` |
+|---|---|---|---|
+| time to first 200 | 18.3 s (17.7 to 18.7) | 22.2 s (21.1 to 22.4), +21.2% | 23.0 s (21.9 to 23.6), +26.1% |
+| startup CPU | 17.9 s (17.4 to 18.4) | 21.8 s (20.8 to 22.0), +21.7% | 22.7 s (21.5 to 23.2), +26.6% |
+
+Every other row of the first table, and the ceiling's startup, come from run 38944648115.
 
 The startup target is the headline's time to first 200 within 25% of `none` on this runner; it is a
 target to watch, not a gate. The ceiling has none. Startup on one core is where the agent's
