@@ -85,11 +85,12 @@ that does not exist. To decide: whether to mark a stub that would throw
 
 ### Hardening follow-ups
 
-Static baseline follow-ups the first-copy change surfaced. Each only loses evidence:
-- A Spring Boot jar's `BOOT-INF/classes` copies rank at the jar's place on the classpath, but at runtime the launcher's class loader asks its parent first, so a flat root later on the classpath wins. Classifying all flat roots first, then each jar's nested entries, would match.
-- A class held only under `META-INF/versions/N/` of an earlier multi-release jar marks no name, so a later root's base copy is kept.
-- A jar whose manifest cannot be read is still scanned; the JDK drops such a jar. `Class-Path` entries are split on single spaces and resolved as file paths, where the JDK tokenises and resolves URLs.
-- Cross-class reads can take a shadowed copy's tables from the referencing root's locator.
+Where the static baseline's classpath walk still differs from the JVM's:
+- A `Class-Path` is resolved against the jar's path as given, where the JVM resolves it against the jar's real path. A jar reached through a symbolic link in another folder can then name a different file. If a stale copy sits at that path, the baseline declares the wrong copy. `dependencies/ClasspathWalker` already follows the JVM here, so building the scan's walk on it would fix this.
+- Only `.jar` and `.zip` files are read, where the JVM reads any file as a jar.
+- A jar whose manifest cannot be read is left out. The JVM keeps one whose raw manifest names no `Class-Path` and no `Multi-Release: true`, and loads its unnamed-package classes.
+- A `Class-Path` token that is not a valid URL is skipped. The JDK drops the whole jar.
+- A class a multi-release jar holds only under `META-INF/versions/N/` takes its name but is not declared. The scan reads base copies only.
 
 ### Tooling: code principles and a refactoring playbook
 

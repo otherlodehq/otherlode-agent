@@ -159,9 +159,9 @@ The scan runs once per process, on a background thread that does not hold up sta
 
 ### What the scan reads
 
-The scan walks each entry of `java.class.path` that is a directory, a `.jar` file or a `.zip` file. It also follows the `Class-Path` attribute of every jar's manifest to further jars, relative to the directory of the jar that names them, which is how `java -jar app.jar` finds its libraries.
+The scan walks each entry of `java.class.path` that is a directory, a `.jar` file or a `.zip` file. It also follows the `Class-Path` attribute of every jar's manifest to further jars and directories, resolved as the JDK resolves them, which is how `java -jar app.jar` finds its libraries. A jar whose manifest cannot be read is left out, with a warning in the log.
 
-When two entries hold a class of the same name, the baseline keeps the copy the JVM would load, the first in the classpath's search order. The jars a `Class-Path` names are searched right after the jar that names them.
+When two entries hold a class of the same name, the baseline keeps the copy the JVM would load, the first in the classpath's search order. The jars a `Class-Path` names are searched right after the jar that names them. The `BOOT-INF/classes/` and `WEB-INF/classes/` folders are searched after every other entry, as Spring Boot's launcher searches them. A class that a multi-release jar holds only under `META-INF/versions/` keeps its name from a later copy, but is not declared.
 
 Inside a jar, the scan reads:
 
