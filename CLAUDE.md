@@ -55,6 +55,11 @@ A change that breaks one of these needs an ADR first.
   then implement, then refactor. For the instrumentation tiers, whose
   behaviour shows only once bytecode is woven, write an integration test
   that weaves a small fixture class and asserts on its probe hits.
+- **Every code change gets an independent review before it lands on
+  master.** A reviewer that did not write the change reads the diff and
+  the code it touches, without the author's reasoning, and looks for
+  bugs. Fix or answer each blocking finding before the change lands. A
+  change to docs, `STATUS.md`, an ADR or a copy guide alone needs none.
 - **Docs follow behaviour, not every code change.** A change that adds
   behaviour a customer can see or set, or modifies behaviour a `docs/site`
   page documents, updates that page in the same commit. A refactor, a fix
