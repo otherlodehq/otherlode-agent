@@ -110,13 +110,19 @@ internal class RouterWalk(
     private val graph: RouterGraph,
 ) {
     private val log = System.getLogger(RouterWalk::class.java.name)
-    private val apis = WeakHashMap<ClassLoader, Api>()
-    private val unreadRegexLogged = ConcurrentHashMap.newKeySet<Any>()
+    private val apis = WeakHashMap<ClassLoader, WeakReference<Api>>()
+    private val unreadRegexLogged = ConcurrentHashMap.newKeySet<String>()
     private val parameterisedChainsByRoot = WeakIdentityMap<List<Pair<WeakReference<Any>, String>>>()
+
+    private fun apiFor(loader: ClassLoader?): Api {
+        if (loader == null) return Api(null)
+        apis[loader]?.get()?.let { return it }
+        return Api(loader).also { apis[loader] = WeakReference(it) }
+    }
 
     /** Declares the routes reachable from [root] and returns the routers it reached. Call it under the graph's lock. */
     fun declare(root: Any): List<Any> {
-        val api = apis.getOrPut(root.javaClass.classLoader) { Api(root.javaClass.classLoader) }
+        val api = apiFor(root.javaClass.classLoader)
         val reached = IdentityHashMap<Any, Reached>()
         visit(api, root, Chain(null, false), mutableListOf(), reached)
         val ownChains =
@@ -176,7 +182,7 @@ internal class RouterWalk(
         val path = api.pathOf(route)
         val regexRoute = path == null && api.isRegexPath(route)
         if (regexRoute && info.regexSource == null) {
-            if (unreadRegexLogged.add(route.javaClass)) {
+            if (unreadRegexLogged.add(route.javaClass.name)) {
                 log.log(Level.WARNING, "otherlode: a vertx-web regex route's source was never seen, so it is not declared")
             }
             return

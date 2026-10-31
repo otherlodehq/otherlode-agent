@@ -45,6 +45,7 @@ the section being read.
 
 ### Fixed
 
+- The `servlet`, `jaxrs` and `vertx-web` endpoint modules no longer keep a class loader alive after its application is undeployed. Each redeploy of a WAR, or each Spring Boot DevTools restart, had kept the old loader and every class it defined.
 - The testkit's `neverCalled()` leaves out an endpoint whose endpoint module every instance that reported it switched off, as Otherlode does.
 - Kotlin 1.9 and 2.0 projects compile against the testkit. Its classes carry Kotlin 2.0 metadata, and it depends on kotlin-stdlib 2.0.21, where they carried 2.2 metadata and kotlin-stdlib 2.2.21, which Kotlin 2.0 and earlier cannot read.
 - A class confirmed by a probe hit no longer keeps the stack of the thread that loaded it for the life of the process. Each stack frame is also stored once, however many classes load under it. On the Spring Boot demo with Spring's own classes in scope, the stacks held 9 MB of heap.

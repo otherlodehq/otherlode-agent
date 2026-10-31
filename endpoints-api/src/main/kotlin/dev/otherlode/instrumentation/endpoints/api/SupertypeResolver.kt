@@ -77,6 +77,7 @@ class SupertypeCaches<C : SupertypeCache>(
 
 /**
  * Reads a type's supertypes, erased, for [loader]'s classes, leaving out those [skipped] names.
+ * It holds [loader] weakly, so a matcher built on it never keeps a retired loader alive.
  *
  * The agent's pool resolves lazily (`TypePool.Default.WithLazyResolution`), so `asErasure()` hands
  * back a description that throws only when something reads it. A supertype the pool has no class
@@ -96,10 +97,13 @@ class SupertypeCaches<C : SupertypeCache>(
  * definition regardless.
  */
 class SupertypeResolver(
-    private val loader: ClassLoader?,
+    loader: ClassLoader?,
     private val cache: SupertypeCache,
     private val skipped: (String) -> Boolean = { false },
 ) {
+    private val loader: WeakReference<ClassLoader>? = loader?.let { WeakReference(it) }
+    private val isBootstrap = loader == null
+
     /** [type]'s superclass, erased and readable, or null when there is none or it is [skipped]. */
     fun superErasure(type: TypeDescription): TypeDescription? = locate { type.superClass }?.let(::describe)
 
@@ -151,8 +155,13 @@ class SupertypeResolver(
         if (skipped(supertype.name)) return null
         val erased = supertype.erased
         if (erased != null && (cache.isKnown(supertype.name) || isReadable(erased))) return erased
-        val loaded = cache.loadedClass(supertype.name, loader) ?: throw UndefinableTypeException(supertype.name)
+        val loaded = loadedClass(supertype.name) ?: throw UndefinableTypeException(supertype.name)
         return TypeDescription.ForLoadedType.of(loaded)
+    }
+
+    private fun loadedClass(name: String): Class<*>? {
+        val live = loader?.get()
+        return if (live == null && !isBootstrap) null else cache.loadedClass(name, live)
     }
 
     private fun isReadable(type: TypeDescription): Boolean =

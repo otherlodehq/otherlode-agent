@@ -56,7 +56,7 @@ testing {
                 useJUnitJupiter()
                 sources {
                     kotlin.srcDir("src/test/kotlin")
-                    kotlin.exclude("**/PathTemplatesTest.kt", "**/WeakIdentityMapTest.kt")
+                    kotlin.exclude("**/PathTemplatesTest.kt", "**/WeakIdentityMapTest.kt", "**/RouterWalkLoaderLeakTest.kt")
                 }
                 dependencies {
                     implementation(project())
