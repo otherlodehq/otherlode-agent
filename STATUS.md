@@ -212,7 +212,11 @@ development convenience.
   read as duplicates. No count is lost. A fix needs the bridge to know the
   route is not a template.
 - Vert.x Web 4.5.0's "a parameterised mount replaced by another" test failed
-  once with no hits at all (1 run in 12, not reproduced since).
+  once with no hits at all (1 run in 12). About 1,400 runs on 2026-10-31
+  did not reproduce it: 4.5.0, 4.5.35, 5.0.12 and 5.2.1, fresh JVMs and
+  in-JVM repeats, pinned to one busy core, with `-Xint` and with a 48 MB
+  heap. The note landed in the same commit as `Harness.kt`'s per-test
+  client, so the failure may predate that client. No cause is known.
 - Spring MVC `resources(...)`: a lookup the adopter composes over Spring's
   path lookup that turns a found resource into none leaves the request
   marked, so the route that then serves it is not counted. A filtered nest
