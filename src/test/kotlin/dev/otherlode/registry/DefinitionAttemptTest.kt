@@ -81,6 +81,22 @@ class DefinitionAttemptTest {
     }
 
     @Test
+    fun `two attempts captured from one call site share their frame strings`() {
+        val attempts = List(2) { Definer().defineClass1Capturing() }
+        val first = attempts[0].heldFrames()
+        val second = attempts[1].heldFrames()
+
+        assertEquals(first, second)
+        assertTrue(first.indices.all { first[it] === second[it] })
+    }
+
+    private fun Definer.defineClass1Capturing(): DefinitionAttempt {
+        var attempt: DefinitionAttempt? = null
+        defineClass1 { attempt = capture() }
+        return assertNotNull(attempt)
+    }
+
+    @Test
     fun `capture finds no attempt when no transformer entry frame is on the stack`() {
         assertNull(capture())
         assertNull(DefinitionAttempt.capture())

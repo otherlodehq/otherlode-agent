@@ -237,6 +237,18 @@ class ProbeRegistryDefinitionAttemptTest {
     }
 
     @Test
+    fun `a class confirmed by a probe hit drops its definition attempt`() {
+        val registry = ScriptedRegistry()
+        registry.next = registry.attempt()
+        registry.registerFoo()[0]++
+
+        registry.confirmFrom(emptySet())
+
+        assertEquals(0, registry.unconfirmedClassCount())
+        assertEquals(0, registry.classesHoldingAttempts())
+    }
+
+    @Test
     fun `an entry with no recorded attempt counts its misses from the start`() {
         val registry = ScriptedRegistry()
         registry.next = null

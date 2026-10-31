@@ -45,6 +45,7 @@ the section being read.
 
 ### Fixed
 
+- A class confirmed by a probe hit no longer keeps the stack of the thread that loaded it for the life of the process. Each stack frame is also stored once, however many classes load under it. On the Spring Boot demo with Spring's own classes in scope, the stacks held 9 MB of heap.
 - The static baseline searches the classpath as the JVM does in four more cases. A Spring Boot jar's `BOOT-INF/classes/` and a WAR's `WEB-INF/classes/` rank after every flat classpath entry. A class a multi-release jar holds only under `META-INF/versions/N/`, for an N the JVM reads, keeps its name from a later copy. A jar whose manifest cannot be read is left out with a warning, and a `Class-Path` is split and resolved as URLs relative to the jar, as the JDK does it. A cross-class read takes the copy of the class the JVM loads.
 - An OpenJPA entity with property access that OpenJPA enhances as it loads no longer reports a wrong outcome for a getter or setter. The wrapper keeps its entry probe and gets no branch probes, as EclipseLink's woven methods do, and a branch you wrote in it is not reported.
 - A plain Kotlin class that writes `component1`, `component2`, `copy`, `equals`, `hashCode` and `toString` itself no longer has `component1`, `component2` and `copy` marked `DATA_CLASS`. The rule marks `componentN` and `copy` only when they have no line-number table, as it already did for the other three.

@@ -573,7 +573,10 @@ open class ProbeRegistry(
     private fun isConfirmed(entry: ClassEntry): Boolean {
         if (entry.confirmed) return true
         if (entry.counts.any { it > 0L }) {
-            entry.confirmed = true
+            synchronized(entry) {
+                entry.confirmed = true
+                entry.attempts.clear()
+            }
         }
         return entry.confirmed
     }
@@ -1285,6 +1288,9 @@ open class ProbeRegistry(
 
     /** How many registered classes still hold their manifest metadata; for tests. */
     internal fun classesHoldingMetadata(): Int = entriesByKey.values.count { it.manifestData != null }
+
+    /** How many registered classes still hold a definition attempt; for tests. */
+    internal fun classesHoldingAttempts(): Int = entriesByKey.values.count { synchronized(it) { it.attempts.isNotEmpty() } }
 
     internal companion object {
         /** The reason a class reported as skipped gives when its manifest entries alone break a bound. */

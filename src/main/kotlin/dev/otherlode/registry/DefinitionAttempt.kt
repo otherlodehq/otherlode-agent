@@ -30,6 +30,9 @@ internal class DefinitionAttempt(
     /** The held frames, each as `class#method`, from the definition frame down to the bottom. */
     private val frames: Array<String> = frames.toTypedArray()
 
+    /** The held frame strings, for tests. */
+    internal fun heldFrames(): List<String> = frames.asList()
+
     /** The class of the frame that started the definition. */
     val frameClass: String get() = frames[0].substringBefore('#')
 
@@ -126,7 +129,7 @@ internal class DefinitionAttempt(
                 stream.forEach { frame ->
                     total++
                     if (afterEntry) {
-                        held += frame.className + "#" + frame.methodName
+                        held += (frame.className + "#" + frame.methodName).intern()
                     } else if (frame.className == entryClass && frame.methodName == entryMethod) {
                         afterEntry = true
                     }
