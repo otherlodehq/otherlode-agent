@@ -72,3 +72,17 @@ Decided in a grill during the pre-release review.
 - **`ASYNC` and `ERROR` still count nothing.** An async redispatch continues a request already counted, and an error page is not a call.
 - **A dispatch counts at each endpoint it reaches.** A request that a servlet forwards counts at that servlet and at its target. A forward or include to the endpoint the request already reached counts it again, which raises its count and changes no claim. An owned or container servlet is still left out wherever the dispatch lands.
 - **Considered and rejected.** Leaving the rule and documenting it: a declared servlet that serves traffic would read as never called, a false claim.
+
+## Amended on 2026-10-31: an error page and an asynchronous dispatch count at their target
+
+Decided in the second pre-release review. This replaces what the first decision and the forward amendment say about `ASYNC` and `ERROR`, and the forward amendment's rule for when a context is declared.
+
+- **Every dispatch type counts at the servlet it reaches.** A plain servlet that only an `<error-page>` location reaches, or only `AsyncContext.dispatch(path)`, was declared at the context's first request and never counted, so it read as never called while it served.
+- **An `ERROR` or `ASYNC` dispatch reads its mapping from `getHttpServletMapping()`**, as a forward does. It counts with the verb the dispatch reports. For an error page that is the failed request's verb on Tomcat 9 and 10.1, Jetty 10 and 12 and Undertow, and `GET` on Tomcat 11.
+- **A dispatch back to the servlet already counted counts it again.** A servlet that calls `startAsync` and then `dispatch()` counts twice, which raises its count and changes no claim, as a forward to the same endpoint does.
+- **A context is declared at its first dispatch of any type.** A filter that answers with an error can make the error page's dispatch the context's first.
+- **Spring Boot's `/error` is still counted by one module.** The Spring MVC module already counts an error dispatch, and `dispatcherServlet` is left out of this module.
+- **Proved on Tomcat 9, 10.1 and 11, Jetty 10 and 12, and Undertow 2.3.** Each answers the target's mapping on both dispatch types.
+- **Considered and rejected.**
+  - Skipping an `ASYNC` dispatch whose `AsyncContext.ASYNC_MAPPING` attribute names the same servlet and pattern: a filter can call `startAsync` and return before the servlet, then dispatch to it. The servlet then runs only on the `ASYNC` dispatch, with the same mapping in the attribute, and would never count. Jetty's `QoSFilter` and `DoSFilter` work this way.
+  - Leaving error page locations undeclared: no registration says which servlets only error pages reach, and a servlet can be both.

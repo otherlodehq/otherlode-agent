@@ -72,7 +72,9 @@ private class UndertowWebApp(
         filter: Filter,
         pattern: String,
     ) {
-        deployment.addFilter(FilterInfo(name, filter.javaClass, ImmediateInstanceFactory(filter)))
+        val info = FilterInfo(name, filter.javaClass, ImmediateInstanceFactory(filter))
+        info.isAsyncSupported = true
+        deployment.addFilter(info)
         deployment.addFilterUrlMapping(name, pattern, DispatcherType.REQUEST)
     }
 

@@ -5,11 +5,15 @@ import com.example.servlet.fixture.AsyncDispatchingServlet
 import com.example.servlet.fixture.BareServlet
 import com.example.servlet.fixture.BaseGetServlet
 import com.example.servlet.fixture.DelegatingServlet
+import com.example.servlet.fixture.ErrorPageMethods
 import com.example.servlet.fixture.ErrorPageServlet
+import com.example.servlet.fixture.FailingPostServlet
 import com.example.servlet.fixture.FailingServlet
 import com.example.servlet.fixture.ForwardingServlet
 import com.example.servlet.fixture.GenericOnlyServlet
 import com.example.servlet.fixture.GetAndHeadServlet
+import com.example.servlet.fixture.GetOnlyErrorPageServlet
+import com.example.servlet.fixture.GetPostErrorPageServlet
 import com.example.servlet.fixture.GetPostServlet
 import com.example.servlet.fixture.IncludingServlet
 import com.example.servlet.fixture.InheritingServlet
@@ -19,6 +23,7 @@ import com.example.servlet.fixture.PatchServlet
 import com.example.servlet.fixture.ProtectedServiceServlet
 import com.example.servlet.fixture.ProtectedServiceSuperServlet
 import com.example.servlet.fixture.PublicServiceSuperServlet
+import com.example.servlet.fixture.SelfDispatchingServlet
 import com.example.servlet.fixture.SubOfOwnedServlet
 import dev.otherlode.export.EndpointDiscoverySource
 import dev.otherlode.export.EndpointTemplateKind
@@ -239,7 +244,7 @@ class ServletModuleTest : ServletTestSupport() {
     }
 
     @Test
-    fun `an asynchronous dispatch counts nothing`() {
+    fun `an asynchronous dispatch to another servlet counts it at the target`() {
         container
             .start("") {
                 servlet("start", AsyncDispatchingServlet("/async/target"), "/async/start")
@@ -247,7 +252,76 @@ class ServletModuleTest : ServletTestSupport() {
             }.use { app ->
                 assertEquals(200, app.send("/async/start"))
                 assertEquals(1, hits("GET", "/async/start"))
-                assertEquals(0, hits("GET", "/async/target"))
+                assertEquals(1, hits("GET", "/async/target"))
+            }
+    }
+
+    @Test
+    fun `an asynchronous dispatch back to the same servlet counts it again`() {
+        container
+            .start("") {
+                servlet("self", SelfDispatchingServlet(), "/async/self")
+            }.use { app ->
+                assertEquals(200, app.send("/async/self"))
+                assertEquals(2, hits("GET", "/async/self"))
+            }
+    }
+
+    @Test
+    fun `a filter that starts asynchronous processing and dispatches counts the servlet behind it once`() {
+        val defers =
+            object : Filter {
+                override fun doFilter(
+                    request: ServletRequest,
+                    response: ServletResponse,
+                    chain: FilterChain,
+                ) {
+                    if (request.dispatcherType == jakarta.servlet.DispatcherType.REQUEST) {
+                        request.startAsync().dispatch()
+                    } else {
+                        chain.doFilter(request, response)
+                    }
+                }
+            }
+        container
+            .start("") {
+                servlet("deferred", GetPostServlet(), "/async/deferred")
+                filter("defers", defers, "/async/deferred")
+            }.use { app ->
+                assertEquals(200, app.send("/async/deferred"))
+                assertEquals(1, hits("GET", "/async/deferred"))
+            }
+    }
+
+    @Test
+    fun `a failed POST counts an error page that declares doPost at the method the container reached it with`() {
+        ErrorPageMethods.seen.clear()
+        container
+            .start("") {
+                servlet("boom", FailingPostServlet(), "/errpost/boom")
+                servlet("page", GetPostErrorPageServlet(), "/errpost/page")
+                errorPage(500, "/errpost/page")
+            }.use { app ->
+                assertEquals(500, app.send("/errpost/boom", "POST"))
+                assertEquals(1, hits("POST", "/errpost/boom"))
+                val reached = ErrorPageMethods.seen.single()
+                assertEquals(1, hits(reached, "/errpost/page"), "the container reached the error page with $reached")
+            }
+    }
+
+    @Test
+    fun `a failed POST counts nothing at an error page that declares only doGet`() {
+        ErrorPageMethods.seen.clear()
+        container
+            .start("") {
+                servlet("boom", FailingPostServlet(), "/errget/boom")
+                servlet("page", GetOnlyErrorPageServlet(), "/errget/page")
+                errorPage(500, "/errget/page")
+            }.use { app ->
+                app.send("/errget/boom", "POST")
+                assertEquals(1, hits("POST", "/errget/boom"))
+                assertEquals(null, endpoint("POST", "/errget/page"))
+                assertEquals(ErrorPageMethods.seen.size.toLong(), hits("GET", "/errget/page"), "the page ran with ${ErrorPageMethods.seen}")
             }
     }
 
@@ -414,7 +488,7 @@ class ServletModuleTest : ServletTestSupport() {
     }
 
     @Test
-    fun `an error page dispatch counts nothing`() {
+    fun `an error page dispatch counts the error page servlet`() {
         container
             .start("") {
                 servlet("boom", FailingServlet(), "/err/boom")
@@ -428,7 +502,7 @@ class ServletModuleTest : ServletTestSupport() {
                     "the container dispatched to the error page: ${ErrorPageServlet.dispatches}",
                 )
                 assertEquals(1, hits("GET", "/err/boom"))
-                assertEquals(0, hits("GET", "/err/page"))
+                assertEquals(1, hits("GET", "/err/page"))
             }
     }
 

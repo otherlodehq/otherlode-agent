@@ -29,8 +29,9 @@ import net.bytebuddy.asm.Advice;
  * runs on has a name of its own in its {@code ServletConfig}, and so is not the one the container
  * matched. A servlet with no config, or none that names itself, counts.
  *
- * <p>A {@code REQUEST}, {@code FORWARD} or {@code INCLUDE} dispatch counts at the servlet it
- * reaches; {@code ASYNC} and {@code ERROR} count nothing. A forward's mapping is the request's own.
+ * <p>Every dispatch type counts at the servlet it reaches. A forward's, an error page's and an
+ * asynchronous dispatch's mapping is the request's own. A dispatch back to the servlet that started
+ * the asynchronous cycle counts it again.
  * An include leaves the request's mapping as the original one, so the included servlet's mapping is
  * read from the request attribute {@code RequestDispatcher.INCLUDE_MAPPING}, whose name the advice
  * builds for the namespace in use because a string constant is not rebound. When that mapping names
@@ -72,7 +73,10 @@ public class ServletServiceAdvice {
             DispatcherType dispatch = http.getDispatcherType();
             String namespace = DispatcherType.REQUEST.getDeclaringClass().getName().startsWith("javax") ? "javax" : "jakarta";
             HttpServletMapping mapping;
-            if (dispatch == DispatcherType.REQUEST || dispatch == DispatcherType.FORWARD) {
+            if (dispatch == DispatcherType.REQUEST
+                    || dispatch == DispatcherType.FORWARD
+                    || dispatch == DispatcherType.ERROR
+                    || dispatch == DispatcherType.ASYNC) {
                 mapping = http.getHttpServletMapping();
             } else if (dispatch == DispatcherType.INCLUDE) {
                 Object included = http.getAttribute(namespace.concat(".servlet.include.mapping"));

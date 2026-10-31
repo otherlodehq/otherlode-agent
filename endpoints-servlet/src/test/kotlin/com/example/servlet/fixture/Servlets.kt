@@ -233,6 +233,49 @@ class FailingServlet : HttpServlet() {
     ): Unit = throw ServletException("boom")
 }
 
+/** Fails on POST, so the container dispatches the failed POST to its error page. */
+class FailingPostServlet : HttpServlet() {
+    override fun doPost(
+        req: HttpServletRequest,
+        resp: HttpServletResponse,
+    ): Unit = throw ServletException("boom")
+}
+
+/** The methods the error pages below were reached with. */
+object ErrorPageMethods {
+    val seen: MutableList<String> = java.util.concurrent.CopyOnWriteArrayList()
+}
+
+/** An error page that declares only GET. */
+class GetOnlyErrorPageServlet : HttpServlet() {
+    override fun doGet(
+        req: HttpServletRequest,
+        resp: HttpServletResponse,
+    ) {
+        ErrorPageMethods.seen += "GET"
+        resp.say("error page")
+    }
+}
+
+/** An error page that declares GET and POST. */
+class GetPostErrorPageServlet : HttpServlet() {
+    override fun doGet(
+        req: HttpServletRequest,
+        resp: HttpServletResponse,
+    ) {
+        ErrorPageMethods.seen += "GET"
+        resp.say("error page")
+    }
+
+    override fun doPost(
+        req: HttpServletRequest,
+        resp: HttpServletResponse,
+    ) {
+        ErrorPageMethods.seen += "POST"
+        resp.say("error page")
+    }
+}
+
 /** Answers an error page dispatch, and records the dispatcher type the container showed it. */
 class ErrorPageServlet : HttpServlet() {
     override fun doGet(
@@ -262,6 +305,20 @@ class DelegatingServlet(
         val request: ServletRequest = req
         val response: ServletResponse = resp
         target.service(request, response)
+    }
+}
+
+/** Starts asynchronous processing and dispatches back to its own path with no argument. */
+class SelfDispatchingServlet : HttpServlet() {
+    override fun doGet(
+        req: HttpServletRequest,
+        resp: HttpServletResponse,
+    ) {
+        if (req.dispatcherType == jakarta.servlet.DispatcherType.ASYNC) {
+            resp.status = 200
+        } else {
+            req.startAsync().dispatch()
+        }
     }
 }
 
