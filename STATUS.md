@@ -222,6 +222,14 @@ development convenience.
   marked, so the route that then serves it is not counted. A filtered nest
   whose composed resource lookup falls back to a resource counts against a
   route declared at the nest's own path. Both are rare.
+- Plain servlets (ADR 0074, amended 2026-10-31): a mapped servlet that only
+  a `getNamedDispatcher` forward or include reaches, as Spring's
+  `ServletForwardingController` does, is declared and never counted, so it
+  reads as never called. No container gives a named dispatch a mapping, so
+  it cannot be told from a direct call. On Undertow 2.3 an include of a
+  servlet mapped by extension, as the default servlet or at the context
+  root counts nothing either, since Undertow's include mapping names the
+  including servlet. Both need a servlet that nothing else reaches.
 
 ## Parked
 
