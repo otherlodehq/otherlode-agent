@@ -89,7 +89,8 @@ public data class DependencyReferenceSite internal constructor(
  * listed it by its sorted identity pairs, never by the per-instance id.
  *
  * [identityKey] is those pairs joined with commas, for example `com.fasterxml.jackson.core:jackson-databind`,
- * or `:commons-lang3` for a filename-derived identity. [identities] names each pair with its
+ * or `:commons-lang3` for a filename-derived identity. A `\`, `:` or `,` inside a group or artifact
+ * id is escaped with a backslash. [identities] names each pair with its
  * versions; a shaded jar carries several. [loadedClassesTotal] is the largest distinct-class count
  * any one instance reported, [classCount] the jar's class count when the listing knew it.
  * [sites] lists every referencing site the rules found, sorted, live or not: for an

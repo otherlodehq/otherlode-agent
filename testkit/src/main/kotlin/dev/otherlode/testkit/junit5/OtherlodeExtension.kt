@@ -38,8 +38,8 @@ import java.util.concurrent.TimeoutException
  * ```
  *
  * The collector binds to the port named by the `otherlode.testkit.port` system property, defaulting
- * to 4319, the agent's own default `endpoint` port, so a `-javaagent` flag with no explicit
- * `endpoint` option works without further wiring. The agent always needs `includePackages`: without
+ * to 4319, the port of the agent's default `exportUrl`, so a `-javaagent` flag with no explicit
+ * `exportUrl` option works without further wiring. The agent always needs `includePackages`: without
  * it the agent refuses to start and no heartbeat ever arrives. [beforeAll] waits for the agent's
  * first liveness heartbeat once per test JVM, with a timeout named by the
  * `otherlode.testkit.startup.timeout.seconds` system property, defaulting to 15 seconds.
