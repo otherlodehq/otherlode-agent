@@ -225,15 +225,14 @@ class DecoratedWeavingTest {
     }
 
     @Test
-    fun `a class below version 55 without a type initializer gets a new one holding only the prelude`() {
+    fun `a class below version 55 without a type initializer gets none, and its slow path stores the array`() {
         for (version in listOf(45, 48, 49, 50, 52)) {
             val fixture = VersionedFixtures.straight(version)
             val woven = weave(fixture)
             val label = "v$version"
 
             val methods = methodsOf(woven.bytes)
-            assertTrue("<clinit>" in methods, "$label gained a type initializer")
-            assertEquals(Opcodes.ACC_STATIC, methods.getValue("<clinit>").access, label)
+            assertFalse("<clinit>" in methods, "$label gained no type initializer")
             assertEquals(if (version >= 50) 1 else 0, methods.getValue(ProbeArrayForm.PROBE_ARRAY_ACCESSOR).frames, label)
 
             val type = Class.forName(fixture.name, true, woven.loader)

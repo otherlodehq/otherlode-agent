@@ -85,10 +85,12 @@ import java.util.WeakHashMap
  * [TransformResultListener]. Its probes reach its own array, which the bootstrap-resident
  * [OtherlodeProbeArrays] asks the registry for, through the [ProbeArrayForm] its class-file
  * version selects. From version 55 every probe loads the array as a dynamic constant and the class
- * gets no member at all. Below it the class gets a `public static final long[]` field, a `<clinit>`
- * prelude that fills it with one call to the holder, and a private accessor every probe calls,
- * which falls back to the holder while the field is still null. A supertype's initializer can run
- * the class's code before the class's own `<clinit>`, and a probe must not read a null array there.
+ * gets no member at all. Below it the class gets a private `long[]` field and a private accessor
+ * every probe calls, which falls back to the holder while the field is still null. The field is
+ * final and filled by a `<clinit>` prelude when the class has a `<clinit>`; otherwise the fallback
+ * stores into it. An interface keeps a `public static final` field and gets a `<clinit>`, and one
+ * below version 52 gets no accessor. A supertype's initializer can run the class's code before the
+ * class's own `<clinit>`, and a probe must not read a null array there.
  * Either way a probe is a load of the array and a constant slot index. No lookup by class or
  * method name is involved on any hot path; the one lookup happens once per class.
  *
@@ -138,6 +140,8 @@ class OtherlodeInstrumentation(
     private val codeSourceClassFile: CodeSourceClassFile = CodeSourceClassFile(),
     /** The adopter's named callback annotations, and which of them a transform has seen. */
     private val callbackAnnotations: ConfiguredCallbackAnnotations = ConfiguredCallbackAnnotations(config.callbackAnnotations),
+    /** Which class loaders cannot see the probe holder; shared with the endpoint tier. */
+    private val bootstrapVisibilityGuard: BootstrapVisibilityGuard = BootstrapVisibilityGuard(),
 ) {
     private val log = System.getLogger(OtherlodeInstrumentation::class.java.name)
 
@@ -474,7 +478,7 @@ class OtherlodeInstrumentation(
                 else -> {
                     val refusal = generateSequence(throwable) { it.cause }.filterIsInstance<SupertypeRefusal>().firstOrNull()
                     if (refusal != null) {
-                        log.log(Level.WARNING, "otherlode: $typeName ${refusal.message}")
+                        if (!refusal.logged) log.log(Level.WARNING, "otherlode: $typeName ${refusal.message}")
                         registry.recordSkipped(typeName, refusal.message.orEmpty())
                     } else {
                         log.log(Level.WARNING, "otherlode: instrumentation failed for $typeName, class will run uninstrumented", throwable)
@@ -528,6 +532,7 @@ class OtherlodeInstrumentation(
         protectionDomain: ProtectionDomain?,
     ): DynamicType.Builder<*> {
         if (alreadyLoaded.get() == true) return reweave(builder, typeDescription, classLoader, protectionDomain)
+        bootstrapVisibilityGuard.refusal(classLoader)?.let { throw SupertypeRefusal.blindLoader(it) }
         // The JVM cannot define a class whose own supertype is absent, so weaving it would publish
         // probes for a class that never loads. Failing here records it as skipped.
         supertypeGuard.missingSupertype(typeDescription, classLoader)?.let { throw SupertypeRefusal.undefinable(it) }

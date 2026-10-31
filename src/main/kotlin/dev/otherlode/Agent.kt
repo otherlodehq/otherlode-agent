@@ -21,6 +21,7 @@ import dev.otherlode.export.IncludeRules
 import dev.otherlode.export.ResourceAttributes
 import dev.otherlode.export.forNewRun
 import dev.otherlode.instrumentation.BootstrapInstallException
+import dev.otherlode.instrumentation.BootstrapVisibilityGuard
 import dev.otherlode.instrumentation.ClassFileByteCache
 import dev.otherlode.instrumentation.LoadedClassSweep
 import dev.otherlode.instrumentation.OtherlodeInstrumentation
@@ -51,6 +52,7 @@ import java.net.URL
 import java.nio.file.Files
 import java.nio.file.Paths
 import java.time.Duration
+import java.util.concurrent.atomic.AtomicBoolean
 
 /** `-javaagent:otherlode-agent.jar` entry point. */
 object Agent {
@@ -58,6 +60,7 @@ object Agent {
     private val TEST_RUN_SCAN_WAIT: Duration = Duration.ofSeconds(15)
     private const val OTEL_BRIDGE_MODULE_NAME = "otel"
     private val log = System.getLogger(Agent::class.java.name)
+    private val claimed = AtomicBoolean(false)
 
     /**
      * Nothing may escape from here. The `java.lang.instrument` contract aborts the whole target
@@ -69,10 +72,17 @@ object Agent {
         agentArgs: String?,
         instrumentation: Instrumentation,
     ) {
+        if (!claimed.compareAndSet(false, true)) {
+            log.log(Level.WARNING, "otherlode: the agent is already running in this JVM; this second -javaagent is ignored")
+            return
+        }
+        var running: Running? = null
         try {
-            start(agentArgs, instrumentation)
+            running = start(agentArgs, instrumentation)
         } catch (e: Throwable) {
             log.log(Level.ERROR, "otherlode: agent failed to start and is disabled for this JVM", e)
+        } finally {
+            if (running == null) claimed.set(false)
         }
     }
 
@@ -181,6 +191,7 @@ object Agent {
         val handlerForwarders = HandlerForwarders(endpointModules.orEmpty().flatMapTo(sortedSetOf()) { it.handlerInterfaces })
 
         val classFileCache = ClassFileByteCache()
+        val bootstrapVisibilityGuard = BootstrapVisibilityGuard()
         val otherlodeInstrumentation =
             OtherlodeInstrumentation(
                 config,
@@ -192,6 +203,7 @@ object Agent {
                 externalClassRegistry = externalClassRegistry,
                 handlerForwarders = handlerForwarders,
                 classFileCache = classFileCache,
+                bootstrapVisibilityGuard = bootstrapVisibilityGuard,
             )
         val transformer =
             try {
@@ -215,6 +227,7 @@ object Agent {
                         handlerForwarders = handlerForwarders,
                         classFileCache = classFileCache,
                         ownRetransformationFailures = ownRetransformationFailures,
+                        bootstrapVisibilityGuard = bootstrapVisibilityGuard,
                     )
                 endpointTransformer = instance.install(instrumentation)
                 endpointInstrumentation = instance

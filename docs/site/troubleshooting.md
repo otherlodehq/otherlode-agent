@@ -261,6 +261,12 @@ otherlode: com.acme.shop.Report cannot be defined: its supertype com.acme.shop.B
 The class is in your include rules, but a superclass or interface, at any depth, has no class file its loader can read. The JVM cannot define such a class, so the agent leaves it alone and reports it as skipped with this reason. The class would fail with `NoClassDefFoundError` without the agent too. Add the missing dependency to the classpath, or remove the class.
 
 ```text
+otherlode: the class loader org.jboss.modules.ModuleClassLoader cannot see dev.otherlode.bootstrap, so the agent does not instrument the classes it defines; delegate dev.otherlode.bootstrap to the boot loader, for example with -Djboss.modules.system.pkgs=dev.otherlode.bootstrap or org.osgi.framework.bootdelegation=dev.otherlode.bootstrap
+```
+
+The loader does not pass `dev.otherlode.bootstrap` to the boot loader, so a woven class could not resolve the agent's probe holder. The agent skips every class of that loader and reports each as skipped with the reason `its class loader cannot see dev.otherlode.bootstrap, so it is not instrumented`. It logs this line once per loader. Delegate the package to the boot loader with the setting for your runtime. [Compatibility](compatibility#class-loaders-that-do-not-delegate-to-the-boot-loader) lists them.
+
+```text
 otherlode: instrumentation failed for com.acme.shop.Report, class will run uninstrumented
 ```
 

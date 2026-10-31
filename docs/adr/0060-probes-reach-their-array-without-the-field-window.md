@@ -39,3 +39,16 @@ flags and instructions ByteBuddy wrote. The class literal is `ldc` from version 
 `Class.forName` below it; the accessor's stack map frame is written from version 50 only, since
 HotSpot reads none below it. The rebase's appended `<clinit>` scaffold (a jump to an appended tail
 with two frames) is gone, so the prelude adds no frame at all.
+
+## Amended on 2026-10-31: the field is private, and a class without a `<clinit>` gets none
+
+Found in the pre-release review. `ObjectStreamClass` computes a `Serializable` class's default `serialVersionUID` from every field that is not private and static, and from whether the class has a static initializer. The public field, and the `<clinit>` added to a class that had none, changed the default UID of every `Serializable` class below version 55 that declares none. Data one JVM serialized then failed to read on a JVM that weaves the class differently, with `InvalidClassException`. The public field also showed in `Class.getFields()`.
+
+- **The field is private.** A class that has its own `<clinit>` gets `private static final synthetic long[] $otherlodeProbeCounts`, filled by the prelude as before, so C2 still folds the trusted final.
+- **A class with no `<clinit>` gets none.** Its field is `private static synthetic`, not final, and the slow path stores the array it resolves into the field, so later calls read the field. `resolve` returns the same registered array on every call, so two threads that race store the same array.
+- **An interface keeps `public static final`**, which the JVM requires of an interface field, and keeps its added `<clinit>`. A `Serializable` interface below version 55 that is woven, one with a default method, a static method or a static initialiser, therefore still changes its own default UID. That shows only when its `Class` object is serialized across a woven and an unwoven JVM. Skipping such interfaces would lose their counts to cover a case that rare, so the compatibility page states the exception instead.
+- **The cost.** The field read in a class with no `<clinit>` is a plain static read and a null check, not a folded constant.
+
+## Amended on 2026-10-31: a loader that cannot see the holder gets no woven class
+
+Found in the pre-release review. A woven class reaches `OtherlodeProbeArrays` through its own defining loader (JVMS 5.3). A loader that does not delegate `dev.otherlode.bootstrap` to the boot loader, as JBoss Modules and Apache Felix do by default, fails that reference at the class's first probe or in its `<clinit>`, and the application breaks. Before the method tier weaves a class of a non-null loader, it checks once per loader that the loader resolves the holder to the agent's own class. A class of a loader that does not is left unwoven and reported skipped, and the agent logs one WARNING per loader naming the package to delegate. The endpoint tier shares the check: a module that would weave a class of such a loader switches itself off for the process, with `TRANSFORM_FAILED`. Skipping per loader instead would leave routes it declared in other loaders counted where its advice runs and never counted where it cannot, which reads as never called. OpenTelemetry's agent meets the same constraint by instrumenting the loaders; the check is the smaller step that fails closed.

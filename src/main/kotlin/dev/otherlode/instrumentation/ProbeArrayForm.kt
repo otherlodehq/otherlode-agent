@@ -26,9 +26,10 @@ fun interface ProbeArrayLoad {
  *
  * - [DynamicConstant], from version 55: every probe loads the array with `ldc` of a dynamic
  *   constant bootstrapped by [OtherlodeProbeArrays.probeArray]. Nothing is added to the class.
- * - [Accessor], below 55: the class keeps the field and its `<clinit>` prelude, and every probe
- *   calls a private static synthetic accessor that returns the field or, while it is null, the
- *   array [OtherlodeProbeArrays.resolve] hands out.
+ * - [Accessor], below 55: the class keeps the field, filled by a `<clinit>` prelude or, in a class
+ *   with no `<clinit>`, by the accessor's slow path, and every probe calls a private static synthetic
+ *   accessor that returns the field or, while it is null, the array [OtherlodeProbeArrays.resolve]
+ *   hands out.
  * - [PreludeOnly], an interface below version 52: it cannot have a private method and has no code
  *   outside its `<clinit>`, so only the prelude exists.
  *

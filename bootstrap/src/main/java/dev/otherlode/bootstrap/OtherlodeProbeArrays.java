@@ -16,10 +16,11 @@ import java.util.concurrent.ConcurrentHashMap;
  *
  * <p>A class reaches its array in one of two ways, by class-file version. From version 55 every
  * probe loads it as a dynamic constant bootstrapped by {@link #probeArray}, which resolves on first
- * use whatever state the class's initialisation is in. Below 55 the class keeps a static field its
- * {@code <clinit>} fills with {@link #resolve}, and a probe that finds the field still null calls
- * {@link #resolve} itself. A supertype's initializer can run a class's code before the class's own
- * {@code <clinit>} has, so the field is null for that window and a probe cannot assume otherwise.
+ * use whatever state the class's initialisation is in. Below 55 the class keeps a static field that
+ * its {@code <clinit>}, or in a class with none the first probe, fills with {@link #resolve}, and a
+ * probe that finds the field still null calls {@link #resolve} itself. A supertype's initializer can
+ * run a class's code before the class's own {@code <clinit>} has, so the field is null for that
+ * window and a probe cannot assume otherwise.
  *
  * <p>A miss (no resolver installed yet, or the registry has no array for this class) returns a
  * fresh array of the requested size and logs once. An uncounted class is the worst case this

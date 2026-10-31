@@ -45,6 +45,9 @@ the section being read.
 
 ### Fixed
 
+- A `Serializable` class below Java 11 keeps its default `serialVersionUID` when woven. Its counts field is private, and a class with no static initialiser gets none, so data serialized by a JVM without the agent reads in one with it. A woven `Serializable` interface below Java 11 still changes its own value.
+- A class whose loader cannot see `dev.otherlode.bootstrap`, as JBoss Modules and Apache Felix loaders by default, is left unwoven and reported as skipped, where it failed at its first probe and broke the application. An endpoint module that would hook such a class switches itself off with the kind `TRANSFORM_FAILED`.
+- A second `-javaagent` of the agent in one JVM is ignored with a `WARNING`. It wove every class twice, which failed a class below Java 11 to load and counted each hit twice from Java 11.
 - The `servlet`, `jaxrs` and `vertx-web` endpoint modules no longer keep a class loader alive after its application is undeployed. Each redeploy of a WAR, or each Spring Boot DevTools restart, had kept the old loader and every class it defined.
 - The testkit's `neverCalled()` leaves out an endpoint whose endpoint module every instance that reported it switched off, as Otherlode does.
 - Kotlin 1.9 and 2.0 projects compile against the testkit. Its classes carry Kotlin 2.0 metadata, and it depends on kotlin-stdlib 2.0.21, where they carried 2.2 metadata and kotlin-stdlib 2.2.21, which Kotlin 2.0 and earlier cannot read.

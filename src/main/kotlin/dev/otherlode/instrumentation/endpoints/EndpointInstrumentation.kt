@@ -2,6 +2,7 @@ package dev.otherlode.instrumentation.endpoints
 
 import dev.otherlode.bootstrap.OtherlodeEndpoints
 import dev.otherlode.instrumentation.BootstrapHolder
+import dev.otherlode.instrumentation.BootstrapVisibilityGuard
 import dev.otherlode.instrumentation.ClassFileByteCache
 import dev.otherlode.instrumentation.OwnRetransformationFailures
 import dev.otherlode.instrumentation.TypeMatchPolicy
@@ -50,6 +51,8 @@ class EndpointInstrumentation(
     private val classFileCache: ClassFileByteCache = ClassFileByteCache(),
     /** Where the lambda factory hook records a class it failed to retransform. */
     ownRetransformationFailures: OwnRetransformationFailures = OwnRetransformationFailures(),
+    /** Which class loaders cannot see `dev.otherlode.bootstrap`; shared with the method tier. */
+    private val bootstrapVisibilityGuard: BootstrapVisibilityGuard = BootstrapVisibilityGuard(),
 ) {
     private val log = System.getLogger(EndpointInstrumentation::class.java.name)
     private val agentClassLoader = EndpointInstrumentation::class.java.classLoader
@@ -163,6 +166,15 @@ class EndpointInstrumentation(
                     // declarations start, since another module matching the same class may have
                     // staged some already.
                     val mark = pendingDeclarations.begin(typeDescription.name)
+                    if (classLoader != null && bootstrapVisibilityGuard.refusal(classLoader) != null) {
+                        pendingDeclarations.rollbackTo(mark)
+                        OtherlodeEndpoints.moduleDisabled(
+                            module.name,
+                            OtherlodeEndpoints.KIND_TRANSFORM_FAILED,
+                            "the class loader ${classLoader.javaClass.name} cannot see dev.otherlode.bootstrap",
+                        )
+                        return@transform typeBuilder
+                    }
                     if (alreadyLoaded.get() == true) return@transform reweave(module, typeBuilder, typeDescription, classLoader, mark)
                     try {
                         // A view of the cached binder that records this call's hooks alone; see

@@ -72,12 +72,14 @@ internal class SupertypeGuard(
 }
 
 /**
- * Why the transform of a class failed on purpose: the JVM cannot define it. [message] reads as a
- * predicate of the class: the listener logs it after the class name as one WARNING with no stack
- * trace, and records it as the class's skip reason.
+ * Why the transform of a class failed on purpose: the JVM cannot define it, or its loader cannot
+ * resolve the probes. [message] reads as a predicate of the class: the listener logs it after the
+ * class name as one WARNING with no stack trace, unless [logged] says the cause was logged already,
+ * and records it as the class's skip reason.
  */
 internal class SupertypeRefusal private constructor(
     message: String,
+    val logged: Boolean = false,
 ) : IllegalStateException(message) {
     internal companion object {
         /** The JVM cannot define the class: its supertype [supertype] could not be read from its loader. */
@@ -85,5 +87,8 @@ internal class SupertypeRefusal private constructor(
             SupertypeRefusal(
                 "cannot be defined: its supertype $supertype could not be read from its loader, so it is not instrumented",
             )
+
+        /** The class's loader cannot see the probe holder; the guard logged one WARNING for the loader. */
+        fun blindLoader(reason: String) = SupertypeRefusal(reason, logged = true)
     }
 }

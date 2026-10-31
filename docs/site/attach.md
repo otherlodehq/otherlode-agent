@@ -85,7 +85,7 @@ env:
         key: token
 ```
 
-The JVM prints `Picked up JAVA_TOOL_OPTIONS: ...` to stderr when it reads the variable. Every JVM that starts in the container reads it, including a health check that runs `java`, so that JVM starts the agent too. If that matters, put the flag in the entrypoint's command line.
+The JVM prints `Picked up JAVA_TOOL_OPTIONS: ...` to stderr when it reads the variable. Every JVM that starts in the container reads it, including a health check that runs `java`, so that JVM starts the agent too. If that matters, put the flag in the entrypoint's command line. A second `-javaagent` of the agent in one JVM, such as one in `JAVA_TOOL_OPTIONS` and one on the command line, is ignored with a `WARNING` while the first is running.
 
 An environment variable has the lowest precedence of the three sources. The option string wins over a system property, and a system property wins over a variable. If your image's command line already sets an option, a variable for the same option has no effect. [The configuration options](configuration) explain the precedence.
 

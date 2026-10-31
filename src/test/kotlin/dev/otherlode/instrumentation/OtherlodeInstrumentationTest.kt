@@ -10,6 +10,7 @@ import net.bytebuddy.agent.builder.ResettableClassFileTransformer
 import net.bytebuddy.jar.asm.ClassReader
 import net.bytebuddy.jar.asm.ClassWriter
 import java.io.File
+import java.io.ObjectStreamClass
 import java.lang.instrument.ClassFileTransformer
 import java.lang.reflect.Modifier
 import java.nio.file.Files
@@ -380,7 +381,7 @@ class OtherlodeInstrumentationTest {
     }
 
     @Test
-    fun `the counts field of a version 52 class is public static final and holds the registry's own array`() {
+    fun `the counts field of a version 52 class is private static and holds the registry's own array`() {
         val registry = ProbeRegistry()
         val config = AgentConfig.parse("includePackages=com.example.target")
         installOnly(registry, config)
@@ -392,7 +393,11 @@ class OtherlodeInstrumentationTest {
 
         val field = target.javaClass.getDeclaredField("\$otherlodeProbeCounts")
         val modifiers = field.modifiers
-        assertTrue(Modifier.isPublic(modifiers) && Modifier.isStatic(modifiers) && Modifier.isFinal(modifiers))
+        assertTrue(
+            Modifier.isPrivate(modifiers) && Modifier.isStatic(modifiers) && !Modifier.isFinal(modifiers),
+            "the field of a class with no initializer is private static: ${Modifier.toString(modifiers)}",
+        )
+        field.isAccessible = true
         target.javaClass.getMethod("ping").invoke(target)
         val counts = field.get(null) as LongArray
         val pingIndex =
@@ -410,6 +415,90 @@ class OtherlodeInstrumentationTest {
                     pingIndex
             }
         assertEquals(1L, reported.hitsTotal, "the registry's array saw the same hit")
+    }
+
+    @Test
+    fun `weaving a version 52 serializable class with no static initializer keeps its default serialVersionUID`() {
+        assertDefaultSerialVersionUidKept("com.example.target.SerializableNoInitializerTarget", hasInitializer = false)
+    }
+
+    @Test
+    fun `weaving a version 52 serializable class with a static initializer keeps its default serialVersionUID`() {
+        assertDefaultSerialVersionUidKept("com.example.target.SerializableWithInitializerTarget", hasInitializer = true)
+    }
+
+    private fun assertDefaultSerialVersionUidKept(
+        className: String,
+        hasInitializer: Boolean,
+    ) {
+        val unwoven = Class.forName(className, true, LegacyFixtures.loader(javaClass.classLoader))
+        val expected = ObjectStreamClass.lookup(unwoven).serialVersionUID
+        assertFalse(unwoven.declaredFields.any { it.name == ProbeArrayForm.PROBE_ARRAY_FIELD }, "the control copy is unwoven")
+
+        val registry = ProbeRegistry()
+        installOnly(registry, AgentConfig.parse("includePackages=com.example.target"))
+        val woven = Class.forName(className, true, LegacyFixtures.loader(javaClass.classLoader))
+        val field = woven.declaredFields.singleOrNull { it.name == ProbeArrayForm.PROBE_ARRAY_FIELD }
+        assertNotNull(field, "$className is woven")
+        assertEquals(expected, ObjectStreamClass.lookup(woven).serialVersionUID)
+        assertEquals(hasInitializer, Modifier.isFinal(field.modifiers), "the field is final only with the class's own initializer")
+        assertTrue(Modifier.isPrivate(field.modifiers), "the field is private")
+
+        val target = woven.getDeclaredConstructor().newInstance()
+        repeat(2) { woven.getMethod("next").invoke(target) }
+        val resource = ResourceAttributes("test", null, "instance-1", null, "run-1")
+        val nextIndex =
+            registry
+                .manifest(resource)
+                .probes
+                .single { it.className == className && it.methodName == "next" }
+                .probeIndex
+        val hits =
+            registry
+                .computeDeltaBatch(resource)
+                .batch.deltas
+                .single { it.probeIndex == nextIndex }
+                .hitsTotal
+        assertEquals(2L, hits)
+    }
+
+    /** Defines the fixtures itself and, like a loader with no boot delegation, resolves nothing under `dev.otherlode.`. */
+    private class BootstrapBlindClassLoader(
+        parent: ClassLoader,
+    ) : FixtureClassLoader(arrayOf(File("build/classes/java/test").toURI().toURL()), parent) {
+        override fun loadClass(
+            name: String,
+            resolve: Boolean,
+        ): Class<*> = if (name.startsWith("dev.otherlode.")) throw ClassNotFoundException(name) else super.loadClass(name, resolve)
+    }
+
+    @Test
+    fun `a class of a loader that cannot see the bootstrap package runs unwoven, is skipped, and warns once per loader`() {
+        val registry = ProbeRegistry()
+        installOnly(registry, AgentConfig.parse("includePackages=com.example.target"))
+        val loader = BootstrapBlindClassLoader(javaClass.classLoader)
+
+        val records =
+            captureLogRecords(BootstrapVisibilityGuard::class.java.name) {
+                for (name in listOf("SampleTarget", "StaticInitTarget")) {
+                    val type = Class.forName("com.example.target.$name", true, loader)
+                    assertFalse(type.declaredFields.any { it.name == ProbeArrayForm.PROBE_ARRAY_FIELD }, "$name is not woven")
+                }
+                val sample = Class.forName("com.example.target.SampleTarget", true, loader)
+                assertEquals("pong", sample.getMethod("ping").invoke(sample.getDeclaredConstructor().newInstance()))
+            }
+        val reasons =
+            registry
+                .manifest(ResourceAttributes("test", null, "instance-1", null, "run-1"))
+                .skippedClasses
+                .associate { it.className to it.reason }
+        for (name in listOf("SampleTarget", "StaticInitTarget")) {
+            assertTrue("cannot see dev.otherlode.bootstrap" in reasons["com.example.target.$name"].orEmpty(), "$name: $reasons")
+        }
+        val warnings = records.filter { it.level == JulLevel.WARNING && "cannot see dev.otherlode.bootstrap" in it.message }
+        assertEquals(1, warnings.size, "${records.map { it.message }}")
+        assertTrue(BootstrapBlindClassLoader::class.java.name in warnings.single().message)
+        assertTrue("org.osgi.framework.bootdelegation" in warnings.single().message)
     }
 
     @Test

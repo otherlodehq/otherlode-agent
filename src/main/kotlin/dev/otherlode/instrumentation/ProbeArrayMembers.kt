@@ -23,9 +23,14 @@ import net.bytebuddy.pool.TypePool
  *
  * For a [ProbeArrayForm] with a field the class gets:
  *
- * - `public static final synthetic long[] $otherlodeProbeCounts`;
- * - a prelude at the start of its `<clinit>`, or a new `<clinit>` holding only the prelude when it
- *   has none:
+ * - the field `$otherlodeProbeCounts`, a `long[]`. It is `private static final synthetic` in a
+ *   class that has its own `<clinit>`, `private static synthetic` in a class that has none, and
+ *   `public static final synthetic` in an interface, where the JVMS requires it. A private field
+ *   is part of the default `serialVersionUID` of a serializable class only when it is neither
+ *   static nor transient, and so is the presence of a `<clinit>`; the class gets no added
+ *   `<clinit>` so that weaving leaves that value as it was;
+ * - a prelude at the start of its `<clinit>`, or in an interface a new `<clinit>` holding only the
+ *   prelude when it has none:
  *
  *   ```
  *   ldc          "<class name>"
@@ -39,7 +44,8 @@ import net.bytebuddy.pool.TypePool
  *
  *   followed, when the class has a type initializer probe, by an increment of its slot;
  * - for [ProbeArrayForm.Accessor] only, the private static synthetic accessor every probe calls and
- *   the slow path it falls back on while the field is null.
+ *   the slow path it falls back on while the field is null. In a class with no `<clinit>` the slow
+ *   path stores the array in the field, so later calls read it there.
  *
  * The prelude adds no branch and no local, so it needs no stack map frame and leaves every frame of
  * the original `<clinit>` where it was. The class literal is `ldc <class>` from version 49 and
@@ -93,7 +99,9 @@ internal object ProbeArrayMembers {
     private const val FILL_STACK = 5
     private const val INCREMENT_STACK = 6
     private const val ACCESSOR_STACK = 2
-    private const val FIELD_ACCESS = Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC or Opcodes.ACC_FINAL or Opcodes.ACC_SYNTHETIC
+    private const val INTERFACE_FIELD_ACCESS = Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC or Opcodes.ACC_FINAL or Opcodes.ACC_SYNTHETIC
+    private const val CLASS_FIELD_ACCESS = Opcodes.ACC_PRIVATE or Opcodes.ACC_STATIC or Opcodes.ACC_SYNTHETIC
+    private const val MARKER_FIELD_ACCESS = Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC or Opcodes.ACC_FINAL or Opcodes.ACC_SYNTHETIC
     private const val PRIVATE_SYNTHETIC = Opcodes.ACC_PRIVATE or Opcodes.ACC_STATIC or Opcodes.ACC_SYNTHETIC
 
     private val RESOLVE: MethodDescription.InDefinedShape =
@@ -139,6 +147,16 @@ internal object ProbeArrayMembers {
         private var majorVersion = 0
         private var sawTypeInitializer = false
 
+        private val storesInSlowPath get() = !isInterface && !sawTypeInitializer
+
+        private val fieldAccess
+            get() =
+                when {
+                    isInterface -> INTERFACE_FIELD_ACCESS
+                    sawTypeInitializer -> CLASS_FIELD_ACCESS or Opcodes.ACC_FINAL
+                    else -> CLASS_FIELD_ACCESS
+                }
+
         private val preludeStack get() = if (typeInitializerProbeIndex == null) FILL_STACK else INCREMENT_STACK
 
         override fun visit(
@@ -179,8 +197,8 @@ internal object ProbeArrayMembers {
         }
 
         override fun visitEnd() {
-            cv.visitField(FIELD_ACCESS, ProbeArrayForm.PROBE_ARRAY_FIELD, ARRAY_DESCRIPTOR, null, null)?.visitEnd()
-            if (!sawTypeInitializer) {
+            cv.visitField(fieldAccess, ProbeArrayForm.PROBE_ARRAY_FIELD, ARRAY_DESCRIPTOR, null, null)?.visitEnd()
+            if (!sawTypeInitializer && isInterface) {
                 val initializer = cv.visitMethod(Opcodes.ACC_STATIC, TYPE_INITIALIZER, VOID_DESCRIPTOR, null, null)
                 initializer.visitCode()
                 prelude(initializer)
@@ -243,7 +261,8 @@ internal object ProbeArrayMembers {
          * ```
          *
          * It does not store the resolved array: a final static field is written only by its class's
-         * `<clinit>`, and the array is the one the prelude stores later. The frame at `done` is
+         * `<clinit>`, and the array is the one the prelude stores later. The slow path stores it in
+         * a class with no `<clinit>`. The frame at `done` is
          * written from version 50, where the verifier requires one, and left out below it.
          */
         private fun writeAccessor() {
@@ -271,13 +290,18 @@ internal object ProbeArrayMembers {
         }
 
         /**
-         * The slow path, the prelude's call without its store, so the accessor stays small enough
-         * for C1 to inline.
+         * The slow path, the prelude's call, so the accessor stays small enough for C1 to inline.
+         * In a class with no `<clinit>` the field is not final and the slow path stores the array in
+         * it; resolving returns the same array each time.
          */
         private fun writeSlowPath() {
             val visitor = cv.visitMethod(PRIVATE_SYNTHETIC, ProbeArrayForm.PROBE_ARRAY_SLOW_PATH, ARRAY_FACTORY_DESCRIPTOR, null, null)
             visitor.visitCode()
             resolve(visitor)
+            if (storesInSlowPath) {
+                visitor.visitInsn(Opcodes.DUP)
+                visitor.visitFieldInsn(Opcodes.PUTSTATIC, owner, ProbeArrayForm.PROBE_ARRAY_FIELD, ARRAY_DESCRIPTOR)
+            }
             visitor.visitInsn(Opcodes.ARETURN)
             visitor.visitMaxs(FILL_STACK, 0)
             visitor.visitEnd()
@@ -288,7 +312,7 @@ internal object ProbeArrayMembers {
         visitor: ClassVisitor,
     ) : ClassVisitor(Opcodes.ASM9, visitor) {
         override fun visitEnd() {
-            cv.visitField(FIELD_ACCESS, ProbeArrayForm.REFUSAL_MARKER_FIELD, "I", null, null)?.visitEnd()
+            cv.visitField(MARKER_FIELD_ACCESS, ProbeArrayForm.REFUSAL_MARKER_FIELD, "I", null, null)?.visitEnd()
             super.visitEnd()
         }
     }

@@ -58,15 +58,17 @@ Both findings leave out the class's inline, generated and unread-shape methods w
 
 The agent skips a class that matched the rules and that it could not instrument. The class runs unchanged. The agent records the class name and a reason, once per class name, and sends the list in the manifest, so Otherlode counts the class as loaded and never as dead code.
 
-Two causes put a class here:
+Three causes put a class here:
 
 - **A missing supertype.** The agent reads the class's superclass and interfaces, and theirs in turn, as class files through the class's own loader. A supertype the loader cannot serve as a class file makes the class one the JVM cannot define with or without the agent, so the agent refuses it. A supertype defined at runtime from memory has no class file and counts as missing. Names under `java.` count as present. Weaving such a class would publish probes for a class that never defines.
+- **A class loader that cannot see the agent's package.** A loader that does not delegate `dev.otherlode.bootstrap` to the boot loader cannot resolve the class a woven class refers to. The agent skips every class that loader defines and logs one `WARNING` for the loader. The reason is `its class loader cannot see dev.otherlode.bootstrap, so it is not instrumented`. See [compatibility](compatibility#class-loaders-that-do-not-delegate-to-the-boot-loader).
 - **Any other failure while rewriting the class.** The reason is the failure's message.
 
-The first cause logs one line, and the second logs a line with the stack trace:
+The first cause logs one line per class, the second one line per loader, and the third a line with the stack trace:
 
 ```text
 otherlode: com.acme.Foo cannot be defined: its supertype com.acme.Missing could not be read from its loader, so it is not instrumented
+otherlode: the class loader org.jboss.modules.ModuleClassLoader cannot see dev.otherlode.bootstrap, so the agent does not instrument the classes it defines; delegate dev.otherlode.bootstrap to the boot loader, for example with -Djboss.modules.system.pkgs=dev.otherlode.bootstrap or org.osgi.framework.bootdelegation=dev.otherlode.bootstrap
 otherlode: instrumentation failed for com.acme.Foo, class will run uninstrumented
 ```
 
@@ -127,7 +129,7 @@ A class that failed to load is a deployment to fix, never dead code. Otherlode r
 
 A class whose static initialiser throws is defined, and it still never runs. The JVM does not run the initialiser again, and every later use of the class throws `NoClassDefFoundError`. Such a class would read as dead code: its static initialiser's entry probe counted, and every method the initialiser did not reach sits at zero.
 
-The agent puts two more probes beside the entry probe of each static initialiser the class file declares. One counts each time the initialiser returns, and one counts each time it throws. The throwing probe sits in a handler that wraps the initialiser's body and rethrows the same exception, so the class fails exactly as it does without the agent. An initialiser the agent adds itself, to a class below Java 11 that has none, gets neither probe.
+The agent puts two more probes beside the entry probe of each static initialiser the class file declares. One counts each time the initialiser returns, and one counts each time it throws. The throwing probe sits in a handler that wraps the initialiser's body and rethrows the same exception, so the class fails exactly as it does without the agent. An initialiser the agent adds itself, to an interface below Java 11 that has none, gets neither probe.
 
 The first time the throwing probe counts, the agent names the class in the manifest's `classes_failed_to_initialize`, with the reason `STATIC_INITIALIZER_THREW` and the time. It sends the name once per class. The two probes travel with the other probes, so their counts arrive in the delta batches. See [what the agent sends](data-sent).
 
@@ -257,6 +259,7 @@ Every message starts with `otherlode:`. In the JVM's default format, the logger 
 | Level | Line (abridged) | Meaning |
 |---|---|---|
 | `WARNING` | `<class> cannot be defined: its supertype <type> could not be read from its loader, so it is not instrumented` | The class is skipped. |
+| `WARNING` | `the class loader <loader> cannot see dev.otherlode.bootstrap, so the agent does not instrument the classes it defines; ...` | Every class of the loader is skipped. The line is logged once per loader. |
 | `WARNING` | `instrumentation failed for <class>, class will run uninstrumented` | The class is skipped, and the stack trace follows. |
 | `INFO` | `<n> loaded classes reached no transformer and are reported as unreported rather than instrumented; ...` | The first sweep found classes no transformer saw. |
 | `WARNING` | `<class> was woven and registered but the JVM never defined it; its probes are withheld for good` | The class failed to load. |

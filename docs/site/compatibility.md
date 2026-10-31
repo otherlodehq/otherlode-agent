@@ -21,11 +21,24 @@ The agent weaves classes at any class-file version your JDK can define. A test g
 Two things differ by version:
 
 - **Version 55 and later.** Each probe reads its class's count array as a dynamic constant. The agent adds no field, method or static initialiser to the class.
-- **Below version 55.** The agent adds a `public static final long[]` field, a static initialiser that fills it, and a private synthetic accessor that every probe calls. Reflection over such a class shows the extra members.
+- **Below version 55.** The agent adds a `private static synthetic long[]` field and two private synthetic methods: an accessor that every probe calls, and the lookup it falls back on. If the class has a static initialiser, the field is `final` and the initialiser fills it. If not, the agent adds no static initialiser, and the first probe stores the array in the field. An interface keeps a `public static final` field, because the JVM requires it, and gets a static initialiser if it has none. An interface below version 52 gets no private methods: its probes are all in its static initialiser. Reflection over such a class shows the extra members.
+
+A class that implements `Serializable` and declares no `serialVersionUID` keeps its default `serialVersionUID`. Data serialized by a JVM without the agent still reads in a JVM with it, and the other way round. A `Serializable` interface below version 55 that the agent instruments, one with a default method, a static method or a static initialiser, is the exception: its own default `serialVersionUID` changes. That matters only when its `Class` object is serialized, as in a field of type `Class`.
 
 Classes below version 51 can contain `jsr` and `ret` subroutines. The agent inlines them before it adds probes.
 
 A woven class fails to load only where the unwoven class fails too. The one exception is a class whose supertype is missing at any depth: the agent skips it and reports it. See [classes](classes).
+
+## Class loaders that do not delegate to the boot loader
+
+A woven class refers to `dev.otherlode.bootstrap.OtherlodeProbeArrays`, which the agent puts on the boot class path. A class loader that does not pass that package to the boot loader cannot resolve it, and the class would fail at its first probe. JBoss Modules (WildFly) and Apache Felix behave this way by default.
+
+The agent checks each loader once, before it weaves the first class the loader defines. If the loader cannot see `dev.otherlode.bootstrap`, the agent leaves every class of that loader unwoven and reports each as skipped. An endpoint module that would hook a class of that loader switches itself off, so none of its endpoints reads as never called. The agent logs one `WARNING` per loader, which names the loader's class, and each module that switches off logs its own. See [skipped classes](classes#skipped-classes).
+
+To instrument the classes of such a loader, delegate the package to the boot loader:
+
+- **JBoss Modules and WildFly.** Add `-Djboss.modules.system.pkgs=dev.otherlode.bootstrap` to the JVM options. If the property is already set, append the package to its comma-separated list.
+- **Apache Felix and other OSGi frameworks.** Set `org.osgi.framework.bootdelegation=dev.otherlode.bootstrap`. If the property is already set, append the package to its comma-separated list.
 
 ## Compilers
 

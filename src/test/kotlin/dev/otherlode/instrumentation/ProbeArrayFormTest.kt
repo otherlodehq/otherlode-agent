@@ -13,6 +13,7 @@ import net.bytebuddy.jar.asm.Opcodes
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.InputStream
+import java.lang.reflect.Modifier
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
@@ -185,7 +186,7 @@ class ProbeArrayFormTest {
     }
 
     @Test
-    fun `a class below version 55 gets the field, the prelude and two private static synthetic accessors`() {
+    fun `a class below version 55 with no type initializer gets the field and two private static synthetic accessors and no initializer`() {
         val original = downgradedFixture("SampleTarget")
         assertEquals(LegacyFixtures.MAJOR_VERSION, WovenBytes.majorVersion(original))
 
@@ -194,12 +195,12 @@ class ProbeArrayFormTest {
         assertTrue(WovenBytes.declaresField(woven), "the probe field")
         assertFalse(WovenBytes.loadsProbeConstant(woven), "no dynamic constant")
         val flags = methodFlags(woven)
-        assertTrue("<clinit>" in flags, "the prelude's type initializer")
+        assertFalse("<clinit>" in flags, "no type initializer")
         for (accessor in ACCESSORS) {
             assertEquals(ACC_PRIVATE_STATIC_SYNTHETIC, flags[accessor], "$accessor is private static synthetic")
         }
         assertEquals(
-            methodFlags(original).keys + ACCESSORS + "<clinit>",
+            methodFlags(original).keys + ACCESSORS,
             flags.keys,
             "nothing else was added",
         )
@@ -239,6 +240,11 @@ class ProbeArrayFormTest {
         for (accessor in ACCESSORS) assertEquals(ACC_PRIVATE_STATIC_SYNTHETIC, flags[accessor], "$accessor on the interface")
         assertTrue(WovenBytes.declaresField(woven))
         val iface = Class.forName("$TARGET.DefaultMethodTarget", true, loader)
+        val modifiers = iface.getDeclaredField(ProbeArrayForm.PROBE_ARRAY_FIELD).modifiers
+        assertTrue(
+            Modifier.isPublic(modifiers) && Modifier.isStatic(modifiers) && Modifier.isFinal(modifiers),
+            "an interface field is public static final",
+        )
         assertEquals("static", iface.getMethod("staticThing").invoke(null))
         assertEquals(listOf(1L), hits("$TARGET.DefaultMethodTarget", "staticThing"))
         assertEquals(listOf(0L), hits("$TARGET.DefaultMethodTarget", "defaultThing"))
