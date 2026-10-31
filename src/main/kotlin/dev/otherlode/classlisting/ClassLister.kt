@@ -120,6 +120,17 @@ class ClassLister(
             }
         }
 
+        override fun jarWithInvalidClassPath(
+            jar: File,
+            jarFile: JarFile,
+            cause: Exception,
+        ) {
+            // Java 17 keeps such a jar when it has an index, and then loads the classes the index
+            // maps to other jars, which the listing cannot follow.
+            if (jarFile.getEntry(INDEX_LIST) != null) throw ListingFailed(jar.path, cause)
+            addJarClasses(jarFile, names)
+        }
+
         override fun directory(directory: File) {
             walk(directory.toPath()) { relative -> if (isClassEntry(relative)) addIfIncluded(relative, names) }
         }
@@ -267,6 +278,8 @@ class ClassLister(
     ) : Exception(cause)
 
     private companion object {
+        const val INDEX_LIST = "META-INF/INDEX.LIST"
+
         val APPLICATION_CLASSES_PREFIXES = listOf("BOOT-INF/classes/", "WEB-INF/classes/")
     }
 }

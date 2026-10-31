@@ -382,6 +382,42 @@ class ClassListerTest {
     }
 
     @Test
+    fun `a jar with a Class-Path token that is not a valid URL lists its own classes and not the jars it names`() {
+        val bad =
+            TestJars.write(
+                dir.resolve("bad.jar"),
+                listOf(classEntry("com.acme.Bad")),
+                mapOf("Class-Path" to "named.jar unknown:thing"),
+            )
+        val named = TestJars.write(dir.resolve("named.jar"), listOf(classEntry("com.acme.Named")))
+
+        lateinit var listed: List<String>
+        val warnings = warningsFrom { listed = lister(classPath(bad)).list() ?: error("no listing") }
+
+        assertEquals(listOf("com.acme.Bad"), listed)
+        assertEquals(emptyList(), warnings)
+        assertTrue(named.toFile().exists())
+    }
+
+    @Test
+    fun `a jar with a Class-Path token that is not a valid URL and an index gives no listing`() {
+        val bad =
+            TestJars.write(
+                dir.resolve("indexed.jar"),
+                listOf(classEntry("com.acme.Bad"), "META-INF/INDEX.LIST" to "JarIndex-Version: 1.0\n\nnamed.jar\ncom/acme\n".toByteArray()),
+                mapOf("Class-Path" to "named.jar unknown:thing"),
+            )
+        TestJars.write(dir.resolve("named.jar"), listOf(classEntry("com.acme.Named")))
+        var listed: List<String>? = listOf("unset")
+
+        val warnings = warningsFrom { listed = lister(classPath(bad)).list() }
+
+        assertNull(listed)
+        assertEquals(1, warnings.size, warnings.toString())
+        assertTrue(bad.toString() in warnings.single().message, warnings.single().message)
+    }
+
+    @Test
     fun `a jar that cannot be read gives no listing and one WARNING naming it and the cause`() {
         val good = TestJars.write(dir.resolve("good.jar"), listOf(classEntry("com.acme.A")))
         val garbage = Files.write(dir.resolve("garbage.jar"), "not a zip file at all".toByteArray())

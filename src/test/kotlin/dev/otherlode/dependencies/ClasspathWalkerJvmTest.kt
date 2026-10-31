@@ -10,6 +10,8 @@ import java.nio.file.Path
 import java.util.concurrent.TimeUnit
 import java.util.jar.JarFile
 import java.util.jar.Manifest
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
@@ -23,9 +25,6 @@ import kotlin.test.fail
  * path the JVM used.
  * The first file the walker reports that holds the class must be that file at that path, and a
  * class the JVM cannot find must never be reported.
- *
- * A `Class-Path` token that is not a valid URL makes the JVM skip the whole jar, while the walker
- * skips only that token ([classPathEntries]), so the tree holds no such token.
  *
  * It creates symbolic links, which Windows does not allow without a privilege.
  */
@@ -49,6 +48,8 @@ class ClasspathWalkerJvmTest {
                 "fixture.ManifestNamed",
                 "fixture.UpThroughLink",
                 "fixture.CanonSiblingBesideTarget",
+                "fixture.BadTokenHolder",
+                "fixture.BadTokenAfterToken",
             )
     }
 
@@ -58,6 +59,9 @@ class ClasspathWalkerJvmTest {
     ) {
         val entries = mutableListOf<String>()
         val classes = mutableListOf<String>()
+
+        /** The jars the JDK drops, which the walker reports as unreadable. */
+        val dropped = mutableListOf<Path>()
         private val classOfFile = mutableMapOf<Path, String>()
 
         fun jar(
@@ -71,6 +75,24 @@ class ClasspathWalkerJvmTest {
                     listOf(TestJars.loadableClassEntry(className)),
                     classPath?.let { mapOf("Class-Path" to it) },
                 )
+            return holds(path, className)
+        }
+
+        /** A jar whose manifest is [manifest] verbatim, holding the class [className]. */
+        fun rawJar(
+            relative: String,
+            className: String,
+            manifest: String,
+        ): Path {
+            val path = base.resolve(relative)
+            Files.createDirectories(path.parent)
+            ZipOutputStream(Files.newOutputStream(path)).use { out ->
+                out.putNextEntry(ZipEntry("META-INF/MANIFEST.MF"))
+                out.write(manifest.toByteArray())
+                val (name, bytes) = TestJars.loadableClassEntry(className)
+                out.putNextEntry(ZipEntry(name))
+                out.write(bytes)
+            }
             return holds(path, className)
         }
 
@@ -112,9 +134,18 @@ class ClasspathWalkerJvmTest {
         }
     }
 
-    /** Records the jars and folders the walker reports, in order. It fails on anything else. */
+    /** Records the jars and folders the walker reports, in order, and the files it calls unreadable. It fails on anything else. */
     private class Recorder : ClasspathVisitor {
         val reported = mutableListOf<File>()
+        val unreadable = mutableListOf<Path>()
+
+        override fun jarWithUnreadableManifest(
+            jar: File,
+            jarFile: JarFile,
+            cause: Exception,
+        ) {
+            reported += jar
+        }
 
         override fun jar(
             jar: File,
@@ -141,7 +172,9 @@ class ClasspathWalkerJvmTest {
         override fun unreadable(
             location: String,
             cause: Exception,
-        ) = fail("The walker could not read $location: $cause")
+        ) {
+            unreadable.add(Path.of(location))
+        }
     }
 
     private fun buildTree(): Tree {
@@ -215,6 +248,17 @@ class ClasspathWalkerJvmTest {
         tree.jar("named/named.jar", "fixture.ManifestNamed")
         tree.classpath(manifestDir)
 
+        // The JDK drops a whole jar for a Class-Path token that is not a valid URL: its own class and
+        // the jar it names before that token are never loaded.
+        val droppedHolder = tree.jar("badtoken/holder.jar", "fixture.BadTokenHolder", classPath = "dep.jar unknown:thing")
+        tree.jar("badtoken/dep.jar", "fixture.BadTokenAfterToken")
+        tree.dropped.add(droppedHolder)
+        tree.classpath(droppedHolder)
+
+        // A jar whose manifest cannot be read, and whose raw manifest names no Class-Path and no
+        // Multi-Release: true, stays: the JVM loads its classes of the unnamed package.
+        tree.classpath(tree.rawJar("badmanifest/unnamed.jar", "NoManifestUnnamed", "Manifest-Version: 1.0\nnot a header\n\n"))
+
         // A classpath file is a jar whatever its extension.
         tree.classpath(tree.jar("ext/library.zipx", "fixture.OddExtension"))
 
@@ -267,6 +311,7 @@ class ClasspathWalkerJvmTest {
                 .filterValues { it > 1 }
                 .keys
         assertEquals(emptySet(), repeated, "The walker reported a path twice")
+        assertEquals(tree.dropped, recorder.unreadable, "The walker dropped the jars the JDK drops")
         val first = linkedMapOf<String, String>()
         for (file in recorder.reported) {
             val className = tree.classAt(file.toPath()) ?: fail("The walker reported $file, which holds no class of the tree")

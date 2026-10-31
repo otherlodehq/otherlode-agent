@@ -68,12 +68,15 @@ internal data class ClassPathEntry(
  * them for a jar on disk. The value splits on the whitespace `StringTokenizer` splits on. Each
  * entry is a URL relative to [jar]. An entry whose protocol is not `file` (compared ignoring
  * case) is dropped, and so is a jar entry whose host is neither empty nor `localhost`, as the
- * system loader drops both. A directory entry, one that ends in `/`, is read whatever its host. An entry that is not a valid URL is dropped too; the system loader then skips the whole
- * jar, so this reads more than it loads, never less. A path is read from the URL's file part with
- * its `%` escapes decoded, so a space arrives as `%20`, and characters `java.net.URI` refuses,
- * such as `[` and `]`, are kept.
+ * system loader drops both. A directory entry, one that ends in `/`, is read whatever its host. A
+ * path is read from the URL's file part with its `%` escapes decoded, so a space arrives as `%20`,
+ * and characters `java.net.URI` refuses, such as `[` and `]`, are kept.
  *
- * Shared by the dependency listing and the class listing, so both parse `Class-Path` the same way.
+ * @throws MalformedURLException when a token is not a valid URL. The system loader drops the whole
+ * jar then, so the caller asks the running JDK ([jdkLoadsFrom]) whether it reads the jar at all.
+ *
+ * Shared by the dependency listing, the class listing and the static baseline, so all three parse
+ * `Class-Path` the same way.
  */
 internal fun classPathEntries(
     jar: File,
@@ -84,12 +87,7 @@ internal fun classPathEntries(
     val tokens = StringTokenizer(value)
     val entries = mutableListOf<ClassPathEntry>()
     while (tokens.hasMoreTokens()) {
-        val resolved =
-            try {
-                URL(base, tokens.nextToken())
-            } catch (_: MalformedURLException) {
-                continue
-            }
+        val resolved = URL(base, tokens.nextToken())
         if (!"file".equals(resolved.protocol, ignoreCase = true)) continue
         val host = resolved.host.orEmpty()
         // The JDK reads a directory URL's local path whatever its host, and a jar URL only when

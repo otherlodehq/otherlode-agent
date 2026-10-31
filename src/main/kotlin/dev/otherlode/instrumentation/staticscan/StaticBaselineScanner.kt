@@ -1,7 +1,8 @@
 package dev.otherlode.instrumentation.staticscan
 
-import dev.otherlode.dependencies.ClassPathEntry
-import dev.otherlode.dependencies.classPathEntries
+import dev.otherlode.dependencies.ClasspathVisitor
+import dev.otherlode.dependencies.ClasspathWalker
+import dev.otherlode.dependencies.JarClassifier
 import dev.otherlode.export.BodyKind
 import dev.otherlode.export.DeclaredClass
 import dev.otherlode.export.DeclaredMethod
@@ -21,6 +22,8 @@ import java.io.File
 import java.io.IOException
 import java.lang.System.Logger.Level
 import java.util.jar.JarFile
+import java.util.jar.Manifest
+import java.util.zip.ZipEntry
 
 /**
  * What one static baseline scan found. [ownClassNames] is every class name whose kept copy is in a
@@ -100,8 +103,8 @@ class StaticBaselineScanner(
      * One place a class loader looks for classes: a directory, the root of a jar, or the
      * `BOOT-INF/classes/` or `WEB-INF/classes/` folder of a jar. [classNames] are the dotted names
      * of the classes it holds. [unreadNames] are names the JVM finds here whose bytes this scan does
-     * not read, so the names are taken and nothing is classified for them: the classes a
-     * multi-release jar holds only under `META-INF/versions/N/`. [ownCode] is true for a directory
+     * not read, so the names are taken and nothing is classified for them: the classes of a named
+     * package in a jar whose manifest cannot be read. [ownCode] is true for a directory
      * and a nested classes folder, and [nested] for the latter.
      */
     private class ClassSource(
@@ -157,8 +160,14 @@ class StaticBaselineScanner(
      * can name further jars with manifests of their own. Without following them, an adopter's
      * code in one of those jars would never be declared.
      *
-     * A jar that cannot be opened, or whose manifest cannot be read, is left out with a WARNING,
-     * and with it the files its `Class-Path` names.
+     * Which files are read, at which paths and in what order is [ClasspathWalker]'s, as the JDK's
+     * `URLClassPath` reads them. A file that is not a directory is a jar whatever its extension.
+     * A file that cannot be opened as a jar is left out with a WARNING. So is a jar the JDK
+     * drops: one whose manifest cannot be read when its raw manifest names a `Class-Path` or says
+     * `Multi-Release: true`, and one whose `Class-Path` has a token that is not a valid URL. The
+     * files such a jar names are left out with it. A jar whose manifest cannot be read and that the
+     * JDK keeps contributes the classes of the unnamed package, and the other class names it holds
+     * are taken: the JVM finds them here, cannot define them, and never reaches a later copy.
      */
     fun scan(classpathRoots: List<File> = defaultClasspathRoots()): StaticScanResult {
         val buckets = Buckets()
@@ -183,24 +192,9 @@ class StaticBaselineScanner(
         return buckets.toResult()
     }
 
-    /** A file the walk is about to read; [isDirectory] is null for an entry of the classpath, else how a `Class-Path` URL reads it. */
-    private class Reached(
-        val file: File,
-        val isDirectory: Boolean?,
-    ) {
-        fun exists(): Boolean = if (isDirectory == null) file.exists() else if (isDirectory) file.isDirectory else file.isFile
-    }
-
     /**
-     * The sources of [roots] followed by those of every file reachable through manifest
-     * `Class-Path` entries, each file once, in the depth-first order the JVM searches them: the
-     * files a jar names come right after it, before the next root. The jars stay open in
-     * [jarFiles], for the caller to close.
-     *
-     * A `Class-Path` is read as `URLClassPath.JarLoader.getClassPath` reads it, through
-     * [dev.otherlode.dependencies.classPathEntries]. A URL ending in `/` is read only as a
-     * directory and any other only as a jar, and a file that is not what its URL says is skipped,
-     * as `URLClassPath.getLoader` skips it.
+     * The sources of everything [ClasspathWalker] reaches from [roots], in the order it reaches
+     * them. The jars stay open in [jarFiles], for the caller to close.
      */
     private fun searchPath(
         roots: List<File>,
@@ -208,67 +202,74 @@ class StaticBaselineScanner(
     ): SearchPath {
         val flat = mutableListOf<ClassSource>()
         val nested = mutableListOf<ClassSource>()
-        val seen = HashSet<File>()
-        val queue = ArrayDeque(roots.map { Reached(it, null) })
-        while (queue.isNotEmpty()) {
-            val reached = queue.removeFirst()
-            val root = reached.file
-            if (!reached.exists()) continue
-            if (!seen.add(runCatching { root.canonicalFile }.getOrDefault(root.absoluteFile))) continue
-            if (root.isDirectory) {
-                scanSources(root) { flat += directorySource(root) }
-                continue
+        val visitor =
+            object : ClasspathVisitor {
+                override fun jar(
+                    jar: File,
+                    jarFile: JarFile,
+                ) = add(jar, manifestReadable = true)
+
+                override fun jarWithUnreadableManifest(
+                    jar: File,
+                    jarFile: JarFile,
+                    cause: Exception,
+                ) {
+                    log.log(
+                        Level.WARNING,
+                        "otherlode: $jar has a manifest that could not be read, so the static baseline declares only its unnamed-package classes",
+                        cause,
+                    )
+                    add(jar, manifestReadable = false)
+                }
+
+                override fun directory(directory: File) {
+                    flat += directorySource(directory)
+                }
+
+                override fun directoryWithUnreadableManifest(
+                    directory: File,
+                    cause: Exception,
+                ) {
+                    flat += directorySource(directory)
+                }
+
+                override fun libraryDirectory(
+                    application: File,
+                    directory: File,
+                ) = Unit
+
+                override fun explodedApplication(
+                    root: File,
+                    manifest: Manifest,
+                ) {
+                    flat += directorySource(root)
+                }
+
+                override fun libraryJar(
+                    application: File,
+                    jar: File,
+                    jarFile: JarFile,
+                ) = Unit
+
+                override fun unreadable(
+                    location: String,
+                    cause: Exception,
+                ) {
+                    log.log(Level.WARNING, "otherlode: left $location out of the static baseline: it could not be read", cause)
+                }
+
+                private fun add(
+                    jar: File,
+                    manifestReadable: Boolean,
+                ) {
+                    val opened = JarFile(jar)
+                    jarFiles += opened
+                    for (source in jarSources(jar, opened, manifestReadable)) (if (source.nested) nested else flat) += source
+                }
             }
-            if (!isJarFile(root)) continue
-            val opened = openedJar(root) ?: continue
-            jarFiles += opened.jarFile
-            opened.classPath.asReversed().forEach { queue.addFirst(Reached(it.file, it.isDirectory)) }
-            scanSources(root) {
-                for (source in jarSources(root, opened.jarFile)) (if (source.nested) nested else flat) += source
-            }
-        }
+        ClasspathWalker(JarClassifier(includePackages, excludePackages)).walk(roots.map { it.path }, visitor)
         return SearchPath(flat, nested)
     }
-
-    private fun scanSources(
-        root: File,
-        read: () -> Unit,
-    ) {
-        try {
-            read()
-        } catch (e: Exception) {
-            log.log(Level.WARNING, "otherlode: could not scan classpath entry $root for the static baseline", e)
-        }
-    }
-
-    /** An open jar and the files its `Class-Path` names. */
-    private class OpenedJar(
-        val jarFile: JarFile,
-        val classPath: List<ClassPathEntry>,
-    )
-
-    /**
-     * [jar] opened, or null after a WARNING when it cannot be opened or its manifest cannot be
-     * read. The JDK drops such a jar when its raw manifest bytes name a `Class-Path`, or say
-     * `Multi-Release: true` and the main section fails to parse. Otherwise it keeps the jar and
-     * fails to define its named-package classes, so dropping every such jar leaves out only the
-     * unnamed-package classes the JVM loads from it.
-     */
-    private fun openedJar(jar: File): OpenedJar? {
-        var jarFile: JarFile? = null
-        return try {
-            val opened = JarFile(jar)
-            jarFile = opened
-            OpenedJar(opened, classPathEntries(jar, opened.manifest))
-        } catch (e: Exception) {
-            runCatching { jarFile?.close() }
-            log.log(Level.WARNING, "otherlode: left $jar out of the static baseline: it could not be opened or its manifest could not be read", e)
-            null
-        }
-    }
-
-    /** A jar or zip, by extension, case-insensitively: the launcher accepts `Foo.JAR` and `lib.zip` alike. */
-    private fun isJarFile(root: File): Boolean = root.extension.lowercase() in JAR_EXTENSIONS
 
     private fun directorySource(root: File): ClassSource =
         classSource(
@@ -287,18 +288,25 @@ class StaticBaselineScanner(
      * `WEB-INF/classes/`. Each dependency there is its own jar-inside-a-jar under
      * `BOOT-INF/lib`/`WEB-INF/lib`, deliberately not opened here.
      *
-     * A class a multi-release jar holds only under `META-INF/versions/N/`, for an N the running JVM
-     * reads, takes its name and is not classified. The scan reads base copies only, also when a
-     * versioned copy sits beside one. A Spring Boot launcher reads the nested folders as plain
-     * folders of classes, so no versioned entry there counts.
+     * A multi-release jar's class is read from the highest `META-INF/versions/N/` copy with N at or
+     * below the running JVM's feature version, and from the base entry when it has none, as
+     * `JarFile.getVersionedEntry` picks it. A class held only under a versioned folder is a class
+     * of the jar. A Spring Boot launcher reads the nested folders as plain folders of classes, so no
+     * versioned entry there counts.
+     *
+     * With [manifestReadable] false, the jar declares the classes of the unnamed package, and the
+     * names of the others are taken without being read, since the JVM cannot define them. Its nested
+     * classes folders are left out, since a Spring Boot launcher cannot read its manifest.
      */
     private fun jarSources(
         root: File,
         jarFile: JarFile,
+        manifestReadable: Boolean,
     ): List<ClassSource> {
         val flatNames = LinkedHashSet<String>()
         val nestedNames = NESTED_CLASSES_PREFIXES.associateWith { LinkedHashSet<String>() }
-        val versionedNames = HashSet<String>()
+        val versionedNames = LinkedHashSet<String>()
+        val versions = sortedSetOf<Int>(Comparator.reverseOrder())
         val runtimeFeature = JarFile.runtimeVersion().feature()
         val readsVersions = runtimeFeature > MIN_VERSIONED_RELEASE && jarFile.isMultiRelease
         for (entry in jarFile.entries()) {
@@ -321,30 +329,33 @@ class StaticBaselineScanner(
                     val versioned = versionedClassEntry(name)
                     if (versioned != null && versioned.version in MIN_VERSIONED_RELEASE..runtimeFeature) {
                         versionedNames += dottedName(versioned.classPath)
+                        versions += versioned.version
                     }
                 }
             }
         }
+        val rootNames = LinkedHashSet(flatNames).apply { addAll(versionedNames) }
+        val declared = if (manifestReadable) rootNames else rootNames.filterTo(LinkedHashSet()) { '.' !in it }
         val sources = mutableListOf<ClassSource>()
         sources +=
             classSource(
                 root,
                 ownCode = false,
                 nested = false,
-                ownLocator = ClassFileLocator.ForJarFile(jarFile),
-                resources = jarResources(jarFile, ""),
-                classNames = flatNames,
-                unreadNames = versionedNames - flatNames,
+                ownLocator = JarClassFileLocator(jarFile, "", versions.toList()),
+                resources = jarResources(jarFile, "", versions.toList()),
+                classNames = declared,
+                unreadNames = rootNames - declared,
             )
         for ((prefix, names) in nestedNames) {
-            if (names.isEmpty()) continue
+            if (names.isEmpty() || !manifestReadable) continue
             sources +=
                 classSource(
                     root,
                     ownCode = true,
                     nested = true,
-                    ownLocator = PrefixedJarClassFileLocator(jarFile, prefix),
-                    resources = jarResources(jarFile, prefix),
+                    ownLocator = JarClassFileLocator(jarFile, prefix, emptyList()),
+                    resources = jarResources(jarFile, prefix, emptyList()),
                     classNames = names,
                     unreadNames = emptySet(),
                 )
@@ -380,13 +391,17 @@ class StaticBaselineScanner(
             File(root, path).takeIf { it.isFile }?.inputStream()?.use { it.readNBytes(ScalaReleases.HEADER_BYTES) }
         }
 
-    /** Reads a resource by its path under [prefix] inside [jarFile], the leading bytes of it at most. */
+    /**
+     * Reads a resource by its path under [prefix] inside [jarFile], the leading bytes of it at most,
+     * from the highest of [versions] that holds it, else from the base entry.
+     */
     private fun jarResources(
         jarFile: JarFile,
         prefix: String,
+        versions: List<Int>,
     ): (String) -> ByteArray? =
         { path ->
-            jarFile.getJarEntry(prefix + path)?.let { entry ->
+            jarFile.entryFor(prefix, path, versions)?.let { entry ->
                 jarFile.getInputStream(entry).use { it.readNBytes(ScalaReleases.HEADER_BYTES) }
             }
         }
@@ -629,7 +644,6 @@ class StaticBaselineScanner(
     private companion object {
         val NESTED_CLASSES_PREFIXES = listOf("BOOT-INF/classes/", "WEB-INF/classes/")
         val NESTED_JAR_PREFIXES = listOf("BOOT-INF/lib/", "WEB-INF/lib/")
-        val JAR_EXTENSIONS = setOf("jar", "zip")
 
         /** The lowest `META-INF/versions/N/` the JDK's `JarFile.getVersionedEntry` reads, `BASE_VERSION_FEATURE`. A runtime version at or below it reads none. */
         const val MIN_VERSIONED_RELEASE = 8
@@ -699,19 +713,41 @@ internal fun versionedClassEntry(path: String): VersionedClassEntry? {
 
 private val VERSIONED_ENTRY = Regex("^META-INF/versions/([0-9]+)/(.+)$")
 
-/** Reads a class's bytes from a fixed prefix inside [jarFile], for nested classpath roots such as `BOOT-INF/classes/`. */
-private class PrefixedJarClassFileLocator(
+/**
+ * The entry for [path] under [prefix] in this jar: the copy under the highest of [versions] that
+ * holds it, else the base entry. A path in `META-INF/` has no versioned copy.
+ */
+private fun JarFile.entryFor(
+    prefix: String,
+    path: String,
+    versions: List<Int>,
+): ZipEntry? {
+    if (!path.startsWith("META-INF/")) {
+        for (version in versions) {
+            getEntry("${prefix}META-INF/versions/$version/$path")?.let { return it }
+        }
+    }
+    return getEntry(prefix + path)
+}
+
+/**
+ * Reads a class's bytes from a fixed prefix inside [jarFile], for nested classpath roots such as
+ * `BOOT-INF/classes/`, and from the highest of [versions] that holds the class when there are any.
+ */
+private class JarClassFileLocator(
     private val jarFile: JarFile,
     private val prefix: String,
+    private val versions: List<Int>,
 ) : ClassFileLocator {
     override fun locate(typeName: String): ClassFileLocator.Resolution {
         val entry =
-            jarFile.getJarEntry(prefix + typeName.replace('.', '/') + ".class") ?: return ClassFileLocator.Resolution.Illegal(typeName)
+            jarFile.entryFor(prefix, typeName.replace('.', '/') + ".class", versions)
+                ?: return ClassFileLocator.Resolution.Illegal(typeName)
         val bytes = jarFile.getInputStream(entry).use { it.readBytes() }
         return ClassFileLocator.Resolution.Explicit(bytes)
     }
 
     override fun close() {
-        // jarFile's lifecycle is owned by the caller, which may share it across multiple prefixed locators.
+        // jarFile's lifecycle is owned by the caller, which may share it across multiple locators.
     }
 }

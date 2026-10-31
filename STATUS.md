@@ -75,15 +75,6 @@ consumer reads as the adopter's code: it calls a `$DefaultImpls` method
 that does not exist. To decide: whether to mark a stub that would throw
 `NoSuchMethodError`.
 
-### Hardening follow-ups
-
-Where the static baseline's classpath walk still differs from the JVM's:
-- A `Class-Path` is resolved against the jar's path as given, where the JVM resolves it against the jar's real path. A jar reached through a symbolic link in another folder can then name a different file. If a stale copy sits at that path, the baseline declares the wrong copy. `dependencies/ClasspathWalker` already follows the JVM here, so building the scan's walk on it would fix this.
-- Only `.jar` and `.zip` files are read, where the JVM reads any file as a jar.
-- A jar whose manifest cannot be read is left out. The JVM keeps one whose raw manifest names no `Class-Path` and no `Multi-Release: true`, and loads its unnamed-package classes.
-- A `Class-Path` token that is not a valid URL is skipped. The JDK drops the whole jar.
-- A class a multi-release jar holds only under `META-INF/versions/N/` takes its name but is not declared. The scan reads base copies only.
-
 ### Tooling: code principles and a refactoring playbook
 
 From the comparison with pstack's poteto-mode (`cursor/plugins`, `190d287`).
@@ -105,7 +96,10 @@ Each lands in every repo as a shared path.
 Known gaps in what it lists, all rare, all listing less than the JVM loads:
 
 - JDK 17's `META-INF/INDEX.LIST`, which can name jars outside `Class-Path`
-  (JDK 18 dropped it).
+  (JDK 18 dropped it). The static baseline does not read it either: on JDK
+  17 a jar with an index loads a class from the jar its index names, and
+  the scan can declare a later copy instead. Rare: an index is deprecated,
+  and the jar must also hold a copy-shadowing class.
 - Boot `PropertiesLauncher` `loader.path` folders (documented as a blind
   spot; the server's coverage rule limits the damage).
 
@@ -472,10 +466,6 @@ Dependencies and the testkit:
   and class names only when the fat jar shares `java.class.path` with other
   entries, as in `java -cp app.jar:x.jar ...JarLauncher`; `java -jar` leaves
   only the fat jar.
-- A `Class-Path` token that is not a valid URL makes the JVM skip the whole
-  jar, while the listings skip only that token and read the rest
-  (`classPathEntries`). Both listings read more than the JVM loads there,
-  never less.
 - `withHomeAsTilde` turns a home of `C:\` into `C:`, so on Windows every
   `C:\...` location would read as `~\...`, though its KDoc says a root home
   changes nothing.

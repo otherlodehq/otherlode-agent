@@ -161,9 +161,19 @@ The scan runs once per process, on a background thread that does not hold up sta
 
 ### What the scan reads
 
-The scan walks each entry of `java.class.path` that is a directory, a `.jar` file or a `.zip` file. It also follows the `Class-Path` attribute of every jar's manifest to further jars and directories, resolved as the JDK resolves them, which is how `java -jar app.jar` finds its libraries. A jar whose manifest cannot be read is left out, with a warning in the log.
+The scan reads the classpath as the JVM's system class loader does. It walks each entry of `java.class.path`: a directory, or any other file as a jar, whatever its extension. It also follows the `Class-Path` attribute of every jar's manifest to further jars and directories, which is how `java -jar app.jar` finds its libraries. A `Class-Path` resolves against the real path of a jar on `java.class.path`, with every symbolic link in it followed, and against the path as written for a jar that another jar names.
 
-When two entries hold a class of the same name, the baseline keeps the copy the JVM would load, the first in the classpath's search order. The jars a `Class-Path` names are searched right after the jar that names them. The `BOOT-INF/classes/` and `WEB-INF/classes/` folders are searched after every other entry, as Spring Boot's launcher searches them. A class that a multi-release jar holds only under `META-INF/versions/` keeps its name from a later copy, but is not declared.
+The scan leaves a file out, with a warning in the log, when the JVM would not load from it:
+
+- A file that cannot be opened as a jar.
+- A jar with a `Class-Path` token that is not a valid URL. The files that jar names are left out with it.
+- A jar whose manifest cannot be read, when the manifest text holds `Class-Path:`, or holds `Multi-Release: true` and its main section cannot be read. So is a jar whose manifest is larger than the JVM reads, 16 MB by default. The files that jar names are left out with it.
+
+The scan asks the JVM it runs on in these cases, so a rule that differs between Java versions follows the version you run. On Java 17, a jar that holds `META-INF/INDEX.LIST` is kept, and the JVM then loads classes from the jars its index names, which the scan does not read.
+
+A jar whose manifest cannot be read and that the JVM keeps is read as the JVM reads it. The JVM defines only its classes in the unnamed package, so the scan declares those and no others from it, and none under `BOOT-INF/classes/` or `WEB-INF/classes/`. A class of a named package in that jar still takes its name from a later copy.
+
+When two entries hold a class of the same name, the baseline keeps the copy the JVM would load, the first in the classpath's search order. The jars a `Class-Path` names are searched right after the jar that names them. The `BOOT-INF/classes/` and `WEB-INF/classes/` folders are searched after every other entry, as Spring Boot's launcher searches them. In a multi-release jar, the scan declares the copy the JVM loads: the one under the highest `META-INF/versions/N/` at or below the Java version the application runs on, else the copy at the root of the jar. A class that such a jar holds only under `META-INF/versions/` is declared from there.
 
 Inside a jar, the scan reads:
 
@@ -232,7 +242,7 @@ It reads the classpath the way the JVM's system class loader does:
 
 Like the scan, the listing cannot see a class whose location another system decides at run time: a WAR that an application server deploys, an OSGi bundle, a plugin folder, or the extra folders Spring Boot's `PropertiesLauncher` reads from `loader.path`. Otherlode accepts a class's absence only when an earlier listing named that class, so a place the agent never reads cannot turn into a false removal.
 
-The agent sends a listing only when it read the whole classpath. If a directory, a jar or a nested jar that exists cannot be opened or read, the agent sends no listing for that process and logs one warning that names the file and the cause. A listing with a hole would read as proof that the missing classes are gone. A classpath entry that does not exist is skipped, as the JVM skips it. The agent also sends no listing when `java.class.path` is empty or has an empty element, which the JVM reads as the working directory, or when the JVM runs from a module path or a linked image, which the listing does not read. An unpacked Spring Boot application whose classpath index is malformed also gives no listing. Spring Boot does not launch from one either.
+The agent sends a listing only when it read the whole classpath. If a directory, a jar or a nested jar that exists cannot be opened or read, the agent sends no listing for that process and logs one warning that names the file and the cause. A jar whose `Class-Path` holds a token that is not a valid URL is listed by its own classes only, unless it holds `META-INF/INDEX.LIST`: Java 17 keeps such a jar and loads classes from the jars its index names, so the agent sends no listing for that process. A JVM from Java 18 on loads nothing from such a jar, yet the build holds its classes, and the jars it names are not read. A listing with a hole would read as proof that the missing classes are gone. A classpath entry that does not exist is skipped, as the JVM skips it. The agent also sends no listing when `java.class.path` is empty or has an empty element, which the JVM reads as the working directory, or when the JVM runs from a module path or a linked image, which the listing does not read. An unpacked Spring Boot application whose classpath index is malformed also gives no listing. Spring Boot does not launch from one either.
 
 The agent sends the listing in chunks of at most 20,000 names, in order, and each chunk says its position out of the total. It sends chunks again like the baseline's: after a flush the collector confirmed, one per flush, and a `400` or `422` answer drops the rest. Set `classListingEnabled=false` to switch it off. See [configuration options](configuration) and [what the agent sends](data-sent#class-listing-chunk).
 

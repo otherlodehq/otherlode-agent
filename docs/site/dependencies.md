@@ -41,7 +41,7 @@ The agent lists the startup classpath once per process, off the application's ma
 | Source | What the agent reads |
 |---|---|
 | `java.class.path` | Each entry, read through its real path. A file is read as a jar, whatever its extension, as the JDK's system loader does. A directory is not a dependency itself. |
-| Manifest `Class-Path` | Each `file:` entry a jar names, searched right after the jar that names it. An entry ending in `/` is a directory, never a dependency. |
+| Manifest `Class-Path` | Each `file:` entry a jar names, searched right after the jar that names it. An entry ending in `/` is a directory, never a dependency. A jar with a `Class-Path` token that is not a valid URL is skipped with a warning, as the JVM loads nothing from it. |
 | Unpacked Spring Boot application on the classpath | Every file under `BOOT-INF/lib/`, or `WEB-INF/lib/` and `WEB-INF/lib-provided/`, plus every jar its classpath index names. Each is a dependency unless it holds your own classes. A jar there that names an agent is still a dependency, as in a fat jar. These are searched after every `java.class.path` entry, as Spring Boot's class loader asks the JVM's loader first. |
 | Spring Boot executable jar | Every file under `BOOT-INF/lib/`, each read from its own central directory inside the fat jar, with nothing extracted to disk. |
 | Executable WAR | Every file under `WEB-INF/lib/` and `WEB-INF/lib-provided/`. |

@@ -3,7 +3,12 @@ package dev.otherlode.instrumentation.staticscan
 import dev.otherlode.export.CallEdge
 import net.bytebuddy.jar.asm.ClassWriter
 import net.bytebuddy.jar.asm.Opcodes
+import org.junit.jupiter.api.condition.DisabledOnOs
+import org.junit.jupiter.api.condition.EnabledOnJre
+import org.junit.jupiter.api.condition.JRE
+import org.junit.jupiter.api.condition.OS
 import java.io.File
+import java.nio.file.Files
 import java.util.logging.Handler
 import java.util.logging.LogRecord
 import java.util.zip.ZipEntry
@@ -69,7 +74,8 @@ class StaticBaselineSearchOrderTest {
         return jar
     }
 
-    private fun manifestOf(vararg attributes: String): String = (listOf("Manifest-Version: 1.0") + attributes).joinToString("\n", postfix = "\n\n")
+    private fun manifestOf(vararg attributes: String): String =
+        (listOf("Manifest-Version: 1.0") + attributes).joinToString("\n", postfix = "\n\n")
 
     private fun methodsOfDup(result: StaticScanResult): List<String> =
         result.declaredClasses
@@ -136,7 +142,8 @@ class StaticBaselineSearchOrderTest {
     @Test
     fun `a nested classes copy still wins over a copy in no flat root, and the first nested root wins among nested ones`() {
         val first = writeJar(File(directoryRoot(), "first.jar"), manifestOf(), "BOOT-INF/classes/$dupName.class" to dupBytes("fromFirst"))
-        val second = writeJar(File(directoryRoot(), "second.jar"), manifestOf(), "BOOT-INF/classes/$dupName.class" to dupBytes("fromSecond"))
+        val second =
+            writeJar(File(directoryRoot(), "second.jar"), manifestOf(), "BOOT-INF/classes/$dupName.class" to dupBytes("fromSecond"))
 
         val result = scan(first, second)
 
@@ -155,7 +162,7 @@ class StaticBaselineSearchOrderTest {
     }
 
     @Test
-    fun `a class held only under META-INF versions of an earlier multi-release jar takes its name`() {
+    fun `a class held only under META-INF versions of an earlier multi-release jar is declared from that copy`() {
         val earlier =
             writeJar(
                 File(directoryRoot(), "mr.jar"),
@@ -166,11 +173,11 @@ class StaticBaselineSearchOrderTest {
 
         val result = scan(earlier, later)
 
-        assertTrue(result.declaredClasses.isEmpty(), "the later copy is not kept: ${result.declaredClasses.map { it.className }}")
+        assertEquals(listOf("fromVersioned"), methodsOfDup(result))
         assertTrue(result.unprobedClasses.isEmpty())
         assertTrue(result.unreadableClasses.isEmpty())
         assertTrue(result.ownClassNames.isEmpty())
-        assertTrue(result.flatJarClassNames.isEmpty())
+        assertEquals(setOf(dupClassName), result.flatJarClassNames)
     }
 
     @Test
@@ -183,7 +190,7 @@ class StaticBaselineSearchOrderTest {
             )
         val later = directoryRoot("$dupName.class" to dupBytes("fromLater"))
 
-        assertTrue(scan(earlier, later).declaredClasses.isEmpty())
+        assertEquals(listOf("fromVersioned"), methodsOfDup(scan(earlier, later)))
     }
 
     @Test
@@ -201,7 +208,7 @@ class StaticBaselineSearchOrderTest {
             val result = scan(earlier, later)
 
             if (taken) {
-                assertTrue(result.declaredClasses.isEmpty(), "version $version")
+                assertEquals(listOf("fromVersioned"), methodsOfDup(result), "version $version")
             } else {
                 assertEquals(listOf("fromLater"), methodsOfDup(result), "version $version")
             }
@@ -224,7 +231,12 @@ class StaticBaselineSearchOrderTest {
     @Test
     fun `a versioned class in a jar that is not multi-release takes no name`() {
         for (manifest in listOf(manifestOf(), manifestOf("Multi-Release: false"), null)) {
-            val earlier = writeJar(File(directoryRoot(), "plain.jar"), manifest, "META-INF/versions/9/$dupName.class" to dupBytes("fromVersioned"))
+            val earlier =
+                writeJar(
+                    File(directoryRoot(), "plain.jar"),
+                    manifest,
+                    "META-INF/versions/9/$dupName.class" to dupBytes("fromVersioned"),
+                )
             val later = directoryRoot("$dupName.class" to dupBytes("fromLater"))
 
             val result = scan(earlier, later)
@@ -234,7 +246,7 @@ class StaticBaselineSearchOrderTest {
     }
 
     @Test
-    fun `a versioned copy beside a base copy leaves the base copy as the kept one`() {
+    fun `a versioned copy beside a base copy is the one declared`() {
         val earlier =
             writeJar(
                 File(directoryRoot(), "mr.jar"),
@@ -246,7 +258,60 @@ class StaticBaselineSearchOrderTest {
 
         val result = scan(earlier, later)
 
-        assertEquals(listOf("fromBase"), methodsOfDup(result))
+        assertEquals(listOf("fromVersioned"), methodsOfDup(result))
+    }
+
+    @Test
+    fun `the highest versioned copy at or below the runtime's version is the one declared`() {
+        val feature = Runtime.version().feature()
+        val earlier =
+            writeJar(
+                File(directoryRoot(), "mr.jar"),
+                manifestOf("Multi-Release: true"),
+                "$dupName.class" to dupBytes("fromBase"),
+                "META-INF/versions/9/$dupName.class" to dupBytes("fromNine"),
+                "META-INF/versions/$feature/$dupName.class" to dupBytes("fromRuntime"),
+                "META-INF/versions/${feature + 1}/$dupName.class" to dupBytes("fromAbove"),
+            )
+
+        assertEquals(listOf("fromRuntime"), methodsOfDup(scan(earlier)))
+    }
+
+    @Test
+    fun `a class with no versioned copy keeps its base copy in a multi-release jar`() {
+        val other = "com/example/target/Other"
+        val earlier =
+            writeJar(
+                File(directoryRoot(), "mr.jar"),
+                manifestOf("Multi-Release: true"),
+                "$dupName.class" to dupBytes("fromBase"),
+                "$other.class" to classNamedAfter("other"),
+                "META-INF/versions/9/$dupName.class" to dupBytes("fromVersioned"),
+            )
+
+        val result = scan(earlier)
+
+        assertEquals(listOf("fromVersioned"), methodsOfDup(result))
+        assertEquals(
+            listOf("other"),
+            result.declaredClasses
+                .single { it.className == "com.example.target.Other" }
+                .methods
+                .map { it.methodName },
+        )
+    }
+
+    @Test
+    fun `a versioned copy of a class that a later jar also holds shadows the later copy`() {
+        val earlier =
+            writeJar(
+                File(directoryRoot(), "mr.jar"),
+                manifestOf("Multi-Release: true"),
+                "META-INF/versions/9/$dupName.class" to dupBytes("fromVersioned"),
+            )
+        val later = writeJar(File(directoryRoot(), "later.jar"), manifestOf(), "$dupName.class" to dupBytes("fromLater"))
+
+        assertEquals(listOf("fromVersioned"), methodsOfDup(scan(earlier, later)))
     }
 
     @Test
@@ -283,22 +348,223 @@ class StaticBaselineSearchOrderTest {
         assertTrue(warnings.single().message.contains("bad.jar"), warnings.single().message)
     }
 
+    private val unnamedScanner = StaticBaselineScanner(listOf("com.example.target", "Unnamed"))
+
+    private fun unnamedBytes(method: String): ByteArray {
+        val cw = ClassWriter(ClassWriter.COMPUTE_FRAMES or ClassWriter.COMPUTE_MAXS)
+        cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "Unnamed", null, "java/lang/Object", null)
+        val mv = cw.visitMethod(Opcodes.ACC_PUBLIC, method, "()V", null, null)
+        mv.visitCode()
+        mv.visitInsn(Opcodes.RETURN)
+        mv.visitMaxs(0, 0)
+        mv.visitEnd()
+        cw.visitEnd()
+        return cw.toByteArray()
+    }
+
+    private fun methodsOfUnnamed(result: StaticScanResult): List<String> =
+        result.declaredClasses
+            .single { it.className == "Unnamed" }
+            .methods
+            .map { it.methodName }
+
+    private val badMainSection = "Manifest-Version: 1.0\nnot a header\n\n"
+
     @Test
-    fun `a jar whose manifest cannot be read is dropped even when it names no Class-Path`() {
-        val unreadable =
+    fun `a jar whose manifest cannot be read and names no Class-Path is kept for its unnamed-package classes`() {
+        val kept =
             writeJar(
                 File(directoryRoot(), "bad.jar"),
-                "Manifest-Version: 1.0\nnot a header\n\n",
+                badMainSection,
+                "Unnamed.class" to unnamedBytes("fromBad"),
                 "$dupName.class" to dupBytes("fromBad"),
             )
-        val later = directoryRoot("$dupName.class" to dupBytes("fromLater"))
+        val later = directoryRoot("$dupName.class" to dupBytes("fromLater"), "Unnamed.class" to unnamedBytes("fromLater"))
 
         lateinit var result: StaticScanResult
-        val warnings = captureWarnings { result = scan(unreadable, later) }
+        val warnings = captureWarnings { result = unnamedScanner.scan(listOf(kept, later)) }
 
-        assertEquals(listOf("fromLater"), methodsOfDup(result))
+        assertEquals(listOf("fromBad"), methodsOfUnnamed(result))
+        assertEquals(setOf("Unnamed"), result.allClassNames(), "the named-package class cannot load, and nor can the later copy")
         assertEquals(1, warnings.size, warnings.joinToString { it.message })
         assertTrue(warnings.single().message.contains("bad.jar"), warnings.single().message)
+    }
+
+    @Test
+    fun `a jar whose Multi-Release true manifest has a bad main section is dropped`() {
+        val dropped =
+            writeJar(
+                File(directoryRoot(), "bad.jar"),
+                "Manifest-Version: 1.0\nMulti-Release: true\nnot a header\n\n",
+                "Unnamed.class" to unnamedBytes("fromBad"),
+            )
+        val later = directoryRoot("Unnamed.class" to unnamedBytes("fromLater"))
+
+        lateinit var result: StaticScanResult
+        val warnings = captureWarnings { result = unnamedScanner.scan(listOf(dropped, later)) }
+
+        assertEquals(listOf("fromLater"), methodsOfUnnamed(result))
+        assertEquals(1, warnings.size, warnings.joinToString { it.message })
+    }
+
+    @Test
+    fun `a jar whose Multi-Release true manifest has only a bad later section is kept`() {
+        val kept =
+            writeJar(
+                File(directoryRoot(), "bad.jar"),
+                "Manifest-Version: 1.0\nMulti-Release: true\n\nnot a name\n\n",
+                "Unnamed.class" to unnamedBytes("fromBad"),
+            )
+
+        assertEquals(listOf("fromBad"), methodsOfUnnamed(unnamedScanner.scan(listOf(kept))))
+    }
+
+    @Test
+    fun `a jar whose raw manifest names a Class-Path in any case is dropped when a later section cannot be read`() {
+        val dir = directoryRoot()
+        val dropped =
+            writeJar(
+                File(dir, "bad.jar"),
+                "Manifest-Version: 1.0\nCLASS-PATH: next.jar\n\nnot a name\n\n",
+                "Unnamed.class" to unnamedBytes("fromBad"),
+            )
+        writeJar(File(dir, "next.jar"), manifestOf(), "com/example/target/Next.class" to dupBytes("fromNext"))
+
+        assertTrue(unnamedScanner.scan(listOf(dropped)).allClassNames().isEmpty())
+    }
+
+    @Test
+    fun `a Class-Path token that is not a valid URL drops the whole jar`() {
+        val dir = directoryRoot()
+        val app =
+            writeJar(
+                File(dir, "app.jar"),
+                manifestOf("Class-Path: ok.jar unknown:thing"),
+                "Unnamed.class" to unnamedBytes("fromApp"),
+            )
+        writeJar(File(dir, "ok.jar"), manifestOf(), "$dupName.class" to dupBytes("fromOk"))
+        val later = directoryRoot("Unnamed.class" to unnamedBytes("fromLater"))
+
+        lateinit var result: StaticScanResult
+        val warnings = captureWarnings { result = unnamedScanner.scan(listOf(app, later)) }
+
+        assertEquals(listOf("fromLater"), methodsOfUnnamed(result))
+        assertEquals(setOf("Unnamed"), result.allClassNames())
+        assertEquals(1, warnings.size, warnings.joinToString { it.message })
+        assertTrue(warnings.single().message.contains("app.jar"), warnings.single().message)
+    }
+
+    @Test
+    fun `a classes directory whose manifest cannot be read is still a directory of classes`() {
+        val dir = directoryRoot("$dupName.class" to dupBytes("fromDir"))
+        File(dir, "META-INF").mkdirs()
+        File(dir, "META-INF/MANIFEST.MF").writeText("Manifest-Version: 1.0\nBundle-Version \${v}\n\n")
+        val later = writeJar(File(directoryRoot(), "later.jar"), manifestOf(), "$dupName.class" to dupBytes("fromLater"))
+
+        assertEquals(listOf("fromDir"), methodsOfDup(scan(dir, later)))
+    }
+
+    @Test
+    fun `a folder an exploded Spring Boot application's classpath index names is not a classpath directory`() {
+        val app = directoryRoot("BOOT-INF/extra/$dupName.class" to dupBytes("fromExtra"))
+        File(app, "META-INF").mkdirs()
+        File(app, "META-INF/MANIFEST.MF").writeText("Manifest-Version: 1.0\nSpring-Boot-Lib: BOOT-INF/lib/\n\n")
+        File(app, "BOOT-INF/classpath.idx").writeText("- \"BOOT-INF/extra/\"\n")
+
+        assertTrue(scan(app).allClassNames().isEmpty())
+    }
+
+    @Test
+    fun `a jar whose manifest cannot be read declares no BOOT-INF classes`() {
+        val kept =
+            writeJar(
+                File(directoryRoot(), "bootbad.jar"),
+                badMainSection,
+                "BOOT-INF/classes/$dupName.class" to dupBytes("fromNested"),
+                "WEB-INF/classes/com/example/target/Other.class" to classNamedAfter("other"),
+            )
+
+        val result = captureWarnings { assertTrue(scan(kept).allClassNames().isEmpty()) }
+
+        assertEquals(1, result.size, result.joinToString { it.message })
+    }
+
+    @Test
+    fun `a manifest over the size the JDK reads drops the jar`() {
+        val dir = directoryRoot()
+        val huge = File(dir, "huge.jar")
+        ZipOutputStream(huge.outputStream()).use { out ->
+            out.putNextEntry(ZipEntry("META-INF/MANIFEST.MF"))
+            out.write("Manifest-Version: 1.0\n\n".toByteArray())
+            val blanks = ByteArray(1 shl 20) { '\n'.code.toByte() }
+            repeat(17) { out.write(blanks) }
+            out.putNextEntry(ZipEntry("Unnamed.class"))
+            out.write(unnamedBytes("fromHuge"))
+        }
+        val later = directoryRoot("Unnamed.class" to unnamedBytes("fromLater"))
+
+        lateinit var result: StaticScanResult
+        captureWarnings { result = unnamedScanner.scan(listOf(huge, later)) }
+
+        assertEquals(listOf("fromLater"), methodsOfUnnamed(result))
+    }
+
+    @Test
+    @EnabledOnJre(JRE.JAVA_17)
+    fun `on JDK 17 a jar with an INDEX LIST is kept whatever its Class-Path holds`() {
+        val kept =
+            writeJar(
+                File(directoryRoot(), "indexed.jar"),
+                manifestOf("Class-Path: ok.jar unknown:thing"),
+                "Unnamed.class" to unnamedBytes("fromIndexed"),
+                "META-INF/INDEX.LIST" to "JarIndex-Version: 1.0\n\nindexed.jar\n\n".toByteArray(),
+            )
+
+        assertEquals(listOf("fromIndexed"), methodsOfUnnamed(unnamedScanner.scan(listOf(kept))))
+    }
+
+    @Test
+    fun `a file of any extension on the classpath is read as a jar`() {
+        val jar = writeJar(File(directoryRoot(), "app.dat"), manifestOf(), "$dupName.class" to dupBytes("fromDat"))
+
+        assertEquals(listOf("fromDat"), methodsOfDup(scan(jar)))
+    }
+
+    @Test
+    fun `a file of any extension that a Class-Path names is read as a jar`() {
+        val dir = directoryRoot()
+        val app = writeJar(File(dir, "app.jar"), manifestOf("Class-Path: lib.bin"))
+        writeJar(File(dir, "lib.bin"), manifestOf(), "$dupName.class" to dupBytes("fromBin"))
+
+        assertEquals(listOf("fromBin"), methodsOfDup(scan(app)))
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS)
+    fun `a Class-Path in a jar reached through a link in another folder resolves against the jar's real folder`() {
+        val real = directoryRoot()
+        val linked = directoryRoot()
+        writeJar(File(real, "app.jar"), manifestOf("Class-Path: dep.jar"))
+        writeJar(File(real, "dep.jar"), manifestOf(), "$dupName.class" to dupBytes("fromReal"))
+        writeJar(File(linked, "dep.jar"), manifestOf(), "$dupName.class" to dupBytes("fromStale"))
+        Files.createSymbolicLink(File(linked, "app.jar").toPath(), File(real, "app.jar").toPath())
+
+        assertEquals(listOf("fromReal"), methodsOfDup(scan(File(linked, "app.jar"))))
+    }
+
+    @Test
+    @DisabledOnOs(OS.WINDOWS)
+    fun `a Class-Path jar reached through a link resolves its own Class-Path against the folder that holds the link`() {
+        val dir = directoryRoot()
+        val links = File(dir, "links").apply { mkdirs() }
+        val elsewhere = File(dir, "elsewhere").apply { mkdirs() }
+        writeJar(File(dir, "app.jar"), manifestOf("Class-Path: links/mid.jar"))
+        writeJar(File(elsewhere, "mid.jar"), manifestOf("Class-Path: dep.jar"))
+        writeJar(File(elsewhere, "dep.jar"), manifestOf(), "$dupName.class" to dupBytes("fromTargetFolder"))
+        writeJar(File(links, "dep.jar"), manifestOf(), "$dupName.class" to dupBytes("fromLinkFolder"))
+        Files.createSymbolicLink(File(links, "mid.jar").toPath(), File(elsewhere, "mid.jar").toPath())
+
+        assertEquals(listOf("fromLinkFolder"), methodsOfDup(scan(File(dir, "app.jar"))))
     }
 
     @Test
@@ -411,7 +677,11 @@ class StaticBaselineSearchOrderTest {
     fun `a Class-Path jar whose manifest cannot be read is dropped with the jars it names`() {
         val dir = directoryRoot()
         val app = writeJar(File(dir, "app.jar"), manifestOf("Class-Path: bad.jar"))
-        writeJar(File(dir, "bad.jar"), "Manifest-Version: 1.0\nClass-Path: c.jar\nnot a header\n\n", "$dupName.class" to dupBytes("fromBad"))
+        writeJar(
+            File(dir, "bad.jar"),
+            "Manifest-Version: 1.0\nClass-Path: c.jar\nnot a header\n\n",
+            "$dupName.class" to dupBytes("fromBad"),
+        )
         writeJar(File(dir, "c.jar"), manifestOf(), "com/example/target/Cee.class" to classNamedAfter("cee"))
 
         lateinit var result: StaticScanResult
@@ -459,14 +729,33 @@ class StaticBaselineSearchOrderTest {
     }
 
     @Test
-    fun `a cross-class read of a class a multi-release jar holds only under META-INF versions goes to the supporting types`() {
+    fun `a cross-class read uses the versioned copy of a class a multi-release jar holds`() {
+        val real = classBytes("kotlin/test/com/example/target/DefaultArgumentTarget.class")
         val callerBytes = classBytes("kotlin/test/com/example/target/CallEdgeTarget.class")
         val hollow = hollowClass("com/example/target/DefaultArgumentTarget")
         val versioned =
             writeJar(
                 File(directoryRoot(), "mr.jar"),
                 manifestOf("Multi-Release: true"),
-                "META-INF/versions/9/com/example/target/DefaultArgumentTarget.class" to hollow,
+                "com/example/target/DefaultArgumentTarget.class" to hollow,
+                "META-INF/versions/9/com/example/target/DefaultArgumentTarget.class" to real,
+            )
+        val caller = directoryRoot("com/example/target/CallEdgeTarget.class" to callerBytes)
+
+        val result = StaticBaselineScanner(listOf("com.example.target")).scan(listOf(versioned, caller))
+
+        assertEquals(resolvedDefaultEdge, callsWithDefaultArgument(result))
+    }
+
+    @Test
+    fun `a cross-class read of a class a jar with an unreadable manifest shadows goes to the supporting types`() {
+        val callerBytes = classBytes("kotlin/test/com/example/target/CallEdgeTarget.class")
+        val hollow = hollowClass("com/example/target/DefaultArgumentTarget")
+        val shadowing =
+            writeJar(
+                File(directoryRoot(), "bad.jar"),
+                badMainSection,
+                "com/example/target/DefaultArgumentTarget.class" to hollow,
             )
         val caller =
             directoryRoot(
@@ -474,7 +763,7 @@ class StaticBaselineSearchOrderTest {
                 "com/example/target/DefaultArgumentTarget.class" to hollow,
             )
 
-        val result = StaticBaselineScanner(listOf("com.example.target")).scan(listOf(versioned, caller))
+        val result = StaticBaselineScanner(listOf("com.example.target")).scan(listOf(shadowing, caller))
 
         assertEquals(resolvedDefaultEdge, callsWithDefaultArgument(result))
     }
@@ -486,8 +775,9 @@ class StaticBaselineSearchOrderTest {
         result.declaredClasses
             .single { it.className == "com.example.target.CallEdgeTarget" }
             .methods
-            .single { it.methodName == "callsWithDefaultArgument" && it.methodDescriptor == "(Lcom/example/target/DefaultArgumentTarget;)I" }
-            .calls
+            .single {
+                it.methodName == "callsWithDefaultArgument" && it.methodDescriptor == "(Lcom/example/target/DefaultArgumentTarget;)I"
+            }.calls
 
     /** A public class [internalName] with no members, so a `$default` pass-through into it cannot resolve. */
     private fun hollowClass(internalName: String): ByteArray {

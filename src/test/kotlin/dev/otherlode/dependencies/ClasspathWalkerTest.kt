@@ -7,6 +7,8 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.util.jar.JarFile
 import java.util.jar.Manifest
+import java.util.zip.ZipEntry
+import java.util.zip.ZipOutputStream
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -38,7 +40,23 @@ class ClasspathWalkerTest {
             jarFile: JarFile,
         ) = record("jar", jar)
 
+        override fun jarWithUnreadableManifest(
+            jar: File,
+            jarFile: JarFile,
+            cause: Exception,
+        ) = record("unnamed", jar)
+
         override fun directory(directory: File) = record("dir", directory)
+
+        override fun libraryDirectory(
+            application: File,
+            directory: File,
+        ) = record("libdir", directory)
+
+        override fun directoryWithUnreadableManifest(
+            directory: File,
+            cause: Exception,
+        ) = record("dirbad", directory)
 
         override fun explodedApplication(
             root: File,
@@ -283,7 +301,7 @@ class ClasspathWalkerTest {
         Files.createDirectories(app.resolve("BOOT-INF/extra"))
         Files.write(app.resolve("BOOT-INF/classpath.idx"), "  \n- \"BOOT-INF/extra\"\n".toByteArray())
 
-        assertEquals(listOf("app:app", "dir:app/BOOT-INF/extra"), walk(app))
+        assertEquals(listOf("app:app", "libdir:app/BOOT-INF/extra"), walk(app))
     }
 
     @Test
@@ -469,5 +487,81 @@ class ClasspathWalkerTest {
             listOf("app:app", "lib:app/BOOT-INF/lib/a.jar", "unreadable:app/BOOT-INF/lib/a.jar", "lib:app/BOOT-INF/lib/b.jar"),
             walk(app, visitor = Recorder(failIn = setOf(first.toString()))),
         )
+    }
+
+    /** A jar holding one class and [manifest] verbatim as its manifest entry. */
+    private fun rawManifestJar(
+        relative: String,
+        manifest: String,
+    ): Path {
+        val file = dir.resolve(relative)
+        ZipOutputStream(Files.newOutputStream(file)).use { out ->
+            out.putNextEntry(ZipEntry("META-INF/MANIFEST.MF"))
+            out.write(manifest.toByteArray())
+            out.putNextEntry(ZipEntry("A.class"))
+            out.write(ByteArray(4))
+        }
+        return file
+    }
+
+    @Test
+    fun `a classpath jar with an unreadable manifest that names no Class-Path is handed over without it`() {
+        val kept = rawManifestJar("kept.jar", "Manifest-Version: 1.0\nnot a header\n\n")
+        val after = jar("after.jar")
+
+        assertEquals(listOf("unnamed:kept.jar", "jar:after.jar"), walk(kept, after))
+    }
+
+    @Test
+    fun `a jar with an unreadable manifest that names a Class-Path is reported and the jars it names are left out`() {
+        val dropped = rawManifestJar("dropped.jar", "Manifest-Version: 1.0\nClass-Path: dep.jar\nnot a header\n\n")
+        jar("dep.jar")
+        val after = jar("after.jar")
+
+        assertEquals(listOf("unreadable:dropped.jar", "jar:after.jar"), walk(dropped, after))
+    }
+
+    @Test
+    fun `a jar with an unreadable manifest in a library folder is reported, since Boot's loader reads it as the JDK does`() {
+        val app = explodedApplication("app")
+        Files.createDirectories(app.resolve("BOOT-INF/lib"))
+        rawManifestJar("app/BOOT-INF/lib/a.jar", "Manifest-Version: 1.0\nnot a header\n\n")
+
+        assertEquals(listOf("app:app", "unreadable:app/BOOT-INF/lib/a.jar"), walk(app))
+    }
+
+    @Test
+    fun `a jar with a Class-Path token that is not a valid URL is reported, not read, and names nothing`() {
+        val dropped = jar("dropped.jar", "dep.jar unknown:thing")
+        jar("dep.jar")
+        val after = jar("after.jar")
+
+        assertEquals(listOf("unreadable:dropped.jar", "jar:after.jar"), walk(dropped, after))
+    }
+
+    @Test
+    fun `a file of any extension is read as a jar`() {
+        val bin = jar("lib.bin", "other.dat")
+        jar("other.dat")
+
+        assertEquals(listOf("jar:lib.bin", "jar:other.dat"), walk(bin))
+    }
+
+    @Test
+    fun `a directory whose manifest cannot be read is handed over through its own callback`() {
+        val classes = Files.createDirectories(dir.resolve("classes/META-INF"))
+        Files.write(classes.resolve("MANIFEST.MF"), "Manifest-Version: 1.0\nBundle-Version \${v}\n\n".toByteArray())
+        val after = jar("after.jar")
+
+        assertEquals(listOf("dirbad:classes", "jar:after.jar"), walk(dir.resolve("classes"), after))
+    }
+
+    @Test
+    fun `a folder the classpath index names is handed over as a library directory, not a classpath directory`() {
+        val app = explodedApplication("app")
+        Files.createDirectories(app.resolve("BOOT-INF/extra"))
+        Files.write(app.resolve("BOOT-INF/classpath.idx"), "- \"BOOT-INF/extra/\"\n".toByteArray())
+
+        assertEquals(listOf("app:app", "libdir:app/BOOT-INF/extra"), walk(app))
     }
 }
