@@ -1159,7 +1159,7 @@ val verifyPublication by tasks.registering {
                             .none { it.tagName == "dependencies" },
                     ) { "the agent POM must declare no dependencies, found $dependencies" }
                 } else {
-                    check(dependencies == listOf("org.jetbrains.kotlin:kotlin-stdlib:2.2.21:runtime")) {
+                    check(dependencies == listOf("org.jetbrains.kotlin:kotlin-stdlib:2.0.21:runtime")) {
                         "the testkit POM must list only kotlin-stdlib at runtime scope, found $dependencies"
                     }
                 }

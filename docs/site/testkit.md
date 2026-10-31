@@ -14,7 +14,7 @@ The agent runs from its own `-javaagent` jar. The testkit is a second jar that g
 
 The two always share one version, and the testkit's collector rejects a payload from an agent of another version. The failure names both versions. Upgrade the pair together.
 
-The testkit bundles its own protobuf under `dev.otherlode.testkit.shaded`. Its one dependency is kotlin-stdlib, and JUnit 5 stays optional: the extension needs `junit-jupiter-api` only if you use it. The jar is class-file version 61, so it loads on JDK 17 and later.
+The testkit bundles its own protobuf under `dev.otherlode.testkit.shaded`. Its one dependency is kotlin-stdlib, and Kotlin test code needs Kotlin 1.9 or later to compile against it. JUnit 5 stays optional: the extension needs `junit-jupiter-api` only if you use it. The jar is class-file version 61, so it loads on JDK 17 and later.
 
 In a Gradle build, resolve the agent jar through a configuration of its own, so it never lands on the test classpath, and attach it to the test task:
 

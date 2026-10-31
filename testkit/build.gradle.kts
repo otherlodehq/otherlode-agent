@@ -1,13 +1,14 @@
 import org.gradle.api.publish.maven.tasks.AbstractPublishToMaven
 import org.gradle.api.tasks.bundling.Jar
+import java.io.DataInputStream
 import java.util.zip.ZipFile
 
 plugins {
     kotlin("jvm") version "2.2.21"
     `jvm-test-suite`
     id("com.gradleup.shadow") version "8.3.11"
-    // 0.18.2 is the newest release (2026-09-02). It reads Kotlin 2.1 and later metadata, which
-    // covers this module's 2.2.21, and its only change since 0.18.1 is a configuration crash fix.
+    // 0.18.2 is the newest release (2026-09-02). Its only change since 0.18.1 is a configuration
+    // crash fix.
     id("org.jetbrains.kotlinx.binary-compatibility-validator") version "0.18.2"
     `maven-publish`
     signing
@@ -57,6 +58,16 @@ dependencies {
 kotlin {
     jvmToolchain(21)
     explicitApi()
+    coreLibrariesVersion = "2.0.21"
+}
+
+// Only the main source set is pinned: the test fixtures keep the default language version, whose
+// compiler shapes the end-to-end tests read.
+tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileKotlin") {
+    compilerOptions {
+        languageVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_0)
+        apiVersion.set(org.jetbrains.kotlin.gradle.dsl.KotlinVersion.KOTLIN_2_0)
+    }
 }
 
 // The plain jar keeps its own classifier so it cannot overwrite the shadow jar, which is the
@@ -121,6 +132,82 @@ tasks.build {
     dependsOn(tasks.shadowJar)
 }
 
+// The `mv` of a class's kotlin.Metadata annotation, or null for a class without one. Reads the
+// constant pool and the class attributes of a class file; nothing else of it.
+fun kotlinMetadataVersion(bytes: ByteArray): List<Int>? {
+    val input = DataInputStream(bytes.inputStream())
+    input.skipBytes(8)
+    val pool = arrayOfNulls<Any>(input.readUnsignedShort())
+    var index = 1
+    while (index < pool.size) {
+        when (val tag = input.readUnsignedByte()) {
+            1 -> pool[index] = input.readUTF()
+            3 -> pool[index] = input.readInt()
+            4 -> input.skipBytes(4)
+            5, 6 -> {
+                input.skipBytes(8)
+                index++
+            }
+            7, 8, 16, 19, 20 -> input.skipBytes(2)
+            9, 10, 11, 12, 17, 18 -> input.skipBytes(4)
+            15 -> input.skipBytes(3)
+            else -> error("unknown constant pool tag $tag")
+        }
+        index++
+    }
+    input.skipBytes(6)
+    input.skipBytes(2 * input.readUnsignedShort())
+    repeat(2) {
+        repeat(input.readUnsignedShort()) {
+            input.skipBytes(6)
+            repeat(input.readUnsignedShort()) {
+                input.skipBytes(2)
+                input.skipBytes(input.readInt())
+            }
+        }
+    }
+    var version: List<Int>? = null
+    repeat(input.readUnsignedShort()) {
+        val name = pool[input.readUnsignedShort()]
+        val length = input.readInt()
+        if (name != "RuntimeVisibleAnnotations") {
+            input.skipBytes(length)
+        } else {
+            repeat(input.readUnsignedShort()) {
+                val type = pool[input.readUnsignedShort()]
+                val pairs = readAnnotationPairs(input, pool)
+                if (type == "Lkotlin/Metadata;") version = (pairs["mv"] as? List<*>)?.filterIsInstance<Int>()
+            }
+        }
+    }
+    return version
+}
+
+fun readAnnotationPairs(
+    input: DataInputStream,
+    pool: Array<Any?>,
+): Map<String, Any?> =
+    buildMap {
+        repeat(input.readUnsignedShort()) { put(pool[input.readUnsignedShort()] as String, readElementValue(input, pool)) }
+    }
+
+fun readElementValue(
+    input: DataInputStream,
+    pool: Array<Any?>,
+): Any? =
+    when (val tag = input.readUnsignedByte().toChar()) {
+        'e' -> {
+            input.skipBytes(4)
+            null
+        }
+        '@' -> {
+            input.skipBytes(2)
+            readAnnotationPairs(input, pool)
+        }
+        '[' -> List(input.readUnsignedShort()) { readElementValue(input, pool) }
+        else -> pool[input.readUnsignedShort()].takeIf { tag == 'I' }
+    }
+
 // Fails the build if the shadow jar is not what an adopter's test classpath can take: only the
 // testkit's own classes, protobuf and the wire module present only relocated, no copy of
 // kotlin-stdlib, and the licence files in place.
@@ -145,6 +232,14 @@ val verifyTestkitJar by tasks.registering {
                     ((header[6].toInt() and 0xFF) shl 8 or (header[7].toInt() and 0xFF)) > 61
                 }
             check(tooNew.isEmpty()) { "testkit jar has classes above class-file version 61: ${tooNew.take(10)}" }
+            val tooNewMetadata =
+                classes.filter { name ->
+                    val version = kotlinMetadataVersion(zip.getInputStream(zip.getEntry(name)).use { it.readBytes() })
+                    version != null && (version[0] > 2 || version[0] == 2 && version[1] > 0)
+                }
+            check(tooNewMetadata.isEmpty()) {
+                "testkit jar has classes with Kotlin metadata above 2.0, which Kotlin 1.9 cannot read: ${tooNewMetadata.take(10)}"
+            }
             val foreign = classes.filterNot { it.startsWith("dev/otherlode/testkit/") }
             check(foreign.isEmpty()) { "testkit jar carries classes outside dev/otherlode/testkit/: ${foreign.take(10)}" }
             val unrelocated =
@@ -302,7 +397,7 @@ tasks.check {
 // `shadow` configuration. It goes on the published variant itself: a `shadow(...)` dependency would
 // also write a Class-Path entry into the jar's manifest.
 configurations.named("shadowRuntimeElements") {
-    dependencies.add(project.dependencies.create("org.jetbrains.kotlin:kotlin-stdlib:2.2.21"))
+    dependencies.add(project.dependencies.create("org.jetbrains.kotlin:kotlin-stdlib:2.0.21"))
 }
 
 val javadocJar by tasks.registering(Jar::class) {
