@@ -109,13 +109,13 @@ private class ServletApiGate : ElementMatcher<ClassLoader?> {
  * namespaces with one module compiled against Servlet 4.0. See ADR 0074.
  *
  * A request is counted at the entry of the servlet's public `service(ServletRequest,
- * ServletResponse)`, for a `REQUEST` dispatch, against the mapping the container matched
- * (`HttpServletRequest.getHttpServletMapping`). The advice is woven onto every servlet class that
+ * ServletResponse)`, for a `REQUEST`, `FORWARD` or `INCLUDE` dispatch, against the mapping the
+ * container matched (`HttpServletRequest.getHttpServletMapping`, or the include mapping attribute). The advice is woven onto every servlet class that
  * declares that method, `HttpServlet` included, and a request is counted by exactly one of the
  * frames it passes through: the keys of a servlet are bound only for the most derived class that
  * declares the method (see [ServletShapes]).
  *
- * A servlet context is declared at the first `REQUEST` dispatch that reaches a hooked servlet in it,
+ * A servlet context is declared at the first `REQUEST`, `FORWARD` or `INCLUDE` dispatch that reaches a hooked servlet in it,
  * from its servlet registrations, and again before each manifest for a mapping added since (see [ServletContexts]). Servlets another
  * module counts behind, and a container's own servlets, are left out.
  */

@@ -212,6 +212,19 @@ class IncludingServlet(
     }
 }
 
+/** Forwards to the servlet named [target], then includes it. */
+class NamedDispatchingServlet(
+    private val target: String,
+) : HttpServlet() {
+    override fun doGet(
+        req: HttpServletRequest,
+        resp: HttpServletResponse,
+    ) {
+        servletContext.getNamedDispatcher(target).include(req, resp)
+        servletContext.getNamedDispatcher(target).forward(req, resp)
+    }
+}
+
 /** Fails, so the container dispatches to its error page. */
 class FailingServlet : HttpServlet() {
     override fun doGet(

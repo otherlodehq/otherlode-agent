@@ -6,6 +6,7 @@ import javax.servlet.DispatcherType;
 import javax.servlet.Servlet;
 import javax.servlet.ServletConfig;
 import javax.servlet.ServletContext;
+import javax.servlet.ServletRegistration;
 import javax.servlet.ServletRequest;
 import javax.servlet.http.HttpServletMapping;
 import javax.servlet.http.HttpServletRequest;
@@ -28,12 +29,25 @@ import net.bytebuddy.asm.Advice;
  * runs on has a name of its own in its {@code ServletConfig}, and so is not the one the container
  * matched. A servlet with no config, or none that names itself, counts.
  *
- * <p>A request counts only for a {@code REQUEST} dispatch. A request whose mapping has no match
+ * <p>A {@code REQUEST}, {@code FORWARD} or {@code INCLUDE} dispatch counts at the servlet it
+ * reaches; {@code ASYNC} and {@code ERROR} count nothing. A forward's mapping is the request's own.
+ * An include leaves the request's mapping as the original one, so the included servlet's mapping is
+ * read from the request attribute {@code RequestDispatcher.INCLUDE_MAPPING}, whose name the advice
+ * builds for the namespace in use because a string constant is not rebound. When that mapping names
+ * a servlet other than the hooked one, as Undertow's does (it holds the including servlet's mapping)
+ * and as it does for a servlet called directly during an include, the hooked servlet's own
+ * registration answers: the mapping equal to the include's servlet path when its path info is null,
+ * or to that path plus {@code /*} when it is not, else nothing counts. Every counted dispatch hands
+ * the context to the module. A request whose mapping has no match
  * type disables the module before anything is declared: the match type is null for the servlet API's
  * default {@code getHttpServletMapping}, which a container that does not implement Servlet 4.0
  * answers with (LINKAGE_ERROR), and for a request object that hides the real mapping
  * (ADVICE_FAILED). Otherwise the context is handed to the module, which declares it once, and the
  * first lookup uses the request's verb, the second the servlet's {@code *} verb.
+ *
+ * <p>The advice is woven into servlet classes at their own class file version, which can be 48. It
+ * therefore holds no string concatenation with {@code +}, which compiles to {@code invokedynamic},
+ * and no class literal, which version 48 cannot load.
  *
  * <p>This advice is written against the {@code javax} servlet types and bound to the {@code
  * jakarta} ones, by prefix, where the woven method takes them. On a servlet API older than 4.0
@@ -55,9 +69,19 @@ public class ServletServiceAdvice {
         try {
             if (!(request instanceof HttpServletRequest)) return;
             HttpServletRequest http = (HttpServletRequest) request;
-            if (http.getDispatcherType() != DispatcherType.REQUEST) return;
+            DispatcherType dispatch = http.getDispatcherType();
+            String namespace = DispatcherType.REQUEST.getDeclaringClass().getName().startsWith("javax") ? "javax" : "jakarta";
+            HttpServletMapping mapping;
+            if (dispatch == DispatcherType.REQUEST || dispatch == DispatcherType.FORWARD) {
+                mapping = http.getHttpServletMapping();
+            } else if (dispatch == DispatcherType.INCLUDE) {
+                Object included = http.getAttribute(namespace.concat(".servlet.include.mapping"));
+                if (!(included instanceof HttpServletMapping)) return;
+                mapping = (HttpServletMapping) included;
+            } else {
+                return;
+            }
             ServletContext context = http.getServletContext();
-            HttpServletMapping mapping = http.getHttpServletMapping();
             String name = mapping.getServletName();
             String pattern = mapping.getPattern();
             String method = http.getMethod();
@@ -76,7 +100,27 @@ public class ServletServiceAdvice {
             }
             ServletConfig config = ((Servlet) servlet).getServletConfig();
             String own = config == null ? null : config.getServletName();
-            if (own != null && !own.equals(name)) return;
+            if (own != null && !own.equals(name)) {
+                if (dispatch != DispatcherType.INCLUDE) return;
+                ServletRegistration registration = context.getServletRegistration(own);
+                if (registration == null) return;
+                Object servletPath = http.getAttribute(namespace.concat(".servlet.include.servlet_path"));
+                Object pathInfo = http.getAttribute(namespace.concat(".servlet.include.path_info"));
+                if (!(servletPath instanceof String)) return;
+                String path = (String) servletPath;
+                boolean exact = pathInfo == null || "".equals(pathInfo);
+                String prefix = path.concat("/*");
+                String found = null;
+                for (String candidate : registration.getMappings()) {
+                    if (exact && candidate.equals(path)) found = candidate;
+                }
+                for (String candidate : registration.getMappings()) {
+                    if (found == null && candidate.equals(prefix)) found = candidate;
+                }
+                if (found == null) return;
+                name = own;
+                pattern = found;
+            }
 
             OtherlodeEndpoints.declare(MODULE, context);
             Object entry = OtherlodeEndpoints.lookup(MODULE, Arrays.<Object>asList(context, name, pattern, method, hooked));

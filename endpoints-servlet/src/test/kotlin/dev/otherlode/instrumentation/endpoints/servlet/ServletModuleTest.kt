@@ -13,6 +13,7 @@ import com.example.servlet.fixture.GetAndHeadServlet
 import com.example.servlet.fixture.GetPostServlet
 import com.example.servlet.fixture.IncludingServlet
 import com.example.servlet.fixture.InheritingServlet
+import com.example.servlet.fixture.NamedDispatchingServlet
 import com.example.servlet.fixture.OuterServiceServlet
 import com.example.servlet.fixture.PatchServlet
 import com.example.servlet.fixture.ProtectedServiceServlet
@@ -288,7 +289,7 @@ class ServletModuleTest : ServletTestSupport() {
     }
 
     @Test
-    fun `a forward counts the first servlet only`() {
+    fun `a forward counts the first servlet and its target`() {
         container
             .start("") {
                 servlet("start", ForwardingServlet("/fwd/target"), "/fwd/start")
@@ -296,12 +297,36 @@ class ServletModuleTest : ServletTestSupport() {
             }.use { app ->
                 assertEquals(200, app.send("/fwd/start"))
                 assertEquals(1, hits("GET", "/fwd/start"))
-                assertEquals(0, hits("GET", "/fwd/target"))
+                assertEquals(1, hits("GET", "/fwd/target"))
             }
     }
 
     @Test
-    fun `an include counts the including servlet only`() {
+    fun `a filter that forwards counts the target once`() {
+        val forwards =
+            object : Filter {
+                override fun doFilter(
+                    request: ServletRequest,
+                    response: ServletResponse,
+                    chain: FilterChain,
+                ) {
+                    request.getRequestDispatcher("/ffwd/b").forward(request, response)
+                }
+            }
+        container
+            .start("") {
+                servlet("a", GetPostServlet(), "/ffwd/a")
+                servlet("b", GetPostServlet(), "/ffwd/b")
+                filter("forwarder", forwards, "/ffwd/a")
+            }.use { app ->
+                assertEquals(200, app.send("/ffwd/a"))
+                assertEquals(0, hits("GET", "/ffwd/a"))
+                assertEquals(1, hits("GET", "/ffwd/b"))
+            }
+    }
+
+    @Test
+    fun `an include counts the including servlet and its target`() {
         container
             .start("") {
                 servlet("start", IncludingServlet("/inc/target"), "/inc/start")
@@ -309,7 +334,82 @@ class ServletModuleTest : ServletTestSupport() {
             }.use { app ->
                 assertEquals(200, app.send("/inc/start"))
                 assertEquals(1, hits("GET", "/inc/start"))
-                assertEquals(0, hits("GET", "/inc/target"))
+                assertEquals(1, hits("GET", "/inc/target"))
+            }
+    }
+
+    @Test
+    fun `an include counts the mapping of an included servlet that has two`() {
+        container
+            .start("") {
+                servlet("start", IncludingServlet("/inc2/t1"), "/inc2/start")
+                servlet("target", GetPostServlet(), "/inc2/t1", "/inc2/t2")
+            }.use { app ->
+                assertEquals(200, app.send("/inc2/start"))
+                assertEquals(1, hits("GET", "/inc2/start"))
+                assertEquals(1, hits("GET", "/inc2/t1"))
+                assertEquals(0, hits("GET", "/inc2/t2"))
+            }
+    }
+
+    @Test
+    fun `a servlet called directly during an include counts nothing`() {
+        val inner = GetPostServlet()
+        container
+            .start("") {
+                servlet("start", IncludingServlet("/dinc/outer"), "/dinc/start")
+                servlet("outer", DelegatingServlet(inner), "/dinc/outer")
+                servlet("inner", inner, "/dinc/inner")
+            }.use { app ->
+                assertEquals(200, app.send("/dinc/inner"), "the container initialises the inner servlet with its own name")
+                assertEquals(200, app.send("/dinc/start"))
+                assertEquals(1, hits("GET", "/dinc/start"))
+                assertEquals(1, hits("GET", "/dinc/outer"))
+                assertEquals(1, hits("GET", "/dinc/inner"), "only the request that went to it")
+            }
+    }
+
+    @Test
+    fun `an include counts the exact mapping or the path mapping of a servlet that has both`() {
+        for ((prefix, mappings) in listOf("/ma" to arrayOf("/ma", "/ma/*"), "/mb" to arrayOf("/mb/*", "/mb"))) {
+            container
+                .start("") {
+                    servlet("start1", IncludingServlet(prefix), "$prefix/s1")
+                    servlet("start2", IncludingServlet("$prefix/x"), "$prefix/s2")
+                    servlet("multi", GetPostServlet(), *mappings)
+                }.use { app ->
+                    assertEquals(200, app.send("$prefix/s1"))
+                    assertEquals(1, hits("GET", prefix), "an include of $prefix")
+                    assertEquals(0, hits("GET", "$prefix/*"))
+                    assertEquals(200, app.send("$prefix/s2"))
+                    assertEquals(1, hits("GET", prefix))
+                    assertEquals(1, hits("GET", "$prefix/*"), "an include of $prefix/x")
+                }
+        }
+    }
+
+    @Test
+    fun `an include counts a path servlet at its bare prefix`() {
+        container
+            .start("") {
+                servlet("start1", IncludingServlet("/menu"), "/bp/s1")
+                servlet("menu", GetPostServlet(), "/menu/*")
+            }.use { app ->
+                assertEquals(200, app.send("/bp/s1"))
+                assertEquals(1, hits("GET", "/menu/*"), "an include of /menu")
+            }
+    }
+
+    @Test
+    fun `a named dispatch counts nothing`() {
+        container
+            .start("") {
+                servlet("start", NamedDispatchingServlet("namedtarget"), "/named/start")
+                servlet("namedtarget", GetPostServlet(), "/named/target")
+            }.use { app ->
+                assertEquals(200, app.send("/named/start"))
+                assertEquals(1, hits("GET", "/named/start"))
+                assertEquals(0, hits("GET", "/named/target"))
             }
     }
 
