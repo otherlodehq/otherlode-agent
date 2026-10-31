@@ -57,24 +57,6 @@ deferrals, gzip, a collector config file, and agent-level redaction
 
 ## TODO
 
-### OpenJPA's checks in an adopter's writeObject: to decide
-
-In a serializable OpenJPA entity whose `writeObject` the adopter wrote, the
-enhancer adds `pcSerializing()` and `if (clear) pcSetDetachedState(null)`
-after the method's first line (`modifyWriteObjectMethod`; seen with javap
-on a build-time-enhanced entity: `iload_3; ifeq` at line 21). The method
-keeps its line table and stays the adopter's, so the check's true outcome,
-which an unmanaged instance never takes, reads as an untaken branch. Rare:
-an entity with a hand-written `writeObject`.
-
-### Kotlin shapes still unmarked
-
-A stub kotlinc writes with a wrong hash in a build that mixes a
-`-jvm-default=disable` library with an `all` or `all-compatibility`
-consumer reads as the adopter's code: it calls a `$DefaultImpls` method
-that does not exist. To decide: whether to mark a stub that would throw
-`NoSuchMethodError`.
-
 ### Tooling: code principles and a refactoring playbook
 
 From the comparison with pstack's poteto-mode (`cursor/plugins`, `190d287`).

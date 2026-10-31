@@ -326,6 +326,31 @@ class JpaEnhancementTest {
     }
 
     @Test
+    fun `openjpa's clear check in an adopter's writeObject gets no outcome claim while the adopter's branch keeps one`() {
+        val library = library("openjpa")
+        val writer = "$openJpa.OjWriter"
+        val probes = probesAfterLoading(library, writer)
+
+        assertEquals(1, probes.methods(writer).count { it.methodName == "writeObject" })
+        val branches = probes.branches(writer, "writeObject")
+        assertEquals(5, branches.size, "the adopter's switch has three outcomes and its condition two, and the enhancer's checks have none")
+        assertEquals(setOf(21, 30), branches.map { it.line }.toSet())
+
+        val analysis = BranchSiteAnalyzer.analyze(library.classBytes(writer.replace('.', '/'))) { _, _ -> true }
+        val sites = analysis.sites.filter { it.methodName == "writeObject" }
+        assertEquals(2, sites.count { it.dropReason == BranchDropReason.JPA_WEAVING }, "one check before each return")
+        assertEquals(2, sites.count { it.dropReason == null })
+
+        val baselineSites =
+            scan(library)
+                .getValue(writer)
+                .methods
+                .single { it.methodName == "writeObject" }
+                .branchSites
+        assertEquals(probes.methods(writer).single { it.methodName == "writeObject" }.branchSites, baselineSites)
+    }
+
+    @Test
     fun `a moved openjpa accessor keeps the outside caller its wrapper overrides`() {
         val library = library("openjpa")
         val note = "$openJpa.OjNote"

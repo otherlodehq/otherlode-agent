@@ -35,9 +35,10 @@ enum class BranchDropReason {
     SIZE_GUARD,
 
     /**
-     * The site is a check EclipseLink's weaving put before the first line-number entry of the
-     * adopter's own method, such as a getter's test of `_persistence_listener`. The method keeps its
-     * probe and its other branch probes.
+     * The site is a check a JPA enhancer added to the adopter's own method: EclipseLink's weaving put
+     * it before the first line-number entry, such as a getter's test of `_persistence_listener`, or
+     * OpenJPA's `if (clear) pcSetDetachedState(null)` before a return of a hand-written `writeObject`.
+     * The method keeps its probe and its other branch probes.
      */
     JPA_WEAVING,
 }

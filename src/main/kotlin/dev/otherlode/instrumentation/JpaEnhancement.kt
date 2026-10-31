@@ -1,8 +1,10 @@
 package dev.otherlode.instrumentation
 
+import dev.otherlode.instrumentation.branch.ConditionalJump
 import net.bytebuddy.jar.asm.ClassReader
 import net.bytebuddy.jar.asm.ClassVisitor
 import net.bytebuddy.jar.asm.FieldVisitor
+import net.bytebuddy.jar.asm.Handle
 import net.bytebuddy.jar.asm.Label
 import net.bytebuddy.jar.asm.MethodVisitor
 import net.bytebuddy.jar.asm.Opcodes
@@ -16,14 +18,26 @@ import net.bytebuddy.jar.asm.Opcodes
  * passes through. [reportedNames] maps an OpenJPA accessor the enhancer moved to `pc<name>` to the
  * adopter's `<name>`, which is the name its probes and call edges carry.
  * [isPersistenceWeaved] says the class holds EclipseLink's weaving, and [hasLineNumbers] says which
- * of its methods carry a line-number table.
+ * of its methods carry a line-number table. [clearCheckOrdinals] gives, for an adopter's
+ * `writeObject` in an OpenJPA class, the position among the method's branch sites of each
+ * `if (clear) pcSetDetachedState(null)` the enhancer added.
  */
 internal class JpaEnhancement private constructor(
     val unprobed: Set<Pair<String, String>>,
     val reportedNames: Map<Pair<String, String>, String>,
     val isPersistenceWeaved: Boolean,
     private val linedMethods: Set<Pair<String, String>>,
+    private val clearChecks: Map<Pair<String, String>, Set<Int>> = emptyMap(),
 ) {
+    /**
+     * The ordinals, among [name]/[descriptor]'s branch sites in code order (conditional jumps and
+     * switches), of the checks OpenJPA's enhancer added to it; see [ClearCheckVisitor].
+     */
+    fun clearCheckOrdinals(
+        name: String,
+        descriptor: String,
+    ): Set<Int> = clearChecks[name to descriptor] ?: emptySet()
+
     /** Whether [name]/[descriptor] is a method the enhancer added. */
     fun isUnprobed(
         name: String,
@@ -88,6 +102,10 @@ internal class JpaEnhancement private constructor(
         private const val STATE_MANAGER = "Lorg/apache/openjpa/enhance/StateManager;"
         private const val PERSISTENCE_CAPABLE_DESCRIPTOR = "Lorg/apache/openjpa/enhance/PersistenceCapable;"
         private const val NEW_INSTANCE = "pcNewInstance"
+        private const val WRITE_OBJECT = "writeObject"
+        private const val WRITE_OBJECT_DESCRIPTOR = "(Ljava/io/ObjectOutputStream;)V"
+        private const val PC_SERIALIZING = "pcSerializing"
+        private const val PC_SET_DETACHED_STATE = "pcSetDetachedState"
 
         /** The names of the interfaces that mark a class an enhancer touched, in internal form. */
         private val MARKERS = setOf(ENTITY_BEAN, PERSISTENCE_WEAVED, PERSISTENCE_CAPABLE)
@@ -205,6 +223,7 @@ internal class JpaEnhancement private constructor(
             val openJpa = PERSISTENCE_CAPABLE in interfaces
             val methods = LinkedHashMap<Pair<String, String>, MethodFacts>()
             val fields = HashMap<String, String>()
+            val clearChecks = HashMap<Pair<String, String>, Set<Int>>()
             reader.accept(
                 object : ClassVisitor(Opcodes.ASM9) {
                     override fun visitField(
@@ -227,12 +246,20 @@ internal class JpaEnhancement private constructor(
                     ): MethodVisitor {
                         val facts = MethodFacts(access)
                         methods[name to descriptor] = facts
-                        return FactsVisitor(
-                            facts,
-                            ebean && name == "toString" && descriptor == "()Ljava/lang/String;",
-                            ebean && (name to descriptor) in EBEAN_IDENTITY_USERS,
-                            reader.className,
-                        )
+                        val factsVisitor =
+                            FactsVisitor(
+                                facts,
+                                ebean && name == "toString" && descriptor == "()Ljava/lang/String;",
+                                ebean && (name to descriptor) in EBEAN_IDENTITY_USERS,
+                                reader.className,
+                            )
+                        return if (openJpa && name == WRITE_OBJECT && descriptor == WRITE_OBJECT_DESCRIPTOR &&
+                            access and Opcodes.ACC_STATIC == 0
+                        ) {
+                            ClearCheckVisitor(factsVisitor, reader.className) { clearChecks[name to descriptor] = it }
+                        } else {
+                            factsVisitor
+                        }
                     }
                 },
                 ClassReader.SKIP_FRAMES,
@@ -243,7 +270,7 @@ internal class JpaEnhancement private constructor(
             if (weaved) unprobed += eclipseLinkMethods(methods)
             if (openJpa) openJpaMethods(reader.className, methods, fields, unprobed, reported)
             val lined = methods.filterValues { it.hasLineNumbers }.keys
-            return JpaEnhancement(unprobed, reported, weaved, lined)
+            return JpaEnhancement(unprobed, reported, weaved, lined, clearChecks)
         }
 
         private fun ebeanMethods(methods: Map<Pair<String, String>, MethodFacts>): Set<Pair<String, String>> =
@@ -351,6 +378,209 @@ internal class JpaEnhancement private constructor(
                     false
                 }
             }
+    }
+
+    /** One instruction of a `writeObject`, as far as [ClearCheckVisitor] reads it. */
+    private sealed interface Step {
+        data object Other : Step
+
+        data object LoadThis : Step
+
+        data object LoadNull : Step
+
+        data object Serializing : Step
+
+        data object SetDetachedState : Step
+
+        data class StoreInt(
+            val slot: Int,
+        ) : Step
+
+        data class LoadInt(
+            val slot: Int,
+        ) : Step
+
+        data class Jump(
+            val opcode: Int,
+            val target: Label,
+            val ordinal: Int,
+        ) : Step
+
+        data class Mark(
+            val label: Label,
+        ) : Step
+    }
+
+    /**
+     * Reads the code of an OpenJPA class's `writeObject`, forwarding every event to [delegate], and
+     * reports through [onFound] the ordinals of the branch sites that are the enhancer's.
+     *
+     * `modifyWriteObjectMethod` starts the method with `this.pcSerializing()` stored in a new
+     * local, and puts `if (local) this.pcSetDetachedState(null)` before each return. The check is
+     * `iload local; ifeq end; aload_0; aconst_null; invokevirtual pcSetDetachedState(Object)V`
+     * with `end` the label that follows the call. A branch site is the enhancer's only when its
+     * `ifeq` is exactly that, reading the local the prologue stored.
+     */
+    private class ClearCheckVisitor(
+        delegate: MethodVisitor,
+        private val owner: String,
+        private val onFound: (Set<Int>) -> Unit,
+    ) : MethodVisitor(Opcodes.ASM9, delegate) {
+        private val steps = ArrayList<Step>()
+        private var sites = 0
+
+        override fun visitLabel(label: Label) {
+            super.visitLabel(label)
+            steps += Step.Mark(label)
+        }
+
+        override fun visitVarInsn(
+            opcode: Int,
+            varIndex: Int,
+        ) {
+            super.visitVarInsn(opcode, varIndex)
+            steps +=
+                when {
+                    opcode == Opcodes.ALOAD && varIndex == 0 -> Step.LoadThis
+                    opcode == Opcodes.ISTORE -> Step.StoreInt(varIndex)
+                    opcode == Opcodes.ILOAD -> Step.LoadInt(varIndex)
+                    else -> Step.Other
+                }
+        }
+
+        override fun visitInsn(opcode: Int) {
+            super.visitInsn(opcode)
+            steps += if (opcode == Opcodes.ACONST_NULL) Step.LoadNull else Step.Other
+        }
+
+        override fun visitMethodInsn(
+            opcode: Int,
+            owner: String,
+            name: String,
+            descriptor: String,
+            isInterface: Boolean,
+        ) {
+            super.visitMethodInsn(opcode, owner, name, descriptor, isInterface)
+            val owned = opcode == Opcodes.INVOKEVIRTUAL && owner == this.owner && !isInterface
+            steps +=
+                when {
+                    owned && name == PC_SERIALIZING && descriptor == "()Z" -> Step.Serializing
+                    owned && name == PC_SET_DETACHED_STATE && descriptor == "(Ljava/lang/Object;)V" -> Step.SetDetachedState
+                    else -> Step.Other
+                }
+        }
+
+        override fun visitJumpInsn(
+            opcode: Int,
+            label: Label,
+        ) {
+            super.visitJumpInsn(opcode, label)
+            val tracked = ConditionalJump.isTracked(opcode)
+            steps += Step.Jump(opcode, label, if (tracked) sites else -1)
+            if (tracked) sites++
+        }
+
+        override fun visitTableSwitchInsn(
+            min: Int,
+            max: Int,
+            dflt: Label,
+            vararg labels: Label,
+        ) {
+            super.visitTableSwitchInsn(min, max, dflt, *labels)
+            steps += Step.Other
+            sites++
+        }
+
+        override fun visitLookupSwitchInsn(
+            dflt: Label,
+            keys: IntArray,
+            labels: Array<out Label>,
+        ) {
+            super.visitLookupSwitchInsn(dflt, keys, labels)
+            steps += Step.Other
+            sites++
+        }
+
+        override fun visitFieldInsn(
+            opcode: Int,
+            owner: String,
+            name: String,
+            descriptor: String,
+        ) {
+            super.visitFieldInsn(opcode, owner, name, descriptor)
+            steps += Step.Other
+        }
+
+        override fun visitIntInsn(
+            opcode: Int,
+            operand: Int,
+        ) {
+            super.visitIntInsn(opcode, operand)
+            steps += Step.Other
+        }
+
+        override fun visitTypeInsn(
+            opcode: Int,
+            type: String,
+        ) {
+            super.visitTypeInsn(opcode, type)
+            steps += Step.Other
+        }
+
+        override fun visitLdcInsn(value: Any?) {
+            super.visitLdcInsn(value)
+            steps += Step.Other
+        }
+
+        override fun visitIincInsn(
+            varIndex: Int,
+            increment: Int,
+        ) {
+            super.visitIincInsn(varIndex, increment)
+            steps += Step.Other
+        }
+
+        override fun visitInvokeDynamicInsn(
+            name: String,
+            descriptor: String,
+            bootstrapMethodHandle: Handle,
+            vararg bootstrapMethodArguments: Any?,
+        ) {
+            super.visitInvokeDynamicInsn(name, descriptor, bootstrapMethodHandle, *bootstrapMethodArguments)
+            steps += Step.Other
+        }
+
+        override fun visitMultiANewArrayInsn(
+            descriptor: String,
+            numDimensions: Int,
+        ) {
+            super.visitMultiANewArrayInsn(descriptor, numDimensions)
+            steps += Step.Other
+        }
+
+        override fun visitEnd() {
+            super.visitEnd()
+            val prologue = steps.filter { it !is Step.Mark }.take(3)
+            val slot = (prologue.getOrNull(2) as? Step.StoreInt)?.slot
+            if (prologue.getOrNull(0) != Step.LoadThis || prologue.getOrNull(1) != Step.Serializing || slot == null) return
+            val found = HashSet<Int>()
+            for (index in 0..steps.size - CLEAR_CHECK_STEPS) {
+                val load = steps[index] as? Step.LoadInt ?: continue
+                val jump = steps[index + 1] as? Step.Jump ?: continue
+                val end = steps[index + 5] as? Step.Mark ?: continue
+                if (load.slot == slot && jump.opcode == Opcodes.IFEQ && jump.target === end.label &&
+                    steps[index + 2] == Step.LoadThis && steps[index + 3] == Step.LoadNull &&
+                    steps[index + 4] == Step.SetDetachedState
+                ) {
+                    found += jump.ordinal
+                }
+            }
+            if (found.isNotEmpty()) onFound(found)
+        }
+
+        private companion object {
+            const val CLEAR_CHECK_STEPS = 6
+        }
     }
 
     /** One of the instructions before a branch, as far as [readsWeavedState] reads it. */

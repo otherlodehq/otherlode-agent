@@ -2165,7 +2165,7 @@ class ExportSchedulerTest {
     }
 
     @Test
-    fun `the first-flush INFO summary counts the checks EclipseLink's weaving added`() {
+    fun `the first-flush INFO summary counts the checks a JPA enhancer added`() {
         val branchDropCounts = BranchDropCounts()
         branchDropCounts.record(mapOf(BranchDropReason.JPA_WEAVING to 3))
         val scheduler =
@@ -2176,7 +2176,7 @@ class ExportSchedulerTest {
         val summary = records.single { it.message.contains("branch sites") }
         assertEquals(
             "otherlode: left 3 branch sites in 1 classes without a probe: 0 inlined from out-of-scope code, 0 coroutine machinery, " +
-                "0 switch lowering, 0 in methods whose branch probes would cross a code-size limit, 3 added by EclipseLink's weaving",
+                "0 switch lowering, 0 in methods whose branch probes would cross a code-size limit, 3 added by a JPA enhancer",
             summary.message,
         )
     }

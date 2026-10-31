@@ -37,3 +37,7 @@ Found while surveying kotlinc 1.9.25 to 2.4.20 and javac 17 to 25 for ADR 0055, 
 - **A record's `equals`, `hashCode` and `toString`** were marked by name and descriptor alone, so an override the adopter wrote was hidden. They are marked only when the body is javac's `invokedynamic` through `java.lang.runtime.ObjectMethods.bootstrap`; an override is ordinary code, as a data class's is.
 
 The data-class and enum rules go by name and descriptor and were unchanged across every compiler read. ADR 0054 gives them no unread-shape outline for that reason.
+
+## Amended on 2026-10-31: a stub whose `$DefaultImpls` method does not exist
+
+Decided in a grill during the pre-release review. A build that mixes a library compiled with `-jvm-default=disable` with a consumer compiled with `all` or `all-compatibility` gets a stub from kotlinc whose call names a `$DefaultImpls` method that does not exist, so calling it throws `NoSuchMethodError`. It read as the adopter's code. A method whose body is otherwise the stub shape above is marked `DEFAULT_IMPLS` when the `$DefaultImpls` class it calls, read as a class file through the class's loader, declares no method of the called name and descriptor. It passes no call through, since there is no target. When that class file cannot be read, the method is left as it is.

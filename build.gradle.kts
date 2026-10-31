@@ -576,6 +576,8 @@ val kotlincSerializationKeys =
     kotlincMatrix.flatMap { version -> if (version in kotlincK1Matrix) listOf(version, "$version-k1") else listOf(version) }
 val kotlincSerializationClassesDirs =
     kotlincSerializationKeys.associateWith { project(":fixtures-kotlinc").layout.buildDirectory.dir("classes/serialization/$it") }
+val kotlincMixedClassesDirs =
+    kotlincMatrix.associateWith { project(":fixtures-kotlinc").layout.buildDirectory.dir("classes/mixed/$it") }
 val javacMatrixClassesDirs =
     javacMatrix.associateWith { project(":fixtures-javac").layout.buildDirectory.dir("classes/javac/$it") }
 // The entities Ebean, EclipseLink and OpenJPA enhanced (ADR 0079), by library, with the runtime
@@ -636,6 +638,7 @@ tasks.test {
         "classSam" to classSamFixtureClassesDir,
     ).plus(kotlincMatrixClassesDirs.map { (version, dir) -> "kotlinc$version" to dir })
         .plus(kotlincSerializationClassesDirs.map { (key, dir) -> "kotlincSerialization$key" to dir })
+        .plus(kotlincMixedClassesDirs.map { (version, dir) -> "kotlincMixed$version" to dir })
         .plus(javacMatrixClassesDirs.map { (version, dir) -> "javac$version" to dir })
         .plus(scalacMatrixClassesDirs.map { (version, dir) -> "scalac$version" to dir })
         .plus(jpaFixtureClassesDirs.map { (name, dir) -> "jpa$name" to dir })
@@ -707,6 +710,9 @@ tasks.test {
         systemProperty("otherlode.fixtures.kotlinc.suspendsSource", kotlincSuspendsSource.absolutePath)
         kotlincMatrixClassesDirs.forEach { (version, dir) ->
             systemProperty("otherlode.fixtures.kotlinc.$version.dir", dir.get().asFile.absolutePath)
+        }
+        kotlincMixedClassesDirs.forEach { (version, dir) ->
+            systemProperty("otherlode.fixtures.kotlincMixed.$version.dir", dir.get().asFile.absolutePath)
         }
         systemProperty("otherlode.fixtures.kotlincSerialization.keys", kotlincSerializationKeys.joinToString(","))
         kotlincSerializationClassesDirs.forEach { (key, dir) ->

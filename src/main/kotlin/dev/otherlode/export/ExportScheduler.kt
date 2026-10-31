@@ -377,7 +377,7 @@ class ExportScheduler(
                 "otherlode: left $total branch sites in ${branchDropCounts.classesWithDrops()} classes without a probe: " +
                     "$inlinedOutOfScope inlined from out-of-scope code, $coroutineMachinery coroutine machinery, " +
                     "$switchLowering switch lowering, $sizeGuard in methods whose branch probes would cross a code-size limit, " +
-                    "$jpaWeaving added by EclipseLink's weaving",
+                    "$jpaWeaving added by a JPA enhancer",
             )
         }
     }

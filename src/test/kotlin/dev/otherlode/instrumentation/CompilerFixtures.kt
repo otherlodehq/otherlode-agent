@@ -53,6 +53,12 @@ object CompilerFixtures {
     /** The build of kotlinc release [version]. */
     fun kotlinc(version: String): Build = Build(File(requiredProperty("otherlode.fixtures.kotlinc.$version.dir")), KOTLIN_PACKAGE)
 
+    /**
+     * The mixed `-jvm-default` build of kotlinc release [version]: `lib` compiled with `disable`, and
+     * `all` and `all-compatibility`, a consumer of it compiled with each of those modes.
+     */
+    fun kotlincMixed(version: String): File = File(requiredProperty("otherlode.fixtures.kotlincMixed.$version.dir"))
+
     /** The kotlinx.serialization fixture build [key], one of [kotlincSerializationKeys]. */
     fun kotlincSerialization(key: String): Build =
         Build(File(requiredProperty("otherlode.fixtures.kotlincSerialization.$key.dir")), KOTLIN_PACKAGE)

@@ -1052,6 +1052,7 @@ object BranchSiteAnalyzer {
                             isStatic = access and Opcodes.ACC_STATIC != 0,
                             eligible = eligible,
                             weavedBranches = jpa.isPersistenceWeaved && jpa.hasLineNumbers(name, descriptor),
+                            clearChecks = jpa.clearCheckOrdinals(name, descriptor),
                             defaultShaped = defaultShaped,
                             ownerInternalName = internalClassName,
                             ownerSuperInternalName = superInternalName,
@@ -2773,6 +2774,8 @@ object BranchSiteAnalyzer {
          * [JpaEnhancement.readsWeavedState].
          */
         private val weavedBranches: Boolean,
+        /** The ordinals of this method's branch sites that are OpenJPA's `if (clear) pcSetDetachedState(null)`; see [JpaEnhancement.clearCheckOrdinals]. */
+        private val clearChecks: Set<Int>,
         private val defaultShaped: Boolean,
         private val ownerInternalName: String,
         /** The class's own direct superclass, in internal form; null only for `java.lang.Object`. */
@@ -2920,7 +2923,7 @@ object BranchSiteAnalyzer {
                 recordSite(
                     coroutineMachinery = machinery,
                     unreadMachinery = suspendShaped && !machinery && isFedByMachinery(),
-                    jpaWeaving = !machinery && isWeavedJump(opcode),
+                    jpaWeaving = !machinery && (isWeavedJump(opcode) || nextMethodOrdinal in clearChecks),
                 )
             }
             pendingSuspendedMarkerCall = false
@@ -3036,7 +3039,7 @@ object BranchSiteAnalyzer {
          * [unreadMachinery] marks a site that is kept as an unread shape of
          * [UnreadShape.COROUTINE_MACHINERY]; a site dropped for any reason carries no outcome to mark.
          *
-         * [jpaWeaving] drops a site EclipseLink's weaving added, with [BranchDropReason.JPA_WEAVING].
+         * [jpaWeaving] drops a site EclipseLink's weaving or OpenJPA's enhancer added, with [BranchDropReason.JPA_WEAVING].
          */
         private fun recordSite(
             outcomeCount: Int = 2,
@@ -3445,6 +3448,7 @@ object BranchSiteAnalyzer {
             for (key in jvmOverloadsForwarders(classBytes, internalClassName)) result.putIfAbsent(key, GeneratedBy.JVM_OVERLOADS)
         }
 
+        var stubsWithoutTarget: Set<Pair<String, String>> = emptySet()
         if (isKotlinClass && interfaceInternalNames.isNotEmpty()) {
             val isValueClass = valueClassTest(lookup)
             val stubs =
@@ -3455,7 +3459,8 @@ object BranchSiteAnalyzer {
                     ownIsValueClass = isValueClassShape(internalClassName, methodAccess),
                     lookup = lookup,
                 )
-            for (key in stubs) result.putIfAbsent(key, GeneratedBy.DEFAULT_IMPLS)
+            for (key in stubs.marked) result.putIfAbsent(key, GeneratedBy.DEFAULT_IMPLS)
+            stubsWithoutTarget = stubs.withoutTarget
         }
 
         var serializationUnread: Map<Pair<String, String>, UnreadShape> = emptyMap()
@@ -3502,6 +3507,7 @@ object BranchSiteAnalyzer {
             serializationUnread,
             cause = UnreadCause.PLUGIN_FILLED.takeIf { serializationUnread.isNotEmpty() },
             valueClassForwarders = valueClass.forwarders,
+            stubsWithoutTarget = stubsWithoutTarget,
         )
     }
 
@@ -3517,10 +3523,14 @@ object BranchSiteAnalyzer {
         val cause: UnreadCause? = null,
         private val valueClassForwarders: Set<Pair<String, String>> = emptySet(),
         private val scalaPassThrough: Set<Pair<String, String>> = emptySet(),
+        private val stubsWithoutTarget: Set<Pair<String, String>> = emptySet(),
     ) {
-        /** The methods a call passes through: the [PASS_THROUGH_FORWARDERS] and the boxed forwarders of a Kotlin or a Scala value class. */
+        /**
+         * The methods a call passes through: the [PASS_THROUGH_FORWARDERS] and the boxed forwarders of a Kotlin or a Scala value class.
+         * A stub whose `$DefaultImpls` method does not exist has no target to pass to.
+         */
         fun passThroughKeys(): Set<Pair<String, String>> =
-            generated.filterValues { it in PASS_THROUGH_FORWARDERS }.keys + valueClassForwarders + scalaPassThrough
+            generated.filterValues { it in PASS_THROUGH_FORWARDERS }.keys + valueClassForwarders + scalaPassThrough - stubsWithoutTarget
     }
 
     private const val ACTIVITY_INTERFACE_DESCRIPTOR = "L${CallbackAnnotations.ACTIVITY_INTERFACE};"
@@ -4032,6 +4042,16 @@ object BranchSiteAnalyzer {
      * `$DefaultImpls`, even for a default declared on a super-interface (checked with `javap`), so no
      * supertype is walked. The caller checks `kotlin.Metadata`, since Java source can write this body
      * by hand and Kotlin source cannot reach a `$DefaultImpls` class.
+     *
+     * A build that mixes a `-jvm-default=disable` library with a consumer compiled with `all` or
+     * `all-compatibility` can get a stub whose call names a mangled `$DefaultImpls` method with a
+     * hash the library never wrote (checked with `javap` on kotlinc 1.9.25 and 2.1.21, for
+     * `class Impl : IdStore` with `IdStore : Store<Id>` and `Store<T>.put(id: Id, item: T)`). Such a
+     * stub fails the typed check, since there is no method to read. It is marked when its body is
+     * otherwise the stub's, with the same name before the hash, and the `$DefaultImpls` class, read
+     * through [lookup], declares no method
+     * of the called name and descriptor, and it is in [DefaultImplsStubs.withoutTarget], so a call
+     * into it has nothing to pass through to. A class that cannot be read leaves it unmarked.
      */
     private fun defaultImplsStubs(
         classBytes: ByteArray,
@@ -4039,7 +4059,7 @@ object BranchSiteAnalyzer {
         isValueClass: (String) -> Boolean,
         ownIsValueClass: Boolean,
         lookup: (internalName: String) -> ByteArray?,
-    ): Set<Pair<String, String>> {
+    ): DefaultImplsStubs {
         val candidates = mutableListOf<ForwarderCandidate>()
         val scope by lazy { scopeOf(classBytes, lookup) }
         val classVisitor =
@@ -4065,7 +4085,7 @@ object BranchSiteAnalyzer {
                             opcode == Opcodes.INVOKESTATIC &&
                                 owner.endsWith(DEFAULT_IMPLS_SUFFIX) &&
                                 interfaceName in interfaceInternalNames &&
-                                namesTheCall(name, calledName) &&
+                                (namesTheCall(name, calledName) || mangledAlike(name, calledName)) &&
                                 calledParameters.size == stubParameters.size + 1 &&
                                 calledParameters[0].sort == Type.OBJECT &&
                                 calledParameters[0].internalName == interfaceName
@@ -4081,9 +4101,12 @@ object BranchSiteAnalyzer {
                         // method's parameter i + 1, after the interface.
                         val interfaceName = match.calledOwner.removeSuffix(DEFAULT_IMPLS_SUFFIX)
                         val ownGeneric = signature?.let { ownErasures(it, scope.bounds) }
-                        val stub =
+                        val shaped =
                             (match.receiverCast == null || match.receiverCast == interfaceName) &&
-                                forwardsThroughErasure(stubParameters, stubReturn, match, offset = 1) &&
+                                forwardsThroughErasure(stubParameters, stubReturn, match, offset = 1)
+                        val typed =
+                            shaped &&
+                                namesTheCall(name, match.calledName) &&
                                 forwardsAsTyped(
                                     stubParameters,
                                     stubReturn,
@@ -4095,16 +4118,46 @@ object BranchSiteAnalyzer {
                                     false,
                                     ownGeneric,
                                 )
-                        if (stub) candidates += ForwarderCandidate(name to descriptor, match)
+                        if (typed) {
+                            candidates += ForwarderCandidate(name to descriptor, match)
+                        } else if (shaped && declaresNoMethod(match.calledOwner, match.calledName, match.calledDescriptor, lookup)) {
+                            candidates += ForwarderCandidate(name to descriptor, match, withoutTarget = true)
+                        }
                     }
                 }
             }
         ClassReader(classBytes).accept(classVisitor, ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
-        if (candidates.isEmpty()) return emptySet()
+        if (candidates.isEmpty()) return DefaultImplsStubs(emptySet(), emptySet())
         val firstLines = firstLineEntries(classBytes)
         val headerLine = firstLines.values.minOrNull()
         val onHeader = candidates.filter { candidate -> firstLines[candidate.key].let { it == null || it == headerLine } }
-        return withoutBoxingTwins(onHeader)
+        val marked = withoutBoxingTwins(onHeader)
+        return DefaultImplsStubs(marked, onHeader.filter { it.withoutTarget && it.key in marked }.mapTo(mutableSetOf()) { it.key })
+    }
+
+    /** The methods [defaultImplsStubs] marked, and those of them whose `$DefaultImpls` method does not exist. */
+    private class DefaultImplsStubs(
+        val marked: Set<Pair<String, String>>,
+        val withoutTarget: Set<Pair<String, String>>,
+    )
+
+    /**
+     * Whether the class [owner], read through [lookup], declares no method [name] with
+     * [descriptor]. False when the class cannot be read.
+     */
+    private fun declaresNoMethod(
+        owner: String,
+        name: String,
+        descriptor: String,
+        lookup: (internalName: String) -> ByteArray?,
+    ): Boolean {
+        val bytes =
+            try {
+                lookup(owner)
+            } catch (_: Exception) {
+                null
+            } ?: return false
+        return declaredMethods(bytes)?.contains(name to descriptor) == false
     }
 
     private const val AJ_SYNTHETIC_ATTRIBUTE = "org.aspectj.weaver.AjSynthetic"
@@ -4381,6 +4434,7 @@ object BranchSiteAnalyzer {
     private class ForwarderCandidate(
         val key: Pair<String, String>,
         val match: ForwarderMatch,
+        val withoutTarget: Boolean = false,
     )
 
     /**
@@ -5549,6 +5603,12 @@ object BranchSiteAnalyzer {
         name: String,
         calledName: String,
     ): Boolean = name == calledName || isMangledForm(name, calledName)
+
+    /** Whether [name] and [calledName] are the same name with two different mangle hashes. */
+    private fun mangledAlike(
+        name: String,
+        calledName: String,
+    ): Boolean = isMangled(name) && isMangled(calledName) && name.dropLast(MANGLE_HASH_LENGTH) == calledName.dropLast(MANGLE_HASH_LENGTH)
 
     /** Whether [name] already ends in `-` and a mangle hash. */
     private fun isMangled(name: String): Boolean =

@@ -369,6 +369,154 @@ class GeneratedStubAnalyzerTest {
         )
     }
 
+    /** `$IFACE$DefaultImpls` as a class file declaring only [methods], each a static taking the interface first. */
+    private fun defaultImplsDeclaring(vararg methods: Pair<String, String>): ByteArray {
+        val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
+        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC or Opcodes.ACC_FINAL, "$IFACE\$DefaultImpls", null, "java/lang/Object", null)
+        for ((name, descriptor) in methods) {
+            val mv = writer.visitMethod(Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC, name, descriptor, null, null)
+            mv.visitCode()
+            mv.visitInsn(Opcodes.ACONST_NULL)
+            mv.visitInsn(Opcodes.ARETURN)
+            mv.visitMaxs(0, 0)
+            mv.visitEnd()
+        }
+        writer.visitEnd()
+        return writer.toByteArray()
+    }
+
+    /** The lookup of a build whose `$DefaultImpls` holds `n` and an `m` the stub's call does not name. */
+    private val missingTargetLookup: (String) -> ByteArray? = { name ->
+        defaultImplsDeclaring("n" to FORWARDED_DESCRIPTOR, "m" to "(L$IFACE;J)Ljava/lang/String;").takeIf { name == "$IFACE\$DefaultImpls" }
+    }
+
+    private fun markOfStub(
+        bytes: ByteArray,
+        lookup: (String) -> ByteArray?,
+    ): GeneratedBy = BranchSiteAnalyzer.analyze(bytes, lookup) { _, _ -> true }.generatedBy("m", STUB_DESCRIPTOR)
+
+    @Test
+    fun `a stub whose DefaultImpls class declares no method of the called name and descriptor is DEFAULT_IMPLS`() {
+        assertEquals(
+            GeneratedBy.DEFAULT_IMPLS,
+            markOfStub(implClass(body = forwardTo("$IFACE\$DefaultImpls")), missingTargetLookup),
+        )
+    }
+
+    @Test
+    fun `a missing-target stub is NONE when its DefaultImpls class cannot be read`() {
+        val bytes = implClass(body = forwardTo("$IFACE\$DefaultImpls"))
+
+        assertEquals(GeneratedBy.NONE, markOfStub(bytes) { null })
+        assertEquals(GeneratedBy.NONE, markOfStub(bytes) { error("unreadable") })
+        assertEquals(GeneratedBy.NONE, markOfStub(bytes) { byteArrayOf(1, 2, 3) })
+    }
+
+    @Test
+    fun `a stub whose called method exists stays on the typed rule, which a missing target does not reach`() {
+        val needlessCast = forwardWith(FORWARDED_DESCRIPTOR) { it.visitTypeInsn(Opcodes.CHECKCAST, "java/lang/String") }
+
+        assertEquals(GeneratedBy.DEFAULT_IMPLS, markOfStub(implClass(body = forwardTo("$IFACE\$DefaultImpls"))))
+        assertEquals(GeneratedBy.NONE, markOfStub(implClass(body = needlessCast)))
+        assertEquals(GeneratedBy.NONE, markOfStub(implClass(body = needlessCast), missingTargetLookup))
+    }
+
+    @Test
+    fun `a missing-target body that is not the stub shape is NONE`() {
+        val extra = forwardTo("$IFACE\$DefaultImpls") { it.visitInsn(Opcodes.NOP) }
+        val otherInterface = forwardTo("com/example/Other\$DefaultImpls")
+        val primitive = forwardWith("(L$IFACE;I)Ljava/lang/String;")
+
+        assertEquals(GeneratedBy.NONE, markOfStub(implClass(body = extra), missingTargetLookup))
+        assertEquals(GeneratedBy.NONE, markOfStub(implClass(body = otherInterface), missingTargetLookup))
+        assertEquals(
+            GeneratedBy.NONE,
+            markOfStub(implClass(interfaces = emptyArray(), body = forwardTo("$IFACE\$DefaultImpls")), missingTargetLookup),
+        )
+        assertEquals(GeneratedBy.NONE, markOfStub(implClass(kotlin = false, body = forwardTo("$IFACE\$DefaultImpls")), missingTargetLookup))
+        assertEquals(GeneratedBy.NONE, markOfStub(implClass(body = primitive), missingTargetLookup))
+    }
+
+    @Test
+    fun `a missing-target stub follows the header-line rule`() {
+        assertEquals(GeneratedBy.DEFAULT_IMPLS, markOfStub(linedClass(stubLine = 3, otherLine = 7), missingTargetLookup))
+        assertEquals(GeneratedBy.NONE, markOfStub(linedClass(stubLine = 9, otherLine = 3), missingTargetLookup))
+    }
+
+    private fun markOfNamedStub(
+        stubName: String,
+        calledName: String,
+        lookup: (String) -> ByteArray?,
+    ): GeneratedBy {
+        val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
+        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC or Opcodes.ACC_FINAL, IMPL, null, "java/lang/Object", arrayOf(IFACE))
+        writer.visitAnnotation("Lkotlin/Metadata;", true).visitEnd()
+        writer.visitMethod(Opcodes.ACC_PUBLIC, stubName, STUB_DESCRIPTOR, null, null).apply {
+            visitCode()
+            visitVarInsn(Opcodes.ALOAD, 0)
+            visitVarInsn(Opcodes.ALOAD, 1)
+            visitMethodInsn(Opcodes.INVOKESTATIC, "$IFACE\$DefaultImpls", calledName, FORWARDED_DESCRIPTOR, false)
+            visitInsn(Opcodes.ARETURN)
+            visitMaxs(0, 0)
+            visitEnd()
+        }
+        writer.visitEnd()
+        return BranchSiteAnalyzer.analyze(writer.toByteArray(), lookup) { _, _ -> true }.generatedBy(stubName, STUB_DESCRIPTOR)
+    }
+
+    @Test
+    fun `a stub that calls the same mangled name with another hash is DEFAULT_IMPLS only when that method does not exist`() {
+        val hashOnly = defaultImplsDeclaring("m-AAAAAAA" to FORWARDED_DESCRIPTOR)
+        val called = defaultImplsDeclaring("m-BBBBBBB" to FORWARDED_DESCRIPTOR)
+
+        assertEquals(GeneratedBy.DEFAULT_IMPLS, markOfNamedStub("m-AAAAAAA", "m-BBBBBBB") { hashOnly })
+        assertEquals(GeneratedBy.NONE, markOfNamedStub("m-AAAAAAA", "m-BBBBBBB") { called })
+        assertEquals(GeneratedBy.NONE, markOfNamedStub("m-AAAAAAA", "n-BBBBBBB") { hashOnly })
+        assertEquals(GeneratedBy.DEFAULT_IMPLS, markOfNamedStub("m-AAAAAAA", "m") { hashOnly })
+        assertEquals(GeneratedBy.NONE, markOfNamedStub("m", "m-BBBBBBB") { hashOnly })
+    }
+
+    /** A class with the stub `m` and a method `caller` that calls `this.m("")`. */
+    private fun implWithCaller(): ByteArray {
+        val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
+        writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC or Opcodes.ACC_FINAL, IMPL, null, "java/lang/Object", arrayOf(IFACE))
+        writer.visitAnnotation("Lkotlin/Metadata;", true).visitEnd()
+        writer.visitMethod(Opcodes.ACC_PUBLIC, "m", STUB_DESCRIPTOR, null, null).apply {
+            visitCode()
+            forwardTo("$IFACE\$DefaultImpls")(this)
+            visitMaxs(0, 0)
+            visitEnd()
+        }
+        writer.visitMethod(Opcodes.ACC_PUBLIC, "caller", "()Ljava/lang/String;", null, null).apply {
+            visitCode()
+            visitVarInsn(Opcodes.ALOAD, 0)
+            visitLdcInsn("")
+            visitMethodInsn(Opcodes.INVOKEVIRTUAL, IMPL, "m", STUB_DESCRIPTOR, false)
+            visitInsn(Opcodes.ARETURN)
+            visitMaxs(0, 0)
+            visitEnd()
+        }
+        writer.visitEnd()
+        return writer.toByteArray()
+    }
+
+    @Test
+    fun `a call to a stub passes through to its DefaultImpls method, and not when that method does not exist`() {
+        val bytes = implWithCaller()
+        val implsName = "com.example.Iface\$DefaultImpls"
+
+        fun callsFrom(lookup: (String) -> ByteArray?) =
+            BranchSiteAnalyzer
+                .analyze(bytes, lookup, listOf("com.example"), emptyList()) { _, _ -> true }
+                .callsOf("caller", "()Ljava/lang/String;")
+        val existing = callsFrom(lookup)
+        val missing = callsFrom(missingTargetLookup)
+
+        assertEquals(listOf(implsName), existing.map { it.className })
+        assertEquals(listOf("com.example.Impl"), missing.map { it.className })
+        assertEquals(listOf("m"), missing.map { it.methodName })
+    }
+
     private fun recordClass(
         equalsBody: (MethodVisitor) -> Unit,
         bootstrapOwner: String = OBJECT_METHODS,

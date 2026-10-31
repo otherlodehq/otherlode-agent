@@ -153,12 +153,83 @@ val serializationTasks =
         }
     }
 
+// A build that mixes a library compiled with -jvm-default=disable and a consumer compiled with
+// -jvm-default=all or all-compatibility (ADR 0026). The flag is -Xjvm-default before 2.2, which names
+// the modes all and all-compatibility, and -jvm-default from 2.2, whose modes no-compatibility and
+// enable are the same two. Each release's classes go to classes/mixed/<release>/{lib,all,all-compatibility}.
+val mixedRoot = layout.projectDirectory.dir("src/mixed")
+
+val mixedTasks =
+    kotlincVersions.flatMap { version ->
+        val (major, minor) = version.split(".").map { it.toInt() }
+        val modern = major > 2 || (major == 2 && minor >= 2)
+        val compiler = configurations.getByName("kotlinCompiler$version")
+        val stdlib = configurations.getByName("kotlinStdlib$version")
+        val releaseDir = layout.buildDirectory.dir("classes/mixed/$version")
+
+        fun flag(mode: String): String =
+            if (modern) {
+                "-jvm-default=" + mapOf("disable" to "disable", "all" to "no-compatibility", "all-compatibility" to "enable").getValue(mode)
+            } else {
+                "-Xjvm-default=$mode"
+            }
+
+        fun register(
+            name: String,
+            mode: String,
+            sources: Directory,
+            output: Provider<Directory>,
+            libraryDir: Provider<Directory>?,
+        ) = tasks.register<JavaExec>("compileMixed$name$version") {
+            group = "build"
+            description = "Compiles the mixed-mode $name fixtures with kotlinc $version under ${flag(mode)}."
+            inputs.dir(sources).withPropertyName("sources")
+            inputs.files(stdlib).withPropertyName("stdlib")
+            libraryDir?.let { inputs.dir(it).withPropertyName("library") }
+            outputs.dir(output).withPropertyName("classes")
+            classpath = compiler
+            mainClass.set("org.jetbrains.kotlin.cli.jvm.K2JVMCompiler")
+            javaLauncher.set(toolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(21)) })
+            val stdlibFiles: FileCollection = stdlib
+            val outputPath = output.map { it.asFile.absolutePath }
+            val libraryPath = libraryDir?.map { it.asFile.absolutePath }
+            val sourcePath = sources.asFile.absolutePath
+            argumentProviders.add(
+                CommandLineArgumentProvider {
+                    val libraryClasspath = libraryPath?.let { File.pathSeparator + it.get() }.orEmpty()
+                    listOf(
+                        "-no-stdlib",
+                        "-no-reflect",
+                        "-jvm-target",
+                        "21",
+                        flag(mode),
+                        "-cp",
+                        stdlibFiles.singleFile.absolutePath + libraryClasspath,
+                        "-d",
+                        outputPath.get(),
+                        sourcePath,
+                    )
+                },
+            )
+            val outputDir = output.map { it.asFile }
+            doFirst { outputDir.get().deleteRecursively() }
+        }
+
+        val library = register("Library", "disable", mixedRoot.dir("lib"), releaseDir.map { it.dir("lib") }, null)
+        listOf("all", "all-compatibility").map { mode ->
+            register("Consumer${mode.split("-").joinToString("") { it.replaceFirstChar(Char::uppercase) }}", mode, mixedRoot.dir("consumer"), releaseDir.map { it.dir(mode) }, releaseDir.map { it.dir("lib") })
+                .also { consumer -> consumer.configure { dependsOn(library) } }
+        } + library
+    }
+
 tasks.register("classes") {
     dependsOn(compileTasks)
     dependsOn(serializationTasks)
+    dependsOn(mixedTasks)
 }
 
 tasks.named("assemble") {
     dependsOn(compileTasks)
     dependsOn(serializationTasks)
+    dependsOn(mixedTasks)
 }

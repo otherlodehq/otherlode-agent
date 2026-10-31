@@ -467,6 +467,149 @@ class JpaEnhancementRulesTest {
         assertEquals(listOf(true, false), droppedOrdinals(weavedBytes(listOf(PERSISTENCE_WEAVED), lined = true, call)))
     }
 
+    /**
+     * An OpenJPA-style `writeObject`: a prologue that stores `pcSerializing()` in [prologueSlot], an
+     * adopter check on argument 1 at line 20, and [check] before the return.
+     */
+    private fun writeObjectBytes(
+        interfaces: List<String>,
+        prologueSlot: Int = 3,
+        name: String = "writeObject",
+        descriptor: String = "(Ljava/io/ObjectOutputStream;)V",
+        check: (MethodVisitor) -> Unit = { visitor -> clearCheck(visitor, 3) },
+    ): ByteArray =
+        forge(
+            interfaces,
+            listOf(
+                Method(name, descriptor, Opcodes.ACC_PRIVATE) { visitor ->
+                    val first = Label()
+                    val skip = Label()
+                    visitor.visitVarInsn(Opcodes.ALOAD, 0)
+                    visitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, OWNER, "pcSerializing", "()Z", false)
+                    visitor.visitVarInsn(Opcodes.ISTORE, prologueSlot)
+                    visitor.visitLabel(first)
+                    visitor.visitLineNumber(20, first)
+                    visitor.visitVarInsn(Opcodes.ALOAD, 1)
+                    visitor.visitJumpInsn(Opcodes.IFNULL, skip)
+                    visitor.visitInsn(Opcodes.NOP)
+                    visitor.visitLabel(skip)
+                    check(visitor)
+                    visitor.visitInsn(Opcodes.RETURN)
+                },
+            ),
+        )
+
+    private fun clearCheck(
+        visitor: MethodVisitor,
+        slot: Int,
+        detach: String = "(Ljava/lang/Object;)V",
+        between: (MethodVisitor) -> Unit = {},
+    ) {
+        val end = Label()
+        visitor.visitVarInsn(Opcodes.ILOAD, slot)
+        visitor.visitJumpInsn(Opcodes.IFEQ, end)
+        visitor.visitVarInsn(Opcodes.ALOAD, 0)
+        visitor.visitInsn(Opcodes.ACONST_NULL)
+        between(visitor)
+        visitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, OWNER, "pcSetDetachedState", detach, false)
+        visitor.visitLabel(end)
+    }
+
+    @Test
+    fun `openjpa's clear check in a writeObject is dropped and the adopter's check is kept`() {
+        assertEquals(listOf(false, true), droppedOrdinals(writeObjectBytes(listOf(PERSISTENCE_CAPABLE))))
+    }
+
+    @Test
+    fun `every clear check the enhancer put before a return is dropped`() {
+        val twice: (MethodVisitor) -> Unit = { visitor ->
+            clearCheck(visitor, 3)
+            visitor.visitInsn(Opcodes.RETURN)
+            clearCheck(visitor, 3)
+        }
+
+        assertEquals(listOf(false, true, true), droppedOrdinals(writeObjectBytes(listOf(PERSISTENCE_CAPABLE), check = twice)))
+    }
+
+    @Test
+    fun `the clear check in a class without openjpa's marker is the adopter's`() {
+        assertEquals(listOf(false, false), droppedOrdinals(writeObjectBytes(emptyList())))
+        assertEquals(listOf(false, false), droppedOrdinals(writeObjectBytes(listOf(PERSISTENCE_WEAVED))))
+    }
+
+    @Test
+    fun `a check that does not read the slot the prologue stored is the adopter's`() {
+        val other: (MethodVisitor) -> Unit = { visitor -> clearCheck(visitor, 2) }
+
+        assertEquals(listOf(false, false), droppedOrdinals(writeObjectBytes(listOf(PERSISTENCE_CAPABLE), check = other)))
+    }
+
+    @Test
+    fun `a check whose body is not pcSetDetachedState of null is the adopter's`() {
+        val wrongCall: (MethodVisitor) -> Unit = { visitor -> clearCheck(visitor, 3, detach = "()V") }
+        val extra: (MethodVisitor) -> Unit = { visitor -> clearCheck(visitor, 3, between = { it.visitInsn(Opcodes.NOP) }) }
+        val interfaces = listOf(PERSISTENCE_CAPABLE)
+
+        assertEquals(listOf(false, false), droppedOrdinals(writeObjectBytes(interfaces, check = wrongCall)))
+        assertEquals(listOf(false, false), droppedOrdinals(writeObjectBytes(interfaces, check = extra)))
+    }
+
+    @Test
+    fun `a switch before a clear check takes an ordinal and the check is still the one dropped`() {
+        val switchFirst: (MethodVisitor) -> Unit = { visitor ->
+            val one = Label()
+            val other = Label()
+            visitor.visitVarInsn(Opcodes.ILOAD, 2)
+            visitor.visitTableSwitchInsn(1, 1, other, one)
+            visitor.visitLabel(one)
+            visitor.visitInsn(Opcodes.NOP)
+            visitor.visitLabel(other)
+            clearCheck(visitor, 3)
+        }
+
+        assertEquals(listOf(false, false, true), droppedOrdinals(writeObjectBytes(listOf(PERSISTENCE_CAPABLE), check = switchFirst)))
+    }
+
+    @Test
+    fun `a jump whose target is not the label after the pcSetDetachedState call is the adopter's`() {
+        val skipsMore: (MethodVisitor) -> Unit = { visitor ->
+            val target = Label()
+            visitor.visitVarInsn(Opcodes.ILOAD, 3)
+            visitor.visitJumpInsn(Opcodes.IFEQ, target)
+            visitor.visitVarInsn(Opcodes.ALOAD, 0)
+            visitor.visitInsn(Opcodes.ACONST_NULL)
+            visitor.visitMethodInsn(Opcodes.INVOKEVIRTUAL, OWNER, "pcSetDetachedState", "(Ljava/lang/Object;)V", false)
+            visitor.visitInsn(Opcodes.NOP)
+            visitor.visitLabel(target)
+        }
+
+        assertEquals(listOf(false, false), droppedOrdinals(writeObjectBytes(listOf(PERSISTENCE_CAPABLE), check = skipsMore)))
+    }
+
+    @Test
+    fun `the same shape in a method that is not the object stream writer is the adopter's`() {
+        val interfaces = listOf(PERSISTENCE_CAPABLE)
+
+        assertEquals(listOf(false, false), droppedOrdinals(writeObjectBytes(interfaces, name = "save")))
+        assertEquals(listOf(false, false), droppedOrdinals(writeObjectBytes(interfaces, descriptor = "(Ljava/io/ObjectOutput;)V")))
+    }
+
+    @Test
+    fun `a method with no pcSerializing prologue has no clear check`() {
+        val noPrologue =
+            forge(
+                listOf(PERSISTENCE_CAPABLE),
+                listOf(
+                    Method("writeObject", "(Ljava/io/ObjectOutputStream;)V", Opcodes.ACC_PRIVATE, line = true) { visitor ->
+                        clearCheck(visitor, 3)
+                        visitor.visitInsn(Opcodes.RETURN)
+                    },
+                ),
+            )
+
+        assertEquals(listOf(false), droppedOrdinals(noPrologue))
+    }
+
     @Test
     fun `a moved openjpa accessor that calls itself records no edge to its own reported name`() {
         val bytes =

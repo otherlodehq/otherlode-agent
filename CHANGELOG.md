@@ -47,6 +47,8 @@ the section being read.
 
 ### Fixed
 
+- The check OpenJPA's enhancer adds to a `writeObject` you wrote, `if (clear) pcSetDetachedState(null)` before each return, no longer reads as an untaken branch. It gets no branch probe (`BranchDropReason.JPA_WEAVING`), and the method keeps its entry probe and every branch you wrote. It needs build-time enhancement, like the other woven checks.
+- A stub kotlinc writes in a build that mixes a `-jvm-default=disable` library with a consumer compiled with `all` or `all-compatibility` is marked `DEFAULT_IMPLS` when the `$DefaultImpls` method it calls does not exist, where it read as your code and as a method that was never hit. A call to it records an edge to the stub. The stub stays unmarked when the agent cannot read the `$DefaultImpls` class.
 - A `Serializable` class below Java 11 keeps its default `serialVersionUID` when woven. Its counts field is private, and a class with no static initialiser gets none, so data serialized by a JVM without the agent reads in one with it. A woven `Serializable` interface below Java 11 still changes its own value.
 - A class whose loader cannot see `dev.otherlode.bootstrap`, as JBoss Modules and Apache Felix loaders by default, is left unwoven and reported as skipped, where it failed at its first probe and broke the application. An endpoint module that would hook such a class switches itself off with the kind `TRANSFORM_FAILED`.
 - A second `-javaagent` of the agent in one JVM is ignored with a `WARNING`. It wove every class twice, which failed a class below Java 11 to load and counted each hit twice from Java 11.

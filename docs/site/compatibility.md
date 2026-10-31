@@ -59,7 +59,7 @@ On the first flush that finds an unread shape, the agent logs one WARNING that c
 
 The agent reads classes that Hibernate, Ebean, EclipseLink and OpenJPA enhanced. See [methods and branches](methods-and-branches#methods-a-jpa-enhancer-adds). The rules are checked against entities that Ebean 19.7, EclipseLink 4.0 and OpenJPA 4.1 enhanced at build time.
 
-Enhance OpenJPA entities that use property access at build time. When OpenJPA enhances one as it loads, a getter or setter it wrapped keeps its entry probe and gets no branch probes, as EclipseLink's woven methods do. The branches you wrote in it are not reported.
+Enhance OpenJPA entities that use property access at build time. When OpenJPA enhances one as it loads, a getter or setter it wrapped keeps its entry probe and gets no branch probes, as EclipseLink's woven methods do. The branches you wrote in it are not reported. A `writeObject` you wrote in a serializable entity is the same: it keeps its entry probe and gets no branch probes, because the class file holds none of the enhancer's checks to match.
 
 OpenJPA's `openjpa.RuntimeUnenhancedClasses=supported` is not supported. OpenJPA then retransforms a class with its own bytes, which discards the agent's probes. Enhance the entities at build time instead.
 

@@ -3,8 +3,10 @@ package dev.otherlode.instrumentation.staticscan
 import dev.otherlode.export.DeclaredMethod
 import dev.otherlode.export.GeneratedBy
 import dev.otherlode.instrumentation.CompilerFixtures
+import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertTrue
 
 /**
  * Proves that a static baseline scan marks a `-jvm-default=disable` stub and a record's methods
@@ -32,6 +34,27 @@ class GeneratedStubBaselineTest {
         assertEquals(GeneratedBy.DEFAULT_IMPLS, method(build, impl, "plain").generatedBy)
         assertEquals(GeneratedBy.DEFAULT_IMPLS, method(build, impl, "describe").generatedBy)
         assertEquals(GeneratedBy.NONE, method(build, impl, "id").generatedBy)
+    }
+
+    @Test
+    fun `a scan marks a stub whose DefaultImpls method does not exist DEFAULT_IMPLS, as the live analysis does`() {
+        val versions = CompilerFixtures.kotlincVersions.filterNot(CompilerFixtures::kotlincDefaultsToJvmDefaultEnable)
+        assertTrue(versions.isNotEmpty())
+        for (version in versions) {
+            for (mode in listOf("all", "all-compatibility")) {
+                val root = CompilerFixtures.kotlincMixed(version)
+                val scanned =
+                    StaticBaselineScanner(listOf("com.example.target"))
+                        .scan(listOf(File(root, mode), File(root, "lib")))
+                        .declaredClasses
+                        .single { it.className == "com.example.target.mixed.MixedIdStoreImpl" }
+                        .methods
+                        .associateBy { it.methodName }
+
+                assertEquals(GeneratedBy.DEFAULT_IMPLS, scanned.getValue("keyed-QoVL8wA").generatedBy, "$version $mode")
+                assertEquals(GeneratedBy.DEFAULT_IMPLS, scanned.getValue("plain-6pmR1NM").generatedBy, "$version $mode")
+            }
+        }
     }
 
     @Test
