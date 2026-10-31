@@ -1,5 +1,6 @@
 package dev.otherlode.instrumentation.endpoints
 
+import dev.otherlode.bootLogger
 import dev.otherlode.registry.DeclaringClass
 import dev.otherlode.registry.DefinitionAttempt
 import java.lang.System.Logger.Level
@@ -29,7 +30,7 @@ import java.lang.System.Logger.Level
  * declines the work, and the caller registers directly.
  */
 class PendingDeclarations internal constructor() {
-    private val log = System.getLogger(PendingDeclarations::class.java.name)
+    private val log by lazy { bootLogger(PendingDeclarations::class.java.name) }
     private val staged = ThreadLocal<Staging?>()
 
     private class Staging(

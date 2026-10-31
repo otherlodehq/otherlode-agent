@@ -1,5 +1,6 @@
 package dev.otherlode.export
 
+import dev.otherlode.bootLogger
 import dev.otherlode.classlisting.ClassListingSender
 import dev.otherlode.config.AgentConfig
 import dev.otherlode.dependencies.DependencyListingRun
@@ -104,7 +105,7 @@ class ExportScheduler(
     /** Milliseconds since the epoch; read once per flush and once at construction. Injectable so a test controls it. */
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
-    private val log = System.getLogger(ExportScheduler::class.java.name)
+    private val log by lazy { bootLogger(ExportScheduler::class.java.name) }
     private var executor: ScheduledExecutorService? = null
     private val branchDropsLogged = AtomicBoolean(false)
     private val unreadShapesLogged = AtomicBoolean(false)

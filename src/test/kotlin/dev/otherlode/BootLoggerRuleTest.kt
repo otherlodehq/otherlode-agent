@@ -1,0 +1,37 @@
+package dev.otherlode
+
+import java.io.File
+import kotlin.test.Test
+import kotlin.test.assertEquals
+import kotlin.test.assertTrue
+
+/**
+ * The agent asks for a `System.Logger` only through the boot loader's `OtherlodeLoggers`. A direct
+ * `System.getLogger` from a class the application loader defines makes the JDK create the default
+ * `java.util.logging.LogManager` before the application's `main` can choose its own.
+ */
+class BootLoggerRuleTest {
+    private val allowed = emptySet<String>()
+
+    @Test
+    fun `no main source outside the bootstrap module calls System getLogger`() {
+        val root = File(System.getProperty("user.dir"))
+        val sourceRoots =
+            listOf(File(root, "src/main")) +
+                root
+                    .listFiles { f -> f.isDirectory && f.name != "bootstrap" }
+                    .orEmpty()
+                    .map { File(it, "src/main") }
+        val scanned =
+            sourceRoots
+                .filter { it.isDirectory }
+                .flatMap { dir -> dir.walkTopDown().filter { it.isFile && it.extension in setOf("kt", "java") }.toList() }
+        assertTrue(scanned.size > 100, "the scan found the agent's sources, found ${scanned.size}")
+        val offenders =
+            scanned
+                .filter { it.relativeTo(root).invariantSeparatorsPath !in allowed }
+                .filter { "System.getLogger" in it.readText() }
+                .map { it.relativeTo(root).invariantSeparatorsPath }
+        assertEquals(emptyList(), offenders, "use OtherlodeLoggers.get, or bootLogger in the root module")
+    }
+}

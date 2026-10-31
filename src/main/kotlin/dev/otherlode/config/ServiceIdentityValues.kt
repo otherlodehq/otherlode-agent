@@ -1,5 +1,6 @@
 package dev.otherlode.config
 
+import dev.otherlode.bootLogger
 import java.lang.System.Logger.Level
 
 /**
@@ -17,7 +18,7 @@ internal object ServiceIdentityValues {
      */
     const val MAX_VALUE_BYTES = 1024
 
-    private val log = System.getLogger(ServiceIdentityValues::class.java.name)
+    private val log by lazy { bootLogger(ServiceIdentityValues::class.java.name) }
 
     fun isDotSegment(value: String): Boolean = value == "." || value == ".."
 

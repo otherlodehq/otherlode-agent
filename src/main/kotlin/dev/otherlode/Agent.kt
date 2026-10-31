@@ -20,6 +20,7 @@ import dev.otherlode.export.HttpExporter
 import dev.otherlode.export.IncludeRules
 import dev.otherlode.export.ResourceAttributes
 import dev.otherlode.export.forNewRun
+import dev.otherlode.instrumentation.BootstrapHolder
 import dev.otherlode.instrumentation.BootstrapInstallException
 import dev.otherlode.instrumentation.BootstrapVisibilityGuard
 import dev.otherlode.instrumentation.ClassFileByteCache
@@ -59,7 +60,7 @@ object Agent {
     private val SHUTDOWN_FLUSH_TIMEOUT: Duration = Duration.ofSeconds(10)
     private val TEST_RUN_SCAN_WAIT: Duration = Duration.ofSeconds(15)
     private const val OTEL_BRIDGE_MODULE_NAME = "otel"
-    private val log = System.getLogger(Agent::class.java.name)
+    private val log by lazy { bootLogger(Agent::class.java.name) }
     private val claimed = AtomicBoolean(false)
 
     /**
@@ -158,6 +159,13 @@ object Agent {
         }
         if (config.includePackages.isEmpty()) {
             log.log(Level.ERROR, IncludeRulesRefusal.message(suggestionForThisJvm()))
+            return null
+        }
+
+        try {
+            BootstrapHolder.install(instrumentation)
+        } catch (e: BootstrapInstallException) {
+            log.log(Level.ERROR, "otherlode: could not install the bootstrap holder; the agent is disabled for this JVM", e)
             return null
         }
 

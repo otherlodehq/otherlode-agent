@@ -1,5 +1,6 @@
 package dev.otherlode.instrumentation.endpoints
 
+import dev.otherlode.bootLogger
 import dev.otherlode.instrumentation.endpoints.api.EndpointModule
 import java.lang.System.Logger.Level
 import java.util.ServiceConfigurationError
@@ -17,7 +18,7 @@ import java.util.ServiceLoader
  * hide every other module behind it.
  */
 object EndpointModules {
-    private val log = System.getLogger(EndpointModules::class.java.name)
+    private val log by lazy { bootLogger(EndpointModules::class.java.name) }
 
     fun discover(classLoader: ClassLoader = EndpointModules::class.java.classLoader): List<EndpointModule> {
         val modules = mutableListOf<EndpointModule>()

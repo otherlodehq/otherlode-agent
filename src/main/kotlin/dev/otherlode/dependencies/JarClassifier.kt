@@ -1,5 +1,6 @@
 package dev.otherlode.dependencies
 
+import dev.otherlode.bootLogger
 import dev.otherlode.instrumentation.TypeMatchPolicy
 import dev.otherlode.registry.DependencyOrigin
 import java.lang.System.Logger.Level
@@ -30,7 +31,7 @@ internal class JarClassifier(
     private val excludes: List<String>,
 ) {
     // Named after the lister, whose INFO line this is, so it reads the same wherever the rule ran.
-    private val log = System.getLogger(StartupClasspathLister::class.java.name)
+    private val log by lazy { bootLogger(StartupClasspathLister::class.java.name) }
 
     /** What a jar's manifest says it is. */
     enum class Kind {

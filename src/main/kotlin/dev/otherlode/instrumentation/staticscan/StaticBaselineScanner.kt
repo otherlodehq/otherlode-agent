@@ -1,5 +1,6 @@
 package dev.otherlode.instrumentation.staticscan
 
+import dev.otherlode.bootLogger
 import dev.otherlode.dependencies.ClasspathVisitor
 import dev.otherlode.dependencies.ClasspathWalker
 import dev.otherlode.dependencies.JarClassifier
@@ -84,7 +85,7 @@ class StaticBaselineScanner(
     private val excludePackages: List<String> = emptyList(),
     private val supportingTypesLocator: ClassFileLocator = ClassFileLocator.ForClassLoader.ofSystemLoader(),
 ) {
-    private val log = System.getLogger(StaticBaselineScanner::class.java.name)
+    private val log by lazy { bootLogger(StaticBaselineScanner::class.java.name) }
     private val typeNameMatcher = TypeMatchPolicy.typeNameMatcher(includePackages, excludePackages)
 
     private class Buckets {

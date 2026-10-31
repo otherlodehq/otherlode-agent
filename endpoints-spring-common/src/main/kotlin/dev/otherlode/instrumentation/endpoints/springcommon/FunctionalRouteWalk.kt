@@ -1,6 +1,7 @@
 package dev.otherlode.instrumentation.endpoints.springcommon
 
 import dev.otherlode.bootstrap.OtherlodeEndpoints
+import dev.otherlode.bootstrap.OtherlodeLoggers
 import java.lang.System.Logger.Level
 import java.lang.reflect.InvocationHandler
 import java.lang.reflect.Proxy
@@ -82,7 +83,7 @@ class FunctionalRouteStack(
 class FunctionalRouteWalk(
     private val spec: FunctionalRouteStack,
 ) {
-    private val log = System.getLogger(FunctionalRouteWalk::class.java.name)
+    private val log by lazy { OtherlodeLoggers.get(FunctionalRouteWalk::class.java.name) }
     private val noPathPredicateLogged = AtomicBoolean(false)
     private val resourcesUnreadLogged = AtomicBoolean(false)
     private val resourcesPathlessLogged = AtomicBoolean(false)

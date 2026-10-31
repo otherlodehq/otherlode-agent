@@ -1,5 +1,6 @@
 package dev.otherlode.instrumentation.staticscan
 
+import dev.otherlode.bootLogger
 import dev.otherlode.export.Exporter
 import dev.otherlode.export.IncludeRules
 import dev.otherlode.export.ResourceAttributes
@@ -39,7 +40,7 @@ class StaticBaselinePublisher(
     private val sender: StaticBaselineSender = StaticBaselineSender(exporter),
     private val includeRules: IncludeRules? = null,
 ) {
-    private val log = System.getLogger(StaticBaselinePublisher::class.java.name)
+    private val log by lazy { bootLogger(StaticBaselinePublisher::class.java.name) }
 
     fun run(resource: ResourceAttributes) {
         val result = scan()

@@ -1,5 +1,6 @@
 package dev.otherlode.instrumentation
 
+import dev.otherlode.bootLogger
 import java.net.URI
 import java.net.URL
 import java.security.ProtectionDomain
@@ -216,7 +217,7 @@ class CodeSourceClassFile internal constructor(
             val failed = attempts.incrementAndGet() >= MAX_WARM_UP_ATTEMPTS
             state.set(if (failed) State.FAILED else State.NOT_WARMED)
             if (failed && log) {
-                System.getLogger(CodeSourceClassFile::class.java.name).log(
+                bootLogger(CodeSourceClassFile::class.java.name).log(
                     System.Logger.Level.DEBUG,
                     "otherlode: code-source warm-up reads kept finding nothing; this location shape is read through the loader",
                 )

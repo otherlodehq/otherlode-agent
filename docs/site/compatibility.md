@@ -95,7 +95,7 @@ A debugger that breaks on uncaught exceptions sees an exception leaving a static
 
 ## The CDS warning
 
-The agent appends a small jar to the bootstrap class path at startup. HotSpot then prints a one-line warning once, which reads in part:
+The agent appends a small jar to the bootstrap class path when it starts. A disabled or refused start appends nothing. HotSpot then prints a one-line warning once, which reads in part:
 
 ```text
 Sharing is only supported for boot loader classes because bootstrap classpath has been appended

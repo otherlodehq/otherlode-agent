@@ -1,6 +1,7 @@
 package dev.otherlode.instrumentation.endpoints.jaxrs
 
 import dev.otherlode.bootstrap.OtherlodeEndpoints
+import dev.otherlode.bootstrap.OtherlodeLoggers
 import dev.otherlode.instrumentation.endpoints.api.AdviceBinder
 import dev.otherlode.instrumentation.endpoints.api.EndpointModule
 import dev.otherlode.instrumentation.endpoints.api.SupertypeCache
@@ -91,7 +92,7 @@ class JaxRsModule
 
         override val weaveFailureLeavesNothingPartial: Boolean = true
 
-        private val log = System.getLogger(JaxRsModule::class.java.name)
+        private val log by lazy { OtherlodeLoggers.get(JaxRsModule::class.java.name) }
         private val classPathIgnoredWarned = ConcurrentHashMap.newKeySet<String>()
         private val interfaceConflictWarned = AtomicBoolean(false)
         private val supertypeCaches = SupertypeCaches(::RouteAnnotationCache)

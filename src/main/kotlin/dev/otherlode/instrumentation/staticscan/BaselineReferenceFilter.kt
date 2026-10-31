@@ -1,5 +1,6 @@
 package dev.otherlode.instrumentation.staticscan
 
+import dev.otherlode.bootLogger
 import dev.otherlode.dependencies.DependencyListingRun
 import dev.otherlode.instrumentation.PlatformProvidedClasses
 import dev.otherlode.registry.DependencyRegistry
@@ -49,7 +50,7 @@ class BaselineReferenceFilter(
     private val providedByPlatform: (String) -> Boolean = PlatformProvidedClasses()::provides,
     private val dependencyListing: DependencyListingRun = DependencyListingRun {},
 ) {
-    private val log = System.getLogger(BaselineReferenceFilter::class.java.name)
+    private val log by lazy { bootLogger(BaselineReferenceFilter::class.java.name) }
 
     /**
      * [result] with JDK and adopter's-own names dropped from every reference list, every kept name

@@ -1,5 +1,6 @@
 package dev.otherlode.instrumentation
 
+import dev.otherlode.bootLogger
 import dev.otherlode.config.AgentConfig
 import dev.otherlode.dependencies.LoadedDependencyCounter
 import dev.otherlode.registry.EndpointRegistry
@@ -44,7 +45,7 @@ open class LoadedClassSweep(
     private val frameworkMarkers: FrameworkMarkerRegistry? = null,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
-    private val log = System.getLogger(LoadedClassSweep::class.java.name)
+    private val log by lazy { bootLogger(LoadedClassSweep::class.java.name) }
     private var everFoundUnreported = false
 
     /**

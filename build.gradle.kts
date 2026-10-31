@@ -343,6 +343,13 @@ val verifyAgentJar by tasks.registering {
                     }
                 }
             }
+            val naming =
+                names
+                    .filter { it.endsWith(".class") }
+                    .filter { "java/util/logging/Logger" in String(zip.getInputStream(zip.getEntry(it)).use { s -> s.readBytes() }, Charsets.ISO_8859_1) }
+            check(naming.isEmpty()) {
+                "agent classes must not name java.util.logging.Logger, whose first use creates the application's LogManager: ${naming.take(10)}"
+            }
             val loose = names.filter { it.startsWith("dev/otherlode/bootstrap/") && it.endsWith(".class") }
             check(loose.isEmpty()) {
                 "agent jar must not carry the bootstrap holder as loose classes, found: $loose"
@@ -928,6 +935,11 @@ tasks.shadowJar {
     // Same rationale for protobuf-java: the target app may already carry its
     // own, differently-versioned copy on the classpath.
     relocate("com.google.protobuf", "dev.otherlode.shaded.protobuf")
+
+    // protobuf-java asks for a java.util.logging.Logger in static initialisers, which creates the
+    // LogManager before the application can choose its own. The stand-in logs through the boot
+    // loader's OtherlodeLoggers instead. verifyAgentJar fails on any class still naming the JDK's.
+    relocate("java.util.logging.Logger", "dev.otherlode.shaded.jul.Logger")
 
     // The wire module's classes, and the root's own in the same packages. A test classpath that
     // carries the testkit carries the wire module too, possibly at another version, and the agent

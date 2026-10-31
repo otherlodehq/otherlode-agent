@@ -1,5 +1,6 @@
 package dev.otherlode.config
 
+import dev.otherlode.bootLogger
 import java.lang.System.Logger.Level
 import java.net.URI
 import java.time.Duration
@@ -143,7 +144,7 @@ data class AgentConfig(
         private const val DEFAULT_EXPORT_URL = "http://localhost:4319"
         private val DEFAULT_FLUSH_INTERVAL: Duration = Duration.ofSeconds(60)
         private val MAX_FLUSH_INTERVAL: Duration = Duration.ofDays(1)
-        private val log = System.getLogger(AgentConfig::class.java.name)
+        private val log by lazy { bootLogger(AgentConfig::class.java.name) }
 
         private val KNOWN_KEYS =
             setOf(

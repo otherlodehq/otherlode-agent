@@ -1,5 +1,6 @@
 package dev.otherlode.instrumentation
 
+import dev.otherlode.bootLogger
 import dev.otherlode.bootstrap.OtherlodeProbeArrays
 import java.util.WeakHashMap
 
@@ -13,7 +14,7 @@ import java.util.WeakHashMap
  * transform time only. One instance serves both tiers, so each loader gets one WARNING.
  */
 class BootstrapVisibilityGuard {
-    private val log = System.getLogger(BootstrapVisibilityGuard::class.java.name)
+    private val log by lazy { bootLogger(BootstrapVisibilityGuard::class.java.name) }
     private val visible = WeakHashMap<ClassLoader, Boolean>()
 
     /**

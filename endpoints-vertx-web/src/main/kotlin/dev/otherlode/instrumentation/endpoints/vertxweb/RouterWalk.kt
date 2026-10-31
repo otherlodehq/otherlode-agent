@@ -1,6 +1,7 @@
 package dev.otherlode.instrumentation.endpoints.vertxweb
 
 import dev.otherlode.bootstrap.OtherlodeEndpoints
+import dev.otherlode.bootstrap.OtherlodeLoggers
 import java.lang.System.Logger.Level
 import java.lang.ref.WeakReference
 import java.lang.reflect.Method
@@ -109,7 +110,7 @@ private class Join(
 internal class RouterWalk(
     private val graph: RouterGraph,
 ) {
-    private val log = System.getLogger(RouterWalk::class.java.name)
+    private val log by lazy { OtherlodeLoggers.get(RouterWalk::class.java.name) }
     private val apis = WeakHashMap<ClassLoader, WeakReference<Api>>()
     private val unreadRegexLogged = ConcurrentHashMap.newKeySet<String>()
     private val parameterisedChainsByRoot = WeakIdentityMap<List<Pair<WeakReference<Any>, String>>>()

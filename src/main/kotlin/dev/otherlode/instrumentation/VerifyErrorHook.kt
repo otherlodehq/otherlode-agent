@@ -1,5 +1,6 @@
 package dev.otherlode.instrumentation
 
+import dev.otherlode.bootLogger
 import dev.otherlode.bootstrap.OtherlodeVerifierMessages
 import dev.otherlode.verifier.VerifyErrorAdvice
 import net.bytebuddy.agent.builder.AgentBuilder
@@ -28,7 +29,7 @@ class VerifyErrorHook(
     private val ownFailures: OwnRetransformationFailures = OwnRetransformationFailures(),
     private val targetClass: String = "java.lang.VerifyError",
 ) {
-    private val log = System.getLogger(VerifyErrorHook::class.java.name)
+    private val log by lazy { bootLogger(VerifyErrorHook::class.java.name) }
     private var transformer: ResettableClassFileTransformer? = null
     private var watch = VerifierRejectionWatch.NOT_WATCHED
 

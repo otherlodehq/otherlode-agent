@@ -1,5 +1,6 @@
 package dev.otherlode.dependencies
 
+import dev.otherlode.bootLogger
 import dev.otherlode.export.DependencyIdentity
 import dev.otherlode.export.DependencyIdentitySource
 import dev.otherlode.registry.DependencyOrigin
@@ -67,7 +68,7 @@ class StartupClasspathLister(
     private val onNotADependency: (DependencyOrigin) -> Unit = {},
     private val keepClassNames: Boolean = false,
 ) {
-    private val log = System.getLogger(StartupClasspathLister::class.java.name)
+    private val log by lazy { bootLogger(StartupClasspathLister::class.java.name) }
     private val classifier = JarClassifier(includes, excludes)
 
     /** Walks the classpath and returns the dependencies found, in the order the JDK would search them. */

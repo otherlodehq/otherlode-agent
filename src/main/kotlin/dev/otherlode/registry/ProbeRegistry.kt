@@ -1,5 +1,6 @@
 package dev.otherlode.registry
 
+import dev.otherlode.bootLogger
 import dev.otherlode.export.BodyKind
 import dev.otherlode.export.ClassFailedToInitialize
 import dev.otherlode.export.ClassLocation
@@ -104,7 +105,7 @@ import java.util.concurrent.atomic.AtomicLong
 open class ProbeRegistry(
     private val confirmsDefinitions: Boolean = false,
 ) {
-    private val log = System.getLogger(ProbeRegistry::class.java.name)
+    private val log by lazy { bootLogger(ProbeRegistry::class.java.name) }
 
     private data class RegistryKey(
         val className: String,

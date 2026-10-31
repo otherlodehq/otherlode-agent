@@ -1,5 +1,6 @@
 package dev.otherlode.instrumentation.endpoints
 
+import dev.otherlode.bootLogger
 import dev.otherlode.bootstrap.OtherlodeEndpoints
 import dev.otherlode.export.DisabledEndpointModuleKind
 import dev.otherlode.export.EndpointTemplateKind
@@ -30,7 +31,7 @@ class RegistryResolver(
     private val pendingDeclarations: PendingDeclarations,
     private val handlerForwarders: HandlerForwarders = HandlerForwarders(),
 ) : OtherlodeEndpoints.Resolver {
-    private val log = System.getLogger(RegistryResolver::class.java.name)
+    private val log by lazy { bootLogger(RegistryResolver::class.java.name) }
     private val modulesByName = modules.associateBy { it.name }
     private val declareFailureLogged = ConcurrentHashMap.newKeySet<String>()
     private val unknownDeclareModuleLogged = ConcurrentHashMap.newKeySet<String>()

@@ -27,6 +27,7 @@ object BootstrapHolder {
     const val HOLDER_CLASS_NAME = "dev.otherlode.bootstrap.OtherlodeProbeArrays"
     const val ENDPOINTS_CLASS_NAME = "dev.otherlode.bootstrap.OtherlodeEndpoints"
     const val VERIFIER_MESSAGES_CLASS_NAME = "dev.otherlode.bootstrap.OtherlodeVerifierMessages"
+    const val LOGGERS_CLASS_NAME = "dev.otherlode.bootstrap.OtherlodeLoggers"
 
     /**
      * Idempotent: a JVM where the holder is already bootstrap-visible (a second install call, a
@@ -70,7 +71,8 @@ object BootstrapHolder {
     fun isInstalled(): Boolean =
         isLoadableFromBootstrap(HOLDER_CLASS_NAME) &&
             isLoadableFromBootstrap(ENDPOINTS_CLASS_NAME) &&
-            isLoadableFromBootstrap(VERIFIER_MESSAGES_CLASS_NAME)
+            isLoadableFromBootstrap(VERIFIER_MESSAGES_CLASS_NAME) &&
+            isLoadableFromBootstrap(LOGGERS_CLASS_NAME)
 
     private fun isLoadableFromBootstrap(className: String): Boolean =
         try {
