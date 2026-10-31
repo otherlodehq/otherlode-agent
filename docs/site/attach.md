@@ -117,7 +117,7 @@ The agent finds the main class from the launch command. It reads `Start-Class`, 
 
 `authToken` is sent to the collector as `Authorization: Bearer <token>`. It may hold only visible ASCII characters. A token with any other character, such as an invisible one copied from a web page, turns the agent off with one ERROR. Set the token through the `OTHERLODE_AUTH_TOKEN` environment variable, not through the option string. Every user on the host can read a process's arguments with `ps`, and cannot read its environment.
 
-If `authToken` is set and `exportUrl` starts with `http://`, the agent logs a warning that the token travels unencrypted. Use an `https://` URL for any collector that is not on the same host.
+If `authToken` is set and `exportUrl` starts with `http://`, the agent logs a warning that the token travels unencrypted. It does not log it when the host is `localhost`, an address from `127.0.0.0` to `127.255.255.255` or `[::1]`. Use an `https://` URL for any other collector.
 
 The agent sends one batch every 60 seconds by default, at a random offset within the first interval so that a fleet does not report in step. `flushIntervalSeconds` changes the interval. [What the agent sends](data-sent) lists what leaves the process and what happens while the collector is down.
 

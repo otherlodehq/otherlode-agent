@@ -214,7 +214,7 @@ data class AgentConfig(
             val authToken = resolve("authToken")
             val tokenRefusal = authToken?.let { tokenRefusal("authToken", it, options, systemProperties, env) }
             val refusals = listOfNotNull(exportUrlRefusal, tokenRefusal)
-            if (refusals.isEmpty() && authToken != null && exportUrl.startsWith("http://")) {
+            if (refusals.isEmpty() && authToken != null && exportUrl.startsWith("http://") && !isLoopbackHost(URI(exportUrl).host)) {
                 log.log(Level.WARNING, "otherlode: exportUrl uses plain http, so the auth token is sent unencrypted")
             }
             val testRun = parseBoolean("testRun", resolve("testRun"), default = false)
@@ -503,6 +503,18 @@ data class AgentConfig(
             }
             val scheme = checkNotNull(uri).scheme
             return (scheme.lowercase() + trimmed.substring(scheme.length)) to null
+        }
+
+        private val IPV4_LOOPBACK = Regex("""127(\.\d{1,3}){3}""")
+
+        /**
+         * True for a host written as `localhost` in any case, an IPv4 address in 127.0.0.0/8 or `[::1]`.
+         * It reads the text only and never resolves a name.
+         */
+        private fun isLoopbackHost(host: String): Boolean {
+            if (host.equals("localhost", ignoreCase = true) || host == "[::1]") return true
+            if (!IPV4_LOOPBACK.matches(host)) return false
+            return host.split('.').all { it.toInt() in 0..255 }
         }
 
         /**

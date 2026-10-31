@@ -28,7 +28,7 @@ Each request has these headers:
 | `Content-Type` | `application/x-protobuf` |
 | `Authorization` | `Bearer <authToken>`, only when you set `authToken` |
 
-The JDK's `java.net.http.HttpClient` adds its own headers (`Host`, `Content-Length`, `User-Agent`). Requests use HTTP/1.1, and the agent offers no upgrade to HTTP/2. It sends the token on every request and logs one warning at startup when `exportUrl` is plain `http://`, since the token then travels unencrypted. Set the token with the `OTHERLODE_AUTH_TOKEN` environment variable, because a `-javaagent` argument is visible to every user on the host through `ps`. See [configuration options](configuration).
+The JDK's `java.net.http.HttpClient` adds its own headers (`Host`, `Content-Length`, `User-Agent`). Requests use HTTP/1.1, and the agent offers no upgrade to HTTP/2. It sends the token on every request and logs one warning at startup when `exportUrl` is plain `http://` and its host is not `localhost`, an address in `127.0.0.0/8` or `[::1]`, since the token then travels unencrypted. Set the token with the `OTHERLODE_AUTH_TOKEN` environment variable, because a `-javaagent` argument is visible to every user on the host through `ps`. See [configuration options](configuration).
 
 The agent reads no response body. A `2xx` status confirms the payload. Each request times out after 10 seconds, and so does the connection attempt.
 

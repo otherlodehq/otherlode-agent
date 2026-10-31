@@ -216,7 +216,7 @@ When `authToken` is set, the agent sends `Authorization: Bearer <token>` with ev
 
 The agent's own advice is to set the token through `OTHERLODE_AUTH_TOKEN`. Both the argument string and a `-D` flag appear on the process command line, which every user on the host can read through `ps` and `/proc/<pid>/cmdline`. An environment variable does not.
 
-When a token is set and the final `exportUrl` starts with `http://`, the agent logs this warning once at startup. The default URL is plain `http`, so a token with no `exportUrl` also triggers it.
+When a token is set and the final `exportUrl` starts with `http://`, the agent logs this warning once at startup. It does not log it when the host is `localhost`, an IPv4 address from `127.0.0.0` to `127.255.255.255`, or `[::1]`. The agent reads the host as written and never looks a name up, so `localhost.example.com` and a name that resolves to `127.0.0.1` still log it. The default URL is `http://localhost:4319`, so a token with no `exportUrl` does not log it.
 
 ```text
 otherlode: exportUrl uses plain http, so the auth token is sent unencrypted

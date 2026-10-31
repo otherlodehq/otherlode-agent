@@ -406,10 +406,32 @@ class AgentConfigTest {
     }
 
     @Test
-    fun `a token sent to the default endpoint is warned about, since it is plain http`() {
-        val warnings = warningsFrom { parseQuietly("authToken=abc") }
+    fun `a token sent to the default endpoint is not warned about, since it is a loopback address`() {
+        val warnings = warningsFrom { parseQuietly("authToken=abc,unknownOption=1") }
 
-        assertEquals(1, warnings.count { it.contains("plain http") })
+        assertEquals(1, warnings.count { it.contains("unknown agent option") }, "log capture saw nothing")
+        assertEquals(0, warnings.count { it.contains("plain http") })
+    }
+
+    @Test
+    fun `a token sent to a loopback host over plain http is not warned about`() {
+        val hosts = listOf("localhost", "LOCALHOST", "127.0.0.1", "127.10.0.5", "[::1]")
+        for (host in hosts) {
+            val warnings = warningsFrom { parseQuietly("exportUrl=http://$host:4319,authToken=abc,unknownOption=1") }
+
+            assertEquals(1, warnings.count { it.contains("unknown agent option") }, "host $host: log capture saw nothing")
+            assertEquals(0, warnings.count { it.contains("plain http") }, "host $host")
+        }
+    }
+
+    @Test
+    fun `a token sent to a host that is not loopback over plain http is warned about`() {
+        val hosts = listOf("collector", "10.0.0.5", "localhost.example.com", "[::2]", "128.0.0.1", "127.0.0.1.example.com")
+        for (host in hosts) {
+            val warnings = warningsFrom { parseQuietly("exportUrl=http://$host:4319,authToken=abc") }
+
+            assertEquals(1, warnings.count { it.contains("plain http") }, "host $host")
+        }
     }
 
     @Test
