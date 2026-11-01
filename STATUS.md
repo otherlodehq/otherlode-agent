@@ -57,21 +57,6 @@ deferrals, gzip, a collector config file, and agent-level redaction
 
 ## TODO
 
-### WildFly reports the Undertow marker on every service: to decide
-
-On WildFly 42.0.0.Final with its default `standalone.xml`, the naming
-subsystem starts `HttpRemoteNamingServerService` at boot, and
-`HttpRemoteNamingService.createHandler` builds a `RoutingHandler` for
-JNDI over HTTP under `/wildfly-services`. Removing the `http-invoker`
-does not stop it. So every WildFly service reports the
-`undertow-routing-handler` marker (ADR 0072), and its endpoints page shows
-a "Routes not counted" notice for WildFly's own routes, not the
-application's. The claim is true but is not about the customer's code.
-Options: leave it and say so on the agent's endpoints page; or leave the
-marker unmet when `org.wildfly.httpclient.naming.HttpRemoteNamingService`
-is loaded, which would also hide a WildFly application that serves its own
-routes through a raw `RoutingHandler` in an Undertow servlet extension.
-
 ### Tooling: code principles and a refactoring playbook
 
 From the comparison with pstack's poteto-mode (`cursor/plugins`, `190d287`).
