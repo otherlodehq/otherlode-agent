@@ -91,6 +91,11 @@ allprojects {
             if (testJdk.isPresent) {
                 javaLauncher.set(toolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(testJdk.get())) })
             }
+            // These test JVMs start as an installed agent does, so agent loggers reach java.util.logging
+            // whatever order the tests run in. Forked fixture JVMs build their own command line.
+            val bootstrapJar = rootProject.project(":bootstrap").tasks.named<Jar>("jar").flatMap { it.archiveFile }
+            inputs.file(bootstrapJar)
+            jvmArgumentProviders.add(CommandLineArgumentProvider { listOf("-Xbootclasspath/a:${bootstrapJar.get().asFile.absolutePath}") })
         }
     }
 }
