@@ -64,7 +64,7 @@ Heap follows the same shape. The broad run's minimum heap used was +122 MiB, and
 
 Startup is the cost to watch. In the startup-only run, the narrow rules added 3.9 s to an 18.3 s startup on one core (+21.2%), the median of 21 runs per variant. With more cores the cost shrinks, since class loading, the JIT and the weave no longer share one CPU. Startup grows with how many classes your application loads, because the agent checks each loaded class against its rules.
 
-Two pieces of work that would otherwise be startup cost run later:
+Three pieces of work that would otherwise be startup cost run later:
 
 - The dependency listing, which reads every jar on the classpath to find its identity, starts at the top of the first flush on the export thread, not in `premain`. It reads each nested jar in a fat jar from its central directory, and decompresses only the `pom.properties` files and manifest it needs.
 - The first full manifest goes out on the first flush, at a random point inside the first interval.
@@ -91,7 +91,7 @@ A timed run of the flush code over 1,195 classes and 22,597 probes, encoding wit
 
 The allocation is mostly copying the count arrays, about 8 bytes a probe a flush. The loaded-class walk took 0.5 ms against a JVM holding 4,900 classes. The first flush grows with the probe count, and happens once.
 
-On the network, a flush is one POST per payload at most every interval. Payload size follows the number of probes whose counts changed, not total traffic or total probes, because the agent sends deltas. An empty batch still goes out as a heartbeat. Each send retries up to five times with exponential backoff, capped at 30 seconds, and when the collector is down the counts stay in memory and are sent again on the next flush, so memory does not grow while it is unreachable. [What the agent sends](data-sent) lists each payload.
+On the network, a flush sends each payload as one or more POST requests, once per interval. Payload size follows the number of probes whose counts changed, not total traffic or total probes, because the agent sends deltas. An empty batch still goes out as a heartbeat. Each send makes up to five attempts, waiting 200 ms after the first failure and doubling the wait up to 30 seconds, and when the collector is down the counts stay in memory and are sent again on the next flush, so memory does not grow while it is unreachable. [What the agent sends](data-sent) lists each payload.
 
 ## Opt-in costs
 

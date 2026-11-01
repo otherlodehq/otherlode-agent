@@ -19,7 +19,7 @@ To build the jar from a checkout instead, run `./gradlew build`. The agent jar i
 
 ## Add the flag
 
-The `-javaagent` flag takes the jar's path, then `=`, then the agent's options as comma-separated `key=value` pairs. Only `includePackages` is required. The other options in this guide are `serviceName` and `exportUrl`.
+The `-javaagent` flag takes the jar's path, then `=`, then the agent's options as comma-separated `key=value` pairs. Only `includePackages` is required.
 
 ```bash
 java \
@@ -29,7 +29,7 @@ java \
 
 Put `-javaagent` before `-jar` or the main class. Anything after the jar name is an argument to your application.
 
-A value in the option string cannot contain a comma, and a value that needs one is ignored with a warning. Set such a value through a system property or an environment variable instead. [The configuration options](configuration) list every option and the names of its property and variable.
+A value in the option string cannot contain a comma. The agent keeps the part before the first comma as the value and ignores the rest with a warning. Set such a value through a system property or an environment variable instead. [The configuration options](configuration) list every option and the names of its property and variable.
 
 ### Gradle
 
@@ -103,7 +103,7 @@ The agent has no default for this option and no wildcard. If `includePackages` i
 
 A prefix written as a glob (`com.acme.*`) or a path (`com/acme`) matches no class. The agent drops it with a warning that names the spelling that would match, and does not apply that spelling for you. If every prefix is dropped this way, the agent refuses to start, as it does for a missing option.
 
-The error tries to help. When it can find your application's main class, it prints the class and its package:
+When the agent can find your application's main class, the error names the class and a prefix that covers its package:
 
 ```text
 otherlode: includePackages is not set, so the agent is disabled for this JVM and nothing will be instrumented or exported; set includePackages to your application's own package prefixes, ';'-separated; the main class is com.acme.shop.ShopApplication; includePackages=com.acme.shop covers its package, or name a broader prefix that also covers your shared libraries

@@ -76,7 +76,7 @@ class CheckoutTest {
 
 The extension starts one collector for the whole test JVM and shares it between test classes. A test class that cannot take a parameter reads the same collector from `OtherlodeExtension.collector()`. That method throws `IllegalStateException` until a test class with the extension has started.
 
-Before the first test class runs, the extension waits for the agent's first report. If none arrives, the test fails with a message that names the flag to add. Two system properties on the test JVM change the extension's behavior:
+Before the first test class runs, the extension waits for the agent's first report. If none arrives, the test fails with a message that names the flag to add. Two system properties on the test JVM change the extension's behaviour:
 
 | Property | Default | Effect |
 |---|---|---|
@@ -100,7 +100,7 @@ Each wait throws `TimeoutException` when the timeout passes.
 
 Class names are the dotted binary names. A Kotlin file's top-level functions live in `com.acme.OrdersKt`, a nested class is `com.acme.Outer$Inner`, and a function in a `@file:JvmMultifileClass` file lives in its part class, such as `com.acme.Orders__OrderTotalsKt`, not in the facade.
 
-Asking about a method the collector has never heard of throws `UnknownProbeException`, not `false`. The message says whether the class was skipped, declared but never loaded, or never mentioned. A route nobody registered throws `UnknownEndpointException` the same way. This keeps "never ran" apart from "the agent never saw it".
+Asking about a method the collector has never heard of throws `UnknownProbeException`, not `false`. The message says which case applies: the class was skipped, loaded without reaching a transformer, declared but never loaded, has no method by that name, or was never mentioned. A route nobody registered throws `UnknownEndpointException` the same way. This keeps "never ran" apart from "the agent never saw it".
 
 A query that rests on a zero count has one more refusal. A class the JVM's verifier rejects fires no probe, so while an instance's agent could not install its hook on `VerifyError`, or counted a `VerifyError` message it could not read, `neverHit`, the class findings, `unreachedClusters` and the dependency verdicts that rest on a zero count throw `IllegalStateException` and name the instance and the reason. Queries that read no zero count, such as `wasHit` and `hitCount`, keep answering. See [the testkit API](testkit-api#queries-that-refuse).
 
@@ -171,7 +171,7 @@ assertEquals(before + 1, collector.hitCount("com.acme.OrderService", "checkout")
 
 The agent increments counts without locking, so two threads racing on one probe can lose a count. Assert `>=` on code that runs concurrently.
 
-For the other findings the collector computes (never-initialized classes, unreached clusters, optional parameters, dependencies), see [the testkit reference](testkit-api).
+For the other findings the collector computes (never-initialised classes, unreached clusters, optional parameters, dependencies), see [the testkit reference](testkit-api).
 
 ## Start a collector by hand for a child JVM
 
@@ -246,4 +246,4 @@ To have Otherlode name the tests that call a method in production, run the agent
 
 ## Handle new enum values
 
-Result types and enums only grow in a minor release. A Kotlin `when` over `ProbeKind`, `GeneratedBy`, `RoutineKind`, `UnreadShape`, `OutsideCallerKind`, `RootKind`, `ClassFinding`, `EndpointDiscoverySource`, `DependencyDiscoverySource` or `DependencyUsage` needs an `else` branch, so a new value does not break your build.
+Result types and enums only grow in a minor release. A Kotlin `when` over `ProbeKind`, `GeneratedBy`, `RoutineKind`, `UnreadShape`, `OutsideCallerKind`, `RootKind`, `ClassFinding`, `EndpointDiscoverySource`, `DependencyDiscoverySource`, `DependencyUsage` or `DisabledEndpointModuleKind` needs an `else` branch, so a new value does not break your build.

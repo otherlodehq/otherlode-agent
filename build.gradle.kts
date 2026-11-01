@@ -1027,7 +1027,7 @@ val javadocJar by tasks.registering(Jar::class) {
 
 extra["otherlode.artifactId"] = "otherlode-agent"
 extra["otherlode.pomName"] = "Otherlode agent"
-extra["otherlode.pomDescription"] = "A Java agent that reports the code paths an application never runs."
+extra["otherlode.pomDescription"] = "A Java agent that counts the methods, branches and endpoints an application runs."
 apply(from = layout.projectDirectory.file("gradle/publishing.gradle.kts"))
 
 dependencies {

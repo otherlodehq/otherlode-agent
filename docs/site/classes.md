@@ -12,7 +12,7 @@ This page covers the whole class. For what the agent records inside a class that
 
 | State | What puts a class there | Where you see it |
 |---|---|---|
-| Instrumented | The class loaded, matched the rules, and has at least one method, default-argument site or static initialiser to probe. | Its probes reach the collector in the manifest. |
+| Instrumented | The class loaded, matched the rules, and has at least one method, optional parameter or static initialiser to probe. | Its probes reach the collector in the manifest. |
 | Never initialised | The class loaded, has a static initialiser, and no instance ran it. | `neverInitialized()` in [the testkit](testkit-api), and Otherlode's class findings. |
 | Never instantiated | The class loaded, and none of its constructors or instance methods ran in any instance. | `neverInstantiated()`, and Otherlode's class findings. |
 | Skipped | The class matched the rules and the agent could not instrument it, or its manifest entries are too large to send. | A `WARNING` log line, `skippedClasses()`, and the manifest's skipped list. |
@@ -20,7 +20,7 @@ This page covers the whole class. For what the agent records inside a class that
 | Failed to load | The agent wove the class and the JVM never defined it. | A `WARNING` log line, `failedToLoad()`, and the manifest. |
 | Failed to initialise | The JVM defined the class and either its static initialiser threw or the JVM's verifier rejected it, so the class can never run in that JVM. | The manifest, and `failedToInitialize()`. |
 | Never loaded | A complete static baseline declared the class and no manifest ever mentioned it. | `neverLoaded()`, and Otherlode's class findings. |
-| Nothing to probe | The class loaded and has no method, default-argument site or static initialiser the agent probes. | Nothing, except in the static baseline's unprobed list. |
+| Nothing to probe | The class loaded and has no method, optional parameter or static initialiser the agent probes. | Nothing, except in the static baseline's unprobed list. |
 | Left out | The class is synthetic, or a framework generated it at runtime. | Nothing. |
 
 A class holds at most one of never loaded, never initialised and never instantiated: the first that applies, in that order. Otherlode judges these findings. The agent sends the facts they rest on.
@@ -29,7 +29,7 @@ A class holds at most one of never loaded, never initialised and never instantia
 
 When a class in scope loads, the agent weaves probes into it and registers it. The class appears in the manifest with one entry per probe, and its delta batches carry the probe counts. The agent holds a class's entries back until it has evidence the JVM defined the class. See [Failed to load](#failed-to-load).
 
-A class has nothing to probe when it has no concrete method the agent probes (see [methods and branches](methods-and-branches)), no default-argument site, and no static initialiser of its own. A marker interface and a constants holder are typical. The agent sends nothing about such a class. A testkit query for one of its methods throws `UnknownProbeException`, and `neverLoaded()` does not list it.
+A class has nothing to probe when it has no concrete method the agent probes (see [methods and branches](methods-and-branches)), no optional parameter, and no static initialiser of its own. A marker interface and an interface that holds only constants are typical. The agent sends nothing about such a class. A testkit query for one of its methods throws `UnknownProbeException`, and `neverLoaded()` does not list it.
 
 ## Never initialised and never instantiated
 
@@ -52,7 +52,7 @@ A class is **never instantiated** when all of these hold:
 
 No instance of the class or of a subclass ran its constructor, since a subclass's constructor runs its superclass's. Java deserialization and libraries such as Gson, Kryo and Objenesis make an instance without its constructor. Its instance methods then run, so the class is not judged. An interface has no constructor, and a class with only static methods is never judged. The class's static methods can still run, so they stay listed as ordinary methods.
 
-Both findings leave out the class's inline, generated and unread-shape methods when judging, because the agent makes no never-hit claim about those. The methods that can only run through a class with a finding are not listed on their own. A never-hit method is covered by a never-initialised class, and a never-hit constructor or instance method by a never-instantiated one. A constructor is a finding itself only as an unused overload: it never ran while another constructor of its class did.
+Inline, generated and unread-shape methods don't make a class eligible for either finding, because the agent makes no never-hit claim about those. A hit on any instance method, one of those included, still rules out never instantiated. The methods that can only run through a class with a finding are not listed on their own. A never-hit method is covered by a never-initialised class, and a never-hit constructor or instance method by a never-instantiated one. A constructor is a finding itself only as an unused overload: it never ran while another constructor of its class did.
 
 ## Skipped classes
 
@@ -103,7 +103,7 @@ The agent registers a class when its transformer runs. The JVM can still refuse 
 - The class's name appearing among the classes the JVM has loaded, checked on each flush.
 - The class's loader having been garbage collected. A loader created, used and collected between two flushes is ordinary for a script engine or a per-test loader, and withholding the class there would lose a class that ran. A class on the bootstrap loader is never confirmed this way.
 
-A class with no evidence stays held. It is **failed to load** once two sweeps have missed it, and a sweep counts as a miss only when the attempt to define the class has ended. A slow loader, a debugger breakpoint or a frozen process keeps the attempt open, so none of them makes a defined class look failed. The shutdown flush counts as one sweep, so a short-lived process still gets an answer.
+A class with no evidence stays held. It is **failed to load** once two flushes have missed it, and a flush counts as a miss only when the attempt to define the class has ended. A slow loader, a debugger breakpoint or a frozen process keeps the attempt open, so none of them makes a defined class look failed. The shutdown flush counts as one, so a short-lived process still gets an answer.
 
 For each class it gives up on, the agent logs one `WARNING` and names the class in the manifest as failed to load. The name carries no reason, because the error is raised after the agent's transformer has returned.
 
@@ -151,7 +151,7 @@ otherlode: classes the JVM's verifier rejects will not be named on this JVM, so 
 
 ## Never loaded
 
-A class that never loads sends nothing, so on the wire it looks the same as a class that does not exist, was renamed, or is outside `includePackages`. The **static baseline** closes that gap: an inventory of the classes under `includePackages`, read from the class files without loading them. A class the baseline declares and that no manifest from the same instance ever mentions is **never loaded**. No instance of the service ever loaded it.
+A class that never loads sends nothing, so on the wire it looks the same as a class that does not exist, was renamed, or is outside `includePackages`. The **static baseline** closes that gap: an inventory of the classes under `includePackages`, read from the class files without loading them. A class the baseline declares and that no manifest from any instance ever mentions is **never loaded**. No instance of the service ever loaded it.
 
 ### Enable the baseline
 
@@ -198,7 +198,7 @@ Each class the scan finds in scope lands in one of three lists:
 
 Only a declared class can be never loaded. The live tier never registers an unprobed class, so declaring one would make Otherlode call a heavily used marker interface never loaded. An unreadable class never silently drops out of the inventory, since it is on the list.
 
-Otherlode calls a declared class never loaded only when it holds the complete scan. The agent sends the scan in chunks of about 20,000 entries, and each chunk stays under 8 MiB and under 180,000 elements (see [chunk caps](data-sent#chunk-caps)). Each chunk says its position out of the total. The agent sends the chunks in order and stops at the first failure. It sends the rest after the next flush that the collector confirms, and logs these lines on the way:
+Otherlode calls a declared class never loaded only when it holds the complete scan. The agent sends the scan in chunks of about 20,000 entries, and each chunk stays under 8 MiB and under 180,000 elements (see [chunk caps](data-sent#chunk-caps)). Each chunk says its position out of the total. The agent sends the chunks in order and stops at the first failure. It sends the rest one chunk per flush, after each flush the collector confirms, and logs these lines on the way:
 
 ```text
 otherlode: failed to send static baseline chunk 2 of 3; it and the chunks after it are sent again after a flush the collector confirms
@@ -209,10 +209,10 @@ otherlode: the collector refused static baseline chunk 1 of 3 with status 400, w
 A class is never split across chunks. If one declared class is too large for a chunk on its own, over 8 MiB or over 180,000 elements, the agent sends no chunk of the scan and logs one `WARNING` that names the class and the bound, never a string constant from it:
 
 ```text
-otherlode: the static baseline is not sent: com.acme.Huge alone exceeds the 8 MiB limit on encoded bytes for one chunk, and a scan without it would read as complete
+otherlode: the static baseline is not sent: com.acme.Huge alone exceeds the limit of 8 MiB on encoded bytes for one chunk, and a scan without it would read as complete
 ```
 
-A scan without the class would be complete and wrong. Otherlode would miss the class's call edges and creations, and another class could read as never constructed. The run has no complete scan, so Otherlode makes no never-loaded claim for it.
+A scan without the class would be complete and wrong. Otherlode would miss the class's call edges and creations, so a class it creates could read as created by nothing. The run has no complete scan, so Otherlode makes no never-loaded claim for it.
 
 In the testkit, `neverLoaded()` also leaves out a declared class whose methods are all inline, generated or unread shapes. Kotlin callers never call an inline method, and the compiler regenerates generated ones, so such a class never loading is no evidence it is dead.
 

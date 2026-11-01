@@ -96,7 +96,7 @@ A finding method takes no arguments and returns a list. It judges the merged hit
 - A branch inside code that never ran. It folds into the row for that code.
 - A routine outcome and an unread shape, listed by the two queries above.
 
-`neverHit` rows sort by class name, method name, line, then branch index. The class and cluster queries sort by class name, and `skippedClasses` by class name.
+`neverHit` rows sort by class name, method name, line, then branch index. `neverInitialized`, `neverInstantiated` and `skippedClasses` sort by class name. `unreachedClusters` sorts by `membersTotal`, largest first, then by root as `neverHit` sorts.
 
 #### Classes that failed to initialise
 
@@ -165,7 +165,7 @@ The six list queries sort by `DependencyStatus.identityKey`, except `absentRefer
 
 ### Rejected payloads
 
-`rejectedPayloads(): List<String>` lists the reason for each payload the collector answered with HTTP 400, oldest first. The collector keeps nothing from a rejected payload. The agent does not resend a payload after a 400.
+`rejectedPayloads(): List<String>` lists the reason for each payload the collector answered with HTTP 400, oldest first. The collector keeps nothing from a rejected payload. The agent does not retry a 400 within a send. It sends its counts and manifest entries again on the next flush. It drops a static baseline or class listing after a 400.
 
 Once the list is not empty, every other query and wait throws `IllegalStateException` that lists the reasons. Only `rejectedPayloads` and `close` keep working. A test fails even if it never reads the list.
 
@@ -232,7 +232,8 @@ Cases 3 and 5 can clear on their own as the application runs. Wait for the class
 ### UnknownEndpointException
 
 1. At least one endpoint module is disabled. The message lists every disabled module and its reason, because the endpoint may belong to one of them.
-2. No manifest from any instance named the endpoint.
+2. No path endpoint has that template, but a regex or servlet pattern endpoint does. The message names which and points to `endpoints()` and `neverCalled()`.
+3. No manifest from any instance named the endpoint.
 
 ### UnknownDependencyException
 
@@ -245,7 +246,7 @@ The message names the dependency and every dependency the collector knows. When 
 | The collector rejected a payload. | Every query and wait. |
 | The collector closed during a wait. | Every wait. |
 | No complete static baseline has arrived. | `neverLoaded` |
-| An instance's hook on `VerifyError` was not installed, or it counted a `VerifyError` message in no read format. | `neverHit`, `neverHitRoutineOutcomes`, `neverHitUnreadShapes`, `neverInitialized`, `neverInstantiated`, `unreachedClusters`, `unreachedDependencies`, `failedToLoadDependencies`, `failedToInitializeDependencies`, and `dependency` for a status that rests on a zero count |
+| An instance's hook on `VerifyError` was not installed, or it counted a `VerifyError` message in no read format. | `neverHit`, `neverHitRoutineOutcomes`, `neverHitUnreadShapes`, `neverInitialized`, `neverInstantiated`, `neverCalled`, `alwaysSupplied`, `unreachedClusters`, `unreachedDependencies`, `failedToLoadDependencies`, `failedToInitializeDependencies`, and `dependency` for a status that rests on a zero count |
 | Dependency listing is incomplete, references are not recorded, or no complete baseline exists. | The dependency list queries, `absentReferences` |
 | Several dependencies carry the identity. | `dependency` |
 | The extension could not start or the agent's first batch did not arrive. | `OtherlodeExtension` |
@@ -416,8 +417,6 @@ What produced a method, read from the bytecode alone.
 |---|---|
 | `ENUM` | An enum's `values`, `valueOf` or `getEntries`. |
 | `DATA_CLASS` | A Kotlin data class's `componentN` and `copy`, and whichever of `equals`, `hashCode` and `toString` you did not write. |
-| `VALUE_CLASS` | A Kotlin value class's `equals-impl`, `equals-impl0`, `hashCode-impl` and `toString-impl` that the compiler wrote, the boxed methods that only forward to a static, and the static whose body only calls an interface default the class inherits. A Scala value class's boxed methods that only forward to the companion's `$extension` method, and the companion's `hashCode$extension` and `equals$extension`. |
-| `KOTLINX_SERIALIZATION` | Code the kotlinx.serialization compiler plugin generates. |
 | `DEFAULT_IMPLS` | A `$DefaultImpls` method that only forwards to the interface's own default method, and a class's stub that only forwards to `$DefaultImpls`. |
 | `RECORD` | A Java record's `equals`, `hashCode` or `toString`. |
 | `JVM_OVERLOADS` | An overload that `@JvmOverloads` adds, whose body only forwards to its `$default` twin. |
@@ -425,6 +424,8 @@ What produced a method, read from the bytecode alone.
 | `CASE_CLASS` | A Scala case class's plumbing, or its companion's. |
 | `STATIC_FORWARDER` | A static forwarder that scalac adds for an object's method. |
 | `SCALA_OBJECT` | A Scala object's `writeReplace`. |
+| `VALUE_CLASS` | A Kotlin value class's `equals-impl`, `equals-impl0`, `hashCode-impl` and `toString-impl` that the compiler wrote, the boxed methods that only forward to a static, and the static whose body only calls an interface default the class inherits. A Scala value class's boxed methods that only forward to the companion's `$extension` method, and the companion's `hashCode$extension` and `equals$extension`. |
+| `KOTLINX_SERIALIZATION` | Code the kotlinx.serialization compiler plugin generates. |
 | `TRAIT_FORWARDER` | A Scala class's method that only calls a trait's static `m$`, and the trait's `m$` that only calls its default method. |
 
 ### RoutineKind

@@ -58,7 +58,7 @@ Set `includePackages` to a dotted package prefix, such as `includePackages=com.a
 otherlode: 'com.acme.*' matches no class and is ignored: write a dotted package prefix with no wildcard, such as 'com.acme'
 ```
 
-The agent drops a prefix that contains `*` or `/`. If the dropped prefix was your only one, the agent then refuses to start with the line above. Write `com.acme`, not `com.acme.*` or `com/acme`.
+The agent drops a prefix that contains `*` or `/`. If the dropped prefix was your only one, the agent then refuses to start with the `includePackages is not set` line. Write `com.acme`, not `com.acme.*` or `com/acme`.
 
 ### The export URL is refused
 
@@ -124,7 +124,7 @@ The method and branch tiers work. The endpoint tier did not install, and the ins
 
 ## An option is ignored
 
-These warnings each mean the agent kept running with a default instead of your value.
+Each of these warnings means the agent kept running without your value, apart from `exportUrl uses plain http`, where it uses the value as given.
 
 | Message | Cause and fix |
 |---|---|
@@ -157,6 +157,8 @@ The exception under the line names the cause. If neither line appears, the sends
 
 ### The connection fails
 
+At shutdown, `otherlode: an in-flight flush used up the shutdown budget; skipping the final flush` means a flush was still retrying a slow or unreachable collector. The final flush has 10 seconds in total, and hits since the last confirmed flush are lost.
+
 The exception is a `java.net.ConnectException` or a timeout.
 
 - The agent cannot reach the address. Check `exportUrl` from the same host or pod with `curl`, using the same URL.
@@ -175,7 +177,7 @@ The exception message is `otherlode: unexpected status <code> from <exportUrl>/v
 | `404` | The URL does not reach a collector. The agent appends `/v1/otherlode/deltas`, `/v1/otherlode/manifest`, `/v1/otherlode/static-baseline` and `/v1/otherlode/class-listing` to `exportUrl`, so a proxy must forward those paths. Drop any path from `exportUrl` that the collector does not expect. |
 | `301`, `302`, `307`, `308` | The agent does not follow redirects. A proxy that redirects `http` to `https` causes this. Put the final `https://` URL in `exportUrl`. |
 | `400`, `422` | The receiver rejected the content. With the testkit's collector, see [A test fails with a version mismatch](#a-test-fails-with-a-version-mismatch). With another receiver, see its log for the reason. |
-| `413` | The receiver refused the request body as too large. A reverse proxy or gateway in front of the collector usually has the limit. Raise it. The agent keeps the static baseline and the class listing after a `413` and sends them once the limit is raised, with no restart. The agent keeps each payload under 8 MiB and under 90% of the collector's element limit, so the limit that refused it is in front of the collector, and the fix is on the receiving side. [What the agent sends](data-sent#chunk-caps) lists the caps. Once a count has been refused, the run says on each later payload that its counts are pending, so a collector does not read its zero hits as never hit. Payloads stamped before the first refusal in that flush say nothing of it. |
+| `413` | The receiver refused the request body as too large. A reverse proxy or gateway in front of the collector has the limit. Raise it. The agent keeps the static baseline and the class listing after a `413` and sends them once the limit is raised, with no restart. The agent keeps each payload under 8 MiB and under 90% of the collector's element limit, so the limit that refused it is in front of the collector, and the fix is on the receiving side. [What the agent sends](data-sent#chunk-caps) lists the caps. Once a count has been refused, the run says on each later payload that its counts are pending, so a collector does not read its zero hits as never hit. Payloads stamped before the first refusal in that flush say nothing of it. |
 | `408`, `429`, `5xx` | The agent retries these within the send. If they persist across flushes, the collector is overloaded or down. |
 
 The agent resends the same payload on the next flush for every status above, so a repeated warning means the answer has not changed. The static baseline and the class listing are the exception. For `400` and `422` each logs a warning and stops sending, since the same bytes meet the same answer:
@@ -197,7 +199,7 @@ This logs once. The chunks stay pending and go out one per flush after a flush w
 ### A class is too large to send
 
 ```text
-otherlode: the static baseline is not sent: com.acme.Huge alone exceeds the 8 MiB limit on encoded bytes for one chunk, and a scan without it would read as complete
+otherlode: the static baseline is not sent: com.acme.Huge alone exceeds the limit of 8 MiB on encoded bytes for one chunk, and a scan without it would read as complete
 ```
 
 One declared class is too large for a static baseline chunk, over 8 MiB of encoded bytes or over 180,000 elements. The agent never splits a class, and a scan without it would read as complete, so it sends no chunk of the scan. The run has no complete scan, and Otherlode makes no never-loaded claim for it. A class like this has very long string constants in its conditions, or tens of thousands of methods or call edges. Exclude the class with `excludePackages`, or split it, and restart.
@@ -313,7 +315,7 @@ otherlode: com.acme.shop.Cart reached this agent rewritten by an earlier transfo
 At INFO. Another agent, such as an aspect weaver, changed the method's body, and the branches in the bytes the agent received no longer match the class file. The agent keeps the entry probe and skips the branches rather than report counts against the wrong code. See [other agents in the same JVM](compatibility#other-agents-in-the-same-jvm).
 
 ```text
-otherlode: com.acme.shop.Cart's bytecode could not be read; any method of it that is probed at all gets an entry probe with no line number, and the class gets no branch probes, no call edges, no supertypes, and no inline or generated mark
+otherlode: could not read com.acme.shop.Cart's bytecode; any method of it that is probed at all gets an entry probe with no line number, and the class gets no branch probes, no call edges, no supertypes, and no inline or generated mark
 ```
 
 The agent could not read the class's bytes from its loader or from the bytes it received. Methods still count, with less detail. If you see this for ordinary classes, report the class and its loader.
@@ -381,10 +383,10 @@ This is the JVM's line, not the agent's, and it is harmless. See [the CDS warnin
 ## An endpoint module is disabled
 
 ```text
-otherlode: endpoint module spring-webmvc disabled itself: java.lang.NoSuchMethodError
+otherlode: endpoint module spring-webmvc disabled itself: java.lang.NoSuchMethodError: ...
 ```
 
-An endpoint module found a framework class that does not match the version it supports and switched itself off for the rest of the process. That happens when its advice throws, when one of its hooks matches no method on the framework class (a framework release renamed or changed the method), when a framework class it hooks fails to weave, or when its type matcher throws while deciding whether the module wants a class. The log line names the cause: the exception's class name, without its message, or for an unmatched hook the hook and the class. The module name is one of `javalin-6`, `javalin-7`, `jaxrs`, `jdk-httpserver`, `ktor-2`, `ktor-3`, `micronaut`, `micronaut-3`, `servlet`, `spring-webflux`, `spring-webmvc`, `vertx-web`, or `otel`. The other modules and the method and branch tiers keep working. The instance reports the module as disabled, with a kind naming why (linkage error, advice failure, transform failure, route walk failure, an unmatched hook, `CONFIGURED_OFF` or `ROUTES_NOT_COUNTED`), so a collector can tell "no endpoints" from "endpoints not instrumented". The testkit lists it with `collector.disabledEndpointModules()`.
+An endpoint module found a framework class that does not match the version it supports and switched itself off for the rest of the process. That happens when its advice throws, when one of its hooks matches no method on the framework class (a framework release renamed or changed the method), when a framework class it hooks fails to weave, or when its type matcher throws while deciding whether the module wants a class. The log line names the cause. For a linkage error it is the error and its message, which names the framework class or member. For any other exception it is the class name alone. For an unmatched hook it is the hook and the class. The module name is one of `javalin-6`, `javalin-7`, `jaxrs`, `jdk-httpserver`, `ktor-2`, `ktor-3`, `micronaut`, `micronaut-3`, `servlet`, `spring-webflux`, `spring-webmvc`, `vertx-web`, or `otel`. The other modules and the method and branch tiers keep working. The instance reports the module as disabled, with a kind naming why (linkage error, advice failure, transform failure, route walk failure, an unmatched hook, `CONFIGURED_OFF` or `ROUTES_NOT_COUNTED`), so a collector can tell "no endpoints" from "endpoints not instrumented". The testkit lists it with `collector.disabledEndpointModules()`.
 
 A module with the kind `CONFIGURED_OFF` is not a fault. `disabledEndpointModules` or `endpointsEnabled=false` kept it from installing, and it logs no WARNING.
 
@@ -425,4 +427,3 @@ These mean the agent hit a case it did not expect. The application is not affect
 | `otherlode: no registered probe array for com.acme.Foo; its hits will not be counted (resolver installed: true)` | A woven class asked for its counter array and the agent had none. The class runs and its hits are not counted. |
 | `otherlode: endpoint resolver threw from <operation>: <exception>` | The endpoint tier threw while recording. |
 | `otherlode: the loaded-class sweep failed, will retry on a later flush` | The check for classes that no transformer saw failed. |
-| `otherlode: an in-flight flush used up the shutdown budget; skipping the final flush` | The collector was slow or down at shutdown. The final flush has 10 seconds in total. Hits since the last confirmed flush are lost. |

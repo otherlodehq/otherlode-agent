@@ -4,8 +4,8 @@ A Java agent that instruments a running JVM application to find code that's
 reachable but never actually exercised at runtime: unused endpoints, methods
 that are never invoked, and conditionals that only ever take one branch.
 
-Attach it with `-javaagent`, run your app, and it reports which of those
-probes never fired.
+Attach it with `-javaagent` and run your app. It sends hit counts to a
+collector, and Otherlode reports the probes that never fired.
 
 Customer docs live in [`docs/site/`](docs/site/), synced to otherlode.dev. This
 README covers building and developing the agent.
@@ -54,7 +54,9 @@ count. Results go to `build/results/jmh/results.txt`.
 
 ## Attach it to an app
 
-Attach the agent with `-javaagent`, passing `includePackages` at minimum. See
+Get the agent jar from Maven Central (`dev.otherlode:otherlode-agent`) or the
+GitHub release, and attach it with `-javaagent`, passing `includePackages` at
+minimum. See
 [`docs/site/attach.md`](docs/site/attach.md) for the flag, Gradle, Spring Boot,
 Docker and Kubernetes. [`docs/site/configuration.md`](docs/site/configuration.md)
 lists every option, where a value comes from (argument string, then system
@@ -124,8 +126,7 @@ calls `farewellNote`, so its part never loads and prints by its file:
 NEVER LOADED: DemoTextFarewell.kt (methods: farewellNote)
 ```
 
-Some findings are about a whole class, not a method in it (otherlode-server's
-ADR 0034). `main` names `AuditLog` and `ReceiptPrinter` through class
+Some findings are about a whole class, not a method in it. `main` names `AuditLog` and `ReceiptPrinter` through class
 literals, which load a class without initialising it. `AuditLog` is an
 object, so its static initialiser is where its one instance is made; that
 never runs, so the class is never initialised. `ReceiptPrinter` has no
@@ -247,8 +248,9 @@ address and credential can be overridden:
 
 The defaults match the compose stack's own development defaults, so with
 the stack up it works with no arguments. Each run registers as a new
-instance, and the server keeps everything it has seen, so the report
-covers every run of that service and version so far; pass a fresh
+instance, and the server keeps every run until its tenant's retention
+period passes, so the report covers every run of that service and version
+within it; pass a fresh
 `-PotherlodeServiceVersion` to start a clean slate.
 
 The demo runs in the unspecified namespace. To run it in a named one, set
@@ -261,8 +263,9 @@ The `testkit` module is an embeddable collector for your own tests. See
 [`docs/site/testkit.md`](docs/site/testkit.md) for the setup and
 [`docs/site/testkit-api.md`](docs/site/testkit-api.md) for every query and wait.
 
-The module isn't published yet. Build the jar with
-`./gradlew :testkit:shadowJar` and put it on your test classpath. It bundles the
+Add `dev.otherlode:otherlode-testkit` from Maven Central to your test
+classpath, at the same version as the agent. To build it from a checkout
+instead, run `./gradlew :testkit:shadowJar`. It bundles the
 wire classes and protobuf-java under `dev.otherlode.testkit.shaded`, so the only
 dependency it brings onto your test classpath is kotlin-stdlib, and never the
 agent itself, which runs from its `-javaagent` jar.
@@ -288,9 +291,11 @@ agent, the collector, and those records share.
 
 ## Status
 
-- Static attach (`-javaagent`) only; no dynamic/runtime attach yet.
-- Nothing is published to a package repository yet, the agent jar and
-  `testkit` included; both are built from this repo.
+- Static attach (`-javaagent`) only. The jar has no `agentmain`, so it
+  cannot attach to a running JVM.
+- A release publishes the agent as `dev.otherlode:otherlode-agent` and the
+  testkit as `dev.otherlode:otherlode-testkit` on Maven Central, at one
+  version.
 - Branch tracking covers two-outcome conditional jumps and
   `TABLESWITCH`/`LOOKUPSWITCH`; `GOTO`/`JSR` aren't tracked (no second
   outcome to observe).

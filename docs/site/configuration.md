@@ -6,7 +6,7 @@ order: 20
 
 ## Options at a glance
 
-The agent has 16 options. You can set each one in the `-javaagent` argument string, as a JVM system property, or as an environment variable. The agent reads them once, at startup.
+The agent has 18 options. You can set each one in the `-javaagent` argument string, as a JVM system property, or as an environment variable. The agent reads them once, at startup.
 
 ```text
 -javaagent:/path/to/otherlode-agent-<version>.jar=serviceName=my-service,includePackages=com.acme.shop
@@ -48,7 +48,7 @@ The system property and environment variable names come from the option name. Th
 | `serviceVersion` | OpenTelemetry's `service.version`, else none | Any text up to 1024 bytes, with no NUL character | A longer value or one with a NUL character is skipped with a warning, and the next source gives the version |
 | `serviceInstanceId` | A random UUID, new for each process | Any text up to 1024 bytes, with no NUL character | A longer value or one with a NUL character is skipped with a warning, and the next source gives the ID, else the random UUID |
 | `environment` | OpenTelemetry's `deployment.environment.name`, then `deployment.environment`, then `test` when `testRun` is on, else none | Any text up to 1024 bytes, with no NUL character | A longer value or one with a NUL character is skipped with a warning, and the next source gives the environment |
-| `exportUrl` | `http://localhost:4319` | An absolute `http` or `https` URL with a host, and with no query string or fragment. A path is allowed | ERROR, and the agent is off for this JVM |
+| `exportUrl` | `http://localhost:4319` | An absolute `http` or `https` URL with a host, and with no query string, fragment, user name, password or other `@` after the scheme. The host cannot contain an underscore. A path is allowed | ERROR, and the agent is off for this JVM |
 | `authToken` | None | Visible ASCII characters only, `!` to `~` | ERROR, and the agent is off for this JVM |
 | `flushIntervalSeconds` | `60` | A whole number of seconds from `1` to `86400` | Warning, and the default is used |
 | `includePackages` | None. Required. | Dotted package or class prefixes, separated by `;` | Glob and path prefixes are dropped with a warning. If no prefix is left, the agent logs an ERROR and disables itself |
@@ -62,7 +62,7 @@ The system property and environment variable names come from the option name. Th
 | `otelBridgeEnabled` | `false` | `true` or `false`, in any letter case | Warning, and the default is used |
 | `testRun` | `false` | `true` or `false`, in any letter case | Warning, and the default is used |
 
-No invalid value stops your application. An invalid value gets a warning in the log and the default. Three values disable the agent for the life of the JVM instead: an empty `includePackages` (see [includePackages and excludePackages](#includepackages-and-excludepackages)), an `exportUrl` the agent cannot use (see [exportUrl](#exporturl)) and an `authToken` with a character outside visible ASCII (see [authToken](#authtoken)).
+No invalid value stops your application. An invalid value gets a warning in the log, and the last column says what the agent uses instead. Three values disable the agent for the life of the JVM instead: an empty `includePackages` (see [includePackages and excludePackages](#includepackages-and-excludepackages)), an `exportUrl` the agent cannot use (see [exportUrl](#exporturl)) and an `authToken` with a character outside visible ASCII (see [authToken](#authtoken)).
 
 ## Where a value comes from
 

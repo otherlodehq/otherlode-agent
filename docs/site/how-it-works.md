@@ -56,9 +56,9 @@ Each update carries a probe's total since the process started, not the amount it
 
 This is the design's central choice. A sender that retries has a hazard: the collector may process a request while the reply is lost, and the agent then sends the same bytes again. If the payload were an increment, Otherlode would add it twice. A larger-of merge is the same whether a value arrives once, twice or out of order, so Otherlode needs no deduplication cache and the agent needs no retry queue. The agent only advances its record of what was delivered after the collector confirms a send, so a failed send leaves the record where it was and the next flush reports the live total again.
 
-That also bounds memory. The data is a set of arrays sized by your code, not your traffic, so an unreachable collector cannot make the agent's buffers grow. If the process dies during a long outage, the cost is the counts since the last confirmed flush, at most one interval's worth. Each send retries a handful of times with a growing delay for failures a retry could fix (a connection error, a 5xx, a 408 or a 429), and fails at once on any other 4xx, since the collector has already read the request and refused it. A flush on shutdown, marked as the last one, lets the collector tell an instance that exited cleanly from one that vanished.
+That also bounds memory. The data is a set of arrays sized by your code, not your traffic, so an unreachable collector cannot make the agent's buffers grow. If the process dies during an outage, the cost is the counts since the last confirmed flush, which covers the whole outage. Each send makes up to 5 attempts with a growing delay for failures a retry could fix (a connection error, a 5xx, a 408 or a 429), and fails at once on any other 4xx, since the collector has already read the request and refused it. A flush on shutdown, marked as the last one, lets Otherlode tell an instance that exited cleanly from one that vanished.
 
-Cumulative totals bring one problem, which is a restart. A process that restarts counts from zero, and a larger-of merge would sit at the old, higher total. The agent stops that with a run id, a random value made once at startup and stamped on every payload. Otherlode keeps each run's data apart and merges within a run only. The instance id defaults to a fresh random value per process, so a restart is normally a new instance anyway. The run id is what keeps results correct when you pin the instance id to something stable, such as a pod name. A restart under a pinned id is then still a new run, and a late update from the old process names the old run and cannot overwrite the new one.
+Cumulative totals bring one problem, which is a restart. A process that restarts counts from zero, and a larger-of merge would sit at the old, higher total. The agent stops that with a run id, a random value made once at startup and stamped on every payload. Otherlode keeps each run's data apart and merges within a run only. The instance id defaults to a fresh random value per process, so unless you pin it, a restart is a new instance anyway. The run id is what keeps results correct when you pin the instance id to something stable, such as a pod name. A restart under a pinned id is then still a new run, and a late update from the old process names the old run and cannot overwrite the new one.
 
 ## Shape comes from the class file, probes go in last
 
@@ -72,7 +72,7 @@ The agent solves this by registering its transformers so that the JVM runs them 
 
 ## A woven class behaves like the original
 
-The rule the agent holds itself to is that an instrumented class loads, fails and reflects exactly as the same class would without the agent, apart from counting. A defect in your app should not become the agent's defect, and the agent should not add failures of its own.
+The rule the agent holds itself to is that an instrumented class loads, fails and reflects exactly as the same class would without the agent, apart from counting. A defect in your app does not become the agent's defect, and the agent adds no failures of its own.
 
 Four things follow from the rule.
 
@@ -85,7 +85,7 @@ When the agent cannot instrument a class, it skips the class and says so. It log
 
 The same rule covers a class that was woven but never defined, for example because a dependency was missing at load. The agent holds that class's probes back from the first report until it has evidence the class exists: a count above zero, or the JVM listing it as loaded. A class that never gets that evidence is named as failed to load. That is a deployment problem, not dead code. The routes a JAX-RS resource class declares while it is woven are held back the same way, so a resource class that never loads leaves no route that reads as never called. [Classes](classes) lists these states.
 
-If the agent cannot start safely, it turns itself off completely and sends nothing. It does this when the support class it needs in the bootstrap loader cannot be installed, or when no include rules are set. A missing instance is something you can see in Otherlode's list of instances. An instance that runs but reports zero everywhere would look like a service with no live code.
+If the agent cannot start safely, it turns itself off completely and sends nothing. It does this when the support class it needs in the bootstrap loader cannot be installed, when no include rules are set, and when `exportUrl` or `authToken` holds a value it cannot use. A missing instance is something you can see in Otherlode's list of instances. An instance that runs but reports zero everywhere would look like a service with no live code.
 
 If a tool such as an IDE swaps a woven class for a changed one, the agent refuses when the class file on disk differs from the one it wove, and the JVM rejects that swap. The class keeps running with its probes. With the class file unchanged, the agent weaves the new bytes against the plan from the first weave and renumbers nothing.
 
@@ -96,7 +96,7 @@ Each of these choices has a price, and you pay it knowingly.
 - The restart. Static attach means a new startup flag and one restart.
 - Approximate counts. Use them to ask whether code ran, not how many times it ran, to the last digit.
 - Memory outside the Java heap. Because the agent runs after other agents, the JVM keeps a copy of each woven class's received bytes.
-- One interval of data lost if a process dies during a collector outage.
+- The counts since the last confirmed flush, lost if a process dies during a collector outage.
 - Descriptions sent once. After the collector confirms a class's description, the agent frees it from memory. If the description is lost after that, Otherlode gets it again only when the instance restarts.
 
 See [overhead](overhead) for measured costs.

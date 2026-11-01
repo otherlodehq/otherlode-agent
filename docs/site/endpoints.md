@@ -308,7 +308,7 @@ The prefix of the Spring WebFlux library instrumentation is not removed. It adds
 
 ## The handler
 
-An endpoint names the method that serves it where the framework lets the agent find one. A consumer joins the endpoint to that method's probe, so a method that never ran can list the endpoints it would serve. The join is a label on the endpoint. Counting does not depend on it.
+An endpoint names the method that serves it where the framework lets the agent find one. Otherlode, and the testkit, join the endpoint to that method's probe, so a method that never ran can list the endpoints it would serve. The join is a label on the endpoint. Counting does not depend on it.
 
 | Module | What the endpoint names |
 |---|---|
@@ -372,7 +372,7 @@ A module that [`disabledEndpointModules`](configuration#disabledendpointmodules)
 
 A Micronaut module with the kind `ROUTES_NOT_COUNTED` has declared no endpoint, so the service's Micronaut routes are absent rather than read as never called. It is reported once a router has waited one flush interval with no dispatch point, or at the final flush, and logs the WARNING above.
 
-A module that switches off stops counting but does not retract. The endpoints it already declared stay in the list, and their counts stop, so they read as never called. The disabled-modules list is the only signal for that. Treat any endpoint finding from a service with a disabled module as unreliable for that framework.
+A module that switches off stops counting but does not retract. The endpoints it already declared stay in the list, and their counts stop. Otherlode reads such an endpoint as **Module disabled**, never as never called, when every run in scope that knows the endpoint disabled the module. The testkit's `neverCalled()` leaves it out on the same terms. An instance whose module kept working counted every call, so its zero still counts.
 
 A class that fails to weave runs from its original bytes and the agent logs a WARNING naming it. The JAX-RS module is the exception to the switch-off: it hooks your own resource classes, and a class that fails to weave takes its own routes with it, so the module stays on for the rest. If another agent retransforms a class the module already wove and the module cannot weave again, nothing switches off. The agent logs one WARNING for that module and that class goes untracked until it is next transformed.
 

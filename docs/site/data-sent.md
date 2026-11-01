@@ -8,7 +8,7 @@ order: 130
 
 The agent pushes four kinds of payload to the collector you set with `exportUrl`. Every payload is a protobuf message, and a payload names code (classes, methods, source files, lines, conditions, routes, jars) and counts. It carries no request data and no argument or return value.
 
-The agent has no redaction setting. It sends what this page lists. A collector with redaction switched on replaces the text of [string literal parts](#condition-text-and-string-literals) with `…` before it forwards a payload, either every such part or those that match a pattern you set. It keeps every field it knows. It drops any field it does not know, which happens when the agent is newer than the collector, and marks that payload with `fields_stripped`. A deployment that needs redaction sends through a collector with redaction switched on. An agent that posts straight to a backend sends everything in clear.
+The agent has no redaction setting. It sends what this page lists. A collector with redaction switched on replaces the text of [string literal parts](#condition-text-and-string-literals) with `…` before it forwards a payload, either every such part or those that match a pattern you set. It replaces each branch key and site key with a key made under a secret you set, and clears the case keys that can give a literal away. It keeps every other field it knows. It drops any field it does not know, which happens when the agent is newer than the collector, and marks that payload with `fields_stripped`. A deployment that needs redaction sends through a collector with redaction switched on. An agent that posts straight to a backend sends everything in clear.
 
 ## Requests
 
@@ -36,7 +36,7 @@ The agent reads no response body. A `2xx` status confirms the payload. Each requ
 
 The agent flushes on a fixed interval, `flushIntervalSeconds`, 60 seconds by default and between 1 and 86400. The first flush comes at a random offset between 0 and one interval after startup, so a fleet that starts together does not flush on the same tick. The flushes after it keep the fixed rate from that offset.
 
-Each flush sends the delta batch and, if something is waiting, the manifest, at the same time. A flush that finds a dependency whose counts were just delivered sends one more manifest for it, and a flush that completes the dependency listing may send one more, empty, manifest that says so.
+Each flush sends the delta batch and, if something is waiting, the manifest, at the same time. A flush that finds a dependency whose counts were just delivered sends one more manifest for it, and once the dependency listing is complete, the first flush whose sends were all confirmed sends one more, empty, manifest that says so.
 
 On a graceful JVM exit a shutdown hook runs one last flush. It ends with an empty delta batch that carries `final_flush`. It has a budget of 10 seconds in total, shared with any flush still running, and it skips the static baseline and class listing retries. A flush still working against an unreachable collector can use the whole budget, and then no final flush runs. `kill -9`, an out-of-memory kill and a crash send no final flush.
 
@@ -51,7 +51,7 @@ A payload that would be larger than its cap is split into several requests, sent
 | Static baseline | About 20,000 entries, where a declared class weighs its methods plus their call edges, branch sites and references | 180,000 |
 | Class listing | 20,000 class names | 90,000 |
 
-A class is never split across requests, so a class can break a bound on its own. What the agent does depends on the payload:
+A class is never split across requests. A class with more entries than its entry cap goes out in a request of its own. A class can also break the byte or element bound on its own, and what the agent does then depends on the payload:
 
 - **Manifest.** The class goes out as a skipped class with the reason `too large to report: its manifest entries exceed the collector's limits`, in place of its probes. Otherlode counts it as loaded and claims nothing about its methods. The agent leaves the class's probe deltas out of every delta batch, and logs a `WARNING` that names the class. The classes behind it go out as usual.
 - **Static baseline.** The agent sends no chunk of the scan and logs one `WARNING` that names the class and the bound. A scan without the class would read as complete, and Otherlode would then drop the class's call edges and creations from the baseline. The run has no complete scan, so Otherlode makes no never-loaded claim for it.
@@ -116,19 +116,19 @@ The manifest says what each id in a delta batch names. It carries the resource a
 
 | Field | Content |
 |---|---|
-| `probes` | One per probe: `class_id`, `probe_index`, `kind`, class name, method name, method descriptor, source line, parameter names, generic signature, and flags for inline, static, lambda body and extension receiver. A branch probe also carries its `branch_key` |
+| `probes` | One per probe: `class_id`, `probe_index`, `kind`, class name, method name, method descriptor, source line, parameter names, generic signature, the compiler construct that generated the method or the unread shape it has, its outside caller (the annotation or supertype that calls it), and flags for inline, static, lambda body and extension receiver. A branch probe also carries its `branch_key` and the class an inlined copy came from. An optional-argument probe carries the parameter's index and name, whether its target can be overridden, and the target's class when it differs |
 | `probes[].branch_sites` | For a branch probe: the site's `site_key`, line, condition, outcomes with their roles, guarded line ranges (source file name plus first and last line), case keys and case labels. `string_hash_code_switch` marks a switch on `String.hashCode()`. Each case key of such a switch is the hash code of a string, often one of your literals, so a collector can clear them. See [methods and branches](methods-and-branches) |
 | `probes[].calls`, `probes[].referenced_classes` | Call edges to other classes in scope, and names of classes outside it that the method refers to |
-| `class_locations` | Per class: super class name, interface names, source file name, body kind, and source name |
+| `class_locations` | Per class: super class name, interface names, source file name, body kind, source name, and Kotlin class kind |
 | `class_references` | Per class: names of classes it refers to outside any probed method |
 | `skipped_classes` | Class name, the reason as free text (usually an exception message), and the time |
-| `failed_classes` | Name of a class that was woven but never loaded, and the time |
+| `failed_classes` | Name of a class that failed to load, one the agent wove and the JVM never defined, and the time |
 | `classes_failed_to_initialize` | Name of a class the JVM defined that can never run, the reason, and the time the agent first saw it. The reason is `STATIC_INITIALIZER_THREW` when its static initializer threw, or `VERIFIER_REJECTED` when the JVM's verifier rejected it. A class is listed once per reason. The two probes behind the first reason, kinds initializer returned and initializer threw, count how often the static initializer returned and how often it threw |
 | `unplaced_verification_failures` | How many `VerifyError` messages were in no format the agent reads, plus the messages the agent had no room to keep. Every manifest carries the run's total |
 | `verifier_rejections_watched` | True when the agent's hook on `VerifyError` is installed. Every manifest of a run agrees |
 | `unreported_classes` | Name of a class the agent found loaded that no transformer was offered, and the time |
 | `endpoints` | Per endpoint: `endpoint_id`, verb, route template, the framework's own spelling of the template, framework name, how it was discovered, whether the template is a path, a regex or a servlet pattern, and the handler class, method and descriptor when known |
-| `disabled_endpoint_modules` | Module name, the reason (the exception's class name when the module failed on an exception), the time, and a kind naming why: a linkage error, an advice failure, a transform failure, a route walk failure, or a hook that matched no method |
+| `disabled_endpoint_modules` | Module name, the reason (the error's text for a linkage error, the exception's class name for any other exception, the setting for a module your configuration kept off), the time, and a kind naming why: a linkage error, an advice failure, a transform failure, a route walk failure, a hook that matched no method, a module your configuration kept off, or routes the module has no point to count at |
 | `framework_markers` | Per marker: its id, the class set that matched as fully qualified names, and the time of the sweep that saw it. Each is delivered once per run. See [frameworks with no module](endpoints#frameworks-with-no-module) |
 | `dependencies` | Per dependency: `dependency_id`, identities (`group_id`, `artifact_id`, `version`), how the identity was read, the location, how it was discovered, and class count |
 | `external_classes` | Name of a class outside scope that your code refers to, the `dependency_id` that provides it, and whether nothing provides it |
@@ -143,7 +143,7 @@ A `branch_key` names one outcome of a branch site across builds and instances, a
 
 A branch site's condition is source-like text rebuilt from bytecode, in parts. A part is code, a placeholder, or a string literal. A string literal part holds the string constant from your class file as the compiler stored it, such as `"ENABLE_LEGACY_DISCOUNT"` in `if (System.getenv("ENABLE_LEGACY_DISCOUNT") != null)`. It also holds the labels of a `when` or `switch` on a string. Nothing is read at run time: the text is a constant in your bytecode, never a value your program computed or received. A constant that holds a secret, such as a hard-coded password or a key compared against input, is sent as it is. A collector can replace string literal parts, because they are marked as such.
 
-The condition fingerprint includes the string constants in the condition, so the [keys](#branch-and-site-keys) of a condition that holds a string literal depend on its text. A branch key for a case of a `when` or `switch` on a string also covers the case's label. <!-- TODO: keys -->
+The condition fingerprint includes the string constants in the condition, so the [keys](#branch-and-site-keys) of a condition that holds a string literal depend on its text. A branch key for a case of a `when` or `switch` on a string also covers the case's label.
 
 #### Names and paths
 

@@ -13,7 +13,7 @@ import java.time.Duration
  * This uses the JDK's built-in [HttpClient]. It avoids a shaded gRPC/Netty
  * dependency.
  *
- * Each send retries up to [maxAttempts] times, with capped exponential
+ * Each send makes up to [maxAttempts] attempts, with capped exponential
  * backoff, but only for failures that a retry can plausibly fix: a
  * connection or timeout error, a 5xx, a 408, or a 429. Any other 4xx fails
  * at once. The collector has already read the bytes and rejected them, so

@@ -58,7 +58,7 @@ A jar discovered at load can never read as unloaded, because a class from it alr
 
 ## Statuses
 
-Otherlode derives one status per dependency from the runs in scope, checked in this order. The first condition that holds decides the status, except that counts behind takes the place of four of them. [Unused dependencies](/docs/server/findings#unused-dependencies) gives Otherlode's full rules.
+Otherlode derives one status per dependency from the runs in scope, checked in this order. The first condition that holds decides the status, except that counts behind takes the place of four of them and without evidence of two. [Unused dependencies](/docs/server/findings#unused-dependencies) gives Otherlode's full rules.
 
 | Status | Meaning |
 |---|---|
@@ -68,10 +68,12 @@ Otherlode derives one status per dependency from the runs in scope, checked in t
 | Loaded | A class loaded, and no instance that lists the jar records references, so nothing further is claimed. |
 | Used | Your code holds a live reference to the jar. |
 | Failed to load | No live reference, and your code references the jar from a class that failed to load. |
+| Failed to initialise | No live reference, no reference from a class that failed to load, and your code references the jar from a class that failed to initialise. |
 | No live reference | The jar has no live reference, and Otherlode cannot tell unreferenced from unreached. |
 | Unreferenced | A class from the jar loaded, and nothing in your code references the jar. |
 | Unreached | Your code references the jar, but only from methods that were never hit or classes that never loaded. |
 | Counts behind | The jar would read as stale, unloaded, no live reference or unreached, but the zero count behind that status comes from a run that has not delivered all its counts. It claims nothing. See [pending counts](data-sent#pending-counts). |
+| Without evidence | The jar would read as no live reference or unreached, but no run that knows a method holding a reference is evidence that the method never ran. It claims nothing. |
 
 Because the agent refuses to start without include rules, every running agent records references. "Loaded" appears only when no instance that lists the jar sent references.
 
@@ -127,8 +129,8 @@ A reference to a class no loader can find is an absent reference. Typical causes
 | Level | Needs |
 |---|---|
 | Resources only, unloaded, loaded | The startup listing and the loaded-class counts. Nothing else. |
-| Used, failed to load, no live reference | The instance's include rules are set (the agent always runs with them) and the recorded references. |
-| Unreferenced, unreached | A complete [static baseline](classes) from every instance that lists the dependency. Set `staticBaselineEnabled=true` to send it. |
+| Used, failed to initialise, no live reference | The instance's include rules are set (the agent always runs with them) and the recorded references. |
+| Unreferenced, unreached, failed to load | A complete [static baseline](classes) from every instance that lists the dependency. Set `staticBaselineEnabled=true` to send it. |
 
 Without a complete baseline, Otherlode cannot see a reference held in a class that never loaded. It would call such a dependency unreferenced when it is unreached. So without the baseline it reports "no live reference", which is true either way.
 
@@ -170,6 +172,7 @@ These rules apply to the queries:
 
 - `dependency` throws `UnknownDependencyException` when no manifest listed the dependency. The message names the identities the collector knows.
 - `dependency` throws `IllegalStateException` when several dependencies carry the identity you asked for, as when a plain jar and a shaded jar both bundle it. The message names each candidate.
-- The four list queries and `absentReferences()` throw `IllegalStateException` until every instance heard from has sent the "dependencies listed" flag. Call `awaitDependenciesListed` first.
-- `unreferencedDependencies()`, `unreachedDependencies()`, and `failedToLoadDependencies()` also throw `IllegalStateException` when a loaded dependency could not be split. That happens when no complete baseline arrived, so run with `staticBaselineEnabled=true`. `absentReferences()` throws when no instance recorded references.
+- The five list queries and `absentReferences()` throw `IllegalStateException` until every instance heard from has sent the "dependencies listed" flag. Call `awaitDependenciesListed` first.
+- `dependency`, `unreachedDependencies()`, `failedToLoadDependencies()` and `failedToInitializeDependencies()` throw `IllegalStateException` while an instance's zero counts are not evidence, as `neverHit` does.
+- `unreferencedDependencies()`, `unreachedDependencies()`, `failedToLoadDependencies()` and `failedToInitializeDependencies()` also throw `IllegalStateException` when a loaded dependency could not be split. That happens when no complete baseline arrived, so run with `staticBaselineEnabled=true`. `absentReferences()` throws when no instance recorded references.
 - Hits and reference sites that separate used from unreached arrive like any probe data. Wait for them with `awaitSettled`.

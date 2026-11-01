@@ -311,7 +311,7 @@ _Avoid_: entry point (a root may be deep inside the code), node
 ### Dependencies
 
 **Dependency**:
-One jar on the classpath that is not the adopter's own code, identified by the `groupId:artifactId` its `pom.properties` names, with the version carried beside the identity rather than in it. A jar that bundles several libraries is one dependency labelled with all of them, since it cannot be half-removed. The same identity loaded by two classloaders is one dependency. A jar whose classes all fall under the include rules is the adopter's own and is not a dependency.
+One jar on the classpath that is not the adopter's own code, identified by the `groupId:artifactId` its `pom.properties` names, with the version carried beside the identity rather than in it. A jar that bundles several libraries is one dependency labelled with all of them, since it cannot be half-removed. The same identity loaded by two classloaders is one dependency. A jar that holds any class the include rules cover is the adopter's own and is not a dependency.
 _Avoid_: library, artifact, jar (as synonyms), call edge (a dependency is never an edge)
 
 **Reference**:
