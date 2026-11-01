@@ -1,5 +1,7 @@
 package dev.otherlode.instrumentation
 
+import dev.otherlode.AgentLogger
+import dev.otherlode.bootstrap.OtherlodeLoggers
 import java.io.IOException
 import java.lang.instrument.Instrumentation
 import java.nio.file.Files
@@ -38,7 +40,10 @@ object BootstrapHolder {
         instrumentation: Instrumentation,
         resourceName: String = DEFAULT_RESOURCE,
     ) {
-        if (isInstalled()) return
+        if (isInstalled()) {
+            useStandardErrorFallback()
+            return
+        }
         val bytes = readEmbeddedJar(resourceName)
         val jar =
             try {
@@ -53,6 +58,11 @@ object BootstrapHolder {
         if (!isInstalled()) {
             throw BootstrapInstallException("otherlode: appended the bootstrap holder jar but $HOLDER_CLASS_NAME is still not loadable")
         }
+        useStandardErrorFallback()
+    }
+
+    private fun useStandardErrorFallback() {
+        OtherlodeLoggers.setFallback { name -> AgentLogger(name, switches = false) }
     }
 
     /** The embedded holder jar's bytes, or a [BootstrapInstallException] naming the resource that was not there. */

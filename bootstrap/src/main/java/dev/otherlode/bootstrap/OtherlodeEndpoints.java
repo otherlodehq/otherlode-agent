@@ -251,7 +251,7 @@ public final class OtherlodeEndpoints {
         }
     }
 
-    private static final System.Logger LOG = System.getLogger(OtherlodeEndpoints.class.getName());
+    private static final System.Logger LOG = OtherlodeLoggers.get(OtherlodeEndpoints.class.getName());
     private static final int BUFFER_CAPACITY = 4096;
 
     private static final Object BUFFER_LOCK = new Object();

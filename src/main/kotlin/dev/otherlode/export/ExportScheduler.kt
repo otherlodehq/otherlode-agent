@@ -1,9 +1,11 @@
 package dev.otherlode.export
 
 import dev.otherlode.bootLogger
+import dev.otherlode.bootstrap.OtherlodeLoggers
 import dev.otherlode.classlisting.ClassListingSender
 import dev.otherlode.config.AgentConfig
 import dev.otherlode.dependencies.DependencyListingRun
+import dev.otherlode.instrumentation.BootstrapHolder
 import dev.otherlode.instrumentation.LoadedClassSweep
 import dev.otherlode.instrumentation.VerifierRejectionWatch
 import dev.otherlode.instrumentation.branch.BranchDropCounts
@@ -161,6 +163,7 @@ class ExportScheduler(
      */
     fun flushOnShutdown(budget: Duration) {
         val deadlineNanos = System.nanoTime() + budget.toNanos()
+        releaseLoggerGate()
         val executor = this.executor
         if (executor != null) {
             executor.shutdown()
@@ -180,6 +183,10 @@ class ExportScheduler(
         worker.start()
         worker.join(remaining)
         sendPool.shutdown()
+    }
+
+    private fun releaseLoggerGate() {
+        if (BootstrapHolder.isInstalled()) OtherlodeLoggers.openGate()
     }
 
     private fun remainingMillis(deadlineNanos: Long): Long = maxOf(0L, (deadlineNanos - System.nanoTime()) / 1_000_000)

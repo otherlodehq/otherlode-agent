@@ -1,5 +1,7 @@
 package dev.otherlode.export
 
+import dev.otherlode.bootstrap.OtherlodeLoggers
+import dev.otherlode.instrumentation.BootstrapHolder
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -120,6 +122,7 @@ class HttpExporter(
          */
         fun lazyClient(): Lazy<HttpClient> =
             lazy {
+                if (BootstrapHolder.isInstalled()) OtherlodeLoggers.awaitGate()
                 HttpClient
                     .newBuilder()
                     .version(HttpClient.Version.HTTP_1_1)

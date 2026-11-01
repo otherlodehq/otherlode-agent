@@ -1,5 +1,6 @@
 package dev.otherlode
 
+import dev.otherlode.bootstrap.OtherlodeLoggers
 import dev.otherlode.classlisting.ClassLister
 import dev.otherlode.classlisting.ClassListingPublisher
 import dev.otherlode.classlisting.ClassListingSender
@@ -122,6 +123,10 @@ object Agent {
             }
             verifierHook.uninstall(instrumentation)
         }
+    }
+
+    private fun openLoggerGate() {
+        if (BootstrapHolder.isInstalled()) OtherlodeLoggers.openGate()
     }
 
     /**
@@ -336,6 +341,7 @@ object Agent {
                 }
             val hook =
                 Thread({
+                    openLoggerGate()
                     shutdown(config.testRun, scanWorker, TEST_RUN_SCAN_WAIT) { started.flushOnShutdown(SHUTDOWN_FLUSH_TIMEOUT) }
                 }, "otherlode-shutdown-hook")
             addShutdownHook(hook)

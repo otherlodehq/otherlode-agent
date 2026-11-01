@@ -15,22 +15,25 @@ import java.util.function.Supplier
  * application's `java.util.logging.LogManager` on the agent's behalf. Before that, and in a JVM
  * where the jar is never appended, it writes to standard error in the format of the JDK's default
  * console logger. It never asks the JDK for a logger itself. A logger created after the install is
- * the boot loader's own, with no wrapper.
+ * the boot loader's own, with no wrapper unless a `System.LoggerFinder` bridge is present; then
+ * [OtherlodeLoggers] writes through [AgentLogger] until its gate opens.
  */
-internal fun bootLogger(name: String): System.Logger = if (BootstrapHolder.isInstalled()) OtherlodeLoggers.get(name) else AgentLogger(name)
+internal fun bootLogger(name: String): System.Logger =
+    if (BootstrapHolder.isInstalled()) OtherlodeLoggers.get(name) else AgentLogger(name, switches = true)
 
 /**
  * Every overload the agent calls is overridden, because the JDK's default methods pass a null
  * parameter array to the abstract vararg overload, which Kotlin's null check rejects.
  */
-private class AgentLogger(
+internal class AgentLogger(
     private val loggerName: String,
+    private val switches: Boolean,
 ) : System.Logger {
     @Volatile private var boot: System.Logger? = null
 
     private fun delegate(): System.Logger? {
         boot?.let { return it }
-        if (!BootstrapHolder.isInstalled()) return null
+        if (!switches || !BootstrapHolder.isInstalled()) return null
         return OtherlodeLoggers.get(loggerName).also { boot = it }
     }
 
@@ -112,10 +115,12 @@ private class AgentLogger(
         thrown: Throwable?,
     ) {
         val self = AgentLogger::class.java.name
+        val gate = BootstrapHolder.LOGGERS_CLASS_NAME
+        val stub = "dev.otherlode.shaded.jul.Logger"
         val source =
             StackWalker.getInstance().walk { frames ->
                 frames
-                    .filter { it.className != self }
+                    .filter { it.className != self && !it.className.startsWith(gate) && it.className != stub }
                     .findFirst()
                     .map { "${it.className} ${it.methodName}" }
                     .orElse(loggerName)

@@ -1,6 +1,7 @@
 package dev.otherlode.instrumentation
 
 import java.io.File
+import java.net.ServerSocket
 import java.nio.file.Files
 import java.util.concurrent.TimeUnit
 import javax.tools.ToolProvider
@@ -18,6 +19,8 @@ class JulManagerTest {
     private companion object {
         const val PACKAGE = "jultest"
         const val PROCESS_TIMEOUT_SECONDS = 120L
+
+        fun closedPort(): Int = ServerSocket(0).use { it.localPort }
 
         val MAIN_SOURCE =
             """
@@ -121,7 +124,7 @@ class JulManagerTest {
     fun `a normal start leaves the log manager to main and keeps the startup line`() {
         val output =
             run(
-                "serviceName=jul,includePackages=$PACKAGE,flushIntervalSeconds=1,exportUrl=http://127.0.0.1:9",
+                "serviceName=jul,includePackages=$PACKAGE,flushIntervalSeconds=1,exportUrl=http://127.0.0.1:${closedPort()}",
                 sleepMillis = 6000,
             )
 
@@ -167,7 +170,7 @@ class JulManagerTest {
 
     @Test
     fun `a refused start leaves the log manager to main and keeps the refusal`() {
-        val output = run("serviceName=jul,includePackages=,exportUrl=http://127.0.0.1:9")
+        val output = run("serviceName=jul,includePackages=,exportUrl=http://127.0.0.1:${closedPort()}")
 
         assertMainChoseTheManager(output)
         assertTrue("otherlode:" in output.replace("manager=", ""), "the refusal shows. Output:\n$output")

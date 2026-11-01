@@ -75,7 +75,7 @@ public final class OtherlodeProbeArrays {
             }
         }
         if (MISSED.add(className)) {
-            System.getLogger(OtherlodeProbeArrays.class.getName()).log(
+            OtherlodeLoggers.get(OtherlodeProbeArrays.class.getName()).log(
                     Level.WARNING,
                     "otherlode: no registered probe array for " + className
                             + "; its hits will not be counted (resolver installed: " + (current != null) + ")");

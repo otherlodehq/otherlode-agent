@@ -627,6 +627,17 @@ dependencies {
     coverageAgentOrderJacoco("org.jacoco:org.jacoco.agent:$jacocoVersion:runtime")
 }
 
+// The jars of a `System.LoggerFinder` bridge, for LoggerBridgeTest, which puts them on a forked
+// JVM's class path. The test needs only their paths, so they stay off the test class path.
+val loggerBridgeTestJars by configurations.creating {
+    isCanBeConsumed = false
+}
+dependencies {
+    loggerBridgeTestJars("org.apache.logging.log4j:log4j-api:2.24.3")
+    loggerBridgeTestJars("org.apache.logging.log4j:log4j-core:2.24.3")
+    loggerBridgeTestJars("org.apache.logging.log4j:log4j-jpl:2.24.3")
+}
+
 tasks.test {
     useJUnitPlatform()
     jvmArgs("-Djdk.attach.allowAttachSelf=true")
@@ -675,9 +686,11 @@ tasks.test {
     val shadedAgentJar = tasks.shadowJar.flatMap { it.archiveFile }
     inputs.file(shadedAgentJar)
     inputs.files(coverageAgentOrderJacoco).withPropertyName("coverageAgentOrderJacoco")
+    inputs.files(loggerBridgeTestJars).withPropertyName("loggerBridgeTestJars")
     doFirst {
         systemProperty("otherlode.agent.shadedJar", shadedAgentJar.get().asFile.absolutePath)
         systemProperty("otherlode.agent.version", project.version.toString())
+        systemProperty("otherlode.test.log4jJars", loggerBridgeTestJars.files.joinToString(File.pathSeparator) { it.absolutePath })
         systemProperty("otherlode.jacoco.agentJar", coverageAgentOrderJacoco.singleFile.absolutePath)
         systemProperty("otherlode.fixtures.scala3.dir", scala3FixtureClassesDir.get().asFile.absolutePath)
         systemProperty("otherlode.fixtures.scala3.classpath", scala3FixtureRuntimeClasspath.get().asPath)
