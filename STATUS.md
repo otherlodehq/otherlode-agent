@@ -57,6 +57,29 @@ deferrals, gzip, a collector config file, and agent-level redaction
 
 ## TODO
 
+### Second pre-release review: follow-ups
+
+Real gaps the review found that predate its fixes. None makes a claim in
+a common setup.
+
+- **A Scala forwarder whose target the loader cannot serve.** On a Scala 3
+  release the agent reads, a trait forwarder, a forwarder to a Java
+  default or a specialised `apply` whose target class the defining loader
+  links but cannot serve as a resource is ordinary code, so it could read
+  as never called. It needs a loader that hides scala-library's class
+  files. Fix: treat an unreadable target as an unread shape on read
+  releases too (ADR 0080, `declaresTwinAbove` returning null).
+- **The static baseline of an unpacked Spring Boot app.** With
+  `JarLauncher` on a directory, the scan names the classes in
+  `BOOT-INF/classes` as `BOOT-INF.classes.com...`, outside the include
+  rules, so it declares none of them. That is a missing claim, never a
+  false one, plus one mismatch WARNING per class. The class listing gets
+  them right.
+- **ADR 0081 untested cases.** A `System.LoggerFinder` bridge
+  (`log4j-jpl`, `slf4j-jdk-platform-logging`) needs its jar downloaded.
+  WildFly itself was not run with the agent: a forked JVM whose `main`
+  sets `java.util.logging.manager` stood in for JBoss Modules.
+
 ### Tooling: code principles and a refactoring playbook
 
 From the comparison with pstack's poteto-mode (`cursor/plugins`, `190d287`).
