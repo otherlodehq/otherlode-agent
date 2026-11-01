@@ -42,10 +42,7 @@ multi-tenant backend.
    its docs sync first run at v0.1.0. The agent's `rehearsal/1` covered
    the Portal upload only; `release.yml`'s `github-release` and `docs`
    jobs have never run.
-5. **Review all customer copy.** Copy edits are pre-approved until
-   release, and the whole corpus is reviewed once before it:
-   `docs/site`, the README, and the server's UI and docs.
-6. **Before the first customer:** the server STATUS's "Go-live
+5. **Before the first customer:** the server STATUS's "Go-live
    checklist" (the company, the privacy policy, the site, the front door,
    the database tier). No collector can be given
    an ingest URL until the front door exists. None of it blocks publishing
