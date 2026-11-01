@@ -68,7 +68,7 @@ Three pieces of work that would otherwise be startup cost run later:
 
 - The dependency listing, which reads every jar on the classpath to find its identity, starts at the top of the first flush on the export thread, not in `premain`. It reads each nested jar in a fat jar from its central directory, and decompresses only the `pom.properties` files and manifest it needs.
 - The first full manifest goes out on the first flush, at a random point inside the first interval.
-- The class listing (on by default) runs on its own background thread, named `otherlode-class-listing`, started once at startup and not in `premain`. It reads the file names in each class folder and the central directory of each jar on the classpath. It reads a jar nested in a Spring Boot fat jar the same way, from that jar's central directory, so it decompresses nothing to read entry names. On the benchmark's PetClinic jar, which holds 126 classes of its own and 38,391 in 107 nested jars, a first call to the listing, measured in a JVM of its own on one core of the benchmark runner, took about 180 ms of CPU with the narrow rules and about 190 ms with `org.springframework`, the medians of six nightly runs. Its cost follows the number of jars it reads, not the number of classes your rules admit: on a classpath of 773 jars and about 270,000 classes it stayed near 200 ms on a laptop core. It parses no class file, and it runs once per process. A JVM started with no class path reads the working directory as its class path, and the listing then walks every folder under it, so start the application from its own folder or give it a class path. With `classListingEnabled=false` the thread does not start. See [classes](classes#the-class-listing).
+- The class listing (on by default) runs on its own background thread, named `otherlode-class-listing`, started once at startup and not in `premain`. It reads the file names in each class folder and the central directory of each jar on the classpath. It reads a jar nested in a Spring Boot fat jar the same way, from that jar's central directory, so it decompresses nothing to read entry names. On the benchmark's PetClinic jar, a first call to the listing, measured in a JVM of its own on one core of the benchmark runner, took about 180 ms of CPU both with the narrow rules, which list 122 classes, and with `org.springframework`, which lists 11,791. Those are the medians of six nightly runs. Its cost follows the number of jars it reads, not the number of classes your rules admit. On a classpath of 773 jars holding about 186,000 classes, with rules that matched none of them, it took about 160 ms of CPU on one laptop core. It parses no class file, and it runs once per process. A JVM started with no class path reads the working directory as its class path, and the listing then walks every folder under it, so start the application from its own folder or give it a class path. With `classListingEnabled=false` the thread does not start. See [classes](classes#the-class-listing).
 
 ## The flush thread and the network
 
@@ -81,15 +81,15 @@ On each flush (every 60 seconds by default, with a random offset for the first o
 - sends any manifest chunks the collector has not confirmed yet,
 - walks the loaded classes to count each dependency's loaded classes, and checks for classes no transformer saw. The check for classes that never reached a transformer runs on every tenth flush, about every ten minutes at the default interval.
 
-A timed run of the flush code over 1,195 classes and 22,597 probes, encoding without sending, gave:
+A timed run of the flush code on a laptop, over 1,488 classes and 26,380 probes, encoding without sending, gave:
 
 | Flush | Time | Allocated |
 |---|---|---|
-| Steady, a tenth of probes changed | 0.16 ms | 650 KB |
-| Empty heartbeat | 0.04 ms | 200 KB |
-| First flush, whole manifest | 22 ms | 40 MB |
+| Steady, a tenth of probes changed | 0.20 ms | 890 KB |
+| Empty heartbeat | 0.05 ms | 240 KB |
+| First flush, whole manifest | 32 ms | 98 MB |
 
-The allocation is mostly copying the count arrays, about 8 bytes a probe a flush. The loaded-class walk took 0.5 ms against a JVM holding 4,900 classes. The first flush grows with the probe count, and happens once.
+A heartbeat's allocation is mostly copying the count arrays, about 9 bytes a probe a flush. The loaded-class walk took 0.5 ms against a JVM holding 4,800 classes. The first flush grows with the probe count, and happens once.
 
 On the network, a flush sends each payload as one or more POST requests, once per interval. Payload size follows the number of probes whose counts changed, not total traffic or total probes, because the agent sends deltas. An empty batch still goes out as a heartbeat. Each send makes up to five attempts, waiting 200 ms after the first failure and doubling the wait up to 30 seconds, and when the collector is down the counts stay in memory and are sent again on the next flush, so memory does not grow while it is unreachable. [What the agent sends](data-sent) lists each payload.
 

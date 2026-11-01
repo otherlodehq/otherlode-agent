@@ -286,7 +286,7 @@ An unread shape is a probe whose code has the outline of compiler output but who
 |---|---|---|
 | `CASE_CLASS` | Scala case-class plumbing | A case class's or its companion's plumbing-named method whose body is not read. |
 | `STATIC_FORWARDER` | Scala static forwarder | A static method with a `$` twin of the same name and descriptor, whose body is not read. |
-| `SCALA_OBJECT` | Scala object serialization | An object's `writeReplace` or `readResolve` whose body is not read. |
+| `SCALA_OBJECT` | Scala object serialisation | An object's `writeReplace` or `readResolve` whose body is not read. |
 | `SCALA_ENUM` | Scala enum plumbing | Scala 3 enum plumbing whose body is not read. |
 | `MULTIFILE_FACADE` | Kotlin multi-file facade method | A method of a Kotlin multi-file facade that is not a recognised forwarder. A facade holds no code of yours. |
 | `COROUTINE_MACHINERY` | coroutine machinery | A jump or switch in a suspend method's state machine that matches none of the shapes the agent reads. |
