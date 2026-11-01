@@ -217,6 +217,8 @@ reference is reached from the handler and never appears in a cluster.
 
 ## Run the demo against a real collector
 
+These tasks need Otherlode's server, which is not public.
+
 ```
 ./gradlew :demo:runDemoStack
 ./gradlew :demo:runSpringDemoStack
