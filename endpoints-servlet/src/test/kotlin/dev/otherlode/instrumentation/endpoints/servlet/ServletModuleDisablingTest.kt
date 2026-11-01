@@ -38,8 +38,15 @@ class ServletModuleDisablingTest : ServletTestSupport() {
     }
 }
 
-/** A context whose registrations are [mappings], each a servlet name and its mappings, of [GetPostServlet]. */
-private fun contextWithMappings(vararg mappings: Pair<String, List<String>>): ServletContext {
+/**
+ * A context whose registrations are [mappings], each a servlet name and its mappings, of [GetPostServlet].
+ * Once [failure] holds a throwable, the method named [failingMethod] throws it.
+ */
+private fun contextWithMappings(
+    vararg mappings: Pair<String, List<String>>,
+    failingMethod: String = "",
+    failure: () -> Throwable? = { null },
+): ServletContext {
     val loader = ServletModuleDisablingTest::class.java.classLoader
     val registrations =
         mappings.associate { (name, patterns) ->
@@ -54,6 +61,7 @@ private fun contextWithMappings(vararg mappings: Pair<String, List<String>>): Se
                 } as ServletRegistration
         }
     return Proxy.newProxyInstance(loader, arrayOf(ServletContext::class.java)) { _, method, _ ->
+        if (method.name == failingMethod) failure()?.let { throw it }
         if (method.name == "getServletRegistrations") registrations else null
     } as ServletContext
 }
@@ -171,5 +179,108 @@ class ServletModuleUnreadableContextTest : ServletTestSupport() {
         assertEquals("servlet", disabled.module)
         assertEquals(DisabledEndpointModuleKind.ROUTE_WALK_FAILED, disabled.kind)
         assertEquals("java.lang.IllegalStateException", disabled.reason)
+    }
+}
+
+/** A context its container destroyed after the module declared it is dropped, and the module stays on. */
+class ServletModuleDestroyedContextTest : ServletTestSupport() {
+    @Test
+    fun `a context that throws IllegalStateException from getClassLoader on a refresh is dropped and the module stays on`() {
+        assertDroppedAfter("getClassLoader", "/destroyed/loader")
+    }
+
+    @Test
+    fun `a context that throws IllegalStateException from getServletRegistrations on a refresh is dropped and the module stays on`() {
+        assertDroppedAfter("getServletRegistrations", "/destroyed/registrations")
+    }
+
+    @Test
+    fun `a dropped context is read no more until a request declares it again`() {
+        var destroyed = false
+        var reads = 0
+        val context =
+            contextWithMappings("again" to listOf("/destroyed/again"), failingMethod = "getClassLoader") {
+                reads++
+                if (destroyed) IllegalStateException("destroyed") else null
+            }
+        val module = ServletModule()
+        module.declare(context)
+        assertEquals(1, reads)
+
+        destroyed = true
+        module.beforeManifest(0, false)
+        assertEquals(2, reads)
+        module.beforeManifest(0, false)
+        assertEquals(2, reads, "a dropped context is not read on the next manifest")
+
+        destroyed = false
+        module.declare(context)
+        assertEquals(3, reads, "a request declares a dropped context afresh")
+        assertEquals(emptyList(), registry.disabledModules())
+        assertEquals(setOf("GET /destroyed/again", "POST /destroyed/again"), declared("/destroyed/again"))
+    }
+
+    private fun assertDroppedAfter(
+        failingMethod: String,
+        mapping: String,
+    ) {
+        var destroyed = false
+        val context =
+            contextWithMappings("kept" to listOf(mapping), failingMethod = failingMethod) {
+                if (destroyed) IllegalStateException("destroyed") else null
+            }
+        val module = ServletModule()
+        module.declare(context)
+        val before = setOf("GET $mapping", "POST $mapping")
+        assertEquals(before, declared(mapping))
+
+        destroyed = true
+        module.beforeManifest(0, false)
+        module.beforeManifest(0, false)
+
+        assertEquals(emptyList(), registry.disabledModules())
+        assertEquals(before, declared(mapping), "the endpoints it declared stay")
+    }
+}
+
+/** Only an IllegalStateException on a refresh means a destroyed context. */
+class ServletModuleRefreshFailureTest : ServletTestSupport() {
+    @Test
+    fun `a context that throws another exception on a refresh disables the module`() {
+        var broken = false
+        val context =
+            contextWithMappings("live" to listOf("/refresh/live"), failingMethod = "getClassLoader") {
+                if (broken) UnsupportedOperationException("broken") else null
+            }
+        val module = ServletModule()
+        module.declare(context)
+        assertEquals(emptyList(), registry.disabledModules())
+
+        broken = true
+        module.beforeManifest(0, false)
+
+        val disabled = registry.disabledModules().single()
+        assertEquals("servlet", disabled.module)
+        assertEquals(DisabledEndpointModuleKind.ROUTE_WALK_FAILED, disabled.kind)
+        assertEquals("java.lang.UnsupportedOperationException", disabled.reason)
+    }
+}
+
+/** A container that stops an application leaves the module on, whether or not it throws when the context is read afterwards. */
+class ServletModuleStoppedApplicationTest : ServletTestSupport() {
+    @Test
+    fun `a flush after the container stopped the application keeps its endpoints and leaves the module on`() {
+        container
+            .start("") {
+                servlet("stopped", GetPostServlet(), "/stopped/a")
+            }.use { app ->
+                assertEquals(200, app.send("/stopped/a"))
+                assertEquals(setOf("GET /stopped/a", "POST /stopped/a"), declared("/stopped"))
+            }
+
+        ServletTestAgent.flush()
+
+        assertEquals(emptyList(), registry.disabledModules())
+        assertEquals(setOf("GET /stopped/a", "POST /stopped/a"), declared("/stopped"))
     }
 }
