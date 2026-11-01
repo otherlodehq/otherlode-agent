@@ -46,3 +46,6 @@ Decided in the second pre-release review.
 - **Each supertype is read once per class.** Marking a class's forwarders parsed each trait once per forwarder; a `Seq[Int]` subclass made 238 class reads for 14 classes.
 - **Considered and rejected.** A new `GeneratedBy` value: both shapes are forwarders scalac writes to implement a supertype's method, which `TRAIT_FORWARDER` already names, and a new value is a wire change for no difference in judgement.
 
+## Amended on 2026-11-01: an unreadable target is an unread shape on a read release
+
+On a Scala 3 release the agent reads, the exact rules decide and the outline does not apply. When a rule could not decide because a class it needs could not be read, the method stayed ordinary: a specialised `apply(I)I` whose `scala/Function1` the loader does not serve, or a trait forwarder whose trait is unreadable. A call through the function type skips `apply(I)I`, so it could read as never called. Such a method is now an unread shape of the `TRAIT_FORWARDER` family, with cause `UNREAD_STRUCTURE`. The same holds on Scala 2 and on a release the agent has not read, where the outline lists only the traits it could read. A method whose rule read every class it needs and said no stays ordinary code. `java/lang/Object` counts as read, since it declares neither a twin nor a trait method.

@@ -204,7 +204,9 @@ internal object ScalaGeneratedMethods {
      * backticked case names. So does every `valueOf(String)` of an enum's companion when none reads
      * as scalac's, the adopter's beside it included ([companionCaseKeys]). The companion of a local enum counts when [pairEnumCompanion] pairs it,
      * even if a class the pairing needs cannot be read; an object the adopter wrote that only looks like
-     * one is not held. [releaseOf] is asked, with the class's internal name, only when such a method
+     * one is not held. A method with a forwarder's call shape that the exact rule could not decide
+     * because a class it needed could not be read is a [UnreadShape.TRAIT_FORWARDER] on every
+     * release, a read one included: the adopter did not write it, or scalac routes calls around it. [releaseOf] is asked, with the class's internal name, only when such a method
      * exists and the class is Scala 3's.
      */
     fun analyse(
@@ -219,9 +221,15 @@ internal object ScalaGeneratedMethods {
         val generated = marks.generated
         val base = outlineOf(shape, lookup, generated, sides)
         val forwarders = mayHaveForwarders(shape, sides, generated)
-        if (base.isEmpty() && !forwarders) return Result(generated, emptyMap(), null, passThrough = marks.passThrough)
+        val undecided = marks.undecided.filter { it !in generated }
+        if (base.isEmpty() && !forwarders && undecided.isEmpty()) {
+            return Result(generated, emptyMap(), null, passThrough = marks.passThrough)
+        }
 
-        fun withForwarders() = if (forwarders) forwarderOutlineOf(shape, lookup, generated, sides) + base else base
+        fun withForwarders(): Map<Pair<String, String>, UnreadShape> {
+            val outlined = if (forwarders) forwarderOutlineOf(shape, lookup, generated, sides) + base else base
+            return outlined + undecided.filter { it !in outlined }.associateWith { UnreadShape.TRAIT_FORWARDER }
+        }
 
         if (!shape.isScala3) {
             val candidates = withForwarders()
@@ -238,10 +246,11 @@ internal object ScalaGeneratedMethods {
                 val enumCase = shape.isEnumCaseClass(lookup)
                 val pairing = if (enumCase) null else pairEnumCompanion(shape, lookup)
                 val accessors = pairing?.let { enumCaseAccessorKeys(shape, it.enumClass, lookup) }.orEmpty()
-                val held =
+                val outlined =
                     (if (enumCase) withForwarders() else base).filterKeys {
                         enumCase || (pairing != null && (isRefusedInEnumCompanion(it) || it in accessors))
                     }
+                val held = outlined + undecided.filter { it !in outlined }.associateWith { UnreadShape.TRAIT_FORWARDER }
                 Result(generated, held, null, UnreadCause.UNREAD_STRUCTURE.takeIf { held.isNotEmpty() }, marks.passThrough)
             }
 
@@ -501,8 +510,9 @@ internal object ScalaGeneratedMethods {
                 passThrough += key
             }
         }
-        for (key in traitForwarders(shape, lookup)) generated.putIfAbsent(key, GeneratedBy.TRAIT_FORWARDER)
-        return Marks(generated, passThrough)
+        val trait = traitForwarders(shape, lookup)
+        for (key in trait.marked) generated.putIfAbsent(key, GeneratedBy.TRAIT_FORWARDER)
+        return Marks(generated, passThrough, trait.undecided)
     }
 
     /** The name of a Scala default-argument getter, which ADR 0023 treats on its own. */
@@ -1078,9 +1088,10 @@ internal object ScalaGeneratedMethods {
     private fun traitForwarders(
         shape: ClassShape,
         lookup: (String) -> ByteArray?,
-    ): Set<Pair<String, String>> {
-        if (shape.access and Opcodes.ACC_INTERFACE != 0) return traitEntries(shape)
+    ): TraitForwarders {
+        if (shape.access and Opcodes.ACC_INTERFACE != 0) return TraitForwarders(traitEntries(shape), emptySet())
         val result = mutableSetOf<Pair<String, String>>()
+        val undecided = mutableSetOf<Pair<String, String>>()
         var supertypes: Map<String, ClassShape?>? = null
         for ((key, method) in shape.methods) {
             val (name, descriptor) = key
@@ -1094,7 +1105,11 @@ internal object ScalaGeneratedMethods {
                 call.opcode == Opcodes.INVOKEVIRTUAL && call.owner == shape.internalName && call.descriptor == descriptor
             ) {
                 val declared = supertypes ?: supertypeShapes(shape, lookup).also { supertypes = it }
-                if (declaresTwinAbove(declared, call.name, descriptor) == true) result += key
+                when (declaresTwinAbove(declared.filterKeys { it != OBJECT }, call.name, descriptor)) {
+                    true -> result += key
+                    null -> undecided += key
+                    false -> Unit
+                }
                 continue
             }
             if (call.opcode == Opcodes.INVOKESPECIAL && call.name == name && call.descriptor == descriptor && body == loads + call + end) {
@@ -1109,14 +1124,29 @@ internal object ScalaGeneratedMethods {
             val entryDescriptor = "(L$trait;${parameterPart(descriptor)})$returnType"
             if (body != loads + Insn.Call(Opcodes.INVOKESTATIC, trait, entryName, entryDescriptor) + end) continue
             val known = supertypes ?: supertypeShapes(shape, lookup).also { supertypes = it }
-            val declared = known[trait] ?: continue
+            val declared = known[trait]
+            if (declared == null) {
+                if (trait in known || known.any { (name, header) -> header == null && name != OBJECT }) undecided += key
+                continue
+            }
             val entry = declared.methods[entryName to entryDescriptor]
             if (declared.access and Opcodes.ACC_INTERFACE != 0 && entry?.isStatic == true && declared.declaresDefault(key)) {
                 result += key
             }
         }
-        return result
+        return TraitForwarders(result, undecided)
     }
+
+    /**
+     * What [traitForwarders] found: the methods it marks ([marked]), and those with a forwarder's
+     * call shape that it could not decide because a class it needed could not be read
+     * ([undecided]). A forwarder's target that was read and does not declare the method is not
+     * undecided: that method is the adopter's.
+     */
+    private class TraitForwarders(
+        val marked: Set<Pair<String, String>>,
+        val undecided: Set<Pair<String, String>>,
+    )
 
     /** Whether [this] is an interface that declares [key] as a method with a body and no receiver restriction. */
     private fun ClassShape.declaresDefault(key: Pair<String, String>): Boolean {
@@ -1209,6 +1239,7 @@ internal object ScalaGeneratedMethods {
     private class Marks(
         val generated: Map<Pair<String, String>, GeneratedBy>,
         val passThrough: Set<Pair<String, String>>,
+        val undecided: Set<Pair<String, String>> = emptySet(),
     )
 
     private fun marksOf(
@@ -1244,7 +1275,7 @@ internal object ScalaGeneratedMethods {
         if (!shape.isScala3 && shape.isModuleClass && !shape.writeReplaceMatches() && shape.readResolveMatches()) {
             result.putIfAbsent(READ_RESOLVE, GeneratedBy.SCALA_OBJECT)
         }
-        return Marks(result, forwarders.passThrough)
+        return Marks(result, forwarders.passThrough, forwarders.undecided)
     }
 
     /**

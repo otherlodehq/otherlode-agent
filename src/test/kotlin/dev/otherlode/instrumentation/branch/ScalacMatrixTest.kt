@@ -1,6 +1,7 @@
 package dev.otherlode.instrumentation.branch
 
 import dev.otherlode.export.GeneratedBy
+import dev.otherlode.export.UnreadShape
 import dev.otherlode.instrumentation.CompilerFixtures
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -216,7 +217,7 @@ class ScalacMatrixTest {
     @ParameterizedTest(name = "scalac {0}")
     @MethodSource("scala3Versions")
     fun `a Scala 3 build has no unread shapes on a read release`(version: String) {
-        assertEquals(emptyList(), unreadOf(CompilerFixtures.scalac(version)).sorted(), "scalac $version")
+        assertEquals(emptyList(), unreadOf(CompilerFixtures.scalac(version).withScalaLibrary(version)).sorted(), "scalac $version")
     }
 
     /**
@@ -225,7 +226,7 @@ class ScalacMatrixTest {
      * `Written`, `Multi`, `Svc`, `BodyVal` and `HandCopy`, `HandCopy.hashCode`, the lookalikes
      * of `CaseLookalikes.scala`, the hand-written `ordinal` in the companion of the local enum
      * `Door` in `LocalEnums.scala`, and `toString$extension` of the case value class `Label`, whose
-     * `toString` is its own, `Almost`'s methods, `WrappingGreeter.greet` and `WrappingHandler.reversed`, and the `apply` of `Inc` and `Halve`, whose specialised twin no readable supertype declares), which with no compiler named cannot be told from scalac's.
+     * `toString` is its own, `Almost`'s methods, `WrappingGreeter.greet` and `WrappingHandler.reversed`), which with no compiler named cannot be told from scalac's.
      */
     private val scala3VersionBlindUnread =
         setOf(
@@ -246,8 +247,6 @@ class ScalacMatrixTest {
             "Label\$.toString\$extension",
             "WrappingGreeter.greet",
             "WrappingHandler.reversed",
-            "Inc.apply",
-            "Halve.apply",
             "Lie2\$.fromProduct",
             "Lie2.equals",
             "Lie2.hashCode",
@@ -288,9 +287,6 @@ class ScalacMatrixTest {
             "Label\$.toString\$extension",
             "WrappingGreeter.greet",
             "WrappingHandler.reversed",
-            "Inc.apply",
-            "Halve.apply",
-            "MySeq.apply",
             "Lie.productArity",
             "Lie.productElement",
             "Lie.productElementName",
@@ -318,12 +314,33 @@ class ScalacMatrixTest {
             "Written.toString",
         )
 
+    /** Asserts that each method [readable] marks as a trait forwarder is marked or an unread trait forwarder in [unreadable], which serves no scala-library. */
+    private fun assertForwardersSurviveWithoutLibrary(
+        version: String,
+        readable: CompilerFixtures.Build,
+        unreadable: CompilerFixtures.Build,
+    ) {
+        for (owner in readable.classNames()) {
+            val marks = unreadable.markEntries(owner).associate { it.first + it.second to it.third }
+            val unread = unreadable.unreadEntries(owner).associate { it.first + it.second to it.third }
+            for ((name, descriptor, mark) in readable.markEntries(owner)) {
+                if (mark != GeneratedBy.TRAIT_FORWARDER) continue
+                val method = name + descriptor
+                assertTrue(
+                    marks[method] == GeneratedBy.TRAIT_FORWARDER || unread[method] == UnreadShape.TRAIT_FORWARDER,
+                    "scalac $version $owner.$method reads as ordinary code without the library",
+                )
+            }
+        }
+    }
+
     @ParameterizedTest(name = "scalac {0}")
     @MethodSource("scala2Versions")
     fun `a Scala 2 build has unread shapes only on the fixtures' hand-written lookalikes and Q`(version: String) {
-        val build = CompilerFixtures.scalac(version)
+        val build = CompilerFixtures.scalac(version).withScalaLibrary(version)
         val unread =
             build.classNames().flatMap { owner -> build.unreadEntries(owner).map { (name, _, _) -> "$owner.$name" } }.toSet()
+        assertForwardersSurviveWithoutLibrary(version, build, CompilerFixtures.scalac(version))
         // 2.12 writes no productElementName.
         val expected =
             if (version.startsWith(
@@ -342,9 +359,14 @@ class ScalacMatrixTest {
     @MethodSource("scala3Versions")
     fun `a Scala 3 build read with no tasty files reports the outline methods the rules leave unmarked`(version: String) {
         val unread =
-            CompilerFixtures.scalac(version).withoutResources().let { build ->
+            CompilerFixtures.scalac(version).withScalaLibrary(version).withoutResources().let { build ->
                 build.classNames().flatMap { owner -> build.unreadEntries(owner).map { (name, _, _) -> "${stable(owner)}.$name" } }.toSet()
             }
+        assertForwardersSurviveWithoutLibrary(
+            version,
+            CompilerFixtures.scalac(version).withScalaLibrary(version).withoutResources(),
+            CompilerFixtures.scalac(version).withoutResources(),
+        )
 
         assertEquals(scala3VersionBlindUnread.sorted(), unread.sorted(), "scalac $version")
     }

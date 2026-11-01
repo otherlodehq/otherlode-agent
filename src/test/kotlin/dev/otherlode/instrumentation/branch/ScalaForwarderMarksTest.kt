@@ -320,10 +320,54 @@ class ScalaForwarderMarksTest {
     fun `scala 2 - a primitive function's apply that forwards to its specialised twin is TRAIT_FORWARDER`(key: String) =
         `a function over a primitive`(key, false)
 
+    @ParameterizedTest(name = "scalac {0}")
+    @MethodSource("scala3Builds")
+    fun `scala 3 - a forwarder that needs an unreadable library class is an unread shape on a read release`(key: String) {
+        val readable = build(key, true)
+        val unreadable = if (key == "baseline") CompilerFixtures.scalaBaseline("3.3.4") else CompilerFixtures.scalac(key)
+        for (owner in listOf("Inc", "Halve", "Inc2")) {
+            val marked = readable.markEntries(owner).filter { it.third == TRAIT }.map { it.first + it.second }
+            val without = unreadable.markEntries(owner).associate { it.first + it.second to it.third }
+            val unread = unreadable.unreadEntries(owner).associate { it.first + it.second to it.third }
+            assertTrue(marked.isNotEmpty(), "$key $owner has no forwarder")
+            for (method in marked) {
+                assertTrue(
+                    without[method] == TRAIT || unread[method] == UnreadShape.TRAIT_FORWARDER,
+                    "$key $owner.$method reads as ordinary code",
+                )
+            }
+        }
+        val unread = unreadable.unreadEntries("Inc").associate { it.first + it.second to it.third }
+        assertEquals(UnreadShape.TRAIT_FORWARDER, unread["apply(I)I"], "$key Inc.apply")
+        assertNull(unread["apply\$mcII\$sp(I)I"], "$key Inc.apply\$mcII\$sp")
+        assertMarks(key, true, "Look", emptyMap())
+        assertEquals(emptyList(), unreadable.unreadEntries("Look"), "$key Look")
+    }
+
     @Test
     fun `scala 2 - a specialised apply whose twin's supertype cannot be read is an unread shape`() {
         val unreadable: (String) -> ByteArray? = { if (it.startsWith("scala/")) null else scala2Fixtures.lookup(it) }
         val analysis = analyse(scala2Fixtures.classBytes("Inc"), unreadable)
+
+        assertEquals(GeneratedBy.NONE, analysis.generatedBy("apply", "(I)I"))
+        assertEquals(UnreadShape.TRAIT_FORWARDER, analysis.unreadShape("apply", "(I)I"))
+    }
+
+    @Test
+    fun `scala 2 - a trait forwarder whose trait cannot be read is an unread shape`() {
+        val unreadable: (String) -> ByteArray? = { if (it.startsWith("scala/")) null else scala2Fixtures.lookup(it) }
+        val analysis = analyse(scala2Fixtures.classBytes("Inc"), unreadable)
+
+        for (method in listOf("compose", "andThen")) {
+            assertEquals(GeneratedBy.NONE, analysis.generatedBy(method, "(Lscala/Function1;)Lscala/Function1;"), method)
+            assertEquals(UnreadShape.TRAIT_FORWARDER, analysis.unreadShape(method, "(Lscala/Function1;)Lscala/Function1;"), method)
+        }
+    }
+
+    @Test
+    fun `scala 3 - a specialised apply whose superclass cannot be read is an unread shape on a read release`() {
+        val unreadable: (String) -> ByteArray? = { if (it.startsWith("scala/") || it == "$PACKAGE/Inc") null else fixtures.lookup(it) }
+        val analysis = analyseWith(fixtures.classBytes("Inc2"), unreadable, tasty("Inc2", "Scala 3.3.4"))
 
         assertEquals(GeneratedBy.NONE, analysis.generatedBy("apply", "(I)I"))
         assertEquals(UnreadShape.TRAIT_FORWARDER, analysis.unreadShape("apply", "(I)I"))

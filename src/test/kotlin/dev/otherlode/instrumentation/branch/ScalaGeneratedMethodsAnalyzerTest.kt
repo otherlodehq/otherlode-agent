@@ -2423,7 +2423,7 @@ class ScalaGeneratedMethodsAnalyzerTest {
     }
 
     @Test
-    fun `scala 3 - a class implementing EnumValue over a scala_reflect_Enum that is not an enum class is not held on a read release`() {
+    fun `scala 3 - an EnumValue class over a scala_reflect_Enum that is no enum holds its unreadable forwarders`() {
         val build = CompilerFixtures.scalaBaseline("3.3.4")
         val suit = build.classBytes("Suit")
         val notEnums =
@@ -2438,7 +2438,7 @@ class ScalaGeneratedMethodsAnalyzerTest {
 
             val analysis = analyzeWith(build.classBytes(singleton), lookup, tastyOf("Suit", "Scala 3.3.4"))
 
-            assertEquals(UnreadShape.NONE, analysis.unreadShape("canEqual", "(Ljava/lang/Object;)Z"), label)
+            assertEquals(UnreadShape.TRAIT_FORWARDER, analysis.unreadShape("canEqual", "(Ljava/lang/Object;)Z"), label)
             assertEquals(GeneratedBy.NONE, analysis.generatedBy("canEqual", "(Ljava/lang/Object;)Z"), label)
         }
     }
