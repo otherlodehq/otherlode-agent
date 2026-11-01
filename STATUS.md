@@ -50,9 +50,10 @@ multi-tenant backend.
    collector `7012896`. Reports land in `/opt/soak/reports` every 6
    hours; `soakctl status` on the VM shows where it is. A scale-60 smoke
    of the same bundle runs on `soak-2`, rebooted halfway to test resume.
-   A failed check is triaged per `soak/DESIGN.md`. When both finish,
-   delete `soak-1` and `soak-2` and the project-level SSH key gcloud
-   added; deleting the project is Luke's.
+   A failed check is triaged per `soak/DESIGN.md`. Clean-up is Luke's,
+   once the week's final report is read: delete VMs `soak-1` and
+   `soak-2`, the project-level SSH key gcloud added on 2026-11-01
+   (Compute Engine, Metadata, SSH keys), and the project itself.
 
 After release: what "Parked" lists, the server's performance-only
 deferrals, gzip, a collector config file, and agent-level redaction
