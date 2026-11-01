@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted, amended by ADR 0082
 ---
 
 # A run says on every payload since when its counts are pending
