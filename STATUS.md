@@ -348,6 +348,17 @@ The testkit stops at query primitives on purpose. Baking in a rule for when
 a count is low enough to fail a build is the confidence policy ADR 0015
 keeps out of the agent, so composing one is an adopter's own call.
 
+### An earlier first manifest: after release
+
+Server ADR 0087 holds back every never-loaded claim a run's classes would
+make until the run delivers its first delta batch. The first flush waits a
+random offset within the flush interval (`ExportScheduler`), so that window
+lasts up to one interval: 14 to 44 seconds on the soak at 60 seconds. A
+first manifest and delta batch sent soon after startup would shrink it to
+about a second. Keep the jitter for every later flush, and spread the early
+one over a few seconds so a fleet started together does not reach the
+collector on one tick. Speed only: the hold-back is correct without it.
+
 ### Small gaps the landed work left, after release
 
 Each was recorded when its work landed and waits for a reason to touch the
