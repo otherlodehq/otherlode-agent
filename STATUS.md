@@ -44,6 +44,15 @@ multi-tenant backend.
    the database tier). No collector can be given
    an ingest URL until the front door exists. None of it blocks publishing
    the agent.
+6. **The soak week** (`soak/DESIGN.md`). It runs on VM `soak-1` in GCP
+   project `project-1d40b09b-5fc7-4240-bed`, from T0 2026-11-01 20:17Z to
+   2026-11-08 20:17Z, on bundle agent `86df258`, server `722759d`,
+   collector `7012896`. Reports land in `/opt/soak/reports` every 6
+   hours; `soakctl status` on the VM shows where it is. A scale-60 smoke
+   of the same bundle runs on `soak-2`, rebooted halfway to test resume.
+   A failed check is triaged per `soak/DESIGN.md`. When both finish,
+   delete `soak-1` and `soak-2` and the project-level SSH key gcloud
+   added; deleting the project is Luke's.
 
 After release: what "Parked" lists, the server's performance-only
 deferrals, gzip, a collector config file, and agent-level redaction
