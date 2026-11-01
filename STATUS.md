@@ -21,12 +21,9 @@ multi-tenant backend.
    update both pages.
 2. **Cut the releases** (ADRs 0062 and 0063, collector ADR 0006). Cutting
    is Luke's call. Collector `v0.1.0` goes first, since the agent's
-   `release.sh` refuses a release until it exists. Each needs its
-   `## [0.1.0]` changelog section written, since both `release.yml` files
-   refuse one without it. Luke writes both sections at release time, so
-   they are fresh: each `[Unreleased]` section is a pre-release log of changes against
-   behaviour no user had, so it becomes a first-release section (what
-   0.1.0 is and what it ships) rather than a renamed heading. Before the first release of each,
+   `release.sh` refuses a release until it exists. Both `## [0.1.0]`
+   changelog sections are written, dated 2026-11-01; change the date if
+   the tag falls on another day. Before the first release of each,
    make the collector's GHCR package public. Still unknown: whether a
    dropped Portal deployment frees its version. A `rehearsal/1-again` tag
    answers it.
