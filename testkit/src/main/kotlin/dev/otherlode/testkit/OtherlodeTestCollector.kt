@@ -1261,7 +1261,8 @@ public class OtherlodeTestCollector internal constructor(
     /**
      * Every class that some instance loaded, that is not never initialised, that has a judgeable
      * constructor and a judgeable method that is neither static nor a constructor, and none of
-     * whose constructors ran in any instance, sorted by class name. No instance of it or of a subclass ever existed.
+     * whose constructors and instance methods ran in any instance, inline and generated ones
+     * included, sorted by class name. No instance of it or of a subclass ran its constructor.
      * A class with only static methods is never listed, and neither is an interface, which has no
      * constructor.
      *
@@ -1341,7 +1342,8 @@ public class OtherlodeTestCollector internal constructor(
      *
      * A class is never initialised when it has a `<clinit>` and that never ran. Otherwise it is never
      * instantiated when it has a `<init>`, none ran, and it has a method that is neither static nor
-     * a constructor. A never-initialised class covers every never-hit method. A never-instantiated
+     * a constructor, and no method of it that is neither static nor a constructor ran, marked or
+     * not. Deserialization makes an instance without running its constructor. A never-initialised class covers every never-hit method. A never-instantiated
      * class covers each never-hit constructor and each never-hit method that is not static.
      *
      * A never-hit lambda body then folds with its creators, since it can only run once one of them
@@ -1352,10 +1354,17 @@ public class OtherlodeTestCollector internal constructor(
         val findings = mutableMapOf<String, ClassFinding>()
         val covered = mutableMapOf<String, List<NodeKey>>()
         val constructed = mutableSetOf<String>()
+        val instanceMethodRan =
+            mergedLocations()
+                .filter { it.key.kind == WireProbeKind.METHOD && it.hits > 0L && !it.static }
+                .map { it.key.method }
+                .filter { it.methodName != CONSTRUCTOR && it.methodName != CLASS_INIT }
+                .mapTo(mutableSetOf()) { it.className }
         val withheld = failedToInitializeNames() + classesWithInitializerRunning()
         for ((className, methods) in judgeable.values.groupBy { it.key.className }) {
             val initialisers = methods.filter { it.key.methodName == CLASS_INIT }
             val constructors = methods.filter { it.key.methodName == CONSTRUCTOR }
+            val instanceMethods = methods.filter { it.key.methodName != CONSTRUCTOR && it.key.methodName != CLASS_INIT && !it.static }
             if (constructors.any { it.hits > 0L }) constructed += className
             val finding =
                 when {
@@ -1369,7 +1378,8 @@ public class OtherlodeTestCollector internal constructor(
 
                     constructors.isNotEmpty() &&
                         className !in constructed &&
-                        methods.any { it.key.methodName != CONSTRUCTOR && it.key.methodName != CLASS_INIT && !it.static } -> {
+                        instanceMethods.isNotEmpty() &&
+                        className !in instanceMethodRan -> {
                         ClassFinding.NEVER_INSTANTIATED
                     }
 
@@ -3448,7 +3458,7 @@ public enum class ClassFinding {
     /** The class loaded and its static initialiser never ran. See [OtherlodeTestCollector.neverInitialized]. */
     NEVER_INITIALIZED,
 
-    /** The class loaded, has instance methods, and none of its constructors ran. See [OtherlodeTestCollector.neverInstantiated]. */
+    /** The class loaded, has instance methods, and none of its constructors or instance methods ran. See [OtherlodeTestCollector.neverInstantiated]. */
     NEVER_INSTANTIATED,
 }
 

@@ -1123,8 +1123,8 @@ private val PRIMITIVE_NAMES =
  * A class with such a probe loaded, so none of these is never loaded.
  *
  * A class is never initialised when it has a `<clinit>` and that never ran. Otherwise it is never
- * instantiated when it has a `<init>`, none ran, and it has a method that is neither static nor a
- * constructor. A never-initialised class covers every never-hit method. A never-instantiated class
+ * instantiated when it has a `<init>`, none ran, it has a method that is neither static nor a
+ * constructor, and no such method ran, marked or not. A never-initialised class covers every never-hit method. A never-instantiated class
  * covers each never-hit constructor and each never-hit method that is not static. A never-hit
  * lambda body then folds with its creators; see [foldLambdaBodies]. Same rules as
  * `OtherlodeTestCollector.judgeClasses`. A class that failed to initialise, or whose initialiser is
@@ -1146,6 +1146,13 @@ private fun judgeClasses(): ClassJudgement {
                     entries.any { it.value.lambdaBody },
                 )
             }
+    val instanceMethodRan =
+        manifestProbes.entries
+            .filter { (key, probe) ->
+                probe.kind == ProbeKind.METHOD && !probe.static &&
+                    probe.methodName != CONSTRUCTOR && probe.methodName != CLASS_INIT &&
+                    (latestHitsTotal[key] ?: 0L) > 0L
+            }.mapTo(mutableSetOf()) { it.value.className }
     val findings = mutableMapOf<String, ClassFinding>()
     val covered = mutableMapOf<String, List<NodeKey>>()
     val constructed = mutableSetOf<String>()
@@ -1165,6 +1172,7 @@ private fun judgeClasses(): ClassJudgement {
 
                 constructors.isNotEmpty() &&
                     className !in constructed &&
+                    className !in instanceMethodRan &&
                     classMethods.any { it.key.methodName != CONSTRUCTOR && it.key.methodName != CLASS_INIT && !it.value.static } -> {
                     ClassFinding.NEVER_INSTANTIATED
                 }

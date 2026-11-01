@@ -14,7 +14,7 @@ This page covers the whole class. For what the agent records inside a class that
 |---|---|---|
 | Instrumented | The class loaded, matched the rules, and has at least one method, default-argument site or static initialiser to probe. | Its probes reach the collector in the manifest. |
 | Never initialised | The class loaded, has a static initialiser, and no instance ran it. | `neverInitialized()` in [the testkit](testkit-api), and Otherlode's class findings. |
-| Never instantiated | The class loaded, and none of its constructors ran in any instance. | `neverInstantiated()`, and Otherlode's class findings. |
+| Never instantiated | The class loaded, and none of its constructors or instance methods ran in any instance. | `neverInstantiated()`, and Otherlode's class findings. |
 | Skipped | The class matched the rules and the agent could not instrument it, or its manifest entries are too large to send. | A `WARNING` log line, `skippedClasses()`, and the manifest's skipped list. |
 | Loaded where no transformer saw it | The class loaded, but the JVM offered it to no transformer. | One `INFO` log line, and the manifest. |
 | Failed to load | The agent wove the class and the JVM never defined it. | A `WARNING` log line, `failedToLoad()`, and the manifest. |
@@ -48,9 +48,9 @@ A class is **never instantiated** when all of these hold:
 - Some instance loaded it.
 - It is not never initialised.
 - It has at least one constructor, and none ran in any instance.
-- It has at least one method that is neither static, a constructor, nor the static initialiser.
+- It has at least one method that is neither static, a constructor, nor the static initialiser, and none of those ran in any instance.
 
-No instance of the class or of a subclass ever existed, since a subclass's constructor runs its superclass's. An interface has no constructor, and a class with only static methods is never judged. The class's static methods can still run, so they stay listed as ordinary methods.
+No instance of the class or of a subclass ran its constructor, since a subclass's constructor runs its superclass's. Java deserialization and libraries such as Gson, Kryo and Objenesis make an instance without its constructor. Its instance methods then run, so the class is not judged. An interface has no constructor, and a class with only static methods is never judged. The class's static methods can still run, so they stay listed as ordinary methods.
 
 Both findings leave out the class's inline, generated and unread-shape methods when judging, because the agent makes no never-hit claim about those. The methods that can only run through a class with a finding are not listed on their own. A never-hit method is covered by a never-initialised class, and a never-hit constructor or instance method by a never-instantiated one. A constructor is a finding itself only as an unused overload: it never ran while another constructor of its class did.
 

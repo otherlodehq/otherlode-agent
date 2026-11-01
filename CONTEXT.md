@@ -388,7 +388,7 @@ A class that some in-scope run loaded, that has a static initialiser, and whose 
 _Avoid_: uninitialised class, dead class, never used
 
 **Never instantiated**:
-A class that some in-scope run loaded, that declares at least one constructor and at least one instance method, and none of whose constructors any in-scope run ran. No instance of it or of a subclass ever existed, since a subclass's constructor runs its superclass's. A class with only static methods is never judged, since nobody meant to create one, and neither is an interface, which has no constructor. A class with a stronger finding, never loaded or never initialised, is not also never instantiated. Its static methods can still run, so they stay listed.
+A class that some in-scope run loaded, that declares at least one constructor and at least one instance method, and none of whose constructors or instance methods any in-scope run ran, marked ones included. No instance of it or of a subclass ran its constructor, since a subclass's constructor runs its superclass's. A deserialized instance runs no constructor, so a hit instance method rules the finding out. A class with only static methods is never judged, since nobody meant to create one, and neither is an interface, which has no constructor. A class with a stronger finding, never loaded or never initialised, is not also never instantiated. Its static methods can still run, so they stay listed.
 _Avoid_: unused class, never constructed, never created
 
 **Unused overload**:

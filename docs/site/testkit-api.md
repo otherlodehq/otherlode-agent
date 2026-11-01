@@ -76,7 +76,7 @@ A finding method takes no arguments and returns a list. It judges the merged hit
 | `neverHitRoutineOutcomes(): List<ProbeRef>` | The branch outcomes `neverHit` leaves out because they are routine, each with its `routine` kind. |
 | `neverHitUnreadShapes(): List<ProbeRef>` | The probes `neverHit` leaves out because their code has the outline of compiler output the agent cannot read, each with its `unreadShape` family. |
 | `neverInitialized(): List<ClassFindingRef>` | Classes some instance loaded whose static initialiser ran in no instance. A class with no static initialiser is never listed. |
-| `neverInstantiated(): List<ClassFindingRef>` | Classes some instance loaded, that are not never initialised, with a constructor and an instance method, and none of whose constructors ran. A class with only static methods and an interface are never listed. |
+| `neverInstantiated(): List<ClassFindingRef>` | Classes some instance loaded, that are not never initialised, with a constructor and an instance method, and none of whose constructors or instance methods ran, generated and inline ones included. A class with only static methods and an interface are never listed. |
 | `neverLoaded(): List<String>` | Class names a complete static baseline declared that no instance ever loaded. Throws `IllegalStateException` until a complete baseline has arrived, which needs the agent option `staticBaselineEnabled=true`. |
 | `failedToLoad(): List<String>` | Class names the agent wove that the JVM never defined in any instance. Each is a deployment problem to fix and never dead code. |
 | `failedToInitialize(): List<String>` | Class names that failed to initialise, sorted. See [Classes that failed to initialise](#classes-that-failed-to-initialise). Each is a deployment problem to fix and never dead code. |
@@ -483,7 +483,7 @@ A finding about a whole class. A class holds at most one, the first that applies
 |---|---|
 | `NEVER_LOADED` | A complete static baseline declared the class and no instance ever loaded it. See `neverLoaded`. |
 | `NEVER_INITIALIZED` | The class loaded and its static initialiser never ran. |
-| `NEVER_INSTANTIATED` | The class loaded, has instance methods, and none of its constructors ran. |
+| `NEVER_INSTANTIATED` | The class loaded, has instance methods, and none of its constructors or instance methods ran. |
 
 ### EndpointDiscoverySource
 

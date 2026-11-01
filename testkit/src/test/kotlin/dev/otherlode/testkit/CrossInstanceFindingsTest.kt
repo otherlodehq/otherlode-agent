@@ -167,6 +167,35 @@ class CrossInstanceFindingsTest {
     }
 
     @Test
+    fun `a class whose instance method ran is not never instantiated, though no constructor ran`() {
+        val target = startCollector()
+        val dto =
+            listOf(
+                method(1, 0, "com.acme.Dto", "<init>"),
+                method(1, 1, "com.acme.Dto", "total"),
+                method(1, 2, "com.acme.Dto", "other"),
+            )
+        send(target, "i-1", dto, 1 to 1)
+
+        assertEquals(emptyList(), target.neverInstantiated(), "an instance made without its constructor ran total")
+        assertEquals(listOf("Dto#other"), target.neverHit().map { it.id() }, "the constructor of a class no instance constructed is no row")
+    }
+
+    @Test
+    fun `a class whose only hit instance method is generated is not never instantiated`() {
+        val target = startCollector()
+        val key =
+            listOf(
+                method(1, 0, "com.acme.Key", "<init>"),
+                method(1, 1, "com.acme.Key", "equals", generatedBy = GeneratedBy.DATA_CLASS),
+                method(1, 2, "com.acme.Key", "describe"),
+            )
+        send(target, "i-1", key, 1 to 1)
+
+        assertEquals(emptyList(), target.neverInstantiated(), "a generated equals ran on an instance")
+    }
+
+    @Test
     fun `a class no instance constructed is never instantiated once, counting both instances loading it`() {
         val target = startCollector()
         val foo = listOf(method(1, 0, "com.acme.Foo", "<init>"), method(1, 1, "com.acme.Foo", "run"))
