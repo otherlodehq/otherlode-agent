@@ -48,6 +48,7 @@ the section being read.
 
 ### Fixed
 
+- A servlet context its container destroyed, as on undeploy or shutdown, no longer switches the `servlet` module off. The module drops the context and keeps the endpoints it declared, so a redeploy is counted and the run's live servlet endpoints are not reported as `module-disabled`.
 - The check OpenJPA's enhancer adds to a `writeObject` you wrote, `if (clear) pcSetDetachedState(null)` before each return, no longer reads as an untaken branch. It gets no branch probe (`BranchDropReason.JPA_WEAVING`), and the method keeps its entry probe and every branch you wrote. It needs build-time enhancement, like the other woven checks.
 - A stub kotlinc writes in a build that mixes a `-jvm-default=disable` library with a consumer compiled with `all` or `all-compatibility` is marked `DEFAULT_IMPLS` when the `$DefaultImpls` method it calls does not exist, where it read as your code and as a method that was never hit. A call to it records an edge to the stub. The stub stays unmarked when the agent cannot read the `$DefaultImpls` class.
 - A `Serializable` class below Java 11 keeps its default `serialVersionUID` when woven. Its counts field is private, and a class with no static initialiser gets none, so data serialized by a JVM without the agent reads in one with it. A woven `Serializable` interface below Java 11 still changes its own value.

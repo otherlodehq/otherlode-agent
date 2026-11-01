@@ -108,7 +108,11 @@ private class Held(
  * added since is declared within one flush interval.
  *
  * A mapping outside the specification's five forms, or a servlet class whose class file cannot be
- * read, disables the module with `ROUTE_WALK_FAILED`, and it declares nothing from that read.
+ * read, disables the module with `ROUTE_WALK_FAILED`, and it declares nothing from that read. So does
+ * any throw while a context is read for the first time.
+ *
+ * A held context that throws `IllegalStateException` when it is read again has been destroyed by its
+ * container, as on undeploy or shutdown. The module drops it and keeps the endpoints it declared.
  */
 internal class ServletContexts(
     private val shapes: ServletShapes,
@@ -127,7 +131,7 @@ internal class ServletContexts(
         synchronized(lock) {
             if (isHeld(context)) return
             val entry = Held(context)
-            refresh(entry, context)
+            refresh(entry, context, dropDestroyed = false)
             held = (held.filter { it.get() != null } + entry).toTypedArray()
         }
     }
@@ -136,10 +140,12 @@ internal class ServletContexts(
     fun refreshAll() {
         synchronized(lock) {
             held = held.filter { it.get() != null }.toTypedArray()
+            val destroyed = HashSet<Held>()
             for (entry in held) {
                 val context = entry.get() ?: continue
-                refresh(entry, context)
+                if (!refresh(entry, context, dropDestroyed = true)) destroyed += entry
             }
+            if (destroyed.isNotEmpty()) held = held.filter { it !in destroyed }.toTypedArray()
         }
     }
 
@@ -151,17 +157,30 @@ internal class ServletContexts(
         return false
     }
 
+    /**
+     * Reads [context] and declares what is new. Returns false when [dropDestroyed] is set and the container
+     * destroyed the context, which throws `IllegalStateException` from the read.
+     */
     private fun refresh(
         entry: Held,
         context: Any,
-    ) {
-        if (OtherlodeEndpoints.isDisabled(MODULE_NAME)) return
+        dropDestroyed: Boolean,
+    ): Boolean {
+        if (OtherlodeEndpoints.isDisabled(MODULE_NAME)) return true
         try {
             val api = ServletApi.of(context)
-            val loader = api.loaderOf(context)
+            val loader: ClassLoader
+            val registrations: List<Registration>
+            try {
+                loader = api.loaderOf(context)
+                registrations = api.registrationsOf(context)
+            } catch (e: IllegalStateException) {
+                if (dropDestroyed) return false
+                throw e
+            }
             val pending = mutableListOf<Triple<Registration, String, ServletShape.Counted>>()
             val skipped = mutableListOf<String>()
-            for (registration in api.registrationsOf(context)) {
+            for (registration in registrations) {
                 for (mapping in registration.mappings) {
                     val id = declaredId(registration, mapping)
                     if (id in entry.declared) continue
@@ -188,6 +207,7 @@ internal class ServletContexts(
             val reason = if (t is UnsupportedMapping) t.message ?: t.javaClass.name else t.javaClass.name
             OtherlodeEndpoints.moduleDisabled(MODULE_NAME, OtherlodeEndpoints.KIND_ROUTE_WALK_FAILED, reason)
         }
+        return true
     }
 
     private fun register(
