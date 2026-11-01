@@ -225,7 +225,7 @@ class ScalacMatrixTest {
      * `Written`, `Multi`, `Svc`, `BodyVal` and `HandCopy`, `HandCopy.hashCode`, the lookalikes
      * of `CaseLookalikes.scala`, the hand-written `ordinal` in the companion of the local enum
      * `Door` in `LocalEnums.scala`, and `toString$extension` of the case value class `Label`, whose
-     * `toString` is its own, `Almost`'s methods and `WrappingGreeter.greet`), which with no compiler named cannot be told from scalac's.
+     * `toString` is its own, `Almost`'s methods, `WrappingGreeter.greet` and `WrappingHandler.reversed`, and the `apply` of `Inc` and `Halve`, whose specialised twin no readable supertype declares), which with no compiler named cannot be told from scalac's.
      */
     private val scala3VersionBlindUnread =
         setOf(
@@ -245,6 +245,9 @@ class ScalacMatrixTest {
             "Almost.twice",
             "Label\$.toString\$extension",
             "WrappingGreeter.greet",
+            "WrappingHandler.reversed",
+            "Inc.apply",
+            "Halve.apply",
             "Lie2\$.fromProduct",
             "Lie2.equals",
             "Lie2.hashCode",
@@ -284,6 +287,10 @@ class ScalacMatrixTest {
             "Almost.twice",
             "Label\$.toString\$extension",
             "WrappingGreeter.greet",
+            "WrappingHandler.reversed",
+            "Inc.apply",
+            "Halve.apply",
+            "MySeq.apply",
             "Lie.productArity",
             "Lie.productElement",
             "Lie.productElementName",

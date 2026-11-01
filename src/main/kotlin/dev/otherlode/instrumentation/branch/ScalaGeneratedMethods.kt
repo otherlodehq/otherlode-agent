@@ -153,7 +153,7 @@ internal object ScalaGeneratedMethods {
     fun of(
         classBytes: ByteArray,
         lookup: (internalName: String) -> ByteArray?,
-    ): Map<Pair<String, String>, GeneratedBy> = marksOf(readShape(classBytes), lookup).generated
+    ): Map<Pair<String, String>, GeneratedBy> = marksOf(readShape(classBytes), readOnce(lookup)).generated
 
     /**
      * The forwarders of the Scala class [classBytes] and nothing else: a value class's boxed
@@ -165,7 +165,7 @@ internal object ScalaGeneratedMethods {
         lookup: (internalName: String) -> ByteArray?,
     ): Forwarders {
         val shape = readShape(classBytes)
-        val marks = forwarderMarks(shape, lookup)
+        val marks = forwarderMarks(shape, readOnce(lookup))
         return Forwarders(marks.generated, marks.passThrough)
     }
 
@@ -209,9 +209,10 @@ internal object ScalaGeneratedMethods {
      */
     fun analyse(
         classBytes: ByteArray,
-        lookup: (internalName: String) -> ByteArray?,
+        reader: (internalName: String) -> ByteArray?,
         releaseOf: (internalName: String) -> String?,
     ): Result {
+        val lookup = readOnce(reader)
         val shape = readShape(classBytes)
         val sides = valueSidesOf(shape, lookup)
         val marks = marksOf(shape, lookup, sides)
@@ -437,7 +438,13 @@ internal object ScalaGeneratedMethods {
                     shape.methods.any { (key, method) ->
                         key !in generated &&
                             !method.isStatic &&
-                            method.code.orEmpty().any { it is Insn.Call && it.opcode == Opcodes.INVOKESTATIC && it.name == key.first + "$" }
+                            method.code.orEmpty().any {
+                                it is Insn.Call && (
+                                    (it.opcode == Opcodes.INVOKESTATIC && it.name == key.first + "$") ||
+                                        callsJavaDefault(shape, key, it) ||
+                                        callsSpecialisedTwin(shape, key, it)
+                                )
+                            }
                     }
             }
 
@@ -1057,6 +1064,16 @@ internal object ScalaGeneratedMethods {
      * `invokespecial T.m` and the return. The trait's default `m` holds the code and is never
      * marked here. Scala 3 before 3.8 writes the class's forwarder as a bridge. A default-argument
      * getter (`m$default$N`) is left to ADR 0023.
+     *
+     * Two more forwarders share the mark. A class that implements a Java interface J gets an
+     * instance method for each default method of J whose body is exactly `aload_0`, each parameter
+     * loaded in order, `invokespecial J.m` with the method's own name and descriptor, and the
+     * return. J must be a direct interface of the class; when [lookup] reads J, it must also declare
+     * `m` as a default method. A class that extends a specialised function gets `apply(I)I` as
+     * `aload_0`, the parameters, `invokevirtual` of its own `apply$mcII$sp` with the same descriptor,
+     * and the return, where the class declares that twin and a supertype that [lookup] reads, such as
+     * `scala/Function1`, declares it too; scalac holds the body in the twin and calls it, so
+     * `apply(I)I` itself never runs. A twin no supertype declares is the adopter's own method.
      */
     private fun traitForwarders(
         shape: ClassShape,
@@ -1064,35 +1081,78 @@ internal object ScalaGeneratedMethods {
     ): Set<Pair<String, String>> {
         if (shape.access and Opcodes.ACC_INTERFACE != 0) return traitEntries(shape)
         val result = mutableSetOf<Pair<String, String>>()
-        var supertypes: Set<String>? = null
+        var supertypes: Map<String, ClassShape?>? = null
         for ((key, method) in shape.methods) {
             val (name, descriptor) = key
             if (method.isStatic || name == "<init>" || DEFAULT_GETTER_NAME.matches(name)) continue
             val body = method.body ?: continue
             val call = body.getOrNull(body.size - 2) as? Insn.Call ?: continue
+            val returnType = Type.getReturnType(descriptor)
+            val loads = listOf(aload(0)) + parameterLoads(descriptor, 1)
+            val end = Insn.Plain(returnType.getOpcode(Opcodes.IRETURN))
+            if (specialisedTwinOf(shape, key) == call.name && body == loads + call + end &&
+                call.opcode == Opcodes.INVOKEVIRTUAL && call.owner == shape.internalName && call.descriptor == descriptor
+            ) {
+                val declared = supertypes ?: supertypeShapes(shape, lookup).also { supertypes = it }
+                if (declaresTwinAbove(declared, call.name, descriptor) == true) result += key
+                continue
+            }
+            if (call.opcode == Opcodes.INVOKESPECIAL && call.name == name && call.descriptor == descriptor && body == loads + call + end) {
+                if (call.owner !in shape.interfaces) continue
+                val declared = supertypes ?: supertypeShapes(shape, lookup).also { supertypes = it }
+                val java = declared[call.owner]
+                if (java == null || java.declaresDefault(key)) result += key
+                continue
+            }
             val trait = call.owner
             val entryName = "$name$"
-            val entryDescriptor = "(L$trait;${parameterPart(descriptor)})${Type.getReturnType(descriptor)}"
-            val expected =
-                listOf(aload(0)) + parameterLoads(descriptor, 1) +
-                    Insn.Call(Opcodes.INVOKESTATIC, trait, entryName, entryDescriptor) +
-                    Insn.Plain(Type.getReturnType(descriptor).getOpcode(Opcodes.IRETURN))
-            if (body != expected) continue
-            val known = supertypes ?: supertypesOf(shape, lookup).also { supertypes = it }
-            if (trait !in known) continue
-            val declared = readClass(trait, lookup, bodiesOf = emptySet()) ?: continue
+            val entryDescriptor = "(L$trait;${parameterPart(descriptor)})$returnType"
+            if (body != loads + Insn.Call(Opcodes.INVOKESTATIC, trait, entryName, entryDescriptor) + end) continue
+            val known = supertypes ?: supertypeShapes(shape, lookup).also { supertypes = it }
+            val declared = known[trait] ?: continue
             val entry = declared.methods[entryName to entryDescriptor]
-            val default = declared.methods[key]
-            if (declared.access and Opcodes.ACC_INTERFACE != 0 &&
-                entry?.isStatic == true &&
-                default != null &&
-                !default.isStatic &&
-                default.access and Opcodes.ACC_ABSTRACT == 0
-            ) {
+            if (declared.access and Opcodes.ACC_INTERFACE != 0 && entry?.isStatic == true && declared.declaresDefault(key)) {
                 result += key
             }
         }
         return result
+    }
+
+    /** Whether [this] is an interface that declares [key] as a method with a body and no receiver restriction. */
+    private fun ClassShape.declaresDefault(key: Pair<String, String>): Boolean {
+        val method = methods[key]
+        return access and Opcodes.ACC_INTERFACE != 0 && method != null && !method.isStatic && method.access and Opcodes.ACC_ABSTRACT == 0
+    }
+
+    /**
+     * The name of the specialised twin `m$mc<return><parameters>$sp` of the method [key] when every
+     * type in its descriptor is a primitive and [shape] declares that twin with the same
+     * descriptor, else null.
+     */
+    private fun specialisedTwinOf(
+        shape: ClassShape,
+        key: Pair<String, String>,
+    ): String? {
+        val (name, descriptor) = key
+        val types = listOf(Type.getReturnType(descriptor)) + Type.getArgumentTypes(descriptor)
+        if (types.any { it.sort == Type.OBJECT || it.sort == Type.ARRAY || it.sort == Type.METHOD }) return null
+        val twin = "$name\$mc${types.joinToString("") { it.descriptor }}\$sp"
+        val method = shape.methods[twin to descriptor] ?: return null
+        return twin.takeIf { !method.isStatic && method.access and Opcodes.ACC_ABSTRACT == 0 }
+    }
+
+    /**
+     * Whether a supertype in [declared] declares the instance method [twin] with [descriptor]: true
+     * when one does, null when none does and some supertype could not be read, false when all were
+     * read and none does.
+     */
+    private fun declaresTwinAbove(
+        declared: Map<String, ClassShape?>,
+        twin: String,
+        descriptor: String,
+    ): Boolean? {
+        if (declared.values.any { it?.methods?.get(twin to descriptor)?.isStatic == false }) return true
+        return if (declared.values.any { it == null }) null else false
     }
 
     /** The static `m$` of the trait [shape] that only calls its default `m`; see [traitForwarders]. */
@@ -1122,19 +1182,23 @@ internal object ScalaGeneratedMethods {
                 }
             }.keys
 
-    /** Every superclass and interface of [shape], by internal name, as far as [lookup] reads them. */
-    private fun supertypesOf(
+    /**
+     * Every superclass and interface of [shape], by internal name, each read once. A type [lookup]
+     * cannot read maps to null.
+     */
+    private fun supertypeShapes(
         shape: ClassShape,
         lookup: (String) -> ByteArray?,
-    ): Set<String> {
-        val seen = LinkedHashSet<String>()
+    ): Map<String, ClassShape?> {
+        val seen = LinkedHashMap<String, ClassShape?>()
         val queue = ArrayDeque(listOfNotNull(shape.superName) + shape.interfaces)
         while (queue.isNotEmpty() && seen.size < MAX_SUPERTYPES) {
             val name = queue.removeFirst()
-            if (!seen.add(name)) continue
-            val header = readClass(name, lookup, bodiesOf = emptySet()) ?: continue
-            header.superName?.let(queue::add)
-            queue.addAll(header.interfaces)
+            if (name in seen) continue
+            val header = readClass(name, lookup, bodiesOf = emptySet())
+            seen[name] = header
+            header?.superName?.let(queue::add)
+            if (header != null) queue.addAll(header.interfaces)
         }
         return seen
     }
@@ -1448,8 +1512,11 @@ internal object ScalaGeneratedMethods {
      * The instance methods of [shape] that a trait forwarder could be, whatever their bodies: a
      * method of a class with an interface among the supertypes its own interfaces lead to that
      * declares the static `m$` taking that interface and the method's parameters, and a default `m`
-     * with the method's descriptor, and whose body calls that `m$`. A method with a body of its own
-     * is not in the outline. A default-argument getter is left out.
+     * with the method's descriptor, and whose body calls that `m$`. The same holds for a method
+     * whose body has an `invokespecial` of a direct interface's method with its own name and
+     * descriptor (the interface, when read, declaring a default), and for one that has an
+     * `invokevirtual` of its own class's specialised `m$mc...$sp` twin. A method with a body of its
+     * own is not in the outline. A default-argument getter is left out.
      */
     private fun traitForwarderOutline(
         shape: ClassShape,
@@ -1457,38 +1524,78 @@ internal object ScalaGeneratedMethods {
     ): List<Pair<String, String>> {
         if (shape.access and Opcodes.ACC_INTERFACE != 0 || shape.interfaces.isEmpty()) return emptyList()
         val traits = mutableListOf<ClassShape>()
-        val seen = LinkedHashSet<String>()
+        val seen = LinkedHashMap<String, ClassShape?>()
         val queue = ArrayDeque(shape.interfaces)
         while (queue.isNotEmpty() && seen.size < MAX_SUPERTYPES) {
             val name = queue.removeFirst()
-            if (!seen.add(name)) continue
-            val header = readClass(name, lookup, bodiesOf = emptySet()) ?: continue
-            if (header.access and Opcodes.ACC_INTERFACE == 0) continue
+            if (name in seen) continue
+            val header = readClass(name, lookup, bodiesOf = emptySet())
+            seen[name] = header
+            if (header == null || header.access and Opcodes.ACC_INTERFACE == 0) continue
             traits += header
             queue.addAll(header.interfaces)
         }
-        if (traits.isEmpty()) return emptyList()
+        val supertypes by lazy { supertypeShapes(shape, lookup) }
         return shape.methods.keys.filter { key ->
             val (name, descriptor) = key
-            !shape.methods.getValue(key).isStatic &&
+            val method = shape.methods.getValue(key)
+            !method.isStatic &&
                 name != "<init>" &&
                 !DEFAULT_GETTER_NAME.matches(name) &&
-                traits.any { trait ->
-                    val entryDescriptor = "(L${trait.internalName};${parameterPart(descriptor)})${Type.getReturnType(descriptor)}"
-                    val default = trait.methods[key]
-                    trait.methods["$name$" to entryDescriptor]?.isStatic == true &&
-                        default != null &&
-                        !default.isStatic &&
-                        default.access and Opcodes.ACC_ABSTRACT == 0 &&
-                        shape.methods
-                            .getValue(
-                                key,
-                            ).code
-                            ?.contains(Insn.Call(Opcodes.INVOKESTATIC, trait.internalName, "$name$", entryDescriptor)) ==
-                        true
-                }
+                (
+                    callsSpecialisedTwinIn(shape, key) { supertypes } ||
+                        method.code.orEmpty().any {
+                            it is Insn.Call && callsJavaDefault(shape, key, it) &&
+                                seen[it.owner].let { java -> java == null || java.declaresDefault(key) }
+                        } ||
+                        traits.any { trait ->
+                            val entryDescriptor = "(L${trait.internalName};${parameterPart(descriptor)})${Type.getReturnType(descriptor)}"
+                            val default = trait.methods[key]
+                            trait.methods["$name$" to entryDescriptor]?.isStatic == true &&
+                                default != null &&
+                                !default.isStatic &&
+                                default.access and Opcodes.ACC_ABSTRACT == 0 &&
+                                method.code?.contains(Insn.Call(Opcodes.INVOKESTATIC, trait.internalName, "$name$", entryDescriptor)) ==
+                                true
+                        }
+                )
         }
     }
+
+    /** Whether [call], in the method [key] of [shape], is an `invokespecial` of the same method on a direct interface. */
+    private fun callsJavaDefault(
+        shape: ClassShape,
+        key: Pair<String, String>,
+        call: Insn.Call,
+    ): Boolean =
+        call.opcode == Opcodes.INVOKESPECIAL && call.name == key.first && call.descriptor == key.second && call.owner in shape.interfaces
+
+    /** Whether [call], in the method [key] of [shape], is an `invokevirtual` of the method's specialised twin on [shape]. */
+    private fun callsSpecialisedTwin(
+        shape: ClassShape,
+        key: Pair<String, String>,
+        call: Insn.Call,
+    ): Boolean =
+        call.opcode == Opcodes.INVOKEVIRTUAL &&
+            call.owner == shape.internalName &&
+            call.descriptor == key.second &&
+            call.name == specialisedTwinOf(shape, key)
+
+    /**
+     * Whether the method [key] of [shape] calls its specialised twin and no supertype read from
+     * [supertypes] leaves the twin undeclared.
+     */
+    private fun callsSpecialisedTwinIn(
+        shape: ClassShape,
+        key: Pair<String, String>,
+        supertypes: () -> Map<String, ClassShape?>,
+    ): Boolean =
+        shape.methods
+            .getValue(key)
+            .code
+            .orEmpty()
+            .any { it is Insn.Call && callsSpecialisedTwin(shape, key, it) } &&
+            declaresTwinAbove(supertypes(), specialisedTwinOf(shape, key).orEmpty(), key.second) != false
 
     /** The static `m$` of the trait [shape] that has a default `m` twin, whatever its body; see [traitEntries]. */
     private fun traitEntryOutline(shape: ClassShape): List<Pair<String, String>> {
@@ -2190,6 +2297,25 @@ internal object ScalaGeneratedMethods {
     private fun ClassShape.constantOrdinal(): Int? {
         val body = methods[ORDINAL]?.body ?: return null
         return if (body.size == 2 && body[1] == Insn.Plain(Opcodes.IRETURN)) (body[0] as? Insn.IntConstant)?.value else null
+    }
+
+    /** [lookup] asked at most once for each class; a failure is kept as no class. */
+    private fun readOnce(lookup: (String) -> ByteArray?): (String) -> ByteArray? {
+        val read = HashMap<String, ByteArray?>()
+        return { internalName ->
+            if (internalName in read) {
+                read[internalName]
+            } else {
+                val bytes =
+                    try {
+                        lookup(internalName)
+                    } catch (_: Exception) {
+                        null
+                    }
+                read[internalName] = bytes
+                bytes
+            }
+        }
     }
 
     private fun readClass(

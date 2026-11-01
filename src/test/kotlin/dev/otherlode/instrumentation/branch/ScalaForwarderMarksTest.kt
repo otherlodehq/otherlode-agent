@@ -63,9 +63,9 @@ class ScalaForwarderMarksTest {
         scala3: Boolean,
     ): CompilerFixtures.Build =
         if (key == "baseline") {
-            CompilerFixtures.scalaBaseline(if (scala3) "3.3.4" else "2.13.15")
+            CompilerFixtures.scalaBaseline(if (scala3) "3.3.4" else "2.13.15").withScalaLibrary(if (scala3) "3.3.4" else "2.13.15")
         } else {
-            CompilerFixtures.scalac(key)
+            CompilerFixtures.scalac(key).withScalaLibrary(key)
         }
 
     /**
@@ -225,6 +225,189 @@ class ScalaForwarderMarksTest {
     fun `scala 2 - a trait's static entry and a mixing class's forwarder are TRAIT_FORWARDER and the default method is not`(key: String) =
         `a trait and the classes that mix it in`(key, false)
 
+    private val comparatorDefaults =
+        listOf("reversed", "thenComparing", "thenComparingInt", "thenComparingLong", "thenComparingDouble")
+
+    /** Asserts that every method of [simpleName] called one of [names] is a trait forwarder. */
+    private fun forwardedDefaults(
+        key: String,
+        scala3: Boolean,
+        simpleName: String,
+        names: List<String>,
+    ) {
+        val entries = build(key, scala3).markEntries(simpleName).filter { it.third !in OTHER_RULES }
+        for (name in names) {
+            val marks = entries.filter { it.first == name }
+            assertTrue(marks.isNotEmpty(), "$key $simpleName has no $name")
+            for ((_, descriptor, mark) in marks) assertEquals(TRAIT, mark, "$key $simpleName.$name$descriptor")
+        }
+    }
+
+    private fun `a class that implements a Java interface with default methods`(
+        key: String,
+        scala3: Boolean,
+    ) {
+        forwardedDefaults(key, scala3, "ComparingHandler", comparatorDefaults)
+        assertMarks(key, scala3, "ComparingHandler", comparatorDefaults.associateWith { TRAIT }, comparatorDefaults.toSet())
+        forwardedDefaults(key, scala3, "EvenLength", listOf("and", "negate", "or"))
+        forwardedDefaults(key, scala3, "Shout", listOf("compose", "andThen"))
+        assertMarks(
+            key,
+            scala3,
+            "RenamingHandler",
+            comparatorDefaults.associateWith {
+                TRAIT
+            } + ("flipped" to GeneratedBy.NONE),
+            comparatorDefaults.toSet(),
+        )
+        assertMarks(
+            key,
+            scala3,
+            "OverridingHandler",
+            comparatorDefaults
+                .filter {
+                    it != "reversed"
+                }.associateWith { TRAIT },
+            comparatorDefaults.toSet(),
+        )
+    }
+
+    @ParameterizedTest(name = "scalac {0}")
+    @MethodSource("scala3Builds")
+    fun `scala 3 - a forwarder to a Java default method is TRAIT_FORWARDER and a method of the adopter's is not`(key: String) =
+        `a class that implements a Java interface with default methods`(key, true)
+
+    @ParameterizedTest(name = "scalac {0}")
+    @MethodSource("scala2Builds")
+    fun `scala 2 - a forwarder to a Java default method is TRAIT_FORWARDER and a method of the adopter's is not`(key: String) =
+        `a class that implements a Java interface with default methods`(key, false)
+
+    @ParameterizedTest(name = "scalac {0}")
+    @MethodSource("scala3Builds")
+    fun `scala 3 - a forwarder to a Java default method reached through a trait is TRAIT_FORWARDER`(key: String) {
+        val entries = build(key, true).markEntries("TransitiveHandler").filter { it.third !in OTHER_RULES }
+        val forwarders = entries.filter { it.first in comparatorDefaults }
+        assertTrue(forwarders.isNotEmpty(), "$key TransitiveHandler has no forwarder, so scalac left the defaults to the interface")
+        for ((name, descriptor, mark) in forwarders) assertEquals(TRAIT, mark, "$key TransitiveHandler.$name$descriptor")
+    }
+
+    private fun `a function over a primitive`(
+        key: String,
+        scala3: Boolean,
+    ) {
+        fun markOf(
+            simpleName: String,
+            method: String,
+        ) = build(key, scala3).markEntries(simpleName).single { it.first + it.second == method }.third
+
+        assertEquals(TRAIT, markOf("Inc", "apply(I)I"), "$key Inc.apply")
+        assertEquals(GeneratedBy.NONE, markOf("Inc", "apply\$mcII\$sp(I)I"), "$key Inc.apply\$mcII\$sp")
+        assertEquals(TRAIT, markOf("Halve", "apply(D)D"), "$key Halve.apply")
+        assertEquals(GeneratedBy.NONE, markOf("Halve", "apply\$mcDD\$sp(D)D"), "$key Halve.apply\$mcDD\$sp")
+        assertEquals(TRAIT, markOf("Inc2", "apply(I)I"), "$key Inc2.apply")
+        assertEquals(GeneratedBy.NONE, markOf("Inc2", "apply\$mcII\$sp(I)I"), "$key Inc2.apply\$mcII\$sp")
+        assertMarks(key, scala3, "Look", emptyMap())
+        assertEquals(emptyList(), build(key, scala3).unreadEntries("Look"), "$key Look")
+    }
+
+    @ParameterizedTest(name = "scalac {0}")
+    @MethodSource("scala3Builds")
+    fun `scala 3 - a primitive function's apply that forwards to its specialised twin is TRAIT_FORWARDER`(key: String) =
+        `a function over a primitive`(key, true)
+
+    @ParameterizedTest(name = "scalac {0}")
+    @MethodSource("scala2Builds")
+    fun `scala 2 - a primitive function's apply that forwards to its specialised twin is TRAIT_FORWARDER`(key: String) =
+        `a function over a primitive`(key, false)
+
+    @Test
+    fun `scala 2 - a specialised apply whose twin's supertype cannot be read is an unread shape`() {
+        val unreadable: (String) -> ByteArray? = { if (it.startsWith("scala/")) null else scala2Fixtures.lookup(it) }
+        val analysis = analyse(scala2Fixtures.classBytes("Inc"), unreadable)
+
+        assertEquals(GeneratedBy.NONE, analysis.generatedBy("apply", "(I)I"))
+        assertEquals(UnreadShape.TRAIT_FORWARDER, analysis.unreadShape("apply", "(I)I"))
+    }
+
+    @Test
+    fun `a specialised apply with one more instruction is ordinary code`() {
+        val analysis = analyse(altered(fixtures.classBytes("Inc"), "apply"), fixtures.lookup)
+
+        assertEquals(GeneratedBy.NONE, analysis.generatedBy("apply", "(I)I"))
+    }
+
+    @Test
+    fun `a forwarder to a Java default method with one more instruction is ordinary code and its siblings stay marked`() {
+        val analysis = analyse(altered(fixtures.classBytes("ComparingHandler"), "reversed"), fixtures.lookup)
+
+        assertEquals(GeneratedBy.NONE, analysis.generatedBy("reversed", "()Ljava/util/Comparator;"))
+        assertEquals(TRAIT, analysis.generatedBy("thenComparingInt", "(Ljava/util/function/ToIntFunction;)Ljava/util/Comparator;"))
+    }
+
+    private val withJdk: (String) -> ByteArray? = { name ->
+        fixtures.lookup(name) ?: ClassLoader.getSystemResourceAsStream("$name.class")?.use { it.readBytes() }
+    }
+
+    @Test
+    fun `a forwarder to a Java default method is marked when the interface can be read and declares the default`() {
+        val analysis = analyse(fixtures.classBytes("ComparingHandler"), withJdk)
+
+        assertEquals(TRAIT, analysis.generatedBy("reversed", "()Ljava/util/Comparator;"))
+        assertEquals(TRAIT, analysis.generatedBy("thenComparingInt", "(Ljava/util/function/ToIntFunction;)Ljava/util/Comparator;"))
+    }
+
+    @Test
+    fun `a forwarder to a Java method the readable interface does not declare as a default is ordinary code`() {
+        val bare = ClassWriter(0)
+        bare.visit(
+            Opcodes.V17,
+            Opcodes.ACC_PUBLIC or Opcodes.ACC_INTERFACE or Opcodes.ACC_ABSTRACT,
+            "java/util/Comparator",
+            null,
+            "java/lang/Object",
+            null,
+        )
+        bare.visitMethod(Opcodes.ACC_PUBLIC or Opcodes.ACC_ABSTRACT, "reversed", "()Ljava/util/Comparator;", null, null).visitEnd()
+        bare.visitEnd()
+        val lookup: (String) -> ByteArray? = { if (it == "java/util/Comparator") bare.toByteArray() else fixtures.lookup(it) }
+        val analysis = analyse(fixtures.classBytes("ComparingHandler"), lookup)
+
+        assertEquals(GeneratedBy.NONE, analysis.generatedBy("reversed", "()Ljava/util/Comparator;"))
+        assertEquals(
+            GeneratedBy.NONE,
+            analysis.generatedBy("thenComparingInt", "(Ljava/util/function/ToIntFunction;)Ljava/util/Comparator;"),
+        )
+    }
+
+    @Test
+    fun `analysing a class that mixes in many traits reads each class once`() {
+        val loader =
+            java.net.URLClassLoader(
+                System
+                    .getProperty("otherlode.fixtures.scala2.classpath")
+                    .split(java.io.File.pathSeparator)
+                    .map {
+                        java.io
+                            .File(it)
+                            .toURI()
+                            .toURL()
+                    }.toTypedArray(),
+                null,
+            )
+        loader.use {
+            val reads = mutableMapOf<String, Int>()
+            val counting: (String) -> ByteArray? = { name ->
+                reads.merge(name, 1, Int::plus)
+                scala2Fixtures.lookup(name) ?: loader.getResourceAsStream("$name.class")?.use { it.readBytes() }
+            }
+            ScalaGeneratedMethods.analyse(scala2Fixtures.classBytes("MySeq"), counting) { null }
+
+            val repeated = reads.filterValues { it > 1 }
+            assertTrue(repeated.isEmpty(), "classes read more than once: $repeated")
+            assertTrue(reads.size > 5, "too few classes read to prove anything: ${reads.keys}")
+        }
+    }
+
     /** [classBytes] with a `nop` first in the method [method], and with the `final` flag of the class cleared when [open]. */
     private fun altered(
         classBytes: ByteArray,
@@ -289,6 +472,8 @@ class ScalaForwarderMarksTest {
             Shape("Weight\$", "equals\$extension", "(JLjava/lang/Object;)Z", "Weight", UnreadShape.VALUE_CLASS),
             Shape("Greeter", "greet", "(Ljava/lang/String;)Ljava/lang/String;", "Greeter", UnreadShape.TRAIT_FORWARDER),
             Shape("Greets", "ping\$", "(L$PACKAGE/Greets;)V", "Greets", UnreadShape.TRAIT_FORWARDER),
+            Shape("ComparingHandler", "reversed", "()Ljava/util/Comparator;", "ComparingHandler", UnreadShape.TRAIT_FORWARDER),
+            Shape("Inc", "apply", "(I)I", "Inc", UnreadShape.TRAIT_FORWARDER),
         )
 
     private fun tasty(
@@ -374,6 +559,46 @@ class ScalaForwarderMarksTest {
 
         assertEquals(UnreadShape.TRAIT_FORWARDER, analysis.unreadShape("greet", "(Ljava/lang/String;)Ljava/lang/String;"))
         assertEquals(TRAIT, analysis.generatedBy("ping", "()V"))
+    }
+
+    private val reversed = "reversed" to "()Ljava/util/Comparator;"
+
+    @Test
+    fun `scala 3 - a Java default forwarder is marked on an unread release and the decoys hold nothing`() {
+        for (release in listOf("Scala 3.99.0", "Scala 3.3.4")) {
+            val unread = release == "Scala 3.99.0"
+            val resources = tasty("ComparingHandler", release)
+            val marked = analyseWith(fixtures.classBytes("ComparingHandler"), fixtures.lookup, resources)
+            assertEquals(TRAIT, marked.generatedBy(reversed.first, reversed.second), release)
+            assertEquals(UnreadShape.NONE, marked.unreadShape(reversed.first, reversed.second), release)
+
+            val renaming = analyseWith(fixtures.classBytes("RenamingHandler"), fixtures.lookup, tasty("RenamingHandler", release))
+            assertEquals(GeneratedBy.NONE, renaming.generatedBy("flipped", "()Ljava/util/Comparator;"), release)
+            assertEquals(UnreadShape.NONE, renaming.unreadShape("flipped", "()Ljava/util/Comparator;"), release)
+
+            val overriding = analyseWith(fixtures.classBytes("OverridingHandler"), fixtures.lookup, tasty("OverridingHandler", release))
+            assertEquals(GeneratedBy.NONE, overriding.generatedBy(reversed.first, reversed.second), release)
+            assertEquals(UnreadShape.NONE, overriding.unreadShape(reversed.first, reversed.second), release)
+
+            val wrapping = analyseWith(fixtures.classBytes("WrappingHandler"), fixtures.lookup, tasty("WrappingHandler", release))
+            assertEquals(GeneratedBy.NONE, wrapping.generatedBy(reversed.first, reversed.second), release)
+            assertEquals(
+                if (unread) UnreadShape.TRAIT_FORWARDER else UnreadShape.NONE,
+                wrapping.unreadShape(reversed.first, reversed.second),
+                release,
+            )
+        }
+    }
+
+    @Test
+    fun `scala 2 - an override of a Java default with work around super is an unread shape and a renamed call is not`() {
+        val wrapping = analyseWith(scala2Fixtures.classBytes("WrappingHandler"), scala2Fixtures.lookup) { null }
+        assertEquals(UnreadShape.TRAIT_FORWARDER, wrapping.unreadShape(reversed.first, reversed.second))
+        assertEquals(TRAIT, wrapping.generatedBy("thenComparingInt", "(Ljava/util/function/ToIntFunction;)Ljava/util/Comparator;"))
+
+        val renaming = analyseWith(scala2Fixtures.classBytes("RenamingHandler"), scala2Fixtures.lookup) { null }
+        assertEquals(UnreadShape.NONE, renaming.unreadShape("flipped", "()Ljava/util/Comparator;"))
+        assertEquals(GeneratedBy.NONE, renaming.generatedBy("flipped", "()Ljava/util/Comparator;"))
     }
 
     @Test

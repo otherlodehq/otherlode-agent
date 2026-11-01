@@ -71,7 +71,18 @@ object CompilerFixtures {
      * release and `fixtures-scala2`'s for a 2.x one.
      */
     fun scalac(version: String): Build =
-        Build(File(requiredProperty("otherlode.fixtures.scalac.$version.dir")), SCALA_PACKAGE, listOf("com.example.scalatarget"))
+        Build(
+            File(requiredProperty("otherlode.fixtures.scalac.$version.dir")),
+            SCALA_PACKAGE,
+            listOf("com.example.scalatarget"),
+        )
+
+    /** The runtime jars of the Scala line [version] belongs to, which the agent's loader would serve to the fixtures. */
+    internal fun scalaLibrary(version: String): List<File> =
+        requiredProperty("otherlode.fixtures.${if (version.startsWith("3.")) "scala3" else "scala2"}.classpath")
+            .split(File.pathSeparator)
+            .filter { it.endsWith(".jar") }
+            .map(::File)
 
     /** The baseline build of the Scala line [version] belongs to: 2.13.15 for a 2.x release, 3.3.4 for a 3.x one. */
     fun scalaBaseline(version: String): Build =
@@ -95,9 +106,13 @@ object CompilerFixtures {
         private val packagePath: String,
         private val includePackages: List<String> = listOf("com.example.target"),
         private val servesResources: Boolean = true,
+        private val library: List<File> = emptyList(),
     ) {
         /** This build as a loader that serves its classes but no other resource, so no `.tasty` is found. */
-        fun withoutResources(): Build = Build(dir, packagePath, includePackages, servesResources = false)
+        fun withoutResources(): Build = Build(dir, packagePath, includePackages, servesResources = false, library = library)
+
+        /** This build as a loader that also serves the classes of the Scala runtime jars of [version]'s line. */
+        fun withScalaLibrary(version: String): Build = Build(dir, packagePath, includePackages, servesResources, scalaLibrary(version))
 
         /** The root of this build's class files, which a static scan can walk. */
         val directory: File get() = dir
@@ -117,7 +132,15 @@ object CompilerFixtures {
         fun classBytes(simpleName: String): ByteArray = File(dir, "$packagePath/$simpleName.class").readBytes()
 
         /** Reads a class by internal name from this build alone, the way the agent reads one through its loader. */
-        val lookup: (String) -> ByteArray? = { internalName -> File(dir, "$internalName.class").takeIf { it.isFile }?.readBytes() }
+        val lookup: (String) -> ByteArray? =
+            { internalName ->
+                File(dir, "$internalName.class").takeIf { it.isFile }?.readBytes()
+                    ?: libraryLoader?.getResourceAsStream("$internalName.class")?.use { it.readBytes() }
+            }
+
+        private val libraryLoader: java.net.URLClassLoader? by lazy {
+            if (library.isEmpty()) null else java.net.URLClassLoader(library.map { it.toURI().toURL() }.toTypedArray(), null)
+        }
 
         /** Reads the leading bytes of a non-class resource of this build, such as a Scala 3 class's `.tasty`, as the agent's loader would. */
         val resources: (String) -> ByteArray? =

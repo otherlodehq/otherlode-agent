@@ -35,3 +35,14 @@ The review ran the real analyser over classes compiled with scalac 2.13.15 and 3
 - `VALUE_CLASS`'s comment in the proto names Scala value classes, and `methods-and-branches.md` lists both shapes.
 - The trait's static default-getter accessor `t$default$N$` keeps ADR 0023's treatment.
 - An adopter's override that only calls `super.m` compiles to the class forwarder's bytes and is marked, the way ADR 0078 marks a Kotlin override with a stub's bytes. A hand-written final one-field class whose companion holds an `m$extension` called with the forwarder's exact body is marked too.
+
+## Amended on 2026-10-31: Java interface defaults and specialised twins
+
+Decided in the second pre-release review.
+
+- **A forwarder to a Java interface's default method is `TRAIT_FORWARDER`.** A Scala class that implements an interface such as `java.util.Comparator` or `java.util.function.Predicate` gets a public method from scalac for each default, with the class's declaration line. Its body is exactly `aload_0`, each argument loaded in order, `invokespecial J.<same name and descriptor>` and a return, where `J` is a direct interface of the class. When the agent can read `J`, `J` must declare that method as a non-static default. When it cannot, the method is still marked, since an unmarked forwarder the adopter cannot delete would read as never called. Scala 2.12, 2.13 and 3.8 on write it as an ordinary method, and Scala 3 before 3.8 as a bridge, which the agent never probes.
+- **A specialised forwarder is `TRAIT_FORWARDER`.** In a class that extends a function type specialised on primitives, scalac moves the body of `apply(I)I` into `apply$mcII$sp(I)I` and writes `apply(I)I` as `aload_0`, the argument, `invokevirtual` of the twin and a return. A call through the function type invokes the twin, so `apply(I)I` never runs. The method is marked when the class declares the `$mc...$sp` twin with the same descriptor and a supertype, such as `scala.Function1`, declares it too, so a method of the adopter's that calls a twin of its own naming stays ordinary code. Both forwarders pass calls through to their target.
+- **The trait-forwarder outline covers both shapes.** On a release the agent does not read, a method that calls either target is an unread shape, with the looseness the outline has for `m$`: an override that wraps `super.m` is in the outline.
+- **Each supertype is read once per class.** Marking a class's forwarders parsed each trait once per forwarder; a `Seq[Int]` subclass made 238 class reads for 14 classes.
+- **Considered and rejected.** A new `GeneratedBy` value: both shapes are forwarders scalac writes to implement a supertype's method, which `TRAIT_FORWARDER` already names, and a new value is a wire change for no difference in judgement.
+

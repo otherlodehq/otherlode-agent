@@ -22,6 +22,20 @@ class ScalaForwarderCallGraphTest {
     private fun lookup(module: String): (String) -> ByteArray? =
         { internalName ->
             File(System.getProperty("otherlode.fixtures.$module.dir"), "$internalName.class").takeIf { it.isFile }?.readBytes()
+                ?: loaders.getValue(module).getResourceAsStream("$internalName.class")?.use { it.readBytes() }
+        }
+
+    private val loaders =
+        listOf("scala2", "scala3").associateWith { module ->
+            java.net.URLClassLoader(
+                System
+                    .getProperty("otherlode.fixtures.$module.classpath")
+                    .split(File.pathSeparator)
+                    .filter { it.endsWith(".jar") }
+                    .map { File(it).toURI().toURL() }
+                    .toTypedArray(),
+                null,
+            )
         }
 
     /** A class with static methods that call a mixed-in trait method and a value class's boxed method. */
@@ -46,6 +60,32 @@ class ScalaForwarderCallGraphTest {
                 visitVarInsn(Opcodes.ALOAD, 0)
                 visitMethodInsn(Opcodes.INVOKEVIRTUAL, "$PACKAGE/ValueSyntax\$RichInt", "doubled", "()I", false)
                 visitInsn(Opcodes.IRETURN)
+                visitMaxs(0, 0)
+                visitEnd()
+            }
+        writer
+            .visitMethod(Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC, "viaSpecialised", "(L$PACKAGE/Inc;)I", null, null)
+            .apply {
+                visitCode()
+                visitVarInsn(Opcodes.ALOAD, 0)
+                visitInsn(Opcodes.ICONST_1)
+                visitMethodInsn(Opcodes.INVOKEVIRTUAL, "$PACKAGE/Inc", "apply", "(I)I", false)
+                visitInsn(Opcodes.IRETURN)
+                visitMaxs(0, 0)
+                visitEnd()
+            }
+        writer
+            .visitMethod(
+                Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC,
+                "viaJavaDefault",
+                "(L$PACKAGE/ComparingHandler;)Ljava/util/Comparator;",
+                null,
+                null,
+            ).apply {
+                visitCode()
+                visitVarInsn(Opcodes.ALOAD, 0)
+                visitMethodInsn(Opcodes.INVOKEVIRTUAL, "$PACKAGE/ComparingHandler", "reversed", "()Ljava/util/Comparator;", false)
+                visitInsn(Opcodes.ARETURN)
                 visitMaxs(0, 0)
                 visitEnd()
             }
@@ -80,5 +120,21 @@ class ScalaForwarderCallGraphTest {
             edges.any { it.className == "$DOTTED.ValueSyntax\$RichInt\$" && it.methodName == "doubled\$extension" },
             edges.toString(),
         )
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = ["scala3", "scala2"])
+    fun `a call to a specialised function's apply reaches its specialised twin`(module: String) {
+        val edges = edges(module, "viaSpecialised", "(L$PACKAGE/Inc;)I")
+
+        assertTrue(edges.any { it.className == "$DOTTED.Inc" && it.methodName == "apply\$mcII\$sp" }, edges.toString())
+    }
+
+    @ParameterizedTest(name = "{0}")
+    @ValueSource(strings = ["scala3", "scala2"])
+    fun `a call to a forwarder of a Java default method walks through it and names no JDK class`(module: String) {
+        val edges = edges(module, "viaJavaDefault", "(L$PACKAGE/ComparingHandler;)Ljava/util/Comparator;")
+
+        assertEquals(emptyList(), edges.filter { it.className.startsWith("java.") }, edges.toString())
     }
 }

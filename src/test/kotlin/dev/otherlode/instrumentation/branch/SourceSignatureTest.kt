@@ -16,7 +16,8 @@ class SourceSignatureTest {
         const val ASM_CLASS = "com/example/target/AsmSignature"
     }
 
-    private fun kotlinBytes(simpleName: String): ByteArray = File("build/classes/kotlin/test/com/example/target/$simpleName.class").readBytes()
+    private fun kotlinBytes(simpleName: String): ByteArray =
+        File("build/classes/kotlin/test/com/example/target/$simpleName.class").readBytes()
 
     private fun javaBytes(simpleName: String): ByteArray = File("build/classes/java/test/com/example/target/$simpleName.class").readBytes()
 
@@ -85,7 +86,10 @@ class SourceSignatureTest {
 
     @Test
     fun `an instance method and a constructor leave out this`() {
-        assertEquals(listOf("label", "count"), kotlinClass.sourceSignatureOf("describe", "(Ljava/lang/String;I)Ljava/lang/String;").parameterNames)
+        assertEquals(
+            listOf("label", "count"),
+            kotlinClass.sourceSignatureOf("describe", "(Ljava/lang/String;I)Ljava/lang/String;").parameterNames,
+        )
         assertEquals(listOf("id", "rate"), kotlinClass.sourceSignatureOf("<init>", "(JD)V").parameterNames)
     }
 

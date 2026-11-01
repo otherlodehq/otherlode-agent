@@ -600,7 +600,10 @@ class BranchSiteAnalyzerTest {
                 mv.visitInsn(Opcodes.ARETURN)
             }
 
-        assertEquals(GeneratedBy.JVM_OVERLOADS, BranchSiteAnalyzer.analyze(bytes) { _, _ -> true }.generatedBy("f", "(I)Ljava/lang/String;"))
+        assertEquals(
+            GeneratedBy.JVM_OVERLOADS,
+            BranchSiteAnalyzer.analyze(bytes) { _, _ -> true }.generatedBy("f", "(I)Ljava/lang/String;"),
+        )
     }
 
     @Test
@@ -644,7 +647,13 @@ class BranchSiteAnalyzerTest {
                 mv.visitInsn(Opcodes.ACONST_NULL)
                 mv.visitInsn(Opcodes.ICONST_2)
                 mv.visitInsn(Opcodes.ACONST_NULL)
-                mv.visitMethodInsn(Opcodes.INVOKESTATIC, "com/example/target/SomewhereElse", "f\$default", ASM_OVERLOADS_TWIN_DESCRIPTOR, false)
+                mv.visitMethodInsn(
+                    Opcodes.INVOKESTATIC,
+                    "com/example/target/SomewhereElse",
+                    "f\$default",
+                    ASM_OVERLOADS_TWIN_DESCRIPTOR,
+                    false,
+                )
                 mv.visitInsn(Opcodes.ARETURN)
             }
 
