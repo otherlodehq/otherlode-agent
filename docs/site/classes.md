@@ -180,7 +180,9 @@ Inside a jar, the scan reads:
 - Classes at the root of the jar.
 - Classes under `BOOT-INF/classes/` and `WEB-INF/classes/`, which is where a Spring Boot executable jar and a WAR keep the application's own code.
 
-It does not open jars nested under `BOOT-INF/lib/` or `WEB-INF/lib/`. If `includePackages` covers a library that you ship as a nested jar, its classes are instrumented when they load but never declared, so they can never be reported as never loaded. [Dependencies](dependencies) explains how the agent treats nested jars.
+A directory that holds an unpacked Spring Boot application or WAR is read the same way: its own classes are named from inside `BOOT-INF/classes/` or `WEB-INF/classes/`, and searched after every other entry.
+
+It does not open jars nested under `BOOT-INF/lib/` or `WEB-INF/lib/`, or the jars in an unpacked application's library folders. If `includePackages` covers a library that you ship as a nested jar, its classes are instrumented when they load but never declared, so they can never be reported as never loaded. [Dependencies](dependencies) explains how the agent treats nested jars.
 
 The scan applies the same rules as the live tier to each class: `includePackages`, `excludePackages`, and the left-out classes below. A class the live tier would skip is not declared.
 

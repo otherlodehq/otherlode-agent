@@ -1,5 +1,6 @@
 package dev.otherlode.instrumentation.staticscan
 
+import dev.otherlode.classlisting.ClassLister
 import dev.otherlode.export.CallEdge
 import net.bytebuddy.jar.asm.ClassWriter
 import net.bytebuddy.jar.asm.Opcodes
@@ -7,6 +8,7 @@ import org.junit.jupiter.api.condition.DisabledOnOs
 import org.junit.jupiter.api.condition.EnabledOnJre
 import org.junit.jupiter.api.condition.JRE
 import org.junit.jupiter.api.condition.OS
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.nio.file.Files
 import java.util.logging.Handler
@@ -472,6 +474,82 @@ class StaticBaselineSearchOrderTest {
         File(app, "BOOT-INF/classpath.idx").writeText("- \"BOOT-INF/extra/\"\n")
 
         assertTrue(scan(app).allClassNames().isEmpty())
+    }
+
+    private fun explodedApplication(
+        classesFolder: String,
+        libFolder: String,
+        manifest: String,
+    ): File {
+        val app =
+            directoryRoot(
+                "$classesFolder$dupName.class" to dupBytes("fromApp"),
+                "org/springframework/boot/loader/JarLauncher.class" to classNamedAfter("launcher"),
+            )
+        File(app, "META-INF").mkdirs()
+        File(app, "META-INF/MANIFEST.MF").writeText(manifest)
+        writeJar(File(app, "${libFolder}core.jar"), manifestOf(), "com/example/target/Core.class" to classNamedAfter("core"))
+        return app
+    }
+
+    @Test
+    fun `an exploded Spring Boot application declares its classes without the folder they sit in, as the class listing names them`() {
+        val layouts =
+            listOf(
+                Triple("BOOT-INF/classes/", "BOOT-INF/lib/", manifestOf("Spring-Boot-Lib: BOOT-INF/lib/")),
+                Triple("WEB-INF/classes/", "WEB-INF/lib/", manifestOf("Spring-Boot-Lib: WEB-INF/lib/")),
+            )
+        for ((classes, lib, manifest) in layouts) {
+            val app = explodedApplication(classes, lib, manifest)
+            val detector = StaticBaselineMismatchDetector()
+
+            lateinit var result: StaticScanResult
+            val warnings = captureWarnings { result = scan(app) }
+            detector.knownClassNames = result.allClassNames()
+
+            assertEquals(listOf("fromApp"), methodsOfDup(result), classes)
+            val inScope = result.allClassNames().filterTo(sortedSetOf()) { it.startsWith("com.example.target.") }
+            assertEquals(setOf(dupClassName), inScope, classes)
+            assertTrue("org.springframework.boot.loader.JarLauncher" in result.ownClassNames, classes)
+            assertTrue(warnings.isEmpty(), warnings.joinToString { it.message })
+            assertTrue(!detector.shouldWarnAbout(dupClassName), classes)
+            assertEquals(
+                ClassLister(listOf("com.example.target"), emptyList(), app.path).list(),
+                (inScope + "com.example.target.Core").sorted(),
+                classes,
+            )
+        }
+    }
+
+    @Test
+    fun `an exploded Spring Boot application's own classes lose to an earlier flat root and win over a later one`() {
+        val app = explodedApplication("BOOT-INF/classes/", "BOOT-INF/lib/", manifestOf("Spring-Boot-Lib: BOOT-INF/lib/"))
+        val earlier = directoryRoot("$dupName.class" to dupBytes("fromEarlier"))
+        val later = directoryRoot("$dupName.class" to dupBytes("fromLater"))
+
+        assertEquals(listOf("fromEarlier"), methodsOfDup(scan(earlier, app)))
+        assertEquals(listOf("fromLater"), methodsOfDup(scan(app, later)))
+    }
+
+    @Test
+    fun `a packed Spring Boot jar still declares its nested classes and not its library jars`() {
+        val inner = ByteArrayOutputStream()
+        ZipOutputStream(inner).use { out ->
+            out.putNextEntry(ZipEntry("com/example/target/Core.class"))
+            out.write(classNamedAfter("core"))
+        }
+        val packed =
+            writeJar(
+                File(directoryRoot(), "app.jar"),
+                manifestOf("Spring-Boot-Lib: BOOT-INF/lib/"),
+                "BOOT-INF/classes/$dupName.class" to dupBytes("fromApp"),
+                "BOOT-INF/lib/core.jar" to inner.toByteArray(),
+            )
+
+        val result = scan(packed)
+
+        assertEquals(listOf("fromApp"), methodsOfDup(result))
+        assertEquals(setOf(dupClassName), result.allClassNames())
     }
 
     @Test

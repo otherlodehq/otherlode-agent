@@ -4,6 +4,7 @@ import dev.otherlode.bootLogger
 import dev.otherlode.dependencies.ClasspathVisitor
 import dev.otherlode.dependencies.ClasspathWalker
 import dev.otherlode.dependencies.JarClassifier
+import dev.otherlode.dependencies.bootLibPrefixes
 import dev.otherlode.export.BodyKind
 import dev.otherlode.export.DeclaredClass
 import dev.otherlode.export.DeclaredMethod
@@ -243,7 +244,13 @@ class StaticBaselineScanner(
                     root: File,
                     manifest: Manifest,
                 ) {
-                    flat += directorySource(root)
+                    val libraryFolders = bootLibPrefixes(manifest.mainAttributes)
+                    val applicationFolders = NESTED_CLASSES_PREFIXES + libraryFolders
+                    flat += directorySource(root, skip = { path -> applicationFolders.any { path.startsWith(it) } })
+                    for (prefix in NESTED_CLASSES_PREFIXES) {
+                        val classes = File(root, prefix)
+                        if (classes.isDirectory) nested += directorySource(classes, nested = true)
+                    }
                 }
 
                 override fun libraryJar(
@@ -272,14 +279,23 @@ class StaticBaselineScanner(
         return SearchPath(flat, nested)
     }
 
-    private fun directorySource(root: File): ClassSource =
+    /**
+     * A directory's classes. With [nested] it is the `BOOT-INF/classes/` or `WEB-INF/classes/`
+     * folder of an exploded application, which a Spring Boot launcher searches after the flat
+     * roots. [skip] takes a `/`-separated path under [root] and is true for one to leave out.
+     */
+    private fun directorySource(
+        root: File,
+        nested: Boolean = false,
+        skip: (String) -> Boolean = { false },
+    ): ClassSource =
         classSource(
             origin = root,
             ownCode = true,
-            nested = false,
+            nested = nested,
             ownLocator = ClassFileLocator.ForFolder(root),
             resources = folderResources(root),
-            classNames = candidateClassNamesInFolder(root).toCollection(LinkedHashSet()),
+            classNames = candidateClassNamesInFolder(root, skip).toCollection(LinkedHashSet()),
             unreadNames = emptySet(),
         )
 
@@ -407,10 +423,13 @@ class StaticBaselineScanner(
             }
         }
 
-    private fun candidateClassNamesInFolder(root: File): List<String> =
+    private fun candidateClassNamesInFolder(
+        root: File,
+        skip: (String) -> Boolean,
+    ): List<String> =
         root
             .walkTopDown()
-            .filter { it.isFile && isClassEntry(it.relativeTo(root).invariantSeparatorsPath) }
+            .filter { it.isFile && it.relativeTo(root).invariantSeparatorsPath.let { path -> isClassEntry(path) && !skip(path) } }
             .map {
                 it
                     .relativeTo(root)
