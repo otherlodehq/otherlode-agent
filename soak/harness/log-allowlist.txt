@@ -1,0 +1,37 @@
+# WARNING lines that check 6 accepts, each tied to the disruption that causes it.
+#
+# Format: <disruption> <regular expression>, one entry a line. The expression is searched in
+# the log line without its timestamp prefix. An entry holds a line only when the line's time
+# falls inside a window of that disruption, taken from the supervisor's event log. ERROR lines
+# are never allowlisted.
+#
+# Disruptions:
+#   jvm-start          the start of any instance, and a shop-test run: from 5s before to 180s after
+#   graceful-restart   a SIGTERM restart of shop-1: from the stop to 180s after the start
+#   kill-9             the kill -9 of shop-2: from the kill to 180s after the start
+#   collector-outage   the collector stopped for 60 minutes: from the stop to the larger of 300s
+#                      and 3 flush intervals after the start
+#   server-restart     the server restart: the same tail as collector-outage
+#   upgrade            the upgrade of events-prod: from the stop to 180s after the start
+#   stack-start        a start of the supervisor or the stack: 300s from T0 or the start
+#
+# These messages come from the agent's troubleshooting page and the collector's monitoring page.
+# The smoke run shows which others appear; add them here with the disruption that explains them.
+
+# The JVM's own warning when an agent is appended to the bootstrap classpath.
+jvm-start ^OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes
+
+# The collector warns once at start that its forward URL is plain http.
+stack-start "msg":"forward URL uses plain http; the backend auth token is sent unencrypted"
+collector-outage "msg":"forward URL uses plain http; the backend auth token is sent unencrypted"
+
+# The agents cannot reach the collector while it is stopped, and retry on the next flush.
+collector-outage otherlode: (delta|manifest) export failed, will retry next flush
+collector-outage otherlode: failed to send (static baseline|class listing) chunk
+collector-outage otherlode: an in-flight flush used up the shutdown budget
+
+# The collector cannot reach the server while it restarts, and the agents may see a 5xx.
+server-restart "msg":"dropping payload
+server-restart otherlode: unexpected status (502|503|504)
+server-restart otherlode: (delta|manifest) export failed, will retry next flush
+server-restart otherlode: failed to send (static baseline|class listing) chunk

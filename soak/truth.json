@@ -1,0 +1,696 @@
+{
+  "_notes": [
+    "Packages are dev.soaktest.*, not dev.otherlode.soak.*: the agent never probes a class under dev.otherlode, so the DESIGN.md names cannot be included.",
+    "Entries of the string lists (never_loaded, never_initialized, never_instantiated, failed_to_initialize) are a class name, or an object {class, from, until} when the answer changes with time.",
+    "Any entry may carry from and until, ISO 8601 durations from T0. A missing from means PT0S, a missing or null until means the answer never ends.",
+    "soak-shop prod instances must run with excludePackages=dev.soaktest.shop.testdriver. The shop-test instance must not. Without the exclude, SoakTestDriver reads as a never loaded class and a cluster root of its own, and Pricing.applyLegacyDiscount is no longer a root called only by tests.",
+    "Entries with framework true are Spring Boot's own jars. Their status comes from a local run of the stub collector, which applies the server's rules; they are not planted.",
+    "The services also report Spring's own endpoints (* /*, * /webjars/*, * /error, handled by classes outside the include rules) as outside routes. They are not planted.",
+    "Traffic rules: GET /orders/{id} must use an id of 0 or more (a negative id takes the id < 0 side). The tier is id % 3, so PLATINUM is never chosen. POST /orders must not pass a limit or sort. POST /events must use a positive id."
+  ],
+  "services": {
+    "soak-shop": {
+      "prod": {
+        "never_hit_methods": [
+          {
+            "class": "dev.soaktest.shop.Pricing",
+            "method": "applyLegacyDiscount"
+          },
+          {
+            "class": "dev.soaktest.shop.OrderController",
+            "method": "delete"
+          },
+          {
+            "class": "dev.soaktest.shop.OrderController",
+            "method": "create$lambda$0"
+          },
+          {
+            "class": "dev.soaktest.shop.AdminController",
+            "method": "rebuild"
+          },
+          {
+            "class": "dev.soaktest.shop.HealthLegacyServlet",
+            "method": "doPost"
+          },
+          {
+            "class": "dev.soaktest.shop.OnceController",
+            "method": "once",
+            "until": "PT96H"
+          }
+        ],
+        "never_hit_outcomes": [
+          {
+            "class": "dev.soaktest.shop.OrderService",
+            "method": "find",
+            "condition_contains": "id < 0"
+          },
+          {
+            "class": "dev.soaktest.shop.OrderService",
+            "method": "find",
+            "condition_contains": "PLATINUM"
+          }
+        ],
+        "never_called_endpoints": [
+          {
+            "verb": "DELETE",
+            "template": "/orders/{id}",
+            "until": null
+          },
+          {
+            "verb": "GET",
+            "template": "/admin/rebuild",
+            "until": null
+          },
+          {
+            "verb": "POST",
+            "template": "/health-legacy",
+            "until": null
+          },
+          {
+            "verb": "GET",
+            "template": "/once",
+            "until": "PT96H"
+          }
+        ],
+        "live_endpoints": [
+          {
+            "verb": "GET",
+            "template": "/orders/{id}",
+            "from": "PT0S"
+          },
+          {
+            "verb": "POST",
+            "template": "/orders",
+            "from": "PT0S"
+          },
+          {
+            "verb": "GET",
+            "template": "/reports/monthly",
+            "from": "PT1H"
+          },
+          {
+            "verb": "GET",
+            "template": "/reports/yearly",
+            "from": "PT10M"
+          },
+          {
+            "verb": "GET",
+            "template": "/broken",
+            "from": "PT5M"
+          },
+          {
+            "verb": "GET",
+            "template": "/health-legacy",
+            "from": "PT0S"
+          },
+          {
+            "verb": "GET",
+            "template": "/once",
+            "from": "PT96H"
+          }
+        ],
+        "never_loaded": [
+          "dev.soaktest.shop.LegacyCsvExporter",
+          "dev.soaktest.shop.OldPromotions"
+        ],
+        "never_initialized": [
+          "dev.soaktest.shop.TaxTables"
+        ],
+        "never_instantiated": [
+          "dev.soaktest.shop.AuditRecord"
+        ],
+        "failed_to_initialize": [
+          {
+            "class": "dev.soaktest.shop.BrokenConfig",
+            "from": "PT5M"
+          }
+        ],
+        "never_supplied": [
+          {
+            "class": "dev.soaktest.shop.OrderSearch",
+            "method": "search",
+            "parameter": "sort"
+          }
+        ],
+        "always_supplied": [
+          {
+            "class": "dev.soaktest.shop.OrderSearch",
+            "method": "search",
+            "parameter": "limit"
+          }
+        ],
+        "dependencies": [
+          {
+            "artifact": "annotations",
+            "status": "unloaded",
+            "version": "13.0",
+            "framework": true
+          },
+          {
+            "artifact": "commons-csv",
+            "status": "unreached",
+            "version": "1.14.1"
+          },
+          {
+            "artifact": "commons-logging",
+            "status": "unreferenced",
+            "version": "1.3.6",
+            "framework": true
+          },
+          {
+            "artifact": "commons-text",
+            "status": "unloaded",
+            "version": "1.14.0"
+          },
+          {
+            "artifact": "guava",
+            "status": "used",
+            "version": "33.7.2-jre"
+          },
+          {
+            "artifact": "jackson-annotations",
+            "status": "unreferenced",
+            "version": "2.21",
+            "framework": true
+          },
+          {
+            "artifact": "jackson-core",
+            "status": "unreferenced",
+            "version": "3.1.5",
+            "framework": true
+          },
+          {
+            "artifact": "jackson-databind",
+            "status": "unreferenced",
+            "version": "3.1.5",
+            "framework": true
+          },
+          {
+            "artifact": "jakarta.annotation-api",
+            "status": "unreferenced",
+            "version": "3.0.0",
+            "framework": true
+          },
+          {
+            "artifact": "jspecify",
+            "status": "unreferenced",
+            "version": "1.0.1",
+            "framework": true
+          },
+          {
+            "artifact": "jul-to-slf4j",
+            "status": "unreferenced",
+            "version": "2.0.18",
+            "framework": true
+          },
+          {
+            "artifact": "kotlin-stdlib",
+            "status": "used",
+            "version": "2.3.21",
+            "framework": true
+          },
+          {
+            "artifact": "log4j-api",
+            "status": "unreferenced",
+            "version": "2.25.5",
+            "framework": true
+          },
+          {
+            "artifact": "log4j-to-slf4j",
+            "status": "unreferenced",
+            "version": "2.25.5",
+            "framework": true
+          },
+          {
+            "artifact": "logback-classic",
+            "status": "unreferenced",
+            "version": "1.5.38",
+            "framework": true
+          },
+          {
+            "artifact": "logback-core",
+            "status": "unreferenced",
+            "version": "1.5.38",
+            "framework": true
+          },
+          {
+            "artifact": "micrometer-commons",
+            "status": "unreferenced",
+            "version": "1.17.1",
+            "framework": true
+          },
+          {
+            "artifact": "micrometer-observation",
+            "status": "unreferenced",
+            "version": "1.17.1",
+            "framework": true
+          },
+          {
+            "artifact": "slf4j-api",
+            "status": "unreferenced",
+            "version": "2.0.18",
+            "framework": true
+          },
+          {
+            "artifact": "snakeyaml",
+            "status": "unloaded",
+            "version": "2.6",
+            "framework": true
+          },
+          {
+            "artifact": "spring-aop",
+            "status": "unreferenced",
+            "version": "7.0.9",
+            "framework": true
+          },
+          {
+            "artifact": "spring-beans",
+            "status": "unreferenced",
+            "version": "7.0.9",
+            "framework": true
+          },
+          {
+            "artifact": "spring-boot",
+            "status": "used",
+            "version": "4.1.1",
+            "framework": true
+          },
+          {
+            "artifact": "spring-boot-autoconfigure",
+            "status": "used",
+            "version": "4.1.1",
+            "framework": true
+          },
+          {
+            "artifact": "spring-boot-http-converter",
+            "status": "unreferenced",
+            "version": "4.1.1",
+            "framework": true
+          },
+          {
+            "artifact": "spring-boot-jackson",
+            "status": "unreferenced",
+            "version": "4.1.1",
+            "framework": true
+          },
+          {
+            "artifact": "spring-boot-jarmode-tools",
+            "status": "unloaded",
+            "version": "4.1.1",
+            "framework": true
+          },
+          {
+            "artifact": "spring-boot-servlet",
+            "status": "unreferenced",
+            "version": "4.1.1",
+            "framework": true
+          },
+          {
+            "artifact": "spring-boot-tomcat",
+            "status": "unreferenced",
+            "version": "4.1.1",
+            "framework": true
+          },
+          {
+            "artifact": "spring-boot-web-server",
+            "status": "unreferenced",
+            "version": "4.1.1",
+            "framework": true
+          },
+          {
+            "artifact": "spring-boot-webmvc",
+            "status": "unreferenced",
+            "version": "4.1.1",
+            "framework": true
+          },
+          {
+            "artifact": "spring-context",
+            "status": "used",
+            "version": "7.0.9",
+            "framework": true
+          },
+          {
+            "artifact": "spring-core",
+            "status": "unreferenced",
+            "version": "7.0.9",
+            "framework": true
+          },
+          {
+            "artifact": "spring-expression",
+            "status": "unreferenced",
+            "version": "7.0.9",
+            "framework": true
+          },
+          {
+            "artifact": "spring-web",
+            "status": "used",
+            "version": "7.0.9",
+            "framework": true
+          },
+          {
+            "artifact": "spring-webmvc",
+            "status": "unreferenced",
+            "version": "7.0.9",
+            "framework": true
+          },
+          {
+            "artifact": "tomcat-embed-core",
+            "status": "used",
+            "version": "11.0.24",
+            "framework": true
+          },
+          {
+            "artifact": "tomcat-embed-el",
+            "status": "unloaded",
+            "version": "11.0.24",
+            "framework": true
+          },
+          {
+            "artifact": "tomcat-embed-websocket",
+            "status": "unreferenced",
+            "version": "11.0.24",
+            "framework": true
+          }
+        ],
+        "stale_hit": [
+          {
+            "class": "dev.soaktest.shop.ReportController",
+            "method": "yearly",
+            "days": 1,
+            "from": "PT26H"
+          },
+          {
+            "class": "dev.soaktest.shop.ReportService",
+            "method": "yearly",
+            "days": 1,
+            "from": "PT26H"
+          },
+          {
+            "class": "dev.soaktest.shop.BrokenController",
+            "method": "broken",
+            "days": 1,
+            "from": "PT26H"
+          },
+          {
+            "class": "dev.soaktest.shop.OnceController",
+            "method": "once",
+            "days": 1,
+            "from": "PT121H"
+          }
+        ],
+        "unreached_cluster_roots": [
+          {
+            "class": "dev.soaktest.shop.AdminController",
+            "method": "rebuild",
+            "members_include": [
+              "dev.soaktest.shop.LegacyCsvExporter"
+            ]
+          },
+          {
+            "class": "dev.soaktest.shop.Pricing",
+            "method": "applyLegacyDiscount",
+            "members_include": [],
+            "called_only_by_tests": {
+              "from": "PT2H",
+              "tests": [
+                "dev.soaktest.shop.testdriver.SoakTestDriver"
+              ]
+            }
+          },
+          {
+            "class": "dev.soaktest.shop.OrderController",
+            "method": "delete",
+            "members_include": []
+          },
+          {
+            "class": "dev.soaktest.shop.OrderController",
+            "method": "create$lambda$0",
+            "members_include": []
+          },
+          {
+            "class": "dev.soaktest.shop.HealthLegacyServlet",
+            "method": "doPost",
+            "members_include": []
+          },
+          {
+            "class": "dev.soaktest.shop.OnceController",
+            "method": "once",
+            "members_include": [],
+            "until": "PT96H"
+          }
+        ],
+        "removed": [],
+        "never_in_findings": [
+          {
+            "class_pattern": "dev.soaktest.shop.OrderView",
+            "methods": [
+              "copy",
+              "copy$default",
+              "component1",
+              "component2",
+              "component3",
+              "equals",
+              "hashCode",
+              "toString"
+            ]
+          },
+          {
+            "class_pattern": "dev.soaktest.shop.Tier",
+            "methods": [
+              "values",
+              "valueOf",
+              "getEntries"
+            ]
+          }
+        ]
+      }
+    },
+    "soak-events": {
+      "prod": {
+        "never_hit_methods": [
+          {
+            "class": "dev.soaktest.events.ArchiveRouteKt$archiveRoute$1",
+            "method": "invokeSuspend"
+          },
+          {
+            "class": "dev.soaktest.events.ReplayRouteKt$replayRoute$1",
+            "method": "invokeSuspend",
+            "until": "PT72H"
+          }
+        ],
+        "never_hit_outcomes": [
+          {
+            "class": "dev.soaktest.events.EventService",
+            "method": "recent",
+            "condition_contains": "10000"
+          }
+        ],
+        "never_called_endpoints": [
+          {
+            "verb": "GET",
+            "template": "/events/archive",
+            "until": null
+          },
+          {
+            "verb": "GET",
+            "template": "/events/{id}/replay",
+            "until": "PT72H"
+          }
+        ],
+        "live_endpoints": [
+          {
+            "verb": "GET",
+            "template": "/events",
+            "from": "PT0S"
+          },
+          {
+            "verb": "POST",
+            "template": "/events",
+            "from": "PT1H"
+          },
+          {
+            "verb": "GET",
+            "template": "/events/stats",
+            "from": "PT72H"
+          }
+        ],
+        "never_loaded": [
+          {
+            "class": "dev.soaktest.events.ReplayEngine",
+            "until": "PT72H"
+          }
+        ],
+        "never_initialized": [],
+        "never_instantiated": [],
+        "failed_to_initialize": [],
+        "never_supplied": [],
+        "always_supplied": [],
+        "dependencies": [],
+        "stale_hit": [],
+        "unreached_cluster_roots": [
+          {
+            "class": "dev.soaktest.events.ArchiveRouteKt$archiveRoute$1",
+            "method": "invokeSuspend",
+            "members_include": []
+          },
+          {
+            "class": "dev.soaktest.events.ReplayRouteKt$replayRoute$1",
+            "method": "invokeSuspend",
+            "members_include": [
+              "dev.soaktest.events.ReplayEngine"
+            ],
+            "until": "PT72H"
+          }
+        ],
+        "removed": [
+          {
+            "kind": "endpoint",
+            "verb": "GET",
+            "template": "/events/{id}/replay",
+            "from": "PT72H"
+          },
+          {
+            "kind": "class",
+            "class": "dev.soaktest.events.ReplayEngine",
+            "from": "PT72H"
+          },
+          {
+            "kind": "class",
+            "class": "dev.soaktest.events.ReplayRouteKt",
+            "from": "PT72H"
+          },
+          {
+            "kind": "class",
+            "class": "dev.soaktest.events.ReplayRouteKt$replayRoute$1",
+            "from": "PT72H"
+          }
+        ],
+        "never_in_findings": [
+          {
+            "class_pattern": "dev.soaktest.events.Event",
+            "methods": [
+              "copy",
+              "copy$default",
+              "component1",
+              "component2",
+              "component3",
+              "equals",
+              "hashCode",
+              "toString",
+              "write$Self$events"
+            ]
+          },
+          {
+            "class_pattern": "dev.soaktest.events.Event$$serializer",
+            "methods": [
+              "<init>",
+              "serialize",
+              "deserialize",
+              "getDescriptor",
+              "childSerializers",
+              "typeParametersSerializers"
+            ]
+          },
+          {
+            "class_pattern": "dev.soaktest.events.Event$Companion",
+            "methods": [
+              "serializer"
+            ]
+          }
+        ]
+      },
+      "staging": {
+        "never_hit_methods": [
+          {
+            "class": "dev.soaktest.events.ReplayRouteKt$replayRoute$1",
+            "method": "invokeSuspend"
+          }
+        ],
+        "never_hit_outcomes": [
+          {
+            "class": "dev.soaktest.events.EventService",
+            "method": "recent",
+            "condition_contains": "10000"
+          }
+        ],
+        "never_called_endpoints": [
+          {
+            "verb": "GET",
+            "template": "/events/{id}/replay",
+            "until": null
+          }
+        ],
+        "live_endpoints": [
+          {
+            "verb": "GET",
+            "template": "/events",
+            "from": "PT0S"
+          },
+          {
+            "verb": "POST",
+            "template": "/events",
+            "from": "PT1H"
+          },
+          {
+            "verb": "GET",
+            "template": "/events/archive",
+            "from": "PT0S"
+          }
+        ],
+        "never_loaded": [
+          "dev.soaktest.events.ReplayEngine"
+        ],
+        "never_initialized": [],
+        "never_instantiated": [],
+        "failed_to_initialize": [],
+        "never_supplied": [],
+        "always_supplied": [],
+        "dependencies": [],
+        "stale_hit": [],
+        "unreached_cluster_roots": [
+          {
+            "class": "dev.soaktest.events.ReplayRouteKt$replayRoute$1",
+            "method": "invokeSuspend",
+            "members_include": [
+              "dev.soaktest.events.ReplayEngine"
+            ]
+          }
+        ],
+        "removed": [],
+        "never_in_findings": [
+          {
+            "class_pattern": "dev.soaktest.events.Event",
+            "methods": [
+              "copy",
+              "copy$default",
+              "component1",
+              "component2",
+              "component3",
+              "equals",
+              "hashCode",
+              "toString",
+              "write$Self$events"
+            ]
+          },
+          {
+            "class_pattern": "dev.soaktest.events.Event$$serializer",
+            "methods": [
+              "<init>",
+              "serialize",
+              "deserialize",
+              "getDescriptor",
+              "childSerializers",
+              "typeParametersSerializers"
+            ]
+          },
+          {
+            "class_pattern": "dev.soaktest.events.Event$Companion",
+            "methods": [
+              "serializer"
+            ]
+          }
+        ]
+      }
+    }
+  }
+}
