@@ -23,8 +23,10 @@ import java.lang.System.Logger.Level
 import java.time.Duration
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.random.Random
 
@@ -179,10 +181,31 @@ class ExportScheduler(
             log.log(Level.WARNING, "otherlode: no shutdown budget left for the final flush; skipping it")
             return
         }
-        val worker = Thread({ flush(final = true) }, "otherlode-shutdown-flush").apply { isDaemon = true }
+        val worker = Thread({ flush(final = true, deadlineNanos = deadlineNanos) }, "otherlode-shutdown-flush").apply { isDaemon = true }
         worker.start()
         worker.join(remaining)
         sendPool.shutdown()
+    }
+
+    /**
+     * Waits for one of a flush's sends. The shutdown flush waits only until [CLOSING_RESERVE_MILLIS]
+     * before its deadline, so its closing batch still has time to go out. A send it stops waiting
+     * for runs [onTimeout], which marks what it carried as pending, and counts as unconfirmed.
+     */
+    private fun awaitSend(
+        send: Future<Boolean>,
+        final: Boolean,
+        deadlineNanos: Long,
+        onTimeout: () -> Unit,
+    ): Boolean {
+        if (!final || deadlineNanos == 0L) return send.get()
+        return try {
+            send.get(maxOf(0L, remainingMillis(deadlineNanos) - CLOSING_RESERVE_MILLIS), TimeUnit.MILLISECONDS)
+        } catch (e: TimeoutException) {
+            onTimeout()
+            log.log(Level.WARNING, "otherlode: a send of the shutdown flush ran out of time; closing with the run marked pending")
+            false
+        }
     }
 
     private fun releaseLoggerGate() {
@@ -214,7 +237,7 @@ class ExportScheduler(
      * them side by side keeps one flush's worst case close to a single
      * send's worst case instead of the sum of both.
      *
-     * Up to two more manifest sends follow on this thread, once both main sends have ended. A
+     * Up to two more manifest sends follow on the send pool, once both main sends have ended. A
      * second manifest send runs only when this flush's confirmed delta sends released a dependency
      * that no manifest has carried yet. It carries that dependency and the mappings
      * held on it, so they go out in the same flush as their counts. Then an empty manifest carries
@@ -239,12 +262,25 @@ class ExportScheduler(
      * A flush that starts with pending counts sends an empty delta batch first, on its own, and a
      * flush that clears them ends with another; see [DeliveryState] and [sendDeltaBatch].
      *
-     * [final] is true only for the flush [flushOnShutdown] runs. That flush ends its delta sends
-     * with one empty batch carrying `finalFlush`, after every hit batch, so a collector can tell an
-     * instance that ended cleanly from one that went silent. No other batch carries it. The
-     * manifest send is unaffected.
+     * [final] is true only for the flush [flushOnShutdown] runs. That flush ends with one empty
+     * delta batch carrying `finalFlush`, after every hit batch and every manifest send, so a
+     * collector can tell an instance that ended cleanly from one that went silent, and the batch
+     * carries the pending state those sends left. No other batch carries it.
+     *
+     * Manifest content the run produced counts as pending counts until it is confirmed, like a hit
+     * batch: a manifest send that fails, or stops the sends after it, marks the run pending since
+     * the start of the flush, and a pass that confirms every manifest send clears it. When the
+     * manifest sends change the state after the flush's batches were stamped, and no delta batch or
+     * heartbeat of the flush failed without a refusal, the flush sends one more heartbeat that says so.
+     *
+     * The shutdown flush waits for each send only until [CLOSING_RESERVE_MILLIS] before its
+     * deadline, then marks what that send carried as pending and closes. A send it stopped waiting
+     * for can still finish after the closing batch.
      */
-    fun flush(final: Boolean = false) {
+    fun flush(
+        final: Boolean = false,
+        deadlineNanos: Long = 0L,
+    ) {
         val flushStart = clock()
         try {
             dependencyListing.runOnce()
@@ -257,20 +293,48 @@ class ExportScheduler(
             // Read after the sweep, so this flush's delta sends carry the counts of this generation.
             val generation = dependencyRegistry.countGeneration
             val deliveredBefore = dependencyRegistry.deliveredGeneration
-            val manifestSend = sendPool.submit<Boolean> { sendManifestDelta(final) }
-            val deltaSend = sendPool.submit<Boolean> { sendDeltaBatch(final, generation, flushStart) }
-            val manifestConfirmed = manifestSend.get()
-            val deltaConfirmed = deltaSend.get()
+            val sends = FlushSends(pendingAtStart = delivery.isPending(), hitsWerePending = delivery.hitsPending())
+            val manifestSend = sendPool.submit<Boolean> { sendManifestDelta(final, flushStart, sends) }
+            val deltaSend = sendPool.submit<Boolean> { sendDeltaBatch(final, generation, flushStart, sends) }
+            var manifestTimedOut = false
+            val manifestConfirmed =
+                awaitSend(manifestSend, final, deadlineNanos) {
+                    delivery.markManifestPending(flushStart)
+                    manifestTimedOut = true
+                }
+            val deltaConfirmed =
+                awaitSend(deltaSend, final, deadlineNanos) {
+                    delivery.markPending(flushStart)
+                    sends.unconfirmed()
+                }
             var allConfirmed = manifestConfirmed && deltaConfirmed
             val released =
                 dependencyRegistry.deliveredGeneration > deliveredBefore && dependencyRegistry.hasSendableUndelivered()
-            if (released) allConfirmed = sendManifestDelta(final) && allConfirmed
-            if (allConfirmed) {
-                sendUnplacedIfDue()
-                sendDependenciesListedIfDue()
+            val roomForMore = !final || remainingMillis(deadlineNanos) > 2 * CLOSING_RESERVE_MILLIS
+            if (released && !manifestTimedOut && roomForMore) {
+                val releasedSend = sendPool.submit<Boolean> { sendManifestDelta(final, flushStart, sends) }
+                allConfirmed = awaitSend(releasedSend, final, deadlineNanos) { delivery.markManifestPending(flushStart) } && allConfirmed
+            }
+            if (allConfirmed && !roomForMore) {
+                if (delivery.unplacedAheadOfDelivered()) delivery.markManifestPending(flushStart)
+            } else if (allConfirmed) {
+                val lateManifests =
+                    sendPool.submit<Boolean> {
+                        sendUnplacedIfDue(flushStart, sends)
+                        sendDependenciesListedIfDue(sends)
+                        true
+                    }
+                awaitSend(lateManifests, final, deadlineNanos) {
+                    if (delivery.unplacedAheadOfDelivered()) delivery.markManifestPending(flushStart)
+                }
+            }
+            if (final) {
+                if (!sendClosingHeartbeat(sends)) allConfirmed = false
+            } else {
+                if (!sends.outage && delivery.stateNotYetSaid() && !sendCatchUpHeartbeat(sends)) allConfirmed = false
                 // One chunk per sender per flush, and none from the shutdown flush, so a slow
                 // resend never holds up a heartbeat or spends the shutdown budget.
-                if (!final) {
+                if (allConfirmed) {
                     staticBaselineSender?.retryPending()
                     classListingSender?.retryPending()
                 }
@@ -547,23 +611,62 @@ class ExportScheduler(
         private val unplacedVerificationFailures: () -> Long,
     ) {
         private val lock = Any()
-        private var pendingSince = 0L
+        private var hitsPendingSince = 0L
+        private var manifestPendingSince = 0L
+        private var lastStampedPendingSince = 0L
         private var nextSequence = 1L
         private var unplacedDelivered = 0L
 
-        fun isPending(): Boolean = synchronized(lock) { pendingSince != 0L }
+        private fun pendingSince(): Long =
+            when {
+                hitsPendingSince == 0L -> manifestPendingSince
+                manifestPendingSince == 0L -> hitsPendingSince
+                else -> minOf(hitsPendingSince, manifestPendingSince)
+            }
+
+        fun isPending(): Boolean = synchronized(lock) { pendingSince() != 0L }
+
+        fun hitsPending(): Boolean = synchronized(lock) { hitsPendingSince != 0L }
 
         /** Called when a hit batch was sent and not confirmed. Keeps the earlier start if already pending. */
         fun markPending(flushStart: Long) {
-            synchronized(lock) { if (pendingSince == 0L) pendingSince = flushStart }
+            synchronized(lock) { if (hitsPendingSince == 0L) hitsPendingSince = flushStart }
         }
 
-        fun clear() {
-            synchronized(lock) { pendingSince = 0L }
+        /**
+         * Called when manifest content the run produced is not confirmed: a send failed, or sends
+         * stopped before a chunk was sent. Keeps the earlier start if already pending.
+         */
+        fun markManifestPending(flushStart: Long) {
+            synchronized(lock) { if (manifestPendingSince == 0L) manifestPendingSince = flushStart }
         }
+
+        /** Called when every hit the run sent was confirmed. Manifest content may still hold the run pending. */
+        fun clearHits() {
+            synchronized(lock) { hitsPendingSince = 0L }
+        }
+
+        /** Called when a pass confirmed every manifest send and left no manifest content outstanding. */
+        fun clearManifest() {
+            synchronized(lock) { manifestPendingSince = 0L }
+        }
+
+        /**
+         * Whether the newest payload stamped says pending while the state is clean now, or says
+         * nothing is pending while manifest content is. Hits that became pending after their own
+         * flush's stamps wait for the next flush's leading heartbeat (ADR 0068).
+         */
+        fun stateNotYetSaid(): Boolean =
+            synchronized(lock) {
+                (pendingSince() == 0L && lastStampedPendingSince != 0L) ||
+                    (manifestPendingSince != 0L && lastStampedPendingSince == 0L)
+            }
 
         fun stamp(batch: DeltaBatch): DeltaBatch =
-            synchronized(lock) { batch.copy(payloadSequence = nextSequence++, countsPendingSince = pendingSince) }
+            synchronized(lock) {
+                lastStampedPendingSince = pendingSince()
+                batch.copy(payloadSequence = nextSequence++, countsPendingSince = lastStampedPendingSince)
+            }
 
         /**
          * Stamps the sequence, the pending state, whether the run watches the verifier and the
@@ -571,9 +674,10 @@ class ExportScheduler(
          */
         fun stamp(manifest: ProbeManifest): ProbeManifest =
             synchronized(lock) {
+                lastStampedPendingSince = pendingSince()
                 manifest.copy(
                     payloadSequence = nextSequence++,
-                    countsPendingSince = pendingSince,
+                    countsPendingSince = lastStampedPendingSince,
                     unplacedVerificationFailures = unplacedVerificationFailures(),
                     verifierRejectionsWatched = verifierRejectionsWatched,
                 )
@@ -644,9 +748,9 @@ class ExportScheduler(
      * [generation] have reached the collector, and this records it
      * ([DependencyRegistry.markCountsDelivered]).
      *
-     * The shutdown flush ([final]) ends with one more empty batch that carries `finalFlush`. It is
-     * sent after every hit batch, whatever happened to them, and stamped then, so it carries the
-     * pending state the hit batches left. No other batch of the flush carries `finalFlush`. The
+     * The shutdown flush ([final]) ends with one more empty batch that carries `finalFlush`, which
+     * [flush] sends after this loop and the manifest sends, whatever happened to them, so it
+     * carries the pending state both left. No other batch of the flush carries `finalFlush`. The
      * shutdown flush sends no empty batch of its own before that one, since the closing batch is
      * its liveness signal, and it replaces the one a clearing flush would send. When anything the
      * loop does not account for throws, such as computing the batches, the shutdown flush marks the
@@ -656,20 +760,19 @@ class ExportScheduler(
      * `flushComplete` is set on at most one batch of a flush, the last one the flush sends, and
      * only when every delta batch the flush sent before it was confirmed, empty batches included.
      * It is decided when the batch is built, from the sends so far. A flush that started clean
-     * carries it on the last batch of the loop. A flush that started pending carries it on its
+     * carries it on the last batch of the loop. A flush that started with pending hits carries it on its
      * closing heartbeat. The shutdown flush carries it on its closing `finalFlush` batch. A failure
      * of any kind, including one before the first send, leaves it off every later batch.
      *
-     * Returns whether the loop ran to its end with every hit batch confirmed, and for the shutdown
-     * flush also whether the closing batch did not fail without a refusal.
+     * Returns whether the loop ran to its end with every hit batch confirmed.
      */
     private fun sendDeltaBatch(
         final: Boolean,
         generation: Long,
         flushStart: Long,
+        sends: FlushSends,
     ): Boolean {
         var confirmed = false
-        val sends = FlushSends()
         try {
             confirmed = sendHitBatches(final, generation, flushStart, sends)
         } catch (t: Throwable) {
@@ -677,15 +780,35 @@ class ExportScheduler(
             log.log(Level.WARNING, "otherlode: delta export failed, will retry next flush", t)
             if (final) delivery.markPending(flushStart)
         }
-        if (!final) return confirmed
-        return try {
+        return confirmed
+    }
+
+    /**
+     * The shutdown flush's last send, after the hit batches and the manifest sends, so it carries
+     * the pending state they left. Returns false when it failed without a refusal.
+     */
+    private fun sendClosingHeartbeat(sends: FlushSends): Boolean =
+        try {
             sendHeartbeat(sends, finalFlush = true, flushComplete = sends.allConfirmed)
-            confirmed
+            true
         } catch (t: Throwable) {
             log.log(Level.WARNING, "otherlode: closing export failed, the run will read as one that went silent", t)
             false
         }
-    }
+
+    /**
+     * Tells the collector the run's state changed after every payload of the flush was stamped:
+     * a manifest send failed after the hit batches said nothing was pending, or the manifest sends
+     * cleared the last pending state. Returns false when it failed without a refusal.
+     */
+    private fun sendCatchUpHeartbeat(sends: FlushSends): Boolean =
+        try {
+            sendHeartbeat(sends, finalFlush = false, flushComplete = false)
+            true
+        } catch (t: Throwable) {
+            log.log(Level.WARNING, "otherlode: heartbeat export failed, will retry next flush", t)
+            false
+        }
 
     private fun sendHitBatches(
         final: Boolean,
@@ -697,8 +820,8 @@ class ExportScheduler(
         val riders =
             endpointRegistry.computeDeltas(maxDeltasPerBatch).map(::endpointDeltaRider) +
                 dependencyRegistry.computeDeltas(maxDeltasPerBatch).map(::dependencyDeltaRider)
-        val pendingAtStart = delivery.isPending()
-        if (pendingAtStart) sendHeartbeat(sends, finalFlush = false, flushComplete = false)
+        val hitsWerePending = sends.hitsWerePending
+        if (sends.pendingAtStart) sendHeartbeat(sends, finalFlush = false, flushComplete = false)
         var allConfirmed = true
         val deltaSends = composeDeltaSends(probeBatches, riders)
         for (send in deltaSends) {
@@ -707,7 +830,7 @@ class ExportScheduler(
                 send.probeSnapshot?.let(registry::advanceBaseline)
                 continue
             }
-            val completesFlush = !final && !pendingAtStart && send === deltaSends.last() && sends.allConfirmed
+            val completesFlush = !final && !hitsWerePending && send === deltaSends.last() && sends.allConfirmed
             try {
                 sendStamped(send.batch.copy(flushComplete = completesFlush))
             } catch (e: ExportFailedException) {
@@ -716,11 +839,15 @@ class ExportScheduler(
                     delivery.markPending(flushStart)
                     allConfirmed = false
                 }
-                if (!e.refused) throw e
+                if (!e.refused) {
+                    sends.outage()
+                    throw e
+                }
                 log.log(Level.WARNING, "otherlode: delta export failed, will retry next flush", e)
                 continue
             } catch (t: Throwable) {
                 sends.unconfirmed()
+                sends.outage()
                 if (hits) delivery.markPending(flushStart)
                 throw t
             }
@@ -729,24 +856,37 @@ class ExportScheduler(
         }
         if (!allConfirmed) return false
         dependencyRegistry.markCountsDelivered(generation)
-        if (delivery.isPending()) {
-            delivery.clear()
-            if (!final) sendHeartbeat(sends, finalFlush = false, flushComplete = sends.allConfirmed)
-        }
+        delivery.clearHits()
+        if (hitsWerePending && !final) sendHeartbeat(sends, finalFlush = false, flushComplete = sends.allConfirmed)
         return true
     }
 
     /**
      * Whether every delta batch a flush has sent so far was confirmed. A batch that was sent and
-     * refused or failed, and a failure before any batch was sent, make it false for the rest of
-     * the flush. Only the flush's delta thread touches it.
+     * refused or failed, a failure before any batch was sent, and a delta send the shutdown flush
+     * stopped waiting for make it false for the rest of the flush. [outage] is set when a delta
+     * batch or a heartbeat failed without a refusal, whatever the status: the collector, or
+     * Otherlode behind it, is not taking payloads. The flush's threads and its send pool read and
+     * write it.
      */
-    private class FlushSends {
+    private class FlushSends(
+        val pendingAtStart: Boolean,
+        val hitsWerePending: Boolean,
+    ) {
+        @Volatile
         var allConfirmed = true
+            private set
+
+        @Volatile
+        var outage = false
             private set
 
         fun unconfirmed() {
             allConfirmed = false
+        }
+
+        fun outage() {
+            outage = true
         }
     }
 
@@ -763,10 +903,14 @@ class ExportScheduler(
             sendStamped(DeltaBatch(resource, emptyList(), finalFlush = finalFlush, flushComplete = flushComplete))
         } catch (e: ExportFailedException) {
             sends.unconfirmed()
-            if (!e.refused) throw e
+            if (!e.refused) {
+                sends.outage()
+                throw e
+            }
             log.log(Level.WARNING, "otherlode: heartbeat export failed, will retry next flush", e)
         } catch (t: Throwable) {
             sends.unconfirmed()
+            sends.outage()
             throw t
         }
     }
@@ -867,9 +1011,15 @@ class ExportScheduler(
      * first send, so every chunk of one call carries the same value.
      *
      * Returns whether every send in the loop was confirmed. A call with
-     * nothing to send returns true.
+     * nothing to send returns true. A failure, a refusal included, or an exception while computing
+     * the chunks marks the run's manifest content pending since [flushStart] (ADR 0068), and a call
+     * that confirms everything it computed clears it.
      */
-    private fun sendManifestDelta(final: Boolean): Boolean {
+    private fun sendManifestDelta(
+        final: Boolean,
+        flushStart: Long,
+        sends: FlushSends,
+    ): Boolean {
         runBeforeManifest(final)
         try {
             endpointRegistry.computeDisabledModules()?.let { snapshot ->
@@ -895,8 +1045,10 @@ class ExportScheduler(
                 send.riders.forEach { it.advance() }
                 if (listed) dependenciesListedSent.set(true)
             }
+            if (!delivery.unplacedAheadOfDelivered()) delivery.clearManifest()
             return true
         } catch (t: Throwable) {
+            delivery.markManifestPending(flushStart)
             log.log(Level.WARNING, "otherlode: manifest export failed, will retry next flush", t)
             return false
         }
@@ -1028,7 +1180,7 @@ class ExportScheduler(
      * tell the collector that its listing is complete. [flush] calls this only when every other
      * send of the flush was confirmed. Guarded like the other sends; see [flush].
      */
-    private fun sendDependenciesListedIfDue() {
+    private fun sendDependenciesListedIfDue(sends: FlushSends) {
         try {
             if (dependenciesListedSent.get() || !dependenciesListed) return
             sendStamped(emptyManifest(dependenciesListed = true))
@@ -1044,13 +1196,18 @@ class ExportScheduler(
      * stamps the current total, so a flush with class chunks to send needs no extra one. [flush]
      * calls this only when every other send of the flush was confirmed. Guarded like the other sends.
      */
-    private fun sendUnplacedIfDue() {
+    private fun sendUnplacedIfDue(
+        flushStart: Long,
+        sends: FlushSends,
+    ) {
         try {
             if (!delivery.unplacedAheadOfDelivered()) return
             val listed = dependenciesListed
             sendStamped(emptyManifest(listed))
             if (listed) dependenciesListedSent.set(true)
+            delivery.clearManifest()
         } catch (t: Throwable) {
+            delivery.markManifestPending(flushStart)
             log.log(Level.WARNING, "otherlode: sending the unplaced verification failure count failed, will retry next flush", t)
         }
     }
@@ -1101,5 +1258,8 @@ class ExportScheduler(
          * own application, and the finding it produces does not go stale.
          */
         const val SWEEP_EVERY_N_FLUSHES: Int = 10
+
+        /** What the shutdown flush keeps of its budget for its closing batch. */
+        const val CLOSING_RESERVE_MILLIS: Long = 2_000L
     }
 }
