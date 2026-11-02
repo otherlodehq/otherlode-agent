@@ -228,9 +228,25 @@ A directory, a jar or a jar nested in a Spring Boot executable jar could not be 
 ```text
 otherlode: java.class.path is empty or has an empty element, which the JVM reads as the working directory, so no class listing is sent
 otherlode: this JVM runs from a module path or a linked image, which the class listing does not read, so no class listing is sent
+otherlode: this JVM upgrades or patches modules, which the class listing does not read, so no class listing is sent
+otherlode: this JVM has no java.management module, so the agent cannot tell whether it patches modules, so no class listing is sent
 ```
 
-The listing reads only the class path, and only when it names every folder the JVM reads. Name the classpath, or remove a leading, trailing or doubled path separator, to get a listing. An application that runs from the module path or a `jlink` image sends none.
+The listing reads only the class path, and only when it names every folder the JVM reads. Name the classpath, or remove a leading, trailing or doubled path separator, to get a listing. An application that runs from the module path, launches a `jlink` image's main module, or uses `--upgrade-module-path` or `--patch-module` sends none, and so does a linked image without `java.management`, since the agent needs that module to see `--patch-module`.
+
+### The class listing missed a root
+
+```text
+otherlode: com.acme.plugin.Exporter loaded from file:/opt/app/plugins/exporter.jar, which the class listing did not read, so Otherlode removes no class from this environment while this run is live
+otherlode: com.acme.plugin.Exporter loaded with no code source, and the class listing does not name it, so Otherlode removes no class from this environment while this run is live
+otherlode: more classes loaded before the class listing finished than the agent keeps, so Otherlode removes no class from this environment while this run is live
+otherlode: a class loaded whose name the agent could not read, so Otherlode removes no class from this environment while this run is live
+otherlode: the agent could not read where com.acme.plugin.Exporter loaded from, so Otherlode removes no class from this environment while this run is live
+```
+
+A class under `includePackages` loaded from a jar or folder that the class listing did not read, such as a plugin folder, a WAR that an application server deployed, an OSGi bundle or a `loader.path` folder. The second form is a class whose loader gave it no code source, which many plugin loaders and some code generators do, and whose name the listing lacks. The third is a JVM that, before the listing finished, loaded classes under `includePackages` from more than 4096 places, or more than 4096 such classes with no code source, so the agent could not check them all. The last two are a class the agent could not name or could not check. Each errs the safe way: Otherlode withholds removals rather than claim a class removed that may still be there. The agent logs this line once per run and marks every manifest the run sends from then on with `class_listing_blind`. While the run is live, Otherlode claims no class removed in its environment, because a class it no longer finds in the listing may have moved to a place the listing cannot read.
+
+To get removal claims for the environment, put that code on the classpath the listing reads. The mark belongs to the run that set it, so a restarted process starts without it.
 
 ### A test run ended before the scan did
 

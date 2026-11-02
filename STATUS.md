@@ -90,11 +90,11 @@ Known gaps in what it lists, all rare, all listing less than the JVM loads:
   the scan can declare a later copy instead. Rare: an index is deprecated,
   and the jar must also hold a copy-shadowing class.
 - Boot `PropertiesLauncher` `loader.path` folders, a WAR deployed on an
-  external Tomcat and plugin folders. The server's guard is by name only,
-  so a dead class moved into one reads removed: a false claim. To grill
-  with the server's item (server STATUS, finding-rule drift): flag a
-  listing as blind when an included class loads from a root it did not
-  read.
+  external Tomcat and plugin folders. The run marks its listing blind once
+  an included class loads from one (ADR 0085). A root whose classes never
+  load stays unseen: a jar of only dead classes in a folder where nothing
+  else loads can still read removed. Reading `loader.path` would close it
+  for Boot.
 
 ### Reminders for expiring keys and credentials: to decide
 

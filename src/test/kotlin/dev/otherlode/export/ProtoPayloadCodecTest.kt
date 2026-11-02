@@ -494,6 +494,16 @@ class ProtoPayloadCodecTest {
     }
 
     @Test
+    fun `the class listing blind flag round-trips through the manifest and defaults to false`() {
+        val resource = ResourceAttributes("checkout", "1.0.0", "", null, "run-1")
+        val blind = ProbeManifest(resource, emptyList(), classListingBlind = true)
+
+        assertTrue(ProtoProbeManifest.parseFrom(ProtoPayloadCodec.encode(blind)).classListingBlind)
+        assertEquals(blind, ProtoPayloadCodec.decodeProbeManifest(ProtoPayloadCodec.encode(blind)))
+        assertFalse(ProtoPayloadCodec.decodeProbeManifest(ProtoPayloadCodec.encode(ProbeManifest(resource, emptyList()))).classListingBlind)
+    }
+
+    @Test
     fun `the verifier rejections watched flag defaults to false`() {
         val manifest = ProbeManifest(ResourceAttributes("checkout", "1.0.0", "", null, "run-1"), emptyList())
 

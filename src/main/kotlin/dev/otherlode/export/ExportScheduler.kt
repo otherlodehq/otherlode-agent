@@ -101,6 +101,11 @@ class ExportScheduler(
      */
     private val verifierWatch: VerifierRejectionWatch = VerifierRejectionWatch.NOT_WATCHED,
     /**
+     * Whether the run's class listing missed a root (ADR 0085), stamped on every manifest. Once it
+     * returns true it must return true for good. The default is never blind.
+     */
+    private val classListingBlind: () -> Boolean = { false },
+    /**
      * Run before each manifest's disabled endpoint modules and endpoints are read, with the flush
      * interval and whether this is the final flush, so a module that settles what it declares does
      * so before that manifest is built. The default does nothing.
@@ -125,7 +130,7 @@ class ExportScheduler(
     private val dependenciesListedSent = AtomicBoolean(false)
     private var flushesSinceSweep = 1
     private val sweepLock = Any()
-    private val delivery = DeliveryState(verifierWatch.watched, registry::unplacedVerificationFailures)
+    private val delivery = DeliveryState(verifierWatch.watched, registry::unplacedVerificationFailures, classListingBlind)
 
     /** Runs the two sends of each flush side by side; see [flush]. Two threads, created once, not two per tick. */
     private val sendPool: ExecutorService =
@@ -335,8 +340,9 @@ class ExportScheduler(
      * a rejected submission after [stop].
      *
      * The run's verifier rejections are drained after the sweep and before the sends, the shutdown
-     * flush included. A manifest carrying a higher unplaced total than any confirmed one is sent
-     * after the main sends when nothing else carried it; see [sendUnplacedIfDue].
+     * flush included. A manifest carrying a higher unplaced total than any confirmed one, or the
+     * blind class listing flag when none has, is sent after the main sends when nothing else
+     * carried it; see [sendUnplacedIfDue].
      *
      * A flush that starts with pending counts sends an empty delta batch first, on its own, and a
      * flush that clears them ends with another; see [DeliveryState] and [sendDeltaBatch].
@@ -424,7 +430,7 @@ class ExportScheduler(
                     awaitSend(releasedSend, final, deadlineNanos) { delivery.markManifestPending(flushStart, sends.flushId) } && allConfirmed
             }
             if (allConfirmed && !room) {
-                if (delivery.unplacedAheadOfDelivered()) delivery.markManifestPending(flushStart, sends.flushId)
+                if (delivery.stampedStateAheadOfDelivered()) delivery.markManifestPending(flushStart, sends.flushId)
             } else if (allConfirmed) {
                 val lateManifests =
                     pool.submit<Boolean> {
@@ -433,7 +439,7 @@ class ExportScheduler(
                         true
                     }
                 awaitSend(lateManifests, final, deadlineNanos) {
-                    if (delivery.unplacedAheadOfDelivered()) delivery.markManifestPending(flushStart, sends.flushId)
+                    if (delivery.stampedStateAheadOfDelivered()) delivery.markManifestPending(flushStart, sends.flushId)
                 }
             }
             if (final) {
@@ -718,6 +724,7 @@ class ExportScheduler(
     private class DeliveryState(
         private val verifierRejectionsWatched: Boolean,
         private val unplacedVerificationFailures: () -> Long,
+        private val classListingBlind: () -> Boolean,
     ) {
         private val lock = Any()
         private var hitsPendingSince = 0L
@@ -730,6 +737,7 @@ class ExportScheduler(
         private var lastStampedPendingSince = 0L
         private var nextSequence = 1L
         private var unplacedDelivered = 0L
+        private var blindDelivered = false
 
         /** Numbers a flush, from 1, in the order flushes start. */
         fun nextFlushId(): Long = synchronized(lock) { ++lastFlushId }
@@ -830,16 +838,27 @@ class ExportScheduler(
                     countsPendingSince = lastStampedPendingSince,
                     unplacedVerificationFailures = unplacedVerificationFailures(),
                     verifierRejectionsWatched = verifierRejectionsWatched,
+                    classListingBlind = classListingBlind(),
                 )
             }
 
-        /** Records that a manifest carrying [total] unplaced failures was confirmed. */
-        fun confirmUnplaced(total: Long) {
-            synchronized(lock) { if (total > unplacedDelivered) unplacedDelivered = total }
+        /** Records that a manifest carrying [total] unplaced failures, and [blind], was confirmed. */
+        fun confirmStamped(
+            total: Long,
+            blind: Boolean,
+        ) {
+            synchronized(lock) {
+                if (total > unplacedDelivered) unplacedDelivered = total
+                if (blind) blindDelivered = true
+            }
         }
 
-        /** Whether the registry's unplaced total is above the highest one a confirmed manifest carried. */
-        fun unplacedAheadOfDelivered(): Boolean = synchronized(lock) { unplacedVerificationFailures() > unplacedDelivered }
+        /**
+         * Whether the registry's unplaced total is above the highest one a confirmed manifest
+         * carried, or the listing went blind and no confirmed manifest has said so.
+         */
+        fun stampedStateAheadOfDelivered(): Boolean =
+            synchronized(lock) { unplacedVerificationFailures() > unplacedDelivered || (classListingBlind() && !blindDelivered) }
     }
 
     /** The one place a delta batch reaches the exporter, so none skips [DeliveryState.stamp]. */
@@ -849,7 +868,7 @@ class ExportScheduler(
     private fun sendStamped(manifest: ProbeManifest) {
         val stamped = delivery.stamp(manifest)
         exporter.exportManifest(stamped)
-        delivery.confirmUnplaced(stamped.unplacedVerificationFailures)
+        delivery.confirmStamped(stamped.unplacedVerificationFailures, stamped.classListingBlind)
     }
 
     private fun hasHits(batch: DeltaBatch): Boolean =
@@ -1212,7 +1231,7 @@ class ExportScheduler(
                 send.riders.forEach { it.advance() }
                 if (listed) dependenciesListedSent.set(true)
             }
-            if (!delivery.unplacedAheadOfDelivered()) delivery.clearManifest(sends.flushId)
+            if (!delivery.stampedStateAheadOfDelivered()) delivery.clearManifest(sends.flushId)
             return true
         } catch (t: Throwable) {
             delivery.markManifestPending(flushStart, sends.flushId)
@@ -1359,7 +1378,8 @@ class ExportScheduler(
 
     /**
      * Sends an empty manifest when the run's unplaced verification failures rose above the total
-     * any confirmed manifest carried and nothing else of this flush carried it. Every manifest
+     * any confirmed manifest carried, or its class listing went blind and no confirmed manifest
+     * said so, and nothing else of this flush carried it. Every manifest
      * stamps the current total, so a flush with class chunks to send needs no extra one. [flush]
      * calls this only when every other send of the flush was confirmed. Guarded like the other sends.
      */
@@ -1368,7 +1388,7 @@ class ExportScheduler(
         sends: FlushSends,
     ) {
         try {
-            if (!delivery.unplacedAheadOfDelivered()) return
+            if (!delivery.stampedStateAheadOfDelivered()) return
             val listed = dependenciesListed
             sendStamped(emptyManifest(listed))
             if (listed) dependenciesListedSent.set(true)

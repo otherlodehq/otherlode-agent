@@ -102,6 +102,7 @@ object ProtoPayloadCodec {
                     countsPendingSince = Long.MAX_VALUE,
                     unplacedVerificationFailures = Long.MAX_VALUE,
                     verifierRejectionsWatched = true,
+                    classListingBlind = true,
                 ),
             ),
         )
@@ -333,6 +334,7 @@ object ProtoPayloadCodec {
             .setUnplacedVerificationFailures(manifest.unplacedVerificationFailures)
             .setVerifierRejectionsWatched(manifest.verifierRejectionsWatched)
             .addAllFrameworkMarkers(manifest.frameworkMarkers.map { toProto(it) })
+            .setClassListingBlind(manifest.classListingBlind)
             .build()
 
     private fun fromProto(manifest: ProtoProbeManifest): ProbeManifest =
@@ -356,6 +358,7 @@ object ProtoPayloadCodec {
             unplacedVerificationFailures = manifest.unplacedVerificationFailures,
             verifierRejectionsWatched = manifest.verifierRejectionsWatched,
             frameworkMarkers = manifest.frameworkMarkersList.map { fromProto(it) },
+            classListingBlind = manifest.classListingBlind,
         )
 
     private fun toProto(unreportedClass: UnreportedClass): ProtoUnreportedClass =

@@ -139,6 +139,7 @@ The manifest says what each id in a delta batch names. It carries the resource a
 | `dependencies` | Per dependency: `dependency_id`, identities (`group_id`, `artifact_id`, `version`), how the identity was read, the location, how it was discovered, and class count |
 | `external_classes` | Name of a class outside scope that your code refers to, the `dependency_id` that provides it, and whether nothing provides it |
 | `references_recorded`, `dependencies_listed` | Flags Otherlode uses to know when references and the startup dependency listing are complete |
+| `class_listing_blind` | `true` once a class under `includePackages` loaded from a jar or folder the run's class listing did not read, or with no code source and a name the listing lacks. It is set on every manifest after that and never goes back to `false`. See [the class listing](classes#the-class-listing) |
 | `payload_sequence`, `counts_pending_since` | Where the run stands in delivering its counts; see [Pending counts](#pending-counts) |
 
 #### Branch and site keys

@@ -1,6 +1,7 @@
 package dev.otherlode.dependencies
 
 import java.io.File
+import java.io.IOException
 import java.net.URI
 import java.net.URISyntaxException
 import java.net.URLDecoder
@@ -105,3 +106,32 @@ internal sealed interface CodeSourceLocation {
         }
     }
 }
+
+/**
+ * A key two code-source locations share when they name the same root: a jar or a folder on disk,
+ * or an entry of a jar such as a nested jar or `BOOT-INF/classes/`. The files are compared by real
+ * path (a file that does not exist, by absolute path), and an entry by its name without a trailing
+ * slash, since Spring Boot 3.2 and later writes `BOOT-INF/classes/` where earlier versions wrote
+ * `BOOT-INF/classes`. Null for an [CodeSourceLocation.Unsupported] location.
+ */
+internal fun CodeSourceLocation.rootKey(): String? =
+    when (this) {
+        is CodeSourceLocation.OnDisk -> "disk:${realPath(path)}"
+        is CodeSourceLocation.InJar -> "jar:${realPath(outerJar)}!/${entryName.trimEnd('/')}"
+        CodeSourceLocation.Unsupported -> null
+    }
+
+/** The [rootKey] of a code-source location's string form, or null when it names no root this agent reads. */
+internal fun rootKeyOf(location: String): String? =
+    try {
+        CodeSourceLocation.parse(location).rootKey()
+    } catch (_: Exception) {
+        null
+    }
+
+private fun realPath(path: Path): Path =
+    try {
+        path.toRealPath()
+    } catch (_: IOException) {
+        path.toAbsolutePath().normalize()
+    }

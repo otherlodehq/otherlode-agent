@@ -742,6 +742,12 @@ enum class BodyKind {
  *
  * [frameworkMarkers] are the frameworks whose routing loaded in this JVM, each delivered once; see
  * [FrameworkMarker]. Empty from an agent that predates the field.
+ *
+ * [classListingBlind] is true on every manifest the run sends once a class the include rules admit
+ * loaded from a code source the run's class listing did not read, or with no code source and a name
+ * the listing lacks. It is false before, and never false again. A run whose classpath the listing
+ * could not read whole never sets it. False from an agent that predates
+ * the field.
  */
 data class ProbeManifest(
     val resource: ResourceAttributes,
@@ -763,6 +769,7 @@ data class ProbeManifest(
     val unplacedVerificationFailures: Long = 0,
     val verifierRejectionsWatched: Boolean = false,
     val frameworkMarkers: List<FrameworkMarker> = emptyList(),
+    val classListingBlind: Boolean = false,
 )
 
 /**

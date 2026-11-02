@@ -4,6 +4,7 @@ import dev.otherlode.bootstrap.OtherlodeLoggers
 import dev.otherlode.classlisting.ClassLister
 import dev.otherlode.classlisting.ClassListingPublisher
 import dev.otherlode.classlisting.ClassListingSender
+import dev.otherlode.classlisting.ClassListingWatch
 import dev.otherlode.config.AgentConfig
 import dev.otherlode.config.IncludeRulesRefusal
 import dev.otherlode.config.MainClassSuggestion
@@ -119,10 +120,13 @@ object Agent {
         val verifierHook: VerifyErrorHook = VerifyErrorHook(),
         /** The weave of `ApplicationShutdownHooks.runHooks`; see [ShutdownHooksHook]. */
         val shutdownHooksHook: ShutdownHooksHook? = null,
+        /** The watch on where included classes load from, or null when `classListingEnabled` is off. */
+        val classListingWatch: ClassListingWatch? = null,
     ) {
         fun stop() {
             Runtime.getRuntime().removeShutdownHook(shutdownHook)
             scheduler.stop()
+            classListingWatch?.let(instrumentation::removeTransformer)
             otherlodeInstrumentation.uninstall(instrumentation, transformer)
             if (endpointInstrumentation != null && endpointTransformer != null) {
                 endpointInstrumentation.uninstall(instrumentation, endpointTransformer)
@@ -272,7 +276,13 @@ object Agent {
         var scheduler: ExportScheduler? = null
         var shutdownHook: Thread? = null
         var shutdownHooksHook: ShutdownHooksHook? = null
+        var classListingWatch: ClassListingWatch? = null
         try {
+            if (config.classListingEnabled) {
+                val watch = ClassListingWatch(config.includePackages, config.excludePackages)
+                instrumentation.addTransformer(watch)
+                classListingWatch = watch
+            }
             // Made once here and shared, so every payload this process sends names the same run.
             val resource = ResourceAttributes.forNewRun(config)
             // One client for every exporter, built by the first send rather than on this thread.
@@ -327,6 +337,7 @@ object Agent {
                     dependencyListing = dependencyListing,
                     releaseQuietCaches = otherlodeInstrumentation::releaseQuietCaches,
                     verifierWatch = verifierHook.watch(),
+                    classListingBlind = { classListingWatch?.isBlind == true },
                     beforeManifest = { graceMillis, finalFlush -> instrumentedEndpoints?.beforeManifest(graceMillis, finalFlush) },
                 )
             scheduler = started
@@ -367,7 +378,7 @@ object Agent {
                 }, "otherlode-shutdown-hook")
             addShutdownHook(hook)
             shutdownHook = hook
-            val listingWorker = classListingSender?.let { classListingThread(config, resource, it) }
+            val listingWorker = classListingSender?.let { classListingThread(config, resource, it, classListingWatch, instrumentation) }
             scanWorker?.start()
             listingWorker?.start()
             return Running(
@@ -383,6 +394,7 @@ object Agent {
                 listingWorker,
                 verifierHook,
                 shutdownHooksHook,
+                classListingWatch,
             )
         } catch (e: Throwable) {
             // Each step is tried on its own, so one that fails neither stops the rest nor hides
@@ -396,6 +408,7 @@ object Agent {
             }
             undo { verifierHook.uninstall(instrumentation) }
             shutdownHooksHook?.let { undo { it.uninstall(instrumentation) } }
+            classListingWatch?.let { undo { instrumentation.removeTransformer(it) } }
             throw e
         }
     }
@@ -519,10 +532,12 @@ object Agent {
         config: AgentConfig,
         resource: ResourceAttributes,
         sender: ClassListingSender,
+        watch: ClassListingWatch?,
+        instrumentation: Instrumentation,
     ): Thread {
         val publisher =
             ClassListingPublisher(
-                ClassLister(config.includePackages, config.excludePackages)::list,
+                ClassLister(config.includePackages, config.excludePackages, onRoots = { roots, names -> watch?.listingRead(roots, names, instrumentation::getAllLoadedClasses) })::list,
                 IncludeRules(config.includePackages, config.excludePackages),
                 sender,
             )

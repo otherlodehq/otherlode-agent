@@ -791,6 +791,14 @@ message ProbeManifest {
   // set up. Each marker is delivered once per run, resent until a manifest carrying it is
   // confirmed; the wire has no retraction, so a marker once sent stands. See FrameworkMarker.
   repeated FrameworkMarker framework_markers = 22;
+  // True on every manifest the run sends once a class the include rules admit loaded from a code
+  // source the run's class listing did not read, such as a plugin folder, a war that an external
+  // container deployed, or an OSGi bundle, or loaded with no code source and a name the listing
+  // lacks. False before, and never false again. A run whose classpath the listing could not read
+  // whole never sets it. While it is true, the run's listing does not cover the code the
+  // JVM loads, so the server claims no class removed on that listing's word. False from an agent
+  // that predates the field.
+  bool class_listing_blind = 23;
 }
 
 // Evidence that a framework's own routing loaded in this JVM: every class of one of the marker's

@@ -376,6 +376,28 @@ class ClassListerTest {
     }
 
     @Test
+    fun `a JVM with an upgrade module path gives no listing`() {
+        val jar = TestJars.write(dir.resolve("app.jar"), listOf(classEntry("com.acme.A")))
+
+        assertNull(ClassLister(listOf("com.acme"), emptyList(), classPath(jar), upgradeModulePath = "upgrades/acmelib.jar").list())
+    }
+
+    @Test
+    fun `a JVM that patches a module gives no listing, in either spelling of the option`() {
+        val jar = TestJars.write(dir.resolve("app.jar"), listOf(classEntry("com.acme.A")))
+
+        assertNull(ClassLister(listOf("com.acme"), emptyList(), classPath(jar), jvmArguments = { listOf("--patch-module", "java.base=patch") }).list())
+        assertNull(ClassLister(listOf("com.acme"), emptyList(), classPath(jar), jvmArguments = { listOf("--patch-module=java.base=patch") }).list())
+    }
+
+    @Test
+    fun `a JVM without java management gives no listing`() {
+        val jar = TestJars.write(dir.resolve("app.jar"), listOf(classEntry("com.acme.A")))
+
+        assertNull(ClassLister(listOf("com.acme"), emptyList(), classPath(jar), jvmArguments = { null }).list())
+    }
+
+    @Test
     fun `two roots holding one name give it once, and the result is sorted`() {
         val first = TestJars.write(dir.resolve("a.jar"), listOf(classEntry("com.acme.Z"), classEntry("com.acme.Shared")))
         val second = TestJars.write(dir.resolve("b.jar"), listOf(classEntry("com.acme.Shared"), classEntry("com.acme.A")))

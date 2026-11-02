@@ -3,10 +3,12 @@ package dev.otherlode.classlisting
 import dev.otherlode.agentLogger
 import dev.otherlode.dependencies.ClasspathVisitor
 import dev.otherlode.dependencies.ClasspathWalker
+import dev.otherlode.dependencies.CodeSourceLocation
 import dev.otherlode.dependencies.JarClassifier
 import dev.otherlode.dependencies.NestedJarReader
 import dev.otherlode.dependencies.bootLibPrefixes
 import dev.otherlode.dependencies.nestedJarNames
+import dev.otherlode.dependencies.rootKey
 import dev.otherlode.instrumentation.TypeMatchPolicy
 import dev.otherlode.instrumentation.staticscan.isClassEntry
 import dev.otherlode.instrumentation.staticscan.versionedClassPath
@@ -48,13 +50,19 @@ import java.util.jar.Manifest
  * under `META-INF/versions/N/` also counts, by its path after that prefix, since a class can exist
  * only there. A name is listed when [TypeMatchPolicy.isIncluded] admits it.
  *
+ * While it lists, the lister collects the roots it read: each jar, each class folder, and each
+ * nested jar or classes folder of a Spring Boot application, as the key of the code-source location
+ * the JVM's loaders give a class from it. When the listing is complete, it hands the keys and the
+ * listed names to [onRoots], so the run can tell a class loaded from any other root (ADR 0085).
+ *
  * The result is complete or absent. A server reads a class's absence from a complete listing as
  * proof that the build lacks it, so a listing with a hole would turn an unreadable jar into removed
  * code. [list] logs one WARNING and returns null when a root that exists, a jar or a nested jar
  * cannot be read, when an exploded application's classpath index is malformed (Boot does not
  * launch then), when [classPath] is empty or has an empty element (which the JVM reads as the
- * working directory), and when [modulePath] or [mainModule] is set, since this lister reads
- * neither a module path nor a linked image.
+ * working directory), when [modulePath] or [mainModule] is set, since this lister reads neither a
+ * module path nor a linked image's main module, and when [upgradeModulePath] is set or
+ * `--patch-module` is among [jvmArguments], since either puts classes in a module of the boot layer.
  */
 class ClassLister(
     private val includes: List<String>,
@@ -62,6 +70,9 @@ class ClassLister(
     private val classPath: String = System.getProperty("java.class.path").orEmpty(),
     private val modulePath: String = System.getProperty("jdk.module.path").orEmpty(),
     private val mainModule: String = System.getProperty("jdk.module.main").orEmpty(),
+    private val upgradeModulePath: String = System.getProperty("jdk.module.upgrade.path").orEmpty(),
+    private val jvmArguments: () -> List<String>? = ::inputArguments,
+    private val onRoots: (Set<String>, Set<String>) -> Unit = { _, _ -> },
 ) {
     private val log by agentLogger(ClassLister::class.java.name)
     private val classifier = JarClassifier(includes, excludes)
@@ -71,13 +82,19 @@ class ClassLister(
         if (modulePath.isNotBlank() || mainModule.isNotBlank()) {
             return refuse("this JVM runs from a module path or a linked image, which the class listing does not read")
         }
+        val arguments = jvmArguments()
+            ?: return refuse("this JVM has no java.management module, so the agent cannot tell whether it patches modules")
+        if (upgradeModulePath.isNotBlank() || arguments.any { it == "--patch-module" || it.startsWith("--patch-module=") }) {
+            return refuse("this JVM upgrades or patches modules, which the class listing does not read")
+        }
         val elements = classPath.split(File.pathSeparator)
         if (elements.any { it.isEmpty() }) {
             return refuse("java.class.path is empty or has an empty element, which the JVM reads as the working directory")
         }
         val names = sortedSetOf<String>()
+        val roots = mutableSetOf<String>()
         try {
-            ClasspathWalker(classifier).walk(elements, Listing(names))
+            ClasspathWalker(classifier).walk(elements, Listing(names, roots))
         } catch (e: ListingFailed) {
             log.log(
                 Level.WARNING,
@@ -94,6 +111,7 @@ class ClassLister(
             )
             return null
         }
+        onRoots(roots, names)
         return names.toList()
     }
 
@@ -105,27 +123,40 @@ class ClassLister(
     /** Adds to [names] what each file the walker reaches holds, and ends the walk at the first file it cannot read. */
     private inner class Listing(
         private val names: MutableSet<String>,
+        private val roots: MutableSet<String>,
     ) : ClasspathVisitor {
         override fun jar(
             jar: File,
             jarFile: JarFile,
         ) {
             val manifest = jarFile.manifest
+            addRoot(CodeSourceLocation.OnDisk(jar.toPath()))
             if (classifier.isBootApplication(manifest)) {
+                val classesFolders = mutableSetOf<String>()
                 for (entry in jarFile.entries()) {
-                    if (!entry.isDirectory) addApplicationEntry(entry.name, names)
+                    if (entry.isDirectory) continue
+                    addApplicationEntry(entry.name, names)
+                    APPLICATION_CLASSES_PREFIXES.firstOrNull { entry.name.startsWith(it) }?.let { classesFolders += it }
                 }
-                listNestedJars(jar, jarFile, manifest?.mainAttributes ?: Attributes(), names)
+                classesFolders.forEach { addRoot(CodeSourceLocation.InJar(jar.toPath(), it)) }
+                listNestedJars(jar, jarFile, manifest?.mainAttributes ?: Attributes(), names, roots)
             } else {
                 addJarClasses(jarFile, names)
             }
+        }
+
+        private fun addRoot(location: CodeSourceLocation) {
+            location.rootKey()?.let { roots += it }
         }
 
         override fun jarWithInvalidClassPath(
             jar: File,
             jarFile: JarFile,
             cause: Exception,
-        ) = addJarClasses(jarFile, names)
+        ) {
+            addRoot(CodeSourceLocation.OnDisk(jar.toPath()))
+            addJarClasses(jarFile, names)
+        }
 
         override fun jarWithIgnoredClassPath(
             jar: File,
@@ -154,6 +185,7 @@ class ClassLister(
         }
 
         override fun directory(directory: File) {
+            addRoot(CodeSourceLocation.OnDisk(directory.toPath()))
             walk(directory.toPath()) { relative -> if (isClassEntry(relative)) addIfIncluded(relative, names) }
         }
 
@@ -162,6 +194,8 @@ class ClassLister(
             manifest: Manifest,
         ) {
             val libPrefixes = bootLibPrefixes(manifest.mainAttributes)
+            addRoot(CodeSourceLocation.OnDisk(root.toPath()))
+            APPLICATION_CLASSES_PREFIXES.forEach { addRoot(CodeSourceLocation.OnDisk(root.toPath().resolve(it))) }
             // The walker reads the library folders, so they are not walked here.
             walk(root.toPath(), skip = { folder -> libPrefixes.any { folder.startsWith(it) } }) { relative ->
                 addApplicationEntry(relative, names)
@@ -172,7 +206,10 @@ class ClassLister(
             application: File,
             jar: File,
             jarFile: JarFile,
-        ) = addJarClasses(jarFile, names)
+        ) {
+            addRoot(CodeSourceLocation.OnDisk(jar.toPath()))
+            addJarClasses(jarFile, names)
+        }
 
         override fun unreadable(
             location: String,
@@ -264,11 +301,13 @@ class ClassLister(
         jarFile: JarFile,
         attributes: Attributes,
         names: MutableSet<String>,
+        roots: MutableSet<String>,
     ) {
         for (entryName in nestedJarNames(jarFile, attributes)) {
             val entry = jarFile.getJarEntry(entryName) ?: continue
             try {
                 val contents = NestedJarReader.read(jarFile, entry)
+                roots.addAll(listOfNotNull(CodeSourceLocation.InJar(outer.toPath(), entryName).rootKey()))
                 (contents.classNames + contents.versionedClassNames).filterTo(names) {
                     TypeMatchPolicy.isIncluded(it, includes, excludes)
                 }
@@ -304,4 +343,13 @@ class ClassLister(
 
         val APPLICATION_CLASSES_PREFIXES = listOf("BOOT-INF/classes/", "WEB-INF/classes/")
     }
+}
+
+/**
+ * The JVM's input arguments, or null when the JVM has no `java.management` module, as a linked image
+ * can leave it out. Only that module's runtime bean still sees `--patch-module` after startup.
+ */
+private fun inputArguments(): List<String>? {
+    if (ModuleLayer.boot().findModule("java.management").isEmpty) return null
+    return java.lang.management.ManagementFactory.getRuntimeMXBean().inputArguments
 }

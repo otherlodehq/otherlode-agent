@@ -500,6 +500,60 @@ class AgentTest {
     }
 
     @Test
+    fun `a class loaded from a root the class listing did not read reaches the collector as a blind listing`(
+        @TempDir plugins: Path,
+    ) {
+        val listing = CompletableFuture<ClassListing>()
+        val manifests = CopyOnWriteArrayList<ProbeManifest>()
+        val collector = HttpServer.create(InetSocketAddress("localhost", 0), 0)
+        collector.createContext("/v1/otherlode/class-listing") { exchange ->
+            listing.complete(ProtoPayloadCodec.decodeClassListing(exchange.requestBody.readBytes()))
+            exchange.sendResponseHeaders(200, -1)
+            exchange.close()
+        }
+        collector.createContext("/v1/otherlode/manifest") { exchange ->
+            manifests += ProtoPayloadCodec.decodeProbeManifest(exchange.requestBody.readBytes())
+            exchange.sendResponseHeaders(200, -1)
+            exchange.close()
+        }
+        collector.createContext("/") { exchange ->
+            exchange.requestBody.readBytes()
+            exchange.sendResponseHeaders(200, -1)
+            exchange.close()
+        }
+        collector.start()
+        val instrumentation = ByteBuddyAgent.install()
+        val jar =
+            dev.otherlode.dependencies.TestJars.write(
+                plugins.resolve("plugin.jar"),
+                listOf(dev.otherlode.dependencies.TestJars.loadableClassEntry("com.example.target.PluginOutsideTheListing")),
+            )
+
+        val running =
+            Agent.start(
+                "includePackages=com.example.target,flushIntervalSeconds=3600,endpointsEnabled=false," +
+                    "exportUrl=http://localhost:${collector.address.port}",
+                instrumentation,
+            )
+        try {
+            assertNotNull(running)
+            listing.get(30, TimeUnit.SECONDS)
+            running.scheduler.flush()
+            assertTrue(manifests.none { it.classListingBlind }, "blind before any class loaded from an unread root")
+
+            java.net.URLClassLoader(arrayOf(jar.toUri().toURL()), null).use {
+                Class.forName("com.example.target.PluginOutsideTheListing", true, it)
+            }
+            running.scheduler.flush()
+
+            assertTrue(manifests.last().classListingBlind, "the manifest after the load says the listing is blind")
+        } finally {
+            running?.stop()
+            collector.stop(0)
+        }
+    }
+
+    @Test
     fun `classListingEnabled=false sends no class listing`() {
         val paths = ConcurrentHashMap.newKeySet<String>()
         val collector = HttpServer.create(InetSocketAddress("localhost", 0), 0)
