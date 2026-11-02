@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted, amended by ADR 0084
 ---
 
 # Classes that loaded but reached no transformer are found by a sweep and reported as unreported
