@@ -86,8 +86,12 @@ Known gaps in what it lists, all rare, all listing less than the JVM loads:
   17 a jar with an index loads a class from the jar its index names, and
   the scan can declare a later copy instead. Rare: an index is deprecated,
   and the jar must also hold a copy-shadowing class.
-- Boot `PropertiesLauncher` `loader.path` folders (documented as a blind
-  spot; the server's coverage rule limits the damage).
+- Boot `PropertiesLauncher` `loader.path` folders, a WAR deployed on an
+  external Tomcat and plugin folders. The server's guard is by name only,
+  so a dead class moved into one reads removed: a false claim. To grill
+  with the server's item (server STATUS, finding-rule drift): flag a
+  listing as blind when an included class loads from a root it did not
+  read.
 
 ### Reminders for expiring keys and credentials: to decide
 
@@ -140,6 +144,21 @@ is superseded, which may need a wire field), and whether that is worth it for a
 development convenience.
 
 ### Endpoint follow-ups
+
+- A module that throws while weaving its advice into a class again, on
+  another agent's retransformation, records no disabled module
+  (`EndpointInstrumentation.reweave`, and `onError` when `loaded`). The
+  class runs untracked while the run reads settled, so its routes can
+  read never called: a false claim. Record `moduleFailed` with
+  `KIND_TRANSFORM_FAILED`. Two tests pin the old behaviour
+  (`EndpointInstrumentationTest`, "a failed weave on a retransformation
+  disables nothing" and "a module that throws while weaving a
+  retransformed class is not disabled"). Goes with the server's disabled
+  module item.
+- A disable record is dropped when the replay buffer is full before the
+  resolver installs (`OtherlodeEndpoints`, the 4096-record cap), so a
+  module can be off without the server hearing of it. Never drop a
+  disable record.
 
 - A handler from Spring's Kotlin DSLs (`router {}`, `coRouter {}`) gets no
   join. Unwrapping to the adopter's lambda waits on reading its compiled
