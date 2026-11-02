@@ -89,6 +89,31 @@ class EndpointInstrumentation(
     /** Modules whose advice failed to weave again on a retransformation, each logged once. */
     private val reweaveFailureLogged = ConcurrentHashMap.newKeySet<String>()
 
+    /**
+     * The classes, by loader, whose first weave failed, each with the modules that stayed on for it
+     * since [EndpointModule.weaveFailureLeavesNothingPartial] holds. Such a class runs without that
+     * module's advice and declared nothing, so a later failed re-weave of it loses nothing and
+     * switches the module off no more than the first failure did. The bootstrap loader is keyed as
+     * null.
+     */
+    private val firstWeaveFailed = WeakHashMap<ClassLoader?, MutableMap<String, MutableSet<String>>>()
+
+    private fun recordFirstWeaveFailed(
+        classLoader: ClassLoader?,
+        typeName: String,
+        module: EndpointModule,
+    ) {
+        synchronized(firstWeaveFailed) {
+            firstWeaveFailed.getOrPut(classLoader) { HashMap() }.getOrPut(typeName) { HashSet() } += module.name
+        }
+    }
+
+    private fun firstWeaveFailed(
+        classLoader: ClassLoader?,
+        typeName: String,
+        module: EndpointModule,
+    ): Boolean = synchronized(firstWeaveFailed) { firstWeaveFailed[classLoader]?.get(typeName)?.contains(module.name) == true }
+
     /** How many declarations from a transform this thread is holding; for tests. */
     internal fun pendingDeclarationCount(): Int = pendingDeclarations.pendingCount()
 
@@ -250,8 +275,10 @@ class EndpointInstrumentation(
      * Weaves [module]'s advice into the bytes passed in for an already-loaded class, by another
      * agent's retransformation or a redefinition, and drops whatever the module declared while doing
      * it, since the class's endpoints were declared when it first loaded. A module that throws here
-     * is not disabled for the process: the class goes without that module's advice until it is next
-     * transformed, and the failure is logged once per module.
+     * is switched off as [OtherlodeEndpoints.KIND_TRANSFORM_FAILED]: the bytes passed in hold none
+     * of this tier's advice, being the class file before it on a retransformation and the
+     * redefiner's bytes on a redefinition, so the class runs untracked. The failure is logged once
+     * per module.
      */
     private fun reweave(
         module: EndpointModule,
@@ -267,10 +294,11 @@ class EndpointInstrumentation(
                 log.log(
                     Level.WARNING,
                     "otherlode: endpoint module ${module.name} could not weave its advice into ${typeDescription.name} again " +
-                        "for a redefinition or retransformation; that class runs without endpoint tracking",
+                        "for a redefinition or retransformation, so it is switched off",
                     t,
                 )
             }
+            OtherlodeEndpoints.moduleFailed(module.name, OtherlodeEndpoints.KIND_TRANSFORM_FAILED, t)
             typeBuilder
         } finally {
             pendingDeclarations.rollbackTo(mark)
@@ -433,10 +461,17 @@ class EndpointInstrumentation(
                 "otherlode: endpoint instrumentation failed for $typeName, class will run without endpoint tracking",
                 throwable,
             )
-            // A re-weave keeps the bytes the first weave produced, so its failure loses no hook.
-            if (loaded) return
+            // On a failed re-weave the JVM keeps the bytes it passed in, which hold none of this
+            // tier's advice, and the routes the first weave declared stay. So a module that stays on
+            // after a failed first weave is switched off here, unless that first weave failed too.
             for (module in matchedModules.get().orEmpty()) {
-                if (module.weaveFailureLeavesNothingPartial) continue
+                if (module.weaveFailureLeavesNothingPartial) {
+                    if (!loaded) {
+                        recordFirstWeaveFailed(classLoader, typeName, module)
+                        continue
+                    }
+                    if (firstWeaveFailed(classLoader, typeName, module)) continue
+                }
                 OtherlodeEndpoints.moduleFailed(module.name, OtherlodeEndpoints.KIND_TRANSFORM_FAILED, throwable)
             }
         }

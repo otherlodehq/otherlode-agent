@@ -895,9 +895,13 @@ public final class OtherlodeEndpoints {
         return anyDisabled && module != null && DISABLED_MODULES.contains(module);
     }
 
-    /** Appends to the buffer while holding {@link #BUFFER_LOCK}; drops the record and logs once if the buffer is already full. */
+    /**
+     * Appends to the buffer while holding {@link #BUFFER_LOCK}; drops the record and logs once if the
+     * buffer is already full. A disable record is kept past the cap: there is at most one per module,
+     * and losing one would leave a module off with the server unaware of it.
+     */
     private static void buffer(BufferedRecord record) {
-        if (BUFFER.size() >= BUFFER_CAPACITY) {
+        if (BUFFER.size() >= BUFFER_CAPACITY && record.kind != RecordKind.FAILURE) {
             if (!bufferOverflowLogged) {
                 bufferOverflowLogged = true;
                 LOG.log(

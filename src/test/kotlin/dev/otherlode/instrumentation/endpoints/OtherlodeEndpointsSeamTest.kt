@@ -144,6 +144,9 @@ class OtherlodeEndpointsSeamTest {
         }
         // Must not throw, and must not be replayed once installed below.
         OtherlodeEndpoints.declare(uniqueModule("cap-declare-overflow"), Any())
+        // A disable is the one record that is never dropped, so it survives a full buffer.
+        val lateFailureModule = uniqueModule("cap-failure-late")
+        OtherlodeEndpoints.moduleDisabled(lateFailureModule, OtherlodeEndpoints.KIND_HOOK_UNMATCHED, "late reason")
 
         val resolver = RecordingResolver()
         OtherlodeEndpoints.install(resolver.asResolver() as OtherlodeEndpoints.Resolver)
@@ -182,7 +185,13 @@ class OtherlodeEndpointsSeamTest {
         assertEquals(declareModule, declareCall.module)
         assertSame(declareObject, declareCall.frameworkObject)
 
-        val disableCall = resolver.disableCalls.single()
+        assertEquals(2, resolver.disableCalls.size, "a disable recorded with the buffer full still replays")
+        val lateDisableCall = resolver.disableCalls.last()
+        assertEquals(lateFailureModule, lateDisableCall.module)
+        assertEquals(OtherlodeEndpoints.KIND_HOOK_UNMATCHED, lateDisableCall.kind)
+        assertEquals("late reason", lateDisableCall.reason)
+        assertTrue(OtherlodeEndpoints.isDisabled(lateFailureModule))
+        val disableCall = resolver.disableCalls.first()
         assertEquals(failureModule, disableCall.module)
         assertEquals("java.lang.RuntimeException", disableCall.reason)
         assertEquals(

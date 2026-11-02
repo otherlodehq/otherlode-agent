@@ -356,7 +356,7 @@ Each module is built against one version of its framework and does not check the
 
 - its advice throws for any reason, including a linkage error against a framework version it does not match;
 - one of its hooks matches no method on the framework class it hooks, because a framework release renamed or changed the method;
-- a framework class it hooks fails to weave.
+- a framework class it hooks fails to weave, including when another agent retransforms a class the module already wove, or a debugger redefines it, and the module cannot weave it again.
 
 A lost registration hook would leave endpoints undeclared. A lost dispatch hook is worse: the module still declares every route but never counts a call, so every endpoint of that framework would read as never called. Switching the module off turns that silence into a report. It logs one WARNING:
 
@@ -374,7 +374,7 @@ A Micronaut module with the kind `ROUTES_NOT_COUNTED` has declared no endpoint, 
 
 A module that switches off stops counting but does not retract. The endpoints it already declared stay in the list, and their counts stop. Otherlode reads such an endpoint as **Module disabled**, never as never called, when every run in scope that knows the endpoint disabled the module. The testkit's `neverCalled()` leaves it out on the same terms. An instance whose module kept working counted every call, so its zero still counts.
 
-A class that fails to weave runs from its original bytes and the agent logs a WARNING naming it. The JAX-RS module is the exception to the switch-off: it hooks your own resource classes, and a class that fails to weave takes its own routes with it, so the module stays on for the rest. If another agent retransforms a class the module already wove and the module cannot weave again, nothing switches off. The agent logs one WARNING for that module and that class goes untracked until it is next transformed.
+A class that fails to weave runs from its original bytes and the agent logs a WARNING naming it. The JAX-RS module is the exception to the switch-off: it hooks your own resource classes, and a class that fails to weave takes its own routes with it, so the module stays on for the rest. If another agent retransforms a class the module already wove, or a debugger redefines it, and the module cannot weave it again, the class loses the advice from the first weave. The JAX-RS module switches off then too, since that class's routes stay declared. It stays on when the class's first weave failed as well, since that class declared no routes.
 
 A framework class that was renamed is not caught. The module never matches it, which reads as the framework being absent. See [troubleshooting](troubleshooting).
 

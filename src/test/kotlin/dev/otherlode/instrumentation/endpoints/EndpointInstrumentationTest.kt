@@ -519,7 +519,7 @@ class EndpointInstrumentationTest {
     }
 
     @Test
-    fun `a failed weave on a retransformation disables nothing`() {
+    fun `a failed weave on a retransformation disables the module as TRANSFORM_FAILED`() {
         val registry = EndpointRegistry()
         val declaring = DeclaringModule(failRewrite = true, failRewriteOnlyAfterFirst = true)
         val router = install(registry, listOf(declaring), "com.example.framework.FakeRouter")
@@ -527,7 +527,30 @@ class EndpointInstrumentationTest {
         installedInstrumentation!!.retransformClasses(router.javaClass)
 
         assertEquals(2, declaring.transforms.get())
-        assertTrue(registry.disabledModules().isEmpty(), "${registry.disabledModules()}")
+        assertEquals(DisabledEndpointModuleKind.TRANSFORM_FAILED, registry.disabledModules().single { it.module == declaring.name }.kind)
+    }
+
+    @Test
+    fun `a failed weave on a retransformation disables a module that opts out of the first-weave switch-off`() {
+        val registry = EndpointRegistry()
+        val declaring = DeclaringModule(failRewrite = true, failRewriteOnlyAfterFirst = true, optOutOfWeaveFailure = true)
+        val router = install(registry, listOf(declaring), "com.example.framework.FakeRouter")
+
+        installedInstrumentation!!.retransformClasses(router.javaClass)
+
+        assertEquals(DisabledEndpointModuleKind.TRANSFORM_FAILED, registry.disabledModules().single { it.module == declaring.name }.kind)
+    }
+
+    @Test
+    fun `a failed weave on a retransformation leaves an opted-out module on when the class's first weave failed too`() {
+        val registry = EndpointRegistry()
+        val declaring = DeclaringModule(failRewrite = true, optOutOfWeaveFailure = true)
+        val router = install(registry, listOf(declaring), "com.example.framework.FakeRouter")
+        assertTrue(registry.disabledModules().none { it.module == declaring.name }, "the failed first weave left the module on")
+
+        installedInstrumentation!!.retransformClasses(router.javaClass)
+
+        assertTrue(registry.disabledModules().none { it.module == declaring.name }, "the class had no advice to lose")
     }
 
     @Test
@@ -779,7 +802,7 @@ class EndpointInstrumentationTest {
     }
 
     @Test
-    fun `a module that throws while weaving a retransformed class is not disabled`() {
+    fun `a module that throws while weaving a retransformed class is disabled as TRANSFORM_FAILED`() {
         val registry = EndpointRegistry()
         val declaring = DeclaringModule(throwAfterDeclaring = true, throwOnlyAfterFirst = true)
         val router = install(registry, listOf(FakeRouterModule(), declaring), "com.example.framework.FakeRouter")
@@ -791,7 +814,8 @@ class EndpointInstrumentationTest {
         dispatch.invoke(router, "GET", "/hit")
 
         assertEquals(2, declaring.transforms.get())
-        assertTrue(registry.disabledModules().isEmpty(), "${registry.disabledModules()}")
+        assertEquals(listOf(declaring.name), registry.disabledModules().map { it.module })
+        assertEquals(DisabledEndpointModuleKind.TRANSFORM_FAILED, registry.disabledModules().single().kind)
         assertEquals(setOf("/hit", "/declared-in-transform"), registry.endpoints().mapTo(mutableSetOf()) { it.verbatimTemplate })
         val hitId = registry.endpoints().single { it.verbatimTemplate == "/hit" }.endpointId
         val byId = registry.computeDeltas(maxPerBatch = 10).flatMap { it.deltas }.associateBy { it.endpointId }

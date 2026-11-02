@@ -145,21 +145,6 @@ development convenience.
 
 ### Endpoint follow-ups
 
-- A module that throws while weaving its advice into a class again, on
-  another agent's retransformation, records no disabled module
-  (`EndpointInstrumentation.reweave`, and `onError` when `loaded`). The
-  class runs untracked while the run reads settled, so its routes can
-  read never called: a false claim. Record `moduleFailed` with
-  `KIND_TRANSFORM_FAILED`. Two tests pin the old behaviour
-  (`EndpointInstrumentationTest`, "a failed weave on a retransformation
-  disables nothing" and "a module that throws while weaving a
-  retransformed class is not disabled"). Goes with the server's disabled
-  module item.
-- A disable record is dropped when the replay buffer is full before the
-  resolver installs (`OtherlodeEndpoints`, the 4096-record cap), so a
-  module can be off without the server hearing of it. Never drop a
-  disable record.
-
 - A handler from Spring's Kotlin DSLs (`router {}`, `coRouter {}`) gets no
   join. Unwrapping to the adopter's lambda waits on reading its compiled
   shape.
