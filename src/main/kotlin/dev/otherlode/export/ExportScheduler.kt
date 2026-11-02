@@ -111,8 +111,19 @@ class ExportScheduler(
      * so before that manifest is built. The default does nothing.
      */
     private val beforeManifest: (graceMillis: Long, finalFlush: Boolean) -> Unit = { _, _ -> },
-    /** Milliseconds since the epoch; read once per flush and once at construction. Injectable so a test controls it. */
+    /** Milliseconds since the epoch, for the times a flush stamps. Injectable so a test controls it. */
     private val clock: () -> Long = System::currentTimeMillis,
+    /**
+     * Whether the run counts as starting from its start until its class loading settles (ADR 0086).
+     * The agent sets it. The default is false, which gives a scheduler no starting phase, as for
+     * every test that does not exercise it.
+     */
+    private val startsPending: Boolean = false,
+    /**
+     * Milliseconds on a clock that only moves forward, for how long the run has been starting
+     * (ADR 0086), so a wall-clock step cannot end it early. Injectable so a test controls it.
+     */
+    private val monotonicMillis: () -> Long = { System.nanoTime() / 1_000_000 },
 ) {
     private val log by agentLogger(ExportScheduler::class.java.name)
     private var executor: ScheduledExecutorService? = null
@@ -130,7 +141,16 @@ class ExportScheduler(
     private val dependenciesListedSent = AtomicBoolean(false)
     private var flushesSinceSweep = 1
     private val sweepLock = Any()
-    private val delivery = DeliveryState(verifierWatch.watched, registry::unplacedVerificationFailures, classListingBlind)
+    private val delivery =
+        DeliveryState(
+            verifierWatch.watched,
+            registry::unplacedVerificationFailures,
+            classListingBlind,
+            monotonicMillis,
+            startedAt = startedAt,
+            intervalMillis = config.flushInterval.toMillis(),
+            starting = startsPending,
+        )
 
     /** Runs the two sends of each flush side by side; see [flush]. Two threads, created once, not two per tick. */
     private val sendPool: ExecutorService =
@@ -389,13 +409,20 @@ class ExportScheduler(
             maybeLogUnseenCallbackAnnotations(final, flushStart)
             synchronized(sweepLock) { maybeSweep(final) }
             drainVerifierRejections()
+            val inScope = registry.inScopeClassCount()
+            val unconfirmed = (registry.unconfirmedClassCount() + endpointRegistry.unconfirmedClassCount()).toLong()
+            when {
+                final -> delivery.endStartingAtExit(inScope, unconfirmed)
+                early -> delivery.observeShutdownStart(inScope)
+                else -> delivery.observeFlushStart(inScope, unconfirmed)
+            }
             if (early && remainingMillis(deadlineNanos) <= 0L) return
             // Read after the sweep, so this flush's delta sends carry the counts of this generation.
             val generation = dependencyRegistry.countGeneration
             val deliveredBefore = dependencyRegistry.deliveredGeneration
             val sends =
                 FlushSends(
-                    pendingAtStart = delivery.isPending(),
+                    pendingAtStart = delivery.deliveryPending(),
                     hitsWerePending = delivery.hitsPending(),
                     flushId = if (flushId != 0L) flushId else delivery.nextFlushId(),
                     stopsAtNanos = if (early) deadlineNanos else 0L,
@@ -717,6 +744,12 @@ class ExportScheduler(
      * start of the flush in which the unconfirmed ones began. [nextSequence] numbers the payloads
      * from 1.
      *
+     * A run that [starting] is pending from [startedAt] too, until a scheduled flush finds that
+     * classes have loaded, that none has loaded for at least one flush interval, that no class
+     * awaits the sweep's confirmation, and that the run is at least one interval old; until 10
+     * intervals have passed; or until a final flush that finds no in-scope class loaded since the
+     * early shutdown flush and none awaiting confirmation (ADR 0086). Ages are read from [monotonic]. Once ended it never comes back.
+     *
      * One lock guards both fields. A flush's manifest and delta sends run on two threads, and a
      * payload's number and the state it carries must be drawn together: any payload numbered after
      * a change of the state then read the state after it.
@@ -725,8 +758,16 @@ class ExportScheduler(
         private val verifierRejectionsWatched: Boolean,
         private val unplacedVerificationFailures: () -> Long,
         private val classListingBlind: () -> Boolean,
+        private val monotonic: () -> Long,
+        private val startedAt: Long,
+        private val intervalMillis: Long,
+        starting: Boolean,
     ) {
         private val lock = Any()
+        private var startingEnded = !starting
+        private val startedMonotonic = monotonic()
+        private var quietCount = 0L
+        private var quietSince = startedMonotonic
         private var hitsPendingSince = 0L
         private var manifestPendingSince = 0L
         private var hitsMarkedBy = 0L
@@ -742,14 +783,81 @@ class ExportScheduler(
         /** Numbers a flush, from 1, in the order flushes start. */
         fun nextFlushId(): Long = synchronized(lock) { ++lastFlushId }
 
-        private fun pendingSince(): Long =
+        private fun deliveryPendingSince(): Long =
             when {
                 hitsPendingSince == 0L -> manifestPendingSince
                 manifestPendingSince == 0L -> hitsPendingSince
                 else -> minOf(hitsPendingSince, manifestPendingSince)
             }
 
-        fun isPending(): Boolean = synchronized(lock) { pendingSince() != 0L }
+        private fun startingActive(): Boolean {
+            if (!startingEnded && monotonic() - startedMonotonic >= STARTING_CAP_INTERVALS * intervalMillis) startingEnded = true
+            return !startingEnded
+        }
+
+        private fun pendingSince(): Long {
+            val unconfirmed = deliveryPendingSince()
+            if (!startingActive()) return unconfirmed
+            val start = maxOf(startedAt, 1L)
+            return if (unconfirmed == 0L) start else minOf(unconfirmed, start)
+        }
+
+        /**
+         * Called at the start of a scheduled flush, after the sweep, with the in-scope class count
+         * and the classes still awaiting the sweep's confirmation. The count's last change is kept
+         * with its time, so flushes that run back to back after a slow one do not shorten the quiet
+         * window. Ends starting when classes have loaded, the count has not moved for at least one
+         * interval, nothing awaits confirmation and the run is at least one interval old, or when
+         * the cap has passed. The early shutdown flush never calls it.
+         */
+        fun observeFlushStart(
+            inScopeCount: Long,
+            unconfirmed: Long,
+        ) {
+            synchronized(lock) {
+                if (startingEnded) return
+                val now = monotonic()
+                if (inScopeCount != quietCount) {
+                    quietCount = inScopeCount
+                    quietSince = now
+                }
+                val age = now - startedMonotonic
+                val quietFor = now - quietSince
+                if (age >= STARTING_CAP_INTERVALS * intervalMillis ||
+                    (inScopeCount > 0 && unconfirmed == 0L && age >= intervalMillis && quietFor >= intervalMillis)
+                ) {
+                    startingEnded = true
+                }
+            }
+        }
+
+        /** The in-scope class count the early shutdown flush read after its sweep; -1 when none ran. */
+        private var shutdownCount = -1L
+
+        /** Called by the early shutdown flush after its sweep, with the in-scope class count. */
+        fun observeShutdownStart(inScopeCount: Long) {
+            synchronized(lock) { shutdownCount = inScopeCount }
+        }
+
+        /**
+         * Called by the final flush after its sweep. Ends starting when the JVM loaded no in-scope
+         * class since the early shutdown flush and none awaits confirmation, as for a batch job
+         * whose work is done. A JVM stopped while its application was still starting keeps loading
+         * through shutdown, so it stays pending. Without an early flush, starting does not end here.
+         */
+        fun endStartingAtExit(
+            inScopeCount: Long,
+            unconfirmed: Long,
+        ) {
+            synchronized(lock) {
+                if (shutdownCount >= 0L && inScopeCount > 0L && inScopeCount == shutdownCount && unconfirmed == 0L) {
+                    startingEnded = true
+                }
+            }
+        }
+
+        /** Whether hits or manifest content are unconfirmed. The starting phase is not counted. */
+        fun deliveryPending(): Boolean = synchronized(lock) { deliveryPendingSince() != 0L }
 
         fun hitsPending(): Boolean = synchronized(lock) { hitsPendingSince != 0L }
 
@@ -1427,6 +1535,9 @@ class ExportScheduler(
     }
 
     companion object {
+        /** Flush intervals after the agent's start at which a run stops counting as starting (ADR 0086). */
+        const val STARTING_CAP_INTERVALS: Long = 10
+
         /**
          * How long after start the unseen callback annotations are first judged. Long enough for an
          * application to have started and loaded its handlers.

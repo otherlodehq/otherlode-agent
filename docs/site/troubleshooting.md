@@ -145,7 +145,7 @@ Each of these warnings means the agent kept running without your value, apart fr
 
 ## Nothing reaches the collector
 
-The agent sends a delta batch on every flush, even when no count changed. The first flush comes at a random point within the first `flushIntervalSeconds`, 60 seconds by default. Before you look further, start the JVM with `flushIntervalSeconds=1` and wait a few seconds.
+The agent sends a delta batch on every flush, even when no count changed. The first flush comes at a random point within the first `flushIntervalSeconds`, 60 seconds by default. Before you look further, start the JVM with `flushIntervalSeconds=1` and wait a few seconds. A new instance reads as counts behind for at least one interval, and until its classes stop loading, so a short `flushIntervalSeconds` shortens that wait too. [Pending counts](data-sent#pending-counts) says when it ends.
 
 A send that fails logs a warning, then the agent tries again on the next flush. Two payloads fail separately, so you often see both lines each flush:
 

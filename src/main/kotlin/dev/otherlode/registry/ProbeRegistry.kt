@@ -290,6 +290,14 @@ open class ProbeRegistry(
     private val nextClassId = AtomicInteger(0)
     private val nextSnapshotSequence = AtomicLong(0)
     private val lastRegistrationSequence = AtomicLong(0)
+    private val inScopeClasses = AtomicLong(0)
+
+    /**
+     * How many in-scope classes the registry has seen: each one registered, skipped, found with
+     * nothing to probe, or found unreported, counted the first time. It never decreases, so a
+     * caller compares two readings to learn whether a class arrived between them (ADR 0086).
+     */
+    fun inScopeClassCount(): Long = inScopeClasses.get()
 
     /**
      * Called once per class transform. Returns the backing array every probe
@@ -346,6 +354,7 @@ open class ProbeRegistry(
         val entry =
             entriesByKey.computeIfAbsent(key) {
                 created = true
+                inScopeClasses.incrementAndGet()
                 ClassEntry(
                     classId = nextClassId.getAndIncrement(),
                     className = className,
@@ -504,7 +513,7 @@ open class ProbeRegistry(
      * cannot see, which is the whole value of the count the sweep produces.
      */
     fun recordNothingToProbe(className: String) {
-        nothingToProbeClassNames += className
+        if (nothingToProbeClassNames.add(className)) inScopeClasses.incrementAndGet()
     }
 
     /**
@@ -518,6 +527,7 @@ open class ProbeRegistry(
         var added = false
         unreportedByClassName.computeIfAbsent(className) {
             added = true
+            inScopeClasses.incrementAndGet()
             UnreportedEntry(System.currentTimeMillis())
         }
         return added
@@ -713,6 +723,7 @@ open class ProbeRegistry(
         reason: String,
     ) {
         skippedByClassName.computeIfAbsent(className) {
+            inScopeClasses.incrementAndGet()
             SkippedEntry(reason, System.currentTimeMillis())
         }
     }

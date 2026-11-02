@@ -126,7 +126,7 @@ The payload listing every probe whose hit total changed since the last confirmed
 _Avoid_: metrics, snapshot
 
 **Pending counts**:
-Hits a run has sent in a delta batch that no collector confirmed. While a run has pending counts, its zero hits are not evidence that code never ran.
+Hits a run has sent in a delta batch, or manifest content it has built, that no collector confirmed, and every count of a run that is still starting (ADR 0086). While a run has pending counts, its zero hits are not evidence that code never ran.
 _Avoid_: lost hits, dropped deltas
 
 **Hit total**:

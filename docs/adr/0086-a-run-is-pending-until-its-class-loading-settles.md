@@ -24,6 +24,14 @@ ADR 0087 accepted a one-flush lag for a class that loads in the middle of a sett
 
 ## Consequences
 
-- A new instance reads as counts behind for at least one flush interval, and until its in-scope classes stop loading. Its zero-count claims, never loaded included, wait for it.
+- A new instance reads as counts behind for at least one flush interval, and until its in-scope classes stop loading, unless it exits sooner with its loading done. Its zero-count claims, never loaded included, wait for it.
 - A rolling deploy holds a version's never-loaded claims until its first instance settles, as ADR 0087 already holds them while it has not.
 - A run whose application loads in-scope classes on every flush for 10 intervals settles at the cap.
+
+## Settled while building it, 2026-11-02
+
+- **The quiet interval is measured from the count's last change,** not from the previous flush. Flushes that run back to back after a slow one would otherwise end starting after a few milliseconds of quiet.
+- **A run that has loaded no in-scope class does not settle,** since an application that has not reached its own code yet has not started. The cap still ends it.
+- **A class that awaits the sweep's confirmation keeps the run starting,** since it is registered but not yet in a manifest.
+- **Ages are read from a clock that only moves forward,** so a wall-clock step at boot cannot end starting early. The stamped time stays the wall-clock start.
+- **The final flush ends starting when loading stopped during shutdown.** It does when no in-scope class loaded after the early shutdown flush's sweep and none awaits confirmation, as when a batch job's `main` has returned. Without this, a JVM that lives less than one interval would never settle and its zero counts would never be evidence. A JVM stopped while its application is still starting keeps loading during shutdown, through threads that are not hooks or hooks the agent cannot wait for, so its closing batch stays pending. Without an early shutdown flush, as in a test run, the final flush does not end starting.
