@@ -419,13 +419,13 @@ class ExportSchedulerTest {
         val scheduler = ExportScheduler(config, resource, registry, EndpointRegistry(), exporter)
 
         scheduler.flush()
+        val firstFlush = exporter.deltaBatches.size
         scheduler.flush()
+        val secondFlush = exporter.deltaBatches.drop(firstFlush)
 
-        assertEquals(
-            2,
-            exporter.deltaBatches.size,
-            "the delta batch send should still happen on every flush even if the manifest side failed",
-        )
+        assertTrue(firstFlush in 1..2, "the first flush sends its batch, and a late heartbeat when the failure came after its stamp")
+        assertEquals(2, secondFlush.size, "the second flush leads with a heartbeat and still sends its batch")
+        assertTrue(secondFlush.first().countsPendingSince != 0L, "the second flush says the manifest content is pending")
     }
 
     @Test
@@ -890,6 +890,214 @@ class ExportSchedulerTest {
 
         assertEquals(1, baselineExporter.staticBaselines.size, "the baseline went out between the flushes")
         assertEquals(listOf(1L, 2L), exporter.deltas.map { it.payloadSequence }.sorted(), "its send used no number")
+    }
+
+    /** Every payload the scenario's exporter attempted, in stamped order. */
+    private fun PendingScenario.payloadsBySequence(): List<Pair<Long, Long>> =
+        (exporter.deltas.map { it.payloadSequence to it.countsPendingSince } + exporter.manifests.map { it.payloadSequence to it.countsPendingSince })
+            .sortedBy { it.first }
+
+    @Test
+    fun `a refused manifest with accepted delta batches makes the next payloads say pending`() {
+        val failures =
+            listOf<() -> Exception>(
+                { refusal() },
+                { transportFailure() },
+                { ExportFailedException("timed out") },
+                { java.io.IOException("reset") },
+                { IllegalStateException("broken") },
+            )
+        for (failure in failures) {
+            val scenario = PendingScenario()
+            scenario.exporter.manifestOutcome = { failure() }
+            scenario.flush(at = 5_000)
+            scenario.exporter.manifestOutcome = { failure() }
+
+            val next = scenario.flush(at = 9_000)
+
+            assertTrue(next.isNotEmpty())
+            assertTrue(next.all { it.countsPendingSince == 5_000L }, "after $failure: ${next.map { it.countsPendingSince }}")
+            assertTrue(
+                scenario.exporter.manifests.drop(1).all { it.countsPendingSince == 5_000L },
+                "the next flush's manifest resend says pending too",
+            )
+        }
+    }
+
+    @Test
+    fun `a flush that starts with pending manifest content leads with a heartbeat`() {
+        val scenario = PendingScenario(probeCount = 0)
+        scenario.registry.register("com.example.Late", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "m", "()V", 1)))
+        scenario.exporter.manifestOutcome = { refusal() }
+        scenario.flush(at = 5_000)
+
+        val sent = scenario.flush(at = 9_000)
+
+        assertTrue(!hasHits(sent.first()), "the leading batch is a heartbeat")
+        assertEquals(5_000L, sent.first().countsPendingSince)
+    }
+
+    @Test
+    fun `a confirmed resend of the manifest clears the pending state and the next payloads carry 0`() {
+        val scenario = PendingScenario()
+        scenario.exporter.manifestOutcome = { refusal() }
+        scenario.flush(at = 5_000)
+        scenario.exporter.manifestOutcome = { null }
+
+        scenario.flush(at = 9_000)
+
+        val ordered = scenario.payloadsBySequence()
+        assertEquals(0L, ordered.last().second, "the run's newest payload says nothing is pending")
+        assertEquals(0L, scenario.flush(at = 13_000).single().countsPendingSince)
+    }
+
+    @Test
+    fun `a failure on the first manifest chunk counts although later chunks were never sent`() {
+        val scenario = PendingScenario(probeCount = 3, maxManifestEntriesPerChunk = 2)
+        scenario.exporter.manifestOutcome = { refusal() }
+
+        scenario.flush(at = 5_000)
+
+        assertEquals(1, scenario.exporter.manifests.size, "the send stopped at the first failure")
+        val next = scenario.flush(at = 9_000)
+        assertTrue(next.all { it.countsPendingSince == 5_000L })
+
+        scenario.exporter.manifestOutcome = { null }
+        scenario.flush(at = 13_000)
+        assertEquals(0L, scenario.payloadsBySequence().last().second)
+    }
+
+    @Test
+    fun `a failure on a later manifest chunk counts, and the confirmed chunks do not clear it`() {
+        val scenario = PendingScenario(probeCount = 3, maxManifestEntriesPerChunk = 2)
+        var sends = 0
+        scenario.exporter.manifestOutcome = { if (++sends >= 2) refusal() else null }
+
+        scenario.flush(at = 5_000)
+
+        val next = scenario.flush(at = 9_000)
+        assertEquals(5_000L, next.first().countsPendingSince)
+    }
+
+    @Test
+    fun `a refused disabled endpoint module manifest counts, and no class chunk is sent after it`() {
+        val endpoints = EndpointRegistry()
+        endpoints.recordDisabledModule("spring-mvc", reason = "linkage", kind = DisabledEndpointModuleKind.LINKAGE_ERROR)
+        val scenario = PendingScenario(endpointRegistry = endpoints)
+        scenario.exporter.manifestOutcome = { refusal() }
+
+        scenario.flush(at = 5_000)
+
+        assertEquals(1, scenario.exporter.manifests.size)
+        assertTrue(scenario.exporter.manifests.single().disabledEndpointModules.isNotEmpty())
+        assertEquals(5_000L, scenario.flush(at = 9_000).first().countsPendingSince)
+    }
+
+    @Test
+    fun `a manifest computation that throws counts as unconfirmed manifest content`() {
+        val registry =
+            object : ProbeRegistry() {
+                var failures = 2
+
+                override fun computeManifestDeltas(
+                    resource: ResourceAttributes,
+                    maxEntriesPerChunk: Int,
+                ): Sequence<ManifestSnapshot> {
+                    if (failures-- > 0) throw IllegalStateException("broken")
+                    return super.computeManifestDeltas(resource, maxEntriesPerChunk)
+                }
+            }
+        val exporter = StampedExporter()
+        val now = java.util.concurrent.atomic.AtomicLong(5_000L)
+        val scheduler = ExportScheduler(config, resource, registry, EndpointRegistry(), exporter, clock = now::get)
+
+        scheduler.flush()
+        val firstFlush = exporter.deltas.size
+        now.set(9_000L)
+        scheduler.flush()
+
+        assertEquals(
+            5_000L,
+            exporter.deltas[firstFlush].countsPendingSince,
+            "the second flush, whose computation fails again, leads with a heartbeat saying pending since the first",
+        )
+    }
+
+    @Test
+    fun `pending from hits and from the manifest clear only when both are confirmed, and the start is the earliest`() {
+        val scenario = PendingScenario()
+        scenario.exporter.deltaOutcome = { if (hasHits(it)) refusal() else null }
+        scenario.flush(at = 1_000)
+        scenario.registry.register("com.example.Late", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "m", "()V", 1)))
+        scenario.exporter.manifestOutcome = { refusal() }
+        val second = scenario.flush(at = 2_000)
+        assertTrue(second.all { it.countsPendingSince == 1_000L }, "the earlier start wins: ${second.map { it.countsPendingSince }}")
+
+        scenario.exporter.deltaOutcome = { null }
+        val third = scenario.flush(at = 3_000)
+        assertEquals(
+            2_000L,
+            third.last().countsPendingSince,
+            "the hits are confirmed, the manifest content is not: its start, which is earlier than this flush",
+        )
+
+        scenario.exporter.manifestOutcome = { null }
+        scenario.flush(at = 4_000)
+        assertEquals(0L, scenario.payloadsBySequence().last().second, "both confirmed")
+        assertEquals(0L, scenario.flush(at = 5_000).single().countsPendingSince)
+    }
+
+    @Test
+    fun `a confirmed manifest does not clear pending hits`() {
+        val scenario = PendingScenario()
+        scenario.exporter.deltaOutcome = { if (hasHits(it)) refusal() else null }
+        scenario.flush(at = 1_000)
+
+        val second = scenario.flush(at = 2_000)
+
+        assertTrue(second.all { it.countsPendingSince == 1_000L })
+        assertEquals(1_000L, scenario.payloadsBySequence().last().second)
+    }
+
+    @Test
+    fun `a heartbeat or an empty manifest makes and clears no manifest pending state`() {
+        val scenario = PendingScenario(probeCount = 0)
+
+        val sent = scenario.flush(at = 5_000)
+        scenario.flush(at = 6_000)
+
+        assertEquals(0L, sent.single().countsPendingSince)
+        assertTrue(scenario.payloadsBySequence().all { it.second == 0L })
+    }
+
+    @Test
+    fun `a shutdown flush whose manifest is refused closes with a marked batch carrying the pending state`() {
+        val scenario = PendingScenario()
+        scenario.exporter.manifestOutcome = { refusal() }
+
+        val sent = scenario.flush(at = 5_000, final = true)
+
+        assertTrue(sent.last().finalFlush)
+        assertEquals(5_000L, sent.last().countsPendingSince)
+        assertEquals(1, sent.count { it.finalFlush })
+        assertTrue(
+            scenario.exporter.manifests.all { it.payloadSequence < sent.last().payloadSequence },
+            "the closing batch is the newest payload",
+        )
+    }
+
+    @Test
+    fun `a shutdown flush that starts with pending manifest content and confirms it closes with 0`() {
+        val scenario = PendingScenario()
+        scenario.exporter.manifestOutcome = { refusal() }
+        scenario.flush(at = 1_000)
+        scenario.exporter.manifestOutcome = { null }
+
+        val sent = scenario.flush(at = 2_000, final = true)
+
+        assertTrue(sent.last().finalFlush)
+        assertEquals(0L, sent.last().countsPendingSince)
+        assertTrue(scenario.exporter.manifests.all { it.payloadSequence < sent.last().payloadSequence })
     }
 
     @Test
