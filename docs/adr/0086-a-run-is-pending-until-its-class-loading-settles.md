@@ -1,5 +1,5 @@
 ---
-status: accepted, amends ADR 0068 and ADR 0082
+status: accepted, amends ADR 0068 and ADR 0082, amended by ADR 0087
 ---
 
 # A run is pending until its class loading settles
