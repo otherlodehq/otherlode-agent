@@ -142,6 +142,7 @@ class Reader:
 
 class Ctx:
     def __init__(self, **kw):
+        self.clock = time.time
         self.__dict__.update(kw)
 
     def window(self, entry):
@@ -518,17 +519,59 @@ def crash_hold(ctx, svc, env):
     return False
 
 
+# Flush intervals after which a run stops starting at the latest (agent ADR 0086). The cap is
+# checked at a flush, which can come up to one interval later.
+STARTING_CAP_INTERVALS = 10
+
+# Seconds a JVM may take from its start to the agent's.
+JVM_BOOT_ALLOWANCE = 60.0
+
+
+def start_hold(ctx, svc, env, at):
+    """True when a run of this scope could have been starting at `at`: from its start until the
+    starting cap, or until three flush intervals after it stopped if that came first. A starting run that is live
+    holds its scope's claims back (server ADR 0092). `at` is the time the read's data is from: a
+    snapshot's as_of, or now for a live read."""
+    for r in ctx.state.get("runs", []):
+        inst = cfg.BY_NAME.get(r.get("instance"))
+        if not inst or (inst.service, inst.env) != (svc, env):
+            continue
+        flush = cfg.fixed_flush(inst, ctx.scale) or ctx.flush
+        end = r["started"] + JVM_BOOT_ALLOWANCE + (STARTING_CAP_INTERVALS + 1) * flush
+        if r.get("ended"):
+            # A graceful stop whose closing batch never arrived stays live as long as a kill does.
+            end = min(end, r["ended"] + 3 * flush)
+        if r["started"] <= at <= end:
+            return True
+    return False
+
+
+def snapshot_as_of(ctx, svc, env):
+    """When the data the scope's reads come from was read: the report's as_of, which a snapshot
+    shares with every route it serves, or now when the report cannot be read."""
+    try:
+        status, body, _ = ctx.reader.api.get("/api/v1/services/%s/report" % urllib.parse.quote(svc, safe=""),
+                                             {"environment": env})
+        if status == 200 and isinstance(body, dict) and body.get("as_of"):
+            return datetime.datetime.fromisoformat(body["as_of"].replace("Z", "+00:00")).timestamp()
+    except (ApiError, ValueError):
+        pass
+    return ctx.now
+
+
 def check1(ctx):
     rd = ctx.reader
     ok, bad, notdue = 0, [], 0
     for svc, env in ctx.pairs():
         tl = ctx.truth_lists(svc, env)
         tag = "%s/%s" % (svc, env)
-        held = crash_hold(ctx, svc, env)
+        held = crash_hold(ctx, svc, env) or start_hold(ctx, svc, env, snapshot_as_of(ctx, svc, env))
 
-        def run(entry, label, test, extra_start=0.0):
+        def run(entry, label, test, extra_start=0.0, live=False):
             nonlocal ok, notdue
-            if held or not ctx.asserted(entry, extra_start):
+            # /endpoints, /optional-parameters and /dependencies are always read live, so a run
+            # starting now holds what they show, whatever the snapshot's as_of.
+            if held or (live and start_hold(ctx, svc, env, ctx.clock())) or not ctx.asserted(entry, extra_start):
                 notdue += 1
                 return
             try:
@@ -569,7 +612,7 @@ def check1(ctx):
                     return "endpoint not listed"
                 return None if norm_status(row[0].get("status")) == "never-called" else \
                     "status is %s, calls_total %s" % (row[0].get("status"), row[0].get("calls_total"))
-            run(e, "never-called endpoint %s %s" % (e["verb"], e["template"]), t)
+            run(e, "never-called endpoint %s %s" % (e["verb"], e["template"]), t, live=True)
         for e in tl.get("live_endpoints", []):
             def t(e=e):
                 rows = rd.rows(svc, env, "endpoints", "endpoints", days=30)
@@ -578,7 +621,7 @@ def check1(ctx):
                     return "endpoint not listed"
                 return None if norm_status(row[0].get("status")) == "live" else \
                     "status is %s, calls_total %s" % (row[0].get("status"), row[0].get("calls_total"))
-            run(e, "live endpoint %s %s" % (e["verb"], e["template"]), t)
+            run(e, "live endpoint %s %s" % (e["verb"], e["template"]), t, live=True)
         for key, route in (("never_loaded", "never-loaded"), ("never_initialized", "never-initialized"),
                            ("never_instantiated", "never-instantiated"), ("failed_to_initialize", "failed-to-initialize")):
             for entry, cls in cls_entries(tl, key):
@@ -594,7 +637,7 @@ def check1(ctx):
                     return None if find(rows, lambda r: r.get("class_name") == e["class"] and r.get("method_name") == e["method"]
                                         and r.get("parameter_name") == e["parameter"]) else \
                         "not on /optional-parameters?status=%s (%d rows)" % (status, len(rows))
-                run(e, "%s %s.%s(%s)" % (key.replace("_", " "), e["class"], e["method"], e["parameter"]), t)
+                run(e, "%s %s.%s(%s)" % (key.replace("_", " "), e["class"], e["method"], e["parameter"]), t, live=True)
         for e in tl.get("dependencies", []):
             def t(e=e):
                 rows = rd.rows(svc, env, "dependencies", "dependencies")
@@ -607,7 +650,7 @@ def check1(ctx):
                     return "no site in %s (sites: %s)" % (
                         e["site_class"], ", ".join(s_.get("class_name", "") for s_ in row[0].get("sites") or []) or "none")
                 return None
-            run(e, "dependency %s" % e["artifact"], t)
+            run(e, "dependency %s" % e["artifact"], t, live=True)
         for e in tl.get("stale_hit", []):
             days = int(e.get("days", 30))
             extra = max(0.0, days * 86400 + 600.0 / ctx.scale - (cfg.parse_duration(e.get("from")) or 0.0) / ctx.scale)
@@ -1511,6 +1554,7 @@ def main(argv=None):
         key = f.read().strip()
     now = a.at if a.at is not None else time.time()
     ctx = Ctx(paths=paths, truth=truth, state=state, now=now, t0=t0, scale=scale, flush=flush, lag=a.lag,
+              clock=(lambda: a.at) if a.at is not None else time.time,
               final=a.final, reader=Reader(Api(a.api, key), a.wait))
     only = {int(x) for x in a.only.split(",") if x.strip()} or None
     rep = run_checks(ctx, only)

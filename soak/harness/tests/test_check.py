@@ -978,6 +978,31 @@ class WindowCheckTests(CheckCase):
         ctx.now = end + 1
         self.assertFalse(check.crash_hold(ctx, inst.service, inst.env))
 
+    def test_a_starting_run_holds_check_1_for_data_read_while_it_could_be_starting(self):
+        inst = cfg.BY_NAME["shop-1"]
+        flush = cfg.fixed_flush(inst, 1) or FLUSH
+        start = T0 + 36 * 3600
+        self.w.state["runs"].append({"instance": "shop-1", "started": start, "ended": None})
+        end = start + check.JVM_BOOT_ALLOWANCE + (check.STARTING_CAP_INTERVALS + 1) * flush
+        ctx = check.Ctx(state=self.w.state, now=end + 3600, t0=T0, scale=1, flush=FLUSH, lag=1800)
+        self.assertTrue(check.start_hold(ctx, inst.service, inst.env, end - 1))
+        self.assertFalse(check.start_hold(ctx, inst.service, inst.env, end + 1))
+        self.assertFalse(check.start_hold(ctx, inst.service, inst.env, start - 1))
+        self.assertFalse(check.start_hold(ctx, "soak-events", "prod", end - 1))
+
+    def test_a_run_that_stopped_while_starting_holds_until_three_intervals_after_it_stopped(self):
+        inst = cfg.BY_NAME["shop-1"]
+        flush = cfg.fixed_flush(inst, 1) or FLUSH
+        start = T0 + 36 * 3600
+        killed = {"instance": "shop-1", "started": start, "ended": start + 30, "how": "kill9"}
+        self.w.state["runs"].append(killed)
+        ctx = check.Ctx(state=self.w.state, now=start + 3600, t0=T0, scale=1, flush=FLUSH, lag=1800)
+        self.assertTrue(check.start_hold(ctx, inst.service, inst.env, start + 30 + 3 * flush - 1))
+        self.assertFalse(check.start_hold(ctx, inst.service, inst.env, start + 30 + 3 * flush + 1))
+        killed["how"] = "graceful"
+        self.assertTrue(check.start_hold(ctx, inst.service, inst.env, start + 30 + 3 * flush - 1),
+                        "a graceful stop whose closing batch never arrived stays live as long as a kill")
+
     def test_6_a_crash_cycle_opens_a_kill_window(self):
         self.w.state["events"].append({"kind": "crash-cycle", "instance": "events-crash", "t0": T0 + 20 * 3600,
                                        "t1": T0 + 20 * 3600 + 30})
