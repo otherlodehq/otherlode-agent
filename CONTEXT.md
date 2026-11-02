@@ -126,8 +126,12 @@ The payload listing every probe whose hit total changed since the last confirmed
 _Avoid_: metrics, snapshot
 
 **Pending counts**:
-Hits a run has sent in a delta batch, or manifest content it has built, that no collector confirmed, and every count of a run that is still starting (ADR 0086). While a run has pending counts, its zero hits are not evidence that code never ran.
+Hits a run has sent in a delta batch, or manifest content it has built, that no collector confirmed (ADR 0068, ADR 0082). While a run has pending counts, its zero hits are not evidence that code never ran, even after the run has ended.
 _Avoid_: lost hits, dropped deltas
+
+**Starting**:
+A run is starting from the agent's start until its application's class loading settles (ADR 0086). Every delta batch and manifest says so in its own `starting` field, apart from the pending counts (ADR 0087). A starting run's zero hits are not evidence while it lives. A run that ended while starting has delivered what it counted.
+_Avoid_: pending, warming up
 
 **Hit total**:
 A probe's cumulative count since process start, merged at the collector with max().

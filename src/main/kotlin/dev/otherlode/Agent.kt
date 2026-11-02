@@ -336,7 +336,7 @@ object Agent {
                     classListingSender = classListingSender,
                     dependencyListing = dependencyListing,
                     releaseQuietCaches = otherlodeInstrumentation::releaseQuietCaches,
-                    startsPending = true,
+                    hasStartingPhase = true,
                     verifierWatch = verifierHook.watch(),
                     classListingBlind = { classListingWatch?.isBlind == true },
                     beforeManifest = { graceMillis, finalFlush -> instrumentedEndpoints?.beforeManifest(graceMillis, finalFlush) },

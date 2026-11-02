@@ -118,7 +118,7 @@ class ExportScheduler(
      * The agent sets it. The default is false, which gives a scheduler no starting phase, as for
      * every test that does not exercise it.
      */
-    private val startsPending: Boolean = false,
+    private val hasStartingPhase: Boolean = false,
     /**
      * Milliseconds on a clock that only moves forward, for how long the run has been starting
      * (ADR 0086), so a wall-clock step cannot end it early. Injectable so a test controls it.
@@ -147,9 +147,8 @@ class ExportScheduler(
             registry::unplacedVerificationFailures,
             classListingBlind,
             monotonicMillis,
-            startedAt = startedAt,
             intervalMillis = config.flushInterval.toMillis(),
-            starting = startsPending,
+            starting = hasStartingPhase,
         )
 
     /** Runs the two sends of each flush side by side; see [flush]. Two threads, created once, not two per tick. */
@@ -374,9 +373,10 @@ class ExportScheduler(
      *
      * Manifest content the run produced counts as pending counts until it is confirmed, like a hit
      * batch: a manifest send that fails, or stops the sends after it, marks the run pending since
-     * the start of the flush, and a pass that confirms every manifest send clears it. When the
-     * manifest sends change the state after the flush's batches were stamped, and no delta batch or
-     * heartbeat of the flush failed without a refusal, the flush sends one more heartbeat that says so.
+     * the start of the flush, and a pass that confirms every manifest send clears it. When the newest
+     * payload a collector accepted no longer says the run's state, as when a send of the flush was
+     * refused after the flush's payloads were stamped, or starting ended, the flush sends one more
+     * heartbeat that says so, unless a delta batch or heartbeat of it failed without a refusal.
      *
      * The shutdown flush waits for each send only until [CLOSING_RESERVE_MILLIS] before its
      * deadline, then marks what that send carried as pending and closes. A send it stopped waiting
@@ -422,7 +422,7 @@ class ExportScheduler(
             val deliveredBefore = dependencyRegistry.deliveredGeneration
             val sends =
                 FlushSends(
-                    pendingAtStart = delivery.deliveryPending(),
+                    pendingAtStart = delivery.isPending(),
                     hitsWerePending = delivery.hitsPending(),
                     flushId = if (flushId != 0L) flushId else delivery.nextFlushId(),
                     stopsAtNanos = if (early) deadlineNanos else 0L,
@@ -740,17 +740,18 @@ class ExportScheduler(
 
     /**
      * The run's delivery state, stamped onto every delta batch and manifest just before it is sent
-     * (ADR 0068). [pendingSince] is 0 when every hit the run has sent was confirmed, otherwise the
-     * start of the flush in which the unconfirmed ones began. [nextSequence] numbers the payloads
-     * from 1.
+     * (ADR 0068). [pendingSince] is 0 when every hit the run has sent and all its manifest content
+     * was confirmed, otherwise the start of the flush in which the unconfirmed content began.
+     * [nextSequence] numbers the payloads from 1.
      *
-     * A run that [starting] is pending from [startedAt] too, until a scheduled flush finds that
-     * classes have loaded, that none has loaded for at least one flush interval, that no class
-     * awaits the sweep's confirmation, and that the run is at least one interval old; until 10
-     * intervals have passed; or until a final flush that finds no in-scope class loaded since the
-     * early shutdown flush and none awaiting confirmation (ADR 0086). Ages are read from [monotonic]. Once ended it never comes back.
+     * A run that [starting] says so on every payload, apart from the pending state (ADR 0087),
+     * until a scheduled flush finds that classes have loaded, that none has loaded for at least one
+     * flush interval, that no class awaits the sweep's confirmation, and that the run is at least
+     * one interval old; until 10 intervals have passed; or until a final flush that finds no
+     * in-scope class loaded since the early shutdown flush and none awaiting confirmation
+     * (ADR 0086). Ages are read from [monotonic]. Once ended it never comes back.
      *
-     * One lock guards both fields. A flush's manifest and delta sends run on two threads, and a
+     * One lock guards the sequence, the pending state and the starting state. A flush's manifest and delta sends run on two threads, and a
      * payload's number and the state it carries must be drawn together: any payload numbered after
      * a change of the state then read the state after it.
      */
@@ -759,7 +760,6 @@ class ExportScheduler(
         private val unplacedVerificationFailures: () -> Long,
         private val classListingBlind: () -> Boolean,
         private val monotonic: () -> Long,
-        private val startedAt: Long,
         private val intervalMillis: Long,
         starting: Boolean,
     ) {
@@ -775,7 +775,24 @@ class ExportScheduler(
         private var hitsClearedBy = 0L
         private var manifestClearedBy = 0L
         private var lastFlushId = 0L
-        private var lastStampedPendingSince = 0L
+        private var acceptedSequence = 0L
+        private var acceptedPendingSince = 0L
+        private var acceptedStarting = false
+
+        /** Records that a collector accepted the payload stamped with these values. */
+        fun accepted(
+            sequence: Long,
+            pendingSince: Long,
+            starting: Boolean,
+        ) {
+            synchronized(lock) {
+                if (sequence > acceptedSequence) {
+                    acceptedSequence = sequence
+                    acceptedPendingSince = pendingSince
+                    acceptedStarting = starting
+                }
+            }
+        }
         private var nextSequence = 1L
         private var unplacedDelivered = 0L
         private var blindDelivered = false
@@ -783,7 +800,7 @@ class ExportScheduler(
         /** Numbers a flush, from 1, in the order flushes start. */
         fun nextFlushId(): Long = synchronized(lock) { ++lastFlushId }
 
-        private fun deliveryPendingSince(): Long =
+        private fun pendingSince(): Long =
             when {
                 hitsPendingSince == 0L -> manifestPendingSince
                 manifestPendingSince == 0L -> hitsPendingSince
@@ -793,13 +810,6 @@ class ExportScheduler(
         private fun startingActive(): Boolean {
             if (!startingEnded && monotonic() - startedMonotonic >= STARTING_CAP_INTERVALS * intervalMillis) startingEnded = true
             return !startingEnded
-        }
-
-        private fun pendingSince(): Long {
-            val unconfirmed = deliveryPendingSince()
-            if (!startingActive()) return unconfirmed
-            val start = maxOf(startedAt, 1L)
-            return if (unconfirmed == 0L) start else minOf(unconfirmed, start)
         }
 
         /**
@@ -856,8 +866,8 @@ class ExportScheduler(
             }
         }
 
-        /** Whether hits or manifest content are unconfirmed. The starting phase is not counted. */
-        fun deliveryPending(): Boolean = synchronized(lock) { deliveryPendingSince() != 0L }
+        /** Whether hits or manifest content are unconfirmed. */
+        fun isPending(): Boolean = synchronized(lock) { pendingSince() != 0L }
 
         fun hitsPending(): Boolean = synchronized(lock) { hitsPendingSince != 0L }
 
@@ -918,20 +928,25 @@ class ExportScheduler(
         }
 
         /**
-         * Whether the newest payload stamped says pending while the state is clean now, or says
-         * nothing is pending while manifest content is. Hits that became pending after their own
-         * flush's stamps wait for the next flush's leading heartbeat (ADR 0068).
+         * Whether the newest payload a collector accepted says something the state no longer
+         * holds: pending while the state is clean, nothing pending while hits or manifest content
+         * are, or starting after starting ended (ADR 0082, ADR 0087). The newest accepted payload
+         * is what the server reads, so a run that dies after such a flush would otherwise read its
+         * lost hits as evidence. False before any payload was accepted.
          */
         fun stateNotYetSaid(): Boolean =
             synchronized(lock) {
-                (pendingSince() == 0L && lastStampedPendingSince != 0L) ||
-                    (manifestPendingSince != 0L && lastStampedPendingSince == 0L)
+                acceptedSequence != 0L &&
+                    ((pendingSince() == 0L) != (acceptedPendingSince == 0L) || (acceptedStarting && !startingActive()))
             }
 
         fun stamp(batch: DeltaBatch): DeltaBatch =
             synchronized(lock) {
-                lastStampedPendingSince = pendingSince()
-                batch.copy(payloadSequence = nextSequence++, countsPendingSince = lastStampedPendingSince)
+                batch.copy(
+                    payloadSequence = nextSequence++,
+                    countsPendingSince = pendingSince(),
+                    starting = startingActive(),
+                )
             }
 
         /**
@@ -940,10 +955,10 @@ class ExportScheduler(
          */
         fun stamp(manifest: ProbeManifest): ProbeManifest =
             synchronized(lock) {
-                lastStampedPendingSince = pendingSince()
                 manifest.copy(
                     payloadSequence = nextSequence++,
-                    countsPendingSince = lastStampedPendingSince,
+                    countsPendingSince = pendingSince(),
+                    starting = startingActive(),
                     unplacedVerificationFailures = unplacedVerificationFailures(),
                     verifierRejectionsWatched = verifierRejectionsWatched,
                     classListingBlind = classListingBlind(),
@@ -970,12 +985,17 @@ class ExportScheduler(
     }
 
     /** The one place a delta batch reaches the exporter, so none skips [DeliveryState.stamp]. */
-    private fun sendStamped(batch: DeltaBatch) = exporter.exportDeltaBatch(delivery.stamp(batch))
+    private fun sendStamped(batch: DeltaBatch) {
+        val stamped = delivery.stamp(batch)
+        exporter.exportDeltaBatch(stamped)
+        delivery.accepted(stamped.payloadSequence, stamped.countsPendingSince, stamped.starting)
+    }
 
     /** The one place a manifest reaches the exporter, so none skips [DeliveryState.stamp]. */
     private fun sendStamped(manifest: ProbeManifest) {
         val stamped = delivery.stamp(manifest)
         exporter.exportManifest(stamped)
+        delivery.accepted(stamped.payloadSequence, stamped.countsPendingSince, stamped.starting)
         delivery.confirmStamped(stamped.unplacedVerificationFailures, stamped.classListingBlind)
     }
 
@@ -1074,9 +1094,9 @@ class ExportScheduler(
         }
 
     /**
-     * Tells the collector the run's state changed after every payload of the flush was stamped:
-     * a manifest send failed after the hit batches said nothing was pending, or the manifest sends
-     * cleared the last pending state. Returns false when it failed without a refusal.
+     * Tells the collector the run's state, when the newest payload it accepted no longer says it:
+     * a send was refused after the flush's payloads were stamped, the last pending state was
+     * cleared, or starting ended. Returns false when it failed without a refusal.
      */
     private fun sendCatchUpHeartbeat(sends: FlushSends): Boolean =
         try {

@@ -122,6 +122,7 @@ class PayloadWeightTest {
                 dependencyDeltas = List(25) { DependencyDelta(it, 1_700_000_000_000L, 1L shl 40) },
                 payloadSequence = 77,
                 countsPendingSince = 1_700_000_000_000L,
+                starting = true,
             )
         val sum =
             ProtoPayloadCodec.weightOf(empty) +
@@ -171,6 +172,7 @@ class PayloadWeightTest {
                 frameworkMarkers = listOf(FrameworkMarker("spring", listOf("a.B", "c.D"), 12L)),
                 payloadSequence = 1L shl 50,
                 countsPendingSince = 1_700_000_000_000L,
+                starting = true,
                 unplacedVerificationFailures = 1L shl 45,
                 referencesRecorded = true,
                 dependenciesListed = true,

@@ -97,7 +97,7 @@ A delta batch carries the resource attributes plus these lists. Each entry is a 
 | `dependency_deltas` | For each dependency: `dependency_id`, `first_loaded_at`, `loaded_classes_total` |
 | `final_flush` | True only on the last, empty delta batch of the shutdown flush |
 | `flush_complete` | True only on the last delta batch of a flush, when the collector accepted every delta batch the flush sent before it |
-| `payload_sequence`, `counts_pending_since` | Where the run stands in delivering its counts; see [Pending counts](#pending-counts) |
+| `payload_sequence`, `counts_pending_since`, `starting` | Where the run stands in delivering its counts, and whether it is still starting; see [Pending counts](#pending-counts) |
 
 `hits_total` is the cumulative count since the process started, not the amount since the last flush. Otherlode merges it with `max()`, so a batch that arrives twice or out of order changes nothing. `first_seen_at` is the time of the flush that first saw a non-zero count, so it is accurate to one interval.
 
@@ -109,14 +109,15 @@ The ids refer to the manifest of the same run. They mean nothing without it.
 
 ### Pending counts
 
-Every delta batch and manifest carries two numbers that tell Otherlode whether the run's counts are behind. Static baseline and class listing chunks carry neither.
+Every delta batch and manifest carries three fields that tell Otherlode whether the run's counts are behind. Static baseline and class listing chunks carry none of them.
 
 - `payload_sequence` numbers the run's delta batches and manifests from 1, one higher each time. The payload with the highest number is the run's latest word, whatever order the payloads arrived in. A gap in the numbers means nothing.
-- `counts_pending_since` is 0 when, as of the moment the payload was stamped, the run is not starting and no count the run sent has been refused or gone unanswered. Otherwise it is the time, in milliseconds since the epoch, of the flush in which that first happened. While the run is starting, it is the time the agent started.
+- `counts_pending_since` is 0 when, as of the moment the payload was stamped, no count the run sent and no class it reported in a manifest has been refused or gone unanswered. Otherwise it is the time, in milliseconds since the epoch, of the flush in which that first happened. It says nothing about the run starting.
+- `starting` is true while the run is starting, and false after.
 
-A run is starting from the agent's start. Every payload says so until a flush finds that the run is at least one `flushIntervalSeconds` old, that classes in scope have loaded, that none has been registered, skipped, found unreported or found with nothing to probe for at least one `flushIntervalSeconds`, and that none awaits confirmation that the JVM defined it. That flush and the ones after it say what the rest of this section says. A run that keeps loading classes in scope stops starting after 10 intervals. The final flush ends it too when no class in scope loaded after shutdown began and none awaits confirmation, as when a batch job's work is done. A JVM stopped while its application was still starting keeps loading during shutdown, so its closing batch stays pending. Once it has stopped, it does not start again, so a class that first loads later is reported on the next flush. A flush sends one extra empty delta batch when the run stops starting after that flush's payloads were stamped.
+A run is starting from the agent's start. Every payload carries `starting = true` until a flush finds that the run is at least one `flushIntervalSeconds` old, that classes in scope have loaded, that none has been registered, skipped, found unreported or found with nothing to probe for at least one `flushIntervalSeconds`, and that none awaits confirmation that the JVM defined it. That flush and the ones after it carry `starting = false`. A run that keeps loading classes in scope stops starting after 10 intervals. The final flush ends it too when no class in scope loaded after shutdown began and none awaits confirmation, as when a batch job's work is done. A JVM stopped while its application was still starting keeps loading during shutdown, so its closing batch still says `starting`. Once it has stopped, it does not start again, so a class that first loads later is reported on the next flush. A flush sends one extra empty delta batch when the run stops starting, or its pending state changes, after that flush's payloads were stamped.
 
-While the latest payload of a run carries a value other than 0, the run is starting or some of its counts have not reached the collector, so its zero hit totals are not evidence that code never ran. Nor are they before any delta batch from the run has arrived. The manifest and the delta batches go out side by side, so a collector can accept one and refuse the other; the manifest then arrives at zero hits for code that did run. One gap remains: payloads stamped in the flush where refusals begin, before the first refusal, carry 0. If the collector accepts nothing after that, up to one flush interval of hits is missing while the run's newest payload says 0, and the run reads like one that stopped without a final flush.
+While the latest payload of a run says `starting`, its zero hit totals are not evidence that code never ran, since the application may not have loaded its classes yet. Once the run has ended, with a crash or a kill, a starting run has delivered everything it counted up to its last flush. While the latest payload carries a `counts_pending_since` other than 0, some of the run's counts have not reached the collector, so its zero hit totals are not evidence that code never ran, even after the run has ended. Nor are they before any delta batch from the run has arrived. The manifest and the delta batches go out side by side, so a collector can accept one and refuse the other; the manifest then arrives at zero hits for code that did run. One gap remains: payloads stamped in the flush where refusals begin, before the first refusal, carry 0. If the collector accepts nothing after that, up to one flush interval of hits is missing while the run's newest payload says 0, and the run reads like one that stopped without a final flush.
 
 ### Probe manifest
 
@@ -142,7 +143,7 @@ The manifest says what each id in a delta batch names. It carries the resource a
 | `external_classes` | Name of a class outside scope that your code refers to, the `dependency_id` that provides it, and whether nothing provides it |
 | `references_recorded`, `dependencies_listed` | Flags Otherlode uses to know when references and the startup dependency listing are complete |
 | `class_listing_blind` | `true` once a class under `includePackages` loaded from a jar or folder the run's class listing did not read, or with no code source and a name the listing lacks. It is set on every manifest after that and never goes back to `false`. See [the class listing](classes#the-class-listing) |
-| `payload_sequence`, `counts_pending_since` | Where the run stands in delivering its counts; see [Pending counts](#pending-counts) |
+| `payload_sequence`, `counts_pending_since`, `starting` | Where the run stands in delivering its counts, and whether it is still starting; see [Pending counts](#pending-counts) |
 
 #### Branch and site keys
 

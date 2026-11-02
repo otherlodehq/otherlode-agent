@@ -228,7 +228,7 @@ otherlode: exportUrl uses plain http, so the auth token is sent unencrypted
 
 The agent starts the first flush at a random point within the first interval, so a fleet of instances that start together does not send at the same moment. The flushes after it follow every interval at a fixed rate.
 
-A running instance counts as starting for at least one interval after the agent starts, and for at most 10. Its zero counts are not evidence until it has stopped starting. [Pending counts](data-sent#pending-counts) says when that is.
+A running instance says `starting` on every payload for at least one interval after the agent starts, and for at most 10. While it runs, its zero counts are not evidence until it has stopped starting. [Pending counts](data-sent#pending-counts) says when that is.
 
 Every payload carries the interval as `flush_interval_seconds`, so Otherlode can tell a run that stopped without its final flush from one that is quiet between flushes.
 

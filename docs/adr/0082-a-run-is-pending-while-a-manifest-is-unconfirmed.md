@@ -1,5 +1,5 @@
 ---
-status: accepted, amends ADR 0068
+status: accepted, amends ADR 0068, amended by ADR 0084, ADR 0086 and ADR 0087
 ---
 
 # A run is pending while a manifest is unconfirmed

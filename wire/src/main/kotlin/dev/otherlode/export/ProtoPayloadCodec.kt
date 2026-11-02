@@ -87,6 +87,7 @@ object ProtoPayloadCodec {
                     flushComplete = true,
                     payloadSequence = Long.MAX_VALUE,
                     countsPendingSince = Long.MAX_VALUE,
+                    starting = true,
                 ),
             ),
         )
@@ -103,6 +104,7 @@ object ProtoPayloadCodec {
                     unplacedVerificationFailures = Long.MAX_VALUE,
                     verifierRejectionsWatched = true,
                     classListingBlind = true,
+                    starting = true,
                 ),
             ),
         )
@@ -248,6 +250,7 @@ object ProtoPayloadCodec {
             .setPayloadSequence(batch.payloadSequence)
             .setCountsPendingSince(batch.countsPendingSince)
             .setFlushComplete(batch.flushComplete)
+            .setStarting(batch.starting)
             .build()
 
     private fun fromProto(batch: ProtoDeltaBatch): DeltaBatch =
@@ -260,6 +263,7 @@ object ProtoPayloadCodec {
             payloadSequence = batch.payloadSequence,
             countsPendingSince = batch.countsPendingSince,
             flushComplete = batch.flushComplete,
+            starting = batch.starting,
         )
 
     private fun toProto(resource: ResourceAttributes): ProtoResourceAttributes {
@@ -335,6 +339,7 @@ object ProtoPayloadCodec {
             .setVerifierRejectionsWatched(manifest.verifierRejectionsWatched)
             .addAllFrameworkMarkers(manifest.frameworkMarkers.map { toProto(it) })
             .setClassListingBlind(manifest.classListingBlind)
+            .setStarting(manifest.starting)
             .build()
 
     private fun fromProto(manifest: ProtoProbeManifest): ProbeManifest =
@@ -359,6 +364,7 @@ object ProtoPayloadCodec {
             verifierRejectionsWatched = manifest.verifierRejectionsWatched,
             frameworkMarkers = manifest.frameworkMarkersList.map { fromProto(it) },
             classListingBlind = manifest.classListingBlind,
+            starting = manifest.starting,
         )
 
     private fun toProto(unreportedClass: UnreportedClass): ProtoUnreportedClass =

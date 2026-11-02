@@ -20,14 +20,18 @@ class ExportSchedulerStartingTest {
     private val intervalMillis = 60_000L
     private val agentStart = 1_000_000L
 
+    private data class Stamp(val starting: Boolean, val pendingSince: Long)
+
     private class Recorder : Exporter {
         val deltas: MutableList<DeltaBatch> = Collections.synchronizedList(mutableListOf())
         val manifests: MutableList<ProbeManifest> = Collections.synchronizedList(mutableListOf())
         @Volatile var afterStamp: () -> Unit = {}
+        @Volatile var refuseHitBatches = false
 
         override fun exportDeltaBatch(batch: DeltaBatch) {
             deltas += batch
             afterStamp()
+            if (refuseHitBatches && batch.deltas.isNotEmpty()) throw ExportFailedException("refused", 413, refused = true)
         }
 
         override fun exportManifest(manifest: ProbeManifest) {
@@ -39,7 +43,11 @@ class ExportSchedulerStartingTest {
 
         override fun exportClassListing(listing: ClassListing) {}
 
-        fun stamps(): List<Long> = (deltas.map { it.payloadSequence to it.countsPendingSince } + manifests.map { it.payloadSequence to it.countsPendingSince }).sortedBy { it.first }.map { it.second }
+        fun stamps(): List<Stamp> =
+            (deltas.map { Triple(it.payloadSequence, it.starting, it.countsPendingSince) } +
+                manifests.map { Triple(it.payloadSequence, it.starting, it.countsPendingSince) })
+                .sortedBy { it.first }
+                .map { Stamp(it.second, it.third) }
 
         fun clear() {
             deltas.clear()
@@ -54,14 +62,14 @@ class ExportSchedulerStartingTest {
     private val scheduler = scheduler(registry)
 
     private fun scheduler(registry: ProbeRegistry) =
-        ExportScheduler(config, resource, registry, EndpointRegistry(), exporter, clock = now::get, startsPending = true, monotonicMillis = monotonic::get)
+        ExportScheduler(config, resource, registry, EndpointRegistry(), exporter, clock = now::get, hasStartingPhase = true, monotonicMillis = monotonic::get)
     private var classes = 0
 
     private fun loadClass() {
         registry.register("com.example.C${classes++}", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "m", "()V", 1)))[0] = 3
     }
 
-    private fun flushAt(age: Long): List<Long> {
+    private fun flushAt(age: Long): List<Stamp> {
         exporter.clear()
         now.set(agentStart + age)
         monotonic.set(agentStart + age)
@@ -69,39 +77,49 @@ class ExportSchedulerStartingTest {
         return exporter.stamps()
     }
 
+    private fun assertStarting(stamps: List<Stamp>, message: String = "") {
+        assertTrue(stamps.isNotEmpty(), "no payload: $message")
+        assertTrue(stamps.all { it.starting && it.pendingSince == 0L }, "every payload says starting and nothing pending: $stamps $message")
+    }
+
+    private fun assertSettled(stamps: List<Stamp>, message: String = "") {
+        assertTrue(stamps.isNotEmpty(), "no payload: $message")
+        assertTrue(stamps.all { !it.starting && it.pendingSince == 0L }, "every payload says neither starting nor pending: $stamps $message")
+    }
+
     @Test
-    fun `a first flush within one interval of the start says pending though every send is confirmed`() {
+    fun `a first flush within one interval of the start says starting and not pending though every send is confirmed`() {
         loadClass()
 
         val stamps = flushAt(600)
 
-        assertTrue(stamps.isNotEmpty() && exporter.manifests.isNotEmpty())
-        assertTrue(stamps.all { it == agentStart }, "every payload says pending since the agent's start: $stamps")
+        assertTrue(exporter.manifests.isNotEmpty())
+        assertStarting(stamps)
     }
 
     @Test
-    fun `a flush past one interval that finds new in-scope classes stays pending`() {
+    fun `a flush past one interval that finds new in-scope classes stays starting`() {
         loadClass()
         flushAt(600)
         loadClass()
 
         val stamps = flushAt(intervalMillis + 600)
 
-        assertTrue(stamps.isNotEmpty() && stamps.all { it == agentStart }, "$stamps")
+        assertStarting(stamps)
     }
 
     @Test
-    fun `the first flush past one interval that finds no new class says nothing is pending and later flushes stay so`() {
+    fun `the first flush past one interval that finds no new class says starting ended and later flushes stay so`() {
         loadClass()
         val first = flushAt(600)
 
         val settled = flushAt(intervalMillis + 600)
-        assertTrue(first.isNotEmpty() && first.all { it == agentStart }, "$first")
+        assertStarting(first)
         loadClass()
         val later = flushAt(2 * intervalMillis + 600)
 
-        assertTrue(settled.isNotEmpty() && settled.all { it == 0L }, "$settled")
-        assertTrue(later.isNotEmpty() && later.all { it == 0L }, "a class loading after the run settled does not bring starting back: $later")
+        assertSettled(settled)
+        assertSettled(later, "a class loading after the run settled does not bring starting back")
     }
 
     @Test
@@ -109,12 +127,12 @@ class ExportSchedulerStartingTest {
         loadClass()
         flushAt(600)
         registry.recordSkipped("com.example.Skipped", "too large")
-        assertTrue(flushAt(intervalMillis + 600).all { it == agentStart })
+        assertStarting(flushAt(intervalMillis + 600))
         registry.recordNothingToProbe("com.example.Empty")
-        assertTrue(flushAt(2 * intervalMillis + 600).all { it == agentStart })
+        assertStarting(flushAt(2 * intervalMillis + 600))
         registry.recordUnreported("com.example.Unreported")
-        assertTrue(flushAt(3 * intervalMillis + 600).all { it == agentStart })
-        assertTrue(flushAt(4 * intervalMillis + 600).all { it == 0L })
+        assertStarting(flushAt(3 * intervalMillis + 600))
+        assertSettled(flushAt(4 * intervalMillis + 600))
     }
 
     @Test
@@ -122,13 +140,13 @@ class ExportSchedulerStartingTest {
         for (k in 0 until 10) {
             loadClass()
             val stamps = flushAt(k * intervalMillis + 600)
-            assertTrue(stamps.all { it == agentStart }, "flush $k is still starting: $stamps")
+            assertStarting(stamps, "flush $k is still starting")
         }
         loadClass()
 
         val stamps = flushAt(10 * intervalMillis + 600)
 
-        assertTrue(stamps.isNotEmpty() && stamps.all { it == 0L }, "$stamps")
+        assertSettled(stamps)
     }
 
     @Test
@@ -148,9 +166,11 @@ class ExportSchedulerStartingTest {
 
         val late = exporter.deltas.maxBy { it.payloadSequence }
         assertEquals(0L, late.countsPendingSince)
+        assertTrue(!late.starting, "the late heartbeat says starting ended")
         assertTrue(late.deltas.isEmpty(), "the newest payload is a heartbeat")
-        val earlier = exporter.deltas.filter { it !== late }.map { it.countsPendingSince } + exporter.manifests.map { it.countsPendingSince }
-        assertTrue(earlier.isNotEmpty() && earlier.all { it == agentStart }, "the flush's own stamps said pending: $earlier")
+        val earlier = exporter.deltas.filter { it !== late }.map { Stamp(it.starting, it.countsPendingSince) } +
+            exporter.manifests.map { Stamp(it.starting, it.countsPendingSince) }
+        assertTrue(earlier.isNotEmpty() && earlier.all { it.starting && it.pendingSince == 0L }, "the flush's own stamps said starting: $earlier")
     }
 
     @Test
@@ -166,6 +186,7 @@ class ExportSchedulerStartingTest {
 
         val closing = exporter.deltas.single { it.finalFlush }
         assertEquals(0L, closing.countsPendingSince)
+        assertTrue(!closing.starting)
     }
 
     @Test
@@ -181,7 +202,8 @@ class ExportSchedulerStartingTest {
         scheduler.flushOnShutdown(Duration.ofSeconds(5))
 
         val closing = exporter.deltas.single { it.finalFlush }
-        assertEquals(agentStart, closing.countsPendingSince)
+        assertEquals(0L, closing.countsPendingSince)
+        assertTrue(closing.starting)
     }
 
     @Test
@@ -195,7 +217,8 @@ class ExportSchedulerStartingTest {
         scheduler.flushOnShutdown(Duration.ofSeconds(5))
 
         val closing = exporter.deltas.single { it.finalFlush }
-        assertEquals(agentStart, closing.countsPendingSince)
+        assertEquals(0L, closing.countsPendingSince)
+        assertTrue(closing.starting)
     }
 
     @Test
@@ -207,7 +230,7 @@ class ExportSchedulerStartingTest {
 
         val catchUp = flushAt(intervalMillis + 601)
 
-        assertTrue(catchUp.isNotEmpty() && catchUp.all { it == agentStart }, "one millisecond of quiet is not an interval: $catchUp")
+        assertStarting(catchUp, "one millisecond of quiet is not an interval")
     }
 
     @Test
@@ -215,8 +238,8 @@ class ExportSchedulerStartingTest {
         val early = flushAt(intervalMillis + 100)
         val later = flushAt(3 * intervalMillis)
 
-        assertTrue(early.isNotEmpty() && early.all { it == agentStart }, "$early")
-        assertTrue(later.isNotEmpty() && later.all { it == agentStart }, "$later")
+        assertStarting(early)
+        assertStarting(later)
     }
 
     @Test
@@ -234,8 +257,7 @@ class ExportSchedulerStartingTest {
 
         scheduler.flush()
 
-        val stamps = exporter.stamps()
-        assertTrue(stamps.isNotEmpty() && stamps.all { it == agentStart }, "$stamps")
+        assertStarting(exporter.stamps())
     }
 
     @Test
@@ -248,7 +270,85 @@ class ExportSchedulerStartingTest {
 
         scheduler.flush()
 
-        val stamps = exporter.stamps()
-        assertTrue(stamps.isNotEmpty() && stamps.all { it == agentStart }, "$stamps")
+        assertStarting(exporter.stamps())
+    }
+
+    @Test
+    fun `a run whose hits are refused while it is starting says both starting and pending`() {
+        loadClass()
+        exporter.refuseHitBatches = true
+
+        flushAt(600)
+        flushAt(1_200)
+
+        val newest = exporter.stamps().last()
+        assertTrue(newest.starting, "the newest payload says starting: ${exporter.stamps()}")
+        assertEquals(agentStart + 600, newest.pendingSince, "the newest payload says the refused hits are pending: ${exporter.stamps()}")
+        assertTrue(exporter.manifests.all { it.starting })
+    }
+
+    @Test
+    fun `hits refused after the flush's stamps said nothing was pending are said by a late heartbeat`() {
+        val counter = registry.register("com.example.Held", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "m", "()V", 1)))
+        counter[0] = 1
+        flushAt(600)
+        exporter.refuseHitBatches = true
+        counter[0] = 2
+
+        flushAt(1_200)
+
+        val accepted =
+            (exporter.deltas.filter { it.deltas.isEmpty() }.map { it.payloadSequence to it.countsPendingSince } +
+                exporter.manifests.map { it.payloadSequence to it.countsPendingSince })
+                .sortedBy { it.first }
+        assertTrue(accepted.isNotEmpty() && accepted.last().second != 0L, "the newest accepted payload says pending: $accepted")
+    }
+
+    @Test
+    fun `two hit batches refused in one flush are said by a late heartbeat`() {
+        val registry = ProbeRegistry()
+        val exporter = Recorder()
+        val scheduler =
+            ExportScheduler(
+                config, resource, registry, EndpointRegistry(), exporter, maxDeltasPerBatch = 1, clock = now::get,
+                hasStartingPhase = true, monotonicMillis = monotonic::get,
+            )
+        val first = registry.register("com.example.A", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "m", "()V", 1)))
+        val second = registry.register("com.example.B", 2L, listOf(ProbeMeta(ProbeKind.METHOD, "m", "()V", 1)))
+        first[0] = 1
+        second[0] = 1
+        now.set(agentStart + 600)
+        monotonic.set(agentStart + 600)
+        scheduler.flush()
+        exporter.refuseHitBatches = true
+        first[0] = 2
+        second[0] = 2
+        now.set(agentStart + 1_200)
+        monotonic.set(agentStart + 1_200)
+
+        scheduler.flush()
+
+        val accepted =
+            (exporter.deltas.filter { it.deltas.isEmpty() || !exporter.refuseHitBatches }.map { it.payloadSequence to it.countsPendingSince } +
+                exporter.manifests.map { it.payloadSequence to it.countsPendingSince })
+                .sortedBy { it.first }
+        val refusedSequences = exporter.deltas.filter { it.deltas.isNotEmpty() && it.payloadSequence > 2 }.map { it.payloadSequence }
+        val newestAccepted = accepted.filter { it.first !in refusedSequences }.maxBy { it.first }
+        assertTrue(newestAccepted.second != 0L, "the newest accepted payload says pending: ${exporter.deltas.map { it.payloadSequence to it.countsPendingSince }}")
+    }
+
+    @Test
+    fun `once starting ends a refused batch still says pending and not starting`() {
+        loadClass()
+        exporter.refuseHitBatches = true
+        flushAt(600)
+
+        flushAt(intervalMillis + 600)
+
+        val hitBatch = exporter.deltas.filter { it.deltas.isNotEmpty() }.maxBy { it.payloadSequence }
+        assertTrue(!hitBatch.starting, "starting ended")
+        assertEquals(agentStart + 600, hitBatch.countsPendingSince, "the refused batch says pending")
+        val newest = exporter.stamps().last()
+        assertTrue(!newest.starting && newest.pendingSince != 0L, "${exporter.stamps()}")
     }
 }

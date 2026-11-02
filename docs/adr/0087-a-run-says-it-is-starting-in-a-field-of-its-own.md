@@ -1,5 +1,5 @@
 ---
-status: accepted, amends ADR 0086
+status: accepted, amends ADR 0082 and ADR 0086
 ---
 
 # A run says it is starting in a field of its own
@@ -26,3 +26,7 @@ The two meanings call for different readings once the run is gone. Undelivered h
 
 - Server ADR 0092 reads `starting`. A starting run holds claims back while it is live and holds nothing once it is not.
 - A collector must know both fields, or its redaction drops them and marks the payload stripped.
+
+## Settled while building it, 2026-11-02
+
+- **The late heartbeat also says hits refused after the flush's stamps.** ADR 0082 left hits that became pending after their own flush's stamps to the next flush's leading heartbeat. Before this record a starting run's stamps always said pending, so that gap could not show for one. Now they can say 0, and a starting run that died right after such a refusal would settle with its lost hits read as zeros. So a flush sends the extra empty batch whenever the newest payload a collector accepted no longer says the run's state, unless a delta batch or heartbeat of the flush failed without a refusal. It compares with the newest accepted payload, not the newest stamped one: two hit batches refused in one flush leave the second stamped pending while the server still holds a 0. That closes the same gap for a settled run. While a collector refuses everything, each flush sends one more refused request.

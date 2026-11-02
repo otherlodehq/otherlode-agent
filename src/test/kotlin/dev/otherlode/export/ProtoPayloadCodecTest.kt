@@ -258,6 +258,7 @@ class ProtoPayloadCodecTest {
                 flushComplete = true,
                 payloadSequence = Long.MAX_VALUE,
                 countsPendingSince = Long.MAX_VALUE,
+                starting = true,
             )
 
         assertFalse(batch.flushComplete)
@@ -491,6 +492,19 @@ class ProtoPayloadCodecTest {
 
         assertTrue(wire.verifierRejectionsWatched)
         assertEquals(manifest, ProtoPayloadCodec.decodeProbeManifest(ProtoPayloadCodec.encode(manifest)))
+    }
+
+    @Test
+    fun `starting round-trips through a delta batch and a manifest and defaults to false`() {
+        val resource = ResourceAttributes("checkout", "1.0.0", "", null, "run-1")
+        val manifest = ProbeManifest(resource, emptyList(), starting = true)
+        val batch = DeltaBatch(resource, emptyList(), starting = true)
+
+        assertTrue(ProtoProbeManifest.parseFrom(ProtoPayloadCodec.encode(manifest)).starting)
+        assertTrue(ProtoDeltaBatch.parseFrom(ProtoPayloadCodec.encode(batch)).starting)
+        assertEquals(manifest, ProtoPayloadCodec.decodeProbeManifest(ProtoPayloadCodec.encode(manifest)))
+        assertEquals(batch, ProtoPayloadCodec.decodeDeltaBatch(ProtoPayloadCodec.encode(batch)))
+        assertFalse(ProtoPayloadCodec.decodeProbeManifest(ProtoPayloadCodec.encode(ProbeManifest(resource, emptyList()))).starting)
     }
 
     @Test

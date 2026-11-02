@@ -200,8 +200,8 @@ data class ProbeDelta(
  * [dependencyDeltas] carries one entry per dependency whose loaded-class total changed since the
  * last successfully delivered batch. See [DependencyDelta].
  *
- * [payloadSequence] and [countsPendingSince] are the run's delivery state when the agent stamped
- * this batch, as [ProbeManifest] documents them. Both are 0 until stamped.
+ * [payloadSequence], [countsPendingSince] and [starting] are the run's delivery state when the
+ * agent stamped this batch, as [ProbeManifest] documents them. They are 0 and false until stamped.
  *
  * [flushComplete] is set on at most one delta batch of a flush: the last batch that carries the
  * flush's counts, and only when the flush read its counts and every delta batch it sent before that
@@ -220,6 +220,7 @@ data class DeltaBatch(
     val payloadSequence: Long = 0,
     val countsPendingSince: Long = 0,
     val flushComplete: Boolean = false,
+    val starting: Boolean = false,
 )
 
 /**
@@ -734,6 +735,11 @@ enum class BodyKind {
  * While the highest-sequence payload carries another value, the run's zero hit totals are not
  * evidence that code never ran. It is drawn together with [payloadSequence].
  *
+ * [starting] is true on every payload the run sends while it is starting: before its application's
+ * class loading has settled (agent ADR 0086 and ADR 0087). It is false after and never true again.
+ * It is independent of [countsPendingSince], which says only that hits or manifest content went
+ * unconfirmed. False from an agent that predates the field.
+ *
  * [verifierRejectionsWatched] is true when the agent's hook on the JVM's `VerifyError` is installed
  * and so can see the verifier's rejections. The agent sets it on every manifest it sends and installs
  * the hook before its first payload, so a run's manifests agree. A run any of whose manifests carries
@@ -770,6 +776,7 @@ data class ProbeManifest(
     val verifierRejectionsWatched: Boolean = false,
     val frameworkMarkers: List<FrameworkMarker> = emptyList(),
     val classListingBlind: Boolean = false,
+    val starting: Boolean = false,
 )
 
 /**

@@ -72,7 +72,7 @@ Otherlode derives one status per dependency from the runs in scope, checked in t
 | No live reference | The jar has no live reference, and Otherlode cannot tell unreferenced from unreached. |
 | Unreferenced | A class from the jar loaded, and nothing in your code references the jar. |
 | Unreached | Your code references the jar, but only from methods that were never hit or classes that never loaded. |
-| Counts behind | The jar would read as stale, unloaded, no live reference or unreached, but the zero count behind that status comes from a run that has not delivered all its counts. It claims nothing. See [pending counts](data-sent#pending-counts). |
+| Counts behind | The jar would read as stale, unloaded, no live reference or unreached, but the zero count behind that status comes from a run that has not delivered all its counts, or from a running instance that is still starting. It claims nothing. See [pending counts](data-sent#pending-counts). |
 | Without evidence | The jar would read as no live reference or unreached, but no run that knows a method holding a reference is evidence that the method never ran. It claims nothing. |
 
 Because the agent refuses to start without include rules, every running agent records references. "Loaded" appears only when no instance that lists the jar sent references.

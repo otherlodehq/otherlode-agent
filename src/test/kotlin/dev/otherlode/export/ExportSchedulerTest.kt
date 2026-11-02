@@ -762,7 +762,12 @@ class ExportSchedulerTest {
         }
 
         assertEquals(listOf(3L, 3L, 4L), offered, "each flush offers the probe again, with the hits recorded since")
-        assertEquals(6, exporter.attempts, "the two flushes after the first lead with a heartbeat, and the accepted one closes with one")
+        assertEquals(
+            8,
+            exporter.attempts,
+            "each refused flush ends with a late heartbeat, since the newest accepted payload, the first manifest, says nothing " +
+                "is pending; the two flushes after the first lead with a heartbeat; the accepted one closes with one",
+        )
         assertEquals(listOf(4L), exporter.confirmed.flatMap { b -> b.deltas.map { it.hitsTotal } }, "nothing lost once accepted")
     }
 
@@ -4140,10 +4145,16 @@ class ExportSchedulerTest {
 
     /** The first rule the flush's recorded sends break, or null. */
     private fun flushCompleteViolation(
-        attempts: List<Attempt>,
+        sent: List<Attempt>,
         final: Boolean,
     ): String? {
-        if (attempts.isEmpty()) return "the flush sent no delta batch"
+        if (sent.isEmpty()) return "the flush sent no delta batch"
+        // A late heartbeat after a refusal carries no flush_complete, so it can follow the batch
+        // that does (ADR 0082, ADR 0087).
+        val lateHeartbeat =
+            sent.size > 1 && sent.last().let { !hasHits(it.batch) && !it.batch.finalFlush && !it.batch.flushComplete } &&
+                sent.dropLast(1).any { it.failure != null }
+        val attempts = if (lateHeartbeat) sent.dropLast(1) else sent
         val marked = attempts.indices.filter { attempts[it].batch.flushComplete }
         val last = attempts.lastIndex
         return when {
