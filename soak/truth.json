@@ -6,7 +6,12 @@
     "soak-shop prod instances must run with excludePackages=dev.soaktest.shop.testdriver. The shop-test instance must not. Without the exclude, SoakTestDriver reads as a never loaded class and a cluster root of its own, and Pricing.applyLegacyDiscount is no longer a root called only by tests.",
     "Entries with framework true are Spring Boot's own jars. Their status comes from a local run of the stub collector, which applies the server's rules; they are not planted.",
     "The services also report Spring's own endpoints (* /*, * /webjars/*, * /error, handled by classes outside the include rules) as outside routes. They are not planted.",
-    "Traffic rules: GET /orders/{id} must use an id of 0 or more (a negative id takes the id < 0 side). The tier is id % 3, so PLATINUM is never chosen. POST /orders must not pass a limit or sort. POST /events must use a positive id."
+    "Traffic rules: GET /orders/{id} must use an id of 0 or more (a negative id takes the id < 0 side). The tier is id % 3, so PLATINUM is never chosen. POST /orders must not pass a limit or sort. POST /events must use a positive id.",
+    "live_methods: a method that must not be on /never-hit from its time. ShutdownAudit.record runs 2 seconds after the shutdown hook starts, at every graceful stop; shop-1's first one is at PT12H. Before that, ShutdownHook.close and ShutdownAudit.record are never hit and ShutdownHook.close is the root of a cluster that holds record.",
+    "A dependency entry may carry site_class: the class that must be among the dependency's sites. commons-codec is a jar of soak-events 2.0.0 only, named by its manifest Class-Path. LegacyDigest refers to it and is never loaded; Main loads one codec class by name, so the jar reads unreached and never unloaded or unreferenced.",
+    "events-crash (the events 1.0.0 jar, soak-events/prod) is started and killed with kill -9 about 5 seconds after it is ready, three times at PT20H and once more with staticBaselineEnabled=false, before its first flush. It changes no finding, check 4 does not assert its runs, and its classes are in no never-loaded claim after its live deadline: the lists above are the same with and without it.",
+    "shop-3 (the shop jar, soak-shop/nobaseline, staticBaselineEnabled=false, a lower traffic rate) runs all week in an environment of its own, which these answers do not judge.",
+    "At PT61H the collector runs for 10 real minutes (2 at a smoke run) with a manifest element limit that a restarted shop-1 exceeds, and shop-1 restarts inside that window. No false never-loaded or never-hit claim may appear at any time, and shop-1's run must read as counts behind on /instances while it is refused. The window reads and check 8 judge it; no list above changes."
   ],
   "services": {
     "soak-shop": {
@@ -36,6 +41,16 @@
             "class": "dev.soaktest.shop.OnceController",
             "method": "once",
             "until": "PT96H"
+          },
+          {
+            "class": "dev.soaktest.shop.ShutdownHook",
+            "method": "close",
+            "until": "PT12H"
+          },
+          {
+            "class": "dev.soaktest.shop.ShutdownAudit",
+            "method": "record",
+            "until": "PT12H"
           }
         ],
         "never_hit_outcomes": [
@@ -437,6 +452,14 @@
             "method": "once",
             "members_include": [],
             "until": "PT96H"
+          },
+          {
+            "class": "dev.soaktest.shop.ShutdownHook",
+            "method": "close",
+            "members_include": [
+              "dev.soaktest.shop.ShutdownAudit#record"
+            ],
+            "until": "PT12H"
           }
         ],
         "removed": [],
@@ -461,6 +484,18 @@
               "valueOf",
               "getEntries"
             ]
+          }
+        ],
+        "live_methods": [
+          {
+            "class": "dev.soaktest.shop.ShutdownHook",
+            "method": "close",
+            "from": "PT12H"
+          },
+          {
+            "class": "dev.soaktest.shop.ShutdownAudit",
+            "method": "record",
+            "from": "PT12H"
           }
         ]
       }
@@ -518,6 +553,10 @@
           {
             "class": "dev.soaktest.events.ReplayEngine",
             "until": "PT72H"
+          },
+          {
+            "class": "dev.soaktest.events.LegacyDigest",
+            "from": "PT72H"
           }
         ],
         "never_initialized": [],
@@ -525,7 +564,15 @@
         "failed_to_initialize": [],
         "never_supplied": [],
         "always_supplied": [],
-        "dependencies": [],
+        "dependencies": [
+          {
+            "artifact": "commons-codec",
+            "status": "unreached",
+            "version": "1.19.0",
+            "from": "PT72H",
+            "site_class": "dev.soaktest.events.LegacyDigest"
+          }
+        ],
         "stale_hit": [],
         "unreached_cluster_roots": [
           {

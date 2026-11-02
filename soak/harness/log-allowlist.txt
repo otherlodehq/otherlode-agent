@@ -1,14 +1,23 @@
-# WARNING lines that check 6 accepts, each tied to the disruption that causes it.
+# Log lines that check 6 accepts, each tied to the disruption that causes it.
 #
 # Format: <disruption> <regular expression>, one entry a line. The expression is searched in
 # the log line without its timestamp prefix. An entry holds a line only when the line's time
-# falls inside a window of that disruption, taken from the supervisor's event log. ERROR lines
-# are never allowlisted.
+# falls inside a window of that disruption, taken from the supervisor's event log.
+# An entry accepts WARNING lines. ERROR lines are never allowlisted, with one exception: an
+# entry written <disruption> [ERROR] <regular expression> accepts ERROR lines, and only those,
+# that match the expression inside the disruption's ERROR window. That window is tight: the
+# server's restart, or a stop of the collector, plus 30s, so a fault on a server that is back
+# still fails the check. Use the marker for an ERROR line that the disruption is certain to
+# cause and that is the product's designed answer to it.
 #
 # Disruptions:
 #   jvm-start          the start of any instance, and a shop-test run: from 5s before to 180s after
 #   graceful-restart   a SIGTERM restart of shop-1: from the stop to 180s after the start
-#   kill-9             the kill -9 of shop-2: from the kill to 180s after the start
+#   kill-9             the kill -9 of shop-2, and the kill -9 of each events-crash cycle: from the
+#                      kill (the start, for a cycle) to 180s after the start
+#   collector-limit    the collector restarted with the low manifest limit, kept for 10 minutes (2 in
+#                      a smoke run) and restarted with the normal one: from the first restart to the
+#                      larger of 300s and 3 flush intervals after the second
 #   collector-outage   the collector stopped for 60 minutes: from the stop to the larger of 300s
 #                      and 3 flush intervals after the start
 #   server-restart     the server restart: the same tail as collector-outage
@@ -28,10 +37,27 @@ collector-outage "msg":"forward URL uses plain http; the backend auth token is s
 # The agents cannot reach the collector while it is stopped, and retry on the next flush.
 collector-outage otherlode: (delta|manifest) export failed, will retry next flush
 collector-outage otherlode: failed to send (static baseline|class listing) chunk
-collector-outage otherlode: an in-flight flush used up the shutdown budget
+collector-outage otherlode: an in-flight flush used up the (early shutdown flush's|shutdown) budget
+collector-outage otherlode: a send of the (early )?shutdown flush ran out of time
+
+# The collector refuses a manifest over its limit with a 413, and the agent sends it again at the next
+# flush. Both collector restarts of the window drop a flush too.
+collector-limit "msg":"refusing manifest with too many elements"
+collector-limit "msg":"forward URL uses plain http; the backend auth token is sent unencrypted"
+collector-limit otherlode: unexpected status 413
+collector-limit otherlode: (delta|manifest) export failed, will retry next flush
+collector-limit otherlode: failed to send (static baseline|class listing) chunk
+collector-limit otherlode: an in-flight flush used up the (early shutdown flush's|shutdown) budget
+collector-limit otherlode: a send of the (early )?shutdown flush ran out of time
 
 # The collector cannot reach the server while it restarts, and the agents may see a 5xx.
-server-restart "msg":"dropping payload
+server-restart [ERROR] "msg":"sink rejected (delta batch|manifest|static baseline|class listing)".*"reason":"(transport|timeout)"
 server-restart otherlode: unexpected status (502|503|504)
 server-restart otherlode: (delta|manifest) export failed, will retry next flush
 server-restart otherlode: failed to send (static baseline|class listing) chunk
+server-restart otherlode: an in-flight flush used up the (early shutdown flush's|shutdown) budget
+server-restart otherlode: a send of the (early )?shutdown flush ran out of time
+
+# Not allowlisted, since no disruption causes them: the "shutdown hooks were still running 18s into
+# shutdown" line (the shop's ShutdownHook sleeps 2s) and "cannot watch the application's shutdown hooks".
+# The kill -9 disruptions run no shutdown hook, so they allow no shutdown line.

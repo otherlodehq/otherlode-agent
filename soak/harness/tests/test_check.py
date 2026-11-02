@@ -1,4 +1,4 @@
-"""Each of the seven checks, passing and failing once, against a fake read API and a toy truth file.
+"""Each of the eight checks, passing and failing once, against a fake read API and a toy truth file.
 
 Run from soak/harness: python3 -m unittest
 """
@@ -26,6 +26,7 @@ KEY = "otl_test-read-key"
 T0 = 1_800_000_000.0
 NOW = T0 + 30 * 3600  # 30 hours in, so every entry of the toy truth is due
 FLUSH = 60
+AFTER_LIMIT = T0 + 61 * 3600
 
 TRUTH = {
     "services": {
@@ -141,6 +142,8 @@ class FakeApi:
                 svc, route = urllib.parse.unquote(m.group(1)), m.group(2)
                 if svc not in ("soak-shop", "soak-shop-tests-only"):
                     return self.reply(404, {"error": "service not found"})
+                if route == "report":
+                    return self.reply(200, {"instances": {"total": 3}})
                 rows = list(outer.data.get(route, []))
                 if route == "stale-hit":
                     rows = [r for r in rows if int(q.get("days", 30)) <= r.get("_max_days", 0)]
@@ -177,6 +180,20 @@ class FakeApi:
 def iso(t):
     import datetime
     return datetime.datetime.fromtimestamp(t, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+
+def windows_file(**over):
+    """The file the supervisor's window reader keeps, after 40 live reads and 3 snapshot reads."""
+    d = {"opened": 12, "events": [], "reads": {"fast": 40, "slow": 3, "report": 3, "errors": 0},
+         "skipped": {"fast": 0, "slow": 0}, "violations": {},
+         "refused": {"reads": 0, "behind": 0, "first_behind": None, "last": []}, "last_error": None}
+    d.update(over)
+    return d
+
+
+def read(path):
+    with open(path) as f:
+        return f.read()
 
 
 def write(path, text):
@@ -216,6 +233,7 @@ class World:
             "shop-2": {"GET /orders/{id}": {"ok": 1000, "non2xx": 0, "errors": 0, "rate_per_s": 5.0}},
         }}
         self.save()
+        write(self.p["windows"], json.dumps(windows_file()))
         write(self.p["truth"], json.dumps(TRUTH))
         write(self.p["read_key"], KEY)
         write(self.p["allowlist"], "collector-outage otherlode: delta export failed, will retry next flush\n")
@@ -234,15 +252,15 @@ class World:
             rows.append("%s,shop-1,11,2,%d,50000" % (iso(t), int((400 + grow_shop1 * i / 6.0) * 1024)))
         write(self.p["memory"], "\n".join(rows) + "\n")
 
-    def logs(self, extra_server="", extra_shop=""):
+    def logs(self, extra_server="", extra_shop="", extra_collector=""):
         info = json.dumps({"time": iso(T0 + 100), "level": "INFO", "msg": "listening"})
         write(os.path.join(self.p["logs"], "server.log"), info + "\n" + extra_server)
-        write(os.path.join(self.p["logs"], "collector.log"), info + "\n")
+        write(os.path.join(self.p["logs"], "collector.log"), info + "\n" + extra_collector)
         shop = "%s Spring started\n%s INFO: otherlode: installing endpoint modules\n" % (iso(T0 + 50), iso(T0 + 51)) + extra_shop
         write(os.path.join(self.p["logs"], "shop-1.log"), shop)
 
 
-class CheckTests(unittest.TestCase):
+class CheckCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.api = FakeApi()
@@ -276,6 +294,8 @@ class CheckTests(unittest.TestCase):
     def evidence(self, res):
         return "\n".join(res["evidence"])
 
+
+class CheckTests(CheckCase):
     # ---- 1
     def test_1_planted_answers_pass(self):
         res = self.run_check(1)
@@ -554,6 +574,113 @@ class CheckTests(unittest.TestCase):
         self.assertEqual(res["status"], "fail")
         self.assertIn("no allowlist entry", self.evidence(res))
 
+    SHIPPED = os.path.join(os.path.dirname(HERE), "log-allowlist.txt")
+
+    def sink_rejected(self, t, reason="transport", kind="delta batch"):
+        return json.dumps({"time": iso(t), "level": "ERROR", "msg": "sink rejected " + kind,
+                           "error": "backend returned 503 Service Unavailable for service \"demo\" instance \"i1\"",
+                           "reason": reason, "unlogged_sink_failures": 0}, separators=(",", ":")) + "\n"
+
+    def server_restart(self, t0=50 * 3600):
+        self.w.state["events"].append({"kind": "server-restart", "instance": None, "t0": T0 + t0, "t1": T0 + t0 + 20})
+        self.w.save()
+        write(self.w.p["allowlist"], read(self.SHIPPED))
+
+    def test_6_a_sink_rejected_error_inside_the_server_restart_window_passes(self):
+        self.server_restart()
+        lines = "".join(self.sink_rejected(T0 + 50 * 3600 + 5, r, k)
+                        for r in ("transport", "timeout")
+                        for k in ("delta batch", "manifest", "static baseline", "class listing"))
+        self.w.logs(extra_collector=lines)
+        res = self.run_check(6)
+        self.assertEqual(res["status"], "pass", res)
+        self.assertIn("ERROR lines inside an allowlisted disruption window: 8", self.evidence(res))
+
+    def test_6_a_sink_rejected_error_after_the_server_is_back_fails(self):
+        self.server_restart()
+        self.w.logs(extra_collector=self.sink_rejected(T0 + 50 * 3600 + 20 + 60, "timeout"))
+        res = self.run_check(6)
+        self.assertEqual(res["status"], "fail")
+        self.assertIn("not inside a server-restart window", self.evidence(res))
+
+    def test_6_a_sink_rejected_server_error_fails_inside_the_restart(self):
+        self.server_restart()
+        self.w.logs(extra_collector=self.sink_rejected(T0 + 50 * 3600 + 5, "server_error"))
+        self.assertEqual(self.run_check(6)["status"], "fail")
+
+    def test_6_a_panic_while_serving_is_an_error(self):
+        self.server_restart()
+        panic = "%s http: panic serving 127.0.0.1:51234: runtime error: invalid memory address\n" % iso(T0 + 50 * 3600 + 5)
+        self.w.logs(extra_server=panic)
+        res = self.run_check(6)
+        self.assertEqual(res["status"], "fail")
+        self.assertIn("panic serving", self.evidence(res))
+
+    def test_6_a_sink_rejected_error_outside_the_server_restart_window_fails(self):
+        self.server_restart()
+        self.w.logs(extra_collector=self.sink_rejected(T0 + 40 * 3600))
+        res = self.run_check(6)
+        self.assertEqual(res["status"], "fail")
+        self.assertIn("not inside a server-restart window", self.evidence(res))
+
+    def test_6_a_sink_rejected_error_with_another_reason_fails(self):
+        self.server_restart()
+        self.w.logs(extra_collector=self.sink_rejected(T0 + 50 * 3600 + 5, "shutting_down"))
+        self.assertEqual(self.run_check(6)["status"], "fail")
+
+    def test_6_a_sink_rejected_error_needs_the_server_restart_window_not_another(self):
+        self.w.state["events"].append({"kind": "collector-outage", "instance": None, "t0": T0 + 50 * 3600,
+                                       "t1": T0 + 50 * 3600 + 20})
+        self.w.save()
+        write(self.w.p["allowlist"], read(self.SHIPPED))
+        self.w.logs(extra_collector=self.sink_rejected(T0 + 50 * 3600 + 5))
+        self.assertEqual(self.run_check(6)["status"], "fail")
+
+    def test_6_an_error_with_no_error_entry_fails_inside_a_window(self):
+        self.server_restart()
+        err = json.dumps({"time": iso(T0 + 50 * 3600 + 5), "level": "ERROR", "msg": "boom"}) + "\n"
+        self.w.logs(extra_server=err)
+        res = self.run_check(6)
+        self.assertEqual(res["status"], "fail")
+        self.assertIn("boom", self.evidence(res))
+
+    def test_6_a_warn_entry_does_not_allow_an_error_line(self):
+        self.server_restart()
+        write(self.w.p["allowlist"], "server-restart \"msg\":\"sink rejected\n")
+        self.w.logs(extra_collector=self.sink_rejected(T0 + 50 * 3600 + 5))
+        self.assertEqual(self.run_check(6)["status"], "fail")
+
+    def test_6_an_error_entry_does_not_allow_a_warn_line(self):
+        self.server_restart()
+        write(self.w.p["allowlist"], 'server-restart [ERROR] "msg":"sink refused\n')
+        warn = json.dumps({"time": iso(T0 + 50 * 3600 + 5), "level": "WARN", "msg": "sink refused delta batch"}) + "\n"
+        self.w.logs(extra_collector=warn)
+        self.assertEqual(self.run_check(6)["status"], "fail")
+
+    def test_6_the_shipped_allowlist_has_no_dropping_payload_entry_and_one_error_disruption(self):
+        rules = check.load_allowlist(self.SHIPPED)
+        self.assertFalse(any(rx.search('"msg":"dropping payload') for _, rx, _, _ in rules))
+        self.assertEqual({k for k, _, _, lv in rules if lv == "ERROR"}, {"server-restart"})
+
+    def test_6_a_shutdown_warning_stderr_line_inside_its_window_passes(self):
+        t = T0 + 20 * 3600 + 30
+        self.w.logs(extra_shop="%s Nov 02, 2026 2:12:28 AM dev.otherlode.shaded.export.ExportScheduler sendDeltaBatch\n"
+                    "%s WARNING: otherlode: delta export failed, will retry next flush\n" % (iso(t), iso(t)))
+        self.assertEqual(self.run_check(6)["status"], "pass")
+
+    def test_6_a_shutdown_budget_warning_needs_a_disruption_window(self):
+        write(self.w.p["allowlist"], read(self.SHIPPED))
+        line = "%s WARNING: otherlode: a send of the early shutdown flush ran out of time\n"
+        self.w.logs(extra_shop=line % iso(T0 + 5 * 3600))
+        self.assertEqual(self.run_check(6)["status"], "fail")
+
+    def test_6_the_hooks_still_running_warning_is_never_allowed(self):
+        self.server_restart()
+        write(self.w.p["allowlist"], read(self.SHIPPED))
+        self.w.logs(extra_shop="%s WARNING: otherlode: the application's shutdown hooks were still running 18s into shutdown, "
+                    "so the final flush runs now and code they run later will not be counted\n" % iso(T0 + 50 * 3600 + 5))
+        self.assertEqual(self.run_check(6)["status"], "fail")
+
     def test_6_app_errors_are_not_judged(self):
         self.w.logs(extra_shop="%s 2026 ERROR 1 --- [nio] o.a.c.c.C.[.[.[/] : Servlet.service() threw\n" % iso(T0 + 400))
         res = self.run_check(6)
@@ -601,7 +728,7 @@ class CheckTests(unittest.TestCase):
         self.assertIn("SoakTestDriver", self.evidence(res))
 
     # ---- the whole run
-    def test_all_seven_and_the_report_files(self):
+    def test_all_eight_and_the_report_files(self):
         out = io.StringIO()
         with redirect_stdout(out):
             code = check.main(["--now", "--home", self.tmp, "--api", self.api.url, "--lag", "1800", "--wait", "0",
@@ -622,6 +749,282 @@ class CheckTests(unittest.TestCase):
         for name in os.listdir(os.path.join(self.tmp, "reports")):
             with open(os.path.join(self.tmp, "reports", name)) as f:
                 self.assertNotIn(KEY, f.read())
+
+
+class WindowCheckTests(CheckCase):
+    """Check 8, the window read, and what the other checks do with the new instances and disruptions."""
+
+    def violation(self, **over):
+        v = {"event": "start of events-prod-g002", "kind": "fast", "first": T0 + 7200, "last": T0 + 7210, "count": 3,
+             "message": "soak-shop/prod: truth.json does not name: never-loaded a.Pricing"}
+        v.update(over)
+        return v
+
+    def limit_event(self, t1=T0 + 60 * 3600 + 600):
+        self.w.state["events"].append({"kind": "collector-limit", "instance": None, "t0": T0 + 60 * 3600, "t1": t1,
+                                       "exit": 0, "start_exit": 0})
+        self.w.save()
+
+    def edit_truth(self, fn):
+        t = copy.deepcopy(TRUTH)
+        fn(t)
+        write(self.w.p["truth"], json.dumps(t))
+
+    def set_windows(self, **over):
+        write(self.w.p["windows"], json.dumps(windows_file(**over)))
+
+    def test_8_passes_with_the_counts_of_reads(self):
+        res = self.run_check(8)
+        self.assertEqual(res["status"], "pass", res)
+        self.assertIn("40 live reads, 3 snapshot reads, 3 report reads, 12 windows opened", res["summary"])
+
+    def test_8_fails_on_a_recorded_violation_and_lists_it(self):
+        self.set_windows(violations={"k": self.violation()})
+        res = self.run_check(8)
+        self.assertEqual(res["status"], "fail")
+        ev = self.evidence(res)
+        self.assertIn("start of events-prod-g002", ev)
+        self.assertIn("never-loaded a.Pricing", ev)
+        self.assertIn("3 times", ev)
+        self.assertIn("fast read", ev)
+
+    def test_8_skips_before_any_read_and_fails_at_the_end(self):
+        os.remove(self.w.p["windows"])
+        self.assertEqual(self.run_check(8)["status"], "skip")
+        self.assertEqual(self.run_check(8, final=True)["status"], "fail")
+
+    def test_8_a_refused_manifest_must_read_as_counts_behind(self):
+        self.limit_event()
+        self.set_windows(refused={"reads": 20, "behind": 0, "first_behind": None, "last": []})
+        res = self.run_check(8, now=AFTER_LIMIT)
+        self.assertEqual(res["status"], "fail")
+        self.assertIn("never read as counts behind", self.evidence(res))
+        self.set_windows(refused={"reads": 20, "behind": 12, "first_behind": T0, "last": []})
+        res = self.run_check(8, now=AFTER_LIMIT)
+        self.assertEqual(res["status"], "pass", res)
+        self.assertIn("counts behind in 12 of 20 reads", self.evidence(res))
+
+    def test_8_no_read_of_shop_1_while_refused_fails(self):
+        self.limit_event()
+        res = self.run_check(8, now=AFTER_LIMIT)
+        self.assertEqual(res["status"], "fail")
+        self.assertIn("no read of shop-1", self.evidence(res))
+
+    def test_8_a_refusal_under_way_is_not_judged(self):
+        self.limit_event(t1=None)
+        res = self.run_check(8)
+        self.assertEqual(res["status"], "pass", res)
+
+    def test_run_is_behind(self):
+        self.assertTrue(check.run_is_behind({"deltas_received": False, "counts_behind_since": None}))
+        self.assertTrue(check.run_is_behind({"deltas_received": True, "counts_behind_since": "2026-01-01T00:00:00Z"}))
+        self.assertFalse(check.run_is_behind({"deltas_received": True, "counts_behind_since": None}))
+        self.assertFalse(check.run_is_behind(None))
+
+    def read(self, kind, now=NOW, truth=None):
+        truth = json.loads(json.dumps(truth or TRUTH))
+        return check.read_window(check.Api(self.api.url, KEY), truth, {"testruns": []}, now, T0, 1, FLUSH, 1800, kind)
+
+    def test_a_live_read_passes_judges_and_asks_for_the_live_view(self):
+        violations, errors, reports = self.read("fast")
+        self.assertEqual((violations, errors, reports), ([], [], 0))
+        self.assertTrue(self.api.requests)
+        self.assertTrue(all(q.get("active_within_days") == "36500" for path, q in self.api.requests if "/report" not in path))
+
+    def test_a_snapshot_read_reads_the_report_and_not_the_live_view(self):
+        violations, errors, reports = self.read("slow")
+        self.assertEqual((violations, errors, reports), ([], [], 1))
+        self.assertTrue(any(path.endswith("/report") for path, _ in self.api.requests))
+        self.assertTrue(all("active_within_days" not in q for _, q in self.api.requests))
+
+    def test_a_window_read_catches_a_false_never_loaded_claim_from_t0(self):
+        self.api.data["never-loaded"].append({"class_name": "a.Pricing"})
+        violations, _, _ = self.read("fast", now=T0 + 90)
+        self.assertEqual(len(violations), 1, violations)
+        self.assertIn("truth.json does not name: never-loaded a.Pricing", violations[0])
+
+    def test_a_live_window_read_judges_removed_code_as_truth_stood_before_the_removal(self):
+        truth = copy.deepcopy(TRUTH)
+        shop = truth["services"]["soak-shop"]["prod"]
+        shop["removed"] = [{"kind": "class", "class": "a.Legacy", "from": "PT20H"}, {"kind": "class", "class": "a.Gone", "from": "PT20H"}]
+        self.api.data["never-loaded"].append({"class_name": "a.Gone", "methods": ["m"]})
+        violations, _, _ = self.read("fast", truth=truth)
+        self.assertFalse(any("a.Legacy" in v for v in violations), "truth named it never loaded before the removal")
+        self.assertTrue(any("a.Gone" in v for v in violations), "truth never named it, before or after")
+
+    def test_an_early_window_read_judges_only_never_loaded_and_dependency_rows(self):
+        self.api.data["never-hit"].append({"kind": "method", "class_name": "a.BrokenController", "method_name": "broken"})
+        self.api.data["never-loaded"].append({"class_name": "a.Stray", "methods": ["m"]})
+        violations, _, _ = self.read("fast", now=T0 + 120)
+        self.assertFalse(any("BrokenController" in v for v in violations), violations)
+        self.assertTrue(any("a.Stray" in v for v in violations), violations)
+
+    def test_8_fails_when_more_than_a_tenth_of_the_reads_failed(self):
+        self.set_windows(reads={"fast": 40, "slow": 3, "report": 3, "errors": 5})
+        res = self.run_check(8)
+        self.assertEqual(res["status"], "fail")
+        self.assertIn("5 of 43 window reads failed", self.evidence(res))
+        self.set_windows(reads={"fast": 40, "slow": 3, "report": 3, "errors": 4})
+        self.assertEqual(self.run_check(8)["status"], "pass")
+
+    def test_a_window_read_leaves_planted_answers_to_the_six_hourly_check(self):
+        self.api.data["never-loaded"] = []
+        violations, _, _ = self.read("fast")
+        self.assertFalse(any("a.Legacy" in v for v in violations), violations)
+
+    def test_a_window_read_holds_a_dependency_to_its_status(self):
+        self.api.data["dependencies"][0]["status"] = "unreferenced"
+        violations, _, _ = self.read("fast")
+        self.assertTrue(any("commons-csv" in v and "unreferenced" in v for v in violations), violations)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            res = self.run_check(2)
+        self.assertEqual(res["status"], "pass", "check 2 keeps its rule")
+
+    def test_a_failed_read_is_an_error_and_not_a_violation(self):
+        self.api.data.pop("never-loaded")
+        violations, errors, _ = check.read_window(check.Api("http://127.0.0.1:1", KEY), json.loads(json.dumps(TRUTH)),
+                                                   {"testruns": []}, NOW, T0, 1, FLUSH, 1800, "fast")
+        self.assertEqual(violations, [])
+        self.assertTrue(errors)
+
+    def test_violation_key_ignores_counts(self):
+        self.assertEqual(check.violation_key("x: not on /never-hit (12 method rows listed)"),
+                         check.violation_key("x: not on /never-hit (13 method rows listed)"))
+
+    # ---- the new instances and disruptions
+    def test_1_a_live_method_must_leave_never_hit(self):
+        self.edit_truth(lambda t: t["services"]["soak-shop"]["prod"].update(
+            live_methods=[{"class": "a.Pricing", "method": "applyLegacyDiscount", "from": "PT12H"}]))
+        res = self.run_check(1, now=T0 + 5 * 3600)
+        self.assertEqual(res["status"], "pass", res)
+        res = self.run_check(1)
+        self.assertEqual(res["status"], "fail")
+        self.assertIn("live method a.Pricing.applyLegacyDiscount: on /never-hit", self.evidence(res))
+
+    def test_1_a_dependency_site_is_asserted(self):
+        self.edit_truth(lambda t: t["services"]["soak-shop"]["prod"]["dependencies"][0].update(site_class="a.Legacy"))
+        res = self.run_check(1)
+        self.assertEqual(res["status"], "fail")
+        self.assertIn("no site in a.Legacy", self.evidence(res))
+        self.api.data["dependencies"][0]["sites"] = [{"class_name": "a.Legacy"}]
+        self.assertEqual(self.run_check(1)["status"], "pass")
+
+    def test_4_a_killed_events_crash_run_is_not_asserted(self):
+        self.w.state["runs"].append({"instance": "events-crash", "instance_id": "events-crash-g001",
+                                     "service": "soak-shop", "env": "prod", "started": T0 + 20 * 3600,
+                                     "ended": T0 + 20 * 3600 + 30, "how": "kill9", "exit": -9})
+        self.w.save()
+        res = self.run_check(4)
+        self.assertEqual(res["status"], "pass", res)
+        self.assertIn("events-crash-g001: ended as kill9 before its first flush; not asserted", self.evidence(res))
+
+    def test_4_an_events_crash_process_that_exits_alone_fails(self):
+        self.w.state["runs"].append({"instance": "events-crash", "instance_id": "events-crash-g001",
+                                     "service": "soak-shop", "env": "prod", "started": T0 + 20 * 3600,
+                                     "ended": T0 + 20 * 3600 + 30, "how": "crash", "exit": 1})
+        self.w.save()
+        self.assertEqual(self.run_check(4)["status"], "fail")
+
+    def test_3_a_failed_collector_limit_command_fails(self):
+        self.limit_event()
+        self.w.state["events"][-1].update(exit=1, start_exit="timeout")
+        self.w.save()
+        res = self.run_check(3)
+        self.assertEqual(res["status"], "fail")
+        self.assertIn("stack.sh collector-limit low exited 1", self.evidence(res))
+        self.assertIn("stack.sh collector-limit normal exited timeout", self.evidence(res))
+
+    def test_3_a_skipped_low_limit_fails(self):
+        self.w.state.setdefault("done", {})["collector-low-limit"] = {"t": T0, "note": "skipped, late"}
+        self.w.save()
+        self.assertEqual(self.run_check(3)["status"], "fail")
+
+    def test_3_the_tolerance_grows_by_a_flush_for_the_limit(self):
+        base = check.traffic_sum(check.Ctx(paths=self.w.p, state=self.w.state, flush=FLUSH), "soak-shop", "prod",
+                                 "GET", "/orders/{id}")[3]
+        self.limit_event()
+        more = check.traffic_sum(check.Ctx(paths=self.w.p, state=self.w.state, flush=FLUSH), "soak-shop", "prod",
+                                 "GET", "/orders/{id}")[3]
+        self.assertGreater(more, base)
+
+    def test_6_a_warning_of_the_refused_manifest_is_allowed_inside_its_window(self):
+        write(self.w.p["allowlist"], "collector-limit otherlode: manifest export failed, will retry next flush\n")
+        self.limit_event()
+        inside = "%s WARNING: otherlode: manifest export failed, will retry next flush\n" % iso(T0 + 60 * 3600 + 120)
+        self.w.logs(extra_shop=inside)
+        res = self.run_check(6)
+        self.assertEqual(res["status"], "pass", res)
+        outside = "%s WARNING: otherlode: manifest export failed, will retry next flush\n" % iso(T0 + 40 * 3600)
+        self.w.logs(extra_shop=outside)
+        res = self.run_check(6)
+        self.assertEqual(res["status"], "fail")
+        self.assertIn("not inside a collector-limit window", self.evidence(res))
+
+    def test_6_the_shipped_allowlist_names_the_refused_manifest(self):
+        rules = check.load_allowlist(os.path.join(os.path.dirname(HERE), "log-allowlist.txt"))
+        self.assertTrue(any(k == "collector-limit" and rx.search('"msg":"refusing manifest with too many elements"')
+                            for k, rx, _, _ in rules))
+        self.assertTrue(any(k == "collector-limit" and rx.search("otherlode: unexpected status 413 from http://x")
+                            for k, rx, _, _ in rules))
+
+    def test_6_a_crash_cycle_opens_a_kill_window(self):
+        self.w.state["events"].append({"kind": "crash-cycle", "instance": "events-crash", "t0": T0 + 20 * 3600,
+                                       "t1": T0 + 20 * 3600 + 30})
+        ctx = check.Ctx(state=self.w.state, now=NOW, t0=T0, scale=1, flush=FLUSH)
+        a, b = check.disruption_windows(ctx)["kill-9"][-1]
+        self.assertLess(a, T0 + 20 * 3600)
+        self.assertGreater(b, T0 + 20 * 3600 + 30)
+
+
+class TruthTimingTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        with open(os.path.join(os.path.dirname(os.path.dirname(HERE)), "truth.json")) as f:
+            cls.truth = json.load(f)
+        cls.shop = cls.truth["services"]["soak-shop"]["prod"]
+        cls.events = cls.truth["services"]["soak-events"]["prod"]
+
+    def entry(self, lists, key, cls, method=None):
+        found = [e for e in lists[key] if isinstance(e, dict) and e.get("class") == cls and e.get("method") == method]
+        self.assertEqual(len(found), 1, (key, cls, method))
+        return found[0]
+
+    def test_the_shutdown_audit_is_never_hit_until_the_first_graceful_restart_and_live_after(self):
+        for cls, m in (("dev.soaktest.shop.ShutdownAudit", "record"), ("dev.soaktest.shop.ShutdownHook", "close")):
+            never = self.entry(self.shop, "never_hit_methods", cls, m)
+            live = self.entry(self.shop, "live_methods", cls, m)
+            self.assertEqual(cfg.parse_duration(never["until"]), 12 * 3600)
+            self.assertEqual(cfg.parse_duration(live["from"]), 12 * 3600)
+            self.assertNotIn("until", live)
+        first = min(i.at for i in cfg.build_schedule() if i.kind == "graceful-restart")
+        self.assertEqual(first, 12 * 3600)
+
+    def test_the_shutdown_hook_roots_a_cluster_that_holds_record_until_then(self):
+        root = self.entry(self.shop, "unreached_cluster_roots", "dev.soaktest.shop.ShutdownHook", "close")
+        self.assertEqual(root["members_include"], ["dev.soaktest.shop.ShutdownAudit#record"])
+        self.assertEqual(cfg.parse_duration(root["until"]), 12 * 3600)
+
+    def test_the_codec_jar_is_unreached_from_the_upgrade(self):
+        dep = [d for d in self.events["dependencies"] if d["artifact"] == "commons-codec"]
+        self.assertEqual(len(dep), 1)
+        self.assertEqual(dep[0]["status"], "unreached")
+        self.assertEqual(dep[0]["site_class"], "dev.soaktest.events.LegacyDigest")
+        upgrade = {i.id: i for i in cfg.build_schedule()}["upgrade-events-prod"].at
+        self.assertEqual(cfg.parse_duration(dep[0]["from"]), upgrade)
+        never = [e for e in self.events["never_loaded"] if isinstance(e, dict) and e["class"].endswith("LegacyDigest")]
+        self.assertEqual(cfg.parse_duration(never[0]["from"]), upgrade)
+        staging = self.truth["services"]["soak-events"]["staging"]
+        self.assertEqual(staging["dependencies"], [])
+
+    def test_the_new_entries_are_ones_the_checker_understands(self):
+        ctx = check.Ctx(truth=self.truth, now=T0 + 80 * 3600, t0=T0, scale=1, lag=1800)
+        live = self.shop["live_methods"][0]
+        self.assertFalse(ctx.asserted(live, 0) is False)
+        self.assertTrue(ctx.may_explain(self.entry(self.shop, "never_hit_methods", "dev.soaktest.shop.ShutdownAudit", "record")) is False)
+        ctx.now = T0 + 11 * 3600
+        self.assertTrue(ctx.may_explain(self.entry(self.shop, "never_hit_methods", "dev.soaktest.shop.ShutdownAudit", "record")))
+        self.assertFalse(ctx.asserted(live))
 
 
 class FingerprintTests(unittest.TestCase):
@@ -681,6 +1084,26 @@ class ParseTests(unittest.TestCase):
         self.assertIsNone(cfg.parse_duration(None))
         with self.assertRaises(ValueError):
             cfg.parse_duration("26h")
+
+    def test_classify_the_shutdown_stderr_format(self):
+        head = "2026-11-02T02:12:28.411Z Nov 02, 2026 2:12:28 AM dev.otherlode.shaded.export.ExportScheduler sendDeltaBatch"
+        ts, lv, _, _ = check.classify(head)
+        self.assertIsNone(lv)
+        self.assertIsNotNone(ts)
+        ts, lv, agent, text = check.classify(
+            "2026-11-02T02:12:28.412Z WARNING: otherlode: delta export failed, will retry next flush")
+        self.assertEqual((lv, agent), ("WARN", True))
+        self.assertEqual(ts, check.parse_ts("2026-11-02T02:12:28.412Z"))
+        self.assertTrue(text.startswith("WARNING: otherlode:"))
+        ts, lv, agent, _ = check.classify(
+            "2026-11-02T02:12:28.413Z SEVERE: otherlode: failed to send the closing batch\n")
+        self.assertEqual((lv, agent), ("ERROR", True))
+
+    def test_classify_a_collector_sink_rejected_line(self):
+        ts, lv, agent, _ = check.classify(
+            '{"time":"2026-11-02T02:00:00Z","level":"ERROR","msg":"sink rejected delta batch","reason":"timeout"}')
+        self.assertEqual((lv, agent), ("ERROR", False))
+        self.assertIsNotNone(ts)
 
     def test_classify(self):
         ts, lv, agent, _ = check.classify('2026-11-01T10:00:00.000Z WARNING: otherlode: ignoring unknown agent option')

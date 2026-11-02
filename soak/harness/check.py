@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""The soak checker: the seven checks of DESIGN.md against Otherlode's read API.
+"""The soak checker: the eight checks of DESIGN.md against Otherlode's read API.
 
-    check.py --now                run all seven checks at once and write the report
+    check.py --now                run all eight checks at once and write the report
     check.py --now --only 3,6     run only checks 3 and 6
     check.py --now --final        the final check: a check that cannot run yet fails
 
@@ -34,6 +34,7 @@ NAMES = {
     5: "Memory",
     6: "Logs",
     7: "Test run",
+    8: "Windows",
 }
 MAX_EVIDENCE = 40
 
@@ -81,12 +82,14 @@ class Api:
 class Reader:
     """Reads the pages of a per-service route, waits out a 202, and remembers what it read."""
 
-    def __init__(self, api, wait=900.0):
+    def __init__(self, api, wait=900.0, extra=None):
         self.api = api
         self.wait = wait
+        self.extra = dict(extra or {})
         self.memo = {}
 
     def rows(self, svc, env, route, listkey, paged=True, fresh=False, **params):
+        params = dict(self.extra, **params)
         key = (svc, env, route, tuple(sorted(params.items())))
         if not fresh and key in self.memo:
             return self.memo[key]
@@ -389,6 +392,12 @@ def explained(f, tl, ctx):
         return e.get("class") == f.cls and (not e.get("method") or e.get("method") == f.method)
 
     k = f.kind
+    if getattr(ctx, "live_read", False) and not k.startswith("removed"):
+        gone = [e for e in tl.get("removed", []) if ctx.now >= ctx.window(e)[0]]
+        if removed_by_truth(f, gone):
+            start = min(ctx.window(e)[0] for e in gone)
+            before = Ctx(**dict(ctx.__dict__, now=start - 1.0, live_read=False, lag=0.0))
+            return explained(f, tl, before)
     if k in cl_names():
         return any(c == f.cls for e, c in cls_entries(tl, cl_names()[k]) if ctx.may_explain(e))
     if k == "never-hit method":
@@ -418,7 +427,9 @@ def explained(f, tl, ctx):
         return any(e.get("class") == f.cls and e.get("method") == f.method and e.get("parameter") == f.param
                    for e in live(tl.get(key, [])))
     if k == "dependency":
-        return any(e.get("artifact") in f.artifacts for e in live(tl.get("dependencies", [])))
+        strict = getattr(ctx, "strict_status", False)
+        return any(e.get("artifact") in f.artifacts and (not strict or norm_status(e.get("status")) == f.status)
+                   for e in live(tl.get("dependencies", [])))
     if k.startswith("removed"):
         for e in live(tl.get("removed", [])):
             if k == "removed endpoint" and e.get("verb") == f.verb and \
@@ -430,6 +441,28 @@ def explained(f, tl, ctx):
                 return True
         return False
     return False
+
+
+def removed_by_truth(f, entries):
+    """True when a finding is about code a removed entry names. A read with active_within_days
+    applies no removal, so that code is still in the findings it read, and truth as it stood just
+    before the removal judges the row."""
+    for e in entries:
+        cls = e.get("class") or e.get("class_name")
+        if cls and f.cls == cls:
+            return True
+        if e.get("verb") and f.verb == e.get("verb") and \
+                (e.get("template") or e.get("route_template") or e.get("path")) == f.template:
+            return True
+        if e.get("artifact") and e.get("artifact") in f.artifacts:
+            return True
+    return False
+
+
+# Kinds a window read judges before T0 plus the lag. Until then the planned first requests have not
+# all come, so a never-hit or never-called row is a true finding truth.json does not name; a class
+# that loaded, and a jar's references, are known from the start.
+EARLY_WINDOW_KINDS = ("never-loaded", "dependency")
 
 
 def _split_member_list(members):
@@ -468,16 +501,33 @@ def cluster_test_problem(cluster, tests):
     return None
 
 
+def crash_hold(ctx, svc, env):
+    """True while a crash-cycle run of this scope can still hold claims back: from its start until
+    three of its flush intervals after its kill, as a run that never delivered holds them (server
+    ADR 0087)."""
+    for e in ctx.state.get("events", []):
+        if e.get("kind") != "crash-cycle":
+            continue
+        inst = cfg.BY_NAME.get(e.get("instance"))
+        if not inst or (inst.service, inst.env) != (svc, env):
+            continue
+        end = (e.get("t1") or ctx.now) + 3 * (cfg.fixed_flush(inst, ctx.scale) or ctx.flush)
+        if e["t0"] <= ctx.now <= end:
+            return True
+    return False
+
+
 def check1(ctx):
     rd = ctx.reader
     ok, bad, notdue = 0, [], 0
     for svc, env in ctx.pairs():
         tl = ctx.truth_lists(svc, env)
         tag = "%s/%s" % (svc, env)
+        held = crash_hold(ctx, svc, env)
 
         def run(entry, label, test, extra_start=0.0):
             nonlocal ok, notdue
-            if not ctx.asserted(entry, extra_start):
+            if held or not ctx.asserted(entry, extra_start):
                 notdue += 1
                 return
             try:
@@ -550,8 +600,12 @@ def check1(ctx):
                 row = find(rows, lambda r: e["artifact"] in _artifacts(r))
                 if not row:
                     return "dependency not listed"
-                return None if norm_status(row[0].get("status")) == norm_status(e["status"]) else \
-                    "status is %s, expected %s" % (row[0].get("status"), e["status"])
+                if norm_status(row[0].get("status")) != norm_status(e["status"]):
+                    return "status is %s, expected %s" % (row[0].get("status"), e["status"])
+                if e.get("site_class") and not any(s_.get("class_name") == e["site_class"] for s_ in row[0].get("sites") or []):
+                    return "no site in %s (sites: %s)" % (
+                        e["site_class"], ", ".join(s_.get("class_name", "") for s_ in row[0].get("sites") or []) or "none")
+                return None
             run(e, "dependency %s" % e["artifact"], t)
         for e in tl.get("stale_hit", []):
             days = int(e.get("days", 30))
@@ -562,6 +616,13 @@ def check1(ctx):
                 return None if find(rows, lambda r: r.get("class_name") == e["class"] and r.get("method_name") == e["method"]) \
                     else "not on /stale-hit?days=%d (%d rows)" % (days, len(rows))
             run(e, "stale hit %s.%s at days=%d" % (e["class"], e["method"], days), t, extra_start=extra)
+        for e in tl.get("live_methods", []):
+            def t(e=e):
+                rows = rd.rows(svc, env, "never-hit", "rows")
+                hit = find(rows, lambda r: r.get("kind") == "method" and r.get("class_name") == e["class"]
+                           and r.get("method_name") == e["method"])
+                return "on /never-hit, but it ran" if hit else None
+            run(e, "live method %s.%s" % (e["class"], e["method"]), t)
         for e in tl.get("unreached_cluster_roots", []):
             def t(e=e):
                 rows = rd.rows(svc, env, "unreached-clusters", "clusters")
@@ -624,7 +685,7 @@ def pattern_matches(pattern, cls):
 
 def check2(ctx):
     rd = ctx.reader
-    if ctx.now < ctx.t0 + ctx.lag:
+    if ctx.now < ctx.t0 + ctx.lag and not getattr(ctx, "windowed", False):
         return result(2, "skip", "too early: findings are read %ds after T0" % ctx.lag)
     evidence, total, unexplained = [], 0, 0
     for svc, env in ctx.pairs():
@@ -637,6 +698,9 @@ def check2(ctx):
             evidence.append("%s: could not read the findings: %s" % (tag, e))
             unexplained += 1
             continue
+        if getattr(ctx, "windowed", False) and ctx.now < ctx.t0 + ctx.lag:
+            fs = [f for f in fs if f.kind in EARLY_WINDOW_KINDS]
+            removed = []
         total += len(fs) + len(removed)
         for f in fs + removed:
             if not explained(f, tl, ctx):
@@ -688,7 +752,8 @@ def traffic_sum(ctx, svc, env, verb, template):
         per_flush = int(math.ceil(rate * flush)) + 1
         starts = sum(1 for r in ctx.state.get("runs", []) if r["instance"] == inst.name) or 1
         kills = sum(1 for ev in ctx.state.get("events", []) if ev["kind"] == "kill9" and ev["instance"] == inst.name)
-        tol += per_flush + 2 * starts + kills * per_flush + int(math.ceil(rate * 10))
+        limits = sum(1 for ev in ctx.state.get("events", []) if ev["kind"] == "collector-limit")
+        tol += per_flush + 2 * starts + (kills + limits) * per_flush + int(math.ceil(rate * 10))
     return ok, non, err, tol
 
 
@@ -720,12 +785,14 @@ def check3(ctx):
             else:
                 bad.append(line + " -> outside %d..%d" % (lo, hi))
     for e in ctx.state.get("events", []):
-        for field, cmd in (("exit", {"collector-outage": "stop-collector", "server-restart": "restart-server"}),
-                           ("start_exit", {"collector-outage": "start-collector"})):
+        for field, cmd in (("exit", {"collector-outage": "stop-collector", "server-restart": "restart-server",
+                                     "collector-limit": "collector-limit low"}),
+                           ("start_exit", {"collector-outage": "start-collector",
+                                           "collector-limit": "collector-limit normal"})):
             if e.get(field) and e["kind"] in cmd:
                 failed.append("the planned %s did not run as planned: stack.sh %s exited %s"
                               % (e["kind"], cmd[e["kind"]], e[field]))
-    for item in ("collector-stop", "server-restart"):
+    for item in ("collector-stop", "server-restart", "collector-low-limit"):
         note = (ctx.state.get("done", {}).get(item) or {}).get("note", "")
         if note.startswith("skipped"):
             failed.append("the planned %s did not run: %s" % (item, note))
@@ -747,7 +814,8 @@ def check4(ctx):
     if not runs:
         return result(4, "skip", "the supervisor has recorded no run")
     ev = ctx.state.get("events", [])
-    outages = [(e["t0"], e["t1"] or ctx.now) for e in ev if e["kind"] == "collector-outage"]
+    outages = [(e["t0"], e["t1"] or ctx.now) for e in ev if e["kind"] in ("collector-outage", "collector-limit")]
+    unasserted = {i.name for i in cfg.INSTANCES if not i.asserts_runs}
     bad, good, notes = [], 0, []
     by_scope = {}
     for r in runs:
@@ -762,6 +830,12 @@ def check4(ctx):
         for r in rs:
             iid, how = r["instance_id"], r.get("how")
             if r.get("ended") is None:
+                continue
+            if r.get("instance") in unasserted:
+                if how == "crash":
+                    bad.append("%s: the process exited on its own (exit %s)" % (iid, r.get("exit")))
+                else:
+                    notes.append("%s: ended as %s before its first flush; not asserted" % (iid, how))
                 continue
             if how == "crash":
                 bad.append("%s: the process exited on its own (exit %s)" % (iid, r.get("exit")))
@@ -955,7 +1029,12 @@ def classify(line):
     return ts, level, bool(AGENT_LINE.search(rest)), rest
 
 
+ERROR_MARK = "[ERROR]"
+
+
 def load_allowlist(path):
+    """Return (disruption, expression, line number, level) for each entry. The level is WARN, or
+    ERROR for an entry that starts with the marker [ERROR]."""
     out = []
     try:
         with open(path) as f:
@@ -965,17 +1044,43 @@ def load_allowlist(path):
                     continue
                 kind, _, rx = s.partition(" ")
                 rx = rx.strip()
+                level = "WARN"
+                if rx.startswith(ERROR_MARK + " "):
+                    level, rx = "ERROR", rx[len(ERROR_MARK):].strip()
                 if not rx:
                     raise ValueError("%s line %d: needs a disruption and a regular expression" % (path, n))
-                out.append((kind, re.compile(rx), n))
+                out.append((kind, re.compile(rx), n, level))
     except OSError:
         pass
     return out
 
 
+ERROR_TAIL = 30.0
+
+
+def error_windows(ctx):
+    """Windows [a, b] in epoch seconds in which an [ERROR] entry holds, by disruption. They are
+    tight: a stop of the server or the collector, or the server's whole restart, plus
+    ERROR_TAIL seconds, the collector's 8-second request timeout with room. A fault on a server
+    that is back must still fail the check."""
+    w = {"collector-outage": [], "collector-limit": [], "server-restart": []}
+    for e in ctx.state.get("events", []):
+        t0, t1, k = e["t0"], e.get("t1"), e["kind"]
+        if k == "server-restart":
+            w[k].append((t0 - 5, (t1 or ctx.now) + ERROR_TAIL))
+        elif k == "collector-outage":
+            w[k].append((t0 - 5, t0 + ERROR_TAIL))
+        elif k == "collector-limit":
+            w[k].append((t0 - 5, t0 + ERROR_TAIL))
+            if t1:
+                w[k].append((t1 - 5, t1 + ERROR_TAIL))
+    return w
+
+
 def disruption_windows(ctx):
     """Windows [a, b] in epoch seconds, by the disruption name the allowlist uses."""
-    w = {k: [] for k in ("jvm-start", "graceful-restart", "kill-9", "collector-outage", "server-restart", "upgrade", "stack-start")}
+    w = {k: [] for k in ("jvm-start", "graceful-restart", "kill-9", "collector-outage", "collector-limit",
+                         "server-restart", "upgrade", "stack-start")}
     grace = max(300.0, 3 * ctx.flush)
     for r in ctx.state.get("runs", []):
         w["jvm-start"].append((r["started"] - 5, r["started"] + 180))
@@ -988,8 +1093,10 @@ def disruption_windows(ctx):
             w[k].append((e["t0"] - 5, (t1 or ctx.now) + 180))
         elif k == "upgrade":
             w[k].append((e["t0"] - 5, (t1 or ctx.now) + 180))
-        elif k == "kill9":
+        elif k in ("kill9", "crash-cycle"):
             w["kill-9"].append((e["t0"] - 5, (t1 or ctx.now) + 180))
+        elif k == "collector-limit":
+            w[k].append((e["t0"] - 5, (t1 or ctx.now) + grace))
         elif k == "collector-outage":
             w[k].append((e["t0"] - 5, (t1 or ctx.now) + grace))
         elif k == "server-restart":
@@ -1004,6 +1111,7 @@ def check6(ctx):
     logs = ctx.paths["logs"]
     allow = load_allowlist(ctx.paths["allowlist"])
     windows = disruption_windows(ctx)
+    err_windows = error_windows(ctx)
     files = {}
     try:
         names = sorted(os.listdir(logs))
@@ -1027,6 +1135,7 @@ def check6(ctx):
         return result(6, "fail", "no log of the %s" % " or ".join(missing))
     errors, warns, app_info = [], [], {}
     allowed_n = 0
+    allowed_err = 0
     counts = {}
     for path, src in files.items():
         try:
@@ -1037,7 +1146,7 @@ def check6(ctx):
             for line in f:
                 ts, level, is_agent, text = classify(line)
                 if level is None and src in ("server", "collector"):
-                    if re.search(r"\b(panic:|fatal error:)", line):
+                    if re.search(r"\b(panic:|fatal error:)|http: panic serving", line):
                         level = "ERROR"
                 if level is None:
                     continue
@@ -1048,26 +1157,27 @@ def check6(ctx):
                 counts[(src if not src.startswith("app:") else "agent (" + src[4:] + ")", level)] = \
                     counts.get((src if not src.startswith("app:") else "agent (" + src[4:] + ")", level), 0) + 1
                 where = "%s %s: %s" % (os.path.basename(path), datetime.datetime.fromtimestamp(ts, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if ts else "?", text.strip()[:240])
-                if level == "ERROR":
-                    errors.append(where)
-                    continue
-                matched = [(k, rx, n) for k, rx, n in allow if rx.search(text)]
+                matched = [(k, rx, n) for k, rx, n, lv in allow if lv == level and rx.search(text)]
+                bad = errors if level == "ERROR" else warns
                 if not matched:
-                    warns.append(where + "  [no allowlist entry]")
+                    bad.append(where + ("" if level == "ERROR" else "  [no allowlist entry]"))
                     continue
-                if ts is not None and any(a <= ts <= b for k, rx, n in matched for a, b in windows.get(k, [])):
+                spans = err_windows if level == "ERROR" else windows
+                if ts is not None and any(a <= ts <= b for k, rx, n in matched for a, b in spans.get(k, [])):
                     allowed_n += 1
+                    allowed_err += level == "ERROR"
                 else:
-                    warns.append(where + "  [matches allowlist line %s but not inside a %s window]" % (
+                    bad.append(where + "  [matches allowlist line %s but not inside a %s window]" % (
                         ",".join(str(n) for _, _, n in matched), "/".join(sorted({k for k, _, _ in matched}))))
     summary = ["%s %s: %d" % (s, lv, n) for (s, lv), n in sorted(counts.items())]
-    summary.append("WARN lines inside an allowlisted disruption window: %d" % allowed_n)
+    summary.append("WARN lines inside an allowlisted disruption window: %d" % (allowed_n - allowed_err))
+    summary.append("ERROR lines inside an allowlisted disruption window: %d" % allowed_err)
     for (s, lv), n in sorted(app_info.items()):
         summary.append("app output, not judged: %s %s: %d" % (s[4:], lv, n))
     if errors or warns:
         ev = ["ERROR: " + e for e in errors] + ["WARN: " + w for w in warns]
         return result(6, "fail", "%d ERROR lines and %d unexplained WARN lines" % (len(errors), len(warns)), _cap(ev) + summary)
-    return result(6, "pass", "no ERROR line, no unexplained WARN line", summary)
+    return result(6, "pass", "no unexplained ERROR or WARN line", summary)
 
 
 # ---------------------------------------------------------------- check 7
@@ -1180,7 +1290,114 @@ def check7(ctx):
     return result(7, "pass", "%d of %d test runs compared, and each left every finding as it was" % (compared, len(runs)), _cap(ev))
 
 
-CHECKS = {1: check1, 2: check2, 3: check3, 4: check4, 5: check5, 6: check6, 7: check7}
+# ---------------------------------------------------------------- window reads and check 8
+
+WINDOW_CAP = 1000
+REFUSED_SERVICE = ("soak-shop", "prod")
+REFUSED_INSTANCE = "shop-1"
+
+
+def violation_key(line):
+    """A line of check 1 or 2 without the counts that change between reads, so a finding that stays
+    wrong is one violation and not one for every read."""
+    return re.sub(r"\(\d+ [^)]*\)", "(N)", line)
+
+
+def read_window(api, truth, state, now, t0, scale, flush, lag, kind, wait=30.0):
+    """One window read of every finding, judged by check 2's rule. Check 1's planted answers are
+    not judged here: a run that has not delivered its counts holds those claims back on purpose
+    (server ADR 0059, 0087), and the six-hourly checker judges them. A `fast` read is live. A `slow` read is what a page of the UI reads:
+    the snapshot-served routes and the report. Returns the violations, the read errors and the
+    number of reads of the report."""
+    rd = Reader(api, wait, extra={"active_within_days": 36500} if kind == "fast" else None)
+    ctx = Ctx(paths={}, truth=truth, state=state, now=now, t0=t0, scale=scale, flush=flush, lag=lag, final=False,
+              reader=rd, windowed=True, strict_status=True, live_read=kind == "fast")
+    violations, errors, reports = [], [], 0
+    global MAX_EVIDENCE
+    saved, MAX_EVIDENCE = MAX_EVIDENCE, WINDOW_CAP
+    try:
+        for fn in (check2,):
+            res = fn(ctx)
+            if res["status"] != "fail":
+                continue
+            for line in res["evidence"]:
+                if line.startswith("... and ") or re.search(r"still answers 202 computing after \d+s", line):
+                    continue
+                (errors if "could not read" in line else violations).append(line)
+        if kind == "slow":
+            for svc in sorted({svc for svc, _ in ctx.pairs()}):
+                try:
+                    status, body, _ = api.get("/api/v1/services/%s/report" % urllib.parse.quote(svc, safe=""))
+                except ApiError as e:
+                    errors.append("could not read the report of %s: %s" % (svc, e))
+                    continue
+                if status == 200 and isinstance(body, dict):
+                    reports += 1
+                elif status != 202:
+                    errors.append("could not read the report of %s: HTTP %s" % (svc, status))
+    finally:
+        MAX_EVIDENCE = saved
+    return violations, errors, reports
+
+
+def instance_row(api, svc, env, instance_id, wait=30.0):
+    """The /instances row of one instance, or None when the server does not list it."""
+    rows = Reader(api, wait).rows(svc, env, "instances", "instances", paged=False, fresh=True)
+    return next((r for r in rows if r.get("instance_id") == instance_id), None)
+
+
+def run_is_behind(row):
+    """True when a run reads as one whose counts are behind: no delta batch yet, or a payload that
+    said hits had not arrived."""
+    return row is not None and (not row.get("deltas_received") or row.get("counts_behind_since") is not None)
+
+
+def check8(ctx):
+    w = read_json(ctx.paths["windows"], None)
+    reads = (w or {}).get("reads", {})
+    made = reads.get("fast", 0) + reads.get("slow", 0)
+    if not made and reads.get("errors", 0):
+        return result(8, "fail", "every window read failed (%d); the last: %s" % (reads["errors"], w.get("last_error")))
+    if not made:
+        return result(8, "skip", "no window read has been made yet")
+    bad, ev = [], []
+    viols = sorted(w.get("violations", {}).values(), key=lambda v: v.get("first", 0))
+    for v in viols:
+        when = datetime.datetime.fromtimestamp(v["first"], datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        bad.append("%s, %s read, %d times, opened by %s: %s" % (when, v.get("kind"), v.get("count", 1), v.get("event"),
+                                                               v.get("message")))
+    for e in ctx.state.get("events", []):
+        if e["kind"] != "collector-limit":
+            continue
+        ref = w.get("refused", {})
+        n, behind = ref.get("reads", 0), ref.get("behind", 0)
+        if e.get("t1") is None or ctx.now < e["t1"] + 60:
+            ev.append("the collector refuses manifests now or just stopped; %d reads of %s, %d behind" % (
+                n, REFUSED_INSTANCE, behind))
+        elif behind:
+            ev.append("%s read as counts behind in %d of %d reads while the collector refused its manifest" % (
+                REFUSED_INSTANCE, behind, n))
+        elif n:
+            bad.append("%s never read as counts behind on /instances in %d reads while the collector refused its "
+                       "manifest" % (REFUSED_INSTANCE, n))
+        else:
+            bad.append("no read of %s on /instances was made while the collector refused manifests" % REFUSED_INSTANCE)
+    opened = w.get("opened", 0)
+    stats = "%d live reads, %d snapshot reads, %d report reads, %d windows opened, %d ticks skipped, %d reads failed" % (
+        reads.get("fast", 0), reads.get("slow", 0), reads.get("report", 0), opened,
+        sum((w.get("skipped") or {}).values()), reads.get("errors", 0))
+    if w.get("last_error"):
+        ev.append("the last failed read: %s" % w["last_error"])
+    errors = reads.get("errors", 0)
+    if errors * 10 > made:
+        bad.append("%d of %d window reads failed, so the windows were not read" % (errors, made))
+    if bad:
+        return result(8, "fail", "%d problems in the windows after a start, a restart, a kill, an upgrade, a collector "
+                      "start or a server restart; %s" % (len(bad), stats), _cap(bad + ev))
+    return result(8, "pass", "no violation in %s" % stats, _cap(ev))
+
+
+CHECKS = {1: check1, 2: check2, 3: check3, 4: check4, 5: check5, 6: check6, 7: check7, 8: check8}
 
 
 # ---------------------------------------------------------------- report

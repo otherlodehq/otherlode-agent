@@ -11,7 +11,12 @@ repositories {
     mavenCentral()
 }
 
+val codec by configurations.creating {
+    isTransitive = false
+}
+
 dependencies {
+    codec("commons-codec:commons-codec:1.19.0")
     implementation("io.ktor:ktor-server-core:3.5.2")
     implementation("io.ktor:ktor-server-cio:3.5.2")
     implementation("io.ktor:ktor-server-content-negotiation:3.5.2")
@@ -37,9 +42,21 @@ kotlin {
 val versionSourceSets = mapOf("1.0.0" to "v1", "2.0.0" to "v2")
 val wanted = providers.gradleProperty("eventsVersion").orNull
 
+// Version 2.0.0 names commons-codec in its manifest Class-Path and ships it beside the jar, so the agent
+// sees it as a jar of its own. Only LegacyDigest, a class nothing loads, refers to it.
+val codecJarName = "commons-codec-1.19.0.jar"
+val copyCodec =
+    tasks.register<Copy>("copyCodec") {
+        from(codec)
+        into(layout.buildDirectory.dir("libs/lib"))
+    }
+
 val shadowJars =
     versionSourceSets.map { (version, name) ->
         val versionSourceSet = sourceSets.create(name)
+        if (version == "2.0.0") {
+            dependencies.add(versionSourceSet.compileOnlyConfigurationName, "commons-codec:commons-codec:1.19.0")
+        }
         kotlin.target.compilations
             .getByName(name)
             .associateWith(kotlin.target.compilations.getByName("main"))
@@ -54,6 +71,12 @@ val shadowJars =
             mergeServiceFiles()
             manifest {
                 attributes["Main-Class"] = "dev.soaktest.events.MainKt"
+                if (version == "2.0.0") {
+                    attributes["Class-Path"] = "lib/$codecJarName"
+                }
+            }
+            if (version == "2.0.0") {
+                dependsOn(copyCodec)
             }
             onlyIf { wanted == null || wanted == version }
         }

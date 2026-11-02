@@ -51,6 +51,7 @@ def paths(home=None):
         "state_dir": os.path.join(h, "state"),
         "state": os.path.join(h, "state", "state.json"),
         "traffic": os.path.join(h, "state", "traffic.json"),
+        "windows": os.path.join(h, "state", "windows.json"),
         "memory": os.path.join(h, "state", "memory.csv"),
         "reports": os.path.join(h, "reports"),
         "secrets": os.path.join(h, "secrets"),
@@ -74,6 +75,10 @@ class Inst:
     include: str | None
     exclude: str | None = None
     control: str | None = None  # the agent-less instance whose memory this one is compared with
+    static_baseline: bool = True
+    flush: int | None = None  # a flush interval that holds at every scale
+    always_on: bool = True  # False: the schedule starts it, and the supervisor does not at its start
+    asserts_runs: bool = True  # False: check 4 does not assert how its runs ended
 
 
 INSTANCES = [
@@ -81,11 +86,15 @@ INSTANCES = [
          control="shop-control"),
     Inst("shop-2", "shop", 8082, True, "soak-shop", "prod", "1.0.0", "dev.soaktest.shop", "dev.soaktest.shop.testdriver",
          control="shop-control"),
+    Inst("shop-3", "shop", 8083, True, "soak-shop", "nobaseline", "1.0.0", "dev.soaktest.shop", "dev.soaktest.shop.testdriver",
+         control="shop-control", static_baseline=False),
     Inst("shop-control", "shop", 8089, False, None, None, None, None),
     Inst("events-prod", "events", 8091, True, "soak-events", "prod", "1.0.0", "dev.soaktest.events",
          control="events-control"),
     Inst("events-staging", "events", 8092, True, "soak-events", "staging", "1.0.0", "dev.soaktest.events",
          control="events-staging-control"),
+    Inst("events-crash", "events", 8093, True, "soak-events", "prod", "1.0.0", "dev.soaktest.events",
+         control="events-control", flush=600, always_on=False, asserts_runs=False),
     Inst("events-control", "events", 8099, False, None, None, "1.0.0", None),
     Inst("events-staging-control", "events", 8098, False, None, None, "1.0.0", None),
 ]
@@ -152,13 +161,21 @@ _EVENTS_PROD_ROUTES = _EVENTS_ROUTES + [
     Route("GET", "/events/stats", "/events/stats", 0.5, scaled=False, only_version="2.0.0")
 ]
 _EVENTS_STAGING_ROUTES = _EVENTS_ROUTES + [Route("GET", "/events/archive", "/events/archive", 600.0)]
+_SHOP_3_ROUTES = [
+    Route("GET", "/orders/{id}", "/orders/{id}", 1.0, scaled=False),
+    Route("POST", "/orders", "/orders", 30.0, query="q=widget"),
+    Route("GET", "/reports/monthly", "/reports/monthly", 6 * H),
+    Route("GET", "/health-legacy", "/health-legacy", 60.0),
+]
 
 ROUTES = {
     "shop-1": list(_SHOP_ROUTES),
     "shop-2": list(_SHOP_ROUTES),
+    "shop-3": list(_SHOP_3_ROUTES),
     "shop-control": list(_SHOP_ROUTES),
     "events-prod": list(_EVENTS_PROD_ROUTES),
     "events-staging": list(_EVENTS_STAGING_ROUTES),
+    "events-crash": [],
     "events-control": list(_EVENTS_PROD_ROUTES),
     "events-staging-control": list(_EVENTS_STAGING_ROUTES),
 }
@@ -194,9 +211,43 @@ class Item:
     text: str = ""
 
 
-def build_schedule():
+# Real seconds, at every scale. A window read, a crash cycle and the refusal window are not scaled
+# the way the design hours are.
+WINDOW_FAST_PERIOD = 5.0
+WINDOW_FAST_SPAN = 150.0
+WINDOW_SLOW_PERIOD = 60.0
+WINDOW_SLOW_SPAN = 1200.0
+CRASH_AT = 20 * H
+CRASH_GAP_REAL = 240.0
+CRASH_LIVE_REAL = 5.0
+CRASH_CYCLES = 3
+REFUSE_AT = 61 * H
+
+
+def fixed_flush(inst, scale):
+    """The flush interval of an instance with one of its own: as set at scale 1, and at most 60
+    seconds in a smoke run, so a run it leaves unsettled holds claims back for minutes, not half
+    an hour."""
+    if not inst.flush:
+        return None
+    return inst.flush if scale <= 1 else min(inst.flush, 60)
+LOW_MANIFEST_ELEMENTS = 20
+
+
+def refuse_window_real(scale):
+    """Real seconds the collector keeps the low manifest limit: 10 minutes at scale 1, 2 at a smoke run."""
+    return 600.0 if scale <= 1 else 120.0
+
+
+def refuse_restart_real(scale):
+    """Real seconds after the low limit starts at which shop-1 restarts, so its manifest meets the limit."""
+    return refuse_window_real(scale) / 5.0
+
+
+def build_schedule(scale=1.0):
     """The timetable of DESIGN.md, in design seconds. Dynamic items (the test run's
-    follow-up) are not here; the supervisor adds them."""
+    follow-up) are not here; the supervisor adds them. `scale` turns the real-second gaps
+    (crash cycles, the refusal window) into design seconds."""
     items = []
     for o in ONE_OFFS:
         items.append(
@@ -214,6 +265,19 @@ def build_schedule():
     items.append(Item("collector-stop", 40 * H, "collector-stop", {}, "stop the collector"))
     items.append(Item("collector-start", 41 * H, "collector-start", {}, "start the collector, 60 minutes later"))
     items.append(Item("server-restart", 50 * H, "server-restart", {}, "restart the server"))
+    for n in range(CRASH_CYCLES + 1):
+        baseline = n < CRASH_CYCLES
+        items.append(Item("crash-events-%d" % (n + 1) if baseline else "crash-events-nobaseline",
+                          CRASH_AT + n * CRASH_GAP_REAL * scale, "crash-cycle",
+                          {"instance": "events-crash", "baseline": baseline},
+                          "start events-crash, kill -9 it %gs after it is ready%s" % (
+                              CRASH_LIVE_REAL, "" if baseline else ", with staticBaselineEnabled=false")))
+    items.append(Item("collector-low-limit", REFUSE_AT, "collector-limit", {"mode": "low"},
+                      "restart the collector with a manifest element limit of %d" % LOW_MANIFEST_ELEMENTS))
+    items.append(Item("restart-shop-1-refused", REFUSE_AT + refuse_restart_real(scale) * scale, "graceful-restart",
+                      {"instance": "shop-1"}, "graceful restart of shop-1 while the collector refuses manifests"))
+    items.append(Item("collector-normal-limit", REFUSE_AT + refuse_window_real(scale) * scale, "collector-limit",
+                      {"mode": "normal"}, "restart the collector with the normal limit"))
     items.append(Item("upgrade-events-prod", 72 * H, "upgrade", {"instance": "events-prod", "to": "2.0.0"},
                       "upgrade events-prod to 2.0.0 (SIGTERM, start the 2.0.0 jar)"))
     items.append(Item("upgrade-events-control", 72 * H, "upgrade", {"instance": "events-control", "to": "2.0.0"},

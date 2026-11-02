@@ -7,6 +7,10 @@
 #   stack.sh status            print what runs; exit 1 when something does not
 #   stack.sh stop-collector    stop only the collector (the supervisor's outage)
 #   stack.sh start-collector   start only the collector
+#   stack.sh collector-limit low|normal
+#                              restart the collector with a low manifest element limit (the build of
+#                              bin/otherlode-collector-lowmanifest) or the normal one; the collector
+#                              keeps the mode across later stops and starts
 #   stack.sh restart-server    stop and start only the server
 #   stack.sh session           mint a browser session for soak@example.com into secrets/session-token
 #   stack.sh run-server|run-collector|refresh-loop
@@ -201,7 +205,25 @@ run_collector() {
     OTHERLODE_COLLECTOR_REDACT_ALL_LITERALS=true \
     OTHERLODE_COLLECTOR_REDACT_SECRET_FILE="$secrets/redact.secret" \
     OTHERLODE_COLLECTOR_RATE_LIMIT_RPS=50 OTHERLODE_COLLECTOR_RATE_LIMIT_BURST=200
+  if [ "$(cat "$home/run/collector-limit" 2>/dev/null || true)" = low ] && [ -x "$bin/otherlode-collector-lowmanifest" ]; then
+    exec "$bin/otherlode-collector-lowmanifest"
+  fi
   exec "$bin/otherlode-collector"
+}
+
+# Restarts the collector in a limit mode. The collector has no variable for its element limits, so the
+# low mode runs a build of it with a lower manifest limit.
+set_collector_limit() {
+  case "$1" in
+    low) [ -x "$bin/otherlode-collector-lowmanifest" ] || { log "no $bin/otherlode-collector-lowmanifest"; exit 1; } ;;
+    normal) ;;
+    *) echo "usage: $0 collector-limit low|normal" >&2; exit 2 ;;
+  esac
+  mkdir -p "$home/run"
+  printf '%s' "$1" >"$home/run/collector-limit"
+  log "restarting the collector with the $1 manifest limit"
+  unit stop collector
+  start_collector
 }
 
 # Writes a session for the bootstrap user. The database keeps only the token's SHA-256, as the
@@ -252,6 +274,7 @@ purge() {
   docker rm -f "$pg_name" >/dev/null 2>&1 || true
   docker volume rm "$pg_volume" >/dev/null 2>&1 || true
   find "$secrets" -mindepth 1 -delete 2>/dev/null || true
+  rm -f "$home/run/collector-limit"
 }
 
 case "${1:-}" in
@@ -277,6 +300,10 @@ case "${1:-}" in
     ensure_secrets
     start_collector
     ;;
+  collector-limit)
+    ensure_secrets
+    set_collector_limit "${2:-}"
+    ;;
   restart-server)
     unit stop server
     start_server
@@ -293,7 +320,7 @@ case "${1:-}" in
   session) mint_session ;;
   purge) purge "${2:-}" ;;
   *)
-    echo "usage: $0 up|down|status|stop-collector|start-collector|restart-server|session|purge --yes" >&2
+    echo "usage: $0 up|down|status|stop-collector|start-collector|collector-limit low|normal|restart-server|session|purge --yes" >&2
     exit 2
     ;;
 esac

@@ -3,8 +3,11 @@
 #
 #   bin/otherlode-server        linux/amd64, with the web UI embedded
 #   bin/otherlode-collector     linux/amd64
+#   bin/otherlode-collector-lowmanifest
+#                               the same collector with a low manifest element limit, for the refused
+#                               manifest of DESIGN.md (the collector has no variable for the limit)
 #   agent/otherlode-agent.jar   the agent's shadow jar
-#   apps/soak-shop.jar, apps/soak-events-1.0.0.jar, apps/soak-events-2.0.0.jar
+#   apps/soak-shop.jar, apps/soak-events-1.0.0.jar, apps/soak-events-2.0.0.jar, apps/lib/commons-codec-*.jar
 #   truth.json, harness/, VERSION
 #
 #   build-bundle.sh [output-dir]
@@ -55,6 +58,18 @@ log "building the collector for linux/amd64"
 (cd "$collector_dir" && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
   go build -trimpath -ldflags='-s -w' -o "$stage/bin/otherlode-collector" ./cmd/otherlode-collector)
 
+log "building the collector with a low manifest limit"
+low=$(cd "$here" && python3 -c 'import soakcfg; print(soakcfg.LOW_MANIFEST_ELEMENTS)')
+patched=$(mktemp -d "${TMPDIR:-/tmp}/soak-collector.XXXXXX")
+tar -C "$collector_dir" --exclude=.git -cf - . | tar -C "$patched" -xf -
+sed -i.bak -E "s/(MaxManifestElements = )[0-9_]+/\1$low/" "$patched/ingest/elements.go"
+rm -f "$patched/ingest/elements.go.bak"
+grep -q "MaxManifestElements = $low\$" "$patched/ingest/elements.go" || die "could not set MaxManifestElements in the collector copy"
+(cd "$patched" && GOOS=linux GOARCH=amd64 CGO_ENABLED=0 \
+  go build -trimpath -ldflags='-s -w' -o "$stage/bin/otherlode-collector-lowmanifest" ./cmd/otherlode-collector)
+find "$patched" -mindepth 1 -delete
+rmdir "$patched"
+
 log "building the agent"
 (cd "$agent_dir" && ./gradlew --console=plain shadowJar)
 agent_jar=$agent_dir/build/libs/otherlode-agent-0.1.0-SNAPSHOT.jar
@@ -82,6 +97,10 @@ done
 cp "$shop" "$stage/apps/soak-shop.jar"
 cp "$ev1" "$stage/apps/soak-events-1.0.0.jar"
 cp "$ev2" "$stage/apps/soak-events-2.0.0.jar"
+codec=$(find "$agent_dir/soak/apps/events/build/libs/lib" -name 'commons-codec-*.jar' 2>/dev/null | head -1)
+[ -n "$codec" ] || die "the apps build left no commons-codec jar under soak/apps/events/build/libs/lib"
+mkdir -p "$stage/apps/lib"
+cp "$codec" "$stage/apps/lib/"
 
 cp "$agent_dir/soak/truth.json" "$stage/truth.json"
 for f in "$here"/*.py "$here"/*.sh "$here"/log-allowlist.txt "$here"/README.md; do

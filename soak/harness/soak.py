@@ -52,7 +52,7 @@ def timetable(scale, flush, check_delay):
     out.append("%-12s %-14s %s" % ("design", "from T0", "action"))
     out.append("%-12s %-14s %s" % ("T+00:00:00", "0.00s", "start the stack and every instance but shop-test"))
     rows = []
-    for it in cfg.build_schedule():
+    for it in cfg.build_schedule(scale):
         delay = check_delay if it.kind == "check" else 0.0
         rows.append((it.at / scale + delay, it.at, it.text + (" (+%.1fs)" % delay if delay else "")))
     for scaled, at, text in sorted(rows, key=lambda r: r[0]):
@@ -217,6 +217,173 @@ class RouteGen(threading.Thread):
                 sup.counters.add(inst.name, r.key, "non2xx")
 
 
+# ---------------------------------------------------------------- window reads
+
+
+class WindowTracker:
+    """Which window reads are due. After an event, a live read is due every `fast_period` seconds for
+    `fast_span` seconds, and a snapshot read every `slow_period` seconds for `slow_span`. The times are
+    real seconds at every scale. A read that runs late makes the ticks it covered skipped."""
+
+    def __init__(self, fast_period=cfg.WINDOW_FAST_PERIOD, fast_span=cfg.WINDOW_FAST_SPAN,
+                 slow_period=cfg.WINDOW_SLOW_PERIOD, slow_span=cfg.WINDOW_SLOW_SPAN):
+        self.period = {"fast": fast_period, "slow": slow_period}
+        self.span = {"fast": fast_span, "slow": slow_span}
+        self.windows = []
+        self.last = {"fast": None, "slow": None}
+        self.skipped = {"fast": 0, "slow": 0}
+        self.lock = threading.Lock()
+
+    def open(self, label, t):
+        with self.lock:
+            self.windows = [w for w in self.windows if t - w[1] < self.span["slow"]]
+            self.windows.append((label, t))
+
+    def covering(self, kind, now):
+        return [w for w in self.windows if 0 <= now - w[1] < self.span[kind]]
+
+    def due(self, now):
+        with self.lock:
+            out = []
+            for kind in ("fast", "slow"):
+                last = self.last[kind]
+                if self.covering(kind, now) and (last is None or now - last >= self.period[kind]):
+                    out.append(kind)
+            return out
+
+    def label(self, kind, now):
+        with self.lock:
+            cover = self.covering(kind, now)
+            return cover[-1][0] if cover else None
+
+    def started(self, kind, now):
+        with self.lock:
+            last, p = self.last[kind], self.period[kind]
+            if last is not None and now - last > 1.5 * p and any(
+                    0 <= last - w[1] < self.span[kind] and 0 <= now - w[1] < self.span[kind] for w in self.windows):
+                self.skipped[kind] += int(round((now - last) / p)) - 1
+            self.last[kind] = now
+
+
+class WindowReader(threading.Thread):
+    """One thread that reads every finding in the windows after an event, judges each read, and
+    keeps the violations, the counts and the reads of shop-1 while the collector refuses manifests in
+    `state/windows.json`, which check 8 reads. A read that is still running when the next is due
+    makes that tick skipped."""
+
+    def __init__(self, sup):
+        super().__init__(daemon=True, name="windows")
+        self.sup = sup
+        self.tracker = WindowTracker()
+        self.path = sup.paths["windows"]
+        self.data = {"opened": 0, "events": [], "reads": {"fast": 0, "slow": 0, "report": 0, "errors": 0},
+                     "skipped": {"fast": 0, "slow": 0}, "violations": {},
+                     "refused": {"reads": 0, "behind": 0, "first_behind": None, "last": []}, "last_error": None}
+        try:
+            with open(self.path) as f:
+                self.data.update(json.load(f))
+        except (OSError, ValueError):
+            pass
+        self.api = None
+        self.truth = None
+        self.last_refusal_read = 0.0
+
+    def connect(self):
+        import check
+        if self.api is None:
+            with open(self.sup.paths["read_key"]) as f:
+                self.api = check.Api(cfg.API_BASE, f.read().strip())
+            with open(self.sup.paths["truth"]) as f:
+                self.truth = json.load(f)
+
+    def open(self, label, t=None):
+        t = time.time() if t is None else t
+        self.tracker.open(label, t)
+        self.data["opened"] += 1
+        self.data["events"] = (self.data["events"] + [{"label": label, "t": t}])[-50:]
+
+    def save(self):
+        self.data["skipped"] = dict(self.tracker.skipped)
+        tmp = self.path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(self.data, f)
+        os.replace(tmp, self.path)
+
+    def run(self):
+        sup = self.sup
+        while not sup.stop.is_set() and not sup.state.d["finished"]:
+            now = time.time()
+            for kind in self.tracker.due(now):
+                try:
+                    self.read(kind, now)
+                except Exception as e:
+                    self.data["reads"]["errors"] += 1
+                    self.data["last_error"] = "%s read: %r" % (kind, e)
+                    sup.log("window read failed: %r" % e)
+            if now - self.last_refusal_read >= 5.0:
+                self.last_refusal_read = now
+                try:
+                    if self.observe_refusal(now):
+                        self.save()
+                except Exception as e:
+                    sup.log("refusal read failed: %r" % e)
+            sup.stop.wait(1.0)
+
+    def read(self, kind, now):
+        import check
+        sup = self.sup
+        self.connect()
+        label = self.tracker.label(kind, now)
+        self.tracker.started(kind, now)
+        with sup.state.lock:
+            state = {"testruns": list(sup.state.d["testruns"])}
+        violations, errors, reports = check.read_window(self.api, self.truth, state, now, sup.t0, sup.scale, sup.flush,
+                                                        sup.lag, kind, wait=5.0 if kind == "slow" else 30.0)
+        r = self.data["reads"]
+        r[kind] += 1
+        r["report"] += reports
+        if errors:
+            r["errors"] += 1
+            self.data["last_error"] = errors[0]
+        for line in violations:
+            key = "%s|%s|%s" % (label, kind, check.violation_key(line))
+            v = self.data["violations"].get(key)
+            if v:
+                v["last"], v["count"] = now, v["count"] + 1
+            elif len(self.data["violations"]) < check.WINDOW_CAP:
+                self.data["violations"][key] = {"event": label, "kind": kind, "first": now, "last": now, "count": 1,
+                                                "message": line}
+        self.save()
+
+    def observe_refusal(self, now):
+        """While the collector holds the low manifest limit, reads shop-1's row on /instances after
+        its restart inside the window has had two flushes to send its manifest. Runs every 5 seconds
+        on its own, not only inside a read window. Returns whether it read."""
+        import check
+        sup = self.sup
+        with sup.state.lock:
+            events = [dict(e) for e in sup.state.d["events"] if e["kind"] == "collector-limit" and e["t1"] is None]
+            runs = [dict(r) for r in sup.state.d["runs"] if r["instance"] == check.REFUSED_INSTANCE]
+        if not events or not runs:
+            return False
+        run = runs[-1]
+        if run["started"] < events[-1]["t0"] or run.get("ended") or now < (run.get("ready") or now + 1) + 2 * sup.flush:
+            return False
+        self.connect()
+        row = check.instance_row(self.api, *check.REFUSED_SERVICE, run["instance_id"])
+        behind = check.run_is_behind(row)
+        ref = self.data["refused"]
+        ref["reads"] += 1
+        if behind:
+            ref["behind"] += 1
+            ref["first_behind"] = ref["first_behind"] or now
+        obs = {"t": now, "instance_id": run["instance_id"], "listed": row is not None, "behind": behind,
+               "deltas_received": (row or {}).get("deltas_received"),
+               "counts_behind_since": (row or {}).get("counts_behind_since")}
+        ref["last"] = (ref["last"] + [obs])[-20:]
+        return True
+
+
 # ---------------------------------------------------------------- processes
 
 
@@ -270,6 +437,7 @@ class Managed:
         self.accepting = False
         self.hold = False
         self.expect = None
+        self.baseline = inst.static_baseline
         self.log = LogFile(os.path.join(sup.paths["logs"], inst.name + ".log"))
         self.lock = threading.Lock()
 
@@ -287,8 +455,8 @@ class Managed:
         o = [
             "serviceName=%s" % i.service, "environment=%s" % i.env, "serviceVersion=%s" % version,
             "serviceInstanceId=%s" % instance_id, "includePackages=%s" % i.include,
-            "staticBaselineEnabled=true", "classListingEnabled=true",
-            "flushIntervalSeconds=%d" % self.sup.flush, "exportUrl=%s" % cfg.COLLECTOR_URL,
+            "staticBaselineEnabled=%s" % ("true" if self.baseline else "false"), "classListingEnabled=true",
+            "flushIntervalSeconds=%d" % (cfg.fixed_flush(i, self.sup.scale) or self.sup.flush), "exportUrl=%s" % cfg.COLLECTOR_URL,
         ]
         if i.exclude:
             o.append("excludePackages=%s" % i.exclude)
@@ -319,6 +487,7 @@ class Managed:
             self.popen = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
                                           start_new_session=True, cwd=sup.paths["home"], text=True, bufsize=1)
             self.expect = None
+            sup.open_window("start of %s" % instance_id)
             run = {"instance": i.name, "instance_id": instance_id, "gen": gen, "pid": self.popen.pid,
                    "version": self.version(), "service": i.service, "env": i.env,
                    "started": time.time(), "ended": None, "how": None, "exit": None, "ready": None}
@@ -357,8 +526,8 @@ class Managed:
         self.expect = "graceful"
         p.send_signal(signal.SIGTERM)
         try:
-            p.wait(timeout)
-            how = "graceful"
+            code = p.wait(timeout)
+            how = "graceful" if code in (0, 143, -15) else "crash"
         except subprocess.TimeoutExpired:
             p.kill()
             p.wait()
@@ -382,6 +551,8 @@ class Managed:
         if p is None or self.run is None or self.run["ended"] is not None:
             return False
         if p.poll() is None:
+            return False
+        if self.expect:
             return False
         self._finish("crash")
         self.sup.event("crash", self.inst.name, time.time(), time.time())
@@ -431,14 +602,18 @@ class Supervisor:
         self.pool = concurrent.futures.ThreadPoolExecutor(max_workers=8)
         self.inflight = set()
         self.last_try = {}
-        self.sched = cfg.build_schedule()
+        self.sched = cfg.build_schedule(self.scale)
         self.sample_lock = threading.Lock()
         self.sampling = False
+        self.windows = WindowReader(self)
 
     # ---- helpers
     def log(self, msg):
         print("%s %s" % (iso(), msg), flush=True)
         self.slog.write(msg)
+
+    def open_window(self, label):
+        self.windows.open(label)
 
     def agent_token(self):
         with open(self.paths["agent_token"]) as f:
@@ -493,6 +668,8 @@ class Supervisor:
         self.event("supervisor-start", None, time.time(), time.time())
         threads = []
         for m in self.mgrs.values():
+            if not m.inst.always_on:
+                continue
             t = threading.Thread(target=m.start)
             t.start()
             threads.append(t)
@@ -534,6 +711,7 @@ class Supervisor:
             self.event("collector-outage", None, time.time(), None, exit=code)
         elif k == "collector-start":
             code = self.stack("start-collector")
+            self.open_window("collector start")
             def close(d):
                 for e in reversed(d["events"]):
                     if e["kind"] == "collector-outage" and e["t1"] is None:
@@ -545,6 +723,31 @@ class Supervisor:
             t0 = time.time()
             code = self.stack("restart-server")
             self.event("server-restart", None, t0, time.time(), exit=code)
+            self.open_window("server restart")
+        elif k == "crash-cycle":
+            t0 = time.time()
+            m.hold = True
+            m.baseline = a["baseline"]
+            m.start()
+            if m.accepting:
+                time.sleep(cfg.CRASH_LIVE_REAL)
+            m.kill9()
+            m.baseline = m.inst.static_baseline
+            self.event("crash-cycle", m.inst.name, t0, time.time(), baseline=a["baseline"])
+        elif k == "collector-limit":
+            t0 = time.time()
+            code = self.stack("collector-limit", a["mode"])
+            self.open_window("collector restart with the %s manifest limit" % a["mode"])
+            if a["mode"] == "low":
+                self.event("collector-limit", None, t0, None, exit=code)
+            else:
+                def close(d):
+                    for e in reversed(d["events"]):
+                        if e["kind"] == "collector-limit" and e["t1"] is None:
+                            e["t1"] = time.time()
+                            e["start_exit"] = code
+                            break
+                self.state.update(close)
         elif k == "upgrade":
             t0 = time.time()
             m.hold = True
@@ -676,13 +879,14 @@ class Supervisor:
         threading.Thread(target=go, daemon=True).start()
 
     # ---- the loop
-    LATE = {"graceful-restart": 6 * H, "check": 3 * H, "testrun": 12 * H, "collector-stop": 0.5 * H}
+    LATE = {"graceful-restart": 6 * H, "check": 3 * H, "testrun": 12 * H, "collector-stop": 0.5 * H,
+            "collector-limit": 0.5 * H, "crash-cycle": 6 * H}
 
     def tick(self):
         now = time.time()
         d = self.state.d
         for m in self.mgrs.values():
-            if m.check_exit() and not m.hold:
+            if m.check_exit() and not m.hold and m.inst.always_on:
                 self.pool.submit(self._restart_after_crash, m)
         if d["finished"]:
             return
@@ -692,7 +896,18 @@ class Supervisor:
             due = self.due_time(it)
             if now < due:
                 continue
+            if (it.args.get("mode") == "normal" or it.id == "restart-shop-1-refused") \
+                    and "collector-low-limit" not in d["done"]:
+                continue
+            if it.args.get("mode") == "low":
+                normal = next((x for x in self.sched if x.args.get("mode") == "normal"), None)
+                if normal is not None and now >= self.due_time(normal):
+                    self.state.update(lambda dd: dd["done"].__setitem__(it.id, {"t": now, "note": "skipped, late"}))
+                    self.log("%s skipped: its window had passed" % it.id)
+                    continue
             late = self.LATE.get(it.kind)
+            if it.args.get("mode") == "normal":
+                late = None
             final = it.args.get("final")
             if late and not final and now - due > late / self.scale:
                 self.state.update(lambda dd: dd["done"].__setitem__(it.id, {"t": now, "note": "skipped, late"}))
@@ -750,6 +965,7 @@ class Supervisor:
                 self.log("stack.sh up failed (%s); the supervisor exits" % code)
                 sys.exit(1)
         self.adopt()
+        self.windows.start()
         self.start_all()
         last_save = last_sample = 0.0
         while not self.stop.is_set():

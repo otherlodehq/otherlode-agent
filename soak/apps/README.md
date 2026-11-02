@@ -14,10 +14,12 @@ From the worktree root:
 ./gradlew -p soak/apps build
 ```
 
-This writes three jars:
+This writes three jars and one library:
 
 - `soak/apps/shop/build/libs/soak-shop.jar`, a Spring Boot fat jar.
 - `soak/apps/events/build/libs/soak-events-1.0.0.jar` and `soak-events-2.0.0.jar`, shaded jars.
+- `soak/apps/events/build/libs/lib/commons-codec-1.19.0.jar`. The 2.0.0 jar names it in its manifest
+  `Class-Path` (`lib/commons-codec-1.19.0.jar`), so it must sit in a `lib` folder beside the jar.
 
 `-PeventsVersion=1.0.0` or `-PeventsVersion=2.0.0` builds only that events jar.
 
@@ -99,6 +101,9 @@ Version 2.0.0 removes the replay route and `ReplayEngine`, and adds the stats ro
 | `Event` serializer (kotlinx.serialization) | The `$serializer` members are generated and in no finding. |
 | commons-csv | Unreached: loaded once by name at startup, referenced only from `LegacyCsvExporter`. |
 | commons-text | Unloaded. |
+| `ShutdownHook.close` and `ShutdownAudit.record` | Never hit until the first graceful stop, then live. `close` is a `@PreDestroy` method that sleeps 2 seconds and then calls `record`, which nothing else calls. `Startup` calls `ShutdownAudit.armed()`, so the class loads. |
+| `LegacyDigest` (2.0.0) | Never loaded. It refers to commons-codec's `Hex`. |
+| commons-codec (2.0.0) | Unreached, with `LegacyDigest` as its site: 2.0.0's `main` loads `Hex` by name, and no 1.0.0 jar refers to the jar. |
 | guava | Used. |
 
 The Spring Boot jars in the fat jar also have a status. `../truth.json` lists them with
