@@ -202,9 +202,19 @@
           },
           {
             "artifact": "jakarta.annotation-api",
+            "status": "unreached",
+            "version": "3.0.0",
+            "framework": true,
+            "until": "PT12H",
+            "site_class": "dev.soaktest.shop.ShutdownHook",
+            "note": "ShutdownHook.close holds the @PreDestroy reference and first runs when Spring destroys the bean, at shop-1's first graceful restart (12h)"
+          },
+          {
+            "artifact": "jakarta.annotation-api",
             "status": "used",
             "version": "3.0.0",
-            "framework": true
+            "framework": true,
+            "from": "PT12H"
           },
           {
             "artifact": "jspecify",

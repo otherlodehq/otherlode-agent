@@ -968,6 +968,16 @@ class WindowCheckTests(CheckCase):
         self.assertTrue(any(k == "collector-limit" and rx.search("otherlode: unexpected status 413 from http://x")
                             for k, rx, _, _ in rules))
 
+    def test_a_crash_cycle_holds_check_1_until_its_live_deadline_plus_the_lag(self):
+        kill = T0 + 20 * 3600 + 30
+        self.w.state["events"].append({"kind": "crash-cycle", "instance": "events-crash", "t0": T0 + 20 * 3600, "t1": kill})
+        inst = cfg.BY_NAME["events-crash"]
+        end = kill + 3 * (cfg.fixed_flush(inst, 1) or FLUSH) + 1800
+        ctx = check.Ctx(state=self.w.state, now=end - 1, t0=T0, scale=1, flush=FLUSH, lag=1800)
+        self.assertTrue(check.crash_hold(ctx, inst.service, inst.env))
+        ctx.now = end + 1
+        self.assertFalse(check.crash_hold(ctx, inst.service, inst.env))
+
     def test_6_a_crash_cycle_opens_a_kill_window(self):
         self.w.state["events"].append({"kind": "crash-cycle", "instance": "events-crash", "t0": T0 + 20 * 3600,
                                        "t1": T0 + 20 * 3600 + 30})
@@ -1016,6 +1026,20 @@ class TruthTimingTests(unittest.TestCase):
         self.assertEqual(cfg.parse_duration(never[0]["from"]), upgrade)
         staging = self.truth["services"]["soak-events"]["staging"]
         self.assertEqual(staging["dependencies"], [])
+
+    def test_the_annotation_jar_is_unreached_until_the_first_graceful_restart_and_used_after(self):
+        dep = [d for d in self.shop["dependencies"] if d["artifact"] == "jakarta.annotation-api"]
+        self.assertEqual(sorted(d["status"] for d in dep), ["unreached", "used"])
+        unreached = next(d for d in dep if d["status"] == "unreached")
+        used = next(d for d in dep if d["status"] == "used")
+        first = min(i.at for i in cfg.build_schedule() if i.kind == "graceful-restart")
+        self.assertEqual(cfg.parse_duration(unreached["until"]), first)
+        self.assertEqual(cfg.parse_duration(used["from"]), first)
+        self.assertEqual(unreached["site_class"], "dev.soaktest.shop.ShutdownHook")
+        ctx = check.Ctx(truth=self.truth, now=T0, t0=T0, scale=1, lag=1800)
+        for at in range(0, 24 * 3600, 600):
+            ctx.now = T0 + at
+            self.assertFalse(ctx.asserted(unreached) and ctx.asserted(used), at)
 
     def test_the_new_entries_are_ones_the_checker_understands(self):
         ctx = check.Ctx(truth=self.truth, now=T0 + 80 * 3600, t0=T0, scale=1, lag=1800)

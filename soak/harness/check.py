@@ -503,15 +503,16 @@ def cluster_test_problem(cluster, tests):
 
 def crash_hold(ctx, svc, env):
     """True while a crash-cycle run of this scope can still hold claims back: from its start until
-    three of its flush intervals after its kill, as a run that never delivered holds them (server
-    ADR 0087)."""
+    three of its flush intervals after its kill, plus the lag a snapshot may trail by. A crash run
+    is killed while it is still starting, so it holds claims whether or not it delivered (server
+    ADR 0087, agent ADR 0086)."""
     for e in ctx.state.get("events", []):
         if e.get("kind") != "crash-cycle":
             continue
         inst = cfg.BY_NAME.get(e.get("instance"))
         if not inst or (inst.service, inst.env) != (svc, env):
             continue
-        end = (e.get("t1") or ctx.now) + 3 * (cfg.fixed_flush(inst, ctx.scale) or ctx.flush)
+        end = (e.get("t1") or ctx.now) + 3 * (cfg.fixed_flush(inst, ctx.scale) or ctx.flush) + ctx.lag
         if e["t0"] <= ctx.now <= end:
             return True
     return False
