@@ -146,6 +146,14 @@ edit deleted would read as never hit unless a collector learns the old entry
 is superseded, which may need a wire field), and whether that is worth it for a
 development convenience.
 
+### Flaky framework-marker fixtures
+
+`FrameworkMarkerFixtureTest` forks framework apps that bind a port the
+test chose earlier, and another process can take it first:
+`BindException: Address already in use` (struts 7.4.0 on 2026-11-02), and
+a Play app whose request saw the connection close (play-akka 2.9.12).
+Both pass on rerun. Bind port 0 in the fixture and read the port back.
+
 ### Endpoint follow-ups
 
 - A handler from Spring's Kotlin DSLs (`router {}`, `coRouter {}`) gets no
