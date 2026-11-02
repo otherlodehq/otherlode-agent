@@ -48,7 +48,7 @@ multi-tenant backend.
    project `project-1d40b09b-5fc7-4240-bed`, from T0 2026-11-02 14:09Z to
    2026-11-09 14:09Z, on bundle agent `f573ff0`, server `4e8f6c5`,
    collector `d62080a`; `truth.json` and `check.py` were replaced in
-   place on both VMs with `0790fdb`'s at 15:05Z. A scale-60 smoke of the same bundle runs on
+   place on both VMs with `0790fdb`'s at 14:57Z. A scale-60 smoke of the same bundle runs on
    `soak-2` from T0 2026-11-02 14:09Z to about 16:58Z. Two earlier runs
    were stopped after their smokes found false claims; the fixes since are
    agent ADRs 0082 to 0086, collector ADR 0010 and server ADRs 0087 to 0091.
