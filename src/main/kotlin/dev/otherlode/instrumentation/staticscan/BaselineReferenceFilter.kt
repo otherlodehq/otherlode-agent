@@ -2,6 +2,7 @@ package dev.otherlode.instrumentation.staticscan
 
 import dev.otherlode.bootLogger
 import dev.otherlode.dependencies.DependencyListingRun
+import dev.otherlode.export.ExternalClass
 import dev.otherlode.instrumentation.PlatformProvidedClasses
 import dev.otherlode.registry.DependencyRegistry
 import dev.otherlode.registry.ExternalClassRegistry
@@ -33,9 +34,9 @@ import java.time.Duration
  * Step 3 comes before step 4 because on a flat classpath the scan walks every jar, dependencies
  * included, so a name seen in a jar is the adopter's only when no dependency holds it.
  *
- * Mappings are recorded into [externalClasses], which sends each once on the manifest, so the
- * baseline carries none and never disagrees with the transform path; a name the transform path
- * recorded first keeps that recording.
+ * Mappings are recorded into [externalClasses], and the filtered result carries what
+ * [ExternalClassRegistry.mappingFor] returns for each kept name, so the baseline and the manifest
+ * send the same mapping; a name the transform path recorded first keeps that recording.
  *
  * [filter] first runs [dependencyListing] if no one has, on the scan's own thread, so the scan never
  * waits for a flush that may be a minute away; then it waits up to [listingWait] for the startup
@@ -89,8 +90,9 @@ class BaselineReferenceFilter(
 
     private fun keepReferences(result: StaticScanResult): StaticScanResult {
         val kept = HashMap<String, Boolean>()
+        val mappings = ArrayList<ExternalClass>()
 
-        fun keep(names: List<String>): List<String> = names.filter { name -> kept.getOrPut(name) { resolve(name, result) } }
+        fun keep(names: List<String>): List<String> = names.filter { name -> kept.getOrPut(name) { resolve(name, result, mappings) } }
 
         return result.copy(
             declaredClasses =
@@ -102,18 +104,25 @@ class BaselineReferenceFilter(
                 },
             ownClassNames = emptySet(),
             flatJarClassNames = emptySet(),
+            externalClasses = mappings,
         )
     }
 
-    /** Whether [name] is kept; a kept name the class index maps is recorded into [externalClasses]. */
+    /**
+     * Whether [name] is kept. A kept name the class index maps is recorded into [externalClasses].
+     * Every kept name with a mapping, the ones the transform path recorded first included, absent
+     * ones too, has that mapping added to [mappings].
+     */
     private fun resolve(
         name: String,
         result: StaticScanResult,
+        mappings: MutableList<ExternalClass>,
     ): Boolean {
         if (providedByPlatform(name) || name in result.ownClassNames) return false
         val dependencyId = dependencies.dependencyForClass(name)
         if (dependencyId == null && name in result.flatJarClassNames) return false
         if (dependencyId != null) externalClasses.recordResolved(name, dependencyId)
+        externalClasses.mappingFor(name)?.let(mappings::add)
         return true
     }
 

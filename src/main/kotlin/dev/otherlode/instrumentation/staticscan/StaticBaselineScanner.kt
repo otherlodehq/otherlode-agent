@@ -8,6 +8,7 @@ import dev.otherlode.dependencies.bootLibPrefixes
 import dev.otherlode.export.BodyKind
 import dev.otherlode.export.DeclaredClass
 import dev.otherlode.export.DeclaredMethod
+import dev.otherlode.export.ExternalClass
 import dev.otherlode.export.KotlinKind
 import dev.otherlode.export.UnprobedClass
 import dev.otherlode.export.UnreadableClass
@@ -32,7 +33,8 @@ import java.util.zip.ZipEntry
  * directory root or under `BOOT-INF/classes`/`WEB-INF/classes`, in scope or not: the adopter's own
  * code. [flatJarClassNames] is every class name whose kept copy is at the root of a jar, which may
  * be the adopter's own jar or a dependency on a flat classpath. Both are kept only to filter the scan's
- * references and are never sent.
+ * references and are never sent. [externalClasses] maps the referenced names the scan kept to their
+ * dependency, or to absent; [StaticBaselineChunker] sends each with the first chunk that references it.
  */
 data class StaticScanResult(
     val declaredClasses: List<DeclaredClass>,
@@ -40,6 +42,7 @@ data class StaticScanResult(
     val unprobedClasses: List<UnprobedClass> = emptyList(),
     val ownClassNames: Set<String> = emptySet(),
     val flatJarClassNames: Set<String> = emptySet(),
+    val externalClasses: List<ExternalClass> = emptyList(),
 ) {
     /** Every class name the scan saw, in any bucket. */
     fun allClassNames(): Set<String> =

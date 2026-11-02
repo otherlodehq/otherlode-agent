@@ -180,6 +180,10 @@ object ProtoPayloadCodec {
     fun entryWeight(externalClass: ExternalClass): PayloadWeight =
         entry(ProtoProbeManifest.EXTERNAL_CLASSES_FIELD_NUMBER, toProto(externalClass))
 
+    /** What one [ExternalClass] adds to a [StaticBaseline]. */
+    fun baselineEntryWeight(externalClass: ExternalClass): PayloadWeight =
+        entry(ProtoStaticBaseline.EXTERNAL_CLASSES_FIELD_NUMBER, toProto(externalClass))
+
     /** What one [FailedClass] adds to its payload. */
     fun entryWeight(failed: FailedClass): PayloadWeight = entry(ProtoProbeManifest.FAILED_CLASSES_FIELD_NUMBER, toProto(failed))
 

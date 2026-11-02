@@ -10,6 +10,7 @@ import dev.otherlode.export.ConditionPart
 import dev.otherlode.export.ConditionPartKind
 import dev.otherlode.export.DeclaredClass
 import dev.otherlode.export.DeclaredMethod
+import dev.otherlode.export.ExternalClass
 import dev.otherlode.export.IncludeRules
 import dev.otherlode.export.LineRange
 import dev.otherlode.export.PayloadKind
@@ -272,6 +273,119 @@ class StaticBaselineChunkerTest {
 
         val failure =
             assertFailsWith<ClassTooLargeException> { StaticBaselineChunker.chunk(result, resource, 1L, maxEntriesPerChunk = 10_000_000) }
+
+        assertEquals("Wide", failure.className)
+        assertEquals(ChunkBound.ELEMENTS, failure.bound)
+    }
+
+    private fun referencing(
+        name: String,
+        vararg references: String,
+    ) = DeclaredClass(name, listOf(DeclaredMethod("m", "()V", referencedClasses = references.toList())))
+
+    @Test
+    fun `a mapping goes in the chunk of the first class that references its name, and in no other`() {
+        val result =
+            StaticScanResult(
+                declaredClasses =
+                    listOf(
+                        referencing("A", "org.lib.One"),
+                        referencing("B", "org.lib.Two", "org.lib.One"),
+                        referencing("C", "org.lib.Two", "org.lib.Three"),
+                    ),
+                unreadableClasses = emptyList(),
+                externalClasses = listOf(ExternalClass("org.lib.One", 1), ExternalClass("org.lib.Two", 2), ExternalClass("org.lib.Three", 3)),
+            )
+
+        val chunks = StaticBaselineChunker.chunk(result, resource, scannedAt = 1L, maxEntriesPerChunk = 5)
+
+        assertEquals(listOf(listOf("A"), listOf("B"), listOf("C")), chunks.map { c -> c.declaredClasses.map { it.className } })
+        assertEquals(
+            listOf(
+                listOf(ExternalClass("org.lib.One", 1)),
+                listOf(ExternalClass("org.lib.Two", 2)),
+                listOf(ExternalClass("org.lib.Three", 3)),
+            ),
+            chunks.map { it.externalClasses },
+        )
+    }
+
+    @Test
+    fun `a name without a mapping adds nothing, and an absent mapping travels like any other`() {
+        val result =
+            StaticScanResult(
+                declaredClasses = listOf(referencing("A", "org.lib.Unmapped", "org.gone.Missing")),
+                unreadableClasses = emptyList(),
+                externalClasses = listOf(ExternalClass("org.gone.Missing", null, absent = true)),
+            )
+
+        val chunk = StaticBaselineChunker.chunk(result, resource, scannedAt = 1L, maxEntriesPerChunk = 100).single()
+
+        assertEquals(listOf(ExternalClass("org.gone.Missing", null, absent = true)), chunk.externalClasses)
+    }
+
+    @Test
+    fun `a mapping counts one entry toward its chunk's weight, so it can seal the chunk`() {
+        // "A" weighs 1 method + 1 record + 1 reference = 3, plus 1 for the mapping = 4. "B" weighs 2.
+        // A cap of 5 holds both only if the mapping is not counted.
+        val result =
+            StaticScanResult(
+                declaredClasses = listOf(referencing("A", "org.lib.One"), declared("B", 1)),
+                unreadableClasses = emptyList(),
+                externalClasses = listOf(ExternalClass("org.lib.One", 1)),
+            )
+
+        val chunks = StaticBaselineChunker.chunk(result, resource, scannedAt = 1L, maxEntriesPerChunk = 5)
+
+        assertEquals(listOf(listOf("A"), listOf("B")), chunks.map { c -> c.declaredClasses.map { it.className } })
+    }
+
+    @Test
+    fun `every chunk stays within the entry cap and the wire bounds with mappings counted`() {
+        val classes = (1..300).map { i -> referencing("C$i", "org.lib.N$i", "org.lib.N${i + 1}") }
+        val result =
+            StaticScanResult(
+                declaredClasses = classes,
+                unreadableClasses = emptyList(),
+                externalClasses = (1..301).map { ExternalClass("org.lib.N$it", it) },
+            )
+        val cap = 40
+
+        val chunks = StaticBaselineChunker.chunk(result, resource, scannedAt = 1L, maxEntriesPerChunk = cap)
+
+        assertTrue(chunks.size > 1)
+        assertEquals(301, chunks.sumOf { it.externalClasses.size })
+        assertEquals(301, chunks.flatMap { c -> c.externalClasses.map { it.className } }.toSet().size)
+        chunks.forEach { chunk ->
+            val weight =
+                chunk.declaredClasses.sumOf { c ->
+                    c.methods.size + c.methods.sumOf { it.referencedClasses.size } + c.referencedClasses.size + 1
+                } + chunk.externalClasses.size
+            assertTrue(weight <= cap, "chunk ${chunk.chunkIndex} weighs $weight")
+            assertTrue(PayloadKind.STATIC_BASELINE.admits(ProtoPayloadCodec.weightOf(chunk)))
+            chunk.externalClasses.forEach { mapping ->
+                assertTrue(
+                    chunk.declaredClasses.any { c -> c.methods.any { mapping.className in it.referencedClasses } },
+                    "${mapping.className} sits beside a class that references it",
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `a class whose references and mappings together break the element bound fails the scan`() {
+        val names = List(150_000) { "org.lib.N$it" }
+        val result =
+            StaticScanResult(
+                declaredClasses = listOf(DeclaredClass("Wide", listOf(DeclaredMethod("m", "()V")), referencedClasses = names)),
+                unreadableClasses = emptyList(),
+                externalClasses = names.map { ExternalClass(it, 1) },
+            )
+
+        val failure =
+            assertFailsWith<ClassTooLargeException> {
+                StaticBaselineChunker.chunk(result, resource, scannedAt = 1L, maxEntriesPerChunk = 10_000_000)
+            }
 
         assertEquals("Wide", failure.className)
         assertEquals(ChunkBound.ELEMENTS, failure.bound)

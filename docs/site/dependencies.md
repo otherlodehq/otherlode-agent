@@ -144,7 +144,7 @@ Every Kotlin class carries the runtime-visible `kotlin.Metadata` annotation, so 
 
 ## When a dependency is listed
 
-The agent sends a dependency's entry only after a send that carried its first loaded-class count was confirmed. If Otherlode saw the entry first, it would read a used jar as unloaded. The agent holds back the mapping from a referenced class to that dependency under the same condition. An absent reference names no dependency, so nothing holds it back.
+The agent sends a dependency's entry only after a send that carried its first loaded-class count was confirmed. If Otherlode saw the entry first, it would read a used jar as unloaded. On the manifest, the agent holds back the mapping from a referenced class to that dependency under the same condition. An absent reference names no dependency, so nothing holds it back. A static baseline chunk carries the mappings of the names its classes reference, held back or not, so a complete baseline never reaches Otherlode without them.
 
 The manifest of each instance also carries a flag that means "dependencies listed". The agent sets it once the startup listing finished, every startup dependency has been delivered, and every reference mapping recorded before the listing ended has been delivered. Before that point, an empty list of dependencies or absent references means "not listed yet", not "none". Otherlode can then judge a dependency as soon as its entry arrives.
 

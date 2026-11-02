@@ -1,6 +1,7 @@
 package dev.otherlode.instrumentation.staticscan
 
 import dev.otherlode.export.DeclaredClass
+import dev.otherlode.export.ExternalClass
 import dev.otherlode.export.IncludeRules
 import dev.otherlode.export.PayloadKind
 import dev.otherlode.export.PayloadWeight
@@ -18,11 +19,15 @@ import dev.otherlode.export.UnreadableClass
  * [maxEntriesPerChunk]. A declared class counts as its number of methods, plus the total number of
  * call edges across those methods, plus its methods' branch sites by
  * [dev.otherlode.export.BranchSite.chunkWeight], plus one for its own class record, plus one per
- * referenced class on its methods and on the class itself, mirroring the weighting
+ * referenced class on its methods and on the class itself, plus one per mapping it carries, mirroring the weighting
  * [dev.otherlode.registry.ProbeRegistry] gives a manifest class for the same reason; every
  * unreadable or unprobed class counts as one. The other two are the encoded bytes and the element
  * count of [PayloadKind.STATIC_BASELINE], measured by [ProtoPayloadCodec] on the encoding the
  * exporter sends.
+ *
+ * A mapping in [StaticScanResult.externalClasses] travels in the chunk of the first declared class
+ * that references its name, so a class and the mappings of its references commit together. Its
+ * encoded size and element count count toward that chunk's bounds like the class's own.
  *
  * Classes are never split across chunks, so a declared class heavier than [maxEntriesPerChunk]
  * gets a chunk of its own. A class that breaks the byte or element bound on its own cannot be
@@ -44,6 +49,8 @@ object StaticBaselineChunker {
         require(maxEntriesPerChunk > 0) { "maxEntriesPerChunk must be positive" }
         val kind = PayloadKind.STATIC_BASELINE
         val frame = ProtoPayloadCodec.weightOf(StaticBaseline(resource, emptyList(), scannedAt = scannedAt, includeRules = includeRules))
+        val mappings = result.externalClasses.associateBy { it.className }
+        val placed = HashSet<String>()
         val chunks = mutableListOf<Chunk>()
         var current = Chunk(frame)
 
@@ -66,8 +73,17 @@ object StaticBaselineChunker {
         result.declaredClasses.forEach { c ->
             val references = c.methods.sumOf { it.referencedClasses.size } + c.referencedClasses.size
             val sites = c.methods.sumOf { method -> method.branchSites.sumOf { it.chunkWeight } }
-            val weight = (c.methods.size + c.methods.sumOf { it.calls.size } + sites + 1 + references).coerceAtLeast(1)
-            place(c.className, weight, ProtoPayloadCodec.entryWeight(c)) { declared += c }
+            val carried =
+                (c.methods.asSequence().flatMap { it.referencedClasses } + c.referencedClasses)
+                    .filter { it in mappings && placed.add(it) }
+                    .map { mappings.getValue(it) }
+                    .toList()
+            val weight = (c.methods.size + c.methods.sumOf { it.calls.size } + sites + 1 + references + carried.size).coerceAtLeast(1)
+            val encoded = carried.fold(ProtoPayloadCodec.entryWeight(c)) { total, mapping -> total + ProtoPayloadCodec.baselineEntryWeight(mapping) }
+            place(c.className, weight, encoded) {
+                declared += c
+                external += carried
+            }
         }
         result.unreadableClasses.forEach { c -> place(c.className, 1, ProtoPayloadCodec.entryWeight(c)) { unreadable += c } }
         result.unprobedClasses.forEach { c -> place(c.className, 1, ProtoPayloadCodec.entryWeight(c)) { unprobed += c } }
@@ -79,6 +95,7 @@ object StaticBaselineChunker {
                 declaredClasses = chunk.declared,
                 unreadableClasses = chunk.unreadable,
                 unprobedClasses = chunk.unprobed,
+                externalClasses = chunk.external,
                 scannedAt = scannedAt,
                 chunkIndex = index,
                 chunkCount = chunks.size,
@@ -93,6 +110,7 @@ object StaticBaselineChunker {
         val declared = mutableListOf<DeclaredClass>()
         val unreadable = mutableListOf<UnreadableClass>()
         val unprobed = mutableListOf<UnprobedClass>()
+        val external = mutableListOf<ExternalClass>()
         var size = 0
     }
 }

@@ -384,6 +384,34 @@ class DependencyQueryTest {
     }
 
     @Test
+    fun `a name mapped by the manifest keeps that mapping when a later baseline maps it elsewhere`() {
+        manifest(dependencies = listOf(dependency(0, "org.example", "first"), dependency(1, "org.example", "second")))
+        deltas(listOf(DependencyDelta(0, 1L, 1L), DependencyDelta(1, 1L, 1L)))
+        manifest(externalClasses = listOf(ExternalClass("org.example.Old", 0)))
+        baseline(
+            declaredClasses = listOf(DeclaredClass("demo.Legacy", listOf(DeclaredMethod("apply", "()V", referencedClasses = listOf("org.example.Old"))))),
+            externalClasses = listOf(ExternalClass("org.example.Old", 1)),
+        )
+
+        assertEquals(listOf("org.example:first"), collector.unreachedDependencies().map { it.identityKey })
+        assertEquals(listOf("org.example:second"), collector.unreferencedDependencies().map { it.identityKey })
+    }
+
+    @Test
+    fun `a name mapped by the baseline keeps that mapping when a later manifest maps it elsewhere`() {
+        manifest(dependencies = listOf(dependency(0, "org.example", "first"), dependency(1, "org.example", "second")))
+        deltas(listOf(DependencyDelta(0, 1L, 1L), DependencyDelta(1, 1L, 1L)))
+        baseline(
+            declaredClasses = listOf(DeclaredClass("demo.Legacy", listOf(DeclaredMethod("apply", "()V", referencedClasses = listOf("org.example.Old"))))),
+            externalClasses = listOf(ExternalClass("org.example.Old", 1)),
+        )
+        manifest(externalClasses = listOf(ExternalClass("org.example.Old", 0)))
+
+        assertEquals(listOf("org.example:second"), collector.unreachedDependencies().map { it.identityKey })
+        assertEquals(listOf("org.example:first"), collector.unreferencedDependencies().map { it.identityKey })
+    }
+
+    @Test
     fun `unloadedDependencies needs neither references nor a baseline`() {
         manifest(dependencies = listOf(dependency(0, "com.acme", "lib"), dependency(1, "com.acme", "loaded")), referencesRecorded = false)
         deltas(listOf(DependencyDelta(1, 1L, 2L)))

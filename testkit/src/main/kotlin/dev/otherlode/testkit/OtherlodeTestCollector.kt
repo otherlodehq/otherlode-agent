@@ -2996,7 +2996,10 @@ public class OtherlodeTestCollector internal constructor(
             classLevelReferences[InstanceKey(instanceId, references.classId)] = references.referencedClasses
         }
         for (external in manifest.externalClasses) {
-            externalClassesByName[InstanceKey(instanceId, external.className)] = ExternalClassView(external.dependencyId, external.absent)
+            externalClassesByName.putIfAbsent(
+                InstanceKey(instanceId, external.className),
+                ExternalClassView(external.dependencyId, external.absent),
+            )
         }
         // The entries go in after the mappings and the flag goes in last. A query answers once it
         // sees an entry or the flag, and it runs outside this handler's thread, so it must never
@@ -3077,8 +3080,10 @@ public class OtherlodeTestCollector internal constructor(
                         )
                 }
                 for (external in baseline.externalClasses) {
-                    externalClassesByName[InstanceKey(instanceId, external.className)] =
-                        ExternalClassView(external.dependencyId, external.absent)
+                    externalClassesByName.putIfAbsent(
+                        InstanceKey(instanceId, external.className),
+                        ExternalClassView(external.dependencyId, external.absent),
+                    )
                 }
                 instanceIds += instanceId
                 if (!wasComplete && progress.complete) {

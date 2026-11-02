@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted, amended by ADR 0083
 ---
 
 # Dependency usage is read from class loads and the adopter's references, never from probes in library code
@@ -155,7 +155,7 @@ referenced class that no loader can find is an *absent reference* and is reporte
   listing builds only when the baseline is enabled and drops once the baseline has read it. It
   never records a name as absent: it cannot tell a missing class from one in a jar only a runtime
   loader opens, and an absent verdict would outrank the transform path's later answer. Every
-  mapping travels on the manifest; `StaticBaseline.external_classes` stays empty.
+  mapping travels on the manifest; `StaticBaseline.external_classes` stays empty. (Amended by ADR 0083: a baseline chunk carries the mappings its references need.)
 - ADR 0014 left nested jars unopened for the scan. This decision opens them for the listing only, one
   entry each; the scan still does not walk their classes.
 - Wire, all additive: `DependencyLocation` send-once on the manifest, `DependencyDelta` on the delta

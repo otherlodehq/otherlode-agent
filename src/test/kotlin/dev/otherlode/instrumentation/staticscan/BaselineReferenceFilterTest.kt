@@ -174,22 +174,77 @@ class BaselineReferenceFilterTest {
     }
 
     @Test
-    fun `the publisher sends references filtered before chunking, so the weights count only what is sent`() {
+    fun `the filtered scan carries each mapped name once, with the mapping the manifest would send`() {
+        val dependencies = indexedRegistry()
+        val lib = dependencies.addListed("lib", "org.lib.Indexed")
+        val flat = dependencies.addListed("flat", "org.flat.InDependency")
+        dependencies.markListingComplete()
+        val external = externalRegistry(dependencies)
+
+        val filtered = BaselineReferenceFilter(dependencies, external).filter(scanReferencingEverything())
+
+        val expected = listOf(ExternalClass("org.lib.Indexed", lib), ExternalClass("org.flat.InDependency", flat))
+        assertEquals(expected, filtered.externalClasses)
+        assertEquals(expected, sent(external))
+    }
+
+    @Test
+    fun `a name the transform path recorded first has that mapping on the scan and on the manifest`() {
         val dependencies = indexedRegistry()
         dependencies.addListed("lib", "org.lib.Indexed")
+        dependencies.markListingComplete()
+        val external = ExternalClassRegistry(dependencies::isListingComplete, mapOf("jar:file:/other.jar!/" to 42)::get)
+        external.record("org.lib.Indexed", "jar:file:/other.jar!/")
+
+        val filtered = BaselineReferenceFilter(dependencies, external).filter(scanReferencingEverything())
+
+        assertEquals(ExternalClass("org.lib.Indexed", 42), filtered.externalClasses.single { it.className == "org.lib.Indexed" })
+        assertEquals(ExternalClass("org.lib.Indexed", 42), sent(external).single { it.className == "org.lib.Indexed" })
+    }
+
+    @Test
+    fun `a name the transform path recorded as absent is absent on the scan too, and an unmapped name has no mapping`() {
+        val dependencies = indexedRegistry()
+        dependencies.addListed("lib", "org.lib.Indexed")
+        dependencies.markListingComplete()
+        val external = externalRegistry(dependencies)
+        external.record("org.gone.Missing", null)
+
+        val filtered = BaselineReferenceFilter(dependencies, external).filter(scanReferencingEverything())
+
+        assertEquals(ExternalClass("org.gone.Missing", null, absent = true), filtered.externalClasses.single { it.className == "org.gone.Missing" })
+        assertTrue(filtered.externalClasses.none { it.className == "org.flat.InDependency" })
+    }
+
+    @Test
+    fun `a scan sent without references carries no mapping`() {
+        val dependencies = indexedRegistry()
+        dependencies.addListed("lib", "org.lib.Indexed")
+        val external = externalRegistry(dependencies)
+
+        val filtered =
+            BaselineReferenceFilter(dependencies, external, listingWait = Duration.ofMillis(10)).filter(scanReferencingEverything())
+
+        assertTrue(filtered.externalClasses.isEmpty())
+    }
+
+    @Test
+    fun `the publisher sends references filtered before chunking, so the weights count only what is sent`() {
+        val dependencies = indexedRegistry()
+        val lib = dependencies.addListed("lib", "org.lib.Indexed")
         dependencies.markListingComplete()
         val exporter = RecordingExporter()
         val second = DeclaredClass("com.acme.Second", listOf(DeclaredMethod("m", "()V")))
         val scan = scanReferencingEverything().let { it.copy(declaredClasses = it.declaredClasses + second) }
         // "App" weighs 1 method + 1 class record + 3 kept references on the method + 3 on the
-        // class = 8, and "Second" weighs 2. Unfiltered, "App" alone would weigh 16.
+        // class + 1 mapping = 9, and "Second" weighs 2. Unfiltered, "App" alone would weigh 16.
         val publisher =
             StaticBaselinePublisher(
                 { scan },
                 exporter,
                 ProbeRegistry(),
                 StaticBaselineMismatchDetector(),
-                maxEntriesPerChunk = 10,
+                maxEntriesPerChunk = 11,
                 filterReferences = BaselineReferenceFilter(dependencies, externalRegistry(dependencies))::filter,
             )
 
@@ -199,7 +254,7 @@ class BaselineReferenceFilterTest {
             listOf(listOf("com.acme.App", "com.acme.Second")),
             exporter.baselines.map { b -> b.declaredClasses.map { it.className } },
         )
-        assertTrue(exporter.baselines.all { it.externalClasses.isEmpty() }, "mappings travel on the manifest, never the baseline")
+        assertEquals(listOf(ExternalClass("org.lib.Indexed", lib)), exporter.baselines.single().externalClasses)
     }
 
     @Test
@@ -364,11 +419,12 @@ class BaselineReferenceFilterTest {
         val mappings = sent(external)
         assertTrue(ExternalClass("com.example.library.Lib\$New", library1.dependencyId) in mappings)
         assertTrue(ExternalClass("com.example.library.Lib\$Base", library1.dependencyId) in mappings)
-        assertTrue(
+        assertEquals(
+            mappings.toSet(),
             exporter.baselines
                 .single()
                 .externalClasses
-                .isEmpty(),
+                .toSet(),
         )
     }
 

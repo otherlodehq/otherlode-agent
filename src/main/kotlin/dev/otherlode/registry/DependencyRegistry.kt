@@ -359,8 +359,11 @@ class DependencyRegistry(
      * on every record that no earlier generation has stamped.
      *
      * No lock guards registration against this. After the listing completes, a jar is registered
-     * only inside a sweep's count or through `resolveLocation` on a send thread. Neither overlaps
-     * this call, because each flush waits for its sends before the next sweep runs.
+     * inside a sweep's count, through `resolveLocation` on a send thread, or through it on the static
+     * baseline's scan thread. The first two never overlap this call, because each flush waits for
+     * its sends before the next sweep runs. A jar the scan thread registers between a sweep's count
+     * and this call takes that sweep's generation, and its zero is right: no class of it was in the
+     * sweep's snapshot, or the sweep would have registered it first.
      */
     @Synchronized
     fun markCounted() {

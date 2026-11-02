@@ -876,9 +876,9 @@ data class UnprobedClass(
  * [resource] and [scannedAt]; [chunkIndex] (0-based) and [chunkCount] say which part this is and
  * how many to expect. A collector should only diff a scan once it holds every chunk.
  *
- * [externalClasses] maps referenced class names to their dependency, or to absent. This agent
- * never sets it: the baseline's mappings go out on the manifest, so each name is sent once per
- * instance. See [ExternalClass].
+ * [externalClasses] maps the class names this chunk's declared classes reference to their
+ * dependency, or to absent. This agent puts a name's mapping in the chunk of the first class that
+ * references it, and the manifest carries it too. See [ExternalClass].
  *
  * [includeRules] are the include and exclude rules the scan applied, so a consumer can tell a class
  * the rules left out from one the build lacks. Null when the sender did not say.

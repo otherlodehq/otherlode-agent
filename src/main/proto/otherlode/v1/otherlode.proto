@@ -922,8 +922,8 @@ message StaticBaseline {
   int32 chunk_index = 7;
   int32 chunk_count = 8;
   // Maps class names the declared classes' referenced_classes list to their dependency, or to
-  // absent. This agent never sets it: the baseline's mappings go out on the manifest, so each name
-  // is sent once per instance. See ExternalClass.
+  // absent. This agent sends a name's mapping in the chunk of the first class that references it,
+  // and the manifest carries it too. See ExternalClass.
   repeated ExternalClass external_classes = 9;
   // The include and exclude rules the scan applied. A class outside them is not in the scan
   // because the rules left it out, not because the build lacks it. Absent when the sender did not

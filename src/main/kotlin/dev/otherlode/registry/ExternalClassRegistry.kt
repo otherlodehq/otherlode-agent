@@ -12,16 +12,17 @@ import java.util.concurrent.atomic.AtomicLong
  * The out-of-scope classes the adopter's code references, each with where the transform found it,
  * resolved to a dependency and delivered once per name.
  *
- * [record] runs on transforming threads and only remembers a location string. Resolution waits for
- * the export thread, since it can read a jar, and for [isListingComplete], since before the startup
- * listing has finished a jar on the classpath would be registered as discovered by load. A name
+ * [record] runs on transforming threads and only remembers a location string. Resolution runs on the
+ * export thread, or on the scan thread through [mappingFor], since it can read a jar, and waits for
+ * [isListingComplete], since before the startup listing has finished a jar on the classpath would be
+ * registered as discovered by load. A name
  * whose location [resolveLocation] maps to no dependency (a jar of the adopter's own, an agent jar,
  * an unsupported scheme) is resolved once and never sent. A name no loader could find is sent as
  * absent.
  *
- * The static baseline records names it has already mapped through [recordResolved]; they go out on
- * the manifest the same way, so the baseline itself never carries a mapping and no name is sent
- * twice.
+ * The static baseline records names it has already mapped through [recordResolved] and sends the
+ * mapping [mappingFor] returns with the chunk that first references the name. The manifest sends
+ * it too, and a collector keeps the first mapping it holds for a name, so both payloads agree.
  *
  * A name that maps to a dependency is held while [isDependencySendable] is false for that id. It is
  * neither delivered nor dropped, and a later compute offers it. An absent name names no dependency
@@ -122,6 +123,16 @@ class ExternalClassRegistry(
             className,
             Entry(className, null, nextSequence.getAndIncrement(), absent = dependencyId == null, resolvedId = dependencyId),
         )
+    }
+
+    /**
+     * The mapping [computeManifestEntries] sends for [className], delivered or not, or null when the
+     * name was never recorded, the listing has not completed, or the name maps to no dependency.
+     * The static baseline carries this same mapping.
+     */
+    fun mappingFor(className: String): ExternalClass? {
+        if (!isListingComplete()) return null
+        return entries[className]?.let(::toExternalClass)
     }
 
     /**
