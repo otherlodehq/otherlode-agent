@@ -1,6 +1,6 @@
 package dev.otherlode.classlisting
 
-import dev.otherlode.bootLogger
+import dev.otherlode.agentLogger
 import dev.otherlode.dependencies.ClasspathVisitor
 import dev.otherlode.dependencies.ClasspathWalker
 import dev.otherlode.dependencies.JarClassifier
@@ -63,7 +63,7 @@ class ClassLister(
     private val modulePath: String = System.getProperty("jdk.module.path").orEmpty(),
     private val mainModule: String = System.getProperty("jdk.module.main").orEmpty(),
 ) {
-    private val log by lazy { bootLogger(ClassLister::class.java.name) }
+    private val log by agentLogger(ClassLister::class.java.name)
     private val classifier = JarClassifier(includes, excludes)
 
     /** The sorted, distinct, dotted names of the listed classes, or null when the classpath could not be read whole. */

@@ -1,6 +1,6 @@
 package dev.otherlode.dependencies
 
-import dev.otherlode.bootLogger
+import dev.otherlode.agentLogger
 import dev.otherlode.export.DependencyDiscoverySource
 import dev.otherlode.registry.DependencyOrigin
 import dev.otherlode.registry.DependencyRegistry
@@ -38,7 +38,7 @@ internal class DependencyResolver(
     private val readFlatJar: (Path) -> JarContents = ::readFlat,
     private val readNestedJar: (Path, String) -> JarContents = ::readNested,
 ) {
-    private val log by lazy { bootLogger(DependencyResolver::class.java.name) }
+    private val log by agentLogger(DependencyResolver::class.java.name)
     private val byDomain = WeakHashMap<ProtectionDomain, Int>()
     private val byLocation = HashMap<String, Int>()
 

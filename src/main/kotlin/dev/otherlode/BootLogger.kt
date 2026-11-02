@@ -8,6 +8,8 @@ import java.text.MessageFormat
 import java.time.ZonedDateTime
 import java.util.ResourceBundle
 import java.util.function.Supplier
+import kotlin.properties.ReadOnlyProperty
+import kotlin.reflect.KProperty
 
 /**
  * A logger for the agent's classes. Once the agent has put the bootstrap jar on the boot class
@@ -20,6 +22,36 @@ import java.util.function.Supplier
  */
 internal fun bootLogger(name: String): System.Logger =
     if (BootstrapHolder.isInstalled()) OtherlodeLoggers.get(name) else AgentLogger(name, switches = true)
+
+/**
+ * Whether the agent writes its log lines to standard error whatever the application's logging
+ * holds. It starts false. The shutdown hook sets it when it starts, since the JVM runs
+ * `java.util.logging`'s hook at the same time, that hook resets every handler, and a line through
+ * it is then lost.
+ */
+internal object StandardErrorLogging {
+    @Volatile var on: Boolean = false
+}
+
+/**
+ * The logger of a class, as a property delegate: [bootLogger] until [StandardErrorLogging] is on,
+ * then a writer to standard error in the console format of ADR 0081. The logger is made at its
+ * first use, as a `by lazy` field is, and a call goes straight to the logger, so a record names
+ * the class that logged.
+ */
+internal fun agentLogger(name: String): ReadOnlyProperty<Any?, System.Logger> = SwitchedLogger(name)
+
+private class SwitchedLogger(
+    private val name: String,
+) : ReadOnlyProperty<Any?, System.Logger> {
+    private val normal = lazy { bootLogger(name) }
+    private val standardError = lazy { AgentLogger(name, switches = false) }
+
+    override fun getValue(
+        thisRef: Any?,
+        property: KProperty<*>,
+    ): System.Logger = if (StandardErrorLogging.on) standardError.value else normal.value
+}
 
 /**
  * Every overload the agent calls is overridden, because the JDK's default methods pass a null

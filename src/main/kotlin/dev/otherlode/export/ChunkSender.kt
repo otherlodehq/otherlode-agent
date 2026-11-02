@@ -1,6 +1,6 @@
 package dev.otherlode.export
 
-import dev.otherlode.bootLogger
+import dev.otherlode.agentLogger
 import java.lang.System.Logger.Level
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -38,7 +38,7 @@ open class ChunkSender<T : Any>(
     private val chunkIndex: (T) -> Int,
     private val chunkCount: (T) -> Int,
 ) {
-    private val log by lazy { bootLogger(this::class.java.name) }
+    private val log by agentLogger(this::class.java.name)
     private val lock = ReentrantLock()
 
     /** Guarded by [lock]. */

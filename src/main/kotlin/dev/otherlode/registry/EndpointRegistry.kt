@@ -1,6 +1,6 @@
 package dev.otherlode.registry
 
-import dev.otherlode.bootLogger
+import dev.otherlode.agentLogger
 import dev.otherlode.bootstrap.OtherlodeEndpoints
 import dev.otherlode.export.ChunkLimits
 import dev.otherlode.export.DisabledEndpointModule
@@ -83,7 +83,7 @@ private val EXTENSION_ROUTE = Regex("/\\*\\.[^/*]+")
 class EndpointRegistry(
     private val dispatchLimit: Int = OtherlodeEndpoints.DISPATCH_LIMIT,
 ) {
-    private val log by lazy { bootLogger(EndpointRegistry::class.java.name) }
+    private val log by agentLogger(EndpointRegistry::class.java.name)
 
     private data class Identity(
         val verb: String,

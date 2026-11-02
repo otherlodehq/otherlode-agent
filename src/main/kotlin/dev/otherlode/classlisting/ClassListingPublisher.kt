@@ -1,6 +1,6 @@
 package dev.otherlode.classlisting
 
-import dev.otherlode.bootLogger
+import dev.otherlode.agentLogger
 import dev.otherlode.export.IncludeRules
 import dev.otherlode.export.ResourceAttributes
 import java.lang.System.Logger.Level
@@ -20,7 +20,7 @@ class ClassListingPublisher(
     private val maxNamesPerChunk: Int = ClassListingChunker.DEFAULT_MAX_NAMES_PER_CHUNK,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
-    private val log by lazy { bootLogger(ClassListingPublisher::class.java.name) }
+    private val log by agentLogger(ClassListingPublisher::class.java.name)
 
     /**
      * Lists, chunks and sends one listing stamped with [resource]. A failure is logged once and

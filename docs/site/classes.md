@@ -80,7 +80,7 @@ The JVM does not call a transformer for a class it loads while the same thread i
 
 The agent finds these classes by sweeping every class the JVM holds. A sweep keeps the loaded classes that are in scope and that the agent never registered, skipped or found to have nothing to probe. It names each one in the manifest, and Otherlode counts it as loaded. It makes no claim about the class's methods.
 
-The sweep runs every tenth flush and on the shutdown flush. With the default `flushIntervalSeconds` of 60, that is about every ten minutes. The sweep ignores:
+The sweep runs on the first flush, on the shutdown flush and, once the dependency listing has completed, on every flush. Until the listing completes, it runs on every tenth flush after the first. With the default `flushIntervalSeconds` of 60, a class loaded with no transformer reaches a manifest within a minute once the listing has completed, and within 10 minutes before that. The sweep ignores:
 
 - Array, primitive, hidden and synthetic classes.
 - Classes on the bootstrap or platform loader.

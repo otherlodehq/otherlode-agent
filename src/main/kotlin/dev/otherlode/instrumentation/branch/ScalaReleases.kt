@@ -1,6 +1,6 @@
 package dev.otherlode.instrumentation.branch
 
-import dev.otherlode.bootLogger
+import dev.otherlode.agentLogger
 import java.lang.System.Logger.Level
 
 /**
@@ -20,7 +20,7 @@ internal object ScalaReleases {
     /** The bytes of a `.tasty` file the release reader needs, for a resource lookup that reads only a header. */
     const val HEADER_BYTES = 512
 
-    private val log by lazy { bootLogger(ScalaReleases::class.java.name) }
+    private val log by agentLogger(ScalaReleases::class.java.name)
 
     /** The releases listed in `scala3-read-releases.txt`, which is empty (and logged once) when the resource cannot be read. */
     val read: Set<String> by lazy { loadReadReleases() }

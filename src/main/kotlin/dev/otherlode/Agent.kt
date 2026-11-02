@@ -28,6 +28,7 @@ import dev.otherlode.instrumentation.ClassFileByteCache
 import dev.otherlode.instrumentation.LoadedClassSweep
 import dev.otherlode.instrumentation.OtherlodeInstrumentation
 import dev.otherlode.instrumentation.OwnRetransformationFailures
+import dev.otherlode.instrumentation.ShutdownHooksHook
 import dev.otherlode.instrumentation.VerifyErrorHook
 import dev.otherlode.instrumentation.branch.BranchDropCounts
 import dev.otherlode.instrumentation.branch.ConfiguredCallbackAnnotations
@@ -58,10 +59,13 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /** `-javaagent:otherlode-agent.jar` entry point. */
 object Agent {
-    private val SHUTDOWN_FLUSH_TIMEOUT: Duration = Duration.ofSeconds(10)
+    internal val SHUTDOWN_FLUSH_TIMEOUT: Duration = Duration.ofSeconds(10)
+    internal val SHUTDOWN_DEADLINE: Duration = Duration.ofSeconds(28)
+    internal val EARLY_FLUSH_BUDGET: Duration = Duration.ofSeconds(5)
+    internal val HOOK_WAIT_ENDS: Duration = Duration.ofSeconds(18)
     private val TEST_RUN_SCAN_WAIT: Duration = Duration.ofSeconds(15)
     private const val OTEL_BRIDGE_MODULE_NAME = "otel"
-    private val log by lazy { bootLogger(Agent::class.java.name) }
+    private val log by agentLogger(Agent::class.java.name)
     private val claimed = AtomicBoolean(false)
 
     /**
@@ -113,6 +117,8 @@ object Agent {
         val classListingWorker: Thread? = null,
         /** The hook on `java.lang.VerifyError`; see [VerifyErrorHook]. */
         val verifierHook: VerifyErrorHook = VerifyErrorHook(),
+        /** The weave of `ApplicationShutdownHooks.runHooks`; see [ShutdownHooksHook]. */
+        val shutdownHooksHook: ShutdownHooksHook? = null,
     ) {
         fun stop() {
             Runtime.getRuntime().removeShutdownHook(shutdownHook)
@@ -122,6 +128,7 @@ object Agent {
                 endpointInstrumentation.uninstall(instrumentation, endpointTransformer)
             }
             verifierHook.uninstall(instrumentation)
+            shutdownHooksHook?.uninstall(instrumentation)
         }
     }
 
@@ -264,6 +271,7 @@ object Agent {
         // it. The threads start last, once nothing after them can fail.
         var scheduler: ExportScheduler? = null
         var shutdownHook: Thread? = null
+        var shutdownHooksHook: ShutdownHooksHook? = null
         try {
             // Made once here and shared, so every payload this process sends names the same run.
             val resource = ResourceAttributes.forNewRun(config)
@@ -339,10 +347,23 @@ object Agent {
                 } else {
                     null
                 }
+            val hooksHook = if (config.testRun) null else ShutdownHooksHook(ownRetransformationFailures)
+            shutdownHooksHook = hooksHook
+            val hookWatch = if (hooksHook != null && hooksHook.install(instrumentation)) ShutdownHookWatch.fromSeam() else null
             val hook =
                 Thread({
+                    val hookStarted = System.nanoTime()
                     openLoggerGate()
-                    shutdown(config.testRun, scanWorker, TEST_RUN_SCAN_WAIT) { started.flushOnShutdown(SHUTDOWN_FLUSH_TIMEOUT) }
+                    shutdown(
+                        config.testRun,
+                        scanWorker,
+                        TEST_RUN_SCAN_WAIT,
+                        flushEarly = { started.flushAtShutdownStart(EARLY_FLUSH_BUDGET) },
+                        awaitApplicationHooks = { awaitApplicationHooks(hookWatch, timeLeft(hookStarted, HOOK_WAIT_ENDS)) },
+                    ) {
+                        val budget = if (config.testRun) SHUTDOWN_FLUSH_TIMEOUT else maxOf(SHUTDOWN_FLUSH_TIMEOUT, timeLeft(hookStarted, SHUTDOWN_DEADLINE))
+                        started.flushOnShutdown(budget)
+                    }
                 }, "otherlode-shutdown-hook")
             addShutdownHook(hook)
             shutdownHook = hook
@@ -361,6 +382,7 @@ object Agent {
                 resource,
                 listingWorker,
                 verifierHook,
+                shutdownHooksHook,
             )
         } catch (e: Throwable) {
             // Each step is tried on its own, so one that fails neither stops the rest nor hides
@@ -373,6 +395,7 @@ object Agent {
                 undo { endpointInstrumentation.uninstall(instrumentation, endpointTransformer) }
             }
             undo { verifierHook.uninstall(instrumentation) }
+            shutdownHooksHook?.let { undo { it.uninstall(instrumentation) } }
             throw e
         }
     }
@@ -509,18 +532,35 @@ object Agent {
     }
 
     /**
-     * What the shutdown hook does: [flush], then, for a test run, wait up to [scanWait] for the
-     * static baseline scan on [scanWorker] to end. A test JVM often exits before the scan ends, and
-     * the scan is where a collector reads the edges of test classes that never loaded. The flush
-     * goes first, so a JVM halted during the wait still sends the final manifest. The scan sends
-     * through the exporter, not the scheduler's pool, so it still works after the flush.
+     * The shutdown hook's three steps share one deadline, [SHUTDOWN_DEADLINE] from the hook's
+     * start. A run that is not a test run first calls [flushEarly], bounded to [EARLY_FLUSH_BUDGET],
+     * so the counts so far are on their way. It then calls [awaitApplicationHooks], which waits for
+     * the application's own hooks until [HOOK_WAIT_ENDS], so their hits are counted. Then [flush]
+     * runs the final flush with the time left, at least [SHUTDOWN_FLUSH_TIMEOUT]. Then, for a test
+     * run, the hook waits up to [scanWait] for the static baseline scan on [scanWorker] to end. A
+     * test JVM often exits before the scan ends, and the scan is where a collector reads the edges
+     * of test classes that never loaded. A test run neither flushes early nor waits for hooks. The
+     * flush goes before the scan wait, so a JVM halted during the wait still sends the final
+     * manifest. The scan sends through the exporter, not the scheduler's pool, so it still works
+     * after the flush. A failure of the early flush or the hook wait is logged and never stops
+     * [flush], and an interrupt of the hook thread is cleared before it. From the hook's start the
+     * agent writes its log lines to standard error: the JVM starts the hook of `java.util.logging`
+     * with this one, and that hook resets every handler.
      */
     internal fun shutdown(
         testRun: Boolean,
         scanWorker: Thread?,
         scanWait: Duration,
+        flushEarly: () -> Unit = {},
+        awaitApplicationHooks: () -> Unit = {},
         flush: () -> Unit,
     ) {
+        StandardErrorLogging.on = true
+        if (!testRun) {
+            guarded("early flush", flushEarly)
+            guarded("wait for the application's shutdown hooks", awaitApplicationHooks)
+            Thread.interrupted()
+        }
         flush()
         if (!testRun || scanWorker == null) return
         scanWorker.join(scanWait.toMillis())
@@ -528,6 +568,40 @@ object Agent {
             log.log(
                 Level.WARNING,
                 "otherlode: the static baseline scan did not end within ${scanWait.seconds}s of shutdown, so this test run may send no complete scan",
+            )
+        }
+    }
+
+    private fun guarded(
+        step: String,
+        action: () -> Unit,
+    ) {
+        try {
+            action()
+        } catch (t: Throwable) {
+            log.log(Level.WARNING, "otherlode: the $step failed at shutdown: $t")
+        }
+    }
+
+    private fun timeLeft(
+        startedNanos: Long,
+        endsAfter: Duration,
+    ): Duration = Duration.ofNanos(maxOf(0L, startedNanos + endsAfter.toNanos() - System.nanoTime()))
+
+    /**
+     * Waits up to [cap] for the application's shutdown hooks other than the caller's, or does
+     * nothing when [watch] is null.
+     */
+    internal fun awaitApplicationHooks(
+        watch: ShutdownHookWatch?,
+        cap: Duration,
+    ) {
+        if (watch == null) return
+        if (!watch.awaitOthers(Thread.currentThread(), cap)) {
+            log.log(
+                Level.WARNING,
+                "otherlode: the application's shutdown hooks were still running ${HOOK_WAIT_ENDS.seconds}s into shutdown, " +
+                    "so the final flush runs now and code they run later will not be counted",
             )
         }
     }

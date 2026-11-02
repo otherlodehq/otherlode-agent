@@ -18,6 +18,7 @@ WARNING: otherlode: ignoring unknown agent option 'foo' (known options: [authTok
 Two details trip people up:
 
 - The agent logs its startup failures at ERROR. `java.util.logging` prints that level as `SEVERE`.
+- From the start of the JVM's exit, the agent writes its lines to standard error in this shape, whatever logging your application uses. `java.util.logging` removes its handlers as the JVM starts to exit, so a line sent through it then would be lost.
 - The agent logs at WARNING and ERROR for problems it can name, and at INFO for a few events such as `otherlode: disabled by configuration, nothing will be instrumented or exported`. A healthy agent prints a few INFO lines, such as `otherlode: installing endpoint modules: ...` at startup, and the JVM prints its own CDS warning, described [below](#the-jvm-prints-a-cds-warning-at-startup).
 
 If your application sends `System.Logger` output to Logback, Log4j or another backend through a bridge, such as `log4j-jpl` or `slf4j-jdk-platform-logging`, the agent's lines go there 10 seconds after it starts. Until then it writes its INFO and higher lines to standard error and sends nothing, so the bridge's backend starts only once your `main` has had time to configure it. Without a bridge, lines written during `premain`, before your application configures logging, go to standard error. The agent leaves the choice of `java.util.logging` manager to your application, so a launcher such as JBoss Modules that sets `java.util.logging.manager` in its own `main` still gets its manager. That holds unless the command line sets `java.util.logging.config.file` or `java.util.logging.config.class`: then the JDK creates the manager when the agent first logs.
@@ -157,8 +158,6 @@ The exception under the line names the cause. If neither line appears, the sends
 
 ### The connection fails
 
-At shutdown, `otherlode: an in-flight flush used up the shutdown budget; skipping the final flush` means a flush was still retrying a slow or unreachable collector. The final flush has 10 seconds in total, and hits since the last confirmed flush are lost.
-
 The exception is a `java.net.ConnectException` or a timeout.
 
 - The agent cannot reach the address. Check `exportUrl` from the same host or pod with `curl`, using the same URL.
@@ -240,6 +239,53 @@ otherlode: the static baseline scan did not end within 15s of shutdown, so this 
 ```
 
 This appears only with `testRun` and `staticBaselineEnabled` both on. The shutdown hook waits 15 seconds for the scan, and the scan was still running. Otherlode makes no never-loaded claim from an incomplete scan. Run the scan on a smaller classpath, or accept that this test run reports no complete scan.
+
+## The flush at shutdown is late, missing or not waiting
+
+On a graceful exit the agent's shutdown hook has 28 seconds in all. It flushes at once for up to 5 seconds, waits until 18 seconds in for your application's own shutdown hooks, then runs the final flush with the time left, at least 10 seconds. [What the agent sends](data-sent#when-payloads-are-sent) describes each step. These lines say a step did not go as planned.
+
+```text
+otherlode: an in-flight flush used up the early shutdown flush's budget; skipping it
+```
+
+A scheduled flush was still sending to a slow or unreachable collector when shutdown began, and it did not end within 5 seconds. The agent skips the early flush and goes on to the wait.
+
+```text
+otherlode: a send of the early shutdown flush ran out of time
+```
+
+A send of the early flush had not ended after 5 seconds. The agent stops waiting for it and goes on to the wait.
+
+```text
+otherlode: the application's shutdown hooks were still running 18s into shutdown, so the final flush runs now and code they run later will not be counted
+```
+
+A shutdown hook of your application, such as a graceful drain, had not ended after 18 seconds. The agent runs the final flush anyway. Hits the hook makes after that flush are lost, and Otherlode may report the code it ran as never hit. Shorten the hook.
+
+```text
+otherlode: an in-flight flush used up the shutdown budget; skipping the final flush
+```
+
+The same scheduled flush was still sending when the 28 seconds ran out, so no final flush ran. Hits since the last confirmed flush are lost, and the run reads as one that went silent.
+
+```text
+otherlode: a send of the shutdown flush ran out of time; closing with the run marked pending
+```
+
+A send of the final flush had not ended when its time was nearly up. The agent stops waiting for it and ends the run with a closing batch that says some counts are not confirmed.
+
+```text
+otherlode: cannot watch the application's shutdown hooks, so the final flush will not wait for them and code they run after it will not be counted: java.lang.IllegalStateException: transforming java.lang.ApplicationShutdownHooks failed: ...
+```
+
+This appears at startup. The agent could not install the change that lets it see your application's shutdown hooks. Another Java agent that rewrites `java.lang.ApplicationShutdownHooks` is one cause, and the text after the colon names the cause on your JVM. The agent still flushes at the start of shutdown and runs the final flush at the end, but code your own hooks run in between is not counted. Remove the other agent, or report the line.
+
+From the start of the JVM's exit, the agent writes its lines to standard error, whatever logging your application uses, since `java.util.logging` removes its handlers when the JVM starts to exit. A send that fails then logs in the format of [the agent's log](#read-the-agents-log):
+
+```text
+Nov 02, 2026 2:12:28 AM dev.otherlode.shaded.export.ExportScheduler sendDeltaBatch
+WARNING: otherlode: delta export failed, will retry next flush
+```
 
 ## A test fails with a version mismatch
 

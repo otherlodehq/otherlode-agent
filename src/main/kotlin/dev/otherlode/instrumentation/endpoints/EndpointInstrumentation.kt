@@ -1,6 +1,6 @@
 package dev.otherlode.instrumentation.endpoints
 
-import dev.otherlode.bootLogger
+import dev.otherlode.agentLogger
 import dev.otherlode.bootstrap.OtherlodeEndpoints
 import dev.otherlode.instrumentation.BootstrapHolder
 import dev.otherlode.instrumentation.BootstrapVisibilityGuard
@@ -55,7 +55,7 @@ class EndpointInstrumentation(
     /** Which class loaders cannot see `dev.otherlode.bootstrap`; shared with the method tier. */
     private val bootstrapVisibilityGuard: BootstrapVisibilityGuard = BootstrapVisibilityGuard(),
 ) {
-    private val log by lazy { bootLogger(EndpointInstrumentation::class.java.name) }
+    private val log by agentLogger(EndpointInstrumentation::class.java.name)
     private val agentClassLoader = EndpointInstrumentation::class.java.classLoader
     private val lambdaFactoryHook = LambdaFactoryHook(lambdaFactoryShape, ownRetransformationFailures)
 
@@ -329,7 +329,7 @@ class EndpointInstrumentation(
     }
 
     companion object {
-        private val matcherLog by lazy { bootLogger(EndpointInstrumentation::class.java.name) }
+        private val matcherLog by agentLogger(EndpointInstrumentation::class.java.name)
 
         /**
          * The matcher [install] registers for [module], which calls [onMatched] with [module] when it

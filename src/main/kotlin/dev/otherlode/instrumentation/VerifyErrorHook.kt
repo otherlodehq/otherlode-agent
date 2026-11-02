@@ -1,6 +1,6 @@
 package dev.otherlode.instrumentation
 
-import dev.otherlode.bootLogger
+import dev.otherlode.agentLogger
 import dev.otherlode.bootstrap.OtherlodeVerifierMessages
 import dev.otherlode.verifier.VerifyErrorAdvice
 import net.bytebuddy.agent.builder.AgentBuilder
@@ -29,7 +29,7 @@ class VerifyErrorHook(
     private val ownFailures: OwnRetransformationFailures = OwnRetransformationFailures(),
     private val targetClass: String = "java.lang.VerifyError",
 ) {
-    private val log by lazy { bootLogger(VerifyErrorHook::class.java.name) }
+    private val log by agentLogger(VerifyErrorHook::class.java.name)
     private var transformer: ResettableClassFileTransformer? = null
     private var watch = VerifierRejectionWatch.NOT_WATCHED
 
@@ -44,7 +44,7 @@ class VerifyErrorHook(
             if (!BootstrapHolder.isInstalled()) problem("the bootstrap holder is not installed")
             val target = Class.forName(targetClass, false, null)
             OtherlodeVerifierMessages.warm()
-            addJavaBaseReadEdge(instrumentation)
+            addJavaBaseReadEdge(instrumentation, OtherlodeVerifierMessages::class.java)
             val outcome = RetransformationOutcome(targetClass, ownFailures)
             installed = builder(outcome, target).installOn(instrumentation)
             outcome.failure()?.let { problem(it) }
@@ -114,12 +114,6 @@ class VerifyErrorHook(
         val drained = OtherlodeVerifierMessages.drain()
         check(drained.contains(message)) { "a VerifyError built after the weave was not recorded" }
         return drained
-    }
-
-    private fun addJavaBaseReadEdge(instrumentation: Instrumentation) {
-        val seamModule = OtherlodeVerifierMessages::class.java.module
-        val javaBase = Any::class.java.module
-        instrumentation.redefineModule(javaBase, setOf(seamModule), emptyMap(), emptyMap(), emptySet(), emptyMap())
     }
 
     private fun undo(

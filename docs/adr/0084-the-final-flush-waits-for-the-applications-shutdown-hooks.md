@@ -1,5 +1,5 @@
 ---
-status: accepted, amends ADR 0027 and ADR 0068
+status: accepted, amends ADR 0027, ADR 0068 and ADR 0082
 ---
 
 # The final flush waits for the application's shutdown hooks
@@ -30,3 +30,10 @@ The agent's shutdown hook ran its final flush beside the application's own hooks
 - A shutdown can take up to 28 seconds where it took at most 10, but only when the application's own hooks or the collector are slow. The JVM already waits for every application hook, so a fast shutdown is no slower.
 - A hook that runs past 18 seconds has what it runs after that left uncounted, and the agent says so on standard error.
 - A hook that calls `Runtime.halt` ends the JVM before the final flush. The early flush has then delivered what ran before shutdown began.
+
+## Settled while building it, 2026-11-02
+
+- **The early flush runs on its own send threads,** and starts no send, chunk or batch after its 5 seconds. A send it stopped waiting for no longer holds a thread the final flush needs, so the final flush's content goes out, not only its closing batch. Up to one early send per side can still be in flight while the final flush runs, so an early manifest pass and the final one can overlap. That amends ADR 0082's rule that two passes never read the registry at once: a pass copies what it sends, so the overlap can send an entry twice, which the server stores once.
+- **A flush clears a pending state only when no later flush marked it.** Each flush has a number. Without this, an early send that ended after the final flush began, all its batches confirmed, cleared the pending state a refused final batch had set, and the closing batch said nothing was pending. The hits a hook ran would then read never hit, the false claim this record exists to prevent.
+- **The agent writes to standard error from the start of its shutdown hook,** in every run, not once the application's hooks have ended. The JVM starts `java.util.logging`'s hook at the same time as the agent's, so the early flush's lines were lost too, and so was every line when the weave could not be installed.
+- **The first forward sweep's lag is one flush only once the dependency listing has completed.** Until then the forward pass runs on the first flush and every tenth after it, so a class loaded with no transformer offered it can take ten flushes to reach a manifest.

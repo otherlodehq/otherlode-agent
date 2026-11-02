@@ -381,8 +381,13 @@ val verifyAgentJar by tasks.registering {
             // itself (a private helper is a real call at the woven site), carry no synthetic
             // member (a lambda, a switch over an enum, or an assert compiles to one), and never
             // mention the relocated Kotlin stdlib. Passes trivially while the packages are empty.
-            val adviceSeams = listOf("dev/otherlode/bootstrap/OtherlodeEndpoints", "dev/otherlode/bootstrap/OtherlodeVerifierMessages")
-            val advicePackages = listOf("dev/otherlode/endpoints/", "dev/otherlode/verifier/")
+            val adviceSeams =
+                listOf(
+                    "dev/otherlode/bootstrap/OtherlodeEndpoints",
+                    "dev/otherlode/bootstrap/OtherlodeVerifierMessages",
+                    "dev/otherlode/bootstrap/OtherlodeShutdownHooks",
+                )
+            val advicePackages = listOf("dev/otherlode/endpoints/", "dev/otherlode/verifier/", "dev/otherlode/shutdown/")
             val adviceClassNames = names.filter { name -> advicePackages.any { name.startsWith(it) } && name.endsWith(".class") }
             val adviceProblems =
                 adviceClassNames.flatMap { entryName ->

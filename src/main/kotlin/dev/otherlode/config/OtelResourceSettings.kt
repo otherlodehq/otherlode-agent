@@ -1,6 +1,6 @@
 package dev.otherlode.config
 
-import dev.otherlode.bootLogger
+import dev.otherlode.agentLogger
 import java.io.ByteArrayOutputStream
 import java.lang.System.Logger.Level
 
@@ -42,7 +42,7 @@ internal class OtelResourceSettings(
             ?: ServiceIdentityValues.withinLimit(attributes["deployment.environment"], "deployment.environment in the resource attributes")
 
     companion object {
-        private val log by lazy { bootLogger(OtelResourceSettings::class.java.name) }
+        private val log by agentLogger(OtelResourceSettings::class.java.name)
 
         /**
          * Resolves each of `otel.service.name` and `otel.resource.attributes` as one setting. Each

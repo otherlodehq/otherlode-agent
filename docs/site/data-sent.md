@@ -38,7 +38,13 @@ The agent flushes on a fixed interval, `flushIntervalSeconds`, 60 seconds by def
 
 Each flush sends the delta batch and, if something is waiting, the manifest, at the same time. A flush that finds a dependency whose counts were just delivered sends one more manifest for it, and once the dependency listing is complete, the first flush whose sends were all confirmed sends one more, empty, manifest that says so.
 
-On a graceful JVM exit a shutdown hook runs one last flush. It ends with an empty delta batch that carries `final_flush`. It has a budget of 10 seconds in total, shared with any flush still running, and it skips the static baseline and class listing retries. A flush still working against an unreachable collector can use the whole budget, and then no final flush runs. `kill -9`, an out-of-memory kill and a crash send no final flush.
+On a graceful JVM exit the agent's shutdown hook works to one deadline, 28 seconds from the moment it starts, under Kubernetes' default grace period of 30 seconds. It takes three steps:
+
+1. It flushes at once, for up to 5 seconds, so the counts so far are on their way while your application's own shutdown hooks run. The JVM starts those hooks at the same time as the agent's. A send of this flush that is still going at 5 seconds is no longer waited for, and the flush sends no further hit batch or manifest chunk after that.
+2. It waits for your application's own shutdown hooks to end, until 18 seconds in, so that code they run, such as a framework closing its context, is counted. A hook that has not started within 1 second is not waited for.
+3. It runs one last flush with the time left, at least 10 seconds. The last flush ends with an empty delta batch that carries `final_flush`. Its sends do not wait for a send of the early flush that is still going.
+
+Neither the early flush nor the last flush sends a static baseline or class listing retry. A flush that was already running when shutdown began, and is stuck on an unreachable collector, holds both flushes back: the early flush gives up after 5 seconds, and the last flush gives up when the 28 seconds end. If the agent cannot read the list of your application's shutdown hooks, it logs why at startup, then flushes at once and runs the last flush straight after, without the wait. A test run (`testRun`) neither flushes early nor waits for your hooks. `kill -9`, an out-of-memory kill and a crash send no final flush.
 
 ### Chunk caps
 

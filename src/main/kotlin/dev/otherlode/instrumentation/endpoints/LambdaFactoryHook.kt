@@ -1,6 +1,6 @@
 package dev.otherlode.instrumentation.endpoints
 
-import dev.otherlode.bootLogger
+import dev.otherlode.agentLogger
 import dev.otherlode.bootstrap.OtherlodeEndpoints
 import dev.otherlode.endpoints.lambdafactory.SpinInnerClassAdvice
 import dev.otherlode.instrumentation.BootstrapHolder
@@ -102,7 +102,7 @@ class LambdaFactoryHook(
     private val shape: LambdaFactoryShape = LambdaFactoryShape.JDK,
     private val ownFailures: OwnRetransformationFailures = OwnRetransformationFailures(),
 ) {
-    private val log by lazy { bootLogger(LambdaFactoryHook::class.java.name) }
+    private val log by agentLogger(LambdaFactoryHook::class.java.name)
     private var transformer: ResettableClassFileTransformer? = null
 
     /**

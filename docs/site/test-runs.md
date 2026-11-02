@@ -14,7 +14,7 @@ A test run is a run whose agent has `testRun=true`. The agent probes, records ca
 
 - Every payload of the run carries a flag saying it is a test run. Otherlode uses that flag to leave the run out of every finding about production and to read only its call edges.
 - If no source sets an environment, the environment is `test`. Any environment you set, through an option or through OpenTelemetry's settings, wins over it.
-- At shutdown, the agent sends its final flush, then waits up to 15 seconds for the static baseline scan to end. It logs a warning if the scan has not ended by then. The wait happens only when `staticBaselineEnabled` is on.
+- At shutdown, the agent sends its final flush, then waits up to 15 seconds for the static baseline scan to end. It logs a warning if the scan has not ended by then. The wait happens only when `staticBaselineEnabled` is on. A test run does not flush early or wait for the application's own shutdown hooks.
 
 ## Set up the test JVM
 

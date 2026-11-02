@@ -34,6 +34,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
@@ -60,6 +61,127 @@ class AgentTest {
         }
 
         assertEquals(listOf("flushed", "scan ended"), synchronized(events) { events.toList() })
+    }
+
+    @Test
+    fun `a production run's shutdown flushes early, waits for the application's hooks, then flushes finally`() {
+        val events = mutableListOf<String>()
+
+        Agent.shutdown(
+            testRun = false,
+            scanWorker = null,
+            scanWait = Duration.ofSeconds(1),
+            flushEarly = { events += "early flush" },
+            awaitApplicationHooks = { events += "wait" },
+        ) { events += "final flush" }
+
+        assertEquals(listOf("early flush", "wait", "final flush"), events)
+    }
+
+    @Test
+    fun `the wait for application hooks ends at the cap on a hook that never finishes, and the final flush still runs`() {
+        val never = CountDownLatch(1)
+        val stuck = Thread { never.await() }.apply { isDaemon = true; start() }
+        val watch = ShutdownHookWatch { arrayOf(stuck) }
+        val events = mutableListOf<String>()
+
+        val started = System.nanoTime()
+        Agent.shutdown(
+            testRun = false,
+            scanWorker = null,
+            scanWait = Duration.ofSeconds(1),
+            flushEarly = { events += "early flush" },
+            awaitApplicationHooks = { Agent.awaitApplicationHooks(watch, Duration.ofMillis(300)) },
+        ) { events += "final flush" }
+        val elapsedMillis = (System.nanoTime() - started) / 1_000_000
+        never.countDown()
+
+        assertEquals(listOf("early flush", "final flush"), events)
+        assertTrue(elapsedMillis in 250..5_000, "the wait ended at the cap, took ${elapsedMillis}ms")
+    }
+
+    @Test
+    fun `the agent's own hook is not joined by its wait`() {
+        val result = CompletableFuture<Boolean>()
+        lateinit var self: Thread
+        self = Thread {
+            Agent.awaitApplicationHooks(ShutdownHookWatch { arrayOf(self) }, Duration.ofSeconds(30))
+            result.complete(true)
+        }.apply { isDaemon = true; start() }
+
+        assertTrue(result.get(5, java.util.concurrent.TimeUnit.SECONDS))
+    }
+
+    @Test
+    fun `a test run's shutdown neither flushes early nor waits for hooks`() {
+        val events = mutableListOf<String>()
+
+        Agent.shutdown(
+            testRun = true,
+            scanWorker = null,
+            scanWait = Duration.ofSeconds(1),
+            flushEarly = { events += "early flush" },
+            awaitApplicationHooks = { events += "wait" },
+        ) { events += "final flush" }
+
+        assertEquals(listOf("final flush"), events)
+    }
+
+    @Test
+    fun `the hook thread's interrupt flag is cleared before the final flush`() {
+        var interruptedAtFlush: Boolean? = null
+
+        Agent.shutdown(
+            testRun = false,
+            scanWorker = null,
+            scanWait = Duration.ofSeconds(1),
+            awaitApplicationHooks = { Thread.currentThread().interrupt() },
+        ) { interruptedAtFlush = Thread.currentThread().isInterrupted }
+
+        assertEquals(false, interruptedAtFlush)
+    }
+
+    @Test
+    fun `the agent logs to standard error from the start of the shutdown hook, before the early flush`() {
+        var onAtEarlyFlush = false
+
+        Agent.shutdown(
+            testRun = false,
+            scanWorker = null,
+            scanWait = Duration.ofSeconds(1),
+            flushEarly = { onAtEarlyFlush = StandardErrorLogging.on },
+        ) {}
+
+        assertEquals(true, onAtEarlyFlush)
+    }
+
+    @Test
+    fun `a test run logs to standard error from the start of the shutdown hook too`() {
+        var onAtFlush = false
+
+        Agent.shutdown(testRun = true, scanWorker = null, scanWait = Duration.ofSeconds(1)) { onAtFlush = StandardErrorLogging.on }
+
+        assertEquals(true, onAtFlush)
+    }
+
+    @AfterTest
+    fun leaveLoggingAsFound() {
+        StandardErrorLogging.on = false
+    }
+
+    @Test
+    fun `a failing early flush or hook wait never stops the final flush`() {
+        val events = mutableListOf<String>()
+
+        Agent.shutdown(
+            testRun = false,
+            scanWorker = null,
+            scanWait = Duration.ofSeconds(1),
+            flushEarly = { throw IllegalStateException("early") },
+            awaitApplicationHooks = { throw IllegalStateException("wait") },
+        ) { events += "final flush" }
+
+        assertEquals(listOf("final flush"), events)
     }
 
     @Test

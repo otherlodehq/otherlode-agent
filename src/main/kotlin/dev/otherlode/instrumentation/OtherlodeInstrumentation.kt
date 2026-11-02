@@ -1,6 +1,6 @@
 package dev.otherlode.instrumentation
 
-import dev.otherlode.bootLogger
+import dev.otherlode.agentLogger
 import dev.otherlode.bootstrap.OtherlodeProbeArrays
 import dev.otherlode.config.AgentConfig
 import dev.otherlode.export.BodyKind
@@ -144,7 +144,7 @@ class OtherlodeInstrumentation(
     /** Which class loaders cannot see the probe holder; shared with the endpoint tier. */
     private val bootstrapVisibilityGuard: BootstrapVisibilityGuard = BootstrapVisibilityGuard(),
 ) {
-    private val log by lazy { bootLogger(OtherlodeInstrumentation::class.java.name) }
+    private val log by agentLogger(OtherlodeInstrumentation::class.java.name)
 
     private val supertypeGuard = SupertypeGuard(classFileCache)
 

@@ -33,6 +33,7 @@ import java.time.Duration
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import java.util.logging.Handler
@@ -1600,6 +1601,173 @@ class ExportSchedulerTest {
     }
 
     @Test
+    fun `flushAtShutdownStart sends the counts so far in a flush that is not final, and the final flush follows`() {
+        val registry = ProbeRegistry()
+        val probes = registry.register("com.example.Foo", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "bar", "()V", 1)))
+        probes[0] += 4
+        val exporter = RecordingExporter()
+        val scheduler = ExportScheduler(config, resource, registry, EndpointRegistry(), exporter, noJitter)
+        scheduler.start()
+
+        scheduler.flushAtShutdownStart(Duration.ofSeconds(5))
+        val afterEarly = exporter.deltaBatches.map { it.finalFlush }
+        probes[0] += 1
+        scheduler.flushOnShutdown(Duration.ofSeconds(5))
+
+        assertTrue(afterEarly.isNotEmpty() && afterEarly.none { it }, "the early flush sent batches and none is final: $afterEarly")
+        assertEquals(1, exporter.deltaBatches.count { it.finalFlush }, "the final flush ends the run once")
+        assertTrue(exporter.deltaBatches.last().finalFlush, "and it is the last batch")
+        assertEquals(5L, exporter.deltaBatches.flatMap { it.deltas }.maxOf { it.hitsTotal }, "the hit made after the early flush went out too")
+    }
+
+    @Test
+    fun `flushAtShutdownStart waits for an in-flight scheduled flush and stops the schedule`() {
+        val registry = ProbeRegistry()
+        registry.register("com.example.Foo", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "bar", "()V", 1)))
+        val exporter = GatedExporter()
+        val scheduler = ExportScheduler(config, resource, registry, EndpointRegistry(), exporter, noJitter)
+        scheduler.start()
+        assertTrue(exporter.inFlight.await(5, TimeUnit.SECONDS))
+
+        val early = thread { scheduler.flushAtShutdownStart(Duration.ofSeconds(10)) }
+        Thread.sleep(200)
+        assertEquals(1, exporter.deltaSends.get(), "the early flush must not start while a scheduled flush is in flight")
+
+        exporter.gate.countDown()
+        early.join(10_000)
+
+        assertEquals(false, early.isAlive)
+        assertTrue(exporter.deltaSends.get() >= 2, "the early flush ran after the in-flight one")
+    }
+
+    private fun liveThread(name: String): Boolean = Thread.getAllStackTraces().keys.any { it.name == name && it.isAlive }
+
+    @Test
+    fun `an early flush stops waiting for a send at its own deadline`() {
+        val registry = ProbeRegistry()
+        registry.register("com.example.Foo", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "bar", "()V", 1)))
+        val exporter = GatedExporter()
+        val scheduler = ExportScheduler(config, resource, registry, EndpointRegistry(), exporter)
+
+        val elapsed = measureTimeMillis { scheduler.flushAtShutdownStart(Duration.ofMillis(300)) }
+        Thread.sleep(200)
+        val workerAlive = liveThread("otherlode-shutdown-early-flush")
+        exporter.gate.countDown()
+
+        assertTrue(elapsed in 250..3_000, "returned at the deadline, took ${elapsed}ms")
+        assertEquals(false, workerAlive, "the flush itself ended at the deadline with its send still blocked")
+    }
+
+    @Test
+    fun `the final flush runs although the early flush's last send is still going`() {
+        val registry = ProbeRegistry()
+        val probes = registry.register("com.example.Foo", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "bar", "()V", 1)))
+        probes[0] += 1
+        val exporter = RecordingExporter()
+        val release = CountDownLatch(1)
+        val first = AtomicBoolean(true)
+        exporter.beforeDeltaSend = { if (first.getAndSet(false)) release.await() }
+        val scheduler = ExportScheduler(config, resource, registry, EndpointRegistry(), exporter)
+
+        scheduler.flushAtShutdownStart(Duration.ofMillis(300))
+        scheduler.flushOnShutdown(Duration.ofSeconds(5))
+        val finalSent = exporter.deltaBatches.any { it.finalFlush }
+        release.countDown()
+
+        assertTrue(finalSent, "the closing batch went out while the early flush's send was blocked")
+    }
+
+    @Test
+    fun `an early flush sends no static baseline or class listing retry, and a normal flush does`() {
+        val exporter = RecordingExporter()
+        val baseline = StaticBaselineSender(exporter)
+        baseline.offer(listOf(StaticBaseline(resource, emptyList(), scannedAt = 1L)))
+        val listing = ClassListingSender(exporter)
+        listing.offer(listOf(ClassListing(resource, listOf("com.acme.A"), IncludeRules(listOf("com.acme")), listedAt = 1L)))
+        val scheduler =
+            ExportScheduler(
+                config,
+                resource,
+                ProbeRegistry(),
+                EndpointRegistry(),
+                exporter,
+                staticBaselineSender = baseline,
+                classListingSender = listing,
+            )
+
+        scheduler.flushAtShutdownStart(Duration.ofSeconds(5))
+
+        assertEquals(0, exporter.staticBaselines.size)
+        assertEquals(0, exporter.classListings.size)
+
+        scheduler.flush()
+
+        assertEquals(1, exporter.staticBaselines.size, "the retry is pending and a normal flush sends it")
+        assertEquals(1, exporter.classListings.size)
+    }
+
+    @Test
+    fun `an interrupt of the shutdown thread does not break the final flush`() {
+        val registry = ProbeRegistry()
+        registry.register("com.example.Foo", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "bar", "()V", 1)))
+        val exporter = RecordingExporter()
+        val scheduler = ExportScheduler(config, resource, registry, EndpointRegistry(), exporter, noJitter)
+        scheduler.start()
+        var failure: Throwable? = null
+        val hook =
+            thread {
+                try {
+                    Thread.currentThread().interrupt()
+                    scheduler.flushAtShutdownStart(Duration.ofSeconds(5))
+                    Thread.currentThread().interrupt()
+                    scheduler.flushOnShutdown(Duration.ofSeconds(5))
+                } catch (t: Throwable) {
+                    failure = t
+                }
+            }
+        hook.join(10_000)
+
+        assertEquals(null, failure, "no exception left the shutdown calls")
+        assertTrue(exporter.deltaBatches.any { it.finalFlush }, "the closing batch was sent")
+    }
+
+    @Test
+    fun `an interrupt while the final flush is sending does not end the wait for it`() {
+        val registry = ProbeRegistry()
+        registry.register("com.example.Foo", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "bar", "()V", 1)))
+        val exporter = RecordingExporter()
+        val release = CountDownLatch(1)
+        val entered = CountDownLatch(1)
+        exporter.beforeDeltaSend = {
+            if (it.finalFlush) {
+                entered.countDown()
+                release.await()
+            }
+        }
+        val scheduler = ExportScheduler(config, resource, registry, EndpointRegistry(), exporter)
+        var failure: Throwable? = null
+        val hook =
+            thread {
+                try {
+                    scheduler.flushOnShutdown(Duration.ofSeconds(10))
+                } catch (t: Throwable) {
+                    failure = t
+                }
+            }
+        assertTrue(entered.await(5, TimeUnit.SECONDS))
+
+        hook.interrupt()
+        Thread.sleep(300)
+        val stillWaiting = hook.isAlive
+        release.countDown()
+        hook.join(10_000)
+
+        assertEquals(null, failure)
+        assertTrue(stillWaiting, "the hook kept waiting for the closing batch after the interrupt")
+        assertTrue(exporter.deltaBatches.any { it.finalFlush })
+    }
+
+    @Test
     fun `flush sends every delta batch with finalFlush false`() {
         val registry = ProbeRegistry()
         val probes = registry.register("com.example.Foo", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "bar", "()V", 1)))
@@ -2827,7 +2995,7 @@ class ExportSchedulerTest {
     }
 
     @Test
-    fun `the confirmation pass runs on every flush while the forward direction runs only on the tenth and the final flush`() {
+    fun `the confirmation pass runs on every flush while the forward direction runs on the first flush, every tenth after it and the final flush`() {
         val registry = ProbeRegistry(confirmsDefinitions = true)
         registry.register("com.example.never.Loaded", layoutHash = 1L, probes = listOf(ProbeMeta(ProbeKind.METHOD, "m", "()V", 1)))
         val sweep = RecordingSweep(ByteBuddyAgent.install(), registry, config)
@@ -2842,29 +3010,29 @@ class ExportSchedulerTest {
                 frameworkMarkers = FrameworkMarkerRegistry(emptyList()),
             )
 
-        repeat(10) { scheduler.flush() }
+        repeat(11) { scheduler.flush() }
         scheduler.flushOnShutdown(Duration.ofSeconds(5))
 
         assertEquals(
-            11,
+            12,
             sweep.calls.size,
             "a class awaits confirmation throughout, so every flush plus the final one must reach the sweep",
         )
         assertEquals(
-            List(9) { false } + listOf(true, true),
+            listOf(true) + List(9) { false } + listOf(true, true),
             sweep.calls.map { it.runForwardPass },
-            "only the tenth flush and the final flush run the forward, unreported-class direction",
+            "only the first flush, the eleventh and the final flush run the forward, unreported-class direction",
         )
-        assertEquals(List(10) { false } + listOf(true), sweep.calls.map { it.final })
+        assertEquals(List(11) { false } + listOf(true), sweep.calls.map { it.final })
     }
 
     @Test
-    fun `a forward pass that throws on the tenth flush runs again on the eleventh`() {
+    fun `a forward pass that throws on the first flush runs again on the second`() {
         val registry = ProbeRegistry(confirmsDefinitions = true)
         var calls = 0
         val sweep =
             RecordingSweep(ByteBuddyAgent.install(), registry, config) {
-                if (++calls == 10) error("forward pass failed")
+                if (++calls == 1) error("forward pass failed")
             }
         val scheduler =
             ExportScheduler(
@@ -2878,14 +3046,13 @@ class ExportSchedulerTest {
             )
         registry.register("com.example.never.Loaded", layoutHash = 1L, probes = listOf(ProbeMeta(ProbeKind.METHOD, "m", "()V", 1)))
 
-        repeat(10) { scheduler.flush() }
-        scheduler.flush()
+        repeat(2) { scheduler.flush() }
 
-        assertEquals(listOf(10, 11), forwardPassFlushes(sweep))
+        assertEquals(listOf(1, 2), forwardPassFlushes(sweep))
     }
 
     @Test
-    fun `a forward pass that completes on the tenth flush is not repeated on the eleventh`() {
+    fun `a forward pass that completes on the first flush is not repeated until the eleventh`() {
         val registry = ProbeRegistry(confirmsDefinitions = true)
         val sweep = RecordingSweep(ByteBuddyAgent.install(), registry, config)
         val scheduler =
@@ -2900,9 +3067,9 @@ class ExportSchedulerTest {
             )
         registry.register("com.example.never.Loaded", layoutHash = 1L, probes = listOf(ProbeMeta(ProbeKind.METHOD, "m", "()V", 1)))
 
-        repeat(11) { scheduler.flush() }
+        repeat(12) { scheduler.flush() }
 
-        assertEquals(listOf(10), forwardPassFlushes(sweep))
+        assertEquals(listOf(1, 11), forwardPassFlushes(sweep))
     }
 
     @Test
@@ -2921,8 +3088,11 @@ class ExportSchedulerTest {
             )
 
         scheduler.flush()
+        assertEquals(1, sweep.calls.size, "the first flush runs the forward direction")
 
-        assertTrue(sweep.calls.isEmpty(), "nothing awaits confirmation and this is neither the tenth nor the final flush")
+        scheduler.flush()
+
+        assertEquals(1, sweep.calls.size, "nothing awaits confirmation and this is neither the due flush nor the final flush")
     }
 
     @Test
@@ -2941,14 +3111,14 @@ class ExportSchedulerTest {
                 frameworkMarkers = markers,
             )
 
-        scheduler.flush()
-        assertEquals(1, sweep.calls.size, "an unseen marker keeps the walk running off cadence")
-        assertEquals(false, sweep.calls.single().runForwardPass)
+        repeat(2) { scheduler.flush() }
+        assertEquals(2, sweep.calls.size, "an unseen marker keeps the walk running off cadence")
+        assertEquals(false, sweep.calls.last().runForwardPass)
 
         markers.observe(arrayOf(java.util.ArrayList::class.java), seenAt = 1L)
         scheduler.flush()
 
-        assertEquals(1, sweep.calls.size, "every marker seen, nothing awaits confirmation, not due")
+        assertEquals(2, sweep.calls.size, "every marker seen, nothing awaits confirmation, not due")
     }
 
     @Test
@@ -2967,10 +3137,10 @@ class ExportSchedulerTest {
                 frameworkMarkers = FrameworkMarkerRegistry(emptyList()),
             )
 
-        scheduler.flush()
+        repeat(2) { scheduler.flush() }
 
-        assertEquals(1, sweep.calls.size)
-        assertEquals(false, sweep.calls.single().runForwardPass, "not yet the tenth or the final flush")
+        assertEquals(2, sweep.calls.size)
+        assertEquals(false, sweep.calls.last().runForwardPass, "not the due flush or the final flush")
     }
 
     @Test
@@ -2996,14 +3166,14 @@ class ExportSchedulerTest {
                 frameworkMarkers = FrameworkMarkerRegistry(emptyList()),
             )
 
-        scheduler.flush()
+        repeat(2) { scheduler.flush() }
 
-        assertEquals(1, sweep.calls.size, "the probe registry awaits nothing, the endpoint registry awaits one class")
-        assertEquals(false, sweep.calls.single().runForwardPass)
+        assertEquals(2, sweep.calls.size, "the probe registry awaits nothing, the endpoint registry awaits one class")
+        assertEquals(false, sweep.calls.last().runForwardPass)
     }
 
     @Test
-    fun `the sweep walk is not skipped on the tenth flush even when nothing awaits confirmation`() {
+    fun `the sweep walk is not skipped on a due flush even when nothing awaits confirmation`() {
         val registry = ProbeRegistry(confirmsDefinitions = true)
         val sweep = RecordingSweep(ByteBuddyAgent.install(), registry, config)
         val scheduler =
@@ -3017,17 +3187,21 @@ class ExportSchedulerTest {
                 frameworkMarkers = FrameworkMarkerRegistry(emptyList()),
             )
 
+        scheduler.flush()
+        assertEquals(1, sweep.calls.size)
+        assertTrue(sweep.calls.single().runForwardPass, "the first flush runs the forward direction regardless of confirmation state")
+
         repeat(9) { scheduler.flush() }
-        assertTrue(sweep.calls.isEmpty(), "the first nine flushes have nothing to confirm and are not due")
+        assertEquals(1, sweep.calls.size, "the nine flushes after it have nothing to confirm and are not due")
 
         scheduler.flush()
 
-        assertEquals(1, sweep.calls.size)
-        assertTrue(sweep.calls.single().runForwardPass, "the tenth flush runs the forward direction regardless of confirmation state")
+        assertEquals(2, sweep.calls.size)
+        assertTrue(sweep.calls.last().runForwardPass, "the eleventh flush runs the forward direction regardless of confirmation state")
     }
 
     @Test
-    fun `once the dependency listing completes the sweep runs on every flush, with the directions' cadences unchanged`() {
+    fun `once the dependency listing completes every flush walks the loaded classes and runs the forward direction with the walk`() {
         val registry = ProbeRegistry(confirmsDefinitions = true)
         val sweep = RecordingSweep(ByteBuddyAgent.install(), registry, config)
         val dependencyRegistry = DependencyRegistry().apply { markListingComplete() }
@@ -3047,7 +3221,7 @@ class ExportSchedulerTest {
         scheduler.flushOnShutdown(Duration.ofSeconds(5))
 
         assertEquals(11, sweep.calls.size, "nothing awaits confirmation, but dependency counting needs the walk on every flush")
-        assertEquals(List(9) { false } + listOf(true, true), sweep.calls.map { it.runForwardPass })
+        assertEquals(List(11) { true }, sweep.calls.map { it.runForwardPass }, "the walk is paid anyway, so the forward direction runs with it")
         assertEquals(List(10) { false } + listOf(true), sweep.calls.map { it.final })
     }
 

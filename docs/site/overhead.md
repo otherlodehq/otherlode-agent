@@ -72,14 +72,14 @@ Three pieces of work that would otherwise be startup cost run later:
 
 ## The flush thread and the network
 
-The agent runs one scheduled thread named `otherlode-export` and two send threads named `otherlode-export-send`, all daemon threads. They do not keep your JVM alive. The class listing runs on one more thread for a short time at startup, and with the static baseline on, another thread scans the classpath. A graceful shutdown starts a short-lived thread for the final flush.
+The agent runs one scheduled thread named `otherlode-export` and two send threads named `otherlode-export-send`, all daemon threads. They do not keep your JVM alive. The class listing runs on one more thread for a short time at startup, and with the static baseline on, another thread scans the classpath. A graceful shutdown starts a short-lived thread for the early flush, two send threads named `otherlode-export-early-send` for its sends, and a thread for the final flush, all daemon threads.
 
 On each flush (every 60 seconds by default, with a random offset for the first one so a fleet does not flush at the same instant), the thread:
 
 - copies each changed class's count array,
 - encodes a delta batch, and sends it (a flush with unconfirmed counts sends an empty batch first, and one that catches up ends with another),
 - sends any manifest chunks the collector has not confirmed yet,
-- walks the loaded classes to count each dependency's loaded classes, and checks for classes no transformer saw. The check for classes that never reached a transformer runs on every tenth flush, about every ten minutes at the default interval.
+- walks the loaded classes to count each dependency's loaded classes, and checks for classes no transformer saw. Once the dependency listing has completed, this runs on every flush. When the listing did not complete, the check for classes that never reached a transformer runs on the first flush and then every tenth, about every ten minutes at the default interval.
 
 A timed run of the flush code on a laptop, over 1,488 classes and 26,380 probes, encoding without sending, gave:
 
