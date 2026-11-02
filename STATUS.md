@@ -45,14 +45,14 @@ multi-tenant backend.
    an ingest URL until the front door exists. None of it blocks publishing
    the agent.
 6. **The soak week** (`soak/DESIGN.md`). It runs on VM `soak-1` in GCP
-   project `project-1d40b09b-5fc7-4240-bed`. The first week, from T0
-   2026-11-01 20:17Z, was stopped at 9.6 hours: its smoke found false
-   claims, and the fixes since changed the agent, collector and server.
-   The week starts again once the open false-claim gaps are fixed (gaps
-   5, 7 and 8 in server STATUS, finding-rule drift). A scale-60 smoke of
-   bundle agent `d1c288e`, server `8b4da88`, collector `9fd74fa` runs on
-   `soak-2` from T0 2026-11-02 05:54Z to about 08:42Z. Reports land in
-   `/opt/soak/reports`; `soakctl status` on the VM shows where it is.
+   project `project-1d40b09b-5fc7-4240-bed`, from T0 2026-11-02 14:09Z to
+   2026-11-09 14:09Z, on bundle agent `f573ff0`, server `4e8f6c5`,
+   collector `d62080a`. A scale-60 smoke of the same bundle runs on
+   `soak-2` from T0 2026-11-02 14:09Z to about 16:58Z. Two earlier runs
+   were stopped after their smokes found false claims; the fixes since are
+   agent ADRs 0082 to 0086, collector ADR 0010 and server ADRs 0087 to 0091.
+   Reports land in `/opt/soak/reports`; `soakctl status` on the VM shows
+   where it is.
    A failed check is triaged per `soak/DESIGN.md`. Clean-up is Luke's,
    once the week's final report is read: delete VMs `soak-1` and
    `soak-2`, the project-level SSH key gcloud added on 2026-11-01
