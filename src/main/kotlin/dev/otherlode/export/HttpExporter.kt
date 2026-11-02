@@ -7,6 +7,9 @@ import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
 import java.time.Duration
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
+import java.time.format.DateTimeParseException
 
 /**
  * Sends every payload shape to a collector at [endpoint] over plain HTTP/1.1.
@@ -20,6 +23,10 @@ import java.time.Duration
  * resending the same bytes a moment later cannot change its answer; it only
  * burns the flush budget. Such a 4xx is a refusal, and the
  * [ExportFailedException] it throws says so ([ExportFailedException.refused]).
+ * A 408, 429 or 5xx may carry a `Retry-After` header, in seconds or as an HTTP date. A value of at
+ * most [maxRetryAfter] replaces the backoff for that wait. A longer value ends the send at once with
+ * the same failure an exhausted retry gives, so the next flush resends. A missing, malformed or past
+ * value leaves the backoff in place.
  * If every attempt fails, the last failure propagates to the caller; a retryable status that
  * failed every attempt is not a refusal. The caller is expected to be [ExportScheduler]. It
  * treats the exception as a signal to leave the registry baseline untouched, and retries the
@@ -48,6 +55,7 @@ class HttpExporter(
     private val initialBackoff: Duration = Duration.ofMillis(200),
     private val maxBackoff: Duration = Duration.ofSeconds(30),
     private val requestTimeout: Duration = DEFAULT_TIMEOUT,
+    private val maxRetryAfter: Duration = Duration.ofSeconds(2),
 ) : Exporter {
     private val client: HttpClient by httpClient
 
@@ -74,6 +82,7 @@ class HttpExporter(
         var backoff = initialBackoff
         var lastError: Exception? = null
         for (attempt in 1..maxAttempts) {
+            var retryAfter: Duration? = null
             val status =
                 try {
                     val requestBuilder =
@@ -90,7 +99,9 @@ class HttpExporter(
                         }
                     }
                     val request = requestBuilder.build()
-                    client.send(request, HttpResponse.BodyHandlers.discarding()).statusCode()
+                    val response = client.send(request, HttpResponse.BodyHandlers.discarding())
+                    retryAfter = parseRetryAfter(response.headers().firstValue("Retry-After").orElse(null))
+                    response.statusCode()
                 } catch (e: HeaderRefusedException) {
                     throw ExportFailedException(e.message.orEmpty())
                 } catch (e: Exception) {
@@ -103,9 +114,15 @@ class HttpExporter(
                     throw ExportFailedException("otherlode: unexpected status $status from $uri", status, refused = status in 400..499)
                 }
                 lastError = ExportFailedException("otherlode: unexpected status $status from $uri", status)
+                if (retryAfter != null && retryAfter > maxRetryAfter) break
             }
             if (attempt < maxAttempts) {
-                Thread.sleep(backoff.toMillis())
+                val wait = retryAfter?.takeIf { status != null && it <= maxRetryAfter }
+                if (wait != null) {
+                    Thread.sleep(wait.toMillis())
+                } else {
+                    Thread.sleep(backoff.toMillis())
+                }
                 backoff = minOf(backoff.multipliedBy(2), maxBackoff)
             }
         }
@@ -132,13 +149,33 @@ class HttpExporter(
 
         private val DEFAULT_TIMEOUT: Duration = Duration.ofSeconds(10)
 
+        /** The wait a `Retry-After` value asks for, or null when it is missing, malformed or already past. */
+        internal fun parseRetryAfter(value: String?): Duration? {
+            val text = value?.trim()
+            if (text.isNullOrEmpty()) return null
+            if (text.all { it in '0'..'9' }) {
+                val seconds = text.toLongOrNull() ?: return Duration.ofSeconds(Long.MAX_VALUE / 1000)
+                return Duration.ofSeconds(minOf(seconds, Long.MAX_VALUE / 1000))
+            }
+            val date =
+                try {
+                    ZonedDateTime.parse(text, DateTimeFormatter.RFC_1123_DATE_TIME)
+                } catch (e: DateTimeParseException) {
+                    return null
+                }
+            val wait = Duration.between(ZonedDateTime.now(), date)
+            return wait.takeIf { !it.isNegative && !it.isZero }
+        }
+
         /** 408 and 429 are the two 4xx codes that describe the server's state at that moment, not the request itself. */
         private fun isRetryableStatus(status: Int): Boolean = status >= 500 || status == 408 || status == 429
     }
 }
 
 /**
- * [statusCode] is null when the failure was not an HTTP response at all (for example, every attempt threw).
+ * [statusCode] is null when the failure was not an HTTP response at all. A send whose every attempt
+ * threw without a response rethrows that exception instead, so a caller sees a connection or timeout
+ * error as itself, not as this type.
  * [refused] is true when the collector answered with a 4xx the exporter does not retry, which is a
  * refusal of that one request; it is false for every other failure, a retryable status that failed
  * on every attempt included.

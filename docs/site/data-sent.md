@@ -208,6 +208,8 @@ One send makes up to 5 attempts, waiting 200 ms after the first failure and doub
 
 Every other status, including a `401`, `403`, `404` and a redirect, fails the send at once, because the same bytes would meet the same answer. Only a `2xx` confirms.
 
+When a retried answer carries a `Retry-After` header, in seconds or as an HTTP date, the agent waits that long before the next attempt instead, if it is 2 seconds or less. A longer `Retry-After` ends the send at once, and the next flush sends the payload again. The collector sends one when Otherlode is down or busy, so an outage costs one request per payload a flush, not five.
+
 ### After a failed send
 
 - **Delta batch.** The counts are not marked as delivered. The next flush reports the live cumulative count again, which is how a lost acknowledgement or a late batch heals. A refused request, meaning a `4xx` status the agent does not retry, does not stop the flush: the later delta requests still go, and the refused one is built again on the next flush. Any other failure stops the flush's delta requests at that one; the manifest, sent alongside, is not affected. The requests it did confirm stay confirmed either way. Counts a collector has not confirmed are pending: the next flush leads with an empty delta batch that says so, sent on its own so the news arrives even when the batch with the counts is refused for its size. A flush that then confirms every batch with counts ends with another empty batch saying nothing is pending.

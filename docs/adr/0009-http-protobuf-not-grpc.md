@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted, amended 2026-11-02
 ---
 
 # HTTP and protobuf rather than gRPC
@@ -26,3 +26,5 @@ The 2026-10-07 amendment listed the collector's 400 and 413 answers as they stoo
 - **413** also answers a payload over its kind's element limit (collector ADR 0008), counted before the body is decoded.
 
 The collector's `data-sent` page lists every check in the order it runs them.
+
+Amended 2026-11-02, when the collector began forwarding while the agent waits (collector ADR 0010): a retried answer with a `Retry-After` of 2 seconds or less sets the wait before the next attempt, and a longer one ends the send at once, as an exhausted retry does. Five fast attempts against a collector that reports Otherlode down only multiplied the load on it; the next flush resends from the run's totals, so ending early loses nothing.

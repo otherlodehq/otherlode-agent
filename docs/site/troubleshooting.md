@@ -165,7 +165,7 @@ The exception is a `java.net.ConnectException` or a timeout.
 - You set no `exportUrl`, so the agent uses its default, `http://localhost:4319`. That address reaches nothing in a container that runs no collector. An `exportUrl` the agent cannot use does not cause this: it turns the agent off (see [the export URL is refused](#the-export-url-is-refused)).
 - The collector accepts the connection and never answers. The agent gives up on a request after 10 seconds.
 
-One send makes up to 5 attempts, so a single failure takes several seconds to log. [What the agent sends](data-sent#when-the-collector-is-down-or-refuses-a-payload) describes the retry rules.
+One send makes up to 5 attempts, so a single failure can take several seconds to log. An answer with a `Retry-After` longer than 2 seconds ends the send at once. [What the agent sends](data-sent#when-the-collector-is-down-or-refuses-a-payload) describes the retry rules.
 
 ### The collector answers with a status
 
@@ -178,7 +178,7 @@ The exception message is `otherlode: unexpected status <code> from <exportUrl>/v
 | `301`, `302`, `307`, `308` | The agent does not follow redirects. A proxy that redirects `http` to `https` causes this. Put the final `https://` URL in `exportUrl`. |
 | `400`, `422` | The receiver rejected the content. With the testkit's collector, see [A test fails with a version mismatch](#a-test-fails-with-a-version-mismatch). With another receiver, see its log for the reason. |
 | `413` | The receiver refused the request body as too large. A reverse proxy or gateway in front of the collector has the limit. Raise it. The agent keeps the static baseline and the class listing after a `413` and sends them once the limit is raised, with no restart. The agent keeps each payload under 8 MiB and under 90% of the collector's element limit, so the limit that refused it is in front of the collector, and the fix is on the receiving side. [What the agent sends](data-sent#chunk-caps) lists the caps. Once a count has been refused, the run says on each later payload that its counts are pending, so a collector does not read its zero hits as never hit. Payloads stamped before the first refusal in that flush say nothing of it. |
-| `408`, `429`, `5xx` | The agent retries these within the send. If they persist across flushes, the collector is overloaded or down. |
+| `408`, `429`, `5xx` | The agent retries these within the send, waiting for a `Retry-After` of up to 2 seconds. A longer `Retry-After` ends the send at once, and the next flush sends again. If they persist across flushes, the collector is overloaded or down, or the collector reports that Otherlode is. |
 
 The agent resends the same payload on the next flush for every status above, so a repeated warning means the answer has not changed. The static baseline and the class listing are the exception. For `400` and `422` each logs a warning and stops sending, since the same bytes meet the same answer:
 
