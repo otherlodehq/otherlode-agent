@@ -27,7 +27,7 @@ jobs:
             17
             25
             21
-      - uses: gradle/actions/setup-gradle@3f5f9adaf7d9fecd50b5935e54106014257a94e6 # v6.4.0
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
       # Extends the kotlinc and scalac lists in gradle.properties with the newest stable release of
       # each (kotlinc, scalac 2.12, scalac 2.13, Scala 3) when it is not listed already.
       - id: newest
