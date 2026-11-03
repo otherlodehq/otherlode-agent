@@ -44,7 +44,8 @@ multi-tenant backend.
    the database tier). No collector can be given
    an ingest URL until the front door exists. None of it blocks publishing
    the agent.
-6. **The soak week** (`soak/DESIGN.md`). It runs on VM `soak-1` in GCP
+6. **The soak week** (`soak/DESIGN.md`). It blocks the release: the
+   week and its smokes find gaps, bugs and memory leaks. It runs on VM `soak-1` in GCP
    project `project-1d40b09b-5fc7-4240-bed`, from T0 2026-11-02 21:36Z to
    2026-11-09 21:36Z, on bundle agent `e627f52`, server `c9ea174`,
    collector `9ea7b70`. A scale-60 smoke of the same bundle runs on
@@ -68,6 +69,13 @@ deferrals, gzip, a collector config file, and agent-level redaction
 (the server STATUS's parked "Redaction in the agent", with its trigger).
 
 ## TODO
+
+### An overhead comparison with the OpenTelemetry Java agent
+
+`benchmark-overhead/` gains an OTel Java agent 2.32.0 variant beside
+`none` and the Otherlode agent, so Otherlode's overhead reads against an
+industry-standard tool. A benchmark, not a release blocker. Being
+designed in its own session; Luke OKs the design and the jar download.
 
 ### Tooling: code principles and a refactoring playbook
 
