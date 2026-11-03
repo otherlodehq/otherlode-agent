@@ -126,7 +126,12 @@
         ],
         "never_loaded": [
           "dev.soaktest.shop.LegacyCsvExporter",
-          "dev.soaktest.shop.OldPromotions"
+          "dev.soaktest.shop.OldPromotions",
+          {
+            "class": "dev.soaktest.shop.BrokenConfig",
+            "until": "PT5M",
+            "note": "Nothing loads BrokenConfig before GET /broken runs on shop-1 at PT5M. It reads never loaded until then, and a snapshot can trail the request by the lag."
+          }
         ],
         "never_initialized": [
           "dev.soaktest.shop.TaxTables"

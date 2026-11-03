@@ -727,6 +727,24 @@ class CheckTests(CheckCase):
         self.assertEqual(res["status"], "fail")
         self.assertIn("SoakTestDriver", self.evidence(res))
 
+    def hold_the_target(self, started):
+        self.w.state["runs"][1]["started"] = started
+        self.w.save()
+        self.api.data["never-hit"] = [r for r in self.api.data["never-hit"] if r.get("method_name") != "applyLegacyDiscount"]
+        self.api.data["unreached-clusters"] = self.api.data["unreached-clusters"][:1]
+
+    def test_7_a_starting_run_holds_the_cluster_and_the_never_hit_method_back(self):
+        self.hold_the_target(NOW - 300)
+        res = self.run_check(7)
+        self.assertEqual(res["status"], "pass", res)
+        self.assertIn("could be starting", self.evidence(res))
+
+    def test_7_a_missing_cluster_fails_with_no_run_starting(self):
+        self.hold_the_target(T0)
+        res = self.run_check(7)
+        self.assertEqual(res["status"], "fail")
+        self.assertIn("no cluster rooted at a.Pricing.applyLegacyDiscount", self.evidence(res))
+
     # ---- the whole run
     def test_all_eight_and_the_report_files(self):
         out = io.StringIO()
@@ -851,6 +869,17 @@ class WindowCheckTests(CheckCase):
         violations, _, _ = self.read("fast", truth=truth)
         self.assertFalse(any("a.Legacy" in v for v in violations), "truth named it never loaded before the removal")
         self.assertTrue(any("a.Gone" in v for v in violations), "truth never named it, before or after")
+
+    def test_a_never_loaded_row_for_a_class_that_fails_later_is_explained_only_until_the_lag_after_it(self):
+        truth = json.loads(json.dumps(TRUTH))
+        lists = truth["services"]["soak-shop"]["prod"]
+        lists["never_loaded"].append({"class": "a.Cfg", "until": "PT5M", "note": "n"})
+        lists["failed_to_initialize"].append({"class": "a.Cfg", "from": "PT5M"})
+        self.api.data["never-loaded"].append({"class_name": "a.Cfg"})
+        violations, _, _ = self.read("slow", now=T0 + 302, truth=truth)
+        self.assertFalse(any("a.Cfg" in v for v in violations), violations)
+        violations, _, _ = self.read("slow", now=T0 + 300 + 1800 + 60, truth=truth)
+        self.assertTrue(any("a.Cfg" in v for v in violations), violations)
 
     def test_an_early_window_read_judges_only_never_loaded_and_dependency_rows(self):
         self.api.data["never-hit"].append({"kind": "method", "class_name": "a.BrokenController", "method_name": "broken"})
@@ -1065,6 +1094,24 @@ class TruthTimingTests(unittest.TestCase):
         for at in range(0, 24 * 3600, 600):
             ctx.now = T0 + at
             self.assertFalse(ctx.asserted(unreached) and ctx.asserted(used), at)
+
+    def test_broken_config_reads_never_loaded_until_the_broken_request_and_failed_after(self):
+        entry = next(e for e in self.shop["never_loaded"]
+                     if isinstance(e, dict) and e["class"] == "dev.soaktest.shop.BrokenConfig")
+        broken = next(o for o in cfg.ONE_OFFS if o.id == "broken").at
+        self.assertEqual(cfg.parse_duration(entry["until"]), broken)
+        self.assertTrue(entry["note"])
+        failed = next(e for e in self.shop["failed_to_initialize"] if e["class"] == "dev.soaktest.shop.BrokenConfig")
+        self.assertEqual(cfg.parse_duration(failed["from"]), broken)
+        lag = 1800
+        ctx = check.Ctx(truth=self.truth, now=T0 + broken + 2, t0=T0, scale=1, lag=lag)
+        self.assertFalse(ctx.asserted(entry))
+        self.assertTrue(ctx.may_explain(entry))
+        for at in range(0, int(broken + lag), 30):
+            ctx.now = T0 + at
+            self.assertFalse(ctx.asserted(entry) and ctx.asserted(failed), at)
+        ctx.now = T0 + broken + lag + 60
+        self.assertFalse(ctx.may_explain(entry))
 
     def test_the_new_entries_are_ones_the_checker_understands(self):
         ctx = check.Ctx(truth=self.truth, now=T0 + 80 * 3600, t0=T0, scale=1, lag=1800)

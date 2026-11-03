@@ -162,7 +162,10 @@ fails with the evidence.
    `timeout`. It passes only from the server's stop to 30 seconds after it is back, so a fault on
    the restarted server still fails the check.
 7. **Test run.** `shop-test` leaves every finding as it was, and the never-hit
-   `Pricing.applyLegacyDiscount` reads as called only by tests, naming `SoakTestDriver`.
+   `Pricing.applyLegacyDiscount` reads as called only by tests, naming `SoakTestDriver`. Like check 1,
+   it does not judge the method while a run of its scope could be starting or a crash-cycle run could
+   hold claims back, since a starting run that is live holds its scope's zero-count claims (server
+   ADR 0092). A report then says the method was not judged.
 
 8. **Windows.** The supervisor reads every finding live every 5 seconds for 150 seconds after each
    instance start (a graceful restart, a `kill -9` restart, an upgrade and a crash cycle included),

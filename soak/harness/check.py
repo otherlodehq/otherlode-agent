@@ -1306,6 +1306,10 @@ def check7(ctx):
         bad.append("truth.json names no cluster root called only by tests (%s)" % cfg.TEST_TARGET_METHOD)
     elif settled and ctx.now >= settled[0]["ended"] + ctx.lag and all(ctx.asserted(t[5]) for t in targets):
         for svc, env, cls, meth, tests, _ in targets:
+            if crash_hold(ctx, svc, env) or start_hold(ctx, svc, env, snapshot_as_of(ctx, svc, env)):
+                ev.append("%s.%s: not judged, since a run of %s/%s could be starting and holds its claims back" % (
+                    cls, meth, svc, env))
+                continue
             try:
                 clusters = ctx.reader.rows(svc, env, "unreached-clusters", "clusters", fresh=True)
                 hits = ctx.reader.rows(svc, env, "never-hit", "rows", fresh=True)
