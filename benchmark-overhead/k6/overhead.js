@@ -7,20 +7,51 @@
 // tagged with the third of the window it started in, and the thresholds below make k6 export the
 // request count of the first and last thirds, which the harness compares to tell a warm JVM from
 // one still compiling.
+//
+// With OPEN_RATE_PER_MIN set, the window is one constant-arrival-rate scenario: that many iterations
+// a minute for OPEN_DURATION_S seconds, from OPEN_PRE_ALLOCATED_VUS up to OPEN_MAX_VUS virtual users.
+// The harness passes neither -u nor --duration then, since either would replace the scenario.
 import http from 'k6/http';
 import exec from 'k6/execution';
 import { check } from 'k6';
 
 const WINDOW_MS = Number(__ENV.WINDOW_MS || 0);
+const OPEN_RATE_PER_MIN = Number(__ENV.OPEN_RATE_PER_MIN || 0);
 
-export const options = WINDOW_MS > 0
-  ? {
-    thresholds: {
-      'http_reqs{third:first}': ['count>=0'],
-      'http_reqs{third:last}': ['count>=0'],
+const thirds = {
+  thresholds: {
+    'http_reqs{third:first}': ['count>=0'],
+    'http_reqs{third:last}': ['count>=0'],
+  },
+};
+
+const open = {
+  scenarios: {
+    open: {
+      executor: 'constant-arrival-rate',
+      rate: OPEN_RATE_PER_MIN,
+      timeUnit: '1m',
+      duration: Number(__ENV.OPEN_DURATION_S) + 's',
+      preAllocatedVUs: Number(__ENV.OPEN_PRE_ALLOCATED_VUS),
+      maxVUs: Number(__ENV.OPEN_MAX_VUS),
     },
-  }
-  : {};
+  },
+};
+
+// A fixed rate starts the same number of iterations in every third, so the open loop also exports
+// each third's median latency, which the harness compares instead of the counts.
+const latencyThirds = {
+  thresholds: Object.assign({}, thirds.thresholds, {
+    'http_req_duration{third:first}': ['med>=0'],
+    'http_req_duration{third:last}': ['med>=0'],
+  }),
+};
+
+export const options = OPEN_RATE_PER_MIN > 0
+  ? Object.assign({}, open, latencyThirds)
+  : WINDOW_MS > 0
+    ? thirds
+    : {};
 
 const BASE = 'http://petclinic:9966/petclinic/api';
 const JSON_TYPE = { 'Content-Type': 'application/json' };

@@ -16,7 +16,10 @@ image, on PetClinic's cpuset, `javac` compiles `src/main/resources/ListingCost.j
 and a separate JVM runs it, so the listing meets the cold JVM a starting application gives it. It calls `ClassLister.list()` five times in one JVM against `/app/petclinic.jar`, using the
 config's `includePackages` and no excludes, and times each call with the thread's CPU time and the wall clock.
 The first call is the cold one a starting JVM pays on the agent's listing thread; the agent builds
-the lister in `premain`, so the timed call covers `list()` alone. The harness records its CPU and wall milliseconds, the median
+the lister in `premain`, so the timed call covers `list()` alone. The calls run on a thread of their
+own with nothing touching `java.lang.management` first, so the first pays the platform MXBeans'
+first use as the agent's does. The agent's `onRoots` work, judging the classes its listing watch
+saw, needs an `Instrumentation` and is not timed. The harness records its CPU and wall milliseconds, the median
 CPU milliseconds of the four calls after it, and the number of classes listed. A null listing fails the run
 before any variant starts.
 
@@ -27,8 +30,9 @@ Per run it records:
   running for" seconds, and the CPU the container used and the steal time of its cores over that
   interval. Every variant, `none` included, has the agent jar copied in, so the copy costs them all
   alike.
-- **k6:** throughput and request count, `http_req_duration` average, p95 and p99,
-  `iteration_duration` average and p95, and the checks pass rate. Each request carries a `name`
+- **k6:** throughput, request count and iteration count, `http_req_duration` p50, average, p95 and
+  p99, `iteration_duration` average and p95, the dropped-iteration count (0 in a closed loop), and
+  the checks pass rate. Each request carries a `name`
   tag and the `url` system tag is off, so a path with an id in it does not start a metric series
   of its own.
 - **Per request:** CPU milliseconds, KiB allocated and GC pause per 1000 requests. In a closed loop
@@ -144,12 +148,14 @@ Two configs, one per Gradle invocation (`-Pconfig=headline|ceiling`):
 | `headline` | `org.springframework.samples.petclinic` |
 | `ceiling` | `org.springframework` |
 
-Three variants of each: `none` (no agent), `agent` (default options), and `agent-baseline`
-(`staticBaselineEnabled=true`). Every agent run uses `exportUrl=http://collector:4319` and leaves
-`flushIntervalSeconds` at its default of 60, so three flushes fall in the default 180 s window.
+Four variants are known; `-Pvariants` (below) picks which run. By default three of each config run:
+`none` (no agent), `agent` (default options), and `agent-baseline` (`staticBaselineEnabled=true`).
+The fourth, `otel`, runs the OpenTelemetry Java agent. Every Otherlode run uses
+`exportUrl=http://collector:4319` and leaves `flushIntervalSeconds` at its default of 60, so three
+flushes fall in the default 180 s window.
 
 `-Prepeats=N` (default 6) repeats the whole set. In round `r` the variants run in the order rotated
-by `r`, so no variant always goes first.
+by `r` within the chosen list, so no variant always goes first.
 
 ## Run it locally
 
@@ -174,6 +180,11 @@ git clone https://github.com/otherlodehq/otherlode-collector /path/to/otherlode-
 | `-PwarmupSteadyDrift` | `0.03` | How far a slice's throughput may differ from the slice before it, as a fraction, and still count as steady. |
 | `-PwindowSeconds` | `180` | Length of the measured window. |
 | `-PstartupOnly` | `false` | `true` runs the startup-only mode above. |
+| `-Pvariants` | `none,agent,agent-baseline` | Comma-separated variants to run, in rotation order. Ids are `none`, `agent`, `agent-baseline` and `otel`. Unknown or repeated ids are refused, and `none` must be listed. |
+| `-PotelAgentJar` | none | The OpenTelemetry Java agent jar. Required when `-Pvariants` lists `otel`. When set, every variant's container gets it. |
+| `-Pload` | `closed` | `closed` or `open`; see "Open-loop load". |
+| `-PiterationRate` | calibrated | With `-Pload=open`, the arrival rate in iterations per second. Refused with `-Pload=closed`. |
+| `-PopenRateFraction` | `0.5` | With a calibrated open-loop rate, the share of `none`'s steady closed-loop iteration rate to run at. Above 0 and at most 1. |
 
 Give both paths absolute, as above, or relative to `benchmark-overhead/`: `-p` makes that Gradle's
 start directory, so a path relative to the repository root names nothing. The harness stops if
@@ -185,6 +196,90 @@ parsing and summary code. With just one of them, the build stops with a message.
 The first run builds the PetClinic image (a clone and a Maven build); later invocations reuse
 Docker's layer cache. The build pins PetClinic to commit `afc8fc1d3b8ec8de69414482b3bd70a1da78cb95`.
 
+## Against the OpenTelemetry Java agent
+
+`-Pvariants=none,otel,agent` adds the OpenTelemetry Java agent as a third JVM, so the same app under
+the same load shows what Otherlode costs next to what an accepted industry agent costs.
+`benchmark-overhead/OTEL-COMPARISON.md` is the design and its reasons.
+
+```
+benchmark-overhead/scripts/fetch-otel-agent.sh /path/to/empty-dir
+./gradlew -p benchmark-overhead test \
+  -PagentJar=$PWD/build/libs/otherlode-agent-0.1.0-SNAPSHOT.jar \
+  -PcollectorDir=/path/to/otherlode-collector \
+  -PotelAgentJar=/path/to/empty-dir/opentelemetry-javaagent-2.32.0.jar \
+  -Pconfig=headline -Pvariants=none,otel,agent
+```
+
+`scripts/fetch-otel-agent.sh <empty-dir>` downloads agent 2.32.0 and its `.sha1` and `.asc` from
+Maven Central and checks them against values pinned in the script: the size, the published SHA-1
+against the computed one and the pinned one, the pinned SHA-256, and the signature, using the
+OpenTelemetry Java key fetched from `keyserver.ubuntu.com` into a throwaway keyring and checked
+against its pinned fingerprint. It refuses a directory that exists and is not empty, exits non-zero
+on any mismatch, leaves only the jar in the directory, and prints the jar's path.
+
+The `otel` JVM adds `-javaagent:/app/opentelemetry-javaagent.jar`,
+`-Dotel.exporter.otlp.endpoint=http://otlp-sink:4318` and `-Dotel.service.name=petclinic` before
+`-jar`. Everything else stays at the agent's defaults: every instrumentation on, every request
+traced, and traces, metrics and logs sent over OTLP `http/protobuf`. That is the agent as an
+adopter first installs it, and it does a different job from Otherlode's counting. Sampling would
+lower its cost.
+
+The harness starts the OTLP sink once per matrix, only when `otel` is listed: a container from the
+PetClinic image running `src/main/resources/NoopOtlpSink.java` (`java /app/NoopOtlpSink.java 4318`,
+network alias `otlp-sink`) on the cores Postgres and the collector share. It answers every `POST`
+with 200 and an empty `application/x-protobuf` body after reading and discarding the request, and
+counts the requests and bytes per path. `GET /counts` answers one `<path> <requests> <bytes>` line
+per path; anything else is 404. The agent therefore pays for building, batching, encoding and
+sending its telemetry, and nothing for what a receiver does with it. The harness reads `/counts`
+from the host before and after each `otel` run, startup-only runs included, and records the
+differences as `sinkTraceExports`, `sinkMetricExports`, `sinkLogExports` and `sinkBytes`. A run
+covers the warmup, the window and the shutdown flush, so the counts do too.
+
+When `-PotelAgentJar` is set, every variant's container gets the jar at
+`/app/opentelemetry-javaagent.jar`, as every variant gets the Otherlode jar, so the copy costs none
+of them more than another.
+
+The `summary.md` of a run that includes both `agent` and `otel` gains a last column, `agent vs otel`:
+the change of `agent`'s median against `otel`'s, marked `~` when their minimum-to-maximum ranges
+overlap, in which case the two are comparable on that metric. A footnote says so. The startup-only
+summary has the column too and marks overlap by the same minimum-to-maximum rule, although its
+cells show interquartile ranges. The `k6` metrics gain `httpReqP50Ms`, the median
+`http_req_duration`, ahead of the average.
+
+## Open-loop load
+
+A closed loop at PetClinic's CPU limit makes latency mostly queueing: it moves with throughput.
+`-Pload=open` measures the time an agent adds to a request instead. The warmup is the same
+closed-loop warmup, so the JIT warms as it does in a closed run. The measured window then runs
+k6's `constant-arrival-rate` executor at a fixed rate for `windowSeconds`, with 4 virtual users
+per PetClinic core times 4 pre-allocated and at most 200. `k6/overhead.js` builds the scenario from
+the environment variables `OPEN_RATE_PER_MIN`, `OPEN_DURATION_S`, `OPEN_PRE_ALLOCATED_VUS` and
+`OPEN_MAX_VUS`; the rate is whole iterations a minute, which expresses a fractional rate per second
+exactly. The harness passes neither `-u` nor `--duration` to k6 in this mode, since either would
+replace the scenario. Results go to `benchmark-overhead/build/results/<config>-open/`.
+
+The rate is `-PiterationRate` (iterations per second) when given. Otherwise the harness calibrates
+it once before the matrix: it starts Postgres and a `none` PetClinic as a full run does, runs the
+closed-loop warmup until steady, takes the iterations per second of the last slice, and multiplies it
+by `-PopenRateFraction` (default 0.5). PetClinic then has headroom by design, so the saturation
+rule does not apply. A run is invalid instead when it dropped an iteration, or when PetClinic
+averaged 80% or more of its pinned cores, since its requests then queued. The calibration's warmup
+reaching its cap is not a failure and is recorded as `openIterationRateCalibrationSteady=false`.
+`metadata.properties` records `openIterationRate`, `openIterationsPerMinute` (the rate k6 ran),
+`openIterationRateSource` (`given` or
+`calibrated`), and for a calibrated rate `openIterationRateMeasured` (the closed-loop rate before
+the fraction) and `openRateFraction`; `summary.md` gives the rate and how it was obtained under
+"Open loop rate". The calibration's slices are in `calibration/`.
+
+A fixed rate starts the same number of iterations in every third of the window, so the request
+counts cannot show a JVM still compiling. In an open loop the script also exports each third's
+median request latency, and `warmupDrift` is the first third's median over the last third's: above
+1 the service sped up through the window, below 1 it slowed. The drift rule below judges it with
+the same bounds.
+
+There is no startup-only open loop; the two together are refused.
+
 ## Run it in CI
 
 The `benchmark-overhead` workflow runs nightly on `master` at 03:17 UTC with the defaults, and by
@@ -195,6 +290,23 @@ runs both configs, and the startup-only job, in parallel on
 summary. Results live only in the run: nothing is committed. A run waits for one still in progress
 rather than overlapping it. GitHub disables a public repository's schedule after 60 days without
 activity, and the Actions tab re-enables it.
+
+The `benchmark-otel-comparison` workflow runs only by hand (`workflow_dispatch`), so the nightly job
+is unchanged. It takes `collector_ref` (default `master`), `repeats` (default 6), `startup_repeats`
+(default 21) and `window_seconds` (default 300), and waits for a run of itself in progress. Three
+jobs run at once, each on a runner of its own, each with `-Pvariants=none,otel,agent` on the
+headline config, so every comparison is within one machine:
+
+| Job | Runs | Artifact |
+|---|---|---|
+| `closed` | `-Pload=closed`, `repeats` of 300 s windows | `otel-comparison-closed` |
+| `open` | `-Pload=open`, the calibrated rate, `repeats` of 300 s windows | `otel-comparison-open` |
+| `startup` | `-PstartupOnly=true`, `startup_repeats` | `otel-comparison-startup` |
+
+Each job builds the shaded jar, checks out the collector, runs `scripts/fetch-otel-agent.sh`, which
+fails the job on any mismatch before a run starts, then runs the matrix, uploads
+`benchmark-overhead/build/results` kept 90 days even when a run fails, and adds its `summary.md`
+to the job summary.
 
 ## What makes a run invalid
 
@@ -220,7 +332,16 @@ stay in the results directory, and the summary lists why under "Why the run is i
   the mean of the two. The summary names each completed run that drifted past 10% on its own, and a
   run that failed for another reason after its window names its drift in its failure when it lay
   past 10%.
-- For an agent variant: the agent logged an error (`SEVERE: otherlode:` before Spring Boot sets up
+- For `otel`, in full and startup-only runs: the sink's `sinkTraceExports` difference is 0 (the
+  agent exported no trace); PetClinic's log has no `opentelemetry-javaagent - version:` line (the
+  agent did not start); a line starting `[otel.javaagent` is at ` ERROR `; or any line contains
+  `Failed to export`. The Otherlode rules below, and the skipped-class count, do not apply to it.
+- In an open loop: k6's `dropped_iterations` count (`k6DroppedIterations`, 0 when k6 reports none)
+  is above 0, so the virtual users could not start every iteration at the arrival rate; or
+  PetClinic averaged 80% or more of its pinned cores (`cpuCoresAvg`), so its requests queued.
+  Neither is an environmental problem, and neither takes a retry. The saturation rule above does
+  not apply to an open loop; the drift rule does, on median latency (see "Open-loop load").
+- For an agent variant (`agent`, `agent-baseline`): the agent logged an error (`SEVERE: otherlode:` before Spring Boot sets up
   logging, a line at `ERROR` naming `otherlode:` after); the collector's `/metrics`
   did not show `otherlode_collector_ingest_accepted_total` rising for deltas and for the manifest
   (and the static baseline, for `agent-baseline`), or showed `otherlode_collector_ingest_rejected_total`
@@ -245,7 +366,8 @@ beside the numbers and are not a failure. The summary marks with
 
 ## Results
 
-Under `benchmark-overhead/build/results/<config>/`:
+Under `benchmark-overhead/build/results/<config>/` (`<config>-startup/` for a startup-only run,
+`<config>-open/` for an open-loop run):
 
 - `runs.csv`: one row per run with every metric.
 - `summary.md`: per variant, each metric's median with its minimum and maximum, and the median's
@@ -254,7 +376,9 @@ Under `benchmark-overhead/build/results/<config>/`:
 - `metadata.properties`: the runner's OS, CPU count and CPU model (`runner.cpu.model`,
   `runner.cpu.count`), whether the run was startup-only (`startupOnly`), the PetClinic image's `java -version`, the
   agent jar's SHA-256 and modification time, the agent repository's commit and whether its tree was
-  dirty (a local jar can predate the commit), the class listing's `classListingColdCpuMs`,
+  dirty (a local jar can predate the commit), the variants and load shape (`variants`, `load`), the
+  OpenTelemetry jar's name and SHA-256 (`otel.jar`, `otel.jar.sha256`) when one was given, the
+  open-loop rate (above), the class listing's `classListingColdCpuMs`,
   `classListingColdWallMs`, `classListingWarmCpuMs` and `classListingClasses`, the PetClinic commit, the collector
   directory's commit, resolved image digests, and the repeats, window and warmup settings used.
 - `runs/<variant>-r<N>/`: the raw k6 JSON and log, the JFR file, PetClinic's log, and the

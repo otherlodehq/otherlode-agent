@@ -1,0 +1,180 @@
+name: benchmark-otel-comparison
+
+# Overhead of the Otherlode agent against the OpenTelemetry Java agent and no agent, on one runner per job.
+# Only by hand, so the nightly benchmark-overhead job is unchanged. See benchmark-overhead/OTEL-COMPARISON.md.
+on:
+  workflow_dispatch:
+    inputs:
+      collector_ref:
+        description: Branch, tag or commit of otherlodehq/otherlode-collector to build
+        default: master
+      repeats:
+        description: Runs per variant of the closed-loop and open-loop jobs
+        default: "6"
+      startup_repeats:
+        description: Runs per variant of the startup-only job
+        default: "21"
+      window_seconds:
+        description: Length of the measured window of the closed-loop and open-loop jobs
+        default: "300"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: benchmark-otel-comparison
+  cancel-in-progress: false
+
+jobs:
+  closed:
+    name: closed loop (headline)
+    runs-on: ubuntu-latest
+    # A run is startup, a warmup of 90 to 600 s (it ends once throughput is steady), the window and teardown:
+    # about eight to sixteen minutes at the default 300 s window. 18 runs at the default 6 repeats, plus image builds.
+    # More repeats or a longer window need a longer limit.
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - run: ./gradlew shadowJar --no-daemon
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          repository: otherlodehq/otherlode-collector
+          ref: ${{ inputs.collector_ref || 'master' }}
+          path: otherlode-collector
+      - name: Fetch and verify the OpenTelemetry agent
+        id: otel
+        run: |
+          jar="$(benchmark-overhead/scripts/fetch-otel-agent.sh "$RUNNER_TEMP/otel-agent")"
+          echo "jar=$jar" >> "$GITHUB_OUTPUT"
+      - env:
+          OTEL_JAR: ${{ steps.otel.outputs.jar }}
+          REPEATS: ${{ inputs.repeats || '6' }}
+          WINDOW_SECONDS: ${{ inputs.window_seconds || '300' }}
+        run: >-
+          ./gradlew -p benchmark-overhead test --no-daemon
+          -PagentJar="$(ls "$GITHUB_WORKSPACE"/build/libs/otherlode-agent-*.jar | grep -v -e -plain -e -jmh | head -n 1)"
+          -PcollectorDir="$GITHUB_WORKSPACE/otherlode-collector"
+          -PotelAgentJar="$OTEL_JAR"
+          -Pconfig=headline
+          -Pvariants=none,otel,agent
+          -Prepeats="$REPEATS"
+          -PwindowSeconds="$WINDOW_SECONDS"
+          -Pload=closed
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: otel-comparison-closed
+          path: benchmark-overhead/build/results
+          retention-days: 90
+      - name: Add the summary to the job page
+        if: always()
+        run: cat benchmark-overhead/build/results/headline/summary.md >> "$GITHUB_STEP_SUMMARY" || echo "No summary was written." >> "$GITHUB_STEP_SUMMARY"
+
+  open:
+    name: open loop (headline)
+    runs-on: ubuntu-latest
+    # A run is startup, a warmup of 90 to 600 s (it ends once throughput is steady), the window and teardown:
+    # about eight to sixteen minutes at the default 300 s window. 18 runs at the default 6 repeats, plus image builds.
+    # The open-loop job also calibrates its rate first, one more warmup. More repeats or a longer window need a longer limit.
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - run: ./gradlew shadowJar --no-daemon
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          repository: otherlodehq/otherlode-collector
+          ref: ${{ inputs.collector_ref || 'master' }}
+          path: otherlode-collector
+      - name: Fetch and verify the OpenTelemetry agent
+        id: otel
+        run: |
+          jar="$(benchmark-overhead/scripts/fetch-otel-agent.sh "$RUNNER_TEMP/otel-agent")"
+          echo "jar=$jar" >> "$GITHUB_OUTPUT"
+      - env:
+          OTEL_JAR: ${{ steps.otel.outputs.jar }}
+          REPEATS: ${{ inputs.repeats || '6' }}
+          WINDOW_SECONDS: ${{ inputs.window_seconds || '300' }}
+        run: >-
+          ./gradlew -p benchmark-overhead test --no-daemon
+          -PagentJar="$(ls "$GITHUB_WORKSPACE"/build/libs/otherlode-agent-*.jar | grep -v -e -plain -e -jmh | head -n 1)"
+          -PcollectorDir="$GITHUB_WORKSPACE/otherlode-collector"
+          -PotelAgentJar="$OTEL_JAR"
+          -Pconfig=headline
+          -Pvariants=none,otel,agent
+          -Prepeats="$REPEATS"
+          -PwindowSeconds="$WINDOW_SECONDS"
+          -Pload=open
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: otel-comparison-open
+          path: benchmark-overhead/build/results
+          retention-days: 90
+      - name: Add the summary to the job page
+        if: always()
+        run: cat benchmark-overhead/build/results/headline-open/summary.md >> "$GITHUB_STEP_SUMMARY" || echo "No summary was written." >> "$GITHUB_STEP_SUMMARY"
+
+  startup:
+    name: startup (headline)
+    runs-on: ubuntu-latest
+    # Each start takes under a minute, and a repeat starts each of three variants once. 21 repeats at the default,
+    # plus one warm-up start and the image builds: about 80 minutes. More repeats need a longer limit.
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+      - run: ./gradlew shadowJar --no-daemon
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          repository: otherlodehq/otherlode-collector
+          ref: ${{ inputs.collector_ref || 'master' }}
+          path: otherlode-collector
+      - name: Fetch and verify the OpenTelemetry agent
+        id: otel
+        run: |
+          jar="$(benchmark-overhead/scripts/fetch-otel-agent.sh "$RUNNER_TEMP/otel-agent")"
+          echo "jar=$jar" >> "$GITHUB_OUTPUT"
+      - env:
+          OTEL_JAR: ${{ steps.otel.outputs.jar }}
+          REPEATS: ${{ inputs.startup_repeats || '21' }}
+        run: >-
+          ./gradlew -p benchmark-overhead test --no-daemon
+          -PagentJar="$(ls "$GITHUB_WORKSPACE"/build/libs/otherlode-agent-*.jar | grep -v -e -plain -e -jmh | head -n 1)"
+          -PcollectorDir="$GITHUB_WORKSPACE/otherlode-collector"
+          -PotelAgentJar="$OTEL_JAR"
+          -Pconfig=headline
+          -Pvariants=none,otel,agent
+          -Prepeats="$REPEATS"
+          -PstartupOnly=true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: otel-comparison-startup
+          path: benchmark-overhead/build/results
+          retention-days: 90
+      - name: Add the summary to the job page
+        if: always()
+        run: cat benchmark-overhead/build/results/headline-startup/summary.md >> "$GITHUB_STEP_SUMMARY" || echo "No summary was written." >> "$GITHUB_STEP_SUMMARY"

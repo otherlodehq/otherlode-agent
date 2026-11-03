@@ -118,4 +118,72 @@ class SummaryTest {
         assertEquals("", driftedRunsSection(runs))
         assertTrue("drifted" !in summaryMarkdown(Config.HEADLINE, runs))
     }
+
+    private fun rows(
+        variant: Variant,
+        values: List<Double>,
+    ) = values.mapIndexed { i, v -> run(variant, i + 1, v) }
+
+    @Test
+    fun `agent against otel is a column after the others, marked when their ranges overlap`() {
+        val runs =
+            rows(Variant.NONE, listOf(100.0, 101.0, 99.0)) +
+                rows(Variant.OTEL, listOf(90.0, 92.0, 94.0)) +
+                rows(Variant.AGENT, listOf(93.0, 96.0, 99.0))
+        val md = summaryMarkdown(Config.HEADLINE, runs)
+        val header = md.lines().single { it.startsWith("| metric") }
+        assertTrue(header.endsWith("| agent vs otel |"), header)
+        val row = md.lines().single { it.startsWith("| k6ThroughputPerSec") }
+        assertTrue(row.endsWith("| +4.3% ~ |"), row)
+        assertTrue("~ Otherlode's and OpenTelemetry's ranges overlap: comparable on this metric." in md, md)
+    }
+
+    @Test
+    fun `agent against otel is unmarked when the ranges are apart`() {
+        val runs =
+            rows(Variant.NONE, listOf(100.0, 101.0, 99.0)) +
+                rows(Variant.OTEL, listOf(80.0, 81.0, 82.0)) +
+                rows(Variant.AGENT, listOf(95.0, 96.0, 97.0))
+        val row = summaryMarkdown(Config.HEADLINE, runs).lines().single { it.startsWith("| k6ThroughputPerSec") }
+        assertTrue(row.endsWith("| +18.5% |"), row)
+    }
+
+    @Test
+    fun `the cell is the percent change of the agent median against the otel median`() {
+        assertEquals("-10.0%", agentVsOtelCell(Spread(90.0, 89.0, 91.0), Spread(100.0, 99.0, 101.0)))
+        assertEquals("+10.0% ~", agentVsOtelCell(Spread(110.0, 100.0, 120.0), Spread(100.0, 95.0, 105.0)))
+        assertEquals("n/a", agentVsOtelCell(null, Spread(1.0, 1.0, 1.0)))
+        assertEquals("n/a", agentVsOtelCell(Spread(1.0, 1.0, 1.0), Spread(0.0, 0.0, 0.0)))
+    }
+
+    @Test
+    fun `ranges that only touch overlap`() {
+        assertTrue(rangesOverlap(Spread(1.0, 1.0, 2.0), Spread(3.0, 2.0, 4.0)))
+        assertTrue(!rangesOverlap(Spread(1.0, 1.0, 1.9), Spread(3.0, 2.0, 4.0)))
+    }
+
+    @Test
+    fun `without both agent and otel there is no comparison column or footnote`() {
+        val onlyOtel = summaryMarkdown(Config.HEADLINE, rows(Variant.NONE, listOf(100.0)) + rows(Variant.OTEL, listOf(90.0)))
+        assertTrue("agent vs otel" !in onlyOtel, onlyOtel)
+        assertTrue("comparable on this metric" !in onlyOtel, onlyOtel)
+        assertTrue("otel vs none" in onlyOtel, onlyOtel)
+        val onlyAgent = summaryMarkdown(Config.HEADLINE, rows(Variant.NONE, listOf(100.0)) + rows(Variant.AGENT, listOf(90.0)))
+        assertTrue("agent vs otel" !in onlyAgent, onlyAgent)
+    }
+
+    @Test
+    fun `the skipped classes section names only the Otherlode variants`() {
+        val runs = rows(Variant.NONE, listOf(100.0)) + rows(Variant.OTEL, listOf(90.0)) + rows(Variant.AGENT, listOf(90.0))
+        val md = summaryMarkdown(Config.HEADLINE, runs)
+        assertTrue("- agent: " in md, md)
+        assertTrue("- otel: " !in md, md)
+    }
+
+    @Test
+    fun `the open loop is named in the summary heading`() {
+        val md = summaryMarkdown(Config.HEADLINE, rows(Variant.NONE, listOf(100.0)), Load.OPEN)
+        assertTrue(md.startsWith("## Overhead, headline, open loop"), md)
+        assertTrue(summaryMarkdown(Config.HEADLINE, rows(Variant.NONE, listOf(100.0))).startsWith("## Overhead, headline (includePackages"))
+    }
 }

@@ -89,4 +89,96 @@ class LogScanTest {
         val stat = "usage_usec 12345678\nuser_usec 10000000\nsystem_usec 2345678\nnr_periods 0\n"
         assertEquals(12_345_678L, CgroupCpu.parse(stat).usageMicros)
     }
+
+    private val otelStart =
+        "[otel.javaagent 2026-11-03 12:00:00:000 +0000] [main] INFO io.opentelemetry.javaagent.tooling.VersionLogger - " +
+            "opentelemetry-javaagent - version: 2.32.0"
+
+    @Test
+    fun `a log with the version line and nothing wrong has no otel problem`() {
+        val log =
+            otelStart + "\n" +
+                "[otel.javaagent 2026-11-03 12:00:01:000 +0000] [main] WARN io.opentelemetry.sdk.Foo - something mild\n" +
+                "2026-11-03T12:00:02.000Z ERROR 1 --- [main] o.s.Other : an application error, not the agent's\n"
+        assertEquals(emptyList<String>(), otelLogProblems(log))
+    }
+
+    @Test
+    fun `a log with no version line means the agent did not start`() {
+        val problems = otelLogProblems("Started PetClinicApplication in 6.329 seconds (process running for 6.944)")
+        assertEquals(1, problems.size)
+        assertTrue(problems[0].contains("the OpenTelemetry agent did not start"), problems[0])
+    }
+
+    @Test
+    fun `an otel agent line at ERROR is a problem`() {
+        val log =
+            otelStart + "\n" +
+                "[otel.javaagent 2026-11-03 12:00:05:000 +0000] [OkHttp http://otlp-sink:4318/...] ERROR io.opentelemetry.exporter.internal.http.HttpExporter - Bad thing\n"
+        val problems = otelLogProblems(log)
+        assertEquals(1, problems.size)
+        assertTrue(problems[0].contains("Bad thing"), problems[0])
+        assertTrue(problems[0].contains("ERROR"), problems[0])
+    }
+
+    @Test
+    fun `an application line at ERROR is not the agent's`() {
+        val log = otelStart + "\n2026-11-03T12:00:02.000Z ERROR 1 --- [main] o.s.Other : [otel.javaagent mentioned mid-line] ERROR\n"
+        assertEquals(emptyList<String>(), otelLogProblems(log))
+    }
+
+    @Test
+    fun `a failed export on any line is a problem`() {
+        val log =
+            otelStart + "\n" +
+                "[otel.javaagent 2026-11-03 12:00:05:000 +0000] [BatchSpanProcessor_WorkerThread-1] WARN " +
+                "io.opentelemetry.exporter.internal.http.HttpExporter - Failed to export spans. The request could not be executed. Full error message: Connection refused\n"
+        val problems = otelLogProblems(log)
+        assertEquals(1, problems.size)
+        assertTrue(problems[0].contains("Failed to export"), problems[0])
+        assertTrue(otelLogProblems(otelStart + "\nFailed to export metrics\n").single().contains("Failed to export"))
+    }
+
+    @Test
+    fun `several problems are all reported`() {
+        val problems = otelLogProblems("[otel.javaagent x] ERROR a\nFailed to export b\n")
+        assertEquals(3, problems.size)
+    }
+
+    @Test
+    fun `k6's summary yields the median, the iteration count and the dropped iterations`() {
+        val json =
+            """
+            {"metrics":{
+              "http_reqs":{"count":1000,"rate":55.5},
+              "http_req_duration":{"avg":10.5,"med":9,"p(95)":20,"p(99)":30,"max":99},
+              "iterations":{"count":60,"rate":1.0},
+              "dropped_iterations":{"count":4,"rate":0.07},
+              "checks":{"passes":995,"fails":0,"value":1}
+            }}
+            """.trimIndent()
+        val m = K6Summary.parse(json).metrics
+        assertEquals(9.0, m["httpReqP50Ms"])
+        assertEquals(60.0, m["k6Iterations"])
+        assertEquals(4.0, m["k6DroppedIterations"])
+    }
+
+    @Test
+    fun `no dropped iterations metric means none were dropped`() {
+        val json = """{"metrics":{"http_req_duration":{"avg":10.5,"med":9},"checks":{"value":1}}}"""
+        val m = K6Summary.parse(json).metrics
+        assertEquals(0.0, m["k6DroppedIterations"])
+        assertNull(m["k6Iterations"])
+    }
+
+    @Test
+    fun `p50 is listed before the average`() {
+        assertTrue(MetricNames.K6.indexOf("httpReqP50Ms") in 0 until MetricNames.K6.indexOf("httpReqAvgMs"))
+        assertTrue("httpReqP50Ms" in MetricNames.ALL)
+    }
+
+    @Test
+    fun `the sink metrics are columns`() {
+        assertTrue(MetricNames.ALL.containsAll(listOf("sinkTraceExports", "sinkMetricExports", "sinkLogExports", "sinkBytes")))
+    }
 }

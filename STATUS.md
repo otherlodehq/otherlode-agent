@@ -74,8 +74,13 @@ deferrals, gzip, a collector config file, and agent-level redaction
 
 `benchmark-overhead/` gains an OTel Java agent 2.32.0 variant beside
 `none` and the Otherlode agent, so Otherlode's overhead reads against an
-industry-standard tool. A benchmark, not a release blocker. Being
-designed in its own session; Luke OKs the design and the jar download.
+industry-standard tool. A benchmark, not a release blocker. The design
+(`benchmark-overhead/OTEL-COMPARISON.md`), the harness changes and the
+dispatch-only `benchmark-otel-comparison` workflow are on master. Open:
+a one-repeat CI check, then the full run (6 repeats per variant for the
+closed and open loops, 21 startup-only), and the report with a table per
+metric. The open loop's latency drift rule is new and untried on the
+runner; if it fails there, raise the warmup before loosening the rule.
 
 ### Tooling: code principles and a refactoring playbook
 

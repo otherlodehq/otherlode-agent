@@ -30,6 +30,16 @@ open class InvalidRunException(
 ) : RuntimeException(message)
 
 /**
+ * What the warmup measured: the metrics every run records, the last slice's iterations per second
+ * (null when k6 gave no count or there was no warmup), and whether the rule ended it steady.
+ */
+private class WarmupOutcome(
+    val metrics: Map<String, Double>,
+    val lastSliceIterationsPerSec: Double?,
+    val steady: Boolean,
+)
+
+/**
  * Does not wait at all. The harness polls readiness itself, every 100 ms, because Testcontainers'
  * stock HTTP wait shares a rate limiter that allows one request a second, which would put a one
  * second grain on the startup time.
@@ -83,6 +93,9 @@ class Harness(
     }
     private var javaVersion: String = "unknown"
     private var listingCost: ClassListingCost? = null
+    private var openRate: OpenRate? = null
+    private var calibrationSteady: Boolean? = null
+    private var sink: Box? = null
     private val failures = mutableListOf<String>()
     private val discarded = mutableListOf<DiscardedAttempt>()
 
@@ -92,15 +105,31 @@ class Harness(
         settings.configDir.toFile().deleteRecursively()
         Files.createDirectories(settings.configDir)
         val runs = mutableListOf<RunRecord>()
-        try {
-            if (!settings.startupOnly) listingCost = measureClassListing()
-        } catch (e: Exception) {
-            failures += "class listing: ${e.message ?: e::class.simpleName}"
-            writeResults(runs)
-            throw InvalidRunException("The overhead run is invalid:\n" + failures.joinToString("\n") { " - $it" })
+
+        fun <T> beforeTheMatrix(
+            what: String,
+            step: () -> T,
+        ): T =
+            try {
+                step()
+            } catch (e: Exception) {
+                failures += "$what: ${e.message ?: e::class.simpleName}"
+                writeResults(runs)
+                throw InvalidRunException("The overhead run is invalid:\n" + failures.joinToString("\n") { " - $it" })
+            }
+        if (!settings.startupOnly) listingCost = beforeTheMatrix("class listing") { measureClassListing() }
+        if (settings.load == Load.OPEN) {
+            openRate = beforeTheMatrix("open-loop rate") { settings.iterationRate?.let(OpenRate::given) ?: calibrateOpenRate() }
         }
         val collector = startCollector()
         try {
+            if (Variant.OTEL in settings.variants) {
+                try {
+                    startSink()
+                } catch (e: Exception) {
+                    failures += "OTLP sink: ${e.message ?: e::class.simpleName}"
+                }
+            }
             if (settings.startupOnly) {
                 // The job's first start is the coldest: nothing has read the image's files or started its JDK yet.
                 println("=== ${settings.config.id} warm-up start, not recorded ===")
@@ -111,7 +140,7 @@ class Harness(
                 }
             }
             outer@ for (repeat in 1..(if (failures.isEmpty()) settings.repeats else 0)) {
-                for (variant in rotatedVariants(repeat - 1)) {
+                for (variant in rotatedVariants(repeat - 1, settings.variants)) {
                     println("=== ${settings.config.id} ${variant.id} repeat $repeat of ${settings.repeats} ===")
                     try {
                         runs +=
@@ -129,10 +158,11 @@ class Harness(
                     }
                 }
             }
-            if (failures.isEmpty() && !settings.startupOnly) failures += variantWarmthProblems(runs)
+            if (failures.isEmpty() && !settings.startupOnly) failures += variantWarmthProblems(runs, settings.load)
         } finally {
             writeResults(runs)
             collector.stop()
+            sink?.let { runCatching { it.stop() } }
             network.close()
         }
         if (failures.isNotEmpty()) {
@@ -177,6 +207,65 @@ class Harness(
             .waitingFor(Wait.forHttp("/healthz").forPort(COLLECTOR_PORT))
             .also { it.start() }
 
+    private fun postgresContainer() =
+        PostgreSQLContainer("postgres:16.3")
+            .withNetwork(network)
+            .withNetworkAliases("postgres")
+            .withUsername(DB_USER)
+            .withPassword(DB_PASS)
+            .withDatabaseName("petclinic")
+            .withCreateContainerCmdModifier { it.hostConfig!!.withCpusetCpus(cpuSplit.support) }
+
+    /**
+     * Starts the no-op OTLP sink once for the matrix: a container from the PetClinic image, which has
+     * a JDK, running `NoopOtlpSink.java` on the cores Postgres and the collector share. Returns when
+     * its `/counts` answers.
+     */
+    private fun startSink() {
+        println("Starting the OTLP sink...")
+        val container =
+            Box(petclinicImage)
+                .withNetwork(network)
+                .withNetworkAliases(OTLP_SINK_HOST)
+                .withExposedPorts(OTLP_SINK_PORT)
+                .withCopyFileToContainer(MountableFile.forClasspathResource("NoopOtlpSink.java"), "/app/NoopOtlpSink.java")
+                .withCreateContainerCmdModifier { it.hostConfig!!.withCpusetCpus(cpuSplit.support) }
+                .withCommand("java", "/app/NoopOtlpSink.java", OTLP_SINK_PORT.toString())
+                .waitingFor(NoWait())
+        sink = container
+        container.start()
+        val deadline = System.nanoTime() + Duration.ofSeconds(60).toNanos()
+        while (runCatching { sinkCounts() }.isFailure) {
+            if (!container.isRunning) throw InvalidRunException("the OTLP sink exited at startup: ${container.logs.trim()}")
+            val late = System.nanoTime() > deadline
+            if (late) throw InvalidRunException("the OTLP sink did not answer /counts within 60 s: ${container.logs.trim()}")
+            Thread.sleep(200)
+        }
+    }
+
+    private fun sinkCounts(): SinkCounts {
+        val running = checkNotNull(sink) { "The OTLP sink is not running" }
+        val url = "http://${running.host}:${running.getMappedPort(OTLP_SINK_PORT)}/counts"
+        val res = http.send(HttpRequest.newBuilder(URI(url)).timeout(Duration.ofSeconds(10)).build(), HttpResponse.BodyHandlers.ofString())
+        check(res.statusCode() == 200) { "GET $url answered ${res.statusCode()}" }
+        return SinkCounts.parse(res.body())
+    }
+
+    /**
+     * The problems with the OpenTelemetry agent's run of [variant], and the sink's deltas since
+     * [sinkBefore] added to [metrics]. Empty for any other variant.
+     */
+    private fun otelProblems(
+        variant: Variant,
+        sinkBefore: SinkCounts?,
+        log: String,
+        metrics: MutableMap<String, Double>,
+    ): List<String> {
+        if (variant != Variant.OTEL) return emptyList()
+        metrics += sinkMetrics(checkNotNull(sinkBefore) { "No reading of the sink before the run" }, sinkCounts())
+        return otelLogProblems(log) + listOfNotNull(sinkTraceProblem(metrics))
+    }
+
     private fun collectorMetrics(collector: Box): CollectorMetrics {
         val url = "http://${collector.host}:${collector.getMappedPort(COLLECTOR_PORT)}/metrics"
         val res = http.send(HttpRequest.newBuilder(URI(url)).timeout(Duration.ofSeconds(10)).build(), HttpResponse.BodyHandlers.ofString())
@@ -211,15 +300,9 @@ class Harness(
         Files.createDirectories(dir)
         val metricsBefore = collectorMetrics(collector)
         val collectorLogStart = collector.logs.length
+        val sinkBefore = if (variant == Variant.OTEL) sinkCounts() else null
 
-        val postgres =
-            PostgreSQLContainer("postgres:16.3")
-                .withNetwork(network)
-                .withNetworkAliases("postgres")
-                .withUsername(DB_USER)
-                .withPassword(DB_PASS)
-                .withDatabaseName("petclinic")
-                .withCreateContainerCmdModifier { it.hostConfig!!.withCpusetCpus(cpuSplit.support) }
+        val postgres = postgresContainer()
         val petclinic = petclinicContainer(variant)
         val metrics = linkedMapOf<String, Double>()
         var log = ""
@@ -234,7 +317,7 @@ class Harness(
             metrics += startupCpuAndSteal(petclinic, postgres, stealBefore)
             if (javaVersion == "unknown") javaVersion = exec(petclinic, "java", "-version").trim()
 
-            metrics += warmup(petclinic, dir)
+            metrics += warmup(petclinic, dir).metrics
 
             run(petclinic, "JFR.start", "settings=/app/overhead.jfc", "name=measure")
             val cpuBefore = CgroupCpu.parse(exec(petclinic, "cat", CPU_STAT))
@@ -275,11 +358,14 @@ class Harness(
 
             val problems = mutableListOf<String>()
             if (LogScan.hasVerifyError(log)) problems += "PetClinic's log contains VerifyError"
-            agentErrors(log).takeIf { it.isNotEmpty() }?.let { problems += "the agent logged errors: ${it.joinToString(" | ")}" }
+            if (variant.otherlode) {
+                agentErrors(log).takeIf { it.isNotEmpty() }?.let { problems += "the agent logged errors: ${it.joinToString(" | ")}" }
+            }
             LogScan.bootProcessSeconds(log)?.let { metrics["bootProcessSeconds"] = it }
                 ?: problems.add("PetClinic's log has no Started PetClinicApplication line")
             val metricsAfter = collectorMetrics(collector)
             problems += deliveryProblems(variant, metricsBefore, metricsAfter, collectorLog, metrics)
+            problems += otelProblems(variant, sinkBefore, log, metrics)
             metrics["collectorDeltasAccepted"] = (metricsAfter.accepted("deltas") - metricsBefore.accepted("deltas")).toDouble()
             metrics["collectorManifestAccepted"] = (metricsAfter.accepted("manifest") - metricsBefore.accepted("manifest")).toDouble()
             metrics["collectorBaselineAccepted"] =
@@ -289,14 +375,14 @@ class Harness(
 
             val checks = metrics["checksPassRate"] ?: 0.0
             if (checks < 1.0) problems += "k6 checks pass rate was $checks, below 1.0"
-            warmthProblem(metrics)?.let { problems += it }
-            metrics["cpuCoresAvg"]?.let { saturationProblem(it, cpuSplit.petclinicCores)?.let { p -> problems += p } }
+            warmthProblem(metrics, settings.load)?.let { problems += it }
+            loadProblem(settings.load, metrics, cpuSplit.petclinicCores)?.let { problems += it }
             if (problems.isNotEmpty()) {
                 val message = problems.joinToString("; ")
                 throw if (isEnvironmental(problems)) EnvironmentalRunException(message) else InvalidRunException(message)
             }
 
-            val skipped = if (variant == Variant.NONE) emptyList() else LogScan.skippedClasses(log)
+            val skipped = if (variant.otherlode) LogScan.skippedClasses(log) else emptyList()
             RunRecord(settings.config, variant, repeat, metrics, skipped)
         } catch (e: Exception) {
             throw failed(e, metrics)
@@ -305,7 +391,7 @@ class Harness(
 
     /**
      * What the collector saw of [variant]'s run, between [before] and [after], as problems that make
-     * the run invalid; the manifest counts go into [metrics]. The variant with no agent has none.
+     * the run invalid; the manifest counts go into [metrics]. A variant that does not run the Otherlode agent has none.
      */
     private fun deliveryProblems(
         variant: Variant,
@@ -314,7 +400,7 @@ class Harness(
         collectorLog: String,
         metrics: MutableMap<String, Double>,
     ): List<String> {
-        if (variant == Variant.NONE) return emptyList()
+        if (!variant.otherlode) return emptyList()
         val problems = collectorProblems(before, after, expectBaseline = variant == Variant.AGENT_BASELINE).toMutableList()
         val manifests = ManifestCounts.parse(collectorLog)
         metrics["manifestProbes"] = manifests.probes.toDouble()
@@ -340,14 +426,8 @@ class Harness(
         Files.createDirectories(dir)
         val metricsBefore = collectorMetrics(collector)
         val collectorLogStart = collector.logs.length
-        val postgres =
-            PostgreSQLContainer("postgres:16.3")
-                .withNetwork(network)
-                .withNetworkAliases("postgres")
-                .withUsername(DB_USER)
-                .withPassword(DB_PASS)
-                .withDatabaseName("petclinic")
-                .withCreateContainerCmdModifier { it.hostConfig!!.withCpusetCpus(cpuSplit.support) }
+        val sinkBefore = if (variant == Variant.OTEL) sinkCounts() else null
+        val postgres = postgresContainer()
         val petclinic = petclinicContainer(variant)
         val metrics = linkedMapOf<String, Double>()
         var log = ""
@@ -376,24 +456,16 @@ class Harness(
         Files.writeString(dir.resolve("collector.log"), collectorLog)
         val problems = mutableListOf<String>()
         if (LogScan.hasVerifyError(log)) problems += "PetClinic's log contains VerifyError"
-        agentErrors(log).takeIf { it.isNotEmpty() }?.let { problems += "the agent logged errors: ${it.joinToString(" | ")}" }
+        if (variant.otherlode) {
+            agentErrors(log).takeIf { it.isNotEmpty() }?.let { problems += "the agent logged errors: ${it.joinToString(" | ")}" }
+        }
         LogScan.bootProcessSeconds(log)?.let { metrics["bootProcessSeconds"] = it }
             ?: problems.add("PetClinic's log has no Started PetClinicApplication line")
         problems += deliveryProblems(variant, metricsBefore, collectorMetrics(collector), collectorLog, metrics)
+        problems += otelProblems(variant, sinkBefore, log, metrics)
         if (problems.isNotEmpty()) throw InvalidRunException(problems.joinToString("; "))
-        return RunRecord(
-            settings.config,
-            variant,
-            repeat,
-            metrics,
-            if (variant ==
-                Variant.NONE
-            ) {
-                emptyList()
-            } else {
-                LogScan.skippedClasses(log)
-            },
-        )
+        val skipped = if (variant.otherlode) LogScan.skippedClasses(log) else emptyList()
+        return RunRecord(settings.config, variant, repeat, metrics, skipped)
     }
 
     /**
@@ -452,7 +524,7 @@ class Harness(
 
     /** What a failed run's window drift adds to its failure, when the window ran and its drift lay past [MAX_WINDOW_DRIFT]. */
     private fun driftNote(metrics: MutableMap<String, Double>): String? {
-        if (warmthProblem(metrics) != null) return null
+        if (warmthProblem(metrics, settings.load) != null) return null
         return metrics["warmupDrift"]?.let(::driftBeyondBound)?.let { "its window's last third also drifted $it from its first" }
     }
 
@@ -465,6 +537,7 @@ class Harness(
                 add("-Xmx1g")
                 add("-XX:+UseG1GC")
                 if (options != null) add("-javaagent:/app/otherlode-agent.jar=$options")
+                addAll(otelJvmOptions(variant))
                 add("-jar")
                 add("/app/petclinic.jar")
             }
@@ -478,8 +551,9 @@ class Harness(
             .withEnv("POSTGRES_PASS", DB_PASS)
             .withCopyFileToContainer(MountableFile.forClasspathResource("overhead.jfc"), "/app/overhead.jfc")
             .also {
-                // Every variant gets the jar, so copying it into the container costs the startup time of none as much as the others.
+                // Every variant gets each jar, so copying it into the container costs the startup time of none as much as the others.
                 it.withCopyFileToContainer(MountableFile.forHostPath(settings.agentJar), "/app/otherlode-agent.jar")
+                settings.otelAgentJar?.let { jar -> it.withCopyFileToContainer(MountableFile.forHostPath(jar), OTEL_AGENT_PATH) }
             }.withCreateContainerCmdModifier { cmd: CreateContainerCmd ->
                 cmd.hostConfig!!
                     .withCpusetCpus(cpuSplit.petclinic)
@@ -516,37 +590,71 @@ class Harness(
     private fun warmup(
         petclinic: Box,
         dir: Path,
-    ): Map<String, Double> {
-        if (settings.warmupSeconds <= 0) return mapOf("warmupSecondsUsed" to 0.0, "warmupSteady" to 0.0)
+    ): WarmupOutcome {
+        if (settings.warmupSeconds <= 0) return WarmupOutcome(mapOf("warmupSecondsUsed" to 0.0, "warmupSteady" to 0.0), null, false)
         val slice = settings.warmupSliceSeconds
         println("Warming up in slices of $slice s, at least ${settings.warmupMinSeconds} s and at most ${settings.warmupSeconds} s...")
         run(petclinic, "JFR.start", "settings=/app/overhead.jfc", "name=warmup", "filename=/tmp/warmup.jfr")
         val throughputs = mutableListOf<Double>()
+        var lastIterationsPerSec: Double? = null
         var verdict: WarmupVerdict
         do {
             val summary = dir.resolve("warmup-slice-${throughputs.size + 1}.json")
-            runK6(slice, summary, windowMillis = 0)
-            val requests =
-                K6Summary.parse(Files.readString(summary)).metrics["k6Requests"]
-                    ?: throw InvalidRunException("k6 reported no request count for a warmup slice")
+            runK6(slice, summary, windowMillis = 0, open = null)
+            val sliceMetrics = K6Summary.parse(Files.readString(summary)).metrics
+            val requests = sliceMetrics["k6Requests"] ?: throw InvalidRunException("k6 reported no request count for a warmup slice")
             throughputs += requests / slice
+            lastIterationsPerSec = sliceMetrics["k6Iterations"]?.let { it / slice }
             println("  warmup slice ${throughputs.size}: %.1f requests/s".format(java.util.Locale.ROOT, throughputs.last()))
             verdict =
                 warmupVerdict(throughputs, slice, settings.warmupMinSeconds, settings.warmupSeconds, settings.warmupSteadyDrift)
         } while (verdict == WarmupVerdict.CONTINUE)
         run(petclinic, "JFR.stop", "name=warmup")
         println("Warmup ended after ${throughputs.size * slice} s: ${if (verdict == WarmupVerdict.STEADY) "steady" else "cap reached"}")
-        return linkedMapOf(
-            "warmupSecondsUsed" to (throughputs.size * slice).toDouble(),
-            "warmupSteady" to if (verdict == WarmupVerdict.STEADY) 1.0 else 0.0,
-            "warmupLastSliceThroughputPerSec" to throughputs.last(),
-        )
+        val metrics =
+            linkedMapOf(
+                "warmupSecondsUsed" to (throughputs.size * slice).toDouble(),
+                "warmupSteady" to if (verdict == WarmupVerdict.STEADY) 1.0 else 0.0,
+                "warmupLastSliceThroughputPerSec" to throughputs.last(),
+            )
+        return WarmupOutcome(metrics, lastIterationsPerSec, verdict == WarmupVerdict.STEADY)
+    }
+
+    /**
+     * Measures the closed loop's steady iteration rate on a `none` PetClinic, started as a full run
+     * starts it and warmed as a full run warms it, and returns [BenchSettings.openRateFraction] of
+     * the last warmup slice's rate. A warmup that reached its cap is recorded in the metadata and
+     * not refused: the rate only sets a load with headroom.
+     */
+    private fun calibrateOpenRate(): OpenRate {
+        println("Calibrating the open-loop rate on ${Variant.NONE.id}...")
+        val dir = settings.configDir.resolve("calibration")
+        Files.createDirectories(dir)
+        val postgres = postgresContainer()
+        val petclinic = petclinicContainer(Variant.NONE)
+        try {
+            postgres.start()
+            val t0 = System.nanoTime()
+            petclinic.start()
+            awaitHealthy(petclinic, t0)
+            val outcome = warmup(petclinic, dir)
+            val measured =
+                outcome.lastSliceIterationsPerSec
+                    ?: throw InvalidRunException("the calibration read no iteration count; it needs -PwarmupSeconds above 0")
+            calibrationSteady = outcome.steady
+            return OpenRate.calibrated(measured, settings.openRateFraction)
+        } finally {
+            runCatching { petclinic.stop() }
+            runCatching { postgres.stop() }
+        }
     }
 
     private fun measuredWindow(dir: Path): Map<String, Double> {
-        println("Measuring for ${settings.windowSeconds} s...")
+        val open = openRate?.let { OpenLoopLoad.of(it.perSecond, settings.windowSeconds, cpuSplit.petclinicCores) }
+        val shape = open?.let { ", open loop at ${it.iterationsPerMinute} iterations/min" }.orEmpty()
+        println("Measuring for ${settings.windowSeconds} s$shape...")
         val summary = dir.resolve("k6.json")
-        runK6(settings.windowSeconds, summary, windowMillis = settings.windowSeconds * 1000L)
+        runK6(settings.windowSeconds, summary, windowMillis = settings.windowSeconds * 1000L, open = open)
         return K6Summary.parse(Files.readString(summary)).metrics
     }
 
@@ -554,6 +662,7 @@ class Harness(
         seconds: Int,
         summaryOut: Path?,
         windowMillis: Long,
+        open: OpenLoopLoad?,
     ) {
         val k6 =
             Box(K6_IMAGE)
@@ -562,20 +671,9 @@ class Harness(
                 .withCopyFileToContainer(MountableFile.forHostPath(settings.projectDir.resolve("k6/overhead.js")), "/app/overhead.js")
                 .withCreateContainerCmdModifier { it.withUser("root").hostConfig!!.withCpusetCpus(cpuSplit.k6) }
                 .withEnv("WINDOW_MS", windowMillis.toString())
-                .withCommand(
-                    "run",
-                    "-u",
-                    cpuSplit.virtualUsers.toString(),
-                    "--system-tags",
-                    K6_SYSTEM_TAGS,
-                    "--duration",
-                    "${seconds}s",
-                    "--summary-export",
-                    "/tmp/k6.json",
-                    "--summary-trend-stats",
-                    "avg,med,p(95),p(99),max",
-                    "/app/overhead.js",
-                ).withStartupCheckStrategy(OneShotStartupCheckStrategy().withTimeout(Duration.ofSeconds(seconds + 300L)))
+                .withCommand(*k6Arguments(seconds, cpuSplit.virtualUsers, open).toTypedArray())
+                .withStartupCheckStrategy(OneShotStartupCheckStrategy().withTimeout(Duration.ofSeconds(seconds + 300L)))
+        open?.env()?.forEach { (name, value) -> k6.withEnv(name, value) }
         try {
             k6.start()
             if (summaryOut != null) {
@@ -633,8 +731,13 @@ class Harness(
         Files.writeString(dir.resolve("runs.csv"), runsCsv(runs))
         val summary =
             StringBuilder(
-                if (settings.startupOnly) startupSummaryMarkdown(settings.config, runs) else summaryMarkdown(settings.config, runs),
+                if (settings.startupOnly) {
+                    startupSummaryMarkdown(settings.config, runs)
+                } else {
+                    summaryMarkdown(settings.config, runs, settings.load)
+                },
             )
+        summary.append(openRateSection(openRate))
         summary.append(retriesSection(discarded))
         summary.append(classListingSection(listingCost) { cpuSplit.petclinic })
         if (failures.isNotEmpty()) {
@@ -671,8 +774,9 @@ class Harness(
             }.getOrDefault("unknown")
 
         val hostCpuInfo = runCatching { CpuInfo.parse(Files.readString(Path.of("/proc/cpuinfo"))) }.getOrNull()
-        val sha =
-            MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(settings.agentJar)).joinToString("") { "%02x".format(it) }
+
+        fun sha256(file: Path) =
+            MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(file)).joinToString("") { "%02x".format(it) }
         val props =
             linkedMapOf(
                 "runner.os" to "${System.getProperty("os.name")} ${System.getProperty("os.version")} ${System.getProperty("os.arch")}",
@@ -686,7 +790,7 @@ class Harness(
                 "docker.memoryBytes" to info.memTotal.toString(),
                 "petclinic.java.version" to javaVersion.lines().joinToString(" | "),
                 "agent.jar" to settings.agentJar.fileName.toString(),
-                "agent.jar.sha256" to sha,
+                "agent.jar.sha256" to sha256(settings.agentJar),
                 "agent.repo.commit" to git(settings.agentRepoDir, "rev-parse", "HEAD"),
                 // The jar may predate the commit: CI builds it fresh, a local run may not.
                 "agent.repo.dirty" to
@@ -705,6 +809,8 @@ class Harness(
                 "image.postgres" to digest("postgres:16.3"),
                 "image.k6" to digest(K6_IMAGE),
                 "config" to settings.config.id,
+                "variants" to settings.variants.joinToString(",") { it.id },
+                "load" to settings.load.id,
                 "includePackages" to settings.config.includePackages,
                 "repeats" to settings.repeats.toString(),
                 "startupOnly" to settings.startupOnly.toString(),
@@ -714,6 +820,12 @@ class Harness(
                 "warmupSteadyDrift" to settings.warmupSteadyDrift.toString(),
                 "windowSeconds" to settings.windowSeconds.toString(),
             )
+        settings.otelAgentJar?.let {
+            props["otel.jar"] = it.fileName.toString()
+            props["otel.jar.sha256"] = sha256(it)
+        }
+        openRate?.let { props += it.properties() }
+        calibrationSteady?.let { props["openIterationRateCalibrationSteady"] = it.toString() }
         listingCost?.let { props += it.properties() }
         return props.entries.joinToString("\n", postfix = "\n") { "${it.key}=${it.value}" }
     }
@@ -727,9 +839,6 @@ class Harness(
         const val JFR_PATH = "/tmp/measure.jfr"
         const val CPU_STAT = "/sys/fs/cgroup/cpu.stat"
 
-        // k6's default system tags without `url`, which would start a metric series per id in a path.
-        const val K6_SYSTEM_TAGS =
-            "proto,subproto,status,method,name,group,check,error,error_code,tls_version,scenario,service,expected_response"
         const val PETCLINIC_SHA = "afc8fc1d3b8ec8de69414482b3bd70a1da78cb95"
         const val MIB = 1024.0 * 1024.0
     }

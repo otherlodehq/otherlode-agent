@@ -8,7 +8,10 @@ object MetricNames {
         listOf(
             "k6ThroughputPerSec",
             "k6Requests",
+            "k6Iterations",
+            "k6DroppedIterations",
             "warmupDrift",
+            "httpReqP50Ms",
             "httpReqAvgMs",
             "httpReqP95Ms",
             "httpReqP99Ms",
@@ -59,8 +62,9 @@ object MetricNames {
             "manifestEndpoints",
             "manifestSkippedClasses",
         )
+    val SINK = listOf("sinkTraceExports", "sinkMetricExports", "sinkLogExports", "sinkBytes")
     val WARMUP = listOf("warmupSecondsUsed", "warmupSteady", "warmupLastSliceThroughputPerSec")
-    val ALL = K6 + JFR + PROCESS + COLLECTOR + WARMUP
+    val ALL = K6 + JFR + PROCESS + COLLECTOR + SINK + WARMUP
 }
 
 /**
@@ -109,6 +113,29 @@ internal fun num(v: Double): String =
 
 private fun fmt(s: Spread) = "${num(s.median)} (${num(s.min)} to ${num(s.max)})"
 
+/** Whether the minimum-to-maximum ranges of [a] and [b] share a value. */
+fun rangesOverlap(
+    a: Spread,
+    b: Spread,
+): Boolean = a.min <= b.max && b.min <= a.max
+
+/**
+ * The `agent vs otel` cell: the change of [agent]'s median against [otel]'s, followed by ` ~` when
+ * the two ranges overlap, or `n/a` when either is missing or [otel]'s median is zero.
+ */
+fun agentVsOtelCell(
+    agent: Spread?,
+    otel: Spread?,
+): String {
+    if (agent == null || otel == null) return "n/a"
+    val change = percentChange(otel.median, agent.median) ?: return "n/a"
+    return signed(change) + if (rangesOverlap(agent, otel)) " ~" else ""
+}
+
+private const val OVERLAP_NOTE = "~ Otherlode's and OpenTelemetry's ranges overlap: comparable on this metric."
+
+internal fun comparesAgentWithOtel(variants: List<Variant>) = Variant.AGENT in variants && Variant.OTEL in variants
+
 internal fun signed(v: Double): String {
     val text = String.format(Locale.ROOT, "%+.1f%%", v).replace("+-", "-")
     return if (text == "-0.0%" || text == "+0.0%") "0.0%" else text
@@ -133,11 +160,13 @@ fun runsCsv(runs: List<RunRecord>): String {
 fun summaryMarkdown(
     config: Config,
     runs: List<RunRecord>,
+    load: Load = Load.CLOSED,
 ): String {
     val variants = Variant.entries.filter { v -> runs.any { it.variant == v } }
     val byVariant = variants.associateWith { v -> runs.filter { it.variant == v } }
     val sb = StringBuilder()
-    sb.append("## Overhead, ${config.id} (includePackages=${config.includePackages})\n\n")
+    val shape = if (load == Load.OPEN) ", open loop" else ""
+    sb.append("## Overhead, ${config.id}$shape (includePackages=${config.includePackages})\n\n")
     sb.append("Runs per variant: ").append(variants.joinToString(", ") { "${it.id} ${byVariant.getValue(it).size}" }).append("\n\n")
     val header = StringBuilder("| metric |")
     val rule = StringBuilder("|---|")
@@ -148,6 +177,10 @@ fun summaryMarkdown(
             header.append(" ${v.id} vs none |")
             rule.append("---|")
         }
+    }
+    if (comparesAgentWithOtel(variants)) {
+        header.append(" agent vs otel |")
+        rule.append("---|")
     }
     sb
         .append(header)
@@ -168,16 +201,18 @@ fun summaryMarkdown(
                 row.append(" ${change?.let { signed(it) + if (inNoise) " *" else "" } ?: "n/a"} |")
             }
         }
+        if (comparesAgentWithOtel(variants)) row.append(" ${agentVsOtelCell(spreads[Variant.AGENT], spreads[Variant.OTEL])} |")
         sb.append(row).append('\n')
     }
     if (Variant.NONE in variants && byVariant.getValue(Variant.NONE).size > 1) {
         sb.append("\n\\* The median lies inside `none`'s own minimum to maximum: not told apart from run-to-run noise.\n")
     }
+    if (comparesAgentWithOtel(variants)) sb.append("\n$OVERLAP_NOTE\n")
     sb.append(warmupSection(variants, byVariant))
     sb.append(driftedRunsSection(runs))
     sb.append("\n### Classes the agent skipped\n\n")
     var any = false
-    for (v in variants.filter { it != Variant.NONE }) {
+    for (v in variants.filter { it.otherlode }) {
         val counts = byVariant.getValue(v).map { it.metrics["manifestSkippedClasses"]?.toLong() ?: 0L }
         val union = byVariant.getValue(v).flatMap { it.skippedClasses }.distinct()
         sb.append("- ${v.id}: ${counts.joinToString(", ")} per run, from the manifests\n")

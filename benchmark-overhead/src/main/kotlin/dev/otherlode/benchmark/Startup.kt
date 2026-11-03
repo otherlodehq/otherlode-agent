@@ -108,6 +108,10 @@ fun startupSummaryMarkdown(
             rule.append("---|")
         }
     }
+    if (comparesAgentWithOtel(variants)) {
+        header.append(" agent vs otel |")
+        rule.append("---|")
+    }
     sb
         .append(header)
         .append('\n')
@@ -128,7 +132,14 @@ fun startupSummaryMarkdown(
                 )
             }
         }
+        if (comparesAgentWithOtel(variants)) {
+            val spreadOf = { v: Variant -> spread(byVariant.getValue(v).mapNotNull { it.metrics[name] }) }
+            row.append(" ${agentVsOtelCell(spreadOf(Variant.AGENT), spreadOf(Variant.OTEL))} |")
+        }
         sb.append(row).append('\n')
+    }
+    if (comparesAgentWithOtel(variants)) {
+        sb.append("\n~ Otherlode's and OpenTelemetry's minimum-to-maximum ranges overlap: comparable on this metric.\n")
     }
     return sb.toString()
 }

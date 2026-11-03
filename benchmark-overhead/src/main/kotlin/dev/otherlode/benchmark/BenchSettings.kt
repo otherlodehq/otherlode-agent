@@ -19,11 +19,36 @@ data class BenchSettings(
     val projectDir: Path,
     val agentRepoDir: Path,
     val startupOnly: Boolean = false,
+    val variants: List<Variant> = DEFAULT_VARIANTS,
+    val otelAgentJar: Path? = null,
+    val load: Load = Load.CLOSED,
+    val iterationRate: Double? = null,
+    val openRateFraction: Double = DEFAULT_OPEN_RATE_FRACTION,
 ) {
-    /** Where this config's results land: a startup-only run keeps its own directory. */
-    val configDir: Path get() = resultsDir.resolve(if (startupOnly) "${config.id}-startup" else config.id)
+    init {
+        require(Variant.OTEL !in variants || otelAgentJar != null) { "-PotelAgentJar is required when -Pvariants lists otel" }
+        require(!(startupOnly && load == Load.OPEN)) { "-Pload=open has no startup-only mode: drop -PstartupOnly or -Pload" }
+        require(iterationRate == null || load == Load.OPEN) { "-PiterationRate sets the open loop's rate and needs -Pload=open" }
+        require(iterationRate == null || iterationRate > 0) { "-PiterationRate must be above zero" }
+        require(iterationRate == null || perMinute(iterationRate) >= 1) { "-PiterationRate rounds to no iteration a minute" }
+        require(openRateFraction > 0 && openRateFraction <= 1) { "-PopenRateFraction must be above 0 and at most 1" }
+    }
+
+    /** Where this config's results land: a startup-only run and an open-loop run each keep their own directory. */
+    val configDir: Path
+        get() =
+            resultsDir.resolve(
+                when {
+                    startupOnly -> "${config.id}-startup"
+                    load == Load.OPEN -> "${config.id}-open"
+                    else -> config.id
+                },
+            )
 
     companion object {
+        /** The share of `none`'s steady closed-loop iteration rate the open loop runs at unless `-PopenRateFraction` says otherwise. */
+        const val DEFAULT_OPEN_RATE_FRACTION = 0.5
+
         fun fromSystemProperties(): BenchSettings {
             fun prop(name: String) =
                 System.getProperty(name) ?: error("System property $name is not set; run through the benchmark-overhead Gradle build")
@@ -49,6 +74,14 @@ data class BenchSettings(
                 projectDir = Paths.get(prop("bench.projectDir")),
                 agentRepoDir = Paths.get(prop("bench.agentRepoDir")),
                 startupOnly = prop("bench.startupOnly").toBooleanStrict(),
+                variants = parseVariants(prop("bench.variants")),
+                otelAgentJar =
+                    System.getProperty("bench.otelAgentJar")?.let { Paths.get(it) }?.also {
+                        require(Files.isRegularFile(it)) { "-PotelAgentJar names no file: $it" }
+                    },
+                load = Load.parse(prop("bench.load")),
+                iterationRate = System.getProperty("bench.iterationRate")?.toDouble(),
+                openRateFraction = prop("bench.openRateFraction").toDouble(),
             )
         }
     }

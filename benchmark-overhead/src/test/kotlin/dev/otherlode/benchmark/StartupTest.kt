@@ -111,4 +111,29 @@ class StartupTest {
         val steal = md.lines().single { it.startsWith("| startupStealMs") }
         assertTrue(steal.endsWith("| n/a |"), steal)
     }
+
+    @Test
+    fun `the startup summary compares agent with otel by minimum-to-maximum range`() {
+        val runs =
+            listOf(10000.0, 11000.0, 12000.0).mapIndexed { i, ms -> run(Variant.NONE, i + 1, ms) } +
+                listOf(11000.0, 12000.0, 13000.0).mapIndexed { i, ms -> run(Variant.OTEL, i + 1, ms) } +
+                listOf(14000.0, 15000.0, 16000.0).mapIndexed { i, ms -> run(Variant.AGENT, i + 1, ms) }
+        val md = startupSummaryMarkdown(Config.HEADLINE, runs)
+        val header = md.lines().single { it.startsWith("| metric") }
+        assertTrue(header.endsWith("| agent vs otel |"), header)
+        val row = md.lines().single { it.startsWith("| startupMs") }
+        assertTrue(row.endsWith("| +25.0% |"), row)
+    }
+
+    @Test
+    fun `an overlap in the startup comparison is marked and footnoted`() {
+        val runs =
+            listOf(10000.0, 11000.0, 12000.0).mapIndexed { i, ms -> run(Variant.OTEL, i + 1, ms) } +
+                listOf(11500.0, 12500.0, 13500.0).mapIndexed { i, ms -> run(Variant.AGENT, i + 1, ms) } +
+                listOf(9000.0).mapIndexed { i, ms -> run(Variant.NONE, i + 1, ms) }
+        val md = startupSummaryMarkdown(Config.HEADLINE, runs)
+        val row = md.lines().single { it.startsWith("| startupMs") }
+        assertTrue(row.endsWith("| +13.6% ~ |"), row)
+        assertTrue("~ Otherlode's and OpenTelemetry's minimum-to-maximum ranges overlap: comparable on this metric." in md, md)
+    }
 }

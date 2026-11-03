@@ -4,8 +4,8 @@ import java.nio.file.Path
 import java.util.Locale
 
 /**
- * How far the median over a variant's repeats of `warmupDrift`, the window's last-third request
- * count over its first-third count, may lie from 1 in either direction before the variant's windows
+ * How far the median over a variant's repeats of `warmupDrift` (see [warmthProblem]: in a closed loop
+ * the window's last-third request count over its first-third count) may lie from 1 in either direction before the variant's windows
  * are judged unsteady: rising means the JIT was still compiling when measurement began, falling means
  * something degraded through it. A single run beyond it is named in the summary, and with three or
  * more repeats it does not fail its variant.
@@ -65,12 +65,25 @@ fun perRequest(metrics: Map<String, Double>): Map<String, Double> {
 }
 
 /**
- * Why the run's window counts cannot be judged, or null when they can: k6 gave no request count for
- * a third, or the first third served nothing. Records the ratio of last to first in [metrics] as
- * `warmupDrift`; whether that drift is acceptable is judged over a variant's repeats by
- * [variantWarmthProblem].
+ * Why the run's window cannot be judged for steadiness, or null when it can, recording its drift in
+ * [metrics] as `warmupDrift`, where above 1 means the service was still speeding up and below 1
+ * means it slowed. A closed loop's drift is the last third's request count over the first's; k6
+ * gave no count for a third, or the first served nothing, is a problem. An open loop starts the same
+ * number of iterations in every third, so its drift is the first third's median request latency over
+ * the last's; a missing or zero median is a problem. Whether a drift is acceptable is judged over a
+ * variant's repeats by [variantWarmthProblem].
  */
-fun warmthProblem(metrics: MutableMap<String, Double>): String? {
+fun warmthProblem(
+    metrics: MutableMap<String, Double>,
+    load: Load = Load.CLOSED,
+): String? {
+    if (load == Load.OPEN) {
+        val first = metrics["k6FirstThirdMedMs"] ?: return "k6 reported no median latency for the window's first third"
+        val last = metrics["k6LastThirdMedMs"] ?: return "k6 reported no median latency for the window's last third"
+        if (last <= 0) return "the window's last third reported a median latency of zero"
+        metrics["warmupDrift"] = first / last
+        return null
+    }
     val first = metrics["k6FirstThirdRequests"] ?: return "k6 reported no request count for the window's first third"
     val last = metrics["k6LastThirdRequests"] ?: return "k6 reported no request count for the window's last third"
     if (first <= 0) return "the window's first third served no request"
@@ -89,6 +102,7 @@ fun warmthProblem(metrics: MutableMap<String, Double>): String? {
 fun variantWarmthProblem(
     variant: Variant,
     runs: List<RunRecord>,
+    load: Load = Load.CLOSED,
 ): String? {
     val drifts = runs.mapNotNull { it.metrics["warmupDrift"] }
     if (drifts.size < runs.size) return "${variant.id}: ${runs.size - drifts.size} of ${runs.size} runs recorded no warmupDrift"
@@ -96,10 +110,10 @@ fun variantWarmthProblem(
     return when {
         median > 1 + MAX_WINDOW_DRIFT -> {
             val more =
-                "${variant.id}: the median window's last third served %.1f%% more requests than its first".format(
-                    Locale.ROOT,
-                    (median - 1) * 100,
-                )
+                when (load) {
+                    Load.CLOSED -> "${variant.id}: the median window's last third served %.1f%% more requests than its first"
+                    Load.OPEN -> "${variant.id}: the median window's last third had a median latency %.1f%% lower than its first"
+                }.format(Locale.ROOT, if (load == Load.OPEN) (1 - 1 / median) * 100 else (median - 1) * 100)
             val steady = runs.count { it.metrics["warmupSteady"] == 1.0 }
             val capped = runs.size - steady
             val advice =
@@ -113,8 +127,15 @@ fun variantWarmthProblem(
         }
 
         median < 1 - MAX_WINDOW_DRIFT -> {
-            "${variant.id}: the median window's last third served %.1f%% fewer requests than its first, so the service degraded through the window"
-                .format(Locale.ROOT, (1 - median) * 100)
+            when (load) {
+                Load.CLOSED -> {
+                    "${variant.id}: the median window's last third served %.1f%% fewer requests than its first, so the service degraded through the window"
+                }
+
+                Load.OPEN -> {
+                    "${variant.id}: the median window's last third had a median latency %.1f%% higher than its first, so the service degraded through the window"
+                }
+            }.format(Locale.ROOT, if (load == Load.OPEN) (1 / median - 1) * 100 else (1 - median) * 100)
         }
 
         else -> {
@@ -123,9 +144,14 @@ fun variantWarmthProblem(
     }
 }
 
-/** [variantWarmthProblem] for each variant that has runs in [runs], in [Variant] order. */
-fun variantWarmthProblems(runs: List<RunRecord>): List<String> =
-    Variant.entries.mapNotNull { v -> runs.filter { it.variant == v }.takeIf { it.isNotEmpty() }?.let { variantWarmthProblem(v, it) } }
+/** [variantWarmthProblem] under [load] for each variant that has runs in [runs], in [Variant] order. */
+fun variantWarmthProblems(
+    runs: List<RunRecord>,
+    load: Load = Load.CLOSED,
+): List<String> =
+    Variant.entries.mapNotNull { v ->
+        runs.filter { it.variant == v }.takeIf { it.isNotEmpty() }?.let { variantWarmthProblem(v, it, load) }
+    }
 
 /**
  * The `git` arguments that list the agent repository's changes, leaving out [collectorDir] when it

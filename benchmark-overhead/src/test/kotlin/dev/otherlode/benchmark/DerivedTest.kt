@@ -74,6 +74,40 @@ class DerivedTest {
         assertNotNull(warmthProblem(mutableMapOf("k6FirstThirdRequests" to 0.0, "k6LastThirdRequests" to 1.0)))
     }
 
+    @Test
+    fun `an open window's drift is its first third's median latency over its last third's`() {
+        val m =
+            mutableMapOf(
+                "k6FirstThirdMedMs" to 12.0,
+                "k6LastThirdMedMs" to 10.0,
+                "k6FirstThirdRequests" to 500.0,
+                "k6LastThirdRequests" to 500.0,
+            )
+        assertNull(warmthProblem(m, Load.OPEN))
+        assertEquals(1.2, m["warmupDrift"]!!, 1e-12)
+    }
+
+    @Test
+    fun `an open window without the thirds' medians is reported, not passed`() {
+        assertNotNull(warmthProblem(mutableMapOf("k6LastThirdMedMs" to 1.0), Load.OPEN))
+        assertNotNull(warmthProblem(mutableMapOf("k6FirstThirdMedMs" to 1.0, "k6LastThirdMedMs" to 0.0), Load.OPEN))
+    }
+
+    @Test
+    fun `an open variant whose median drift is above the bound names the falling latency`() {
+        val problem = variantWarmthProblem(Variant.AGENT, drifted(1.15, 1.25, 1.30), Load.OPEN)
+        assertNotNull(problem)
+        assertTrue("median latency 20.0% lower" in problem!!, problem)
+    }
+
+    @Test
+    fun `an open variant whose median drift is below the bound names the degradation in latency`() {
+        val problem = variantWarmthProblem(Variant.AGENT, drifted(0.70, 0.80, 0.85), Load.OPEN)
+        assertNotNull(problem)
+        assertTrue("median latency 25.0% higher" in problem!!, problem)
+        assertTrue("degraded" in problem, problem)
+    }
+
     private fun drifted(
         vararg drifts: Double,
         steady: Double = 0.0,
@@ -212,5 +246,17 @@ class DerivedTest {
         assertEquals(300.0, m["k6Requests"])
         assertEquals(90.0, m["k6FirstThirdRequests"])
         assertEquals(110.0, m["k6LastThirdRequests"])
+    }
+
+    @Test
+    fun `k6's summary yields both thirds' median latency`() {
+        val json =
+            """
+            {"metrics":{"http_req_duration{third:first}":{"avg":13.0,"med":12.5},
+            "http_req_duration{third:last}":{"avg":10.0,"med":9.75},"checks":{"value":1}}}
+            """.trimIndent()
+        val m = K6Summary.parse(json).metrics
+        assertEquals(12.5, m["k6FirstThirdMedMs"])
+        assertEquals(9.75, m["k6LastThirdMedMs"])
     }
 }

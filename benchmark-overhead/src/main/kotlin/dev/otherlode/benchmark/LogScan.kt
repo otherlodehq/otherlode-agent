@@ -27,6 +27,35 @@ object LogScan {
             .toList()
 }
 
+private const val OTEL_VERSION_LINE = "opentelemetry-javaagent - version:"
+private const val OTEL_LOG_PREFIX = "[otel.javaagent"
+private const val MOST_LINES_NAMED = 3
+
+/**
+ * What PetClinic's log says is wrong with the OpenTelemetry agent's run, as problems: it never logged
+ * its version line, so it did not start; one of its own lines is at ERROR; or any line reports a
+ * failed export.
+ */
+fun otelLogProblems(log: String): List<String> {
+    val lines = log.lines()
+    val problems = mutableListOf<String>()
+    if (lines.none { OTEL_VERSION_LINE in it }) problems += "the OpenTelemetry agent did not start: no '$OTEL_VERSION_LINE' line in the log"
+    lines
+        .filter { it.startsWith(OTEL_LOG_PREFIX) && " ERROR " in it }
+        .takeIf { it.isNotEmpty() }
+        ?.let { problems += "the OpenTelemetry agent logged at ERROR: ${named(it)}" }
+    lines
+        .filter { "Failed to export" in it }
+        .takeIf { it.isNotEmpty() }
+        ?.let { problems += "the OpenTelemetry agent logged a failed export: ${named(it)}" }
+    return problems
+}
+
+private fun named(lines: List<String>): String {
+    val shown = lines.take(MOST_LINES_NAMED).joinToString(" | ") { it.trim() }
+    return if (lines.size > MOST_LINES_NAMED) "$shown | and ${lines.size - MOST_LINES_NAMED} more" else shown
+}
+
 /** `VmRSS` and `VmHWM` from `/proc/<pid>/status`, in bytes. */
 data class ProcStatus(
     val rssBytes: Long,
@@ -160,6 +189,11 @@ class K6Summary(
             put("k6Requests", value("http_reqs", "count"))
             put("k6FirstThirdRequests", value("http_reqs{third:first}", "count"))
             put("k6LastThirdRequests", value("http_reqs{third:last}", "count"))
+            put("k6FirstThirdMedMs", value("http_req_duration{third:first}", "med"))
+            put("k6LastThirdMedMs", value("http_req_duration{third:last}", "med"))
+            put("k6Iterations", value("iterations", "count"))
+            out["k6DroppedIterations"] = value("dropped_iterations", "count") ?: 0.0
+            put("httpReqP50Ms", value("http_req_duration", "med"))
             put("httpReqAvgMs", value("http_req_duration", "avg"))
             put("httpReqP95Ms", value("http_req_duration", "p(95)"))
             put("httpReqP99Ms", value("http_req_duration", "p(99)"))
