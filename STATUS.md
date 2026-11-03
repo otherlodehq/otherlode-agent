@@ -51,7 +51,11 @@ multi-tenant backend.
    `soak-2` from T0 2026-11-02 21:36Z to about 2026-11-03 00:24Z. Three
    earlier runs were stopped after their smokes found false claims; the
    fixes since are agent ADRs 0082 to 0087, collector ADR 0010 and server
-   ADRs 0087 to 0092.
+   ADRs 0087 to 0092. `check.py` and `truth.json` on `soak-1` were
+   replaced in place with `9a2d37c`'s at 2026-11-03 22:33Z. Check 8 keeps
+   one line that `9a2d37c` explains, since the supervisor stored its
+   verdict before the change: the slow read at 2026-11-02 21:41:12Z
+   listing `BrokenConfig` never loaded, 2 s after `GET /broken`.
    Reports land in `/opt/soak/reports`; `soakctl status` on the VM shows
    where it is.
    A failed check is triaged per `soak/DESIGN.md`. Clean-up is Luke's,
