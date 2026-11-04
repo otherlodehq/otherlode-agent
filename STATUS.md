@@ -57,6 +57,17 @@ multi-tenant backend.
    one line that `9a2d37c` explains, since the supervisor stored its
    verdict before the change: the slow read at 2026-11-02 21:41:12Z
    listing `BrokenConfig` never loaded, 2 s after `GET /broken`.
+   Check 5 flags two agent processes for the final triage to explain.
+   Each is a step, not a climb. shop-1's first process went from 340 to
+   354 MB in hours 6 to 12, after the first `GET /reports/monthly` it
+   served, while its control stayed flat. shop-2's process after the
+   kill -9 rose 23 MB at the start of the collector outage on
+   2026-11-04 13:36Z and stayed at 390 MB. A test on `soak-2` from
+   2026-11-04 17:30Z (`/opt/soak-outage/out`) runs two agent JVMs and a
+   control under native memory tracking through four 30-minute
+   collector outages, to show whether each outage adds a step. Check 5
+   stays as it is: a rule that judged only after warm-up still failed
+   both.
    Reports land in `/opt/soak/reports`; `soakctl status` on the VM shows
    where it is.
    A failed check is triaged per `soak/DESIGN.md`. Clean-up is Luke's,
