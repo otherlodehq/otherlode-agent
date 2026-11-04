@@ -37,6 +37,27 @@ Two limits on these numbers:
 - The benchmark measures steady state. The first flush, which sends the whole manifest, falls in the warmup, so its cost shows in startup and warmup, not in the table.
 - The benchmark does not report a time per probe hit, so this page gives no nanosecond figure.
 
+## Against the OpenTelemetry Java agent
+
+The same benchmark also runs the OpenTelemetry Java agent 2.32.0 as a third variant, so you can compare Otherlode's cost with an agent many teams already run. OpenTelemetry ran on its defaults: every instrumentation on, every request traced, and spans, metrics and logs exported over OTLP to a receiver that answered each request and discarded it. Otherlode ran with the narrow rules above and exported to a real collector. Each figure is the variant's median against the median with no agent, on commit `9bb2c3a`, with 6 repeats per variant.
+
+| | Otherlode | OpenTelemetry |
+|---|---|---|
+| Throughput | +2.0% (noise) | -16.0% |
+| CPU per request | -1.8% (noise) | +20.6% |
+| p99 latency | -2.6% (noise) | +24.9% |
+| p99 latency at a fixed rate | +0.5% (noise) | +37.5% |
+| Allocation per request | +1.1% (noise) | +29.3% |
+| GC pause per 1000 requests | +3.5% | +60.8% |
+| Minimum heap used | +10 MiB | +24 MiB |
+| Resident set size | +75 MiB (+7.3%) | +126 MiB (+12.3%) |
+| Metaspace | +22 MiB | +28 MiB |
+| Startup, time to first 200 | +2.5 s (+19.7%) | +7.1 s (+55.7%) |
+
+The fixed-rate row comes from a second run, on commit `9955112`, that held the load at a quarter of the rate PetClinic reached with no agent. PetClinic then had spare CPU, so the latency is the time an agent adds to a request, not time spent in a queue. Startup comes from the startup-only job, with 21 repeats per variant.
+
+Per request, Otherlode's cost lies inside the no-agent variant's own spread, apart from 3.5% more GC pause. What it adds is fixed: memory, six or seven threads, and startup. OpenTelemetry costs more on every row. On its defaults it builds and exports a trace for every request, which allocates about 27 KiB more per request and shows in CPU, GC pause and p99. The two agents do different work: OpenTelemetry records each request's trace, and Otherlode counts which of your code ran. The table gives each one's cost as first installed. The [benchmark's write-up](https://github.com/otherlodehq/otherlode-agent/blob/master/benchmark-overhead/OTEL-COMPARISON.md) has the method and every figure with its spread.
+
 ## What a probe costs per call
 
 A method probe is one array increment at the method's first instruction: load the class's `long[]`, add one to a slot. A branch probe is the same increment at a branch target. The increment is not atomic and takes no lock, so two threads can lose a count. The agent accepts that, since a count goes out only once per flush interval and the data answers "has this run, and roughly how often".

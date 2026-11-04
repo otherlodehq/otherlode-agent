@@ -70,14 +70,6 @@ deferrals, gzip, a collector config file, and agent-level redaction
 
 ## TODO
 
-### The OpenTelemetry comparison on the customer site: to decide
-
-The comparison with the OTel Java agent 2.32.0 ran in full, every run
-valid, and its tables sit at the end of
-`benchmark-overhead/OTEL-COMPARISON.md`. Otherlode does as well as or
-better than OTel on every metric. Whether `docs/site/overhead.md` quotes it, and in what words,
-is a maintainer's call: it names another project's agent in public copy.
-
 ### Tooling: code principles and a refactoring playbook
 
 From the comparison with pstack's poteto-mode (`cursor/plugins`, `190d287`).
