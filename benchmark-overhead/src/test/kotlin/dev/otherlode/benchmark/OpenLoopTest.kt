@@ -32,10 +32,26 @@ class OpenLoopTest {
     }
 
     @Test
-    fun `virtual users are four a core times four, up to 200`() {
+    fun `a low rate keeps the core-based virtual users and the 200 ceiling`() {
         assertEquals(16, OpenLoopLoad.of(5.0, 300, 1).preAllocatedVus)
         assertEquals(32, OpenLoopLoad.of(5.0, 300, 2).preAllocatedVus)
+        assertEquals(200, OpenLoopLoad.of(5.0, 300, 1).maxVus)
         assertEquals(200, OpenLoopLoad.of(5.0, 300, 2).maxVus)
+    }
+
+    @Test
+    fun `a rate whose one second stall outruns the core-based virtual users pre-allocates one per iteration in the stall`() {
+        val load = OpenLoopLoad.of(123.5, 300, 1)
+        assertEquals(7410, load.iterationsPerMinute)
+        assertEquals(124, load.preAllocatedVus)
+        assertEquals(248, load.maxVus)
+    }
+
+    @Test
+    fun `a pre-allocation above 100 raises the ceiling to twice it`() {
+        val load = OpenLoopLoad.of(150.0, 300, 1)
+        assertEquals(150, load.preAllocatedVus)
+        assertEquals(300, load.maxVus)
     }
 
     @Test

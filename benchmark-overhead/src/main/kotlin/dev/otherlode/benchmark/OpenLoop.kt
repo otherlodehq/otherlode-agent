@@ -19,10 +19,13 @@ enum class Load(
     }
 }
 
-/** The most virtual users k6 may start for an open-loop window. */
+/** The most virtual users k6 may start for an open-loop window, unless twice the pre-allocated virtual users is more. */
 const val OPEN_MAX_VUS = 200
 
-/** The open loop pre-allocates this many times the closed loop's virtual users, so its first iterations do not wait for a VU to start. */
+/** How long, in seconds, an iteration may take before the pre-allocated virtual users run out: one is held per iteration started in it. */
+const val OPEN_STALL_SECONDS = 1.0
+
+/** The open loop pre-allocates at least this many times the closed loop's virtual users, so its first iterations do not wait for a VU to start. */
 const val OPEN_PREALLOCATION_FACTOR = 4
 
 /**
@@ -45,7 +48,12 @@ data class OpenLoopLoad(
         )
 
     companion object {
-        /** The scenario for [iterationsPerSecond] over [durationSeconds], with virtual users sized to [petclinicCores]. */
+        /**
+         * The scenario for [iterationsPerSecond] over [durationSeconds]. It pre-allocates the larger of
+         * [CpuSplit.USERS_PER_CORE] a core of [petclinicCores] times [OPEN_PREALLOCATION_FACTOR] and the
+         * iterations that start in [OPEN_STALL_SECONDS] at the rate, and allows the larger of [OPEN_MAX_VUS]
+         * and twice that.
+         */
         fun of(
             iterationsPerSecond: Double,
             durationSeconds: Int,
@@ -53,12 +61,12 @@ data class OpenLoopLoad(
         ): OpenLoopLoad {
             val rate = perMinute(iterationsPerSecond)
             require(rate >= 1) { "An open-loop rate of $iterationsPerSecond iterations/s rounds to no iteration a minute" }
-            return OpenLoopLoad(
-                rate,
-                durationSeconds,
-                CpuSplit.USERS_PER_CORE * petclinicCores * OPEN_PREALLOCATION_FACTOR,
-                OPEN_MAX_VUS,
-            )
+            val preAllocated =
+                maxOf(
+                    CpuSplit.USERS_PER_CORE * petclinicCores * OPEN_PREALLOCATION_FACTOR,
+                    Math.ceil(rate / 60.0 * OPEN_STALL_SECONDS).toInt(),
+                )
+            return OpenLoopLoad(rate, durationSeconds, preAllocated, maxOf(OPEN_MAX_VUS, 2 * preAllocated))
         }
     }
 }

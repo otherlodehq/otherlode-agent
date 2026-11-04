@@ -5,6 +5,15 @@ name: benchmark-otel-comparison
 on:
   workflow_dispatch:
     inputs:
+      jobs:
+        description: Which jobs to run
+        type: choice
+        options:
+          - all
+          - closed
+          - open
+          - startup
+        default: all
       collector_ref:
         description: Branch, tag or commit of otherlodehq/otherlode-collector to build
         default: master
@@ -27,6 +36,7 @@ concurrency:
 
 jobs:
   closed:
+    if: ${{ inputs.jobs == 'all' || inputs.jobs == 'closed' }}
     name: closed loop (headline)
     runs-on: ubuntu-latest
     # A run is startup, a warmup of 90 to 600 s (it ends once throughput is steady), the window and teardown:
@@ -79,6 +89,7 @@ jobs:
         run: cat benchmark-overhead/build/results/headline/summary.md >> "$GITHUB_STEP_SUMMARY" || echo "No summary was written." >> "$GITHUB_STEP_SUMMARY"
 
   open:
+    if: ${{ inputs.jobs == 'all' || inputs.jobs == 'open' }}
     name: open loop (headline)
     runs-on: ubuntu-latest
     # A run is startup, a warmup of 90 to 600 s (it ends once throughput is steady), the window and teardown:
@@ -131,6 +142,7 @@ jobs:
         run: cat benchmark-overhead/build/results/headline-open/summary.md >> "$GITHUB_STEP_SUMMARY" || echo "No summary was written." >> "$GITHUB_STEP_SUMMARY"
 
   startup:
+    if: ${{ inputs.jobs == 'all' || inputs.jobs == 'startup' }}
     name: startup (headline)
     runs-on: ubuntu-latest
     # Each start takes under a minute, and a repeat starts each of three variants once. 21 repeats at the default,

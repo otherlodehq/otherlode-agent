@@ -252,8 +252,15 @@ cells show interquartile ranges. The `k6` metrics gain `httpReqP50Ms`, the media
 A closed loop at PetClinic's CPU limit makes latency mostly queueing: it moves with throughput.
 `-Pload=open` measures the time an agent adds to a request instead. The warmup is the same
 closed-loop warmup, so the JIT warms as it does in a closed run. The measured window then runs
-k6's `constant-arrival-rate` executor at a fixed rate for `windowSeconds`, with 4 virtual users
-per PetClinic core times 4 pre-allocated and at most 200. `k6/overhead.js` builds the scenario from
+k6's `constant-arrival-rate` executor at a fixed rate for `windowSeconds`. k6 drops an iteration
+whenever no initialised virtual user is free at its start time, so the harness pre-allocates the
+larger of 4 virtual users per PetClinic core times 4 and the iterations that start in one second at
+the rate, so an iteration can take up to about a second without exhausting them. At 123.5
+iterations/s on one core that is 124. k6 starts a virtual user beyond those only after it has
+dropped an iteration, so the maximum, 200 or twice the pre-allocation, whichever is higher, never
+saves a run from the dropped-iteration rule. Each virtual user keeps its own connections, so
+PetClinic holds about as many keep-alive connections as there are pre-allocated users, in every
+variant alike. `k6/overhead.js` builds the scenario from
 the environment variables `OPEN_RATE_PER_MIN`, `OPEN_DURATION_S`, `OPEN_PRE_ALLOCATED_VUS` and
 `OPEN_MAX_VUS`; the rate is whole iterations a minute, which expresses a fractional rate per second
 exactly. The harness passes neither `-u` nor `--duration` to k6 in this mode, since either would
@@ -293,8 +300,9 @@ activity, and the Actions tab re-enables it.
 
 The `benchmark-otel-comparison` workflow runs only by hand (`workflow_dispatch`), so the nightly job
 is unchanged. It takes `collector_ref` (default `master`), `repeats` (default 6), `startup_repeats`
-(default 21) and `window_seconds` (default 300), and waits for a run of itself in progress. Three
-jobs run at once, each on a runner of its own, each with `-Pvariants=none,otel,agent` on the
+(default 21), `window_seconds` (default 300) and `jobs` (`all`, `closed`, `open` or `startup`;
+default `all`), and waits for a run of itself in progress. `jobs` picks which of the three jobs run;
+the default runs all of them. The jobs run at once, each on a runner of its own, each with `-Pvariants=none,otel,agent` on the
 headline config, so every comparison is within one machine:
 
 | Job | Runs | Artifact |
