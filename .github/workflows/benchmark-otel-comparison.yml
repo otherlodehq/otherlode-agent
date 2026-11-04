@@ -28,7 +28,7 @@ on:
         default: "300"
       open_rate_fraction:
         description: The open-loop job's arrival rate, as a share of none's steady closed-loop rate
-        default: "0.5"
+        default: "0.25"
 
 permissions:
   contents: read
@@ -124,7 +124,7 @@ jobs:
           OTEL_JAR: ${{ steps.otel.outputs.jar }}
           REPEATS: ${{ inputs.repeats || '6' }}
           WINDOW_SECONDS: ${{ inputs.window_seconds || '300' }}
-          OPEN_RATE_FRACTION: ${{ inputs.open_rate_fraction || '0.5' }}
+          OPEN_RATE_FRACTION: ${{ inputs.open_rate_fraction || '0.25' }}
         run: >-
           ./gradlew -p benchmark-overhead test --no-daemon
           -PagentJar="$(ls "$GITHUB_WORKSPACE"/build/libs/otherlode-agent-*.jar | grep -v -e -plain -e -jmh | head -n 1)"

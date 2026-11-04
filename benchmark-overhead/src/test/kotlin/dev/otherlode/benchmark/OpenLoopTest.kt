@@ -123,6 +123,11 @@ class OpenLoopTest {
     }
 
     @Test
+    fun `the open loop runs at a quarter of none's closed loop rate unless told otherwise`() {
+        assertEquals(0.25, BenchSettings.DEFAULT_OPEN_RATE_FRACTION)
+    }
+
+    @Test
     fun `a rate of nothing or a fraction outside zero to one is refused`() {
         assertThrows(IllegalArgumentException::class.java) { OpenRate.given(0.0) }
         assertThrows(IllegalArgumentException::class.java) { OpenRate.calibrated(0.0, 0.5) }

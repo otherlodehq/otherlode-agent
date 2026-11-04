@@ -26,6 +26,7 @@ val agentJar = providers.gradleProperty("agentJar")
 val collectorDir = providers.gradleProperty("collectorDir")
 val otelAgentJar = providers.gradleProperty("otelAgentJar")
 val iterationRate = providers.gradleProperty("iterationRate")
+val openRateFraction = providers.gradleProperty("openRateFraction")
 
 tasks.test {
     // The macro run needs both inputs. With neither, only the unit tests run, so the harness's own
@@ -68,9 +69,9 @@ tasks.test {
     if (collectorDir.isPresent) systemProperty("bench.collectorDir", file(collectorDir.get()).absolutePath)
     if (otelAgentJar.isPresent) systemProperty("bench.otelAgentJar", file(otelAgentJar.get()).absolutePath)
     if (iterationRate.isPresent) systemProperty("bench.iterationRate", iterationRate.get())
+    if (openRateFraction.isPresent) systemProperty("bench.openRateFraction", openRateFraction.get())
     systemProperty("bench.variants", providers.gradleProperty("variants").orElse("none,agent,agent-baseline").get())
     systemProperty("bench.load", providers.gradleProperty("load").orElse("closed").get())
-    systemProperty("bench.openRateFraction", providers.gradleProperty("openRateFraction").orElse("0.5").get())
     systemProperty("bench.config", providers.gradleProperty("config").orElse("headline").get())
     systemProperty("bench.repeats", providers.gradleProperty("repeats").orElse("6").get())
     systemProperty("bench.warmupSeconds", providers.gradleProperty("warmupSeconds").orElse("600").get())

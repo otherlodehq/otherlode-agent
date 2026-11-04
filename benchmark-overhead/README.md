@@ -184,7 +184,7 @@ git clone https://github.com/otherlodehq/otherlode-collector /path/to/otherlode-
 | `-PotelAgentJar` | none | The OpenTelemetry Java agent jar. Required when `-Pvariants` lists `otel`. When set, every variant's container gets it. |
 | `-Pload` | `closed` | `closed` or `open`; see "Open-loop load". |
 | `-PiterationRate` | calibrated | With `-Pload=open`, the arrival rate in iterations per second. Refused with `-Pload=closed`. |
-| `-PopenRateFraction` | `0.5` | With a calibrated open-loop rate, the share of `none`'s steady closed-loop iteration rate to run at. Above 0 and at most 1. |
+| `-PopenRateFraction` | `0.25` | With a calibrated open-loop rate, the share of `none`'s steady closed-loop iteration rate to run at. Above 0 and at most 1. |
 
 Give both paths absolute, as above, or relative to `benchmark-overhead/`: `-p` makes that Gradle's
 start directory, so a path relative to the repository root names nothing. The harness stops if
@@ -269,7 +269,7 @@ replace the scenario. Results go to `benchmark-overhead/build/results/<config>-o
 The rate is `-PiterationRate` (iterations per second) when given. Otherwise the harness calibrates
 it once before the matrix: it starts Postgres and a `none` PetClinic as a full run does, runs the
 closed-loop warmup until steady, takes the iterations per second of the last slice, and multiplies it
-by `-PopenRateFraction` (default 0.5). PetClinic then has headroom by design, so the saturation
+by `-PopenRateFraction` (default 0.25). PetClinic then has headroom by design, so the saturation
 rule does not apply. A run is invalid instead when it dropped an iteration, or when PetClinic
 averaged 80% or more of its pinned cores, since its requests then queued. The calibration's warmup
 reaching its cap is not a failure and is recorded as `openIterationRateCalibrationSteady=false`.
@@ -300,7 +300,7 @@ activity, and the Actions tab re-enables it.
 
 The `benchmark-otel-comparison` workflow runs only by hand (`workflow_dispatch`), so the nightly job
 is unchanged. It takes `collector_ref` (default `master`), `repeats` (default 6), `startup_repeats`
-(default 21), `window_seconds` (default 300), `open_rate_fraction` (default 0.5, passed to the
+(default 21), `window_seconds` (default 300), `open_rate_fraction` (default 0.25, passed to the
 open-loop job as `-PopenRateFraction`) and `jobs` (`all`, `closed`, `open` or `startup`; default
 `all`), and waits for a run of itself in progress. `jobs` picks which of the three jobs run;
 the default runs all of them. The jobs run at once, each on a runner of its own, each with `-Pvariants=none,otel,agent` on the

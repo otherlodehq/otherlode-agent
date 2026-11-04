@@ -47,7 +47,7 @@ data class BenchSettings(
 
     companion object {
         /** The share of `none`'s steady closed-loop iteration rate the open loop runs at unless `-PopenRateFraction` says otherwise. */
-        const val DEFAULT_OPEN_RATE_FRACTION = 0.5
+        const val DEFAULT_OPEN_RATE_FRACTION = 0.25
 
         fun fromSystemProperties(): BenchSettings {
             fun prop(name: String) =
@@ -81,7 +81,7 @@ data class BenchSettings(
                     },
                 load = Load.parse(prop("bench.load")),
                 iterationRate = System.getProperty("bench.iterationRate")?.toDouble(),
-                openRateFraction = prop("bench.openRateFraction").toDouble(),
+                openRateFraction = System.getProperty("bench.openRateFraction")?.toDouble() ?: DEFAULT_OPEN_RATE_FRACTION,
             )
         }
     }
