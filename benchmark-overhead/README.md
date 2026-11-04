@@ -300,8 +300,9 @@ activity, and the Actions tab re-enables it.
 
 The `benchmark-otel-comparison` workflow runs only by hand (`workflow_dispatch`), so the nightly job
 is unchanged. It takes `collector_ref` (default `master`), `repeats` (default 6), `startup_repeats`
-(default 21), `window_seconds` (default 300) and `jobs` (`all`, `closed`, `open` or `startup`;
-default `all`), and waits for a run of itself in progress. `jobs` picks which of the three jobs run;
+(default 21), `window_seconds` (default 300), `open_rate_fraction` (default 0.5, passed to the
+open-loop job as `-PopenRateFraction`) and `jobs` (`all`, `closed`, `open` or `startup`; default
+`all`), and waits for a run of itself in progress. `jobs` picks which of the three jobs run;
 the default runs all of them. The jobs run at once, each on a runner of its own, each with `-Pvariants=none,otel,agent` on the
 headline config, so every comparison is within one machine:
 

@@ -121,7 +121,7 @@ Central and checks its size, SHA-1 and SHA-256 against values pinned in the scri
 signature against a key fingerprint pinned there. A mismatch fails the job before any run.
 
 The open loop's rate is measured on its own runner: the job first runs `none` under the closed loop
-until steady, takes the iteration rate of its last slice, and runs the matrix at half of it. The
+until steady, takes the iteration rate of its last slice, and runs the matrix at half of it (the workflow's `open_rate_fraction`, default 0.5). The
 rate goes into the results.
 
 `soak-2` was the other choice. It would hold every job on one machine, but it is an `e2` VM that

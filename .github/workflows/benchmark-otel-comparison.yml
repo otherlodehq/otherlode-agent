@@ -26,6 +26,9 @@ on:
       window_seconds:
         description: Length of the measured window of the closed-loop and open-loop jobs
         default: "300"
+      open_rate_fraction:
+        description: The open-loop job's arrival rate, as a share of none's steady closed-loop rate
+        default: "0.5"
 
 permissions:
   contents: read
@@ -121,6 +124,7 @@ jobs:
           OTEL_JAR: ${{ steps.otel.outputs.jar }}
           REPEATS: ${{ inputs.repeats || '6' }}
           WINDOW_SECONDS: ${{ inputs.window_seconds || '300' }}
+          OPEN_RATE_FRACTION: ${{ inputs.open_rate_fraction || '0.5' }}
         run: >-
           ./gradlew -p benchmark-overhead test --no-daemon
           -PagentJar="$(ls "$GITHUB_WORKSPACE"/build/libs/otherlode-agent-*.jar | grep -v -e -plain -e -jmh | head -n 1)"
@@ -130,6 +134,7 @@ jobs:
           -Pvariants=none,otel,agent
           -Prepeats="$REPEATS"
           -PwindowSeconds="$WINDOW_SECONDS"
+          -PopenRateFraction="$OPEN_RATE_FRACTION"
           -Pload=open
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
