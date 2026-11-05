@@ -595,9 +595,13 @@ class ExportSchedulerTest {
         )
     }
 
-    /** Fails the delta sends [outcome] picks by attempt number, counting every send attempt from 1; records the confirmed ones. */
+    /**
+     * Fails the delta sends [outcome] picks by attempt number, counting every send attempt from 1; records the confirmed ones.
+     * Runs [onManifest] after recording each manifest.
+     */
     private class ScriptedDeltaExporter(
         val outcome: (attempt: Int) -> Exception?,
+        val onManifest: () -> Unit = {},
     ) : Exporter {
         var attempts = 0
         val confirmed = mutableListOf<DeltaBatch>()
@@ -610,6 +614,7 @@ class ExportSchedulerTest {
 
         override fun exportManifest(manifest: ProbeManifest) {
             manifests += manifest
+            onManifest()
         }
 
         override fun exportStaticBaseline(baseline: StaticBaseline) {}
@@ -741,10 +746,15 @@ class ExportSchedulerTest {
         val offered = mutableListOf<Long>()
         var acceptFromFlush = 3
         var flush = 0
+        val firstManifestSent = CountDownLatch(1)
         val exporter =
-            ScriptedDeltaExporter { _ ->
-                if (flush < acceptFromFlush) ExportFailedException("refused", 400, refused = true) else null
-            }
+            ScriptedDeltaExporter(
+                outcome = { _ ->
+                    if (flush == 1) firstManifestSent.await(5, TimeUnit.SECONDS)
+                    if (flush < acceptFromFlush) ExportFailedException("refused", 400, refused = true) else null
+                },
+                onManifest = firstManifestSent::countDown,
+            )
         val registry = ProbeRegistry()
         val probes = registry.register("com.example.Foo", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "m", "()V", 1)))
         probes[0] = 3

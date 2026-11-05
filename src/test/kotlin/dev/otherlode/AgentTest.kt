@@ -107,7 +107,8 @@ class AgentTest {
         self = Thread {
             Agent.awaitApplicationHooks(ShutdownHookWatch { arrayOf(self) }, Duration.ofSeconds(30))
             result.complete(true)
-        }.apply { isDaemon = true; start() }
+        }.apply { isDaemon = true }
+        self.start()
 
         assertTrue(result.get(5, java.util.concurrent.TimeUnit.SECONDS))
     }
