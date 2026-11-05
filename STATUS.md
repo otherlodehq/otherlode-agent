@@ -60,16 +60,23 @@ multi-tenant backend.
    Check 5 flags two agent processes. shop-1's first process stepped
    from 340 to 354 MB in hours 6 to 12, after the first
    `GET /reports/monthly` it served, while its control stayed flat.
-   shop-2's process after the kill -9 is unexplained and still
-   climbing, in steps. It rose 25 MB at the start of the collector
-   outage on 2026-11-04 13:36Z, 15 MB between 04:29Z and 04:39Z on
-   2026-11-05, and 15 MB between 09:29Z and 09:39Z, and read 436 MB at
-   19:40Z. shop-3 stepped 15 MB at the outage and 12 MB at the same
-   04:19Z to 04:39Z sample, to 385 MB. Their control stayed at 275 MB.
-   No log line, collector or server event explains the 04:29Z step.
-   Heap committed is fixed at 128 MB and metaspace at 62 MB, so the
-   growth is native, and the soak-1 JVMs run without native memory
-   tracking. A test on `soak-2`
+   shop-2's process after the kill -9 climbs in steps. It rose 25 MB
+   at the start of the collector outage on 2026-11-04 13:36Z, 15 MB
+   between 04:29Z and 04:39Z on 2026-11-05, and 15 MB between 09:29Z
+   and 09:39Z, and read 436 MB at 19:40Z. shop-3 stepped 15 MB at the
+   outage and 12 MB at the same 04:19Z to 04:39Z sample, to 385 MB.
+   Their control stayed at 275 MB. No log line, collector or server
+   event explains the 04:29Z step. Heap committed is fixed at 128 MB.
+   The steps are glibc keeping freed native memory, not a leak.
+   `jcmd System.native_heap_info` at 19:40Z showed 33 MB of live malloc
+   in both shop-2 and shop-3 (control 22 MB), with 143 MB and 107 MB
+   freed but held in the arenas (control 50 MB).
+   `jcmd System.trim_native_heap` on shop-3 at 19:43Z cut its RSS from
+   386 to 319 MB, and it held there a minute later. shop-3's memory
+   series drops at 19:43Z for that reason. shop-2 was left untouched.
+   Still open: what makes the native bursts that set each new peak.
+   They hit shop-2 and shop-3 in the same samples and not the events
+   services. A test on `soak-2`
    (`/opt/soak-outage/out`) ran two agent JVMs and a control under
    native memory tracking through four 30-minute collector outages. No
    outage added a step. The agent with the static baseline held at
