@@ -747,10 +747,11 @@ class ExportSchedulerTest {
         var acceptFromFlush = 3
         var flush = 0
         val firstManifestSent = CountDownLatch(1)
+        val manifestWaitTimedOut = AtomicBoolean(false)
         val exporter =
             ScriptedDeltaExporter(
                 outcome = { _ ->
-                    if (flush == 1) firstManifestSent.await(5, TimeUnit.SECONDS)
+                    if (flush == 1 && !firstManifestSent.await(5, TimeUnit.SECONDS)) manifestWaitTimedOut.set(true)
                     if (flush < acceptFromFlush) ExportFailedException("refused", 400, refused = true) else null
                 },
                 onManifest = firstManifestSent::countDown,
@@ -772,6 +773,7 @@ class ExportSchedulerTest {
         }
 
         assertEquals(listOf(3L, 3L, 4L), offered, "each flush offers the probe again, with the hits recorded since")
+        assertFalse(manifestWaitTimedOut.get(), "flush 1 sent its manifest before its delta batch was refused")
         assertEquals(
             8,
             exporter.attempts,
