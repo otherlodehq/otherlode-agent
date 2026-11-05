@@ -62,12 +62,18 @@ multi-tenant backend.
    354 MB in hours 6 to 12, after the first `GET /reports/monthly` it
    served, while its control stayed flat. shop-2's process after the
    kill -9 rose 23 MB at the start of the collector outage on
-   2026-11-04 13:36Z and stayed at 390 MB. A test on `soak-2` from
-   2026-11-04 17:30Z (`/opt/soak-outage/out`) runs two agent JVMs and a
-   control under native memory tracking through four 30-minute
-   collector outages, to show whether each outage adds a step. Check 5
-   stays as it is: a rule that judged only after warm-up still failed
-   both.
+   2026-11-04 13:36Z and stayed at 390 MB. A test on `soak-2`
+   (`/opt/soak-outage/out`) ran two agent JVMs and a control under
+   native memory tracking through four 30-minute collector outages. No
+   outage added a step. The agent with the static baseline held at
+   367 MB through outages 2 to 4. Its one step, +6 MB at 20:29Z, came
+   in the normal hour after outage 1, and NMT committed memory stayed
+   at 305 MB through it. The agent without the baseline grew 7 MB over
+   the 6 hours, evenly through outages and normal hours, as its JIT
+   code cache grew from 29 to 35 MB. Each step is a one-off, not a cost
+   per outage.
+   Check 5 stays as it is: a rule that judged only after warm-up still
+   failed both.
    Reports land in `/opt/soak/reports`; `soakctl status` on the VM shows
    where it is.
    A failed check is triaged per `soak/DESIGN.md`. Clean-up is Luke's,
