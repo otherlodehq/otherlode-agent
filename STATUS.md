@@ -87,6 +87,18 @@ multi-tenant backend.
    code cache grew from 29 to 35 MB. An outage alone does not add a
    step each time, but that 7.5-hour test did not reproduce shop-2's
    climb.
+   A second test on `soak-2` (`/opt/soak-burst/out`, 2026-11-05) fired
+   one trigger at a time at two agent JVMs and a control, with NMT
+   detail and glibc sampled every 30 s. The bursts come from C2
+   compiles. One compile's arena peaked at 37 to 61 MB in every JVM,
+   control included, and C2 frees it when the compile ends. The control
+   stepped with the agents: +10 MB at 20:17Z in warm-up and +22 MB after
+   the first reports call, when its compiler arena peak rose from 37
+   to 61 MB. A collector outage, a sibling run and a server restart
+   added no step to any JVM. A second reports call stepped only
+   agent-b, by 10 MB of freed glibc memory. Still open: why soak-1's
+   control stays flat while shop-2 and shop-3 keep stepping, which
+   would need a log of each compile's time and size in an agent JVM.
    Check 5 stays as it is: a rule that judged only after warm-up still
    failed both.
    Reports land in `/opt/soak/reports`; `soakctl status` on the VM shows
