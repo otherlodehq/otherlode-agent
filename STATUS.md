@@ -109,6 +109,8 @@ multi-tenant backend.
    compile in the same JVM, and the trim and two-arena agents stay flat.
    shop-3 regrew from 319 to 368 MB between 20:09Z and 20:19Z, 26 minutes
    after its trim.
+   If the agent causes the growth, fix the agent rather than the page
+   (Luke, 2026-11-05).
    The result decides whether `docs/site/overhead.md` holds. It gives the
    agent's RSS as +76 MiB, from a short PetClinic window, and calls the
    memory the agent adds fixed. On soak-1 the gap to the control
