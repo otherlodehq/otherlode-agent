@@ -57,12 +57,19 @@ multi-tenant backend.
    one line that `9a2d37c` explains, since the supervisor stored its
    verdict before the change: the slow read at 2026-11-02 21:41:12Z
    listing `BrokenConfig` never loaded, 2 s after `GET /broken`.
-   Check 5 flags two agent processes for the final triage to explain.
-   Each is a step, not a climb. shop-1's first process went from 340 to
-   354 MB in hours 6 to 12, after the first `GET /reports/monthly` it
-   served, while its control stayed flat. shop-2's process after the
-   kill -9 rose 23 MB at the start of the collector outage on
-   2026-11-04 13:36Z and stayed at 390 MB. A test on `soak-2`
+   Check 5 flags two agent processes. shop-1's first process stepped
+   from 340 to 354 MB in hours 6 to 12, after the first
+   `GET /reports/monthly` it served, while its control stayed flat.
+   shop-2's process after the kill -9 is unexplained and still
+   climbing, in steps. It rose 25 MB at the start of the collector
+   outage on 2026-11-04 13:36Z, 15 MB between 04:29Z and 04:39Z on
+   2026-11-05, and 15 MB between 09:29Z and 09:39Z, and read 436 MB at
+   19:40Z. shop-3 stepped 15 MB at the outage and 12 MB at the same
+   04:19Z to 04:39Z sample, to 385 MB. Their control stayed at 275 MB.
+   No log line, collector or server event explains the 04:29Z step.
+   Heap committed is fixed at 128 MB and metaspace at 62 MB, so the
+   growth is native, and the soak-1 JVMs run without native memory
+   tracking. A test on `soak-2`
    (`/opt/soak-outage/out`) ran two agent JVMs and a control under
    native memory tracking through four 30-minute collector outages. No
    outage added a step. The agent with the static baseline held at
@@ -70,8 +77,9 @@ multi-tenant backend.
    in the normal hour after outage 1, and NMT committed memory stayed
    at 305 MB through it. The agent without the baseline grew 7 MB over
    the 6 hours, evenly through outages and normal hours, as its JIT
-   code cache grew from 29 to 35 MB. Each step is a one-off, not a cost
-   per outage.
+   code cache grew from 29 to 35 MB. An outage alone does not add a
+   step each time, but that 7.5-hour test did not reproduce shop-2's
+   climb.
    Check 5 stays as it is: a rule that judged only after warm-up still
    failed both.
    Reports land in `/opt/soak/reports`; `soakctl status` on the VM shows
