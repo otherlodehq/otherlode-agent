@@ -97,8 +97,25 @@ multi-tenant backend.
    to 61 MB. A collector outage, a sibling run and a server restart
    added no step to any JVM. A second reports call stepped only
    agent-b, by 10 MB of freed glibc memory. Still open: why soak-1's
-   control stays flat while shop-2 and shop-3 keep stepping, which
-   would need a log of each compile's time and size in an agent JVM.
+   control stays flat while shop-2 and shop-3 keep stepping.
+   Two things run to settle it, both started 2026-11-05 at about 23:20Z.
+   On `soak-2`, `/opt/soak-compile/out` runs six JVMs for 12 hours
+   without NMT: agents with and without the baseline, an agent with
+   `-XX:TrimNativeHeapInterval=300000`, an agent with
+   `MALLOC_ARENA_MAX=2`, and two controls. Each logs every compile with
+   its UTC time. On `soak-1`, `jcmd VM.log` writes the same compile log
+   for shop-2, shop-3 and shop-control to `/var/tmp/soak-jit/`. The
+   C2 cause holds if every step of 5 MB or more lines up with a C2
+   compile in the same JVM, and the trim and two-arena agents stay flat.
+   shop-3 regrew from 319 to 368 MB between 20:09Z and 20:19Z, 26 minutes
+   after its trim.
+   The result decides whether `docs/site/overhead.md` holds. It gives the
+   agent's RSS as +76 MiB, from a short PetClinic window, and calls the
+   memory the agent adds fixed. On soak-1 the gap to the control
+   levels off for the events services, at +95 MB for events-prod and
+   +105 MB for events-staging from about 24 hours. For the shop it keeps
+   growing: shop-3 +60 MB at 1 hour, +85 MB at 24 hours and +104 MB at
+   48 hours; shop-2 +80 MB at 1 hour and +146 MB at 42 hours.
    Check 5 stays as it is: a rule that judged only after warm-up still
    failed both.
    Reports land in `/opt/soak/reports`; `soakctl status` on the VM shows
