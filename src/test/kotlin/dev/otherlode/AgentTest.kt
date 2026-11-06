@@ -310,8 +310,46 @@ class AgentTest {
 
         assertTrue(calls.count { it == "addTransformer" } > 0, "$calls")
         assertEquals(calls.count { it == "addTransformer" }, calls.count { it == "removeTransformer" }, "$calls")
-        val started = (currentThreadNames() - before).filter { it.startsWith("otherlode-") && it != "otherlode-export" }
+        val started = (currentThreadNames() - before).filter { it.startsWith("otherlode-") }
         assertEquals(emptyList(), started, "no listing or scan thread starts once a step has failed")
+    }
+
+    @Test
+    fun `a listing worker that fails to start leaves the scan worker that already started sending nothing`() {
+        val calls = mutableListOf<String>()
+        val before = currentThreadNames()
+        val started = mutableListOf<Thread>()
+        val posts = CopyOnWriteArrayList<String>()
+        val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
+        server.createContext("/") { exchange ->
+            posts += exchange.requestURI.path
+            exchange.sendResponseHeaders(202, -1)
+            exchange.close()
+        }
+        server.start()
+        try {
+            assertFailsWith<IllegalStateException> {
+                Agent.start(
+                    "includePackages=com.example.nothing,staticBaselineEnabled=true,classListingEnabled=true," +
+                        "exportUrl=http://127.0.0.1:${server.address.port}",
+                    recordingInstrumentation(calls),
+                    startWorker = {
+                        if (it.name == "otherlode-class-listing") throw IllegalStateException("cannot start")
+                        started += it
+                        it.start()
+                    },
+                )
+            }
+
+            assertEquals(listOf("otherlode-static-baseline-scan"), started.map { it.name })
+            started.forEach { it.join(10_000) }
+            assertTrue(started.none { it.isAlive }, "the scan thread ended")
+            assertEquals(emptyList(), posts.toList(), "nothing was sent")
+            assertEquals(calls.count { it == "addTransformer" }, calls.count { it == "removeTransformer" }, "$calls")
+            assertEquals(emptyList(), (currentThreadNames() - before).filter { it.startsWith("otherlode-") })
+        } finally {
+            server.stop(0)
+        }
     }
 
     @Test

@@ -143,7 +143,8 @@ class OtherlodeEndpointsSeamTest {
             )
         }
         // Must not throw, and must not be replayed once installed below.
-        OtherlodeEndpoints.declare(uniqueModule("cap-declare-overflow"), Any())
+        val declareOverflowModule = uniqueModule("cap-declare-overflow")
+        OtherlodeEndpoints.declare(declareOverflowModule, Any())
         // A disable is the one record that is never dropped, so it survives a full buffer.
         val lateFailureModule = uniqueModule("cap-failure-late")
         OtherlodeEndpoints.moduleDisabled(lateFailureModule, OtherlodeEndpoints.KIND_HOOK_UNMATCHED, "late reason")
@@ -185,7 +186,14 @@ class OtherlodeEndpointsSeamTest {
         assertEquals(declareModule, declareCall.module)
         assertSame(declareObject, declareCall.frameworkObject)
 
-        assertEquals(2, resolver.disableCalls.size, "a disable recorded with the buffer full still replays")
+        assertEquals(4, resolver.disableCalls.size, "a disable recorded with the buffer full still replays, and each module that lost a record is disabled")
+        assertEquals(
+            setOf(registerModule, declareOverflowModule),
+            resolver.disableCalls
+                .filter { it.reason.contains("replay buffer overflow") }
+                .map { it.module }
+                .toSet(),
+        )
         val lateDisableCall = resolver.disableCalls.last()
         assertEquals(lateFailureModule, lateDisableCall.module)
         assertEquals(OtherlodeEndpoints.KIND_HOOK_UNMATCHED, lateDisableCall.kind)
@@ -200,6 +208,38 @@ class OtherlodeEndpointsSeamTest {
             "a disable buffered before install keeps its kind through replay",
         )
         assertTrue(OtherlodeEndpoints.isDisabled(failureModule))
+    }
+
+    @Test
+    @Order(7)
+    fun `a module that loses a record to a full replay buffer is reported disabled with the overflow reason`() {
+        resetSeam()
+        val module = uniqueModule("overflow")
+        for (i in 0..4096) {
+            OtherlodeEndpoints.register(module, "key-$i", "GET", "/overflow/$i", null, null, null, null)
+        }
+        assertTrue(OtherlodeEndpoints.isDisabled(module))
+
+        val resolver = RecordingResolver()
+        OtherlodeEndpoints.install(resolver.asResolver() as OtherlodeEndpoints.Resolver)
+
+        assertEquals(4096, resolver.registerCalls.size)
+        val disable = resolver.disableCalls.single()
+        assertEquals(module, disable.module)
+        assertTrue(disable.reason.contains("replay buffer overflow"), disable.reason)
+    }
+
+    private fun resetSeam() {
+        val seam = Class.forName("dev.otherlode.bootstrap.OtherlodeEndpoints", false, null)
+
+        fun field(name: String) = seam.getDeclaredField(name).also { it.isAccessible = true }
+        (field("BUFFER").get(null) as MutableCollection<*>).clear()
+        (field("DISABLED_MODULES").get(null) as MutableCollection<*>).clear()
+        (field("FAILURE_LOGGED").get(null) as MutableCollection<*>).clear()
+        field("anyDisabled").setBoolean(null, false)
+        field("bufferOverflowLogged").setBoolean(null, false)
+        field("resolver").set(null, null)
+        field("ready").set(null, null)
     }
 
     @Test

@@ -371,6 +371,16 @@ class DependencyRegistryTest {
     }
 
     @Test
+    fun `a listing marked complete after it failed stays failed`() {
+        val registry = DependencyRegistry()
+        registry.markListingFailed()
+        registry.markListingComplete()
+
+        assertFalse(registry.isListingComplete)
+        assertEquals(DependencyRegistry.ListingOutcome.FAILED, registry.awaitListing(Duration.ofSeconds(1)))
+    }
+
+    @Test
     fun `a failed listing releases the wait at once`() {
         val registry = DependencyRegistry()
         registry.markListingFailed()

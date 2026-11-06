@@ -237,6 +237,26 @@ class ProbeRegistryDefinitionAttemptTest {
     }
 
     @Test
+    fun `a withheld class that takes a hit is confirmed, no longer withheld and ships without a failure`() {
+        val registry = ScriptedRegistry()
+        val attempt = registry.attempt()
+        registry.next = attempt
+        registry.ended += attempt
+        val counts = registry.registerFoo()
+        registry.confirmFrom(emptySet())
+        registry.confirmFrom(emptySet())
+        assertEquals(1, registry.withheldForGoodClassCount())
+        assertEquals(listOf(name), registry.failed())
+
+        counts[0]++
+
+        assertEquals(0, registry.withheldForGoodClassCount())
+        val chunk = registry.computeManifestDelta(resource).manifest
+        assertEquals(listOf(name), chunk.probes.map { it.className }.distinct())
+        assertTrue(chunk.failedClasses.isEmpty())
+    }
+
+    @Test
     fun `a class confirmed by a probe hit drops its definition attempt`() {
         val registry = ScriptedRegistry()
         registry.next = registry.attempt()
