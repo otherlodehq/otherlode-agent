@@ -56,6 +56,7 @@ import java.net.URL
 import java.nio.file.Files
 import java.nio.file.Paths
 import java.time.Duration
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.atomic.AtomicBoolean
 
 /** `-javaagent:otherlode-agent.jar` entry point. */
@@ -163,6 +164,7 @@ object Agent {
         agentArgs: String?,
         instrumentation: Instrumentation,
         addShutdownHook: (Thread) -> Unit = { Runtime.getRuntime().addShutdownHook(it) },
+        startWorker: (Thread) -> Unit = Thread::start,
     ): Running? {
         val config = AgentConfig.parse(agentArgs)
         if (!config.enabled) {
@@ -272,11 +274,12 @@ object Agent {
 
         // Both transformers are installed. A failure from here on would leave classes woven while
         // nothing is ever exported, so it takes down everything set up so far before premain logs
-        // it. The threads start last, once nothing after them can fail.
+        // it. The worker threads wait at the gate, which opens once nothing after it can fail.
         var scheduler: ExportScheduler? = null
         var shutdownHook: Thread? = null
         var shutdownHooksHook: ShutdownHooksHook? = null
         var classListingWatch: ClassListingWatch? = null
+        val gate = WorkerGate()
         try {
             if (config.classListingEnabled) {
                 val watch = ClassListingWatch(config.includePackages, config.excludePackages)
@@ -343,7 +346,6 @@ object Agent {
                     beforeManifest = { graceMillis, finalFlush -> instrumentedEndpoints?.beforeManifest(graceMillis, finalFlush) },
                 )
             scheduler = started
-            started.start()
             val scanWorker =
                 if (staticBaselineSender != null) {
                     val referenceFilter =
@@ -356,6 +358,7 @@ object Agent {
                         registry,
                         staticBaselineMismatchDetector,
                         referenceFilter,
+                        gate,
                     )
                 } else {
                     null
@@ -380,30 +383,35 @@ object Agent {
                 }, "otherlode-shutdown-hook")
             addShutdownHook(hook)
             shutdownHook = hook
-            val listingWorker = classListingSender?.let { classListingThread(config, resource, it, classListingWatch, instrumentation) }
-            scanWorker?.start()
-            listingWorker?.start()
-            return Running(
-                started,
-                instrumentation,
-                otherlodeInstrumentation,
-                transformer,
-                hook,
-                endpointInstrumentation,
-                endpointTransformer,
-                dependencyRegistry,
-                resource,
-                listingWorker,
-                verifierHook,
-                shutdownHooksHook,
-                classListingWatch,
-            )
+            val listingWorker = classListingSender?.let { classListingThread(config, resource, it, classListingWatch, instrumentation, gate) }
+            scanWorker?.let(startWorker)
+            listingWorker?.let(startWorker)
+            started.start()
+            val running =
+                Running(
+                    started,
+                    instrumentation,
+                    otherlodeInstrumentation,
+                    transformer,
+                    hook,
+                    endpointInstrumentation,
+                    endpointTransformer,
+                    dependencyRegistry,
+                    resource,
+                    listingWorker,
+                    verifierHook,
+                    shutdownHooksHook,
+                    classListingWatch,
+                )
+            gate.open()
+            return running
         } catch (e: Throwable) {
             // Each step is tried on its own, so one that fails neither stops the rest nor hides
             // the failure that started the rollback.
             fun undo(step: () -> Unit) = runCatching(step).exceptionOrNull()?.let(e::addSuppressed)
             shutdownHook?.let { undo { Runtime.getRuntime().removeShutdownHook(it) } }
             scheduler?.let { undo(it::stop) }
+            undo(gate::abort)
             undo { otherlodeInstrumentation.uninstall(instrumentation, transformer) }
             if (endpointInstrumentation != null && endpointTransformer != null) {
                 undo { endpointInstrumentation.uninstall(instrumentation, endpointTransformer) }
@@ -508,6 +516,7 @@ object Agent {
         registry: ProbeRegistry,
         mismatchDetector: StaticBaselineMismatchDetector,
         referenceFilter: BaselineReferenceFilter,
+        gate: WorkerGate,
     ): Thread {
         val scanner = StaticBaselineScanner(config.includePackages, config.excludePackages)
         val publisher =
@@ -520,7 +529,7 @@ object Agent {
                 sender = sender,
                 includeRules = IncludeRules(config.includePackages, config.excludePackages),
             )
-        val worker = Thread({ publisher.run(resource) }, "otherlode-static-baseline-scan")
+        val worker = Thread({ if (gate.await()) publisher.run(resource) }, "otherlode-static-baseline-scan")
         worker.isDaemon = true
         return worker
     }
@@ -536,6 +545,7 @@ object Agent {
         sender: ClassListingSender,
         watch: ClassListingWatch?,
         instrumentation: Instrumentation,
+        gate: WorkerGate,
     ): Thread {
         val publisher =
             ClassListingPublisher(
@@ -543,7 +553,7 @@ object Agent {
                 IncludeRules(config.includePackages, config.excludePackages),
                 sender,
             )
-        val worker = Thread({ publisher.run(resource) }, "otherlode-class-listing")
+        val worker = Thread({ if (gate.await()) publisher.run(resource) }, "otherlode-class-listing")
         worker.isDaemon = true
         return worker
     }
@@ -673,10 +683,11 @@ object Agent {
 
     /**
      * Runs [list] to completion, then registers everything it found, with its class names for the
-     * class index, and marks the listing complete. Nothing escapes: a failure is logged at WARNING,
-     * registers nothing and marks the listing failed, so the collector sees no dependencies from
-     * this instance rather than a partial list it would read as the whole classpath, and nothing
-     * waiting on the listing waits any longer.
+     * class index, and marks the listing complete. Nothing escapes: a failure is logged at WARNING
+     * and marks the listing failed, so the registry sends nothing and the collector sees no
+     * dependencies from this instance rather than a partial list it would read as the whole
+     * classpath, and nothing waiting on the listing waits any longer. Entries registered before a
+     * throw stay in the registry, inert.
      *
      * `internal` so a test can drive a failing listing without a real classpath.
      */
@@ -703,4 +714,36 @@ object Agent {
             registry.markListingFailed()
         }
     }
+}
+
+/**
+ * Holds the agent's worker threads until every startup step has succeeded. A worker that
+ * started before a later step failed ends without running once [abort] releases it.
+ */
+internal class WorkerGate {
+    private val decided = CountDownLatch(1)
+
+    @Volatile
+    private var opened = false
+
+    /** Lets every waiting worker run. */
+    fun open() {
+        opened = true
+        decided.countDown()
+    }
+
+    /** Releases every waiting worker without letting it run. */
+    fun abort() {
+        decided.countDown()
+    }
+
+    /** Waits for [open] or [abort] and reports whether the worker may run. An interrupt counts as an abort. */
+    fun await(): Boolean =
+        try {
+            decided.await()
+            opened
+        } catch (e: InterruptedException) {
+            Thread.currentThread().interrupt()
+            false
+        }
 }

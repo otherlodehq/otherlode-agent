@@ -253,6 +253,8 @@ public final class OtherlodeEndpoints {
 
     private static final System.Logger LOG = OtherlodeLoggers.get(OtherlodeEndpoints.class.getName());
     private static final int BUFFER_CAPACITY = 4096;
+    private static final String REPLAY_BUFFER_OVERFLOW =
+            "endpoint replay buffer overflow: records were dropped before a resolver was installed";
 
     private static final Object BUFFER_LOCK = new Object();
     private static final Deque<BufferedRecord> BUFFER = new ArrayDeque<>();
@@ -753,7 +755,7 @@ public final class OtherlodeEndpoints {
         }
     }
 
-    /** No kind: what a buffered record that disables nothing carries. */
+    /** No kind: what a buffered record that disables nothing carries, and a disable that fits none of the kinds below. */
     public static final int KIND_UNSPECIFIED = 0;
 
     /** A {@link LinkageError}, wherever it was caught: the framework release differs from the one the module was built for. */
@@ -896,12 +898,21 @@ public final class OtherlodeEndpoints {
     }
 
     /**
-     * Appends to the buffer while holding {@link #BUFFER_LOCK}; drops the record and logs once if the
-     * buffer is already full. A disable record is kept past the cap: there is at most one per module,
-     * and losing one would leave a module off with the server unaware of it.
+     * Appends to the buffer while holding {@link #BUFFER_LOCK}. When the buffer is already full, a
+     * record other than a disable is dropped and its module is disabled instead, with one disable
+     * record held for it, so the dropped calls read as a disabled module rather than as absence. A
+     * disable record is kept past the cap: there is at most one per module, and losing one would
+     * leave a module off with the server unaware of it.
      */
     private static void buffer(BufferedRecord record) {
         if (BUFFER.size() >= BUFFER_CAPACITY && record.kind != RecordKind.FAILURE) {
+            String module = record.module;
+            if (module != null && FAILURE_LOGGED.add(module)) {
+                DISABLED_MODULES.add(module);
+                anyDisabled = true;
+                BUFFER.addLast(BufferedRecord.forFailure(module, KIND_UNSPECIFIED, REPLAY_BUFFER_OVERFLOW));
+                LOG.log(Level.WARNING, "otherlode: endpoint module " + module + " disabled itself: " + REPLAY_BUFFER_OVERFLOW);
+            }
             if (!bufferOverflowLogged) {
                 bufferOverflowLogged = true;
                 LOG.log(

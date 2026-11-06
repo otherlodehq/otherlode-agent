@@ -166,6 +166,7 @@ class DependencyRegistry(
 
     @Volatile
     private var listingComplete = false
+    private var listingFailed = false
 
     private val countGenerations = AtomicLong(0)
     private val deliveredGenerations = AtomicLong(0)
@@ -181,9 +182,15 @@ class DependencyRegistry(
     val isListingComplete: Boolean
         get() = listingComplete
 
-    /** Records that the startup listing finished, releasing every [awaitListing]. */
+    /**
+     * Records that the startup listing finished, releasing every [awaitListing]. Does nothing
+     * after [markListingFailed], since a failed listing leaves a partial registry.
+     */
     fun markListingComplete() {
-        listingComplete = true
+        synchronized(this) {
+            if (listingFailed) return
+            listingComplete = true
+        }
         listingEnded.countDown()
     }
 
@@ -192,6 +199,9 @@ class DependencyRegistry(
      * leaving it to wait out its timeout. [isListingComplete] stays false.
      */
     fun markListingFailed() {
+        synchronized(this) {
+            if (!listingComplete) listingFailed = true
+        }
         listingEnded.countDown()
     }
 

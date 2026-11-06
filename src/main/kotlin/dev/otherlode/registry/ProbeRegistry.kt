@@ -213,7 +213,7 @@ open class ProbeRegistry(
         @Volatile
         var sequence: Long = sequence
 
-        /** Set once [missedConfirmations] reaches the terminal count; never confirmed after this. */
+        /** Set once [missedConfirmations] reaches the terminal count. A new attempt or a hit clears it. */
         @Volatile
         var withheldForGood: Boolean = false
     }
@@ -579,15 +579,18 @@ open class ProbeRegistry(
     /**
      * Whether [entry] has evidence of having been defined: a probe count above zero, memoised
      * once seen so later calls do not rescan the array, or an earlier confirmation recorded by
-     * [confirmFrom].
+     * [confirmFrom]. A hit that confirms the class also lifts a withhold and drops an unsent
+     * failure, since it proves the class was defined.
      */
     private fun isConfirmed(entry: ClassEntry): Boolean {
         if (entry.confirmed) return true
         if (entry.counts.any { it > 0L }) {
             synchronized(entry) {
                 entry.confirmed = true
+                entry.withheldForGood = false
                 entry.attempts.clear()
             }
+            forgetUnsentFailure(entry.className)
         }
         return entry.confirmed
     }
@@ -618,7 +621,7 @@ open class ProbeRegistry(
      * when any entry of that name is confirmed or pending. Only a name with no live copy may stay
      * failed.
      *
-     * A class already confirmed, or already withheld for good, is left alone. A registry that
+     * A class already confirmed, or withheld for good with no hit, is left alone. A registry that
      * does not withhold tracks nothing and returns nothing: the names this returns are logged as
      * having had their probes withheld, which would not be true, and no class is recorded as
      * failed.
@@ -631,7 +634,7 @@ open class ProbeRegistry(
         val newlyWithheld = mutableListOf<String>()
         for (entry in entriesByKey.values) {
             if (entry.sequence > registeredUpTo) continue
-            if (entry.withheldForGood || isConfirmed(entry)) continue
+            if (isConfirmed(entry) || entry.withheldForGood) continue
             val loaderCollected = entry.classLoaderRef != null && entry.classLoaderRef.get() == null
             if (entry.className in loadedClassNames || loaderCollected) {
                 synchronized(entry) {
@@ -708,7 +711,7 @@ open class ProbeRegistry(
         if (!confirmsDefinitions) 0 else entriesByKey.values.count { !it.withheldForGood && !isConfirmed(it) }
 
     /** How many registered classes were never confirmed defined and are withheld for good. */
-    fun withheldForGoodClassCount(): Int = entriesByKey.values.count { it.withheldForGood }
+    fun withheldForGoodClassCount(): Int = entriesByKey.values.count { it.withheldForGood && !isConfirmed(it) }
 
     /**
      * Records a class the agent matched but could not instrument. This makes it visible on the

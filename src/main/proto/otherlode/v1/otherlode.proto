@@ -1061,7 +1061,8 @@ message DisabledEndpointModule {
 
 // What switched an endpoint module off.
 enum DisabledEndpointModuleKind {
-  // Sent by an agent that predates the field.
+  // Sent by an agent that predates the field, and for a module that lost records before the
+  // agent finished installing, whose reason says so.
   DISABLED_ENDPOINT_MODULE_KIND_UNSPECIFIED = 0;
   // A LinkageError, wherever it was caught: the framework release differs from the one the
   // module was built for.

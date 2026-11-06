@@ -131,6 +131,7 @@ class ExportScheduler(
     private val monotonicMillis: () -> Long = { System.nanoTime() / 1_000_000 },
 ) {
     private val log by agentLogger(ExportScheduler::class.java.name)
+    @Volatile
     private var executor: ScheduledExecutorService? = null
     private val branchDropsLogged = AtomicBoolean(false)
     private val unreadShapesLogged = AtomicBoolean(false)
