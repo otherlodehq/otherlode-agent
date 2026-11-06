@@ -118,10 +118,17 @@ multi-tenant backend.
    01:04Z, every 31 minutes, about 40 MB was malloced and freed over 90
    seconds, with glibc's mapped size unchanged and mostly no C2 compile
    nearby. Nothing in the agent runs on a 31-minute cycle, and G1's
-   malloc peak was 9 MB. A test with a trimmed agent and a trimmed
-   control, both under NMT summary with GC and compile logs, runs on
-   `soak-2` (`/opt/soak-trimpair/out`) until about 15:55Z on 2026-11-06.
-   It decides whether that burst is the agent's.
+   malloc peak was 9 MB. That burst is not the agent's. A 4.5-hour test
+   on `soak-2` (`/opt/soak-trimpair/out`, 2026-11-06) ran a trimmed
+   agent and a trimmed control under NMT summary with GC, compile and
+   thread logs. Both burst 10 to 45 MB about every 16 minutes. NMT's
+   committed total stayed flat through each burst, no GC ran and the
+   control's thread list did not change, so the memory is malloced by
+   native code NMT does not track. Its source is not named.
+   The agent's share of the growth is its compile work: about 25% more
+   C2 compiles in warm-up, and its flush path compiling for hours after.
+   On `soak-2` at 12 hours the untrimmed agents sat 30 to 55 MB above
+   the controls.
    On `soak-1`, `jcmd VM.log` writes compile logs for shop-2, shop-3 and
    shop-control to `/var/tmp/soak-jit/`. From 23:25Z to 11:25Z shop-2
    made 97 compiles, shop-3 101 and the control 6. Most of the agent
