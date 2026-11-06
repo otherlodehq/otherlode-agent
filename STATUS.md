@@ -129,6 +129,26 @@ multi-tenant backend.
    C2 compiles in warm-up, and its flush path compiling for hours after.
    On `soak-2` at 12 hours the untrimmed agents sat 30 to 55 MB above
    the controls.
+   The late compiles trace to the flush path. In 12 hours on day 2 to 3,
+   shop-2 made 89 C2 compiles and shop-control 14: about 30 in agent
+   export and protobuf code, 20 in the JDK HttpClient and
+   CompletableFuture, and 17 in reflection and method handles. A method
+   needs about 5,000 calls before C2 compiles it, so code that runs once
+   a minute reaches it after days. Proposed cuts, waiting on Luke:
+   1. `ProtoPayloadCodec.elementsIn` (`wire/`) counts elements through
+      protobuf reflection, for every changed count on every flush
+      (`ProbeRegistry.kt:788`). Count from the generated accessors
+      instead. That drops the reflection, the method-handle classes the
+      JDK spins for it and protobuf's field accessor table.
+   2. `HttpExporter.lazyClient` keeps the JDK client's default
+      executor, a cached pool whose workers exit after 60 s idle. With a
+      60 s flush, the trimmed agent started 48 workers in 4.5 hours, and
+      each new thread can take a different glibc arena. Give the client
+      one daemon thread of its own.
+   3. `weightOf(batch)` builds the whole batch only to measure it, then
+      the send builds it again. Build it once.
+   Then rerun the 12-hour `soak-2` pair and compare late compiles and the
+   RSS gap with the controls.
    On `soak-1`, `jcmd VM.log` writes compile logs for shop-2, shop-3 and
    shop-control to `/var/tmp/soak-jit/`. From 23:25Z to 11:25Z shop-2
    made 97 compiles, shop-3 101 and the control 6. Most of the agent
