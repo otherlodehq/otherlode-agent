@@ -335,6 +335,7 @@ object Agent {
                     staticBaselineSender = staticBaselineSender,
                     classListingSender = classListingSender,
                     dependencyListing = dependencyListing,
+                    startupCleanup = { BootstrapHolder.sweepLeftovers() },
                     releaseQuietCaches = otherlodeInstrumentation::releaseQuietCaches,
                     hasStartingPhase = true,
                     verifierWatch = verifierHook.watch(),

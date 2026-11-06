@@ -18,7 +18,8 @@ multi-tenant backend.
    41236248477 on `b42e026` (2026-10-31): narrow startup +21.2%, 21
    repeats per variant. If code that runs at class load or in `premain`
    changes before the tag, re-run that job on the tagged commit and
-   update both pages.
+   update both pages. `premain` has changed since: it creates and locks
+   the bootstrap jar's lock file (ADR 0088).
 2. **Cut the releases** (ADRs 0062 and 0063, collector ADR 0006). Cutting
    is Luke's call. Collector `v0.1.0` goes first, since the agent's
    `release.sh` refuses a release until it exists. Both `## [0.1.0]`

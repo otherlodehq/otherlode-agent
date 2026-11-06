@@ -91,6 +91,11 @@ class ExportScheduler(
      */
     private val dependencyListing: DependencyListingRun = DependencyListingRun {},
     /**
+     * Removes leftover files from earlier processes, run at the top of the first scheduled flush
+     * so it stays off `premain` and out of the shutdown flushes. The default removes nothing.
+     */
+    private val startupCleanup: () -> Unit = {},
+    /**
      * Releases transform-time caches of loaders that went quiet, called once per flush after its
      * sends, the shutdown flush excepted. The default releases nothing.
      */
@@ -136,6 +141,7 @@ class ExportScheduler(
     private val startedAt = clock()
     private val cacheReleaseFailureLogged = AtomicBoolean(false)
     private val beforeManifestFailureLogged = AtomicBoolean(false)
+    private val startupCleanupRan = AtomicBoolean(false)
 
     /** Set once a manifest carrying `dependenciesListed = true` was confirmed; see [sendDependenciesListedIfDue]. */
     private val dependenciesListedSent = AtomicBoolean(false)
@@ -402,6 +408,7 @@ class ExportScheduler(
     ) {
         val flushStart = clock()
         try {
+            if (!final && !early && startupCleanupRan.compareAndSet(false, true)) startupCleanup()
             dependencyListing.runOnce()
             maybeLogBranchDrops()
             maybeLogUnreadShapes()

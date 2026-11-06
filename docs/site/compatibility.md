@@ -103,6 +103,8 @@ Sharing is only supported for boot loader classes because bootstrap classpath ha
 
 The line is harmless. OpenTelemetry's agent causes the same one.
 
+The jar is a file named `otherlode-bootstrap-<random>.jar` in `java.io.tmpdir`, with a `.lock` file beside it that the JVM holds while it runs. On Linux and macOS, a JVM that exits normally deletes both. A JVM that is killed leaves both behind, and so does any JVM on Windows, where an open jar cannot be deleted. An agent that starts later with the same `java.io.tmpdir` deletes them at its first scheduled flush, if they are at least 10 minutes old by then. It keeps the files of every JVM still running.
+
 If the agent cannot install that jar, for example on a read-only file system or a full `java.io.tmpdir`, it logs an ERROR and disables itself, exporter included. See [troubleshooting](troubleshooting).
 
 ## Dependencies inside the agent jar
