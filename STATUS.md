@@ -98,17 +98,36 @@ multi-tenant backend.
    added no step to any JVM. A second reports call stepped only
    agent-b, by 10 MB of freed glibc memory. Still open: why soak-1's
    control stays flat while shop-2 and shop-3 keep stepping.
-   Two things run to settle it, both started 2026-11-05 at about 23:20Z.
-   On `soak-2`, `/opt/soak-compile/out` runs six JVMs for 12 hours
-   without NMT: agents with and without the baseline, an agent with
-   `-XX:TrimNativeHeapInterval=300000`, an agent with
-   `MALLOC_ARENA_MAX=2`, and two controls. Each logs every compile with
-   its UTC time. On `soak-1`, `jcmd VM.log` writes the same compile log
-   for shop-2, shop-3 and shop-control to `/var/tmp/soak-jit/`. The
-   C2 cause holds if every step of 5 MB or more lines up with a C2
-   compile in the same JVM, and the trim and two-arena agents stay flat.
-   shop-3 regrew from 319 to 368 MB between 20:09Z and 20:19Z, 26 minutes
-   after its trim.
+   A 12-hour test on `soak-2` (`/opt/soak-compile/out`, ended
+   2026-11-06 11:21Z) ran six JVMs without NMT, each logging every
+   compile with its UTC time:
+
+   | JVM | RSS start | RSS end | C2 compiles after warm-up |
+   |---|---|---|---|
+   | agent, baseline | 281 MB | 354 MB | 658 |
+   | agent, no baseline | 315 MB | 379 MB | 370 |
+   | agent, trim every 5 min | 301 MB | 304 MB | 555 |
+   | agent, `MALLOC_ARENA_MAX=2` | 288 MB | 320 MB | 564 |
+   | control a | 225 MB | 320 MB | 182 |
+   | control b | 238 MB | 327 MB | 166 |
+
+   Every step in the untrimmed JVMs lined up with a C2 compile. The
+   agent JVMs kept compiling for hours after the controls stopped: their
+   flush path runs once a minute and crosses the compile thresholds
+   slowly. The trimmed agent showed a second burst the others hide: from
+   01:04Z, every 31 minutes, about 40 MB was malloced and freed over 90
+   seconds, with glibc's mapped size unchanged and mostly no C2 compile
+   nearby. Nothing in the agent runs on a 31-minute cycle, and G1's
+   malloc peak was 9 MB. A test with a trimmed agent and a trimmed
+   control, both under NMT summary with GC and compile logs, runs on
+   `soak-2` (`/opt/soak-trimpair/out`) until about 15:55Z on 2026-11-06.
+   It decides whether that burst is the agent's.
+   On `soak-1`, `jcmd VM.log` writes compile logs for shop-2, shop-3 and
+   shop-control to `/var/tmp/soak-jit/`. From 23:25Z to 11:25Z shop-2
+   made 97 compiles, shop-3 101 and the control 6. Most of the agent
+   JVMs' compiles were agent and HttpClient code. No JVM stepped 5 MB in
+   that time: shop-2 went from 421 to 425 MB, and shop-3 held at 364 to
+   368 MB after regrowing from 319 MB in the hour after its trim.
    If the agent causes the growth, fix the agent rather than the page
    (Luke, 2026-11-05).
    The result decides whether `docs/site/overhead.md` holds. It gives the
