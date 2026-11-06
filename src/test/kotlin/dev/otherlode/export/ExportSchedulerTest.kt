@@ -3785,6 +3785,42 @@ class ExportSchedulerTest {
         assertEquals(1, listingRuns.get())
     }
 
+    private fun cleanupScenario(cleanups: AtomicInteger): ExportScheduler {
+        val registry = ProbeRegistry(confirmsDefinitions = true)
+        return ExportScheduler(
+            config,
+            resource,
+            registry,
+            EndpointRegistry(),
+            RecordingExporter(),
+            loadedClassSweep = RecordingSweep(ByteBuddyAgent.install(), registry, config),
+            dependencyRegistry = DependencyRegistry().apply { markListingComplete() },
+            startupCleanup = { cleanups.incrementAndGet() },
+        )
+    }
+
+    @Test
+    fun `the startup cleanup runs on the first scheduled flush only`() {
+        val cleanups = AtomicInteger()
+        val scheduler = cleanupScenario(cleanups)
+
+        scheduler.flush()
+        scheduler.flush()
+
+        assertEquals(1, cleanups.get())
+    }
+
+    @Test
+    fun `the shutdown flushes never run the startup cleanup`() {
+        val cleanups = AtomicInteger()
+        val scheduler = cleanupScenario(cleanups)
+
+        scheduler.flushAtShutdownStart(Duration.ofSeconds(5))
+        scheduler.flushOnShutdown(Duration.ofSeconds(5))
+
+        assertEquals(0, cleanups.get())
+    }
+
     @Test
     fun `the shutdown flush runs the dependency listing when no flush ran before`() {
         val events = mutableListOf<String>()
