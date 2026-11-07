@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted, amended 2026-10-25 and 2026-11-07
 ---
 
 # A class's probes stay out of the manifest until the class is confirmed defined
@@ -51,3 +51,15 @@ The deferral above is closed. An endpoint a module declares from inside a class'
 - **`failed_classes` is not extended.** A resource class the probe tier also wove is already named there. One outside the include rules is named only in the `WARNING`, and its endpoints never existed for the framework to serve.
 
 Rejected: holding the declarations unbound until confirmation, which loses every hit before the sweep; confirming per endpoint entry, which a dispatched or shared entry would confirm for a class that never defined; and moving the probe tier's state machine into a shared class, which reshapes tested code for one more caller. The endpoint registry keeps its own copy of the miss rule, built on `DefinitionAttempt`.
+
+## Amended on 2026-11-07: one definition watch for both tiers
+
+The two copies of the miss rule drifted. A hit lifted a withhold in the endpoint copy only, so the probe copy could confirm a withheld class and still hold it withheld: the class shipped with its hits and also stayed in the failed set, against ADR 0066. The drift was fixed and a contract test was added that runs the same scenarios against both registries. That guards only the scenarios it lists, and any further tier that holds data until its class is confirmed would add a third copy. So the state machine moves into one class, `DefinitionWatch`, and the rejection above of "moving the probe tier's state machine into a shared class" is reversed.
+
+- **One watch per watched class, one lock.** A watch holds the class's definition attempts, its misses, whether it is unwatchable, whether it is confirmed or withheld for good, whether it has been named, and its registration sequence. Every transition runs under the watch's own monitor: a new attempt, a confirmation, a sweep's verdict on the class, and naming it. The confirmed and withheld reads are volatile, so a send-pool thread reads them without the lock.
+- **The registries keep what differs.** The evidence that confirms a class stays with each registry: a probe count above zero, or a hit on an endpoint that class alone declared. So does whether a class is unwatchable, since only the probe tier can be called outside a transform, and what a withhold does: the probe tier records the class as failed, and the endpoint tier names it only when it holds an endpoint with no other source.
+- **The rules are the existing ones.** A confirmation, by evidence or by a sweep, lifts a withhold and is never taken back. A new attempt on a class not confirmed clears its misses and a withhold, and the same attempt registered twice counts once. A class takes a miss only when every attempt it recorded has ended and it registered before the sweep's snapshot, and two misses withhold it. An unwatchable class never takes a miss.
+- **The contract test stays,** beside a test of the watch's transitions, since the registries' evidence and withhold reactions still differ.
+
+Rejected: keeping two copies with the contract test as the guard. It catches drift only in the scenarios it lists, and leaves the next tier to copy the rule a third time.
+

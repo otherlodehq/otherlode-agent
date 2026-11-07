@@ -262,20 +262,12 @@ edit deleted would read as never hit unless a collector learns the old entry
 is superseded, which may need a wire field), and whether that is worth it for a
 development convenience.
 
-### One definition-confirmation state for both registries: to decide
+### One definition watch for both registries: building
 
-`ProbeRegistry` and `EndpointRegistry` each keep the class-definition
-confirmation state (attempts, misses, withhold, confirmed) in their own
-fields with their own transitions. The two copies drifted: a hit lifted a
-withhold in the endpoint copy only, so the probe copy could ship a class
-with hits and also list it in `failedClasses`. That drift is fixed, and
-`DefinitionConfirmationContractTest` runs the same scenarios against both,
-so they cannot drift unseen again. The ADR 0028 amendment rejected moving
-the probe tier's state machine into a shared class. To decide: whether to
-reverse that and build one `DefinitionWatch` type (a sealed state behind
-one synchronized transition), with each registry keeping its own evidence
-rule and its reaction to a withhold. The contract test is the cheaper
-guard; the shared type removes the second copy.
+ADR 0028's amendment of 2026-11-07. `DefinitionWatch` takes the
+confirmation state machine out of `ProbeRegistry.ClassEntry` and
+`EndpointRegistry.DeclaringState`. One chunk: the watch with a test of
+its transitions, both registries moved onto it, the contract test kept.
 
 ### Flaky framework-marker fixtures
 
