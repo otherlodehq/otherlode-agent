@@ -262,13 +262,6 @@ edit deleted would read as never hit unless a collector learns the old entry
 is superseded, which may need a wire field), and whether that is worth it for a
 development convenience.
 
-### One definition watch for both registries: building
-
-ADR 0028's amendment of 2026-11-07. `DefinitionWatch` takes the
-confirmation state machine out of `ProbeRegistry.ClassEntry` and
-`EndpointRegistry.DeclaringState`. One chunk: the watch with a test of
-its transitions, both registries moved onto it, the contract test kept.
-
 ### Flaky framework-marker fixtures
 
 `FrameworkMarkerFixtureTest` forks framework apps that bind a port the

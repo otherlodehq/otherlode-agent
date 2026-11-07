@@ -169,36 +169,8 @@ open class ProbeRegistry(
         val decreaseWarned: BooleanArray = BooleanArray(counts.size)
         var manifestIncluded: Boolean = false
 
-        /**
-         * Set once evidence of definition is seen; see [ProbeRegistry.isConfirmed]. Volatile
-         * because [confirmFrom] runs on the flush thread while [computeManifestDeltas] reads this
-         * on a send-pool thread.
-         */
-        @Volatile
-        var confirmed: Boolean = false
-
-        /**
-         * [confirmFrom] calls in which this class was neither confirmed nor collected, and whose
-         * definition attempt had ended. Guarded by the entry's monitor.
-         */
-        var missedConfirmations: Int = 0
-
-        /**
-         * The definition attempts of this class's transforms that may still run. A miss counts
-         * only when every one has ended. Empty when none was recorded, and then every miss counts.
-         * Guarded by the entry's monitor.
-         */
-        val attempts: MutableList<DefinitionAttempt> = if (attempt == null) mutableListOf() else mutableListOf(attempt)
-
-        /**
-         * True when a transform ran inside the JVM's transformer call but its attempt could not be
-         * read. Such a class never takes a miss, so it is never named failed. Guarded by the
-         * entry's monitor.
-         */
-        var unwatchable: Boolean = unwatchable
-
-        /** True once [confirmFrom] has returned this class's name, so it is returned only once. */
-        var reported: Boolean = false
+        /** Whether the JVM defined the class, as far as the agent can tell; see [ProbeRegistry.isConfirmed]. */
+        val watch: DefinitionWatch = DefinitionWatch(attempt, unwatchable, sequence)
 
         /** What [ManifestData] adds to a manifest payload, taken the first time it is needed. */
         @Volatile
@@ -208,14 +180,6 @@ open class ProbeRegistry(
         @Volatile
         var oversize: Boolean? = null
         var oversizeLogged = false
-
-        /** The [ProbeRegistry.registrationSequence] value given to the latest transform of this class. */
-        @Volatile
-        var sequence: Long = sequence
-
-        /** Set once [missedConfirmations] reaches the terminal count. A new attempt or a hit clears it. */
-        @Volatile
-        var withheldForGood: Boolean = false
     }
 
     private class SkippedEntry(
@@ -394,14 +358,7 @@ open class ProbeRegistry(
         unwatchable: Boolean,
     ) {
         if (isConfirmed(entry)) return
-        synchronized(entry) {
-            if (entry.confirmed) return
-            if (attempt != null) entry.attempts += attempt
-            if (unwatchable) entry.unwatchable = true
-            entry.missedConfirmations = 0
-            entry.withheldForGood = false
-            entry.sequence = lastRegistrationSequence.incrementAndGet()
-        }
+        entry.watch.startAttempt(attempt, unwatchable) { lastRegistrationSequence.incrementAndGet() }
     }
 
     private val unwatchableWarned = AtomicBoolean(false)
@@ -583,16 +540,12 @@ open class ProbeRegistry(
      * failure, since it proves the class was defined.
      */
     private fun isConfirmed(entry: ClassEntry): Boolean {
-        if (entry.confirmed) return true
+        if (entry.watch.isConfirmed) return true
         if (entry.counts.any { it > 0L }) {
-            synchronized(entry) {
-                entry.confirmed = true
-                entry.withheldForGood = false
-                entry.attempts.clear()
-            }
+            entry.watch.confirm()
             forgetUnsentFailure(entry.className)
         }
-        return entry.confirmed
+        return entry.watch.isConfirmed
     }
 
     /**
@@ -633,64 +586,17 @@ open class ProbeRegistry(
         if (!confirmsDefinitions) return emptyList()
         val newlyWithheld = mutableListOf<String>()
         for (entry in entriesByKey.values) {
-            if (entry.sequence > registeredUpTo) continue
-            if (isConfirmed(entry) || entry.withheldForGood) continue
+            if (entry.watch.sequence > registeredUpTo) continue
+            if (isConfirmed(entry)) continue
             val loaderCollected = entry.classLoaderRef != null && entry.classLoaderRef.get() == null
-            if (entry.className in loadedClassNames || loaderCollected) {
-                synchronized(entry) {
-                    entry.confirmed = true
-                    entry.attempts.clear()
-                }
-                continue
-            }
-            val watched = synchronized(entry) { if (entry.unwatchable) null else entry.attempts.toList() } ?: continue
-            if (watched.any { !attemptEnded(it) }) continue
-            when (recordMiss(entry, watched, registeredUpTo)) {
-                Withhold.NONE -> {}
-
-                Withhold.QUIET -> {
-                    recordFailed(entry.className)
-                }
-
-                Withhold.REPORTED -> {
-                    recordFailed(entry.className)
-                    newlyWithheld += entry.className
-                }
-            }
+            val defined = entry.className in loadedClassNames || loaderCollected
+            if (entry.watch.reconcile(defined, registeredUpTo, ::attemptEnded) != DefinitionWatch.Verdict.WITHHELD) continue
+            recordFailed(entry.className)
+            if (entry.watch.markReported()) newlyWithheld += entry.className
         }
         dropSupersededFailures()
         return newlyWithheld
     }
-
-    /**
-     * Counts one miss against [entry] and says whether that withholds it for good. Between the
-     * caller's read of [watched] and this lock, a retry can add an attempt or move the entry past
-     * [registeredUpTo], and a confirmation can clear the attempts. Then the miss belongs to a state
-     * that no longer exists, so it is dropped. A counted miss drops the ended attempts, since every
-     * one of them has ended.
-     */
-    private fun recordMiss(
-        entry: ClassEntry,
-        watched: List<DefinitionAttempt>,
-        registeredUpTo: Long,
-    ): Withhold =
-        synchronized(entry) {
-            if (entry.attempts != watched || entry.unwatchable || entry.sequence > registeredUpTo ||
-                entry.withheldForGood || entry.confirmed
-            ) {
-                return Withhold.NONE
-            }
-            entry.missedConfirmations++
-            entry.attempts.clear()
-            if (entry.missedConfirmations < 2) return Withhold.NONE
-            entry.withheldForGood = true
-            if (entry.reported) return Withhold.QUIET
-            entry.reported = true
-            Withhold.REPORTED
-        }
-
-    /** What one miss did to a class: nothing, a withhold already reported once, or a first withhold. */
-    private enum class Withhold { NONE, QUIET, REPORTED }
 
     /**
      * Removes each unsent failure whose name still has an entry that is not withheld for good,
@@ -699,7 +605,7 @@ open class ProbeRegistry(
     private fun dropSupersededFailures() {
         if (failedByClassName.values.none { !it.manifestIncluded }) return
         for (entry in entriesByKey.values) {
-            if (!entry.withheldForGood) forgetUnsentFailure(entry.className)
+            if (!entry.watch.isWithheld) forgetUnsentFailure(entry.className)
         }
     }
 
@@ -708,10 +614,10 @@ open class ProbeRegistry(
      * for a registry that does not withhold, which has nothing to confirm.
      */
     fun unconfirmedClassCount(): Int =
-        if (!confirmsDefinitions) 0 else entriesByKey.values.count { !it.withheldForGood && !isConfirmed(it) }
+        if (!confirmsDefinitions) 0 else entriesByKey.values.count { !it.watch.isWithheld && !isConfirmed(it) }
 
     /** How many registered classes were never confirmed defined and are withheld for good. */
-    fun withheldForGoodClassCount(): Int = entriesByKey.values.count { it.withheldForGood && !isConfirmed(it) }
+    fun withheldForGoodClassCount(): Int = entriesByKey.values.count { it.watch.isWithheld && !isConfirmed(it) }
 
     /**
      * Records a class the agent matched but could not instrument. This makes it visible on the
@@ -1305,7 +1211,7 @@ open class ProbeRegistry(
     internal fun classesHoldingMetadata(): Int = entriesByKey.values.count { it.manifestData != null }
 
     /** How many registered classes still hold a definition attempt; for tests. */
-    internal fun classesHoldingAttempts(): Int = entriesByKey.values.count { synchronized(it) { it.attempts.isNotEmpty() } }
+    internal fun classesHoldingAttempts(): Int = entriesByKey.values.count { it.watch.hasAttempts() }
 
     internal companion object {
         /** The reason a class reported as skipped gives when its manifest entries alone break a bound. */

@@ -179,9 +179,8 @@ class EndpointRegistry(
 
     /**
      * What the registry knows of one class that declared endpoints from its transform, and
-     * whether the JVM defined it. [confirmed], [missedConfirmations], [attempts], [unwatchable],
-     * [reported], [sequence] and [withheldForGood] mean what the same fields of [ProbeRegistry]'s
-     * class entries mean.
+     * whether the JVM defined it. [watch] holds its definition attempts, its misses and whether it
+     * is confirmed or withheld for good.
      */
     internal class DeclaringState(
         val className: String,
@@ -192,20 +191,7 @@ class EndpointRegistry(
         /** The endpoints this class declared. */
         val endpoints: MutableSet<EndpointEntry> = ConcurrentHashMap.newKeySet()
 
-        @Volatile
-        var confirmed: Boolean = false
-
-        /** Guarded by the state's monitor, as are [attempts], [unwatchable] and [reported]. */
-        var missedConfirmations: Int = 0
-        val attempts: MutableList<DefinitionAttempt> = if (attempt == null) mutableListOf() else mutableListOf(attempt)
-        var unwatchable: Boolean = attempt == null
-        var reported: Boolean = false
-
-        @Volatile
-        var sequence: Long = sequence
-
-        @Volatile
-        var withheldForGood: Boolean = false
+        val watch: DefinitionWatch = DefinitionWatch(attempt, attempt == null, sequence)
     }
 
     private class DisabledModuleEntry(
@@ -677,14 +663,7 @@ class EndpointRegistry(
         attempt: DefinitionAttempt?,
     ) {
         if (isConfirmed(state)) return
-        synchronized(state) {
-            if (state.confirmed) return
-            if (attempt != null && state.attempts.any { it === attempt }) return
-            if (attempt != null) state.attempts += attempt else state.unwatchable = true
-            state.missedConfirmations = 0
-            state.withheldForGood = false
-            state.sequence = lastRegistrationSequence.incrementAndGet()
-        }
+        state.watch.startAttempt(attempt, attempt == null) { lastRegistrationSequence.incrementAndGet() }
     }
 
     private fun warnUnwatchableOnce() {
@@ -710,15 +689,9 @@ class EndpointRegistry(
      * class also lifts a withhold.
      */
     private fun isConfirmed(state: DeclaringState): Boolean {
-        if (state.confirmed) return true
-        if (state.endpoints.any { it.count > 0 && !it.anchored && it.declaringClasses.singleOrNull() === state }) {
-            synchronized(state) {
-                state.confirmed = true
-                state.withheldForGood = false
-                state.attempts.clear()
-            }
-        }
-        return state.confirmed
+        if (state.watch.isConfirmed) return true
+        if (state.endpoints.any { it.count > 0 && !it.anchored && it.declaringClasses.singleOrNull() === state }) state.watch.confirm()
+        return state.watch.isConfirmed
     }
 
     /**
@@ -747,66 +720,22 @@ class EndpointRegistry(
     ): List<WithheldEndpointClass> {
         val newlyWithheld = mutableListOf<WithheldEndpointClass>()
         for (state in declaringStates.values) {
-            if (state.sequence > registeredUpTo) continue
-            if (isConfirmed(state) || state.withheldForGood) continue
+            if (state.watch.sequence > registeredUpTo) continue
+            if (isConfirmed(state)) continue
             val loaderCollected = state.classLoaderRef != null && state.classLoaderRef.get() == null
-            if (state.className in loadedClassNames || loaderCollected) {
-                synchronized(state) {
-                    state.confirmed = true
-                    state.attempts.clear()
-                }
-                continue
-            }
-            val watched = synchronized(state) { if (state.unwatchable) null else state.attempts.toList() } ?: continue
-            if (watched.any { !attemptEnded(it) }) continue
-            if (recordMiss(state, watched, registeredUpTo)) {
-                val withheld = state.endpoints.count { !isPublishable(it) }
-                if (withheld > 0 && markReported(state)) newlyWithheld += WithheldEndpointClass(state.className, withheld)
-            }
+            val defined = state.className in loadedClassNames || loaderCollected
+            if (state.watch.reconcile(defined, registeredUpTo, attemptEnded) != DefinitionWatch.Verdict.WITHHELD) continue
+            val withheld = state.endpoints.count { !isPublishable(it) }
+            if (withheld > 0 && state.watch.markReported()) newlyWithheld += WithheldEndpointClass(state.className, withheld)
         }
         return newlyWithheld
     }
 
-    /**
-     * Counts one miss against [state] and says whether that withholds it for good. Between the
-     * caller's read of [watched] and this lock, a retry can add an attempt or move the class past
-     * [registeredUpTo], and a confirmation can clear the attempts. Then the miss belongs to a state
-     * that no longer exists, so it is dropped.
-     */
-    private fun recordMiss(
-        state: DeclaringState,
-        watched: List<DefinitionAttempt>,
-        registeredUpTo: Long,
-    ): Boolean =
-        synchronized(state) {
-            if (state.attempts != watched ||
-                state.unwatchable ||
-                state.sequence > registeredUpTo ||
-                state.withheldForGood ||
-                state.confirmed
-            ) {
-                return false
-            }
-            state.missedConfirmations++
-            state.attempts.clear()
-            if (state.missedConfirmations < 2) return false
-            state.withheldForGood = true
-            true
-        }
-
-    /** Marks [state] as named, and says whether this call is the first to do so. */
-    private fun markReported(state: DeclaringState): Boolean =
-        synchronized(state) {
-            if (state.reported) return false
-            state.reported = true
-            true
-        }
-
     /** How many declaring classes are not yet confirmed defined and not withheld for good. */
-    fun unconfirmedClassCount(): Int = declaringStates.values.count { !isConfirmed(it) && !it.withheldForGood }
+    fun unconfirmedClassCount(): Int = declaringStates.values.count { !isConfirmed(it) && !it.watch.isWithheld }
 
     /** How many declaring classes were never confirmed defined and are withheld for good. */
-    fun withheldForGoodClassCount(): Int = declaringStates.values.count { !isConfirmed(it) && it.withheldForGood }
+    fun withheldForGoodClassCount(): Int = declaringStates.values.count { !isConfirmed(it) && it.watch.isWithheld }
 
     /**
      * Compares each entry's live count against its last successfully sent value, and returns
