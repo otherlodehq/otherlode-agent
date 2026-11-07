@@ -170,23 +170,24 @@ multi-tenant backend.
 
    The memory the agent uses is level: 37 to 83 MB over its control.
    The growth is freed memory glibc keeps per arena, 21 to 94 MB over
-   the control on `soak-1`; `malloc_trim` returns it. Open: whether the
-   agent trims the native heap itself (Luke's call).
+   the control on `soak-1`; `malloc_trim` returns it. The process
+   reuses that memory, and on `soak-1` each JVM's RSS levels off after
+   two to three days: shop-2 held at 428 MB from 60 to 77 hours.
+   The agent does not trim the host's native heap (Luke, 2026-11-07):
+   the growth is bounded, and a trim acts on the whole process. If a
+   JVM still steps on day 7 of the soak, prototype an hourly trim.
+   A draft of `docs/site/overhead.md` sits uncommitted in the master
+   checkout, waiting for Luke's OK. It adds a "Memory over days"
+   section with the soak's figures and `-XX:TrimNativeHeapInterval`,
+   a limit under the benchmark table, and drops "fixed" from the OTel
+   comparison. Its soak figures come from day 4; set them from the
+   final report (2026-11-09 21:36Z) before the commit.
    On `soak-1`, `jcmd VM.log` writes compile logs for shop-2, shop-3 and
    shop-control to `/var/tmp/soak-jit/`. From 23:25Z to 11:25Z shop-2
    made 97 compiles, shop-3 101 and the control 6. Most of the agent
    JVMs' compiles were agent and HttpClient code. No JVM stepped 5 MB in
    that time: shop-2 went from 421 to 425 MB, and shop-3 held at 364 to
    368 MB after regrowing from 319 MB in the hour after its trim.
-   If the agent causes the growth, fix the agent rather than the page
-   (Luke, 2026-11-05).
-   The result decides whether `docs/site/overhead.md` holds. It gives the
-   agent's RSS as +76 MiB, from a short PetClinic window, and calls the
-   memory the agent adds fixed. On soak-1 the gap to the control
-   levels off for the events services, at +95 MB for events-prod and
-   +105 MB for events-staging from about 24 hours. For the shop it keeps
-   growing: shop-3 +60 MB at 1 hour, +85 MB at 24 hours and +104 MB at
-   48 hours; shop-2 +80 MB at 1 hour and +146 MB at 42 hours.
    Check 5 stays as it is: a rule that judged only after warm-up still
    failed both.
    Reports land in `/opt/soak/reports`; `soakctl status` on the VM shows
