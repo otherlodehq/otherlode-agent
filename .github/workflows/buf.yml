@@ -38,7 +38,7 @@ jobs:
       # still caught, and shipping an intended break needs a manual push. A change to this file
       # alone does not trigger a push run, so it never publishes an unchanged schema; run the
       # workflow by hand to check it.
-      - uses: bufbuild/buf-action@85aebf73123b5c15fd5528aaecbf9129cddf7fa7 # v1.6.0
+      - uses: bufbuild/buf-action@37ac33d8960807670a6e9719080e885197b09cc6 # v1.7.0
         with:
           token: ${{ secrets.BUF_TOKEN }}
           lint: true
