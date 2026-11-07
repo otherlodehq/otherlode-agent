@@ -135,21 +135,43 @@ multi-tenant backend.
    export and protobuf code, 20 in the JDK HttpClient and
    CompletableFuture, and 17 in reflection and method handles. A method
    needs about 5,000 calls before C2 compiles it, so code that runs once
-   a minute reaches it after days. Two cuts are built and reviewed but
-   not committed; they sit in the master checkout's working tree:
-   - `ProbeRegistry` caches the empty delta-batch and manifest frame
-     weights per resource. Those were the only protobuf reflection on a
-     steady flush; endpoint and dependency deltas have no repeated or
-     message fields.
-   - `HttpExporter.lazyClient` gives the client a fixed pool of 2 daemon
-     `otherlode-http` threads in place of the JDK default cached pool,
-     whose workers exit after 60 s idle. `docs/site/overhead.md` names
-     the threads.
-   A 12-hour run on `soak-2` (`/opt/soak-flushcuts/out`, started
-   2026-11-06 17:54Z) compares two JVMs each of the master baseline
-   (`1231eacf`), the frame cut only, the HTTP cut only, and no agent.
-   A cut is committed only if it lowers late C2 compiles or the RSS gap
-   to the controls; one that moves nothing is reverted.
+   a minute reaches it after days. Two cuts aimed at them moved nothing
+   and were reverted: caching the empty frame weights in `ProbeRegistry`,
+   and a fixed pool of 2 HTTP client threads in place of the JDK's
+   cached pool. A 12-hour run on `soak-2` (`/opt/soak-flushcuts/out`,
+   ended 2026-11-07 05:56Z) ran two JVMs each of the baseline, each cut
+   and no agent:
+
+   | JVMs | C2 compiles after hour 1 | RSS at 12 hours |
+   |---|---|---|
+   | baseline | 526, 572 | 368, 379 MB |
+   | frame cut | 543, 609 | 356, 369 MB |
+   | HTTP cut | 540, 554 | 351, 383 MB |
+   | no agent | 179, 199 | 305, 330 MB |
+
+   `jcmd System.native_heap_info` splits RSS into memory outside malloc
+   (heap, metaspace, code, thread stacks), malloc in use, and freed
+   memory glibc keeps. On `soak-2` the agent JVMs held 40 to 45 MB more
+   outside malloc and 11 MB more malloc in use than the controls, both
+   level from the second hour. glibc kept 70 to 102 MB free in the agent
+   JVMs and 74 to 103 MB in the controls. On `soak-1` at
+   2026-11-07 09:05Z, in MB:
+
+   | JVM | Up | RSS | Outside malloc | Malloc in use | glibc free |
+   |---|---|---|---|---|---|
+   | shop-1 | 11 h | 350 | 246 | 32 | 71 |
+   | shop-2 | 77 h | 428 | 251 | 33 | 144 |
+   | shop-3 | 107 h | 368 | 230 | 32 | 105 |
+   | shop control | 107 h | 275 | 203 | 22 | 50 |
+   | events 1.0.0 | 107 h | 334 | 230 | 32 | 71 |
+   | events 1.0.0 control | 107 h | 211 | 166 | 13 | 31 |
+   | events 2.0.0 | 35 h | 337 | 225 | 27 | 84 |
+   | events 2.0.0 control | 35 h | 220 | 166 | 13 | 40 |
+
+   The memory the agent uses is level: 37 to 83 MB over its control.
+   The growth is freed memory glibc keeps per arena, 21 to 94 MB over
+   the control on `soak-1`; `malloc_trim` returns it. Open: whether the
+   agent trims the native heap itself (Luke's call).
    On `soak-1`, `jcmd VM.log` writes compile logs for shop-2, shop-3 and
    shop-control to `/var/tmp/soak-jit/`. From 23:25Z to 11:25Z shop-2
    made 97 compiles, shop-3 101 and the control 6. Most of the agent
