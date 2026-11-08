@@ -177,7 +177,7 @@ multi-tenant backend.
    the growth is bounded, and a trim acts on the whole process. If a
    JVM still steps on day 7 of the soak, prototype an hourly trim.
    A draft of `docs/site/overhead.md` sits uncommitted in the master
-   checkout, waiting for Luke's OK. It adds a "Memory over days"
+   checkout. Luke approved its text on 2026-11-07. It adds a "Memory over days"
    section with the soak's figures and `-XX:TrimNativeHeapInterval`,
    a limit under the benchmark table, and drops "fixed" from the OTel
    comparison. Its soak figures come from day 4; set them from the
