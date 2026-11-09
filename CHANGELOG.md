@@ -11,22 +11,18 @@ the section being read.
 
 ## [0.1.0] - 2026-11-01
 
-The first release of the Otherlode agent and its testkit. The agent is a Java agent that counts which methods, branches and endpoints your application runs, and sends the counts to an Otherlode collector. Otherlode then shows the code your traffic never reaches. The docs are at https://otherlode.dev/docs.
+The first release of the Otherlode agent and its testkit. The agent counts which methods, branches and endpoints your JVM application runs and sends the counts to an Otherlode collector, so Otherlode can show the code your traffic never reaches. Docs: https://otherlode.dev/docs.
 
 ### Added
 
-- **The agent jar**, `dev.otherlode:otherlode-agent` on Maven Central. This release also attaches the jar, its signature and `SHA256SUMS`. It loads on JDK 17 and later and attaches with `-javaagent`. `includePackages` is the one option you must set.
-- **Method and branch probes.** As each class your include rules cover loads, the agent probes every concrete method and every outcome of each branch, and counts each hit. A class it cannot weave safely runs unwoven and is reported as skipped.
-- **Generated code is marked, not counted as yours.** The agent recognises code that kotlinc, javac, scalac and the Scala 3 compiler generate, kotlinx.serialization's output, and the methods Hibernate, Ebean, EclipseLink and OpenJPA add to entities. It was checked against kotlinc 1.9 to 2.4, javac 17, 21 and 25, scalac 2.12 and 2.13, and Scala 3.3.3 to 3.10.0. Code from another release that looks generated is reported as an unread shape, never as a finding.
-- **Endpoints.** Modules for Spring MVC and Spring WebFlux (Spring Framework 5.3 to 7), Javalin 6 and 7, Micronaut 3 to 5, Vert.x Web 4.5 and 5, Ktor 2 and 3, JAX-RS, plain servlets and the JDK `HttpServer` declare each route and count its requests. A route bridge, off by default, counts the routes OpenTelemetry's instrumentation resolved, for a framework with no module. Framework markers report a framework's own routing that no module counts.
-- **Classes.** The agent reports each class that loaded, failed to load or failed to initialise. With `staticBaselineEnabled=true` it also sends a static baseline of every class your rules cover, so Otherlode can name classes that never loaded. The class listing, on by default, names the classes your rules cover on the classpath.
-- **Call graph and dependencies.** Call edges between your classes let Otherlode group never-hit code into unreached clusters. The agent lists the jars on the classpath and records which of your classes reference each, so Otherlode can name dependencies your code never uses.
-- **Optional parameters.** Kotlin functions with default arguments get one omission probe per optional parameter, so Otherlode can name a parameter every call supplies.
-- **Test runs.** With `testRun=true` in a test JVM, the agent records which tests call your code, and Otherlode keeps the run out of every finding.
-- **The testkit**, `dev.otherlode:otherlode-testkit` on Maven Central at the same version. It is a collector for JUnit 5 tests, so a test can assert what code it reached and what it never hit.
-- **Configuration** from the `-javaagent` argument string, system properties or environment variables. OpenTelemetry's service name, version and environment settings fill in what you leave unset.
-- **Export** over HTTP and protobuf to a collector, `http://localhost:4319` by default, every 60 seconds and once more at shutdown. Counts are cumulative and stay in memory while the collector cannot be reached.
-- **Native heap trim.** On Linux with glibc, the agent asks the JVM once an hour to return the native memory it has freed, so the resident set size of a long-running service does not keep growing for days. `trimNativeHeapIntervalMinutes` sets the interval, and `0` turns it off.
+- **The agent**, `dev.otherlode:otherlode-agent` on Maven Central. It attaches with `-javaagent` on JDK 17 or later. `includePackages` is the one option you must set.
+- **Methods and branches.** It counts each method body you wrote and each outcome of your own conditionals, in Java, Kotlin and Scala. Code a compiler or JPA enhancer generated is marked, not counted as yours, and a shape it hasn't read is reported as unread, never as dead.
+- **Endpoints** for Spring MVC, Spring WebFlux, Javalin, Micronaut, Vert.x Web, Ktor, JAX-RS, servlets and the JDK `HttpServer`.
+- **Classes, call graph and dependencies.** It reports which classes loaded or failed to, plus call edges and the jars each class references. From these Otherlode groups never-hit code into clusters and names dependencies your code never uses. With `staticBaselineEnabled=true` the agent also sends a baseline, so Otherlode can name classes that never loaded.
+- **Test runs.** With `testRun=true` a run records which tests reached your code and stays out of every finding.
+- **The testkit**, `dev.otherlode:otherlode-testkit`, a JUnit 5 collector for asserting what a test reached.
+- **Export** to a collector at `http://localhost:4319` every 60 seconds and at a graceful shutdown. Counts stay in memory while the collector is down. The agent sends names and string literals from your code in clear. Redaction is the collector's job.
+- **Beside other agents.** A class it can't weave safely runs unwoven and is reported. It works alongside JaCoCo, OpenTelemetry's agent and APM agents that retransform classes.
 
 [Unreleased]: https://github.com/otherlodehq/otherlode-agent/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/otherlodehq/otherlode-agent/releases/tag/v0.1.0
