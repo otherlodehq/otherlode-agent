@@ -212,22 +212,26 @@ class AgentTest {
     }
 
     /**
-     * Compares the thread names present before and after a call, rather than asserting an
-     * absolute count. The test JVM can already be carrying `otherlode-*` threads left by other test
-     * classes in the same Gradle test worker, so an absolute "no such thread exists" assertion
-     * would be flaky for reasons unrelated to this test.
+     * Compares the threads present before and after a call, rather than asserting an absolute
+     * count. The test JVM can already be carrying `otherlode-*` threads left by other test classes
+     * in the same Gradle test worker, so an absolute "no such thread exists" assertion would be
+     * flaky for reasons unrelated to this test. A thread still ending from an earlier test can
+     * share a new thread's name.
      */
-    private fun currentThreadNames(): Set<String> = Thread.getAllStackTraces().keys.mapTo(mutableSetOf()) { it.name }
+    private fun currentThreads(): Set<Thread> = Thread.getAllStackTraces().keys.toSet()
+
+    /** The names of the threads alive now that were not alive at [before]. */
+    private fun threadsStartedSince(before: Set<Thread>): List<String> = (currentThreads() - before).map { it.name }
 
     @Test
     fun `enabled=false starts no otherlode threads at all`() {
         val instrumentation = ByteBuddyAgent.install()
-        val before = currentThreadNames()
+        val before = currentThreads()
 
         val running = Agent.start("enabled=false", instrumentation)
 
         assertNull(running)
-        val newThreadNames = currentThreadNames() - before
+        val newThreadNames = threadsStartedSince(before)
         assertTrue(newThreadNames.none { it.startsWith("otherlode-") }, "unexpected new otherlode- threads: $newThreadNames")
     }
 
@@ -254,13 +258,13 @@ class AgentTest {
         for (args in listOf(null, "", "includePackages=", "includePackages=;", "includePackages= ; ", "excludePackages=com.acme") +
             noUsableRule) {
             val calls = mutableListOf<String>()
-            val before = currentThreadNames()
+            val before = currentThreads()
 
             val running = Agent.start(args, recordingInstrumentation(calls))
 
             assertNull(running, "args '$args' must be refused")
             assertEquals(emptyList(), calls, "args '$args' must not touch Instrumentation")
-            val newThreadNames = currentThreadNames() - before
+            val newThreadNames = threadsStartedSince(before)
             assertTrue(newThreadNames.none { it.startsWith("otherlode-") }, "args '$args' started otherlode- threads: $newThreadNames")
         }
     }
@@ -269,13 +273,13 @@ class AgentTest {
     fun `a refused configuration returns null, installs nothing and starts no otherlode threads`() {
         for (args in listOf("exportUrl=ftp://collector.example.com", "authToken=abc\u200Bdef")) {
             val calls = mutableListOf<String>()
-            val before = currentThreadNames()
+            val before = currentThreads()
 
             val running = Agent.start("includePackages=com.acme,$args", recordingInstrumentation(calls))
 
             assertNull(running, "args '$args' must be refused")
             assertEquals(emptyList(), calls, "args '$args' must not touch Instrumentation")
-            val newThreadNames = currentThreadNames() - before
+            val newThreadNames = threadsStartedSince(before)
             assertTrue(newThreadNames.none { it.startsWith("otherlode-") }, "args '$args' started otherlode- threads: $newThreadNames")
         }
     }
@@ -298,7 +302,7 @@ class AgentTest {
     @Test
     fun `a startup step that fails after install removes every transformer it added and starts no otherlode threads`() {
         val calls = mutableListOf<String>()
-        val before = currentThreadNames()
+        val before = currentThreads()
 
         assertFailsWith<IllegalStateException> {
             Agent.start(
@@ -310,14 +314,14 @@ class AgentTest {
 
         assertTrue(calls.count { it == "addTransformer" } > 0, "$calls")
         assertEquals(calls.count { it == "addTransformer" }, calls.count { it == "removeTransformer" }, "$calls")
-        val started = (currentThreadNames() - before).filter { it.startsWith("otherlode-") }
+        val started = threadsStartedSince(before).filter { it.startsWith("otherlode-") }
         assertEquals(emptyList(), started, "no listing or scan thread starts once a step has failed")
     }
 
     @Test
     fun `a listing worker that fails to start leaves the scan worker that already started sending nothing`() {
         val calls = mutableListOf<String>()
-        val before = currentThreadNames()
+        val before = currentThreads()
         val started = mutableListOf<Thread>()
         val posts = CopyOnWriteArrayList<String>()
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", 0), 0)
@@ -346,7 +350,7 @@ class AgentTest {
             assertTrue(started.none { it.isAlive }, "the scan thread ended")
             assertEquals(emptyList(), posts.toList(), "nothing was sent")
             assertEquals(calls.count { it == "addTransformer" }, calls.count { it == "removeTransformer" }, "$calls")
-            assertEquals(emptyList(), (currentThreadNames() - before).filter { it.startsWith("otherlode-") })
+            assertEquals(emptyList(), threadsStartedSince(before).filter { it.startsWith("otherlode-") })
         } finally {
             server.stop(0)
         }
@@ -354,7 +358,7 @@ class AgentTest {
 
     @Test
     fun `a successful start spawns no dependency listing thread, since the first flush runs the listing`() {
-        val before = currentThreadNames()
+        val before = currentThreads()
         val running =
             Agent.start(
                 "includePackages=dev.otherlode.neverloaded.fixture,flushIntervalSeconds=3600",
@@ -364,7 +368,7 @@ class AgentTest {
         try {
             assertNotNull(running)
             Thread.sleep(200)
-            val started = currentThreadNames() - before
+            val started = threadsStartedSince(before)
             assertTrue(
                 started.none { it.contains("listing") && it != "otherlode-class-listing" },
                 "unexpected dependency listing thread: $started",
@@ -386,19 +390,19 @@ class AgentTest {
     @Test
     fun `enabled=false with no include rules still returns null and installs nothing`() {
         val calls = mutableListOf<String>()
-        val before = currentThreadNames()
+        val before = currentThreads()
 
         val running = Agent.start("enabled=false", recordingInstrumentation(calls))
 
         assertNull(running)
         assertEquals(emptyList(), calls)
-        assertTrue((currentThreadNames() - before).none { it.startsWith("otherlode-") })
+        assertTrue(threadsStartedSince(before).none { it.startsWith("otherlode-") })
     }
 
     @Test
     fun `enabled (the default) starts the export scheduler`() {
         val instrumentation = ByteBuddyAgent.install()
-        val before = currentThreadNames()
+        val before = currentThreads()
 
         // Scoped to a package nothing in this JVM ever loads, so the transformer never matches a
         // real class while it is installed. The interval keeps the scheduler from attempting a
@@ -412,7 +416,7 @@ class AgentTest {
 
         try {
             assertNotNull(running, "enabled must start the agent")
-            val newThreadNames = currentThreadNames() - before
+            val newThreadNames = threadsStartedSince(before)
             assertTrue(newThreadNames.any { it.startsWith("otherlode-") }, "expected a new otherlode- thread, found: $newThreadNames")
         } finally {
             running?.stop()
@@ -479,7 +483,7 @@ class AgentTest {
         }
         collector.start()
         val instrumentation = ByteBuddyAgent.install()
-        val before = currentThreadNames()
+        val before = currentThreads()
 
         // The test classpath is this JVM's java.class.path, and it carries the compiled fixtures
         // under com.example.target, so a scan of the default roots must declare one of them.
@@ -492,7 +496,7 @@ class AgentTest {
             )
         try {
             assertNotNull(running)
-            assertTrue((currentThreadNames() - before).any { it == "otherlode-static-baseline-scan" } || received.isDone)
+            assertTrue(threadsStartedSince(before).any { it == "otherlode-static-baseline-scan" } || received.isDone)
             val baseline = received.get(30, TimeUnit.SECONDS)
             assertTrue(baseline.declaredClasses.any { it.className == "com.example.target.SampleTarget" })
             assertEquals(1, baseline.chunkCount)
