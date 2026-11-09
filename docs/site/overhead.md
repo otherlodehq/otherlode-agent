@@ -26,9 +26,9 @@ The run used GitHub's `ubuntu-latest` runner (4 vCPU) with PetClinic pinned to o
 | Resident set size | +76 MiB (+7.4%) | +303 MiB (+29.5%) |
 | Minimum heap used | +10 MiB | +122 MiB |
 | Metaspace | +19 MiB | +23 MiB |
-| Startup, time to first 200 | 18.3 s to 22.2 s (+21.2%) | 13.5 s to 36.0 s (+166%) |
+| Startup, time to first 200 | 16.8 s to 21.0 s (+24.6%) | 13.5 s to 36.0 s (+166%) |
 
-The narrow startup figure comes from the benchmark's startup-only job, which measures startup alone with 21 repeats per variant, on commit `b42e026` on an AMD EPYC 7763 runner. Every other figure comes from the run above.
+The narrow startup figure comes from the benchmark's startup-only job, which measures startup alone with 21 repeats per variant, on commit `9b1f44bb` on an AMD EPYC 9V74 runner. Every other figure comes from the run above.
 
 Read the table as a bound, not a prediction. PetClinic is one application on one core. The narrow column matches how you should configure the agent, with rules that cover your own code. The broad column shows what you pay for a package like `org.springframework`, which instruments a framework's classes, not only yours.
 
@@ -84,7 +84,7 @@ Heap follows the same shape. The broad run's minimum heap used was +122 MiB, and
 
 ## Startup
 
-Startup is the cost to watch. In the startup-only run, the narrow rules added 3.9 s to an 18.3 s startup on one core (+21.2%), the median of 21 runs per variant. With more cores the cost shrinks, since class loading, the JIT and the weave no longer share one CPU. Startup grows with how many classes your application loads, because the agent checks each loaded class against its rules.
+Startup is the cost to watch. In the startup-only run, the narrow rules added 4.1 s to a 16.8 s startup on one core (+24.6%), the median of 21 runs per variant. With more cores the cost shrinks, since class loading, the JIT and the weave no longer share one CPU. Startup grows with how many classes your application loads, because the agent checks each loaded class against its rules.
 
 Three pieces of work that would otherwise be startup cost run later:
 
@@ -127,7 +127,7 @@ In a week-long soak test without the trim, agent JVMs sat 120 to 185 MB above tw
 
 One feature is off by default and costs something when on.
 
-The static baseline (`staticBaselineEnabled=true`) walks the classpath's bytecode for every class under `includePackages`, on a background thread named `otherlode-static-baseline-scan`. It does not run in `premain`, so it does not add to the time before `main`. It does compete with your application for CPU while it runs, and the cost scales with classpath size, not with traffic. In the startup-only run, the narrow rules with the static baseline on took startup from 18.3 s to 23.0 s on one core (+26.1%), against +21.2% with it off. It runs once per process. See [classes](classes) for what it reports and what it cannot see.
+The static baseline (`staticBaselineEnabled=true`) walks the classpath's bytecode for every class under `includePackages`, on a background thread named `otherlode-static-baseline-scan`. It does not run in `premain`, so it does not add to the time before `main`. It does compete with your application for CPU while it runs, and the cost scales with classpath size, not with traffic. In the startup-only run, the narrow rules with the static baseline on took startup from 16.8 s to 21.9 s on one core (+30.1%), against +24.6% with it off. It runs once per process. See [classes](classes) for what it reports and what it cannot see.
 
 ## What to do about it
 
