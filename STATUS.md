@@ -44,176 +44,26 @@ multi-tenant backend.
    the database tier). No collector can be given
    an ingest URL until the front door exists. None of it blocks publishing
    the agent.
-6. **The soak week** (`soak/DESIGN.md`). It blocks the release: the
-   week and its smokes find gaps, bugs and memory leaks. It runs on VM `soak-1` in GCP
-   project `project-1d40b09b-5fc7-4240-bed`, from T0 2026-11-02 21:36Z to
-   2026-11-09 21:36Z, on bundle agent `e627f52`, server `c9ea174`,
-   collector `9ea7b70`. A scale-60 smoke of the same bundle runs on
-   `soak-2` from T0 2026-11-02 21:36Z to about 2026-11-03 00:24Z. Three
-   earlier runs were stopped after their smokes found false claims; the
-   fixes since are agent ADRs 0082 to 0087, collector ADR 0010 and server
-   ADRs 0087 to 0092. `check.py` and `truth.json` on `soak-1` were
-   replaced in place with `9a2d37c`'s at 2026-11-03 22:33Z. Check 8 keeps
-   one line that `9a2d37c` explains, since the supervisor stored its
-   verdict before the change: the slow read at 2026-11-02 21:41:12Z
-   listing `BrokenConfig` never loaded, 2 s after `GET /broken`.
-   Check 5 flags two agent processes. shop-1's first process stepped
-   from 340 to 354 MB in hours 6 to 12, after the first
-   `GET /reports/monthly` it served, while its control stayed flat.
-   shop-2's process after the kill -9 climbs in steps. It rose 25 MB
-   at the start of the collector outage on 2026-11-04 13:36Z, 15 MB
-   between 04:29Z and 04:39Z on 2026-11-05, and 15 MB between 09:29Z
-   and 09:39Z, and read 436 MB at 19:40Z. shop-3 stepped 15 MB at the
-   outage and 12 MB at the same 04:19Z to 04:39Z sample, to 385 MB.
-   Their control stayed at 275 MB. No log line, collector or server
-   event explains the 04:29Z step. Heap committed is fixed at 128 MB.
-   The steps are glibc keeping freed native memory, not a leak.
-   `jcmd System.native_heap_info` at 19:40Z showed 33 MB of live malloc
-   in both shop-2 and shop-3 (control 22 MB), with 143 MB and 107 MB
-   freed but held in the arenas (control 50 MB).
-   `jcmd System.trim_native_heap` on shop-3 at 19:43Z cut its RSS from
-   386 to 319 MB, and it held there a minute later. shop-3's memory
-   series drops at 19:43Z for that reason. shop-2 was left untouched.
-   Still open: what makes the native bursts that set each new peak.
-   They hit shop-2 and shop-3 in the same samples and not the events
-   services. A test on `soak-2`
-   (`/opt/soak-outage/out`) ran two agent JVMs and a control under
-   native memory tracking through four 30-minute collector outages. No
-   outage added a step. The agent with the static baseline held at
-   367 MB through outages 2 to 4. Its one step, +6 MB at 20:29Z, came
-   in the normal hour after outage 1, and NMT committed memory stayed
-   at 305 MB through it. The agent without the baseline grew 7 MB over
-   the 6 hours, evenly through outages and normal hours, as its JIT
-   code cache grew from 29 to 35 MB. An outage alone does not add a
-   step each time, but that 7.5-hour test did not reproduce shop-2's
-   climb.
-   A second test on `soak-2` (`/opt/soak-burst/out`, 2026-11-05) fired
-   one trigger at a time at two agent JVMs and a control, with NMT
-   detail and glibc sampled every 30 s. The bursts come from C2
-   compiles. One compile's arena peaked at 37 to 61 MB in every JVM,
-   control included, and C2 frees it when the compile ends. The control
-   stepped with the agents: +10 MB at 20:17Z in warm-up and +22 MB after
-   the first reports call, when its compiler arena peak rose from 37
-   to 61 MB. A collector outage, a sibling run and a server restart
-   added no step to any JVM. A second reports call stepped only
-   agent-b, by 10 MB of freed glibc memory. Still open: why soak-1's
-   control stays flat while shop-2 and shop-3 keep stepping.
-   A 12-hour test on `soak-2` (`/opt/soak-compile/out`, ended
-   2026-11-06 11:21Z) ran six JVMs without NMT, each logging every
-   compile with its UTC time:
-
-   | JVM | RSS start | RSS end | C2 compiles after warm-up |
-   |---|---|---|---|
-   | agent, baseline | 281 MB | 354 MB | 658 |
-   | agent, no baseline | 315 MB | 379 MB | 370 |
-   | agent, trim every 5 min | 301 MB | 304 MB | 555 |
-   | agent, `MALLOC_ARENA_MAX=2` | 288 MB | 320 MB | 564 |
-   | control a | 225 MB | 320 MB | 182 |
-   | control b | 238 MB | 327 MB | 166 |
-
-   Every step in the untrimmed JVMs lined up with a C2 compile. The
-   agent JVMs kept compiling for hours after the controls stopped: their
-   flush path runs once a minute and crosses the compile thresholds
-   slowly. The trimmed agent showed a second burst the others hide: from
-   01:04Z, every 31 minutes, about 40 MB was malloced and freed over 90
-   seconds, with glibc's mapped size unchanged and mostly no C2 compile
-   nearby. Nothing in the agent runs on a 31-minute cycle, and G1's
-   malloc peak was 9 MB. That burst is not the agent's. A 4.5-hour test
-   on `soak-2` (`/opt/soak-trimpair/out`, 2026-11-06) ran a trimmed
-   agent and a trimmed control under NMT summary with GC, compile and
-   thread logs. Both burst 10 to 45 MB about every 16 minutes. NMT's
-   committed total stayed flat through each burst, no GC ran and the
-   control's thread list did not change, so the memory is malloced by
-   native code NMT does not track. Its source is not named.
-   The agent's share of the growth is its compile work: about 25% more
-   C2 compiles in warm-up, and its flush path compiling for hours after.
-   On `soak-2` at 12 hours the untrimmed agents sat 30 to 55 MB above
-   the controls.
-   The late compiles trace to the flush path. In 12 hours on day 2 to 3,
-   shop-2 made 89 C2 compiles and shop-control 14: about 30 in agent
-   export and protobuf code, 20 in the JDK HttpClient and
-   CompletableFuture, and 17 in reflection and method handles. A method
-   needs about 5,000 calls before C2 compiles it, so code that runs once
-   a minute reaches it after days. Two cuts aimed at them moved nothing
-   and were reverted: caching the empty frame weights in `ProbeRegistry`,
-   and a fixed pool of 2 HTTP client threads in place of the JDK's
-   cached pool. A 12-hour run on `soak-2` (`/opt/soak-flushcuts/out`,
-   ended 2026-11-07 05:56Z) ran two JVMs each of the baseline, each cut
-   and no agent:
-
-   | JVMs | C2 compiles after hour 1 | RSS at 12 hours |
-   |---|---|---|
-   | baseline | 526, 572 | 368, 379 MB |
-   | frame cut | 543, 609 | 356, 369 MB |
-   | HTTP cut | 540, 554 | 351, 383 MB |
-   | no agent | 179, 199 | 305, 330 MB |
-
-   `jcmd System.native_heap_info` splits RSS into memory outside malloc
-   (heap, metaspace, code, thread stacks), malloc in use, and freed
-   memory glibc keeps. On `soak-2` the agent JVMs held 40 to 45 MB more
-   outside malloc and 11 MB more malloc in use than the controls, both
-   level from the second hour. glibc kept 70 to 102 MB free in the agent
-   JVMs and 74 to 103 MB in the controls. On `soak-1` at
-   2026-11-07 09:05Z, in MB:
-
-   | JVM | Up | RSS | Outside malloc | Malloc in use | glibc free |
-   |---|---|---|---|---|---|
-   | shop-1 | 11 h | 350 | 246 | 32 | 71 |
-   | shop-2 | 77 h | 428 | 251 | 33 | 144 |
-   | shop-3 | 107 h | 368 | 230 | 32 | 105 |
-   | shop control | 107 h | 275 | 203 | 22 | 50 |
-   | events 1.0.0 | 107 h | 334 | 230 | 32 | 71 |
-   | events 1.0.0 control | 107 h | 211 | 166 | 13 | 31 |
-   | events 2.0.0 | 35 h | 337 | 225 | 27 | 84 |
-   | events 2.0.0 control | 35 h | 220 | 166 | 13 | 40 |
-
-   The memory the agent uses is level: 37 to 83 MB over its control.
-   The growth is freed memory glibc keeps per arena, 21 to 94 MB over
-   the control on `soak-1`; `malloc_trim` returns it.
-   The RSS does not level off. On 2026-11-08 shop-2 stepped 433 to
-   457 MB at 14:32Z (day 4 of its process), shop-3 367 to 388 MB at
-   23:32Z and events 1.0.0 335 to 349 MB at 23:43Z (both day 6). The
-   controls held flat. `native_heap_info` at 2026-11-09 10:17Z put all
-   of it in glibc free: shop-2 174 MB free (144 on 2026-11-07), malloc
-   in use 33 MB and outside malloc 251 MB both times. Both steps with a
-   compile log line up with C2 compiles of JDK `jdk.internal.net.http`
-   code (`HttpClientImpl::sendAsync`, `AuthenticationFilter::response`,
-   `MultiExchange` lambdas) on a new dynamic compiler thread. Only the
-   agent's exporter uses that client. A new compiler thread alone does
-   not step: 2 of about 25 did.
-   The agent trims the native heap every hour (ADR 0089). A 24-hour
-   test on `soak-2` (`/opt/soak-native`, from 2026-11-09 10:39Z) runs
-   the agent at `1231eacf` twice, a prototype with an hourly trim twice,
-   a prototype exporter on `HttpURLConnection` twice, and no agent
-   twice, at a 60-second flush; and at a 1-second flush the agent twice,
-   the `HttpURLConnection` exporter twice and the agent with
-   `-XX:-UseDynamicNumberOfCompilerThreads` once. At 1 hour the first
-   trims cut 363 to 301 MB and 360 to 298 MB, the controls' level, and
-   the `HttpURLConnection` exporter was no lower than the agent. Read
-   its end (about 2026-11-10 10:39Z) for the trim over a day.
-   The exporter stays on the JDK `HttpClient` (2026-11-09). From hour 1
-   to 16:04Z the `HttpURLConnection` prototype averaged 373 and 401 MB
-   at the 60-second flush, still climbing, against 353 and 356 MB for
-   the agent; at a 1-second flush they were level (368, 380 against
-   367, 368). A trigger
-   test (`/opt/soak-iso`, ended 2026-11-09 12:44Z) fired JDK
-   `HttpClient` and `HttpURLConnection` POSTs inside the shop app with
-   no agent; its result belongs here once read. The prototype is the
-   detached worktree `proto-native` (`git worktree list`).
-   On `soak-1`, `jcmd VM.log` writes compile logs for shop-2, shop-3 and
-   shop-control to `/var/tmp/soak-jit/`. From 23:25Z to 11:25Z shop-2
-   made 97 compiles, shop-3 101 and the control 6. Most of the agent
-   JVMs' compiles were agent and HttpClient code. No JVM stepped 5 MB in
-   that time: shop-2 went from 421 to 425 MB, and shop-3 held at 364 to
-   368 MB after regrowing from 319 MB in the hour after its trim.
-   Check 5 stays as it is: a rule that judged only after warm-up still
-   failed both.
-   Reports land in `/opt/soak/reports`; `soakctl status` on the VM shows
-   where it is.
-   A failed check is triaged per `soak/DESIGN.md`. Clean-up is Luke's,
-   once the week's final report is read: delete VMs `soak-1` and
-   `soak-2`, the project-level SSH key gcloud added on 2026-11-01
-   (Compute Engine, Metadata, SSH keys), and the project itself.
+6. **The soak week is done** (`soak/DESIGN.md`). `soak-1` ran from T0
+   2026-11-02 21:36Z to its final report at 2026-11-09 21:41Z
+   (`/opt/soak/reports/final.md`). No check that judges a claim failed
+   in 28 reports: planted answers 0 fail, no false claim, counts, runs,
+   logs and test runs all pass. Check 5 (memory) fails on the bundle
+   the week ran, which predates the hourly trim (ADR 0089). Check 8 keeps
+   the one slow read at 2026-11-02 21:41:12Z that `9a2d37c` explains;
+   its 5 failed reads are 404s before `soak-events` first reported.
+   Still open on `soak-2`:
+   - The 24-hour native test (`/opt/soak-native`) ends about
+     2026-11-10 10:39Z. Read the trim pair against the agent pair and the
+     controls over the day, and replace the overhead page's "grew back
+     between trims" sentence with the day's average if it says more.
+   - The release-build pair (`/opt/soak-relpair`, the `6c50d315` jar)
+     ends about 2026-11-10 01:00Z. Through 21:00Z it trimmed 9 times,
+     4.5 to 10.6 ms each, returning 22 to 71 MB, with no error.
+   Clean-up is Luke's, after those: delete VMs `soak-1` and `soak-2`,
+   the project-level SSH key gcloud added on 2026-11-01 (Compute Engine,
+   Metadata, SSH keys), and project `project-1d40b09b-5fc7-4240-bed`.
+   To see the trim over days first, keep `soak-2` running a week.
 
 After release: what "Parked" lists, the server's performance-only
 deferrals, gzip, a collector config file, and agent-level redaction
