@@ -170,18 +170,35 @@ multi-tenant backend.
 
    The memory the agent uses is level: 37 to 83 MB over its control.
    The growth is freed memory glibc keeps per arena, 21 to 94 MB over
-   the control on `soak-1`; `malloc_trim` returns it. The process
-   reuses that memory, and on `soak-1` each JVM's RSS levels off after
-   two to three days: shop-2 held at 428 MB from 60 to 77 hours.
-   The agent does not trim the host's native heap (Luke, 2026-11-07):
-   the growth is bounded, and a trim acts on the whole process. If a
-   JVM still steps on day 7 of the soak, prototype an hourly trim.
+   the control on `soak-1`; `malloc_trim` returns it.
+   The RSS does not level off. On 2026-11-08 shop-2 stepped 433 to
+   457 MB at 14:32Z (day 4 of its process), shop-3 367 to 388 MB at
+   23:32Z and events 1.0.0 335 to 349 MB at 23:43Z (both day 6). The
+   controls held flat. `native_heap_info` at 2026-11-09 10:17Z put all
+   of it in glibc free: shop-2 174 MB free (144 on 2026-11-07), malloc
+   in use 33 MB and outside malloc 251 MB both times. Both steps with a
+   compile log line up with C2 compiles of JDK `jdk.internal.net.http`
+   code (`HttpClientImpl::sendAsync`, `AuthenticationFilter::response`,
+   `MultiExchange` lambdas) on a new dynamic compiler thread. Only the
+   agent's exporter uses that client. A new compiler thread alone does
+   not step: 2 of about 25 did.
+   Luke asked on 2026-11-09 for an hourly trim prototype and for the
+   source to be named. A 24-hour test on `soak-2` (`/opt/soak-native`,
+   started 2026-11-09 10:30Z) runs nine shop JVMs: the agent at
+   `1231eacf` twice, a prototype jar with the exporter on
+   `HttpURLConnection` twice, the prototype with a trim every 60
+   minutes twice, the agent with `-XX:-UseDynamicNumberOfCompilerThreads`
+   once, and no agent twice. It logs RSS, each glibc arena every
+   5 minutes, and every compile and compiler-thread start. The
+   prototype calls the DiagnosticCommand MBean's
+   `systemTrimNativeHeap`; it took 2 ms on a small JVM on `soak-2`.
+   Its source is the detached worktree `proto-native` (`git worktree
+   list`); it never lands as it is.
    A draft of `docs/site/overhead.md` sits uncommitted in the master
-   checkout. Luke approved its text on 2026-11-07. It adds a "Memory over days"
-   section with the soak's figures and `-XX:TrimNativeHeapInterval`,
-   a limit under the benchmark table, and drops "fixed" from the OTel
-   comparison. Its soak figures come from day 4; set them from the
-   final report (2026-11-09 21:36Z) before the commit.
+   checkout. Luke approved its text on 2026-11-07, but the day-6 steps
+   make its "levels off" and "less each day" wrong. Rewrite it from the
+   native test's result and the final report (2026-11-09 21:36Z), and
+   show Luke the new text before the commit.
    On `soak-1`, `jcmd VM.log` writes compile logs for shop-2, shop-3 and
    shop-control to `/var/tmp/soak-jit/`. From 23:25Z to 11:25Z shop-2
    made 97 compiles, shop-3 101 and the control 6. Most of the agent
