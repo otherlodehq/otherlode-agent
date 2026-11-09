@@ -8,6 +8,7 @@ class OptionNamesTest {
     fun `system property name is derived from the camelCase option name`() {
         assertEquals("otherlode.service.name", OptionNames.systemProperty("serviceName"))
         assertEquals("otherlode.flush.interval.seconds", OptionNames.systemProperty("flushIntervalSeconds"))
+        assertEquals("otherlode.trim.native.heap.interval.minutes", OptionNames.systemProperty("trimNativeHeapIntervalMinutes"))
         assertEquals("otherlode.static.baseline.enabled", OptionNames.systemProperty("staticBaselineEnabled"))
         assertEquals("otherlode.class.listing.enabled", OptionNames.systemProperty("classListingEnabled"))
         assertEquals("otherlode.auth.token", OptionNames.systemProperty("authToken"))
@@ -21,6 +22,7 @@ class OptionNamesTest {
     fun `environment variable name is derived from the camelCase option name`() {
         assertEquals("OTHERLODE_SERVICE_NAME", OptionNames.environmentVariable("serviceName"))
         assertEquals("OTHERLODE_FLUSH_INTERVAL_SECONDS", OptionNames.environmentVariable("flushIntervalSeconds"))
+        assertEquals("OTHERLODE_TRIM_NATIVE_HEAP_INTERVAL_MINUTES", OptionNames.environmentVariable("trimNativeHeapIntervalMinutes"))
         assertEquals("OTHERLODE_STATIC_BASELINE_ENABLED", OptionNames.environmentVariable("staticBaselineEnabled"))
         assertEquals("OTHERLODE_CLASS_LISTING_ENABLED", OptionNames.environmentVariable("classListingEnabled"))
         assertEquals(

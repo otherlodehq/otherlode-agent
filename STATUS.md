@@ -182,23 +182,21 @@ multi-tenant backend.
    `MultiExchange` lambdas) on a new dynamic compiler thread. Only the
    agent's exporter uses that client. A new compiler thread alone does
    not step: 2 of about 25 did.
-   Luke asked on 2026-11-09 for an hourly trim prototype and for the
-   source to be named. A 24-hour test on `soak-2` (`/opt/soak-native`,
-   started 2026-11-09 10:30Z) runs nine shop JVMs: the agent at
-   `1231eacf` twice, a prototype jar with the exporter on
-   `HttpURLConnection` twice, the prototype with a trim every 60
-   minutes twice, the agent with `-XX:-UseDynamicNumberOfCompilerThreads`
-   once, and no agent twice. It logs RSS, each glibc arena every
-   5 minutes, and every compile and compiler-thread start. The
-   prototype calls the DiagnosticCommand MBean's
-   `systemTrimNativeHeap`; it took 2 ms on a small JVM on `soak-2`.
-   Its source is the detached worktree `proto-native` (`git worktree
-   list`); it never lands as it is.
-   A draft of `docs/site/overhead.md` sits uncommitted in the master
-   checkout. Luke approved its text on 2026-11-07, but the day-6 steps
-   make its "levels off" and "less each day" wrong. Rewrite it from the
-   native test's result and the final report (2026-11-09 21:36Z), and
-   show Luke the new text before the commit.
+   The agent trims the native heap every hour (ADR 0089). A 24-hour
+   test on `soak-2` (`/opt/soak-native`, from 2026-11-09 10:39Z) runs
+   the agent at `1231eacf` twice, a prototype with an hourly trim twice,
+   a prototype exporter on `HttpURLConnection` twice, and no agent
+   twice, at a 60-second flush; and at a 1-second flush the agent twice,
+   the `HttpURLConnection` exporter twice and the agent with
+   `-XX:-UseDynamicNumberOfCompilerThreads` once. At 1 hour the first
+   trims cut 363 to 301 MB and 360 to 298 MB, the controls' level, and
+   the `HttpURLConnection` exporter was no lower than the agent. Read
+   its end (about 2026-11-10 10:39Z) for the trim over a day, and drop
+   the exporter swap unless it shows a gap the trim leaves. A trigger
+   test (`/opt/soak-iso`, ended 2026-11-09 12:44Z) fired JDK
+   `HttpClient` and `HttpURLConnection` POSTs inside the shop app with
+   no agent; its result belongs here once read. The prototype is the
+   detached worktree `proto-native` (`git worktree list`).
    On `soak-1`, `jcmd VM.log` writes compile logs for shop-2, shop-3 and
    shop-control to `/var/tmp/soak-jit/`. From 23:25Z to 11:25Z shop-2
    made 97 compiles, shop-3 101 and the control 6. Most of the agent
@@ -219,6 +217,15 @@ deferrals, gzip, a collector config file, and agent-level redaction
 (the server STATUS's parked "Redaction in the agent", with its trigger).
 
 ## TODO
+
+- **`AgentConfigTest`'s log capture depends on test order.** Its
+  `recordsFrom` adds a handler to the `java.util.logging` logger of
+  `AgentConfig`, but the agent logs there only once some earlier test in
+  the JVM has installed the bootstrap holder; before that it writes to
+  standard error. Run alone, or first after a failed run (Gradle runs a
+  failed class first), 4 to 10 of its tests fail with "log capture saw
+  nothing". A clean full run passes. Make the capture install what it
+  needs, or capture standard error too.
 
 ### Tooling: code principles and a refactoring playbook
 

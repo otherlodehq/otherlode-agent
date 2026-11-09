@@ -32,8 +32,9 @@ The narrow startup figure comes from the benchmark's startup-only job, which mea
 
 Read the table as a bound, not a prediction. PetClinic is one application on one core. The narrow column matches how you should configure the agent, with rules that cover your own code. The broad column shows what you pay for a package like `org.springframework`, which instruments a framework's classes, not only yours.
 
-Two limits on these numbers:
+Three limits on these numbers:
 
+- Each run lasts minutes, so the resident set size is the figure after warmup, not after days. See [memory over days](#memory-over-days).
 - The benchmark measures steady state. The first flush, which sends the whole manifest, falls in the warmup, so its cost shows in startup and warmup, not in the table.
 - The benchmark does not report a time per probe hit, so this page gives no nanosecond figure.
 
@@ -56,7 +57,7 @@ The same benchmark also runs the OpenTelemetry Java agent 2.32.0 as a third vari
 
 The fixed-rate row comes from a second run, on commit `9955112`, that held the load at a quarter of the rate PetClinic reached with no agent. PetClinic then had spare CPU, so the latency is the time an agent adds to a request, not time spent in a queue. Startup comes from the startup-only job, with 21 repeats per variant.
 
-Per request, Otherlode's cost lies inside the no-agent variant's own spread, apart from 3.5% more GC pause. What it adds is fixed: memory, six or seven threads, and startup. OpenTelemetry costs more on every row. On its defaults it builds and exports a trace for every request, which allocates about 27 KiB more per request and shows in CPU, GC pause and p99. The two agents do different work: OpenTelemetry records each request's trace, and Otherlode counts which of your code ran. The table gives each one's cost as first installed. The [benchmark's write-up](https://github.com/otherlodehq/otherlode-agent/blob/master/benchmark-overhead/OTEL-COMPARISON.md) has the method and every figure with its spread.
+Per request, Otherlode's cost lies inside the no-agent variant's own spread, apart from 3.5% more GC pause. What it adds does not grow with traffic: memory, seven or eight threads, and startup. OpenTelemetry costs more on every row. On its defaults it builds and exports a trace for every request, which allocates about 27 KiB more per request and shows in CPU, GC pause and p99. The two agents do different work: OpenTelemetry records each request's trace, and Otherlode counts which of your code ran. The table gives each one's cost as first installed. The [benchmark's write-up](https://github.com/otherlodehq/otherlode-agent/blob/master/benchmark-overhead/OTEL-COMPARISON.md) has the method and every figure with its spread.
 
 ## What a probe costs per call
 
@@ -93,7 +94,7 @@ Three pieces of work that would otherwise be startup cost run later:
 
 ## The flush thread and the network
 
-The agent runs one scheduled thread named `otherlode-export` and two send threads named `otherlode-export-send`, all daemon threads. They do not keep your JVM alive. The class listing runs on one more thread for a short time at startup, and with the static baseline on, another thread scans the classpath. A graceful shutdown starts a short-lived thread for the early flush, two send threads named `otherlode-export-early-send` for its sends, and a thread for the final flush, all daemon threads.
+The agent runs one scheduled thread named `otherlode-export` and two send threads named `otherlode-export-send`, all daemon threads. They do not keep your JVM alive. On Linux, one more daemon thread, `otherlode-trim`, trims the native heap once an hour. The class listing runs on one more thread for a short time at startup, and with the static baseline on, another thread scans the classpath. A graceful shutdown starts a short-lived thread for the early flush, two send threads named `otherlode-export-early-send` for its sends, and a thread for the final flush, all daemon threads.
 
 On each flush (every 60 seconds by default, with a random offset for the first one so a fleet does not flush at the same instant), the thread:
 
@@ -113,6 +114,14 @@ A timed run of the flush code on a laptop, over 1,488 classes and 26,380 probes,
 A heartbeat's allocation is mostly copying the count arrays, about 9 bytes a probe a flush. The loaded-class walk took 0.5 ms against a JVM holding 4,800 classes. The first flush grows with the probe count, and happens once.
 
 On the network, a flush sends each payload as one or more POST requests, once per interval. Payload size follows the number of probes whose counts changed, not total traffic or total probes, because the agent sends deltas. An empty batch still goes out as a heartbeat. Each send makes up to five attempts, waiting 200 ms after the first failure and doubling the wait up to 30 seconds, and when the collector is down the counts stay in memory and are sent again on the next flush, so memory does not grow while it is unreachable. [What the agent sends](data-sent) lists each payload.
+
+## Memory over days
+
+On Linux, a JVM's resident set size can grow for days after warmup while the memory it uses stays level. The JIT compiler allocates tens of megabytes to compile a method and frees them afterwards, and glibc keeps that freed memory for reuse instead of returning it. An application's own code compiles in its first hours, but the agent's flush code runs once a minute, so the JIT keeps compiling it for days.
+
+Once an hour the agent asks the JVM to trim its native heap, which returns the memory glibc holds free. A trim takes a few milliseconds, and a thread that allocates native memory from an arena glibc is trimming waits for it. [`trimNativeHeapIntervalMinutes`](configuration#trimnativeheapintervalminutes) sets the interval, and `0` turns the trim off.
+
+In a week-long soak test without the trim, agent JVMs sat 120 to 185 MB above twins with no agent after three to six days. In a test of the Spring Boot service with the hourly trim, each trim returned about 60 MB, and the resident set size grew back between trims as the JIT compiled.
 
 ## Opt-in costs
 

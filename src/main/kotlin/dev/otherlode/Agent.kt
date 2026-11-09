@@ -43,6 +43,7 @@ import dev.otherlode.instrumentation.staticscan.StaticBaselineMismatchDetector
 import dev.otherlode.instrumentation.staticscan.StaticBaselinePublisher
 import dev.otherlode.instrumentation.staticscan.StaticBaselineScanner
 import dev.otherlode.instrumentation.staticscan.StaticBaselineSender
+import dev.otherlode.memory.NativeHeapTrimmer
 import dev.otherlode.registry.DependencyOrigin
 import dev.otherlode.registry.DependencyRegistry
 import dev.otherlode.registry.EndpointRegistry
@@ -123,8 +124,11 @@ object Agent {
         val shutdownHooksHook: ShutdownHooksHook? = null,
         /** The watch on where included classes load from, or null when `classListingEnabled` is off. */
         val classListingWatch: ClassListingWatch? = null,
+        /** The periodic native heap trim; see [NativeHeapTrimmer]. */
+        private val nativeHeapTrimmer: NativeHeapTrimmer? = null,
     ) {
         fun stop() {
+            nativeHeapTrimmer?.stop()
             Runtime.getRuntime().removeShutdownHook(shutdownHook)
             scheduler.stop()
             classListingWatch?.let(instrumentation::removeTransformer)
@@ -279,6 +283,7 @@ object Agent {
         var shutdownHook: Thread? = null
         var shutdownHooksHook: ShutdownHooksHook? = null
         var classListingWatch: ClassListingWatch? = null
+        var nativeHeapTrimmer: NativeHeapTrimmer? = null
         val gate = WorkerGate()
         try {
             if (config.classListingEnabled) {
@@ -387,6 +392,9 @@ object Agent {
             scanWorker?.let(startWorker)
             listingWorker?.let(startWorker)
             started.start()
+            val trimmer = NativeHeapTrimmer(config.trimNativeHeapInterval)
+            nativeHeapTrimmer = trimmer
+            trimmer.start()
             val running =
                 Running(
                     started,
@@ -402,6 +410,7 @@ object Agent {
                     verifierHook,
                     shutdownHooksHook,
                     classListingWatch,
+                    trimmer,
                 )
             gate.open()
             return running
@@ -411,6 +420,7 @@ object Agent {
             fun undo(step: () -> Unit) = runCatching(step).exceptionOrNull()?.let(e::addSuppressed)
             shutdownHook?.let { undo { Runtime.getRuntime().removeShutdownHook(it) } }
             scheduler?.let { undo(it::stop) }
+            nativeHeapTrimmer?.let { undo(it::stop) }
             undo(gate::abort)
             undo { otherlodeInstrumentation.uninstall(instrumentation, transformer) }
             if (endpointInstrumentation != null && endpointTransformer != null) {

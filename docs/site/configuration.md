@@ -6,7 +6,7 @@ order: 20
 
 ## Options at a glance
 
-The agent has 18 options. You can set each one in the `-javaagent` argument string, as a JVM system property, or as an environment variable. The agent reads them once, at startup.
+The agent has 19 options. You can set each one in the `-javaagent` argument string, as a JVM system property, or as an environment variable. The agent reads them once, at startup.
 
 ```text
 -javaagent:/path/to/otherlode-agent-<version>.jar=serviceName=my-service,includePackages=com.acme.shop
@@ -28,6 +28,7 @@ The system property and environment variable names come from the option name. Th
 | `exportUrl` | `otherlode.export.url` | `OTHERLODE_EXPORT_URL` |
 | `authToken` | `otherlode.auth.token` | `OTHERLODE_AUTH_TOKEN` |
 | `flushIntervalSeconds` | `otherlode.flush.interval.seconds` | `OTHERLODE_FLUSH_INTERVAL_SECONDS` |
+| `trimNativeHeapIntervalMinutes` | `otherlode.trim.native.heap.interval.minutes` | `OTHERLODE_TRIM_NATIVE_HEAP_INTERVAL_MINUTES` |
 | `includePackages` | `otherlode.include.packages` | `OTHERLODE_INCLUDE_PACKAGES` |
 | `excludePackages` | `otherlode.exclude.packages` | `OTHERLODE_EXCLUDE_PACKAGES` |
 | `callbackAnnotations` | `otherlode.callback.annotations` | `OTHERLODE_CALLBACK_ANNOTATIONS` |
@@ -51,6 +52,7 @@ The system property and environment variable names come from the option name. Th
 | `exportUrl` | `http://localhost:4319` | An absolute `http` or `https` URL with a host, and with no query string, fragment, user name, password or other `@` after the scheme. The host cannot contain an underscore. A path is allowed | ERROR, and the agent is off for this JVM |
 | `authToken` | None | Visible ASCII characters only, `!` to `~` | ERROR, and the agent is off for this JVM |
 | `flushIntervalSeconds` | `60` | A whole number of seconds from `1` to `86400` | Warning, and the default is used |
+| `trimNativeHeapIntervalMinutes` | `60` | A whole number of minutes from `0` to `1440`. `0` turns the trim off | Warning, and the default is used |
 | `includePackages` | None. Required. | Dotted package or class prefixes, separated by `;` | Glob and path prefixes are dropped with a warning. If no prefix is left, the agent logs an ERROR and disables itself |
 | `excludePackages` | None | Dotted package or class prefixes, separated by `;` | Glob and path prefixes are dropped with a warning |
 | `callbackAnnotations` | None | Fully qualified annotation type names, separated by `;` | A name that cannot be a type name is dropped with a warning |
@@ -231,6 +233,14 @@ The agent starts the first flush at a random point within the first interval, so
 A running instance says `starting` on every payload for at least one interval after the agent starts, and for at most 10. While it runs, its zero counts are not evidence until it has stopped starting. [Pending counts](data-sent#pending-counts) says when that is.
 
 Every payload carries the interval as `flush_interval_seconds`, so Otherlode can tell a run that stopped without its final flush from one that is quiet between flushes.
+
+## trimNativeHeapIntervalMinutes
+
+`trimNativeHeapIntervalMinutes` is the time between native heap trims, in whole minutes, from `0` to `1440` (one day). `0` turns the trim off. A decimal, a negative number, a value above one day and text such as `60m` produce a warning and the default of `60`.
+
+A trim returns the native memory that glibc holds free to the operating system, and leaves memory in use alone. The first trim comes one interval after startup. [Memory over days](overhead#memory-over-days) says why the agent trims.
+
+The agent trims only on Linux with glibc, and not when the JVM already trims with `-XX:TrimNativeHeapInterval` above `0`. After a trim fails, it stops trimming for the life of the JVM.
 
 ## Service identity
 

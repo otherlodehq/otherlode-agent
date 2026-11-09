@@ -54,6 +54,12 @@ data class AgentConfig(
     /** How often the agent flushes. Set in whole seconds by `flushIntervalSeconds`; held as a [Duration]. */
     val flushInterval: Duration,
     /**
+     * How often the agent asks the JVM to return freed native memory to the operating system, on Linux.
+     * Set in whole minutes by `trimNativeHeapIntervalMinutes`; held as a [Duration]. [Duration.ZERO]
+     * turns the trim off.
+     */
+    val trimNativeHeapInterval: Duration,
+    /**
      * Only types under one of these prefixes are instrumented. Required: when empty,
      * [dev.otherlode.Agent] refuses to start, logs one ERROR and instruments and exports
      * nothing.
@@ -144,6 +150,8 @@ data class AgentConfig(
         private const val DEFAULT_EXPORT_URL = "http://localhost:4319"
         private val DEFAULT_FLUSH_INTERVAL: Duration = Duration.ofSeconds(60)
         private val MAX_FLUSH_INTERVAL: Duration = Duration.ofDays(1)
+        private val DEFAULT_TRIM_NATIVE_HEAP_INTERVAL: Duration = Duration.ofMinutes(60)
+        private val MAX_TRIM_NATIVE_HEAP_INTERVAL: Duration = Duration.ofDays(1)
         private val log by agentLogger(AgentConfig::class.java.name)
 
         private val KNOWN_KEYS =
@@ -156,6 +164,7 @@ data class AgentConfig(
                 "exportUrl",
                 "authToken",
                 "flushIntervalSeconds",
+                "trimNativeHeapIntervalMinutes",
                 "includePackages",
                 "excludePackages",
                 "staticBaselineEnabled",
@@ -239,6 +248,7 @@ data class AgentConfig(
                 exportUrl = exportUrl,
                 authToken = authToken,
                 flushInterval = parseFlushInterval(resolve("flushIntervalSeconds")),
+                trimNativeHeapInterval = parseTrimNativeHeapInterval(resolve("trimNativeHeapIntervalMinutes")),
                 includePackages = prefixes,
                 excludePackages = excludedPrefixes,
                 staticBaselineEnabled = parseBoolean("staticBaselineEnabled", resolve("staticBaselineEnabled"), default = false),
@@ -537,6 +547,21 @@ data class AgentConfig(
                 return DEFAULT_FLUSH_INTERVAL
             }
             return Duration.ofSeconds(seconds)
+        }
+
+        private fun parseTrimNativeHeapInterval(raw: String?): Duration {
+            if (raw == null) return DEFAULT_TRIM_NATIVE_HEAP_INTERVAL
+            val minutes = raw.toLongOrNull()?.takeIf { it in 0..MAX_TRIM_NATIVE_HEAP_INTERVAL.toMinutes() }
+            if (minutes == null) {
+                log.log(
+                    Level.WARNING,
+                    "otherlode: trimNativeHeapIntervalMinutes must be a whole number from 0 to " +
+                        "${MAX_TRIM_NATIVE_HEAP_INTERVAL.toMinutes()}, " +
+                        "ignoring '$raw' and using the default of ${DEFAULT_TRIM_NATIVE_HEAP_INTERVAL.toMinutes()} minutes",
+                )
+                return DEFAULT_TRIM_NATIVE_HEAP_INTERVAL
+            }
+            return Duration.ofMinutes(minutes)
         }
 
         private fun parseOptions(agentArgs: String?): Map<String, String> {

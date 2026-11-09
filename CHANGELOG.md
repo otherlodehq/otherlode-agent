@@ -26,6 +26,7 @@ The first release of the Otherlode agent and its testkit. The agent is a Java ag
 - **The testkit**, `dev.otherlode:otherlode-testkit` on Maven Central at the same version. It is a collector for JUnit 5 tests, so a test can assert what code it reached and what it never hit.
 - **Configuration** from the `-javaagent` argument string, system properties or environment variables. OpenTelemetry's service name, version and environment settings fill in what you leave unset.
 - **Export** over HTTP and protobuf to a collector, `http://localhost:4319` by default, every 60 seconds and once more at shutdown. Counts are cumulative and stay in memory while the collector cannot be reached.
+- **Native heap trim.** On Linux with glibc, the agent asks the JVM once an hour to return the native memory it has freed, so the resident set size of a long-running service does not keep growing for days. `trimNativeHeapIntervalMinutes` sets the interval, and `0` turns it off.
 
 [Unreleased]: https://github.com/otherlodehq/otherlode-agent/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/otherlodehq/otherlode-agent/releases/tag/v0.1.0

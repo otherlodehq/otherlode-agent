@@ -246,6 +246,40 @@ class AgentConfigTest {
     }
 
     @Test
+    fun `trimNativeHeapIntervalMinutes defaults to sixty minutes`() {
+        assertEquals(Duration.ofMinutes(60), AgentConfig.parse(null).trimNativeHeapInterval)
+    }
+
+    @Test
+    fun `trimNativeHeapIntervalMinutes takes a whole number from zero to a day, and zero turns the trim off`() {
+        assertEquals(Duration.ofMinutes(15), AgentConfig.parse("trimNativeHeapIntervalMinutes=15").trimNativeHeapInterval)
+        assertEquals(Duration.ZERO, AgentConfig.parse("trimNativeHeapIntervalMinutes=0").trimNativeHeapInterval)
+        assertEquals(Duration.ofDays(1), AgentConfig.parse("trimNativeHeapIntervalMinutes=1440").trimNativeHeapInterval)
+    }
+
+    @Test
+    fun `an invalid trimNativeHeapIntervalMinutes falls back to the default with one warning`() {
+        for (raw in listOf("1441", "-1", "soon", "1.5", "9223372036854775807")) {
+            lateinit var config: AgentConfig
+            val warnings = warningsFrom { config = AgentConfig.parse("trimNativeHeapIntervalMinutes=$raw") }
+
+            assertEquals(Duration.ofMinutes(60), config.trimNativeHeapInterval, raw)
+            assertEquals(1, warnings.count { "trimNativeHeapIntervalMinutes" in it && "'$raw'" in it }, "$raw: $warnings")
+        }
+    }
+
+    @Test
+    fun `trimNativeHeapIntervalMinutes resolves from the system property and the environment variable`() {
+        val property = "otherlode.trim.native.heap.interval.minutes"
+        val variable = "OTHERLODE_TRIM_NATIVE_HEAP_INTERVAL_MINUTES"
+        val fromProperty = AgentConfig.parse(null, env = { null }, systemProperties = { "5".takeIf { _ -> it == property } })
+        val fromEnv = AgentConfig.parse(null, env = { "7".takeIf { _ -> it == variable } }, systemProperties = { null })
+
+        assertEquals(Duration.ofMinutes(5), fromProperty.trimNativeHeapInterval)
+        assertEquals(Duration.ofMinutes(7), fromEnv.trimNativeHeapInterval)
+    }
+
+    @Test
     fun `a non-numeric flushIntervalSeconds falls back to the default`() {
         val config = AgentConfig.parse("flushIntervalSeconds=soon")
 
