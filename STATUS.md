@@ -190,8 +190,12 @@ multi-tenant backend.
    `-XX:-UseDynamicNumberOfCompilerThreads` once. At 1 hour the first
    trims cut 363 to 301 MB and 360 to 298 MB, the controls' level, and
    the `HttpURLConnection` exporter was no lower than the agent. Read
-   its end (about 2026-11-10 10:39Z) for the trim over a day, and drop
-   the exporter swap unless it shows a gap the trim leaves. A trigger
+   its end (about 2026-11-10 10:39Z) for the trim over a day.
+   The exporter stays on the JDK `HttpClient` (2026-11-09). From hour 1
+   to 16:04Z the `HttpURLConnection` prototype averaged 373 and 401 MB
+   at the 60-second flush, still climbing, against 353 and 356 MB for
+   the agent; at a 1-second flush they were level (368, 380 against
+   367, 368). A trigger
    test (`/opt/soak-iso`, ended 2026-11-09 12:44Z) fired JDK
    `HttpClient` and `HttpURLConnection` POSTs inside the shop app with
    no agent; its result belongs here once read. The prototype is the
