@@ -22,6 +22,7 @@ The first release of the Otherlode agent and its testkit. The agent counts which
 - **Test runs.** With `testRun=true` a run records which tests reached your code and stays out of every finding.
 - **The testkit**, `dev.otherlode:otherlode-testkit`, a JUnit 5 collector for asserting what a test reached.
 - **Export** to a collector at `http://localhost:4319` every 60 seconds and at a graceful shutdown. Counts stay in memory while the collector is down. The agent sends names and string literals from your code in clear. Redaction is the collector's job.
+- **Native heap trim.** On Linux with glibc, the agent asks the JVM once an hour to return the native memory it has freed. `trimNativeHeapIntervalMinutes` sets the interval, and `0` turns it off.
 - **Beside other agents.** A class it can't weave safely runs unwoven and is reported. It works alongside JaCoCo, OpenTelemetry's agent and APM agents that retransform classes.
 
 [Unreleased]: https://github.com/otherlodehq/otherlode-agent/compare/v0.1.0...HEAD
