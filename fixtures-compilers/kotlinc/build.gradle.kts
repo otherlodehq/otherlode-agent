@@ -83,7 +83,22 @@ val compileTasks =
 // class non-synthetic; 2.3 and later reject that language version. The K1-only and 2.x-only
 // sources join where they compile.
 val serializationRuntimes =
-    mapOf("1.9.25" to "1.6.3", "2.1.21" to "1.8.1", "2.2.21" to "1.9.0", "2.4.20" to "1.9.0")
+    mapOf("1.9.25" to "1.6.3", "2.1.21" to "1.8.1", "2.2.21" to "1.9.0", "2.4.21" to "1.9.0")
+
+// A release the map does not list (the canary adds the newest one) takes the runtime of the newest
+// listed release below it, since a compiler reads older core metadata. A plugin that needs a newer
+// runtime then fails its own serialization compile, not the whole build's configuration.
+fun serializationRuntimeFor(version: String): String {
+    serializationRuntimes[version]?.let { return it }
+    fun key(release: String) = release.split(".").map(String::toInt)
+    val byRelease = Comparator<List<Int>> { a, b -> a.zip(b).map { (x, y) -> x.compareTo(y) }.firstOrNull { it != 0 } ?: a.size.compareTo(b.size) }
+    val below =
+        serializationRuntimes.keys
+            .filter { byRelease.compare(key(it), key(version)) < 0 }
+            .maxWithOrNull(compareBy(byRelease, ::key))
+    return below?.let { serializationRuntimes.getValue(it) }
+        ?: error("kotlinc $version is older than every release in serializationRuntimes; add its kotlinx-serialization-core version.")
+}
 val serializationRoot = layout.projectDirectory.dir("src/serialization")
 
 val serializationTasks =
@@ -104,7 +119,7 @@ val serializationTasks =
         dependencies {
             plugin("org.jetbrains.kotlin:kotlin-serialization-compiler-plugin-embeddable:$version")
             classpath("org.jetbrains.kotlin:kotlin-stdlib:$version")
-            classpath("org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:${serializationRuntimes.getValue(version)}")
+            classpath("org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:${serializationRuntimeFor(version)}")
         }
         val compiler = configurations.getByName("kotlinCompiler$version")
         listOf(false, true).filter { !it || hasK1Mode }.map { k1Mode ->
