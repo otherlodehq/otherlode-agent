@@ -340,7 +340,14 @@ Both pass on rerun. Bind port 0 in the fixture and read the port back.
 - The OTel route bridge gives a parameterised Vert.x mount one endpoint per
   matched value, since OpenTelemetry reports the concrete mount point; the
   bridge is off by default. A fix needs the bridge to recognise those
-  values.
+  values. Each such value is also request data that leaves the process,
+  which `docs/site/data-sent.md` states since 2026-11-10 (review finding
+  A3-01, reproduced with a Vert.x mount at `/u/:id/*`). Stopping the
+  values at the bridge is open design work for Luke to grill: the bridge
+  decides ownership by verb and template (`recordDispatchIfUnowned`), not
+  by request, so it cannot tell at span end that `vertx-web` already
+  counted this request under `/u/{id}/orders`. A per-request mark would
+  have to survive to span end, which can be on another thread.
 - The OTel route bridge, under OpenTelemetry's Java agent, with RESTEasy
   sub-resource locators: `ResteasyResourceLocatorInvokerInstrumentation`
   prepends the locator's path through `JaxrsContextPath`, so the prefix table

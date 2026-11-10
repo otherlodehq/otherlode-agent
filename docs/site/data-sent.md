@@ -6,7 +6,7 @@ order: 130
 
 ## Summary
 
-The agent pushes four kinds of payload to the collector you set with `exportUrl`. Every payload is a protobuf message, and a payload names code (classes, methods, source files, lines, conditions, routes, jars) and counts. It carries no request data and no argument or return value.
+The agent pushes four kinds of payload to the collector you set with `exportUrl`. Every payload is a protobuf message, and a payload names code (classes, methods, source files, lines, conditions, routes, jars) and counts. It carries no request data and no argument or return value, with one exception you turn on yourself: the [route bridge for OpenTelemetry](#endpoint-routes) can send a request's path.
 
 The agent has no redaction setting. It sends what this page lists. A collector with redaction switched on replaces the text of [string literal parts](#condition-text-and-string-literals) with `…` before it forwards a payload, either every such part or those that match a pattern you set. It replaces each branch key and site key with a key made under a secret you set, and clears the case keys that can give a literal away. It keeps every other field it knows. It drops any field it does not know, which happens when the agent is newer than the collector, and marks that payload with `fields_stripped`. A deployment that needs redaction sends through a collector with redaction switched on. An agent that posts straight to a backend sends everything in clear.
 
@@ -163,7 +163,9 @@ A dependency's `location` is the jar's path or its entry inside a fat jar, such 
 
 #### Endpoint routes
 
-An endpoint carries its route template, such as `GET /orders/{id}`, not the URL of any request. The agent reads the pattern the framework matched. It never reads a path, query string, header, parameter or body from a request. An endpoint that no request has reached still appears if the framework registered it. See [endpoints](endpoints).
+An endpoint carries its route template, such as `GET /orders/{id}`, not the URL of any request. The agent reads the pattern the framework matched. It sends no path, query string, header, parameter or body of a request. An endpoint that no request has reached still appears if the framework registered it. See [endpoints](endpoints).
+
+The route bridge for OpenTelemetry is the exception. It is off unless you set `otelBridgeEnabled=true`. With it on, a bridge endpoint carries OpenTelemetry's `http.route` exactly as OpenTelemetry reports it, and OpenTelemetry does not always report a template. It reports a Vert.x Web router mounted at a parameterised path, such as `/u/:id/*`, with the matched value. Each value then becomes an endpoint of its own, such as `GET /u/42/orders`, so a value from a request path is sent. The same holds for any instrumentation that sets `http.route` to a concrete path. A module records at most 8,192 endpoints that it finds only at dispatch, so the bridge sends at most 8,192 such routes in a run. See [route bridge for OpenTelemetry](endpoints#route-bridge-for-opentelemetry).
 
 ### Static baseline chunk
 
@@ -194,7 +196,8 @@ A listing that matches no class is one chunk with no names. A process sends no l
 
 ## What the agent never sends
 
-- The path, query string, headers, parameters or body of a request, or a response.
+- The query string, headers, parameters or body of a request, or a response.
+- The path of a request, unless you turn the route bridge for OpenTelemetry on. See [endpoint routes](#endpoint-routes).
 - Argument values, return values, field values, or exception messages from your code.
 - Environment variables or system properties.
 - Host names, addresses, or user names, apart from a user name inside a jar path that is not under `user.home` or its real path.
