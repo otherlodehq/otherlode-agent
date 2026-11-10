@@ -193,6 +193,14 @@ A failed check is triaged: a wrong `truth.json` entry is fixed there, and a prod
   run lives, read after that run expires. Reproducing it needs the server to prune runs, which the soak
   does not do inside a week.
 
+## The run of 2026-11-02
+
+`soak-1` ran from T0 at 2026-11-02 21:36Z to its final report at 2026-11-09 21:41Z and wrote 28
+reports. No check that judges a claim failed: the planted answers held, no false claim appeared, and
+the counts, runs, logs and test runs passed. Check 5 failed on memory, since the bundle the week ran
+predates the hourly trim (ADR 0089). Check 8 failed on one read at 2026-11-02 21:41:12Z, which
+`9a2d37c` explains. Its 5 failed reads were 404s before `soak-events` first reported.
+
 ## truth.json
 
 ```json

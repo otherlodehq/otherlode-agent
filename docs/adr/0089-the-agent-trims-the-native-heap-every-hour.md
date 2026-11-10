@@ -31,5 +31,6 @@ The free memory comes from C2 compiles. One compile can use 37 to 61 MB of nativ
 
 - In a 12-hour test of the shop service, an agent JVM trimmed every 5 minutes ended at 304 MB. The same agent without a trim ended at 354 MB, and two JVMs with no agent at 320 and 327 MB.
 - A trim takes a few milliseconds and blocks malloc in each arena while it trims that arena. In the shop service on `soak-2` a trim every minute took 1.8 to 5.2 ms and returned 6 to 22 MB.
-- The resident set size grows back between trims as the JIT compiles. In the first hour of a test of the shop service, an hourly trim returned about 60 MB, and the trimmed JVMs averaged 330 and 344 MB against 352 and 355 MB untrimmed.
+- The resident set size grows back between trims as the JIT compiles, and the hourly trim holds it level. In a 24-hour test of the shop service on `soak-2`, measured from the first trim, two JVMs with the hourly trim averaged 335 and 339 MB and held level. Two without it averaged 360 and 361 MB and grew from 347 to 364 MB, and two with no agent averaged 311 and 328 MB. Each trim after the first took 4.5 to 8.0 ms and returned 49 to 64 MB.
+- Two JVMs on the release build trimmed 12 times each in 12 hours, in 4.5 to 10.6 ms a trim, with no error.
 - The agent loads the platform MBean server on its first trim, which the host may not otherwise load.

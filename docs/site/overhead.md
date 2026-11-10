@@ -117,11 +117,11 @@ On the network, a flush sends each payload as one or more POST requests, once pe
 
 ## Memory over days
 
-On Linux, a JVM's resident set size can grow for days after warmup while the memory it uses stays level. The JIT compiler allocates tens of megabytes to compile a method and frees them afterwards, and glibc keeps that freed memory for reuse instead of returning it. An application's own code compiles in its first hours, but the agent's flush code runs once a minute, so the JIT keeps compiling it for days.
+On Linux, a JVM's resident set size can grow for days while the memory it uses stays level. The JIT compiler frees the memory it compiles with, and glibc keeps that memory instead of returning it. The agent's flush code runs once a minute, so the JIT keeps compiling it after your own code has settled.
 
-Once an hour the agent asks the JVM to trim its native heap, which returns the memory glibc holds free. A trim takes a few milliseconds, and a thread that allocates native memory from an arena glibc is trimming waits for it. [`trimNativeHeapIntervalMinutes`](configuration#trimnativeheapintervalminutes) sets the interval, and `0` turns the trim off.
+Once an hour the agent asks the JVM to trim its native heap, which returns that memory. A trim takes a few milliseconds. [`trimNativeHeapIntervalMinutes`](configuration#trimnativeheapintervalminutes) sets the interval, and `0` turns the trim off.
 
-In a week-long soak test without the trim, agent JVMs sat 120 to 185 MB above twins with no agent after three to six days. In a test of the Spring Boot service with the hourly trim, each trim returned about 60 MB, and the resident set size grew back between trims as the JIT compiled.
+With the trim, resident set size held level through a 24-hour test. With it off, agent JVMs in a week-long test reached 120 to 185 MB above JVMs with no agent.
 
 ## Opt-in costs
 
