@@ -107,6 +107,41 @@ class KotlincMatrixTest {
 
     @ParameterizedTest(name = "kotlinc {0}")
     @MethodSource("versions")
+    fun `a data object's toString, hashCode and equals are DATA_CLASS, its constructor is not`(version: String) {
+        listOf("Idle", "Phase\$Start").forEach { name ->
+            val marks = CompilerFixtures.kotlinc(version).marks(name)
+
+            OBJECT_METHOD_NAMES.forEach { assertEquals(GeneratedBy.DATA_CLASS, marks.only(it), "$name.$it") }
+            assertEquals(GeneratedBy.NONE, marks.only("<init>"), name)
+        }
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `a plain object has no generated members`(version: String) {
+        val marks = CompilerFixtures.kotlinc(version).marks("PlainSingleton")
+
+        assertEquals(emptyList(), OBJECT_METHOD_NAMES.flatMap { marks.all(it) }.filter { it != GeneratedBy.NONE })
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `a data object with a hand-written toString marks none of its three members`(version: String) {
+        val marks = CompilerFixtures.kotlinc(version).marks("NamedSingleton")
+
+        OBJECT_METHOD_NAMES.forEach { assertEquals(GeneratedBy.NONE, marks.only(it), it) }
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
+    fun `a class with a static INSTANCE and hand-written toString, hashCode and equals marks none of them`(version: String) {
+        val marks = CompilerFixtures.kotlinc(version).marks("WrittenSingleton")
+
+        OBJECT_METHOD_NAMES.forEach { assertEquals(GeneratedBy.NONE, marks.only(it), it) }
+    }
+
+    @ParameterizedTest(name = "kotlinc {0}")
+    @MethodSource("versions")
     fun `an enum's values, valueOf and getEntries are ENUM, its constructor is not`(version: String) {
         listOf("Color", "Coded").forEach { enum ->
             val marks = CompilerFixtures.kotlinc(version).marks(enum)

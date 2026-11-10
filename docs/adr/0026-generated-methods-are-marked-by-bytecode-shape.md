@@ -41,3 +41,15 @@ The data-class and enum rules go by name and descriptor and were unchanged acros
 ## Amended on 2026-10-31: a stub whose `$DefaultImpls` method does not exist
 
 Decided in a grill during the pre-release review. A build that mixes a library compiled with `-jvm-default=disable` with a consumer compiled with `all` or `all-compatibility` gets a stub from kotlinc whose call names a `$DefaultImpls` method that does not exist, so calling it throws `NoSuchMethodError`. It read as the adopter's code. A method whose body is otherwise the stub shape above is marked `DEFAULT_IMPLS` when the `$DefaultImpls` class it calls, read as a class file through the class's loader, declares no method of the called name and descriptor. It passes no call through, since there is no target. When that class file cannot be read, the method is left as it is.
+
+## Amended on 2026-11-09: a data object's members, and an enum's `getEntries` by shape
+
+Decided in the 2026-11-09 review, from two findings it reproduced.
+
+kotlinc writes `toString`, `hashCode` and `equals` for every `data object`, public and with no line-number table. No rule read them, so they were probed unmarked and read as never-hit methods nobody wrote. They are marked `DATA_CLASS` when the class carries Kotlin metadata, has a static `INSTANCE` of its own type, and all three members are present, public, without a line table and with exactly the bodies kotlinc 1.9.25, 2.1.21, 2.2.21 and 2.4.21 write. `toString` loads the object's simple name and returns it. `hashCode` returns one `int` constant. `equals` is the reference test, then `instanceof`, then `checkcast` and `pop`. One member that differs leaves all three unmarked. kotlinc rejects a hand-written `equals` or `hashCode` on a data object, so `toString` is the only one an adopter can write. It then has a line table and none of the three is marked. A data object's `equals` holds two branch sites, which take the method's mark as a data class's do.
+
+The existing mark is reused. A data object is a form of data class to its reader, and a new mark would change the wire for nothing a reader gains.
+
+A top-level data object whose name holds a `$`, written in backticks, is not marked. The rule takes the simple name after the last `$` and kotlinc writes the whole name, so the three members stay visible as never-hit rows. `STATUS.md` lists it.
+
+An enum's `getEntries` was marked `ENUM` by name alone, whatever its descriptor, so a `getEntries` the adopter wrote on an enum was hidden. It is marked only when it is static, takes no parameters and returns a type whose descriptor ends in `/enums/EnumEntries;`, which is the member kotlinc writes. The suffix is matched without its `kotlin` prefix, because the shaded jar rewrites a literal that starts with it.

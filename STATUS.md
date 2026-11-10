@@ -681,6 +681,11 @@ What the compiler canary and the reviews found that the agent does not
 read. Each reads as an unread shape, never a finding, unless it says
 otherwise. ADRs 0054 and 0055 hold the rule.
 
+- Kotlin: a top-level `data object` whose name holds a `$`, written in
+  backticks. Its `toString`, `hashCode` and `equals` are not marked
+  `DATA_CLASS`, so they read as never-hit rows, not as an unread shape
+  (ADR 0026, 2026-11-09 amendment). The second analysis walk has no
+  `InnerClasses` entry to take the simple name from.
 - Scala 3: backticked case names, an enum that overrides or inherits
   `productPrefix`, and two case names with the same hash. An enum whose
   singleton never reads its name gets no `$name` field and a `$new` calling
