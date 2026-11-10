@@ -3341,8 +3341,9 @@ class ProtoPayloadCodecTest {
 
         assertEquals(manifest, ProtoPayloadCodec.decodeProbeManifest(ProtoPayloadCodec.encode(manifest)))
         assertEquals(baseline, ProtoPayloadCodec.decodeStaticBaseline(ProtoPayloadCodec.encode(baseline)))
-        assertEquals(13, marks.size)
+        assertEquals(14, marks.size)
         assertEquals(12, ProtoGeneratedBy.TRAIT_FORWARDER_VALUE)
+        assertEquals(13, ProtoGeneratedBy.CLASS_DELEGATION_VALUE)
     }
 
     @Test

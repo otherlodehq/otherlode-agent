@@ -9,6 +9,10 @@ the section being read.
 
 ## [Unreleased]
 
+### Added
+
+- The forwarders kotlinc writes for interface delegation are marked `CLASS_DELEGATION` (`GeneratedBy`, wire value 13; the testkit's `GeneratedBy` gains it), and the static method kotlinc adds for a `@JvmStatic` companion function is marked `STATIC_FORWARDER`. A call into either passes through to the method it forwards to. The delegate's method and the companion's method are ordinary code. A method you wrote, such as `override fun describe() = inner.describe()`, has a line-number table and stays ordinary code. A forwarder that casts a result or boxes an argument for a type argument is not marked.
+
 ## [0.1.0] - 2026-11-01
 
 The first release of the Otherlode agent and its testkit. The agent counts which methods, branches and endpoints your JVM application runs and sends the counts to an Otherlode collector, so Otherlode can show the code your traffic never reaches. Docs: https://otherlode.dev/docs.

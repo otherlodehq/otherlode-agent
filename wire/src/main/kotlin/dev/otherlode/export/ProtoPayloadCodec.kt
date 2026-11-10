@@ -881,6 +881,7 @@ object ProtoPayloadCodec {
             GeneratedBy.VALUE_CLASS -> ProtoGeneratedBy.VALUE_CLASS
             GeneratedBy.KOTLINX_SERIALIZATION -> ProtoGeneratedBy.KOTLINX_SERIALIZATION
             GeneratedBy.TRAIT_FORWARDER -> ProtoGeneratedBy.TRAIT_FORWARDER
+            GeneratedBy.CLASS_DELEGATION -> ProtoGeneratedBy.CLASS_DELEGATION
         }
 
     // Never written inside an origin oneof, but a peer can still set the oneof to its zero value, so it
@@ -900,6 +901,7 @@ object ProtoPayloadCodec {
             ProtoGeneratedBy.VALUE_CLASS -> GeneratedBy.VALUE_CLASS
             ProtoGeneratedBy.KOTLINX_SERIALIZATION -> GeneratedBy.KOTLINX_SERIALIZATION
             ProtoGeneratedBy.TRAIT_FORWARDER -> GeneratedBy.TRAIT_FORWARDER
+            ProtoGeneratedBy.CLASS_DELEGATION -> GeneratedBy.CLASS_DELEGATION
             ProtoGeneratedBy.UNRECOGNIZED -> throw IllegalArgumentException("unrecognized generated-by reason on the wire: $generatedBy")
         }
 

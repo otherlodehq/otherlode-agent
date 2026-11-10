@@ -41,6 +41,12 @@ class ResultEnumsTest {
     }
 
     @Test
+    fun `the class delegation mark maps between the wire and the testkit`() {
+        assertEquals(GeneratedBy.CLASS_DELEGATION, WireGeneratedBy.CLASS_DELEGATION.toTestkit())
+        assertEquals(WireGeneratedBy.CLASS_DELEGATION, GeneratedBy.CLASS_DELEGATION.toWire())
+    }
+
+    @Test
     fun `the kotlinx serializer object unread shape maps between the wire and the testkit`() {
         assertEquals(UnreadShape.KOTLINX_SERIALIZER_OBJECT, WireUnreadShape.KOTLINX_SERIALIZER_OBJECT.toTestkit())
         assertEquals(WireUnreadShape.KOTLINX_SERIALIZER_OBJECT, UnreadShape.KOTLINX_SERIALIZER_OBJECT.toWire())

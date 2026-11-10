@@ -693,6 +693,14 @@ otherwise. ADRs 0054 and 0055 hold the rule.
   `DATA_CLASS`, so they read as never-hit rows, not as an unread shape
   (ADR 0026, 2026-11-09 amendment). The second analysis walk has no
   `InnerClasses` entry to take the simple name from.
+- Kotlin: a delegation forwarder specialised for a type argument, as in
+  `class StringFeed(inner: Feed<String>) : Feed<String> by inner`, calls
+  another descriptor and adds a `checkcast` or a boxing call. A class that
+  delegates through a property typed as a sub-interface,
+  `class ViaSub(private val inner: Sub) : I by inner`, reads a field whose
+  type the class does not implement directly. Neither is marked
+  `CLASS_DELEGATION`, so both read as never-hit rows, not as an unread
+  shape (ADR 0090).
 - Scala 3: backticked case names, an enum that overrides or inherits
   `productPrefix`, and two case names with the same hash. An enum whose
   singleton never reads its name gets no `$name` field and a `$new` calling
