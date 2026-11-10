@@ -87,7 +87,8 @@ The argument string is a comma-separated list of `key=value` pairs. The agent sp
 
 - A value cannot contain a comma, and there is no quoting. A value that needs a comma has to come from the system property or the environment variable.
 - Keys are case-sensitive. A key the agent does not know, such as `includePackage` or `IncludePackages`, is ignored with a warning that lists the known options. The option does not act under a near-miss spelling.
-- A pair with no `=`, or with an empty key, is ignored with a warning.
+- A pair with no `=`, or with an empty key, is ignored with a warning. The warning gives the position of the pair in the string and never quotes it.
+- After an `authToken` pair, the agent logs no text of a pair that is not `key=value` with a known key, because it may be the rest of a token that holds a comma. One warning says so and names the system property and the environment variable that can carry the token. This stops at the next pair with a known key.
 - When a key appears twice in the string, the last one wins.
 
 ### System properties and environment variables
