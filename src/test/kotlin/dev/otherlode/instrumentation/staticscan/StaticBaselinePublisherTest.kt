@@ -24,6 +24,7 @@ import java.util.logging.LogRecord
 import java.util.logging.Logger
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
@@ -201,5 +202,47 @@ class StaticBaselinePublisherTest {
         assertEquals(1, tooLarge.size)
         assertTrue(tooLarge.single().message.contains("8 MiB"))
         assertFalse(warnings.any { it.message.contains("SECRET") })
+    }
+
+    @Test
+    fun `a scan that throws a StackOverflowError logs one warning and rethrows the error`() {
+        val publisher =
+            StaticBaselinePublisher(
+                { throw StackOverflowError("deep") },
+                RecordingExporter(),
+                ProbeRegistry(),
+                StaticBaselineMismatchDetector(),
+            )
+
+        val warnings =
+            captureWarnings {
+                assertFailsWith<StackOverflowError> { publisher.run(resource) }
+            }
+
+        assertEquals(1, warnings.size)
+        assertTrue(warnings.single().message.contains("static baseline"))
+    }
+
+    @Test
+    fun `a scan that throws a LinkageError ends run with one warning and sends nothing`() {
+        val exporter = RecordingExporter()
+        val publisher = StaticBaselinePublisher({ throw LinkageError("bad") }, exporter, ProbeRegistry(), StaticBaselineMismatchDetector())
+
+        val warnings = captureWarnings { publisher.run(resource) }
+
+        assertEquals(1, warnings.size)
+        assertTrue(warnings.single().message.contains("static baseline"))
+        assertEquals(emptyList(), exporter.baselines)
+    }
+
+    @Test
+    fun `a scan that throws a RuntimeException ends run with one warning and sends nothing`() {
+        val exporter = RecordingExporter()
+        val publisher = StaticBaselinePublisher({ error("boom") }, exporter, ProbeRegistry(), StaticBaselineMismatchDetector())
+
+        val warnings = captureWarnings { publisher.run(resource) }
+
+        assertEquals(1, warnings.size)
+        assertEquals(emptyList(), exporter.baselines)
     }
 }
