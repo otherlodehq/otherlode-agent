@@ -33,7 +33,11 @@ class OtherlodeTestCollectorEndToEndTest {
     private var scheduler: ExportScheduler? = null
     private var collector: OtherlodeTestCollector? = null
 
-    private fun fixtureLoader() = FixtureClassLoader(arrayOf(File("build/classes/kotlin/test").toURI().toURL()), javaClass.classLoader)
+    private fun fixtureLoader() =
+        FixtureClassLoader(
+            arrayOf(File("build/classes/kotlin/test").toURI().toURL(), File("build/classes/java/test").toURI().toURL()),
+            javaClass.classLoader,
+        )
 
     @AfterTest
     fun tearDown() {
@@ -242,6 +246,7 @@ class OtherlodeTestCollectorEndToEndTest {
         load("LinePrinter", initialise = false)
         load("Greeter", initialise = false)
         load("ReportWriter", initialise = true)
+        load("IdleBoard", initialise = true)
 
         val textUtil = load("TextUtil", initialise = true)
         textUtil.getMethod("trim", String::class.java).invoke(textUtil.getDeclaredConstructor().newInstance(), " x ")
@@ -270,6 +275,7 @@ class OtherlodeTestCollectorEndToEndTest {
             "LinePrinter" to "print",
             "Greeter" to "greet",
             "ReportWriter" to "write",
+            "IdleBoard" to "banner",
             "TextUtil" to "pad",
             "Amount" to "inPounds",
             "Scaled" to "<init>",
@@ -293,11 +299,11 @@ class OtherlodeTestCollectorEndToEndTest {
         assertEquals(listOf("<init>", "record"), neverInitialized.single().methods)
         assertEquals(1, neverInitialized.single().instancesLoading)
 
-        // LinePrinter has no static initialiser and ReportWriter's ran. Neither was created. Utils
-        // holds only statics, Greeter has no constructor, and Counters is a used object, so none of
-        // those three is judged.
+        // LinePrinter has no static initialiser, and ReportWriter's and IdleBoard's ran. None was
+        // created. Utils holds only statics, Greeter has no constructor, and Counters is a used
+        // object, so none of those three is judged.
         assertEquals(
-            listOf("$FIXTURES.LinePrinter", "$FIXTURES.ReportWriter"),
+            listOf("$FIXTURES.IdleBoard", "$FIXTURES.LinePrinter", "$FIXTURES.ReportWriter"),
             target.neverInstantiated().map { it.className },
         )
     }
@@ -312,7 +318,16 @@ class OtherlodeTestCollectorEndToEndTest {
                 .filter { it.kind == RefProbeKind.METHOD }
                 .map { "${it.className.removePrefix("$FIXTURES.")}#${it.methodName}${it.methodDescriptor}" }
         assertTrue("Amount#<init>(II)V" in rows, "Amount's unused overload is a row: $rows")
-        assertTrue("ReportWriter#footer()Ljava/lang/String;" in rows, "a never-instantiated class keeps its static methods: $rows")
+        assertTrue(
+            "ReportWriter\$Companion#footer()Ljava/lang/String;" in rows,
+            "a never-instantiated class keeps its companion's static function: $rows",
+        )
+        assertTrue("ReportWriter#footer()Ljava/lang/String;" !in rows, "the JvmStatic proxy holds no code of its own: $rows")
+        assertTrue("IdleBoard#banner()Ljava/lang/String;" in rows, "a never-instantiated class keeps its static methods: $rows")
+        assertTrue(
+            rows.none { it.startsWith("IdleBoard#<init>") || it.startsWith("IdleBoard#render") },
+            "a never-instantiated class folds its constructor and instance methods: $rows",
+        )
         assertTrue("Counters#unused()I" in rows, "an initialised object's never-hit method is a row: $rows")
         assertTrue("Greeter#greet()Ljava/lang/String;" in rows, "an interface's default method is a row of its own: $rows")
         assertTrue("TextUtil#pad(Ljava/lang/String;I)Ljava/lang/String;" in rows, rows.toString())

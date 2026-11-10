@@ -441,7 +441,7 @@ class AgentConfigTest {
 
     @Test
     fun `a token sent to the default endpoint is not warned about, since it is a loopback address`() {
-        val warnings = warningsFrom { parseQuietly("authToken=abc,unknownOption=1") }
+        val warnings = warningsFrom { parseQuietly("unknownOption=1,authToken=abc") }
 
         assertEquals(1, warnings.count { it.contains("unknown agent option") }, "log capture saw nothing")
         assertEquals(0, warnings.count { it.contains("plain http") })
@@ -451,7 +451,7 @@ class AgentConfigTest {
     fun `a token sent to a loopback host over plain http is not warned about`() {
         val hosts = listOf("localhost", "LOCALHOST", "127.0.0.1", "127.10.0.5", "[::1]")
         for (host in hosts) {
-            val warnings = warningsFrom { parseQuietly("exportUrl=http://$host:4319,authToken=abc,unknownOption=1") }
+            val warnings = warningsFrom { parseQuietly("exportUrl=http://$host:4319,unknownOption=1,authToken=abc") }
 
             assertEquals(1, warnings.count { it.contains("unknown agent option") }, "host $host: log capture saw nothing")
             assertEquals(0, warnings.count { it.contains("plain http") }, "host $host")
@@ -471,7 +471,7 @@ class AgentConfigTest {
     @Test
     fun `a token sent to an https endpoint is not warned about whatever the scheme's case`() {
         for (scheme in listOf("https", "HTTPS")) {
-            val warnings = warningsFrom { parseQuietly("exportUrl=$scheme://collector.example.com,authToken=abc,unknownOption=1") }
+            val warnings = warningsFrom { parseQuietly("exportUrl=$scheme://collector.example.com,unknownOption=1,authToken=abc") }
 
             assertEquals(1, warnings.count { it.contains("unknown agent option") }, "scheme $scheme: log capture saw nothing")
             assertEquals(0, warnings.count { it.contains("plain http") }, "scheme $scheme")
@@ -816,6 +816,66 @@ class AgentConfigTest {
         assertEquals(emptyList(), parseQuietly("disabledEndpointModules= ; ;").disabledEndpointModules)
     }
 
+    private fun messagesFrom(block: () -> Unit): List<String> = recordsFrom(block).mapNotNull { it.message }
+
+    @Test
+    fun `a token with a comma logs no text of the fragment after it`() {
+        val messages = messagesFrom { parseQuietly("authToken=abc,qux,includePackages=x") }
+
+        assertTrue(messages.any { it.contains("authToken") && it.contains("comma") }, "no warning about the comma: $messages")
+        assertTrue(messages.none { it.contains("qux") }, "a fragment was logged: $messages")
+    }
+
+    @Test
+    fun `a token with a comma and an equals sign logs neither side of the fragment after it`() {
+        val config = AgentConfig.parse("authToken=abc,qux=ghi,includePackages=x", env = { null }, systemProperties = { null }, detectServiceName = { null })
+        val messages = messagesFrom { parseQuietly("authToken=abc,qux=ghi,includePackages=x") }
+
+        assertTrue(messages.any { it.contains("authToken") && it.contains("comma") }, "no warning about the comma: $messages")
+        assertTrue(messages.none { it.contains("qux") || it.contains("ghi") }, "a fragment was logged: $messages")
+        assertEquals("abc", config.authToken)
+        assertEquals(listOf("x"), config.includePackages)
+    }
+
+    @Test
+    fun `a token with several commas logs none of the fragments and warns once`() {
+        val messages = messagesFrom { parseQuietly("authToken=abc,qux,quux,includePackages=x") }
+
+        assertTrue(messages.none { it.contains("qux") || it.contains("quux") }, "a fragment was logged: $messages")
+        assertEquals(1, messages.count { it.contains("comma") }, "expected one warning: $messages")
+    }
+
+    @Test
+    fun `the warning for a token with a comma names the system property and the environment variable`() {
+        val messages = messagesFrom { parseQuietly("authToken=abc,qux,includePackages=x") }
+
+        assertTrue(messages.any { it.contains("otherlode.auth.token") && it.contains("OTHERLODE_AUTH_TOKEN") }, "$messages")
+    }
+
+    @Test
+    fun `a run of fragments after a token ends at the next known key`() {
+        val messages = messagesFrom { parseQuietly("authToken=abc,qux,environment=prod,oops") }
+
+        assertTrue(messages.none { it.contains("qux") || it.contains("oops") }, "a fragment was logged: $messages")
+        assertEquals(1, messages.count { it.contains("malformed") }, "the fragment after environment is a malformed option: $messages")
+    }
+
+    @Test
+    fun `a malformed fragment is logged by its position and not by its text`() {
+        val messages = messagesFrom { parseQuietly("includePackages=x,oops") }
+
+        assertTrue(messages.any { it.contains("option 2") && it.contains("no '='") }, "no position in: $messages")
+        assertTrue(messages.none { it.contains("oops") }, "the fragment was logged: $messages")
+    }
+
+    @Test
+    fun `an unknown key is still logged by its name and not by its value`() {
+        val messages = messagesFrom { parseQuietly("inclduePackages=secretvalue,includePackages=x") }
+
+        assertTrue(messages.any { it.contains("inclduePackages") }, "no unknown key in: $messages")
+        assertTrue(messages.none { it.contains("secretvalue") }, "the value was logged: $messages")
+    }
+
     /** Parses [agentArgs] with no environment or system properties unless given, so the JVM running the tests cannot change the result. */
     private fun parseQuietly(
         agentArgs: String,
@@ -842,7 +902,7 @@ class AgentConfigTest {
 
                 override fun close() {}
             }
-        val julLogger = JulLogger.getLogger(AgentConfig::class.java.name)
+        val julLogger = HELD_LOGGER
         val originalLevel = julLogger.level
         julLogger.addHandler(handler)
         julLogger.level = JulLevel.ALL
@@ -853,5 +913,9 @@ class AgentConfigTest {
             julLogger.level = originalLevel
         }
         return records
+    }
+
+    private companion object {
+        val HELD_LOGGER: JulLogger = JulLogger.getLogger(AgentConfig::class.java.name)
     }
 }

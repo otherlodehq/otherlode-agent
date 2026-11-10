@@ -414,6 +414,42 @@ class BranchSiteAnalyzerTest {
     }
 
     @Test
+    fun `an enum's own instance getEntries returning a string is ordinary code`() {
+        val analysis = BranchSiteAnalyzer.analyze(readJavaTargetBytes("EnumWithStringEntries")) { _, _ -> true }
+
+        assertEquals(GeneratedBy.NONE, analysis.generatedBy("getEntries", "()Ljava/lang/String;"))
+        assertEquals(GeneratedBy.ENUM, analysis.generatedBy("values", "()[Lcom/example/target/EnumWithStringEntries;"))
+    }
+
+    @Test
+    fun `an enum's own instance getEntries returning a list is ordinary code`() {
+        val analysis = BranchSiteAnalyzer.analyze(readJavaTargetBytes("EnumWithListEntries")) { _, _ -> true }
+
+        assertEquals(GeneratedBy.NONE, analysis.generatedBy("getEntries", "()Ljava/util/List;"))
+    }
+
+    @Test
+    fun `an enum's static getEntries with a parameter is ordinary code`() {
+        val analysis = BranchSiteAnalyzer.analyze(readJavaTargetBytes("EnumWithParameterEntries")) { _, _ -> true }
+
+        assertEquals(GeneratedBy.NONE, analysis.generatedBy("getEntries", "(I)Ljava/lang/String;"))
+    }
+
+    @Test
+    fun `an enum's instance getEntries returning EnumEntries is ordinary code`() {
+        val analysis = BranchSiteAnalyzer.analyze(readJavaTargetBytes("EnumWithInstanceEnumEntries")) { _, _ -> true }
+
+        assertEquals(GeneratedBy.NONE, analysis.generatedBy("getEntries", "()Lkotlin/enums/EnumEntries;"))
+    }
+
+    @Test
+    fun `an enum's static getEntries with a parameter returning EnumEntries is ordinary code`() {
+        val analysis = BranchSiteAnalyzer.analyze(readJavaTargetBytes("EnumWithParameterEnumEntries")) { _, _ -> true }
+
+        assertEquals(GeneratedBy.NONE, analysis.generatedBy("getEntries", "(I)Lkotlin/enums/EnumEntries;"))
+    }
+
+    @Test
     fun `a default-mode DefaultImpls method that only forwards to the interface is marked DEFAULT_IMPLS`() {
         val analysis = BranchSiteAnalyzer.analyze(readInlineTargetBytes("GeneratedInterface\$DefaultImpls")) { _, _ -> true }
 

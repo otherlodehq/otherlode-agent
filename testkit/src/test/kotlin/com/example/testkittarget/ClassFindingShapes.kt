@@ -37,7 +37,7 @@ class ReportWriter(
     fun write(line: String): String = TextUtil().pad(line, width)
 
     companion object {
-        /** A static method of a never-instantiated class. It can still run, so it is never folded. */
+        /** Runs through the static method `@JvmStatic` adds, which holds no code and is not a finding. */
         @JvmStatic
         fun footer(): String = "end"
     }

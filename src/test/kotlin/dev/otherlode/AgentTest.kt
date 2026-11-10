@@ -597,6 +597,62 @@ class AgentTest {
     }
 
     @Test
+    fun `a listing and a baseline chunk sent again after a manifest with a class was confirmed say so`() {
+        val listings = CopyOnWriteArrayList<ClassListing>()
+        val baselines = CopyOnWriteArrayList<StaticBaseline>()
+        val manifests = CopyOnWriteArrayList<ProbeManifest>()
+        val collector = HttpServer.create(InetSocketAddress("localhost", 0), 0)
+        collector.createContext("/v1/otherlode/class-listing") { exchange ->
+            listings += ProtoPayloadCodec.decodeClassListing(exchange.requestBody.readBytes())
+            exchange.sendResponseHeaders(if (listings.size == 1) 404 else 200, -1)
+            exchange.close()
+        }
+        collector.createContext("/v1/otherlode/static-baseline") { exchange ->
+            baselines += ProtoPayloadCodec.decodeStaticBaseline(exchange.requestBody.readBytes())
+            exchange.sendResponseHeaders(if (baselines.size == 1) 404 else 200, -1)
+            exchange.close()
+        }
+        collector.createContext("/v1/otherlode/manifest") { exchange ->
+            manifests += ProtoPayloadCodec.decodeProbeManifest(exchange.requestBody.readBytes())
+            exchange.sendResponseHeaders(200, -1)
+            exchange.close()
+        }
+        collector.createContext("/") { exchange ->
+            exchange.requestBody.readBytes()
+            exchange.sendResponseHeaders(200, -1)
+            exchange.close()
+        }
+        collector.start()
+        val instrumentation = ByteBuddyAgent.install()
+        val running =
+            Agent.start(
+                "includePackages=com.example.target,flushIntervalSeconds=3600,endpointsEnabled=false,staticBaselineEnabled=true," +
+                    "exportUrl=http://localhost:${collector.address.port}",
+                instrumentation,
+            )
+        try {
+            assertNotNull(running)
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
+            while ((listings.isEmpty() || baselines.isEmpty()) && System.nanoTime() < deadline) Thread.onSpinWait()
+            assertTrue(listings.isNotEmpty() && baselines.isNotEmpty())
+            assertTrue(listings.first().resource.manifestConfirmed.not() && baselines.first().resource.manifestConfirmed.not())
+
+            val testClasses = AgentTest::class.java.protectionDomain.codeSource.location
+            java.net.URLClassLoader(arrayOf(testClasses), null).use {
+                Class.forName("com.example.target.ConfirmedManifestTarget", true, it).getDeclaredConstructor().newInstance()
+            }
+            while ((listings.size < 2 || baselines.size < 2) && System.nanoTime() < deadline) running.scheduler.flush()
+
+            assertTrue(manifests.any { it.probes.isNotEmpty() }, "a manifest with a class was sent")
+            assertTrue(listings.size >= 2 && listings.last().resource.manifestConfirmed, "the resent listing chunk says confirmed")
+            assertTrue(baselines.size >= 2 && baselines.last().resource.manifestConfirmed, "the resent baseline chunk says confirmed")
+        } finally {
+            running?.stop()
+            collector.stop(0)
+        }
+    }
+
+    @Test
     fun `classListingEnabled=false sends no class listing`() {
         val paths = ConcurrentHashMap.newKeySet<String>()
         val collector = HttpServer.create(InetSocketAddress("localhost", 0), 0)

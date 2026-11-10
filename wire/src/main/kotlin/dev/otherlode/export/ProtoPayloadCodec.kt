@@ -83,6 +83,7 @@ object ProtoPayloadCodec {
         weightOf(
             toProto(
                 batch.copy(
+                    resource = batch.resource.copy(manifestConfirmed = true),
                     finalFlush = true,
                     flushComplete = true,
                     payloadSequence = Long.MAX_VALUE,
@@ -97,6 +98,7 @@ object ProtoPayloadCodec {
         weightOf(
             toProto(
                 manifest.copy(
+                    resource = manifest.resource.copy(manifestConfirmed = true),
                     referencesRecorded = true,
                     dependenciesListed = true,
                     payloadSequence = Long.MAX_VALUE,
@@ -111,11 +113,27 @@ object ProtoPayloadCodec {
 
     /** The encoded size and element count of [baseline], with the chunk position at its widest. */
     fun weightOf(baseline: StaticBaseline): PayloadWeight =
-        weightOf(toProto(baseline.copy(chunkIndex = Int.MAX_VALUE, chunkCount = Int.MAX_VALUE)))
+        weightOf(
+            toProto(
+                baseline.copy(
+                    resource = baseline.resource.copy(manifestConfirmed = true),
+                    chunkIndex = Int.MAX_VALUE,
+                    chunkCount = Int.MAX_VALUE,
+                ),
+            ),
+        )
 
     /** The encoded size and element count of [listing], with the chunk position at its widest. */
     fun weightOf(listing: ClassListing): PayloadWeight =
-        weightOf(toProto(listing.copy(chunkIndex = Int.MAX_VALUE, chunkCount = Int.MAX_VALUE)))
+        weightOf(
+            toProto(
+                listing.copy(
+                    resource = listing.resource.copy(manifestConfirmed = true),
+                    chunkIndex = Int.MAX_VALUE,
+                    chunkCount = Int.MAX_VALUE,
+                ),
+            ),
+        )
 
     /**
      * What one entry adds to a payload that holds it in a repeated field: its tag, its length prefix
@@ -277,6 +295,7 @@ object ProtoPayloadCodec {
                 .setAgentVersion(resource.agentVersion)
                 .setFieldsStripped(resource.fieldsStripped)
                 .setFlushIntervalSeconds(resource.flushIntervalSeconds)
+                .setManifestConfirmed(resource.manifestConfirmed)
         resource.serviceVersion?.let { builder.serviceVersion = it }
         resource.environment?.let { builder.environment = it }
         resource.serviceNamespace?.let { builder.serviceNamespace = it }
@@ -295,6 +314,7 @@ object ProtoPayloadCodec {
             agentVersion = resource.agentVersion,
             fieldsStripped = resource.fieldsStripped,
             flushIntervalSeconds = resource.flushIntervalSeconds,
+            manifestConfirmed = resource.manifestConfirmed,
         )
 
     private fun toProto(delta: ProbeDelta): ProtoProbeDelta =
@@ -881,6 +901,7 @@ object ProtoPayloadCodec {
             GeneratedBy.VALUE_CLASS -> ProtoGeneratedBy.VALUE_CLASS
             GeneratedBy.KOTLINX_SERIALIZATION -> ProtoGeneratedBy.KOTLINX_SERIALIZATION
             GeneratedBy.TRAIT_FORWARDER -> ProtoGeneratedBy.TRAIT_FORWARDER
+            GeneratedBy.CLASS_DELEGATION -> ProtoGeneratedBy.CLASS_DELEGATION
         }
 
     // Never written inside an origin oneof, but a peer can still set the oneof to its zero value, so it
@@ -900,6 +921,7 @@ object ProtoPayloadCodec {
             ProtoGeneratedBy.VALUE_CLASS -> GeneratedBy.VALUE_CLASS
             ProtoGeneratedBy.KOTLINX_SERIALIZATION -> GeneratedBy.KOTLINX_SERIALIZATION
             ProtoGeneratedBy.TRAIT_FORWARDER -> GeneratedBy.TRAIT_FORWARDER
+            ProtoGeneratedBy.CLASS_DELEGATION -> GeneratedBy.CLASS_DELEGATION
             ProtoGeneratedBy.UNRECOGNIZED -> throw IllegalArgumentException("unrecognized generated-by reason on the wire: $generatedBy")
         }
 

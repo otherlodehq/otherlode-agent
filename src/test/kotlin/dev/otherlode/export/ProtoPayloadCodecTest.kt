@@ -254,6 +254,7 @@ class ProtoPayloadCodecTest {
         val batch = DeltaBatch(resource, emptyList())
         val widest =
             batch.copy(
+                resource = resource.copy(manifestConfirmed = true),
                 finalFlush = true,
                 flushComplete = true,
                 payloadSequence = Long.MAX_VALUE,
@@ -263,6 +264,48 @@ class ProtoPayloadCodecTest {
 
         assertFalse(batch.flushComplete)
         assertEquals(ProtoPayloadCodec.encode(widest).size.toLong(), ProtoPayloadCodec.weightOf(batch).bytes)
+    }
+
+    @Test
+    fun `the weight of every payload kind bounds the payload once manifestConfirmed is set`() {
+        val resource = ResourceAttributes("checkout", "1.0.0", "", null, "run-1")
+        val confirmed = resource.copy(manifestConfirmed = true)
+        val rules = IncludeRules(listOf("com.example"))
+
+        fun check(
+            unconfirmed: PayloadWeight,
+            confirmedWeight: PayloadWeight,
+            sent: Int,
+            sentUnconfirmed: Int,
+        ) {
+            assertEquals(confirmedWeight, unconfirmed)
+            assertTrue(unconfirmed.bytes >= sent)
+            assertTrue(sent > sentUnconfirmed)
+        }
+        check(
+            ProtoPayloadCodec.weightOf(DeltaBatch(resource, emptyList())),
+            ProtoPayloadCodec.weightOf(DeltaBatch(confirmed, emptyList())),
+            ProtoPayloadCodec.encode(DeltaBatch(confirmed, emptyList())).size,
+            ProtoPayloadCodec.encode(DeltaBatch(resource, emptyList())).size,
+        )
+        check(
+            ProtoPayloadCodec.weightOf(ProbeManifest(resource, emptyList())),
+            ProtoPayloadCodec.weightOf(ProbeManifest(confirmed, emptyList())),
+            ProtoPayloadCodec.encode(ProbeManifest(confirmed, emptyList())).size,
+            ProtoPayloadCodec.encode(ProbeManifest(resource, emptyList())).size,
+        )
+        check(
+            ProtoPayloadCodec.weightOf(StaticBaseline(resource, emptyList(), scannedAt = 1L)),
+            ProtoPayloadCodec.weightOf(StaticBaseline(confirmed, emptyList(), scannedAt = 1L)),
+            ProtoPayloadCodec.encode(StaticBaseline(confirmed, emptyList(), scannedAt = 1L)).size,
+            ProtoPayloadCodec.encode(StaticBaseline(resource, emptyList(), scannedAt = 1L)).size,
+        )
+        check(
+            ProtoPayloadCodec.weightOf(ClassListing(resource, emptyList(), rules, 1L)),
+            ProtoPayloadCodec.weightOf(ClassListing(confirmed, emptyList(), rules, 1L)),
+            ProtoPayloadCodec.encode(ClassListing(confirmed, emptyList(), rules, 1L)).size,
+            ProtoPayloadCodec.encode(ClassListing(resource, emptyList(), rules, 1L)).size,
+        )
     }
 
     @Test
@@ -3341,8 +3384,9 @@ class ProtoPayloadCodecTest {
 
         assertEquals(manifest, ProtoPayloadCodec.decodeProbeManifest(ProtoPayloadCodec.encode(manifest)))
         assertEquals(baseline, ProtoPayloadCodec.decodeStaticBaseline(ProtoPayloadCodec.encode(baseline)))
-        assertEquals(13, marks.size)
+        assertEquals(14, marks.size)
         assertEquals(12, ProtoGeneratedBy.TRAIT_FORWARDER_VALUE)
+        assertEquals(13, ProtoGeneratedBy.CLASS_DELEGATION_VALUE)
     }
 
     @Test
@@ -3482,6 +3526,22 @@ class ProtoPayloadCodecTest {
             assertEquals(stripped, ProtoPayloadCodec.decodeStaticBaseline(baseline).resource.fieldsStripped)
         }
         assertFalse(ResourceAttributes("checkout", null, "i", null, "r").fieldsStripped)
+    }
+
+    @Test
+    fun `manifest confirmed round-trips on every payload and defaults to false`() {
+        for (confirmed in listOf(true, false)) {
+            val resource = ResourceAttributes("checkout", "1.0.0", "instance-1", "prod", "run-1", manifestConfirmed = confirmed)
+            val batch = ProtoPayloadCodec.encode(DeltaBatch(resource, emptyList()))
+            val manifest = ProtoPayloadCodec.encode(ProbeManifest(resource, emptyList()))
+            val baseline = ProtoPayloadCodec.encode(StaticBaseline(resource, emptyList(), scannedAt = 1000L))
+
+            assertEquals(confirmed, ProtoDeltaBatch.parseFrom(batch).resource.manifestConfirmed)
+            assertEquals(confirmed, ProtoPayloadCodec.decodeDeltaBatch(batch).resource.manifestConfirmed)
+            assertEquals(confirmed, ProtoPayloadCodec.decodeProbeManifest(manifest).resource.manifestConfirmed)
+            assertEquals(confirmed, ProtoPayloadCodec.decodeStaticBaseline(baseline).resource.manifestConfirmed)
+        }
+        assertFalse(ResourceAttributes("checkout", null, "i", null, "r").manifestConfirmed)
     }
 
     @Test

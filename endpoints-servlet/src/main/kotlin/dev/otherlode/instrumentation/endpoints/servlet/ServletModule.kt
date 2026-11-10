@@ -27,7 +27,10 @@ private const val ADVICE = "dev.otherlode.endpoints.servlet.ServletServiceAdvice
 private val NAMESPACES = listOf("javax", "jakarta")
 private val SERVLET_MARKERS = NAMESPACES.map { "$it/servlet/Servlet.class" }
 private val SERVLET_INTERFACES = NAMESPACES.map { "$it.servlet.Servlet" }.toSet()
-private val SKIPPED_SUPERTYPE_PREFIXES = listOf("java.", "jdk.", "sun.", "com.sun.", "kotlin.")
+/** Built at run time, since `shadowJar` rewrites a constant that starts with `kotlin`. */
+private val KOTLIN_PREFIX = listOf("kot", "lin", ".").joinToString("")
+
+private val SKIPPED_SUPERTYPE_PREFIXES = listOf("java.", "jdk.", "sun.", "com.sun.", KOTLIN_PREFIX)
 private val PLATFORM_LOADER: ClassLoader = ClassLoader.getPlatformClassLoader()
 
 private val SERVICE_DESCRIPTOR_MARKER = "/servlet/ServletResponse;)".toByteArray(Charsets.US_ASCII)

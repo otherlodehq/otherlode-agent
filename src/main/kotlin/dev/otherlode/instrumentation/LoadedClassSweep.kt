@@ -200,7 +200,7 @@ open class LoadedClassSweep(
         val loader = loaded.classLoader ?: return false
         if (loader === ClassLoader.getPlatformClassLoader()) return false
         val name = loaded.name
-        if (IGNORED_NAME_PREFIXES.any { name.startsWith(it) }) return false
+        if (TypeMatchPolicy.isIgnoredName(name)) return false
         if (!TypeMatchPolicy.isIncluded(name, config.includePackages, config.excludePackages)) {
             return false
         }
@@ -218,15 +218,6 @@ open class LoadedClassSweep(
     private fun isCoroutineContinuation(loaded: Class<*>): Boolean {
         val superclassName = loaded.superclass?.name ?: return false
         return TypeMatchPolicy.CONTINUATION_SUPERCLASS_SUFFIXES.any { superclassName.endsWith(it) }
-    }
-
-    private companion object {
-        /**
-         * Names ByteBuddy's own ignore matcher turns away, beyond the classloader gate. Kept as
-         * literal prefixes rather than read from ByteBuddy, which exposes the matcher only as a
-         * composed predicate over its own type descriptions.
-         */
-        val IGNORED_NAME_PREFIXES = listOf("net.bytebuddy.", "sun.reflect.", "jdk.internal.reflect.")
     }
 
     private fun endpointsPhrase(count: Int): String = if (count == 1) "1 endpoint" else "$count endpoints"

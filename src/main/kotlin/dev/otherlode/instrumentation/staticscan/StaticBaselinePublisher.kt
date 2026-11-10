@@ -42,7 +42,21 @@ class StaticBaselinePublisher(
 ) {
     private val log by agentLogger(StaticBaselinePublisher::class.java.name)
 
+    /**
+     * Scans, checks the classes registered so far against the scan, and sends the baseline. A
+     * failure is logged once and ends the run without an uncaught throwable. Only a
+     * [VirtualMachineError] is rethrown, after it is logged, since the JVM itself is failing.
+     */
     fun run(resource: ResourceAttributes) {
+        try {
+            publish(resource)
+        } catch (t: Throwable) {
+            log.log(Level.WARNING, "otherlode: the static baseline failed, so no static baseline is sent", t)
+            if (t is VirtualMachineError) throw t
+        }
+    }
+
+    private fun publish(resource: ResourceAttributes) {
         val result = scan()
         mismatchDetector.knownClassNames = result.allClassNames()
         for (className in registry.registeredClassNames()) {

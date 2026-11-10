@@ -41,6 +41,9 @@ private val PATH_NAMES = NAMESPACES.map { "$it.Path" }.toSet()
 private val VERB_NAMES = NAMESPACES.flatMap { namespace -> VERBS.map { verb -> "$namespace.$verb" } }.toSet()
 private val HTTP_METHOD_NAMES = NAMESPACES.map { "$it.HttpMethod" }.toSet()
 
+/** Built at run time, since `shadowJar` rewrites a constant that starts with `kotlin`. */
+private val KOTLIN_PREFIX = listOf("kot", "lin", ".").joinToString("")
+
 /**
  * A supertype named under one of these prefixes can never itself carry a JAX-RS annotation, so a
  * supertype walk never recurses into one. This bounds every walk in this module: the JDK's own
@@ -50,7 +53,7 @@ private val HTTP_METHOD_NAMES = NAMESPACES.map { "$it.HttpMethod" }.toSet()
  * interfaces are all excluded from view, leaving only an adopter's own API interfaces and abstract
  * base classes to visit.
  */
-private val SKIPPED_SUPERTYPE_PREFIXES = listOf("java.", "jdk.", "sun.", "com.sun.", "kotlin.", "jakarta.", "javax.")
+private val SKIPPED_SUPERTYPE_PREFIXES = listOf("java.", "jdk.", "sun.", "com.sun.", KOTLIN_PREFIX, "jakarta.", "javax.")
 
 private val ELIGIBLE_METHOD: ElementMatcher.Junction<MethodDescription> =
     not(isStatic<MethodDescription>()).and(not(isAbstract())).and(not(isNative())).and(not(isSynthetic()))

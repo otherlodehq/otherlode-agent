@@ -1391,6 +1391,7 @@ object BranchSiteAnalyzer {
             GeneratedBy.DEFAULT_IMPLS,
             GeneratedBy.STATIC_FORWARDER,
             GeneratedBy.TRAIT_FORWARDER,
+            GeneratedBy.CLASS_DELEGATION,
         )
 
     /**
@@ -3339,8 +3340,9 @@ object BranchSiteAnalyzer {
      * adopter's own `@Deprecated` default method carries that attribute too.
      *
      * A class whose direct superclass is `java.lang.Enum` marks `values()` returning an array of
-     * the class, `valueOf(Ljava/lang/String;)` returning the class, and `getEntries()` of any
-     * descriptor, [GeneratedBy.ENUM].
+     * the class, `valueOf(Ljava/lang/String;)` returning the class, and the static
+     * `getEntries()` whose return type is an `EnumEntries`, [GeneratedBy.ENUM]. A `getEntries` of
+     * another shape is the adopter's own and stays [GeneratedBy.NONE].
      *
      * A class whose direct superclass is `java.lang.Record` marks `equals(Ljava/lang/Object;)Z`,
      * `hashCode()I`, and `toString()Ljava/lang/String;` [GeneratedBy.RECORD] only when the body is
@@ -3367,6 +3369,16 @@ object BranchSiteAnalyzer {
      * signature holds a value class. Once the shape matches, each of `componentN`, `copy`,
      * `equals`, `hashCode` and `toString` is [GeneratedBy.DATA_CLASS] only when it is absent from
      * [methodsWithLineNumbers]; see [markDataClassMembers].
+     *
+     * In a Kotlin class with a static `INSTANCE` of its own type, `toString()`, `hashCode()` and
+     * `equals(Ljava/lang/Object;)Z` are [GeneratedBy.DATA_CLASS] only when all three are public,
+     * absent from [methodsWithLineNumbers] and have the bodies kotlinc writes for a `data object`;
+     * see [dataObjectMembers].
+     *
+     * In a Kotlin class, a public instance method that is absent from [methodsWithLineNumbers] and
+     * only forwards to the delegate of an interface delegation is [GeneratedBy.CLASS_DELEGATION], and
+     * a static method that only forwards to the class's companion object is
+     * [GeneratedBy.STATIC_FORWARDER]; see [kotlinProxies].
      *
      * A constructor or method that only forwards to its own class's `$default` twin, the way an
      * overload `@JvmOverloads` adds does, is [GeneratedBy.JVM_OVERLOADS]; see
@@ -3425,7 +3437,7 @@ object BranchSiteAnalyzer {
                 when {
                     name == "values" && descriptor == arrayDescriptor -> result[key] = GeneratedBy.ENUM
                     name == "valueOf" && descriptor == valueOfDescriptor -> result[key] = GeneratedBy.ENUM
-                    name == "getEntries" -> result[key] = GeneratedBy.ENUM
+                    name == "getEntries" && isEnumEntriesAccessor(descriptor, methodAccess.getValue(key)) -> result[key] = GeneratedBy.ENUM
                 }
             }
         }
@@ -3435,6 +3447,11 @@ object BranchSiteAnalyzer {
         }
 
         markDataClassMembers(internalClassName, methodAccess, methodsWithLineNumbers, result)
+        if (isKotlinClass && EQUALS_KEY !in result) {
+            for (key in dataObjectMembers(classBytes, internalClassName, methodAccess, methodsWithLineNumbers)) {
+                result.putIfAbsent(key, GeneratedBy.DATA_CLASS)
+            }
+        }
 
         val valueClass =
             valueClassMarks(classBytes, internalClassName, methodAccess, methodsWithLineNumbers, interfaceInternalNames, lookup)
@@ -3461,6 +3478,14 @@ object BranchSiteAnalyzer {
                 )
             for (key in stubs.marked) result.putIfAbsent(key, GeneratedBy.DEFAULT_IMPLS)
             stubsWithoutTarget = stubs.withoutTarget
+        }
+
+        if (isKotlinClass) {
+            val forwarders =
+                kotlinProxies(classBytes, internalClassName, methodAccess, methodsWithLineNumbers, interfaceInternalNames, kotlinKind)
+            for ((key, generatedBy) in forwarders) {
+                result.putIfAbsent(key, generatedBy)
+            }
         }
 
         var serializationUnread: Map<Pair<String, String>, UnreadShape> = emptyMap()
@@ -3536,6 +3561,14 @@ object BranchSiteAnalyzer {
     private const val ACTIVITY_INTERFACE_DESCRIPTOR = "L${CallbackAnnotations.ACTIVITY_INTERFACE};"
 
     private const val DEFAULT_IMPLS_SUFFIX = "\$DefaultImpls"
+
+    private val SMALL_INT_PUSHES = (Opcodes.ICONST_M1..Opcodes.ICONST_5).map { "insn:$it" }.toSet()
+    private val TO_STRING_KEY = "toString" to "()Ljava/lang/String;"
+    private val HASH_CODE_KEY = "hashCode" to "()I"
+    private val EQUALS_KEY = "equals" to "(Ljava/lang/Object;)Z"
+
+    /** The end of the return descriptor of an enum's `getEntries`, spelled without its `kotlin` prefix so `shadowJar` leaves it alone. */
+    private const val ENUM_ENTRIES_DESCRIPTOR_SUFFIX = "/enums/EnumEntries;"
 
     /**
      * The owner of kotlinc's parameter null checks, matched by suffix. Spelled without its
@@ -5522,6 +5555,13 @@ object BranchSiteAnalyzer {
         }
     }
 
+    /** Whether a method of [descriptor] and [access] has the shape of kotlinc's enum `getEntries`. */
+    private fun isEnumEntriesAccessor(
+        descriptor: String,
+        access: Int,
+    ): Boolean =
+        access and Opcodes.ACC_STATIC != 0 && descriptor.startsWith("()L") && descriptor.endsWith(ENUM_ENTRIES_DESCRIPTOR_SUFFIX)
+
     /**
      * Finds a consecutive `component1..componentN` group, a matching `<init>`, a matching `copy`,
      * and all three of `equals`/`hashCode`/`toString`, and leaves [result] untouched unless every
@@ -5581,6 +5621,434 @@ object BranchSiteAnalyzer {
         val members = (1..componentCount).map { components.getValue(it).first } + copyKey + objectMethodKeys
         for (key in members) {
             if (key !in methodsWithLineNumbers) result[key] = GeneratedBy.DATA_CLASS
+        }
+    }
+
+    /**
+     * The `toString`, `hashCode` and `equals` of a Kotlin `data object`, or nothing. The class has
+     * a static `INSTANCE` of its own type, and all three members are public, not static, not
+     * synthetic and not in [methodsWithLineNumbers]. Each body is the one kotlinc 1.9.25 to 2.4.21
+     * write: `toString` returns the simple name, `hashCode` returns an `int` constant, and
+     * `equals` returns true for the same reference, false for an object of another class, and
+     * otherwise casts, pops and returns true. One member that differs leaves all three unmarked.
+     */
+    private fun dataObjectMembers(
+        classBytes: ByteArray,
+        internalClassName: String,
+        methodAccess: Map<Pair<String, String>, Int>,
+        methodsWithLineNumbers: Set<Pair<String, String>>,
+    ): Set<Pair<String, String>> {
+        val keys = listOf(TO_STRING_KEY, HASH_CODE_KEY, EQUALS_KEY)
+        val plain = Opcodes.ACC_PUBLIC
+        val excluded = Opcodes.ACC_STATIC or Opcodes.ACC_SYNTHETIC or Opcodes.ACC_BRIDGE or BODYLESS_FLAGS
+        val shaped =
+            keys.all { key ->
+                val access = methodAccess[key] ?: return@all false
+                access and plain != 0 && access and excluded == 0 && key !in methodsWithLineNumbers
+            }
+        if (!shaped) return emptySet()
+
+        var hasInstance = false
+        val bodies = mutableMapOf<Pair<String, String>, List<String>>()
+        val classVisitor =
+            object : ClassVisitor(Opcodes.ASM9) {
+                override fun visitField(
+                    access: Int,
+                    name: String,
+                    descriptor: String,
+                    signature: String?,
+                    value: Any?,
+                ): FieldVisitor? {
+                    if (name == "INSTANCE" && access and Opcodes.ACC_STATIC != 0 && descriptor == "L$internalClassName;") hasInstance = true
+                    return null
+                }
+
+                override fun visitMethod(
+                    access: Int,
+                    name: String,
+                    descriptor: String,
+                    signature: String?,
+                    exceptions: Array<out String>?,
+                ): MethodVisitor? {
+                    val key = name to descriptor
+                    return if (key in keys) ExactBodyVisitor(onBody = { bodies[key] = it }) else null
+                }
+            }
+        ClassReader(classBytes).accept(classVisitor, ClassReader.SKIP_DEBUG or ClassReader.SKIP_FRAMES)
+        if (!hasInstance) return emptySet()
+
+        val simpleName = internalClassName.substringAfterLast('/').substringAfterLast('$')
+        val toStringOk = bodies[TO_STRING_KEY] == listOf("ldc:$simpleName", "insn:${Opcodes.ARETURN}")
+        val hashCodeBody = bodies[HASH_CODE_KEY]
+        val hashCodeOk =
+            hashCodeBody != null &&
+                hashCodeBody.size == 2 &&
+                (hashCodeBody[0] == "int" || hashCodeBody[0] in SMALL_INT_PUSHES) &&
+                hashCodeBody[1] == "insn:${Opcodes.IRETURN}"
+        val equalsOk =
+            bodies[EQUALS_KEY] ==
+                listOf(
+                    "var:${Opcodes.ALOAD}:0",
+                    "var:${Opcodes.ALOAD}:1",
+                    "jump:${Opcodes.IF_ACMPNE}:5",
+                    "insn:${Opcodes.ICONST_1}",
+                    "insn:${Opcodes.IRETURN}",
+                    "var:${Opcodes.ALOAD}:1",
+                    "type:${Opcodes.INSTANCEOF}:$internalClassName",
+                    "jump:${Opcodes.IFNE}:10",
+                    "insn:${Opcodes.ICONST_0}",
+                    "insn:${Opcodes.IRETURN}",
+                    "var:${Opcodes.ALOAD}:1",
+                    "type:${Opcodes.CHECKCAST}:$internalClassName",
+                    "insn:${Opcodes.POP}",
+                    "insn:${Opcodes.ICONST_1}",
+                    "insn:${Opcodes.IRETURN}",
+                )
+        return if (toStringOk && hashCodeOk && equalsOk) keys.toSet() else emptySet()
+    }
+
+    /**
+     * The methods of a Kotlin class that kotlinc writes as pure forwarders, each marked by its exact
+     * body.
+     *
+     * A public instance method that is not static, synthetic or a bridge and has no line-number
+     * table is [GeneratedBy.CLASS_DELEGATION] when it is an interface delegation's forwarder. The body is,
+     * in order: for some of the reference parameters, in parameter order, `aload`, `ldc` and
+     * `Intrinsics.checkNotNullParameter` (the null checks kotlinc adds for non-null types); `aload_0`;
+     * a `getfield` of a private final instance field of this class; each parameter loaded in
+     * order; one `invokeinterface` or `invokevirtual` whose owner is the field's type and whose
+     * name and descriptor are the method's own; and the return for that type. The field is
+     * `$$delegate_<n>`, or the field of the constructor property that the class delegates through,
+     * which kotlinc reuses (`class C(private val d: I) : I by d`). A forwarder that reads the reused
+     * field is marked only when the class has a constructor in [methodsWithLineNumbers] and the
+     * field's type is one of [interfaceInternalNames], since source can write the same body by hand.
+     * A class that delegates through a property typed as a sub-interface is not marked. A forwarder
+     * that casts a result or boxes an argument for a generic type argument has another body and is
+     * not marked.
+     *
+     * A public static method that is not synthetic, in a class whose kind is
+     * [KotlinKind.KOTLIN_CLASS], is [GeneratedBy.STATIC_FORWARDER] when it is the proxy for a
+     * `@JvmStatic` companion function. kotlinc 2.1 and later give it one line-number entry, at its
+     * return instruction, and 1.9.25 gives it none. A method with an entry at any other instruction
+     * is not a proxy. The body is `getstatic` of a static final field of this class named like the
+     * companion class `<this>$<field>` and of that class's type, each parameter loaded in order,
+     * one `invokevirtual` of the same name and descriptor on that class, and the return, with no
+     * null checks.
+     *
+     * kotlinc 1.9.25, 2.1.21, 2.2.21 and 2.4.21 write these bodies, as do 2.1.21 and 2.2.21 under
+     * language version 1.9, whatever the `-jvm-default` mode.
+     */
+    private fun kotlinProxies(
+        classBytes: ByteArray,
+        internalClassName: String,
+        methodAccess: Map<Pair<String, String>, Int>,
+        methodsWithLineNumbers: Set<Pair<String, String>>,
+        interfaceInternalNames: List<String>,
+        kotlinKind: KotlinKind,
+    ): Map<Pair<String, String>, GeneratedBy> {
+        val delegates = interfaceInternalNames.isNotEmpty()
+        val companions = kotlinKind == KotlinKind.KOTLIN_CLASS
+        val unwanted = Opcodes.ACC_SYNTHETIC or Opcodes.ACC_BRIDGE or BODYLESS_FLAGS
+        val candidates =
+            methodAccess
+                .filter { (key, access) ->
+                    key.first != "<init>" &&
+                        key.first != "<clinit>" &&
+                        access and Opcodes.ACC_PUBLIC != 0 &&
+                        access and unwanted == 0 &&
+                        if (access and Opcodes.ACC_STATIC != 0) companions else delegates && key !in methodsWithLineNumbers
+                }.mapValues { (_, access) -> access and Opcodes.ACC_STATIC != 0 }
+        if (candidates.isEmpty()) return emptyMap()
+
+        val fields = mutableMapOf<String, Pair<String, Int>>()
+        val bodies = mutableMapOf<Pair<String, String>, List<String>>()
+        val lines = mutableMapOf<Pair<String, String>, List<Int>>()
+        val classVisitor =
+            object : ClassVisitor(Opcodes.ASM9) {
+                override fun visitField(
+                    access: Int,
+                    name: String,
+                    descriptor: String,
+                    signature: String?,
+                    value: Any?,
+                ): FieldVisitor? {
+                    fields[name] = descriptor to access
+                    return null
+                }
+
+                override fun visitMethod(
+                    access: Int,
+                    name: String,
+                    descriptor: String,
+                    signature: String?,
+                    exceptions: Array<out String>?,
+                ): MethodVisitor? {
+                    val key = name to descriptor
+                    return if (key in candidates) ExactBodyVisitor({ lines[key] = it }) { bodies[key] = it } else null
+                }
+            }
+        ClassReader(classBytes).accept(classVisitor, ClassReader.SKIP_FRAMES)
+
+        val hasLineNumbers = methodsWithLineNumbers.any { it.first == "<init>" }
+        val result = mutableMapOf<Pair<String, String>, GeneratedBy>()
+        for ((key, body) in bodies) {
+            val isStatic = candidates.getValue(key)
+            val matches =
+                if (isStatic) {
+                    lines[key].orEmpty().all { it == body.size - 1 } && isCompanionProxy(internalClassName, key, body, fields)
+                } else {
+                    isDelegationForwarder(internalClassName, key, body, fields, interfaceInternalNames, hasLineNumbers)
+                }
+            if (matches) result[key] = if (isStatic) GeneratedBy.STATIC_FORWARDER else GeneratedBy.CLASS_DELEGATION
+        }
+        return result
+    }
+
+    private val DELEGATE_FIELD = Regex("\\\$\\\$delegate_\\d+")
+
+    /** Whether [body] is what kotlinc writes for the forwarder of an interface delegation; see [kotlinProxies]. */
+    private fun isDelegationForwarder(
+        internalClassName: String,
+        key: Pair<String, String>,
+        body: List<String>,
+        fields: Map<String, Pair<String, Int>>,
+        interfaceInternalNames: List<String>,
+        hasLineNumbers: Boolean,
+    ): Boolean {
+        val (name, descriptor) = key
+        val parameters = parseParameterDescriptors(descriptor)
+        val slots = IntArray(parameters.size)
+        var slot = 1
+        parameters.forEachIndexed { index, type ->
+            slots[index] = slot
+            slot += slotWidth(type)
+        }
+
+        var position = 0
+        var lastChecked = -1
+        while (
+            body.getOrNull(position)?.startsWith("var:${Opcodes.ALOAD}:") == true &&
+            body.getOrNull(position + 1)?.startsWith("ldc:") == true
+        ) {
+            val checkedSlot = body[position].substringAfterLast(':').toInt()
+            val index = slots.indexOf(checkedSlot)
+            if (index <= lastChecked || parameters[index][0] != 'L' && parameters[index][0] != '[') return false
+            if (!isParameterNullCheck(body.getOrNull(position + 2))) return false
+            lastChecked = index
+            position += 3
+        }
+
+        if (body.getOrNull(position) != "var:${Opcodes.ALOAD}:0") return false
+        val fieldToken = body.getOrNull(position + 1)?.removePrefix("field:${Opcodes.GETFIELD}:$internalClassName.") ?: return false
+        if (fieldToken == body[position + 1]) return false
+        val fieldName = fieldToken.substringBefore(':')
+        val fieldDescriptor = fieldToken.substringAfter(':')
+        val (declaredDescriptor, access) = fields[fieldName] ?: return false
+        val delegateAccess = Opcodes.ACC_PRIVATE or Opcodes.ACC_FINAL
+        if (declaredDescriptor != fieldDescriptor) return false
+        if (access and delegateAccess != delegateAccess || access and Opcodes.ACC_STATIC != 0) return false
+        if (!fieldDescriptor.startsWith("L") || !fieldDescriptor.endsWith(";")) return false
+        val delegateType = fieldDescriptor.substring(1, fieldDescriptor.length - 1)
+        if (!DELEGATE_FIELD.matches(fieldName) && !(hasLineNumbers && delegateType in interfaceInternalNames)) return false
+
+        position += 2
+        parameters.forEachIndexed { index, type ->
+            if (body.getOrNull(position++) != "var:${loadOpcodeFor(type)}:${slots[index]}") return false
+        }
+        val call = body.getOrNull(position++) ?: return false
+        val callTarget = "$delegateType.$name$descriptor"
+        if (call != "call:${Opcodes.INVOKEINTERFACE}:$callTarget" && call != "call:${Opcodes.INVOKEVIRTUAL}:$callTarget") return false
+        return body.getOrNull(position++) == "insn:${returnOpcodeFor(returnTypeOf(descriptor))}" && position == body.size
+    }
+
+    /** Whether [body] is what kotlinc writes for the static proxy of a `@JvmStatic` companion function; see [kotlinProxies]. */
+    private fun isCompanionProxy(
+        internalClassName: String,
+        key: Pair<String, String>,
+        body: List<String>,
+        fields: Map<String, Pair<String, Int>>,
+    ): Boolean {
+        val (name, descriptor) = key
+        val fieldToken = body.firstOrNull()?.removePrefix("field:${Opcodes.GETSTATIC}:$internalClassName.") ?: return false
+        if (fieldToken == body[0]) return false
+        val fieldName = fieldToken.substringBefore(':')
+        val companion = "$internalClassName\$$fieldName"
+        val (declaredDescriptor, access) = fields[fieldName] ?: return false
+        val staticFinal = Opcodes.ACC_STATIC or Opcodes.ACC_FINAL
+        if (fieldToken.substringAfter(':') != "L$companion;" || declaredDescriptor != "L$companion;") return false
+        if (access and staticFinal != staticFinal) return false
+
+        var position = 1
+        var slot = 0
+        for (type in parseParameterDescriptors(descriptor)) {
+            if (body.getOrNull(position++) != "var:${loadOpcodeFor(type)}:$slot") return false
+            slot += slotWidth(type)
+        }
+        if (body.getOrNull(position++) != "call:${Opcodes.INVOKEVIRTUAL}:$companion.$name$descriptor") return false
+        return body.getOrNull(position++) == "insn:${returnOpcodeFor(returnTypeOf(descriptor))}" && position == body.size
+    }
+
+    /** Whether [token] is a call of kotlinc's parameter null check, in either of the names it has had. */
+    private fun isParameterNullCheck(token: String?): Boolean {
+        val prefix = "call:${Opcodes.INVOKESTATIC}:"
+        val target = token?.removePrefix(prefix)?.takeIf { it != token } ?: return false
+        val owner = target.substringBefore('.')
+        return owner.endsWith(INTRINSICS_SUFFIX) &&
+            parameterNullCheckNames.any { target == "$owner.$it(Ljava/lang/Object;Ljava/lang/String;)V" }
+    }
+
+    /** The xRETURN opcode that returns a value of field descriptor [type], or `RETURN` for `V`. */
+    private fun returnOpcodeFor(type: String): Int =
+        when (type[0]) {
+            'V' -> Opcodes.RETURN
+            'J' -> Opcodes.LRETURN
+            'F' -> Opcodes.FRETURN
+            'D' -> Opcodes.DRETURN
+            'L', '[' -> Opcodes.ARETURN
+            else -> Opcodes.IRETURN
+        }
+
+    /**
+     * Records a method body as one token per instruction, in order, and hands them to [onBody] at
+     * its end. Labels, line numbers and frames add none. A token reads `insn:<opcode>` for an
+     * instruction without an operand other than an `int` constant, `var:<opcode>:<slot>`,
+     * `type:<opcode>:<type>`, `ldc:<string>` for a string constant, `int` for any `int` constant
+     * pushed by `ldc`, `bipush` or `sipush`, `jump:<opcode>:<index of the target's token>`,
+     * `field:`, `call:` or `other`. A jump to a label no instruction follows ends in `end`. With a
+     * class read that keeps debug information, [onLines] gets the index of the token each line-number
+     * entry starts at.
+     */
+    private class ExactBodyVisitor(
+        private val onLines: (List<Int>) -> Unit = {},
+        private val onBody: (List<String>) -> Unit,
+    ) : MethodVisitor(Opcodes.ASM9) {
+        private val tokens = mutableListOf<String>()
+        private val labelIndex = mutableMapOf<Label, Int>()
+        private val targets = mutableMapOf<Int, Label>()
+        private val lineStarts = mutableListOf<Int>()
+
+        override fun visitLineNumber(
+            line: Int,
+            start: Label,
+        ) {
+            lineStarts += labelIndex[start] ?: tokens.size
+        }
+
+        override fun visitLabel(label: Label) {
+            labelIndex[label] = tokens.size
+        }
+
+        override fun visitInsn(opcode: Int) {
+            tokens += "insn:$opcode"
+        }
+
+        override fun visitIntInsn(
+            opcode: Int,
+            operand: Int,
+        ) {
+            tokens += if (opcode == Opcodes.NEWARRAY) "other" else "int"
+        }
+
+        override fun visitVarInsn(
+            opcode: Int,
+            varIndex: Int,
+        ) {
+            tokens += "var:$opcode:$varIndex"
+        }
+
+        override fun visitTypeInsn(
+            opcode: Int,
+            type: String,
+        ) {
+            tokens += "type:$opcode:$type"
+        }
+
+        override fun visitFieldInsn(
+            opcode: Int,
+            owner: String,
+            name: String,
+            descriptor: String,
+        ) {
+            tokens += "field:$opcode:$owner.$name:$descriptor"
+        }
+
+        override fun visitMethodInsn(
+            opcode: Int,
+            owner: String,
+            name: String,
+            descriptor: String,
+            isInterface: Boolean,
+        ) {
+            tokens += "call:$opcode:$owner.$name$descriptor"
+        }
+
+        override fun visitJumpInsn(
+            opcode: Int,
+            label: Label,
+        ) {
+            targets[tokens.size] = label
+            tokens += "jump:$opcode:"
+        }
+
+        override fun visitLdcInsn(value: Any?) {
+            tokens += if (value is String) "ldc:$value" else if (value is Int) "int" else "other"
+        }
+
+        override fun visitIincInsn(
+            varIndex: Int,
+            increment: Int,
+        ) {
+            tokens += "other"
+        }
+
+        override fun visitInvokeDynamicInsn(
+            name: String,
+            descriptor: String,
+            bootstrapMethodHandle: Handle,
+            vararg bootstrapMethodArguments: Any?,
+        ) {
+            tokens += "other"
+        }
+
+        override fun visitTableSwitchInsn(
+            min: Int,
+            max: Int,
+            dflt: Label,
+            vararg labels: Label,
+        ) {
+            tokens += "other"
+        }
+
+        override fun visitLookupSwitchInsn(
+            dflt: Label,
+            keys: IntArray,
+            labels: Array<out Label>,
+        ) {
+            tokens += "other"
+        }
+
+        override fun visitMultiANewArrayInsn(
+            descriptor: String,
+            numDimensions: Int,
+        ) {
+            tokens += "other"
+        }
+
+        override fun visitTryCatchBlock(
+            start: Label,
+            end: Label,
+            handler: Label,
+            type: String?,
+        ) {
+            tokens += "other"
+        }
+
+        override fun visitEnd() {
+            for ((position, label) in targets) {
+                tokens[position] += labelIndex[label]?.toString() ?: "end"
+            }
+            onLines(lineStarts)
+            onBody(tokens)
         }
     }
 

@@ -422,11 +422,12 @@ What produced a method, read from the bytecode alone.
 | `JVM_OVERLOADS` | An overload that `@JvmOverloads` adds, whose body only forwards to its `$default` twin. |
 | `MULTIFILE_FACADE` | A function of a Kotlin multi-file facade whose body only forwards to the same function on a part class. |
 | `CASE_CLASS` | A Scala case class's plumbing, or its companion's. |
-| `STATIC_FORWARDER` | A static forwarder that scalac adds for an object's method. |
+| `STATIC_FORWARDER` | A static forwarder that scalac adds for an object's method, or the static method that kotlinc adds for a `@JvmStatic` companion function. |
 | `SCALA_OBJECT` | A Scala object's `writeReplace`. |
 | `VALUE_CLASS` | A Kotlin value class's `equals-impl`, `equals-impl0`, `hashCode-impl` and `toString-impl` that the compiler wrote, the boxed methods that only forward to a static, and the static whose body only calls an interface default the class inherits. A Scala value class's boxed methods that only forward to the companion's `$extension` method, and the companion's `hashCode$extension` and `equals$extension`. |
 | `KOTLINX_SERIALIZATION` | Code the kotlinx.serialization compiler plugin generates. |
 | `TRAIT_FORWARDER` | A Scala class's method that only calls a trait's static `m$`, and the trait's `m$` that only calls its default method. |
+| `CLASS_DELEGATION` | A Kotlin class's method that kotlinc writes for interface delegation, whose body only forwards to the delegate's method of the same name. |
 
 ### RoutineKind
 

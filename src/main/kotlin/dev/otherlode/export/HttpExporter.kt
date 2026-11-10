@@ -6,10 +6,14 @@ import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
+import java.net.http.HttpTimeoutException
 import java.time.Duration
 import java.time.ZonedDateTime
 import java.time.format.DateTimeFormatter
 import java.time.format.DateTimeParseException
+import java.util.concurrent.ExecutionException
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 
 /**
  * Sends every payload shape to a collector at [endpoint] over plain HTTP/1.1.
@@ -99,7 +103,7 @@ class HttpExporter(
                         }
                     }
                     val request = requestBuilder.build()
-                    val response = client.send(request, HttpResponse.BodyHandlers.discarding())
+                    val response = sendWithin(request)
                     retryAfter = parseRetryAfter(response.headers().firstValue("Retry-After").orElse(null))
                     response.statusCode()
                 } catch (e: HeaderRefusedException) {
@@ -127,6 +131,26 @@ class HttpExporter(
             }
         }
         throw lastError ?: ExportFailedException("otherlode: export to $uri failed")
+    }
+
+    /**
+     * Sends [request] and waits at most [requestTimeout] for the whole exchange, response body
+     * included. The JDK request timeout covers only the wait for the response headers. A send that
+     * passes the bound is cancelled and fails with [HttpTimeoutException], so it is never a success.
+     */
+    private fun sendWithin(request: HttpRequest): HttpResponse<Void> {
+        val future = client.sendAsync(request, HttpResponse.BodyHandlers.discarding())
+        try {
+            return future.get(requestTimeout.toNanos(), TimeUnit.NANOSECONDS)
+        } catch (e: TimeoutException) {
+            future.cancel(true)
+            throw HttpTimeoutException("otherlode: the exchange took longer than $requestTimeout")
+        } catch (e: ExecutionException) {
+            throw e.cause as? Exception ?: e
+        } catch (e: InterruptedException) {
+            future.cancel(true)
+            throw e
+        }
     }
 
     private fun isRetryable(status: Int): Boolean = isRetryableStatus(status)

@@ -209,8 +209,8 @@ data class AgentConfig(
             systemProperties: (String) -> String? = System::getProperty,
             detectServiceName: () -> String? = { ServiceNameDetector.forThisProcess(env, systemProperties).detect() },
         ): AgentConfig {
-            val options = parseOptions(agentArgs)
-            for (key in options.keys - KNOWN_KEYS) {
+            val (options, unknownKeys) = parseOptions(agentArgs)
+            for (key in unknownKeys) {
                 log.log(Level.WARNING, "otherlode: ignoring unknown agent option '$key' (known options: ${KNOWN_KEYS.sorted()})")
             }
 
@@ -564,23 +564,45 @@ data class AgentConfig(
             return Duration.ofMinutes(minutes)
         }
 
-        private fun parseOptions(agentArgs: String?): Map<String, String> {
-            if (agentArgs.isNullOrBlank()) return emptyMap()
-            return agentArgs
-                .split(",")
-                .mapNotNull { pair ->
-                    val separator = pair.indexOf('=')
-                    if (separator <= 0) {
+        /**
+         * Splits [agentArgs] into its options and the unknown keys worth a warning. A fragment that is
+         * not `key=value` with a known key, after an `authToken` pair, may be the rest of a token that
+         * holds a comma. The parser keeps such a fragment as before but logs no text of it.
+         */
+        private fun parseOptions(agentArgs: String?): Pair<Map<String, String>, Set<String>> {
+            if (agentArgs.isNullOrBlank()) return emptyMap<String, String>() to emptySet()
+            val options = LinkedHashMap<String, String>()
+            val unknownKeys = LinkedHashSet<String>()
+            var afterToken = false
+            var tailWarned = false
+            agentArgs.split(",").forEachIndexed { index, pair ->
+                val separator = pair.indexOf('=')
+                val key = if (separator > 0) pair.take(separator).trim() else null
+                if (key != null && key in KNOWN_KEYS) {
+                    afterToken = key == "authToken"
+                    tailWarned = false
+                } else if (afterToken) {
+                    if (!tailWarned) {
+                        tailWarned = true
                         log.log(
                             Level.WARNING,
-                            "otherlode: ignoring malformed agent option '$pair' (expected key=value; a value cannot contain a " +
-                                "comma, set such a value through a system property or environment variable instead)",
+                            "otherlode: the authToken value in the agent arguments appears to contain a comma, which the " +
+                                "argument string cannot carry, so the token may be cut short. Set the token through the system " +
+                                "property otherlode.auth.token or the environment variable OTHERLODE_AUTH_TOKEN instead",
                         )
-                        null
-                    } else {
-                        pair.take(separator).trim() to pair.substring(separator + 1).trim()
                     }
-                }.toMap()
+                } else if (key == null) {
+                    log.log(
+                        Level.WARNING,
+                        "otherlode: ignoring malformed agent option ${index + 1} (no '=' after a key; expected key=value; a value " +
+                            "cannot contain a comma, set such a value through a system property or environment variable instead)",
+                    )
+                } else {
+                    unknownKeys.add(key)
+                }
+                if (key != null) options[key] = pair.substring(separator + 1).trim()
+            }
+            return options to unknownKeys
         }
     }
 }

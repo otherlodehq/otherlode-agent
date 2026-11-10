@@ -1,6 +1,7 @@
 package dev.otherlode.registry
 
 import java.lang.ref.WeakReference
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * The attempt to define one class, as seen from the thread that ran its transformer.
@@ -98,11 +99,34 @@ internal class DefinitionAttempt(
         @Volatile
         private var readLimit = DEFAULT_READ_LIMIT
 
-        /** Lowers [readLimit] when a read of a stack [total] frames deep came back shorter. */
+        /** Reads the length of the current thread's own stack through [Thread.getStackTrace]. */
+        @Volatile
+        internal var stackDepthReader: () -> Int = { Thread.currentThread().stackTrace.size }
+
+        /** The deepest stack whose [Thread.getStackTrace] read came back uncut. */
+        private val deepestFullRead = AtomicInteger()
+
+        /** The current [readLimit], for tests. */
+        internal fun currentReadLimit(): Int = readLimit
+
+        /** Forgets what earlier captures learned, for tests. */
+        internal fun resetLearnedDepths() {
+            readLimit = DEFAULT_READ_LIMIT
+            deepestFullRead.set(0)
+        }
+
+        /**
+         * Lowers [readLimit] when a read of a stack [total] frames deep came back shorter. A stack
+         * no deeper than one already read in full cannot be cut, so it is not read.
+         */
         private fun learnReadLimit(total: Int) {
-            if (total < LIMIT_PROBE_DEPTH) return
-            val read = Thread.currentThread().stackTrace.size
-            if (read < total && read < readLimit) readLimit = read
+            if (total < LIMIT_PROBE_DEPTH || total <= deepestFullRead.get()) return
+            val read = stackDepthReader()
+            if (read < total) {
+                if (read < readLimit) readLimit = read
+            } else {
+                deepestFullRead.accumulateAndGet(total, ::maxOf)
+            }
         }
 
         /**

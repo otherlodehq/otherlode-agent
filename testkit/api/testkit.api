@@ -163,6 +163,7 @@ public final class dev/otherlode/testkit/EndpointRef {
 
 public final class dev/otherlode/testkit/GeneratedBy : java/lang/Enum {
 	public static final field CASE_CLASS Ldev/otherlode/testkit/GeneratedBy;
+	public static final field CLASS_DELEGATION Ldev/otherlode/testkit/GeneratedBy;
 	public static final field DATA_CLASS Ldev/otherlode/testkit/GeneratedBy;
 	public static final field DEFAULT_IMPLS Ldev/otherlode/testkit/GeneratedBy;
 	public static final field ENUM Ldev/otherlode/testkit/GeneratedBy;

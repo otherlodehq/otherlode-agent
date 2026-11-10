@@ -27,7 +27,6 @@ import dev.otherlode.registry.ExternalClassRegistry
 import dev.otherlode.registry.ProbeMeta
 import dev.otherlode.registry.ProbeRegistry
 import net.bytebuddy.ByteBuddy
-import net.bytebuddy.NamingStrategy
 import net.bytebuddy.agent.builder.AgentBuilder
 import net.bytebuddy.agent.builder.ResettableClassFileTransformer
 import net.bytebuddy.asm.Advice
@@ -301,8 +300,8 @@ class OtherlodeInstrumentation(
      * [typeMatcher], which takes that one kind of synthetic class and turns away every other.
      */
     private fun ignoredNames(): ElementMatcher.Junction<TypeDescription> =
-        nameStartsWith<TypeDescription>("net.bytebuddy.")
-            .and(not(nameStartsWith("${NamingStrategy.BYTE_BUDDY_RENAME_PACKAGE}.")))
+        nameStartsWith<TypeDescription>(TypeMatchPolicy.BYTE_BUDDY_PACKAGE_PREFIX)
+            .and(not(nameStartsWith("${TypeMatchPolicy.BYTE_BUDDY_PACKAGE_PREFIX}renamed.")))
             .or(nameStartsWith("sun.reflect."))
             .or(nameStartsWith("jdk.internal.reflect."))
 
@@ -446,10 +445,34 @@ class OtherlodeInstrumentation(
                     kotlinKind = pending.kotlinKind,
                 )
             }
-            for ((className, location) in pending.externalClasses) externalClassRegistry.record(className, location)
-            pending.handlerForwarders.forEach(handlerForwarders::record)
-            wovenClasses.record(pending.classLoader, pending.className, pending.plan)
-            pending.sizeWarnings.forEach { log.log(Level.WARNING, it) }
+            afterCommit(pending.className) { wovenClasses.record(pending.classLoader, pending.className, pending.plan) }
+            afterCommit(pending.className) { pending.handlerForwarders.forEach(handlerForwarders::record) }
+            afterCommit(pending.className) {
+                for ((className, location) in pending.externalClasses) externalClassRegistry.record(className, location)
+            }
+            for (warning in pending.sizeWarnings) afterCommit(pending.className) { log.log(Level.WARNING, warning) }
+        }
+
+        /**
+         * Runs [action] after the registry commit, where a throw would hand the JVM no woven bytes
+         * for a class that is already registered. A failure is logged if the log works and is
+         * otherwise dropped. A [StackOverflowError] is handled like any other failure. Any other
+         * [VirtualMachineError] is rethrown.
+         */
+        private inline fun afterCommit(
+            className: String,
+            action: () -> Unit,
+        ) {
+            try {
+                action()
+            } catch (t: Throwable) {
+                // Rethrown, it defines the class unwoven and recorded as skipped while its probes stay registered.
+                if (t is VirtualMachineError && t !is StackOverflowError) throw t
+                try {
+                    log.log(Level.WARNING, "otherlode: a step after weaving $className failed; the class is woven", t)
+                } catch (_: Throwable) {
+                }
+            }
         }
 
         override fun onError(
@@ -479,11 +502,21 @@ class OtherlodeInstrumentation(
                 else -> {
                     val refusal = generateSequence(throwable) { it.cause }.filterIsInstance<SupertypeRefusal>().firstOrNull()
                     if (refusal != null) {
-                        if (!refusal.logged) log.log(Level.WARNING, "otherlode: $typeName ${refusal.message}")
-                        registry.recordSkipped(typeName, refusal.message.orEmpty())
+                        try {
+                            if (!refusal.logged) log.log(Level.WARNING, "otherlode: $typeName ${refusal.message}")
+                        } finally {
+                            registry.recordSkipped(typeName, refusal.message.orEmpty())
+                        }
                     } else {
-                        log.log(Level.WARNING, "otherlode: instrumentation failed for $typeName, class will run uninstrumented", throwable)
-                        registry.recordSkipped(typeName, throwable.message ?: throwable.toString())
+                        try {
+                            log.log(
+                                Level.WARNING,
+                                "otherlode: instrumentation failed for $typeName, class will run uninstrumented",
+                                throwable,
+                            )
+                        } finally {
+                            registry.recordSkipped(typeName, throwable.message ?: throwable.toString())
+                        }
                     }
                 }
             }

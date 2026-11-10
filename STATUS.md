@@ -18,7 +18,10 @@ multi-tenant backend.
    42622687684 on `9b1f44bb` (2026-11-09): narrow startup +24.6%, 21
    repeats per variant. If code that runs at class load or in `premain`
    changes before the tag, re-run that job on the tagged commit and
-   update both pages.
+   update both pages. Such code changed after that run, on 2026-11-09
+   and 2026-11-10 (ADR 0026's amendment, ADR 0090, the stack read in a
+   definition attempt and the guard after the registry commit), so the
+   re-run is owed.
 2. **Cut the releases** (ADRs 0062 and 0063, collector ADR 0006). Cutting
    is Luke's call. Collector `v0.1.0` goes first, since the agent's
    `release.sh` refuses a release until it exists. Both `## [0.1.0]`
@@ -64,6 +67,13 @@ multi-tenant backend.
    the project-level SSH key gcloud added on 2026-11-01 (Compute Engine,
    Metadata, SSH keys), and project `project-1d40b09b-5fc7-4240-bed`.
    To see the trim over days first, keep `soak-2` running a week.
+7. **The collector learns `manifest_confirmed` before any agent sends
+   it** (ADR 0091). A collector with redaction on drops a field its
+   bindings do not know and marks the payload stripped, so every run of
+   an agent that sends the field would read as stripped after its first
+   confirmed manifest and make no claim. Bump the collector's bindings
+   and release it before the agent. The server reads the field under its
+   ADR 0095.
 
 After release: what "Parked" lists, the server's performance-only
 deferrals, gzip, a collector config file, and agent-level redaction
@@ -190,7 +200,14 @@ Both pass on rerun. Bind port 0 in the fixture and read the port back.
 - The OTel route bridge gives a parameterised Vert.x mount one endpoint per
   matched value, since OpenTelemetry reports the concrete mount point; the
   bridge is off by default. A fix needs the bridge to recognise those
-  values.
+  values. Each such value is also request data that leaves the process,
+  which `docs/site/data-sent.md` states since 2026-11-10 (review finding
+  A3-01, reproduced with a Vert.x mount at `/u/:id/*`). Stopping the
+  values at the bridge is open design work for Luke to grill: the bridge
+  decides ownership by verb and template (`recordDispatchIfUnowned`), not
+  by request, so it cannot tell at span end that `vertx-web` already
+  counted this request under `/u/{id}/orders`. A per-request mark would
+  have to survive to span end, which can be on another thread.
 - The OTel route bridge, under OpenTelemetry's Java agent, with RESTEasy
   sub-resource locators: `ResteasyResourceLocatorInvokerInstrumentation`
   prepends the locator's path through `JaxrsContextPath`, so the prefix table
@@ -531,6 +548,19 @@ What the compiler canary and the reviews found that the agent does not
 read. Each reads as an unread shape, never a finding, unless it says
 otherwise. ADRs 0054 and 0055 hold the rule.
 
+- Kotlin: a top-level `data object` whose name holds a `$`, written in
+  backticks. Its `toString`, `hashCode` and `equals` are not marked
+  `DATA_CLASS`, so they read as never-hit rows, not as an unread shape
+  (ADR 0026, 2026-11-09 amendment). The second analysis walk has no
+  `InnerClasses` entry to take the simple name from.
+- Kotlin: a delegation forwarder specialised for a type argument, as in
+  `class StringFeed(inner: Feed<String>) : Feed<String> by inner`, calls
+  another descriptor and adds a `checkcast` or a boxing call. A class that
+  delegates through a property typed as a sub-interface,
+  `class ViaSub(private val inner: Sub) : I by inner`, reads a field whose
+  type the class does not implement directly. Neither is marked
+  `CLASS_DELEGATION`, so both read as never-hit rows, not as an unread
+  shape (ADR 0090).
 - Scala 3: backticked case names, an enum that overrides or inherits
   `productPrefix`, and two case names with the same hash. An enum whose
   singleton never reads its name gets no `$name` field and a `$new` calling

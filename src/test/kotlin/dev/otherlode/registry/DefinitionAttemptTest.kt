@@ -309,4 +309,117 @@ class DefinitionAttemptTest {
             thread.join(30_000)
         }
     }
+
+    private fun <T> withStackDepthReader(
+        reader: () -> Int,
+        body: () -> T,
+    ): T {
+        val original = DefinitionAttempt.stackDepthReader
+        DefinitionAttempt.resetLearnedDepths()
+        DefinitionAttempt.stackDepthReader = reader
+        try {
+            return body()
+        } finally {
+            DefinitionAttempt.stackDepthReader = original
+            DefinitionAttempt.resetLearnedDepths()
+        }
+    }
+
+    private fun onDeepStack(
+        depth: Int,
+        body: () -> Unit,
+    ) {
+        fun recurse(left: Int) {
+            if (left > 0) recurse(left - 1) else TransformerEntry.transform(body)
+        }
+        var failure: Throwable? = null
+        val thread =
+            Thread(null, {
+                try {
+                    recurse(depth)
+                } catch (t: Throwable) {
+                    failure = t
+                }
+            }, "deep", 64L * 1024 * 1024)
+        thread.start()
+        thread.join()
+        failure?.let { throw it }
+    }
+
+    @Test
+    fun `repeated captures at one deep depth read the whole stack once`() {
+        var reads = 0
+        withStackDepthReader({
+            reads++
+            Thread.currentThread().stackTrace.size
+        }) {
+            onDeepStack(300) { repeat(20) { assertNotNull(capture()) } }
+        }
+
+        assertEquals(1, reads)
+    }
+
+    @Test
+    fun `a capture no deeper than a stack already read in full does not read again`() {
+        var reads = 0
+        withStackDepthReader({
+            reads++
+            Thread.currentThread().stackTrace.size
+        }) {
+            onDeepStack(400) { assertNotNull(capture()) }
+            onDeepStack(300) { assertNotNull(capture()) }
+        }
+
+        assertEquals(1, reads)
+    }
+
+    @Test
+    fun `a deeper stack than one already read in full is read again`() {
+        var reads = 0
+        withStackDepthReader({
+            reads++
+            Thread.currentThread().stackTrace.size
+        }) {
+            onDeepStack(300) { assertNotNull(capture()) }
+            onDeepStack(500) { assertNotNull(capture()) }
+        }
+
+        assertEquals(2, reads)
+    }
+
+    @Test
+    fun `a read shorter than the walk lowers the read limit`() {
+        withStackDepthReader({ 300 }) {
+            onDeepStack(500) { assertNotNull(capture()) }
+
+            assertEquals(300, DefinitionAttempt.currentReadLimit())
+        }
+    }
+
+    @Test
+    fun `a cut read after a shallower full read still lowers the read limit`() {
+        withStackDepthReader({ Thread.currentThread().stackTrace.size }) {
+            onDeepStack(300) { assertNotNull(capture()) }
+            assertEquals(1024, DefinitionAttempt.currentReadLimit())
+            DefinitionAttempt.stackDepthReader = { 400 }
+
+            onDeepStack(600) { assertNotNull(capture()) }
+
+            assertEquals(400, DefinitionAttempt.currentReadLimit())
+        }
+    }
+
+    @Test
+    fun `a stack under the probe depth is never read`() {
+        var reads = 0
+        withStackDepthReader({
+            reads++
+            0
+        }) {
+            onDeepStack(50) { assertNotNull(capture()) }
+        }
+
+        assertEquals(0, reads)
+        assertEquals(1024, DefinitionAttempt.currentReadLimit())
+    }
 }

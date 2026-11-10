@@ -106,6 +106,16 @@ enum GeneratedBy {
   // calls the trait's default method m with invokespecial and returns. The default method m holds
   // the code and is not marked.
   TRAIT_FORWARDER = 12;
+  // A method kotlinc writes for interface delegation (class C(d: I) : I by d). It is public, not
+  // static, not synthetic and not a bridge, has no line-number table, and its body only null-checks
+  // its non-null reference parameters, reads the delegate field, loads its arguments, calls the
+  // method with its own name and descriptor on the field's type and returns. The delegate field is
+  // $$delegate_<n>, or the private final field of the constructor property the class delegates
+  // through. For that field the class must also have line numbers and the field's type must be an
+  // interface the class implements directly.
+  // The delegate's own method holds the code and is not marked. A forwarder that casts or boxes
+  // for a generic type argument is not marked.
+  CLASS_DELEGATION = 13;
 }
 
 // The family of compiler output a probe's code belongs to when the agent could not read its body.
@@ -189,6 +199,12 @@ message ResourceAttributes {
   // intervals may be treated as stopped, so a consumer reads this to tell a killed run from a
   // quiet one (server ADR 0066). An agent that cannot reach its collector also sends nothing.
   int32 flush_interval_seconds = 10;
+  // False until the collector confirms a probe manifest of this run that held at least one class,
+  // and true on every payload the run sends after that. It never goes back to false. The agent sets
+  // it from its own record of confirmed deliveries, so a manifest whose answer was lost does not
+  // count. A consumer that first hears of a run through a payload that carries true has lost the
+  // manifest the run delivered earlier, and the agent cannot send it again (agent ADR 0091).
+  bool manifest_confirmed = 11;
 }
 
 // hits_total is a cumulative count from process start, not the count since

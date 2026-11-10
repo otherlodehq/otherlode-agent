@@ -50,7 +50,7 @@ class ExportScheduler(
     private val registry: ProbeRegistry,
     /** Endpoint hit and manifest state; see [EndpointRegistry]. */
     private val endpointRegistry: EndpointRegistry,
-    private val exporter: Exporter,
+    exporter: Exporter,
     /** Source of the first-flush jitter. Injectable so a test can pin the initial delay to zero. */
     private val random: Random = Random.Default,
     /** Upper bound on changed probes per delta POST; see [ProbeRegistry.computeDeltaBatches]. */
@@ -131,6 +131,7 @@ class ExportScheduler(
     private val monotonicMillis: () -> Long = { System.nanoTime() / 1_000_000 },
 ) {
     private val log by agentLogger(ExportScheduler::class.java.name)
+    private val exporter: Exporter = ManifestConfirmedExporter(exporter) { registry.manifestConfirmed }
     @Volatile
     private var executor: ScheduledExecutorService? = null
     private val branchDropsLogged = AtomicBoolean(false)
@@ -741,7 +742,7 @@ class ExportScheduler(
             UnreadShape.MULTIFILE_FACADE -> "Kotlin multi-file facade methods"
             UnreadShape.COROUTINE_MACHINERY -> "coroutine machinery"
             UnreadShape.STRING_SWITCH -> "string switch lowering"
-            UnreadShape.KOTLINX_SERIALIZER_OBJECT -> "kotlinx.serialization serializer objects"
+            UnreadShape.KOTLINX_SERIALIZER_OBJECT -> "$KOTLINX_PACKAGE.serialization serializer objects"
             UnreadShape.VALUE_CLASS -> "Scala value class forwarders"
             UnreadShape.TRAIT_FORWARDER -> "Scala trait forwarders"
         }
@@ -1563,6 +1564,9 @@ class ExportScheduler(
     }
 
     companion object {
+        /** Built at run time, since `shadowJar` rewrites a constant that starts with `kotlin`. */
+        private val KOTLINX_PACKAGE = listOf("kot", "linx").joinToString("")
+
         /** Flush intervals after the agent's start at which a run stops counting as starting (ADR 0086). */
         const val STARTING_CAP_INTERVALS: Long = 10
 

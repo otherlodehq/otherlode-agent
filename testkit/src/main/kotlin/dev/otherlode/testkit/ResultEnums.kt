@@ -48,7 +48,7 @@ public enum class GeneratedBy {
     /** A Scala case class's plumbing, or its companion's. */
     CASE_CLASS,
 
-    /** A static forwarder scalac adds for an object's method. */
+    /** A static forwarder scalac adds for an object's method, or the static proxy kotlinc adds for a `@JvmStatic` companion function. */
     STATIC_FORWARDER,
 
     /** A Scala object's `writeReplace`. */
@@ -68,6 +68,9 @@ public enum class GeneratedBy {
 
     /** A trait's concrete method scalac mixes into a class as a forwarder, or the trait's static entry for it. */
     TRAIT_FORWARDER,
+
+    /** A method kotlinc writes for interface delegation, whose body only forwards to the delegate's method of the same name and descriptor. */
+    CLASS_DELEGATION,
 }
 
 /**
@@ -243,6 +246,7 @@ internal fun WireGeneratedBy.toTestkit(): GeneratedBy? =
         WireGeneratedBy.VALUE_CLASS -> GeneratedBy.VALUE_CLASS
         WireGeneratedBy.KOTLINX_SERIALIZATION -> GeneratedBy.KOTLINX_SERIALIZATION
         WireGeneratedBy.TRAIT_FORWARDER -> GeneratedBy.TRAIT_FORWARDER
+        WireGeneratedBy.CLASS_DELEGATION -> GeneratedBy.CLASS_DELEGATION
     }
 
 internal fun GeneratedBy.toWire(): WireGeneratedBy =
@@ -259,6 +263,7 @@ internal fun GeneratedBy.toWire(): WireGeneratedBy =
         GeneratedBy.VALUE_CLASS -> WireGeneratedBy.VALUE_CLASS
         GeneratedBy.KOTLINX_SERIALIZATION -> WireGeneratedBy.KOTLINX_SERIALIZATION
         GeneratedBy.TRAIT_FORWARDER -> WireGeneratedBy.TRAIT_FORWARDER
+        GeneratedBy.CLASS_DELEGATION -> WireGeneratedBy.CLASS_DELEGATION
     }
 
 internal fun WireRoutineKind.toTestkit(): RoutineKind? =
