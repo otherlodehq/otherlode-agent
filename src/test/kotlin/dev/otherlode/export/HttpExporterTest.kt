@@ -6,6 +6,7 @@ import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.http.HttpClient
 import java.time.Duration
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 import kotlin.system.measureTimeMillis
@@ -15,6 +16,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
+import org.junit.jupiter.api.Timeout
 
 class HttpExporterTest {
     private var server: HttpServer? = null
@@ -175,6 +177,83 @@ class HttpExporterTest {
             }
 
         assertTrue(elapsed < 5_000, "expected the request timeout to bound the failure, took ${elapsed}ms")
+    }
+
+    private val stalledBodyConnections = mutableListOf<java.net.Socket>()
+
+    private fun startStalledBodyServer(): ServerSocket {
+        val socket = ServerSocket(0)
+        rawSocket = socket
+        thread(isDaemon = true) {
+            try {
+                while (!socket.isClosed) {
+                    val connection = socket.accept()
+                    synchronized(stalledBodyConnections) { stalledBodyConnections += connection }
+                    connection.getOutputStream().write("HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n".toByteArray())
+                    connection.getOutputStream().flush()
+                }
+            } catch (_: IOException) {
+            }
+        }
+        return socket
+    }
+
+    private fun closeStalledBodyServer(socket: ServerSocket) {
+        synchronized(stalledBodyConnections) { stalledBodyConnections.forEach { it.close() } }
+        socket.close()
+    }
+
+    @Test
+    @Timeout(value = 40, unit = TimeUnit.SECONDS, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
+    fun `a request timeout also bounds a response whose headers arrive and whose body stalls`() {
+        val socket = startStalledBodyServer()
+        val exporter =
+            HttpExporter(
+                endpoint = "http://localhost:${socket.localPort}",
+                maxAttempts = 1,
+                requestTimeout = Duration.ofSeconds(1),
+            )
+
+        try {
+            val elapsed =
+                measureTimeMillis {
+                    assertFailsWith<Exception> {
+                        exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("checkout", null, "i-1", null, "run-1"), emptyList()))
+                    }
+                }
+
+            assertTrue(elapsed < 8_000, "expected the request timeout to bound the failure, took ${elapsed}ms")
+        } finally {
+            closeStalledBodyServer(socket)
+        }
+    }
+
+    @Test
+    @Timeout(value = 40, unit = TimeUnit.SECONDS, threadMode = Timeout.ThreadMode.SEPARATE_THREAD)
+    fun `a stalled response body is retried and each attempt is bounded by the request timeout`() {
+        val socket = startStalledBodyServer()
+        val exporter =
+            HttpExporter(
+                endpoint = "http://localhost:${socket.localPort}",
+                maxAttempts = 3,
+                initialBackoff = Duration.ofMillis(1),
+                maxBackoff = Duration.ofMillis(10),
+                requestTimeout = Duration.ofMillis(500),
+            )
+
+        try {
+            val elapsed =
+                measureTimeMillis {
+                    assertFailsWith<Exception> {
+                        exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("checkout", null, "i-1", null, "run-1"), emptyList()))
+                    }
+                }
+
+            assertEquals(3, synchronized(stalledBodyConnections) { stalledBodyConnections.size })
+            assertTrue(elapsed in 1_400..8_000, "expected three bounded attempts, took ${elapsed}ms")
+        } finally {
+            closeStalledBodyServer(socket)
+        }
     }
 
     @Test
