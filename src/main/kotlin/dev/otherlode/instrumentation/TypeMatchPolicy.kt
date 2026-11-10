@@ -315,6 +315,21 @@ object TypeMatchPolicy {
     internal val BYTE_BUDDY_NAMING_PROPERTY = listOf("net", "bytebuddy", "naming").joinToString(".")
 
     /**
+     * ByteBuddy's own package, which an application's own copy of ByteBuddy shares. Put together at
+     * runtime for the reason [BYTE_BUDDY_NAMING_PROPERTY] is: a literal would be rewritten to the
+     * agent's relocated package in the shaded jar and match nothing the application loads.
+     */
+    internal val BYTE_BUDDY_PACKAGE_PREFIX = listOf("net", "bytebuddy", "").joinToString(".")
+
+    private val IGNORED_NAME_PREFIXES = listOf(BYTE_BUDDY_PACKAGE_PREFIX, "sun.reflect.", "jdk.internal.reflect.")
+
+    /**
+     * Whether [className] is under ByteBuddy's package or the reflection internals, which
+     * ByteBuddy's own default ignore matcher turns away.
+     */
+    fun isIgnoredName(className: String): Boolean = IGNORED_NAME_PREFIXES.any { className.startsWith(it) }
+
+    /**
      * The value of [BYTE_BUDDY_NAMING_PROPERTY], read once when this object is first used, which is
      * while the agent starts. One reading keeps the type matcher, the static baseline scan and the
      * loaded-class sweep in agreement about every class for the life of the process. ByteBuddy

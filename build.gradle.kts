@@ -370,6 +370,36 @@ val verifyAgentJar by tasks.registering {
                 "agent jar is missing vendored third-party licence entries: $missingLicenses"
             }
 
+            // Shadow rewrites a string constant as well as a class reference, so a literal in the agent's own
+            // code that starts with a relocated package name ("kotlin.", "kotlin/", "net.bytebuddy") ships
+            // with the shaded name and no longer matches what it was written to match. A rewritten constant
+            // reads in the jar as one that starts with the shaded prefix. The third-party code the jar
+            // shades is not checked: it holds such constants by design.
+            val relocatedLiteralPrefixes = listOf("dev.otherlode.shaded.", "dev/otherlode/shaded/", "Ldev/otherlode/shaded/")
+            val thirdPartyShaded = listOf("bytebuddy", "kotlin", "protobuf", "intellij", "annotations").map { "dev/otherlode/shaded/$it/" }
+            // These constants start with a shaded prefix on purpose. AgentLogger writes the stand-in logger's
+            // relocated name in its source. A Kotlin null check on a parameter named kotlinKind carries the
+            // name as its message, which only an NPE reads.
+            val intendedRewrites = mapOf("dev/otherlode/AgentLogger" to setOf("dev.otherlode.shaded.jul.Logger"))
+            val parameterNameRewrite = "dev.otherlode.shaded.kotlinKind"
+            val rewrittenLiterals =
+                names
+                    .filter { it.endsWith(".class") && it.startsWith("dev/otherlode/") && thirdPartyShaded.none { prefix -> it.startsWith(prefix) } }
+                    .flatMap { entryName ->
+                        val shape = parseClassShape(zip.getInputStream(zip.getEntry(entryName)).use { it.readBytes() })
+                        shape.stringConstants
+                            .map { constant -> constant.trimStart('[') to constant }
+                            .filter { (stripped, _) -> relocatedLiteralPrefixes.any { stripped.startsWith(it) } }
+                            .map { (_, constant) -> constant }
+                            .filter { constant -> constant != parameterNameRewrite && constant !in intendedRewrites[shape.name].orEmpty() }
+                            .map { constant -> "${shape.name}: \"$constant\"" }
+                    }
+            check(rewrittenLiterals.isEmpty()) {
+                "string constants in the agent's own classes were rewritten by the shadow relocation; build the " +
+                    "value at run time so no compile-time constant starts with a relocated package name:\n  " +
+                    rewrittenLiterals.joinToString("\n  ")
+            }
+
             // Advice classes are inlined into framework or JDK bytecode by ByteBuddy, never
             // loaded as ordinary agent classes. Only the annotated method's own bytecode is
             // copied; anything else the advice touches stays a reference the target's own
@@ -426,6 +456,7 @@ fun classFileMajorVersion(header: ByteArray): Int = ByteBuffer.wrap(header).getS
 class ClassShape(
     val name: String,
     val utf8Constants: List<String>,
+    val stringConstants: List<String>,
     val referencedClasses: Set<String>,
     val selfMethodCalls: Set<String>,
     val syntheticMembers: List<String>,
@@ -450,6 +481,7 @@ fun parseClassShape(bytes: ByteArray): ClassShape {
     val refClassIndex = IntArray(poolCount)
     val refNameAndTypeIndex = IntArray(poolCount)
     val nameAndTypeNameIndex = IntArray(poolCount)
+    val stringIndex = IntArray(poolCount)
     val methodRefs = mutableListOf<Int>()
     var i = 1
     while (i < poolCount) {
@@ -474,7 +506,11 @@ fun parseClassShape(bytes: ByteArray): ClassShape {
                 classNameIndex[i] = u2()
             }
 
-            8, 16, 19, 20 -> {
+            8 -> {
+                stringIndex[i] = u2()
+            }
+
+            16, 19, 20 -> {
                 u2()
             }
 
@@ -534,7 +570,8 @@ fun parseClassShape(bytes: ByteArray): ClassShape {
         methodRefs
             .filter { utf8[classNameIndex[refClassIndex[it]]] == name }
             .mapTo(HashSet()) { checkNotNull(utf8[nameAndTypeNameIndex[refNameAndTypeIndex[it]]]) }
-    return ClassShape(name, utf8.filterNotNull(), referencedClasses, selfMethodCalls, synthetic)
+    val stringConstants = (1 until poolCount).filter { stringIndex[it] != 0 }.map { checkNotNull(utf8[stringIndex[it]]) }
+    return ClassShape(name, utf8.filterNotNull(), stringConstants, referencedClasses, selfMethodCalls, synthetic)
 }
 
 tasks.shadowJar {

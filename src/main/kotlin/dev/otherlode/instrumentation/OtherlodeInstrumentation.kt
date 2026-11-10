@@ -27,7 +27,6 @@ import dev.otherlode.registry.ExternalClassRegistry
 import dev.otherlode.registry.ProbeMeta
 import dev.otherlode.registry.ProbeRegistry
 import net.bytebuddy.ByteBuddy
-import net.bytebuddy.NamingStrategy
 import net.bytebuddy.agent.builder.AgentBuilder
 import net.bytebuddy.agent.builder.ResettableClassFileTransformer
 import net.bytebuddy.asm.Advice
@@ -301,8 +300,8 @@ class OtherlodeInstrumentation(
      * [typeMatcher], which takes that one kind of synthetic class and turns away every other.
      */
     private fun ignoredNames(): ElementMatcher.Junction<TypeDescription> =
-        nameStartsWith<TypeDescription>("net.bytebuddy.")
-            .and(not(nameStartsWith("${NamingStrategy.BYTE_BUDDY_RENAME_PACKAGE}.")))
+        nameStartsWith<TypeDescription>(TypeMatchPolicy.BYTE_BUDDY_PACKAGE_PREFIX)
+            .and(not(nameStartsWith("${TypeMatchPolicy.BYTE_BUDDY_PACKAGE_PREFIX}renamed.")))
             .or(nameStartsWith("sun.reflect."))
             .or(nameStartsWith("jdk.internal.reflect."))
 

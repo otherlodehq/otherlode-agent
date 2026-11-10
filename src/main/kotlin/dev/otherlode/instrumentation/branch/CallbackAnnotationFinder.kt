@@ -253,7 +253,7 @@ internal class CallbackAnnotationFinder(
         }
 
     private fun isSkipped(internalName: String): Boolean =
-        internalName.startsWith("java/lang/annotation/") || internalName.startsWith("kotlin/annotation/")
+        internalName.startsWith("java/lang/annotation/") || internalName.startsWith(KOTLIN_ANNOTATION_PREFIX)
 
     /**
      * What an annotation type reaches, as bits. [COUNTS] is set when it is or carries a listed or
@@ -315,6 +315,9 @@ internal class CallbackAnnotationFinder(
     }
 
     internal companion object {
+        /** Built at run time, since `shadowJar` rewrites a constant that starts with `kotlin`. */
+        private val KOTLIN_ANNOTATION_PREFIX = listOf("kot", "lin", "/annotation/").joinToString("")
+
         /** The element type of a no-argument method returning a one-dimensional object array, such as `()[Lcom/acme/Handles;`, or null. */
         private fun repeatedTypeOf(descriptor: String): String? =
             if (descriptor.startsWith("()[L") && descriptor.endsWith(";")) descriptor.substring(4, descriptor.length - 1) else null
