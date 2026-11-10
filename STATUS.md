@@ -55,18 +55,19 @@ multi-tenant backend.
    the week ran, which predates the hourly trim (ADR 0089). Check 8 keeps
    the one slow read at 2026-11-02 21:41:12Z that `9a2d37c` explains;
    its 5 failed reads are 404s before `soak-events` first reported.
-   Still open on `soak-2`:
-   - The 24-hour native test (`/opt/soak-native`) ends about
-     2026-11-10 10:39Z. Read the trim pair against the agent pair and the
-     controls over the day, and replace the overhead page's "grew back
-     between trims" sentence with the day's average if it says more.
-   - The release-build pair (`/opt/soak-relpair`, the `6c50d315` jar)
-     ends about 2026-11-10 01:00Z. Through 21:00Z it trimmed 9 times,
-     4.5 to 10.6 ms each, returning 22 to 71 MB, with no error.
-   Clean-up is Luke's, after those: delete VMs `soak-1` and `soak-2`,
+   The 24-hour native test on `soak-2` (`/opt/soak-native`, ended
+   2026-11-10 10:40Z) settled the trim. From the first trim on, two
+   JVMs with an hourly trim averaged 335 and 339 MB and held level; two
+   without it averaged 360 and 361 MB and grew from 347 to 364 MB; two
+   with no agent averaged 311 and 328 MB. Each trim after the first took
+   4.5 to 8.0 ms and returned 49 to 64 MB. The release-build pair
+   (`/opt/soak-relpair`, the `6c50d315` jar) trimmed 12 times each in
+   12 hours, 4.5 to 10.6 ms, with no error. Still open: the overhead
+   page's "grew back between trims" sentence can carry these averages,
+   and Luke has the proposed text.
+   Clean-up is Luke's: delete VMs `soak-1` and `soak-2`,
    the project-level SSH key gcloud added on 2026-11-01 (Compute Engine,
    Metadata, SSH keys), and project `project-1d40b09b-5fc7-4240-bed`.
-   To see the trim over days first, keep `soak-2` running a week.
 7. **The collector learns `manifest_confirmed` before any agent sends
    it** (ADR 0091). A collector with redaction on drops a field its
    bindings do not know and marks the payload stripped, so every run of
