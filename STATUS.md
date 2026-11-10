@@ -18,7 +18,10 @@ multi-tenant backend.
    42622687684 on `9b1f44bb` (2026-11-09): narrow startup +24.6%, 21
    repeats per variant. If code that runs at class load or in `premain`
    changes before the tag, re-run that job on the tagged commit and
-   update both pages.
+   update both pages. Such code changed after that run, on 2026-11-09
+   and 2026-11-10 (ADR 0026's amendment, ADR 0090, the stack read in a
+   definition attempt and the guard after the registry commit), so the
+   re-run is owed.
 2. **Cut the releases** (ADRs 0062 and 0063, collector ADR 0006). Cutting
    is Luke's call. Collector `v0.1.0` goes first, since the agent's
    `release.sh` refuses a release until it exists. Both `## [0.1.0]`
@@ -214,6 +217,13 @@ multi-tenant backend.
    once the week's final report is read: delete VMs `soak-1` and
    `soak-2`, the project-level SSH key gcloud added on 2026-11-01
    (Compute Engine, Metadata, SSH keys), and the project itself.
+7. **The collector learns `manifest_confirmed` before any agent sends
+   it** (ADR 0091). A collector with redaction on drops a field its
+   bindings do not know and marks the payload stripped, so every run of
+   an agent that sends the field would read as stripped after its first
+   confirmed manifest and make no claim. Bump the collector's bindings
+   and release it before the agent. The server reads the field under its
+   ADR 0095.
 
 After release: what "Parked" lists, the server's performance-only
 deferrals, gzip, a collector config file, and agent-level redaction

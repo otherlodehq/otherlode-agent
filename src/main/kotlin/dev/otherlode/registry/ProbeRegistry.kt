@@ -1196,6 +1196,7 @@ open class ProbeRegistry(
      * path.
      */
     fun advanceManifestBaseline(snapshot: ManifestSnapshot) {
+        if (snapshot.stagedEntries.isNotEmpty()) manifestConfirmed = true
         for (entry in snapshot.stagedEntries) {
             (entry as ClassEntry).manifestIncluded = true
             entry.manifestData = null
@@ -1206,6 +1207,16 @@ open class ProbeRegistry(
         for (entry in snapshot.stagedFailed) (entry as FailedEntry).manifestIncluded = true
         for (entry in snapshot.stagedInitializationFailures) (entry as InitializationFailureEntry).manifestIncluded = true
     }
+
+    /**
+     * Whether [advanceManifestBaseline] has recorded a manifest that held at least one class. Set on
+     * the flush thread and read on the threads that send, and it never goes back to false. A class
+     * counts once its send-once manifest data is released, which includes a class too large to send
+     * that travelled as a skipped record.
+     */
+    @Volatile
+    var manifestConfirmed: Boolean = false
+        private set
 
     /** How many registered classes still hold their manifest metadata; for tests. */
     internal fun classesHoldingMetadata(): Int = entriesByKey.values.count { it.manifestData != null }

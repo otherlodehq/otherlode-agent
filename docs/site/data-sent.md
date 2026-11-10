@@ -65,7 +65,7 @@ A class is never split across requests. A class with more entries than its entry
 
 ## Payloads
 
-Every payload carries the same resource attributes.
+Every payload carries the same resource attributes, except `manifest_confirmed`, which changes once during a run.
 
 ### Resource attributes
 
@@ -81,6 +81,7 @@ Every payload carries the same resource attributes.
 | `agent_version` | The agent jar's version, empty when unknown |
 | `flush_interval_seconds` | The value of `flushIntervalSeconds`, in whole seconds. Otherlode reads it to tell a run that stopped without its final flush from one that is quiet between flushes |
 | `fields_stripped` | Never set by the agent. A collector sets it only while its redaction is switched on, when it dropped a field it does not know before forwarding |
+| `manifest_confirmed` | False until the collector confirms a probe manifest of this run that held at least one class, then true on every payload after. The agent sets it from the deliveries it saw confirmed, so a manifest whose answer was lost does not count, and it never goes back to false |
 
 The agent adds no host name, address, user name, environment variable or system property. Resource attributes come from your configuration, from OpenTelemetry's `service.*` and `deployment.environment*` settings (see [configuration options](configuration)), and from service name detection when you set none.
 

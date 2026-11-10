@@ -160,6 +160,11 @@ enum class UnreadShape {
  * [flushIntervalSeconds] is the time between the run's flushes, from 1 to 86400 seconds. A consumer
  * reads it to tell a run that stopped without its final flush from one that is quiet between
  * flushes. Zero means unknown: a sender that does not set it.
+ *
+ * [manifestConfirmed] is false until the collector confirms a probe manifest of this run that held
+ * at least one class, and true on every payload the run sends after that. The agent sets it from its
+ * own record of confirmed deliveries, and it never goes back to false. A consumer that first hears
+ * of a run through a payload that carries true has lost the manifest the run delivered earlier.
  */
 data class ResourceAttributes(
     val serviceName: String,
@@ -172,6 +177,7 @@ data class ResourceAttributes(
     val agentVersion: String = "",
     val fieldsStripped: Boolean = false,
     val flushIntervalSeconds: Int = 0,
+    val manifestConfirmed: Boolean = false,
 ) {
     /** Holds the agent's `forNewRun`, which builds one from its configuration. */
     companion object

@@ -20,6 +20,7 @@ import dev.otherlode.export.ExportScheduler
 import dev.otherlode.export.Exporter
 import dev.otherlode.export.HttpExporter
 import dev.otherlode.export.IncludeRules
+import dev.otherlode.export.ManifestConfirmedExporter
 import dev.otherlode.export.ResourceAttributes
 import dev.otherlode.export.forNewRun
 import dev.otherlode.instrumentation.BootstrapHolder
@@ -296,13 +297,14 @@ object Agent {
             // One client for every exporter, built by the first send rather than on this thread.
             val httpClient = HttpExporter.lazyClient()
             val exporter = HttpExporter(config.exportUrl, config.authToken, httpClient)
+            fun stamped(sender: Exporter): Exporter = ManifestConfirmedExporter(sender) { registry.manifestConfirmed }
             // Shared by the scan, which sends first with the exporter's full retries, and the
             // scheduler, which resends what failed with one attempt per chunk.
             val staticBaselineSender =
                 if (config.staticBaselineEnabled) {
                     StaticBaselineSender(
-                        exporter,
-                        retryExporter = HttpExporter(config.exportUrl, config.authToken, httpClient, maxAttempts = 1),
+                        stamped(exporter),
+                        retryExporter = stamped(HttpExporter(config.exportUrl, config.authToken, httpClient, maxAttempts = 1)),
                     )
                 } else {
                     null
@@ -311,8 +313,8 @@ object Agent {
             val classListingSender =
                 if (config.classListingEnabled) {
                     ClassListingSender(
-                        exporter,
-                        retryExporter = HttpExporter(config.exportUrl, config.authToken, httpClient, maxAttempts = 1),
+                        stamped(exporter),
+                        retryExporter = stamped(HttpExporter(config.exportUrl, config.authToken, httpClient, maxAttempts = 1)),
                     )
                 } else {
                     null

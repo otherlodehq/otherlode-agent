@@ -511,7 +511,10 @@ class ExportSchedulerTest {
         val runIds = exporter.deltaBatches.map { it.resource.runId } + exporter.manifests.map { it.resource.runId }
         assertTrue(exporter.deltaBatches.size > 1 && exporter.manifests.size > 1, "the caps must split both payloads")
         assertEquals(setOf(TestResources.RUN_ID), runIds.toSet(), "one scheduler must stamp one run id: $runIds")
-        assertEquals(setOf(resource), (exporter.deltaBatches.map { it.resource } + exporter.manifests.map { it.resource }).toSet())
+        assertEquals(
+            setOf(resource),
+            (exporter.deltaBatches.map { it.resource } + exporter.manifests.map { it.resource }).map { it.copy(manifestConfirmed = false) }.toSet(),
+        )
     }
 
     @Test
