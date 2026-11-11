@@ -1177,7 +1177,7 @@ open class ProbeRegistry(
             entry.oversizeLogged = true
             log.log(
                 Level.WARNING,
-                "otherlode: ${entry.className} is reported as skipped: its manifest entries alone exceed the collector's limits " +
+                "otherlode: ${entry.className} is reported as skipped: its manifest entries alone exceed the ingest limits " +
                     "on encoded bytes or elements, so its methods are not reported",
             )
         }
@@ -1226,7 +1226,7 @@ open class ProbeRegistry(
 
     internal companion object {
         /** The reason a class reported as skipped gives when its manifest entries alone break a bound. */
-        const val OVERSIZE_REASON: String = "too large to report: its manifest entries exceed the collector's limits"
+        const val OVERSIZE_REASON: String = "too large to report: its manifest entries exceed the ingest limits"
 
         private val PROBE_KINDS: List<ProbeKind> = ProbeKind.entries
     }

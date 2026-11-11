@@ -2853,7 +2853,7 @@ public class OtherlodeTestCollector internal constructor(
                 deltaBatchSeq.incrementAndGet()
             }
         if (!applied) return
-        respond(exchange, 200)
+        respond(exchange, 202)
         signalAll()
     }
 
@@ -2966,7 +2966,7 @@ public class OtherlodeTestCollector internal constructor(
                 storeVerifierFacts(manifest)
             }
         if (!applied) return
-        respond(exchange, 200)
+        respond(exchange, 202)
         signalAll()
     }
 
@@ -3094,7 +3094,7 @@ public class OtherlodeTestCollector internal constructor(
                 }
             }
         if (!applied) return
-        respond(exchange, 200)
+        respond(exchange, 202)
         signalAll()
     }
 
@@ -3109,7 +3109,7 @@ public class OtherlodeTestCollector internal constructor(
         } catch (e: Exception) {
             return reject(exchange, undecodable("class listing", e))
         }
-        respond(exchange, 200)
+        respond(exchange, 202)
     }
 
     /**

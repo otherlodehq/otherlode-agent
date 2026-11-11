@@ -1292,7 +1292,7 @@ class OtherlodeTestCollectorTest {
     }
 
     @Test
-    fun `a class listing is answered 200 and keeps nothing, and does not fail a later query`() {
+    fun `a class listing is answered 202 and keeps nothing, and does not fail a later query`() {
         val target = startCollector()
         val listing =
             ClassListing(
@@ -1305,7 +1305,7 @@ class OtherlodeTestCollectorTest {
         val status = postStatus(target, "class-listing", ProtoPayloadCodec.encode(listing))
         exporterFor(target).exportClassListing(listing)
 
-        assertEquals(200, status)
+        assertEquals(202, status)
         assertEquals(emptyList(), target.rejectedPayloads())
         assertEquals(emptyList(), target.neverHit())
     }

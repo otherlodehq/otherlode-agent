@@ -10,7 +10,7 @@ import java.lang.System.Logger.Level
 /**
  * Runs one static baseline scan and publishes the result: primes the
  * [StaticBaselineMismatchDetector], sweeps the classes that already registered dynamically before
- * the scan finished, and sends the scan to the collector in chunks.
+ * the scan finished, and sends the scan to the receiver in chunks.
  *
  * The sweep exists because the detector can only compare a registration against a scan that has
  * completed. Every class loaded during startup, which is exactly when an app server deploys its
@@ -27,8 +27,8 @@ import java.lang.System.Logger.Level
  *
  * Every chunk carries [includeRules], the rules the scan applied. Chunks are sent in order
  * through [sender], and the first failure stops the send. The chunks left are sent again after a
- * later flush the collector confirms; until they arrive the collector holds a partial scan, which
- * it can recognise from `chunk_count` and must not diff as if it were complete.
+ * later flush whose payloads the receiver stores. Until they arrive Otherlode holds a partial scan,
+ * which it recognises from `chunk_count` and never diffs as if it were complete.
  */
 class StaticBaselinePublisher(
     private val scan: () -> StaticScanResult,

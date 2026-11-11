@@ -23,7 +23,7 @@ internal class AgentReceiver : AutoCloseable {
             } catch (e: Exception) {
                 failures += "${exchange.requestURI.path}: $e"
             }
-            exchange.sendResponseHeaders(200, -1)
+            exchange.sendResponseHeaders(202, -1)
             exchange.close()
         }
         server.start()

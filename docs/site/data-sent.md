@@ -30,7 +30,13 @@ Each request has these headers:
 
 The JDK's `java.net.http.HttpClient` adds its own headers (`Host`, `Content-Length`, `User-Agent`). Requests use HTTP/1.1, and the agent offers no upgrade to HTTP/2. It sends the token on every request and logs one warning at startup when `exportUrl` is plain `http://` and its host is not `localhost`, an address in `127.0.0.0/8` or `[::1]`, since the token then travels unencrypted. Set the token with the `OTHERLODE_AUTH_TOKEN` environment variable, because a `-javaagent` argument is visible to every user on the host through `ps`. See [configuration options](configuration).
 
-The agent reads no response body. A `2xx` status confirms the payload. Each request times out after 10 seconds, and so does the connection attempt.
+The agent reads no response body. Only a `202` status counts as stored. Any other `2xx` status fails the send at once, without a retry, and the agent sends the payload again at the next flush. On a `202` the agent reads the `Otherlode-Notice` header and logs a `WARNING` for each notice, at most once an hour per notice. A notice that is not lowercase letters and hyphens, or longer than 64 characters, is logged as `unknown`, and so is a new notice the agent does not know once it has kept 32 different ones. Each request times out after 10 seconds, and so does the connection attempt.
+
+```text
+otherlode: Otherlode stores this service's payloads but does not track the service, because the tenant's plan tracks no more services
+otherlode: Otherlode stores this environment's payloads but does not track the environment, because the service already watches as many environments as its cap allows
+otherlode: Otherlode sent a notice this agent does not know: <notice>
+```
 
 ## When payloads are sent
 
@@ -59,7 +65,7 @@ A payload that would be larger than its cap is split into several requests, sent
 
 A class is never split across requests. A class with more entries than its entry cap goes out in a request of its own. A class can also break the byte or element bound on its own, and what the agent does then depends on the payload:
 
-- **Manifest.** The class goes out as a skipped class with the reason `too large to report: its manifest entries exceed the collector's limits`, in place of its probes. Otherlode counts it as loaded and claims nothing about its methods. The agent leaves the class's probe deltas out of every delta batch, and logs a `WARNING` that names the class. The classes behind it go out as usual.
+- **Manifest.** The class goes out as a skipped class with the reason `too large to report: its manifest entries exceed the ingest limits`, in place of its probes. Otherlode counts it as loaded and claims nothing about its methods. The agent leaves the class's probe deltas out of every delta batch, and logs a `WARNING` that names the class. The classes behind it go out as usual.
 - **Static baseline.** The agent sends no chunk of the scan and logs one `WARNING` that names the class and the bound. A scan without the class would read as complete, and Otherlode would then drop the class's call edges and creations from the baseline. The run has no complete scan, so Otherlode makes no never-loaded claim for it.
 - **Class listing and delta batch.** A class name is at most 65,535 bytes, and a class never has more deltas than probe locations in its manifest, so neither can break a bound on its own.
 
@@ -220,7 +226,7 @@ One send makes up to 5 attempts, waiting 200 ms after the first failure and doub
 - A `5xx` status.
 - A `408` or `429` status.
 
-Every other status, including a `401`, `403`, `404` and a redirect, fails the send at once, because the same bytes would meet the same answer. Only a `2xx` confirms.
+Every other status, including a `401`, `403`, `404` and a redirect, fails the send at once, because the same bytes would meet the same answer. Only a `202` confirms.
 
 When a retried answer carries a `Retry-After` header, in seconds or as an HTTP date, the agent waits that long before the next attempt instead, if it is 2 seconds or less. A longer `Retry-After` ends the send at once, and the next flush sends the payload again. The collector sends one when Otherlode is down or busy, so an outage costs one request per payload a flush, not five.
 

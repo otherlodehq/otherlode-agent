@@ -20,6 +20,7 @@ import dev.otherlode.export.ExportScheduler
 import dev.otherlode.export.Exporter
 import dev.otherlode.export.HttpExporter
 import dev.otherlode.export.IncludeRules
+import dev.otherlode.export.IngestNotices
 import dev.otherlode.export.ManifestConfirmedExporter
 import dev.otherlode.export.ResourceAttributes
 import dev.otherlode.export.forNewRun
@@ -296,7 +297,9 @@ object Agent {
             val resource = ResourceAttributes.forNewRun(config)
             // One client for every exporter, built by the first send rather than on this thread.
             val httpClient = HttpExporter.lazyClient()
-            val exporter = HttpExporter(config.exportUrl, config.authToken, httpClient)
+            val ingestNotices = IngestNotices()
+            val exporter = HttpExporter(config.exportUrl, config.authToken, httpClient, notices = ingestNotices)
+
             fun stamped(sender: Exporter): Exporter = ManifestConfirmedExporter(sender) { registry.manifestConfirmed }
             // Shared by the scan, which sends first with the exporter's full retries, and the
             // scheduler, which resends what failed with one attempt per chunk.
@@ -304,7 +307,10 @@ object Agent {
                 if (config.staticBaselineEnabled) {
                     StaticBaselineSender(
                         stamped(exporter),
-                        retryExporter = stamped(HttpExporter(config.exportUrl, config.authToken, httpClient, maxAttempts = 1)),
+                        retryExporter =
+                            stamped(
+                                HttpExporter(config.exportUrl, config.authToken, httpClient, maxAttempts = 1, notices = ingestNotices),
+                            ),
                     )
                 } else {
                     null
@@ -314,7 +320,10 @@ object Agent {
                 if (config.classListingEnabled) {
                     ClassListingSender(
                         stamped(exporter),
-                        retryExporter = stamped(HttpExporter(config.exportUrl, config.authToken, httpClient, maxAttempts = 1)),
+                        retryExporter =
+                            stamped(
+                                HttpExporter(config.exportUrl, config.authToken, httpClient, maxAttempts = 1, notices = ingestNotices),
+                            ),
                     )
                 } else {
                     null
@@ -384,13 +393,31 @@ object Agent {
                         flushEarly = { started.flushAtShutdownStart(EARLY_FLUSH_BUDGET) },
                         awaitApplicationHooks = { awaitApplicationHooks(hookWatch, timeLeft(hookStarted, HOOK_WAIT_ENDS)) },
                     ) {
-                        val budget = if (config.testRun) SHUTDOWN_FLUSH_TIMEOUT else maxOf(SHUTDOWN_FLUSH_TIMEOUT, timeLeft(hookStarted, SHUTDOWN_DEADLINE))
+                        val budget =
+                            if (config.testRun) {
+                                SHUTDOWN_FLUSH_TIMEOUT
+                            } else {
+                                maxOf(
+                                    SHUTDOWN_FLUSH_TIMEOUT,
+                                    timeLeft(hookStarted, SHUTDOWN_DEADLINE),
+                                )
+                            }
                         started.flushOnShutdown(budget)
                     }
                 }, "otherlode-shutdown-hook")
             addShutdownHook(hook)
             shutdownHook = hook
-            val listingWorker = classListingSender?.let { classListingThread(config, resource, it, classListingWatch, instrumentation, gate) }
+            val listingWorker =
+                classListingSender?.let {
+                    classListingThread(
+                        config,
+                        resource,
+                        it,
+                        classListingWatch,
+                        instrumentation,
+                        gate,
+                    )
+                }
             scanWorker?.let(startWorker)
             listingWorker?.let(startWorker)
             started.start()
@@ -561,7 +588,12 @@ object Agent {
     ): Thread {
         val publisher =
             ClassListingPublisher(
-                ClassLister(config.includePackages, config.excludePackages, onRoots = { roots, names -> watch?.listingRead(roots, names, instrumentation::getAllLoadedClasses) })::list,
+                ClassLister(config.includePackages, config.excludePackages, onRoots = {
+                    roots,
+                    names,
+                    ->
+                    watch?.listingRead(roots, names, instrumentation::getAllLoadedClasses)
+                })::list,
                 IncludeRules(config.includePackages, config.excludePackages),
                 sender,
             )

@@ -40,7 +40,7 @@ private class OrderedReceiver : AutoCloseable {
             } catch (e: Exception) {
                 failures += "${exchange.requestURI.path}: $e"
             }
-            exchange.sendResponseHeaders(200, -1)
+            exchange.sendResponseHeaders(202, -1)
             exchange.close()
         }
         server.start()
@@ -70,9 +70,13 @@ class ShutdownHookCoverageTest {
     private fun describe(receiver: OrderedReceiver): String =
         receiver.events.joinToString("\n") {
             when (it) {
-                is OrderedReceiver.Event.Delta ->
+                is OrderedReceiver.Event.Delta -> {
                     "delta final=${it.batch.finalFlush} hits=${it.batch.deltas.size} total=${it.batch.deltas.sumOf { d -> d.hitsTotal }}"
-                is OrderedReceiver.Event.Manifest -> "manifest classes=${it.manifest.probes.map { p -> p.className }.toSet()}"
+                }
+
+                is OrderedReceiver.Event.Manifest -> {
+                    "manifest classes=${it.manifest.probes.map { p -> p.className }.toSet()}"
+                }
             }
         }
 

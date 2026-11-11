@@ -8,7 +8,7 @@ import java.lang.System.Logger.Level
 /**
  * Runs one class listing and publishes it: chunks what [list] returns and sends the chunks in order
  * through [sender]. The first failure stops the send, and the chunks left are sent again after a
- * later flush the collector confirms.
+ * later flush whose payloads the receiver stores.
  *
  * A null result from [list] means the classpath could not be read whole, and nothing is sent: the
  * server would read a partial listing as proof that the build lacks the classes it left out.

@@ -64,22 +64,22 @@ class StubCollectorTest {
             ).statusCode()
 
     @Test
-    fun `a delta batch with an empty run id is answered 400, and one with a run id 200`() {
+    fun `a delta batch with an empty run id is answered 400, and one with a run id 202`() {
         assertEquals(400, post("deltas", DeltaBatch.newBuilder().setResource(resource("")).build()))
-        assertEquals(200, post("deltas", DeltaBatch.newBuilder().setResource(resource("run-1")).build()))
+        assertEquals(202, post("deltas", DeltaBatch.newBuilder().setResource(resource("run-1")).build()))
     }
 
     @Test
-    fun `a manifest with an empty run id is answered 400, and one with a run id 200`() {
+    fun `a manifest with an empty run id is answered 400, and one with a run id 202`() {
         assertEquals(400, post("manifest", ProbeManifest.newBuilder().setResource(resource("")).build()))
-        assertEquals(200, post("manifest", ProbeManifest.newBuilder().setResource(resource("run-1")).build()))
+        assertEquals(202, post("manifest", ProbeManifest.newBuilder().setResource(resource("run-1")).build()))
     }
 
     @Test
-    fun `a static baseline with an empty run id is answered 400, and one with a run id 200`() {
+    fun `a static baseline with an empty run id is answered 400, and one with a run id 202`() {
         val baseline = StaticBaseline.newBuilder().setChunkCount(1)
         assertEquals(400, post("static-baseline", baseline.setResource(resource("")).build()))
-        assertEquals(200, post("static-baseline", baseline.setResource(resource("run-1")).build()))
+        assertEquals(202, post("static-baseline", baseline.setResource(resource("run-1")).build()))
     }
 
     @Test
@@ -95,7 +95,7 @@ class StubCollectorTest {
                 .setMethodDescriptor("()V")
 
         assertEquals(
-            200,
+            202,
             post(
                 "manifest",
                 ProbeManifest
@@ -107,7 +107,7 @@ class StubCollectorTest {
             ),
         )
         assertEquals(
-            200,
+            202,
             post(
                 "deltas",
                 DeltaBatch
@@ -118,7 +118,7 @@ class StubCollectorTest {
             ),
         )
         assertEquals(
-            200,
+            202,
             post(
                 "static-baseline",
                 StaticBaseline
@@ -152,7 +152,7 @@ class StubCollectorTest {
             .setMethodDescriptor("()V")
 
         assertEquals(
-            200,
+            202,
             post(
                 "manifest",
                 ProbeManifest
@@ -167,7 +167,7 @@ class StubCollectorTest {
             ),
         )
         assertEquals(
-            200,
+            202,
             post(
                 "deltas",
                 DeltaBatch
@@ -184,7 +184,7 @@ class StubCollectorTest {
     }
 
     @Test
-    fun `a test run's payloads are answered 200 and left out of the reports`() {
+    fun `a test run's payloads are answered 202 and left out of the reports`() {
         val testRun = resource("run-test").toBuilder().setTestRun(true).build()
         val probe =
             ProbeLocation
@@ -203,7 +203,7 @@ class StubCollectorTest {
         val before = finalFlushLine()
 
         assertEquals(
-            200,
+            202,
             post(
                 "manifest",
                 ProbeManifest
@@ -215,7 +215,7 @@ class StubCollectorTest {
             ),
         )
         assertEquals(
-            200,
+            202,
             post(
                 "deltas",
                 DeltaBatch
@@ -231,7 +231,7 @@ class StubCollectorTest {
                 .setChunkCount(2)
                 .setScannedAt(1L)
                 .addDeclaredClasses(declared)
-        assertEquals(200, post("static-baseline", firstOfTwoChunks.setResource(testRun).build()))
+        assertEquals(202, post("static-baseline", firstOfTwoChunks.setResource(testRun).build()))
 
         assertTrue(neverHitReport().none { it.contains("OnlyInTests") })
         assertEquals(before, finalFlushLine())
@@ -249,7 +249,7 @@ class StubCollectorTest {
         val run = resource("run-sweep")
 
         assertEquals(
-            200,
+            202,
             post(
                 "static-baseline",
                 StaticBaseline
@@ -262,7 +262,7 @@ class StubCollectorTest {
             ),
         )
         assertEquals(
-            200,
+            202,
             post(
                 "manifest",
                 ProbeManifest
@@ -307,7 +307,7 @@ class StubCollectorTest {
             .setTypeName(typeName)
             .build()
         assertEquals(
-            200,
+            202,
             post(
                 "manifest",
                 ProbeManifest
@@ -343,7 +343,7 @@ class StubCollectorTest {
                 .addMethods(DeclaredMethod.newBuilder().setMethodName("run").setMethodDescriptor("()V"))
         val run = resource("run-failed")
         assertEquals(
-            200,
+            202,
             post(
                 "static-baseline",
                 StaticBaseline
@@ -356,7 +356,7 @@ class StubCollectorTest {
             ),
         )
         assertEquals(
-            200,
+            202,
             post(
                 "manifest",
                 ProbeManifest
@@ -412,7 +412,7 @@ class StubCollectorTest {
                 .addClassLocations(location(3, KotlinKind.KOTLIN_CLASS, "Plain.kt"))
                 .build()
 
-        assertEquals(200, post("manifest", manifest))
+        assertEquals(202, post("manifest", manifest))
 
         assertEquals("Text.kt", classText("com.acme.naming.TextKt"))
         assertEquals("greet (Text.kt)", methodText("com.acme.naming.TextKt", "greet", "()V"))
@@ -557,8 +557,8 @@ class StubCollectorTest {
         val label = "branches in never-hit code (reported with their method or guard):"
         val before = countOn(neverHitReport(), label)
 
-        assertEquals(200, post("manifest", manifest))
-        assertEquals(200, post("deltas", deltas))
+        assertEquals(202, post("manifest", manifest))
+        assertEquals(202, post("deltas", deltas))
 
         val report = neverHitReport()
         val rows = report.filter { it.contains("NEVER HIT:") && it.contains("Folds") }
@@ -610,7 +610,7 @@ class StubCollectorTest {
         val label = "branches in never-hit code (reported with their method or guard):"
         val before = countOn(neverHitReport(), label)
 
-        assertEquals(200, post("manifest", manifest))
+        assertEquals(202, post("manifest", manifest))
 
         val report = neverHitReport()
         assertEquals(emptyList(), report.filter { it.contains("NEVER HIT:") && it.contains("Lone") })
@@ -698,8 +698,8 @@ class StubCollectorTest {
         val label = "UNREAD SHAPES (not judged):"
         val before = countOn(neverHitReport(), label)
 
-        assertEquals(200, post("manifest", manifest))
-        assertEquals(200, post("deltas", deltas))
+        assertEquals(202, post("manifest", manifest))
+        assertEquals(202, post("deltas", deltas))
 
         val report = neverHitReport()
         val rows = report.filter { it.contains("NEVER HIT:") && it.contains("Plumbing") }
@@ -741,7 +741,7 @@ class StubCollectorTest {
                 .addMethods(DeclaredMethod.newBuilder().setMethodName("run").setMethodDescriptor("()V"))
 
         assertEquals(
-            200,
+            202,
             post(
                 "static-baseline",
                 StaticBaseline

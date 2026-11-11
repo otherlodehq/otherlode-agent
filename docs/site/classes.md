@@ -198,12 +198,12 @@ Each class the scan finds in scope lands in one of three lists:
 
 Only a declared class can be never loaded. The live tier never registers an unprobed class, so declaring one would make Otherlode call a heavily used marker interface never loaded. An unreadable class never silently drops out of the inventory, since it is on the list.
 
-Otherlode calls a declared class never loaded only when it holds the complete scan. The agent sends the scan in chunks of about 20,000 entries, and each chunk stays under 8 MiB and under 180,000 elements (see [chunk caps](data-sent#chunk-caps)). Each chunk says its position out of the total. The agent sends the chunks in order and stops at the first failure. It sends the rest one chunk per flush, after each flush the collector confirms, and logs these lines on the way:
+Otherlode calls a declared class never loaded only when it holds the complete scan. The agent sends the scan in chunks of about 20,000 entries, and each chunk stays under 8 MiB and under 180,000 elements (see [chunk caps](data-sent#chunk-caps)). Each chunk says its position out of the total. The agent sends the chunks in order and stops at the first failure. It sends the rest one chunk per flush, after each flush whose payloads are stored, and logs these lines on the way:
 
 ```text
-otherlode: failed to send static baseline chunk 2 of 3; it and the chunks after it are sent again after a flush the collector confirms
-otherlode: the static baseline reached the collector after a retry
-otherlode: the collector refused static baseline chunk 1 of 3 with status 400, which resending the same bytes cannot change; the scan is not sent again
+otherlode: failed to send static baseline chunk 2 of 3; it and the chunks after it are sent again after a flush whose payloads are stored
+otherlode: the static baseline was stored after a retry
+otherlode: static baseline chunk 1 of 3 was refused with status 400, which resending the same bytes cannot change; the scan is not sent again
 ```
 
 A class is never split across chunks. If one declared class is too large for a chunk on its own, over 8 MiB or over 180,000 elements, the agent sends no chunk of the scan and logs one `WARNING` that names the class and the bound, never a string constant from it:
@@ -285,10 +285,10 @@ Every message starts with `otherlode:`. In the JVM's default format, the logger 
 | `WARNING` | `reading the verifier's rejections failed, so this run's zero counts are no longer evidence` | Reading what the hook collected failed on one flush. The run counts one unplaced failure and makes no claim from a zero count. |
 | `WARNING` | `<class> registered dynamically but was not in the static baseline computed at startup ...` | The static scan has a blind spot in this deployment. |
 | `WARNING` | `the static baseline is not sent: <class> alone exceeds <bound> for one chunk, ...` | One class is too large for a chunk, so the agent sends no chunk of the scan. |
-| `WARNING` | `<class> is reported as skipped: its manifest entries alone exceed the collector's limits ...` | A loaded class's manifest entries are too large to send, so it is reported as skipped and its hits are not sent. |
+| `WARNING` | `<class> is reported as skipped: its manifest entries alone exceed the ingest limits ...` | A loaded class's manifest entries are too large to send, so it is reported as skipped and its hits are not sent. |
 | `WARNING` | `failed to send static baseline chunk <i> of <n>; ...` | A chunk will be sent again. |
-| `WARNING` | `the collector refused static baseline chunk <i> of <n> with status <code>, ...` | The collector refused a chunk with a `400` or `422`. The agent does not resend the scan. |
-| `INFO` | `the static baseline reached the collector after a retry` | A failed chunk got through. |
+| `WARNING` | `static baseline chunk <i> of <n> was refused with status <code>, ...` | The receiver refused a chunk with a `400` or `422`. The agent does not resend the scan. |
+| `INFO` | `the static baseline was stored after a retry` | A failed chunk got through. |
 | `WARNING` | `could not read <file> for the class listing, so no class listing is sent: <cause>` | A directory, jar or nested jar could not be read, so this process sends no class listing. |
 | `WARNING` | `java.class.path is empty or has an empty element, which the JVM reads as the working directory, so no class listing is sent` | Name the classpath, or remove the empty element, such as a leading or trailing `:`, to get a listing. |
 | `WARNING` | `this JVM runs from a module path or a linked image, which the class listing does not read, so no class listing is sent` | The application runs from the module path or launches a `jlink` image's main module. No listing is sent, so Otherlode removes no code for this process. |
@@ -297,5 +297,5 @@ Every message starts with `otherlode:`. In the JVM's default format, the logger 
 | `WARNING` | `the class listing failed, so no class listing is sent` | An unexpected error stopped the listing. The stack trace follows. |
 | `INFO` | `<class> loaded from <location>, which the class listing did not read, so Otherlode removes no class from this environment while this run is live` | A class under `includePackages` loaded from a root the listing did not read. [The class listing missed a root](troubleshooting#the-class-listing-missed-a-root) lists the other forms of this line. |
 | `WARNING` | `failed to send class listing chunk <i> of <n>; ...` | A chunk will be sent again. |
-| `WARNING` | `the collector refused class listing chunk <i> of <n> with status <code>, ...` | The collector refused a chunk with a `400` or `422`. The agent does not resend the listing. |
-| `INFO` | `the class listing reached the collector after a retry` | A failed chunk got through. |
+| `WARNING` | `class listing chunk <i> of <n> was refused with status <code>, ...` | The receiver refused a chunk with a `400` or `422`. The agent does not resend the listing. |
+| `INFO` | `the class listing was stored after a retry` | A failed chunk got through. |

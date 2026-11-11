@@ -56,7 +56,7 @@ class CollectorVersionAndMarksTest {
     fun `a payload from an agent of the same version is accepted`() {
         val target = startAs("1.2.3")
 
-        assertEquals(200, post(target, "manifest", manifestBody("1.2.3")))
+        assertEquals(202, post(target, "manifest", manifestBody("1.2.3")))
 
         assertEquals(emptyList(), target.rejectedPayloads())
         assertEquals(listOf("m"), target.neverHit().map { it.methodName })
@@ -83,7 +83,7 @@ class CollectorVersionAndMarksTest {
     fun `a payload from an agent that does not know its version is accepted`() {
         val target = startAs("1.2.3")
 
-        assertEquals(200, post(target, "manifest", manifestBody("")))
+        assertEquals(202, post(target, "manifest", manifestBody("")))
         assertEquals(emptyList(), target.rejectedPayloads())
     }
 
@@ -91,7 +91,7 @@ class CollectorVersionAndMarksTest {
     fun `a testkit that does not know its version accepts any agent version`() {
         val target = startAs("")
 
-        assertEquals(200, post(target, "manifest", manifestBody("9.9.9")))
+        assertEquals(202, post(target, "manifest", manifestBody("9.9.9")))
         assertEquals(emptyList(), target.rejectedPayloads())
     }
 

@@ -16,17 +16,20 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 
 /**
- * Sends every payload shape to a collector at [endpoint] over plain HTTP/1.1.
+ * Sends every payload shape to a receiver at [endpoint] over plain HTTP/1.1.
  * This uses the JDK's built-in [HttpClient]. It avoids a shaded gRPC/Netty
  * dependency.
  *
  * Each send makes up to [maxAttempts] attempts, with capped exponential
  * backoff, but only for failures that a retry can plausibly fix: a
  * connection or timeout error, a 5xx, a 408, or a 429. Any other 4xx fails
- * at once. The collector has already read the bytes and rejected them, so
+ * at once. The receiver has already read the bytes and rejected them, so
  * resending the same bytes a moment later cannot change its answer; it only
  * burns the flush budget. Such a 4xx is a refusal, and the
  * [ExportFailedException] it throws says so ([ExportFailedException.refused]).
+ * Only a 202 counts as stored. Any other 2xx ends the send at once, without a retry, with an
+ * [ExportFailedException] that is not a refusal, so the payload is sent again at the next flush.
+ * A 202 may carry `Otherlode-Notice` headers, which [notices] logs. The response body is discarded.
  * A 408, 429 or 5xx may carry a `Retry-After` header, in seconds or as an HTTP date. A value of at
  * most [maxRetryAfter] replaces the backoff for that wait. A longer value ends the send at once with
  * the same failure an exhausted retry gives, so the next flush resends. A missing, malformed or past
@@ -40,14 +43,14 @@ import java.util.concurrent.TimeoutException
  * constructed: building a JDK [HttpClient] initialises the default `SSLContext` even for an `http`
  * URL, which is a cost the `premain` thread should not pay. Exporters given the same [lazyClient]
  * share one client. The client's connect timeout and each request's [requestTimeout] are both
- * bounded by default. Without a timeout, a collector that accepts a
+ * bounded by default. Without a timeout, a receiver that accepts a
  * connection but never responds would block a send indefinitely. This can
- * happen if the collector is wedged, or if the network silently drops
+ * happen if the receiver is wedged, or if the network silently drops
  * packets. An indefinite block would stall the [ExportScheduler] send it
  * runs on, and the flush waiting for it, liveness heartbeat included,
  * instead of failing into the retry/backoff path above.
  *
- * The collector may require a bearer token, passed as [authToken]. A 401 or 403 fails that send at
+ * The receiver may require a bearer token, passed as [authToken]. A 401 or 403 fails that send at
  * once, as a refusal. The scheduler offers the payload again on the next flush, so a rotated token
  * heals without a restart.
  */
@@ -60,6 +63,7 @@ class HttpExporter(
     private val maxBackoff: Duration = Duration.ofSeconds(30),
     private val requestTimeout: Duration = DEFAULT_TIMEOUT,
     private val maxRetryAfter: Duration = Duration.ofSeconds(2),
+    private val notices: IngestNotices = IngestNotices(),
 ) : Exporter {
     private val client: HttpClient by httpClient
 
@@ -87,6 +91,7 @@ class HttpExporter(
         var lastError: Exception? = null
         for (attempt in 1..maxAttempts) {
             var retryAfter: Duration? = null
+            var noticeValues: List<String> = emptyList()
             val status =
                 try {
                     val requestBuilder =
@@ -105,6 +110,7 @@ class HttpExporter(
                     val request = requestBuilder.build()
                     val response = sendWithin(request)
                     retryAfter = parseRetryAfter(response.headers().firstValue("Retry-After").orElse(null))
+                    noticeValues = response.headers().allValues("Otherlode-Notice")
                     response.statusCode()
                 } catch (e: HeaderRefusedException) {
                     throw ExportFailedException(e.message.orEmpty())
@@ -113,7 +119,13 @@ class HttpExporter(
                     null
                 }
             if (status != null) {
-                if (status in 200..299) return
+                if (status == 202) {
+                    notices.report(noticeValues)
+                    return
+                }
+                if (status in 200..299) {
+                    throw ExportFailedException("otherlode: $uri answered $status, not 202, so the payload counts as not stored", status)
+                }
                 if (!isRetryable(status)) {
                     throw ExportFailedException("otherlode: unexpected status $status from $uri", status, refused = status in 400..499)
                 }
@@ -200,7 +212,7 @@ class HttpExporter(
  * [statusCode] is null when the failure was not an HTTP response at all. A send whose every attempt
  * threw without a response rethrows that exception instead, so a caller sees a connection or timeout
  * error as itself, not as this type.
- * [refused] is true when the collector answered with a 4xx the exporter does not retry, which is a
+ * [refused] is true when the receiver answered with a 4xx the exporter does not retry, which is a
  * refusal of that one request; it is false for every other failure, a retryable status that failed
  * on every attempt included.
  */

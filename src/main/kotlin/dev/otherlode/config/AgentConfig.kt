@@ -40,12 +40,12 @@ data class AgentConfig(
      */
     val environment: String?,
     /**
-     * Base URL of the collector. The exporter appends `/v1/otherlode/{deltas,manifest,static-baseline,class-listing}`
+     * Base URL of the receiver. The exporter appends `/v1/otherlode/{deltas,manifest,static-baseline,class-listing}`
      * to it, so a query string or fragment is refused.
      */
     val exportUrl: String,
     /**
-     * Sent to the collector as `Authorization: Bearer <token>`. Prefer the `OTHERLODE_AUTH_TOKEN`
+     * Sent to the receiver as `Authorization: Bearer <token>`. Prefer the `OTHERLODE_AUTH_TOKEN`
      * environment variable over the `authToken` agent option: a `-javaagent` argument is visible
      * to every user on the host through `ps` and `/proc/<pid>/cmdline`, so a secret passed that
      * way is readable by anyone who can list processes.
@@ -107,7 +107,7 @@ data class AgentConfig(
     val otelBridgeEnabled: Boolean,
     /**
      * Off by default. Marks every payload of this run as a test run, for an agent in a JVM that
-     * runs the adopter's tests. A collector then uses the run's call edges only to name the tests
+     * runs the adopter's tests. A receiver then uses the run's call edges only to name the tests
      * that call production code.
      */
     val testRun: Boolean,
@@ -142,7 +142,7 @@ data class AgentConfig(
         const val DEFAULT_SERVICE_NAME = "unknown_service:java"
 
         /**
-         * The environment a test run reports to when no source names one. A collector that drops
+         * The environment a test run reports to when no source names one. A receiver that drops
          * the test-run flag still keeps the run apart from production.
          */
         const val TEST_RUN_ENVIRONMENT = "test"

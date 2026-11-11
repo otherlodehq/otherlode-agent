@@ -24,7 +24,12 @@ internal class ForkedRun(
     val shutdownMillis: Long get() = exitedAtMillis - checkNotNull(mainDoneAtMillis) { "main printed no end time. Output:\n$output" }
 
     /** The epoch milliseconds in the output line that starts with [label], or null. */
-    fun stamp(label: String): Long? = Regex("""(?m)^$label (\d+)$""").find(output)?.groupValues?.get(1)?.toLong()
+    fun stamp(label: String): Long? =
+        Regex("""(?m)^$label (\d+)$""")
+            .find(output)
+            ?.groupValues
+            ?.get(1)
+            ?.toLong()
 }
 
 /** A collector that accepts every connection and never answers. */
@@ -50,7 +55,7 @@ internal class BlackholeCollector : AutoCloseable {
 
 /** A collector that answers [status] to everything, and records when each delta batch arrived. */
 internal class AnsweringCollector(
-    private val status: Int = 200,
+    private val status: Int = 202,
 ) : AutoCloseable {
     class Arrival(
         val atMillis: Long,
@@ -126,7 +131,12 @@ internal class ForkedShutdownApp : AutoCloseable {
         }
         val exitedAt = System.currentTimeMillis()
         val text = output.readText()
-        val mainDone = Regex("""(?m)^main done (\d+)$""").find(text)?.groupValues?.get(1)?.toLong()
+        val mainDone =
+            Regex("""(?m)^main done (\d+)$""")
+                .find(text)
+                ?.groupValues
+                ?.get(1)
+                ?.toLong()
         return ForkedRun(text, process.exitValue(), mainDone, exitedAt)
     }
 

@@ -753,7 +753,7 @@ private fun callEdgeInfo(edge: CallEdge): CallEdgeInfo =
     )
 
 private fun respondOk(exchange: HttpExchange) {
-    exchange.sendResponseHeaders(200, -1)
+    exchange.sendResponseHeaders(202, -1)
     exchange.close()
 }
 
@@ -762,7 +762,7 @@ private fun namespaceField(resource: ResourceAttributes): String =
     if (resource.hasServiceNamespace() && resource.serviceNamespace.isNotBlank()) " namespace=${resource.serviceNamespace}" else ""
 
 /**
- * Answers 200 to a [payload] from a test run, logs it, and keeps nothing from it. The stub does not
+ * Answers 202 to a [payload] from a test run, logs it, and keeps nothing from it. The stub does not
  * name the tests that call production code, so a test run has nothing to add.
  */
 private fun ignoreTestRun(

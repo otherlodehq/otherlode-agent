@@ -168,10 +168,11 @@ One send makes up to 5 attempts, so a single failure can take several seconds to
 
 ### The collector answers with a status
 
-The exception message is `otherlode: unexpected status <code> from <exportUrl>/v1/otherlode/<deltas|manifest|static-baseline|class-listing>`.
+The exception message is `otherlode: unexpected status <code> from <exportUrl>/v1/otherlode/<deltas|manifest|static-baseline|class-listing>`. A `2xx` other than `202` has its own message, in the first row.
 
 | Status | Cause and fix |
 |---|---|
+| `200`, `201`, `204` or any `2xx` but `202` | Only a `202` means a receiver stored the payload. The message is `otherlode: <url> answered <code>, not 202, so the payload counts as not stored`. A proxy or a wrong URL that answers `2xx` to every request causes this. Point `exportUrl` at a collector or at Otherlode's ingest. The agent does not retry within the send. It sends again on the next flush. |
 | `401`, `403` | The token is missing or wrong, or the collector wants a token and none is set. Set `OTHERLODE_AUTH_TOKEN`. The agent does not retry within a send. It sends again on the next flush, so it recovers after you rotate the token. |
 | `404` | The URL does not reach a collector. The agent appends `/v1/otherlode/deltas`, `/v1/otherlode/manifest`, `/v1/otherlode/static-baseline` and `/v1/otherlode/class-listing` to `exportUrl`, so a proxy must forward those paths. Drop any path from `exportUrl` that the collector does not expect. |
 | `301`, `302`, `307`, `308` | The agent does not follow redirects. A proxy that redirects `http` to `https` causes this. Put the final `https://` URL in `exportUrl`. |
@@ -182,7 +183,7 @@ The exception message is `otherlode: unexpected status <code> from <exportUrl>/v
 The agent resends the same payload on the next flush for every status above, so a repeated warning means the answer has not changed. The static baseline and the class listing are the exception. For `400` and `422` each logs a warning and stops sending, since the same bytes meet the same answer:
 
 ```text
-otherlode: the collector refused static baseline chunk 3 of 7 with status 400, which resending the same bytes cannot change; the scan is not sent again
+otherlode: static baseline chunk 3 of 7 was refused with status 400, which resending the same bytes cannot change; the scan is not sent again
 ```
 
 The class listing logs the same line with `class listing chunk` and `the listing is not sent again`. A static baseline or class listing refused this way is not sent again in this process. A `413` is not refused this way: the agent keeps the scan or the listing and sends it after a later flush the collector confirms.
@@ -190,7 +191,7 @@ The class listing logs the same line with `class listing chunk` and `the listing
 ### A static baseline send fails
 
 ```text
-otherlode: failed to send static baseline chunk 1 of 4; it and the chunks after it are sent again after a flush the collector confirms
+otherlode: failed to send static baseline chunk 1 of 4; it and the chunks after it are sent again after a flush whose payloads are stored
 ```
 
 This logs once. The chunks stay pending and go out one per flush after a flush whose own sends the collector confirmed. If the main sends fail, fix those first.
@@ -204,15 +205,15 @@ otherlode: the static baseline is not sent: com.acme.Huge alone exceeds the limi
 One declared class is too large for a static baseline chunk, over 8 MiB of encoded bytes or over 180,000 elements. The agent never splits a class, and a scan without it would read as complete, so it sends no chunk of the scan. The run has no complete scan, and Otherlode makes no never-loaded claim for it. A class like this has very long string constants in its conditions, or tens of thousands of methods or call edges. Exclude the class with `excludePackages`, or split it, and restart.
 
 ```text
-otherlode: com.acme.Huge is reported as skipped: its manifest entries alone exceed the collector's limits on encoded bytes or elements, so its methods are not reported
+otherlode: com.acme.Huge is reported as skipped: its manifest entries alone exceed the ingest limits on encoded bytes or elements, so its methods are not reported
 ```
 
-When the class's manifest entries are too large, the agent logs this line. The agent reports it as skipped with the reason `too large to report: its manifest entries exceed the collector's limits`, and sends none of its hits. Otherlode counts the class as loaded and claims nothing about its methods. Split the class to get its methods reported, or exclude it.
+When the class's manifest entries are too large, the agent logs this line. The agent reports it as skipped with the reason `too large to report: its manifest entries exceed the ingest limits`, and sends none of its hits. Otherlode counts the class as loaded and claims nothing about its methods. Split the class to get its methods reported, or exclude it.
 
 ### A class listing send fails
 
 ```text
-otherlode: failed to send class listing chunk 1 of 2; it and the chunks after it are sent again after a flush the collector confirms
+otherlode: failed to send class listing chunk 1 of 2; it and the chunks after it are sent again after a flush whose payloads are stored
 ```
 
 The class listing is sent as the static baseline is. This logs once, and the chunks stay pending and go out one per flush after a flush whose own sends the collector confirmed. A `404` here with working deltas means the collector does not serve `/v1/otherlode/class-listing` yet: update the collector. The listing goes out once the route exists.

@@ -34,7 +34,7 @@ import kotlin.random.Random
  * Flushes on a fixed interval. Each instance picks a random offset within
  * that interval before its first flush. Without this, a fleet of instances
  * started around the same time would all flush on the same wall-clock tick,
- * overwhelming the collector at once.
+ * overwhelming the receiver at once.
  *
  * Logs through `java.lang.System.Logger`, not a logging framework. This
  * keeps agent-internal warnings off the target app's classpath.
@@ -76,12 +76,12 @@ class ExportScheduler(
     /** Framework markers the sweep saw, delivered on the manifest. */
     private val frameworkMarkers: FrameworkMarkerRegistry = FrameworkMarkerRegistry(),
     /**
-     * Static baseline chunks the collector has not confirmed yet, sent again, one per flush, after
+     * Static baseline chunks the receiver has not confirmed yet, sent again, one per flush, after
      * a flush whose own sends it confirmed. Null when the static baseline is off.
      */
     private val staticBaselineSender: StaticBaselineSender? = null,
     /**
-     * Class listing chunks the collector has not confirmed yet, sent again like the static
+     * Class listing chunks the receiver has not confirmed yet, sent again like the static
      * baseline's. Null when the class listing is off.
      */
     private val classListingSender: ClassListingSender? = null,
@@ -132,6 +132,7 @@ class ExportScheduler(
 ) {
     private val log by agentLogger(ExportScheduler::class.java.name)
     private val exporter: Exporter = ManifestConfirmedExporter(exporter) { registry.manifestConfirmed }
+
     @Volatile
     private var executor: ScheduledExecutorService? = null
     private val branchDropsLogged = AtomicBoolean(false)
@@ -229,7 +230,7 @@ class ExportScheduler(
      * still running its last send does not hold the final flush back.
      *
      * [budget] is shared between waiting for the in-flight flush and running the final one. If
-     * the in-flight flush is deep in retries against an unreachable collector and uses it all
+     * the in-flight flush is deep in retries against an unreachable receiver and uses it all
      * up, the final flush is skipped. That in-flight flush already carried the latest snapshot
      * it could take, so what is lost is bounded by the hits since it started, and shutdown never
      * stretches past what an orchestrator's termination grace period allows.
@@ -255,7 +256,11 @@ class ExportScheduler(
             return
         }
         val flushId = delivery.nextFlushId()
-        val worker = Thread({ flush(final = true, deadlineNanos = deadlineNanos, flushId = flushId) }, "otherlode-shutdown-flush").apply { isDaemon = true }
+        val worker =
+            Thread({ flush(final = true, deadlineNanos = deadlineNanos, flushId = flushId) }, "otherlode-shutdown-flush").apply {
+                isDaemon =
+                    true
+            }
         worker.start()
         joinQuietly(worker, deadlineNanos)
         sendPool.shutdown()
@@ -329,7 +334,7 @@ class ExportScheduler(
      * One flush attempt. Sends whatever manifest entries haven't gone out
      * yet, and the delta since the last acknowledged baseline.
      *
-     * The delta batch is sent even when empty. A collector otherwise has no
+     * The delta batch is sent even when empty. A receiver otherwise has no
      * way to tell an instance that's alive but idle from one that's crashed
      * or lost its network path. An empty batch acts as a liveness heartbeat.
      *
@@ -341,7 +346,7 @@ class ExportScheduler(
      *
      * The two main sends run concurrently, not one after the other. Each can take
      * a while to fail on its own (multiple retries, each with its own
-     * timeout) if the collector is unreachable. Run back to back, a single
+     * timeout) if the receiver is unreachable. Run back to back, a single
      * flush's worst case could take roughly twice one flush interval,
      * meaning the liveness heartbeat above would arrive far less often than
      * configured during exactly the outage it exists to report. Running
@@ -376,13 +381,13 @@ class ExportScheduler(
      *
      * [final] is true only for the flush [flushOnShutdown] runs. That flush ends with one empty
      * delta batch carrying `finalFlush`, after every hit batch and every manifest send, so a
-     * collector can tell an instance that ended cleanly from one that went silent, and the batch
+     * receiver can tell an instance that ended cleanly from one that went silent, and the batch
      * carries the pending state those sends left. No other batch carries it.
      *
      * Manifest content the run produced counts as pending counts until it is confirmed, like a hit
      * batch: a manifest send that fails, or stops the sends after it, marks the run pending since
      * the start of the flush, and a pass that confirms every manifest send clears it. When the newest
-     * payload a collector accepted no longer says the run's state, as when a send of the flush was
+     * payload a receiver accepted no longer says the run's state, as when a send of the flush was
      * refused after the flush's payloads were stamped, or starting ended, the flush sends one more
      * heartbeat that says so, unless a delta batch or heartbeat of it failed without a refusal.
      *
@@ -453,6 +458,7 @@ class ExportScheduler(
             var allConfirmed = manifestConfirmed && deltaConfirmed
             val released =
                 dependencyRegistry.deliveredGeneration > deliveredBefore && dependencyRegistry.hasSendableUndelivered()
+
             fun roomForMore(): Boolean =
                 when {
                     final -> remainingMillis(deadlineNanos) > 2 * CLOSING_RESERVE_MILLIS
@@ -463,7 +469,8 @@ class ExportScheduler(
             if (released && !manifestTimedOut && room) {
                 val releasedSend = pool.submit<Boolean> { sendManifestDelta(final, flushStart, sends) }
                 allConfirmed =
-                    awaitSend(releasedSend, final, deadlineNanos) { delivery.markManifestPending(flushStart, sends.flushId) } && allConfirmed
+                    awaitSend(releasedSend, final, deadlineNanos) { delivery.markManifestPending(flushStart, sends.flushId) } &&
+                    allConfirmed
             }
             if (allConfirmed && !room) {
                 if (delivery.stampedStateAheadOfDelivered()) delivery.markManifestPending(flushStart, sends.flushId)
@@ -788,7 +795,7 @@ class ExportScheduler(
         private var acceptedPendingSince = 0L
         private var acceptedStarting = false
 
-        /** Records that a collector accepted the payload stamped with these values. */
+        /** Records that a receiver accepted the payload stamped with these values. */
         fun accepted(
             sequence: Long,
             pendingSince: Long,
@@ -802,6 +809,7 @@ class ExportScheduler(
                 }
             }
         }
+
         private var nextSequence = 1L
         private var unplacedDelivered = 0L
         private var blindDelivered = false
@@ -937,7 +945,7 @@ class ExportScheduler(
         }
 
         /**
-         * Whether the newest payload a collector accepted says something the state no longer
+         * Whether the newest payload a receiver accepted says something the state no longer
          * holds: pending while the state is clean, nothing pending while hits or manifest content
          * are, or starting after starting ended (ADR 0082, ADR 0087). The newest accepted payload
          * is what the server reads, so a run that dies after such a flush would otherwise read its
@@ -1045,13 +1053,13 @@ class ExportScheduler(
      * endpoint or dependency delta, that is sent and not confirmed makes the run pending since
      * [flushStart] when it was not already. A flush that sent and confirmed every hit batch it
      * built then clears it and ends with an empty batch stamped after the change. A flush that
-     * starts pending leads with an empty batch on its own, so the field reaches the collector even
+     * starts pending leads with an empty batch on its own, so the field reaches the receiver even
      * when the hit batch is refused for its size. An empty batch carries no counts: its outcome
      * never moves the state, and a refusal of it counts against nothing. Any other failure of it
      * ends the loop like one of a hit batch.
      *
      * When every hit batch in the loop is confirmed, the counts of counting generation
-     * [generation] have reached the collector, and this records it
+     * [generation] have reached the receiver, and this records it
      * ([DependencyRegistry.markCountsDelivered]).
      *
      * The shutdown flush ([final]) ends with one more empty batch that carries `finalFlush`, which
@@ -1103,7 +1111,7 @@ class ExportScheduler(
         }
 
     /**
-     * Tells the collector the run's state, when the newest payload it accepted no longer says it:
+     * Tells the receiver the run's state, when the newest payload it accepted no longer says it:
      * a send was refused after the flush's payloads were stamped, the last pending state was
      * cleared, or starting ended. Returns false when it failed without a refusal.
      */
@@ -1179,7 +1187,7 @@ class ExportScheduler(
      * Whether every delta batch a flush has sent so far was confirmed. A batch that was sent and
      * refused or failed, a failure before any batch was sent, and a delta send the shutdown flush
      * stopped waiting for make it false for the rest of the flush. [outage] is set when a delta
-     * batch or a heartbeat failed without a refusal, whatever the status: the collector, or
+     * batch or a heartbeat failed without a refusal, whatever the status: the receiver, or
      * Otherlode behind it, is not taking payloads. The flush's threads and its send pool read and
      * write it. [flushId] numbers the flush for [DeliveryState]. [stopsAtNanos], when not 0, is the
      * time after which the flush starts no send.
@@ -1318,7 +1326,7 @@ class ExportScheduler(
      * counts were delivered; see [DependencyRegistry.isSendable].
      *
      * A disabled endpoint module not yet delivered goes first, alone on a manifest, before any
-     * class chunk is built. Its record is the only thing that tells a collector the endpoints
+     * class chunk is built. Its record is the only thing that tells a receiver the endpoints
      * earlier manifests declared are no longer counted, so it never waits behind a class chunk
      * and never also rides an endpoint chunk.
      *
@@ -1500,7 +1508,7 @@ class ExportScheduler(
     /**
      * Sends an empty manifest carrying `dependenciesListed` when it is due and no confirmed
      * manifest has carried it yet. Without this, an instance with nothing else to send would never
-     * tell the collector that its listing is complete. [flush] calls this only when every other
+     * tell the receiver that its listing is complete. [flush] calls this only when every other
      * send of the flush was confirmed. Guarded like the other sends; see [flush].
      */
     private fun sendDependenciesListedIfDue(sends: FlushSends) {

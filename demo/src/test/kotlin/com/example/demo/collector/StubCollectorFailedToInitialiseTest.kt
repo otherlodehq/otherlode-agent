@@ -65,7 +65,7 @@ class StubCollectorFailedToInitialiseTest {
                         .build(),
                     HttpResponse.BodyHandlers.discarding(),
                 ).statusCode()
-        assertEquals(200, status)
+        assertEquals(202, status)
     }
 
     private fun probe(

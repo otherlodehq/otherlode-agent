@@ -50,13 +50,13 @@ multi-tenant backend.
    an ingest URL until the front door exists. None of it blocks publishing
    the agent.
 6. **Agents sending straight to ingest** (ADR 0092, server ADR 0096).
-   Before the tag: only a 202 counts as stored, the agent logs
-   `Otherlode-Notice`, `OVERSIZE_REASON` names the ingest limits, and the
-   demo stub and the testkit answer 202. The `docs/site` pages say how to
-   send direct: `attach.md`, `configuration.md`, `data-sent.md`,
-   `how-it-works.md`, `troubleshooting.md` and `test-runs.md`. The server
-   STATUS's "Agents sending straight to ingest" has the landing order
-   across the repos.
+   The code is in. Left before the tag: the `docs/site` pages say how to
+   send direct (`attach.md`, `configuration.md`, `data-sent.md`,
+   `how-it-works.md`, `troubleshooting.md` and `test-runs.md`), and the
+   wording that still says "the collector confirms" in `data-sent.md`,
+   `troubleshooting.md`, `how-it-works.md` and `otherlode.proto:202`
+   becomes the receiver. The server STATUS's "Agents sending straight to
+   ingest" has the landing order across the repos.
 
 After release: what "Parked" lists, the server's performance-only
 deferrals, gzip, a collector config file, and agent-level redaction

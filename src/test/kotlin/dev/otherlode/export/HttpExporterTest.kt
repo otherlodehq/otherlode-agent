@@ -1,6 +1,7 @@
 package dev.otherlode.export
 
 import com.sun.net.httpserver.HttpServer
+import org.junit.jupiter.api.Timeout
 import java.io.IOException
 import java.net.InetSocketAddress
 import java.net.ServerSocket
@@ -16,7 +17,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
-import org.junit.jupiter.api.Timeout
 
 class HttpExporterTest {
     private var server: HttpServer? = null
@@ -58,7 +58,7 @@ class HttpExporterTest {
 
     @Test
     fun `sends HTTP 1_1 without offering an h2c upgrade`() {
-        val endpoint = startServer { 200 }
+        val endpoint = startServer { 202 }
         val batch = DeltaBatch(ResourceAttributes("checkout", "1.0.0", "i-1", "test", "run-1"), emptyList())
 
         HttpExporter(endpoint = endpoint).exportDeltaBatch(batch)
@@ -68,7 +68,7 @@ class HttpExporterTest {
 
     @Test
     fun `posts a delta batch to the deltas endpoint`() {
-        val endpoint = startServer { 200 }
+        val endpoint = startServer { 202 }
         val exporter = exporterFor(endpoint)
         val batch = DeltaBatch(ResourceAttributes("checkout", "1.0.0", "i-1", "test", "run-1"), emptyList())
 
@@ -80,7 +80,7 @@ class HttpExporterTest {
 
     @Test
     fun `posts a manifest to the manifest endpoint`() {
-        val endpoint = startServer { 200 }
+        val endpoint = startServer { 202 }
         val exporter = exporterFor(endpoint)
         val manifest = ProbeManifest(ResourceAttributes("checkout", "1.0.0", "", null, "run-1"), emptyList())
 
@@ -91,7 +91,7 @@ class HttpExporterTest {
 
     @Test
     fun `posts a static baseline to the static-baseline endpoint`() {
-        val endpoint = startServer { 200 }
+        val endpoint = startServer { 202 }
         val exporter = exporterFor(endpoint)
         val baseline =
             StaticBaseline(
@@ -107,7 +107,7 @@ class HttpExporterTest {
 
     @Test
     fun `posts a class listing to the class-listing endpoint`() {
-        val endpoint = startServer { 200 }
+        val endpoint = startServer { 202 }
         val exporter = exporterFor(endpoint)
         val listing =
             ClassListing(
@@ -124,7 +124,7 @@ class HttpExporterTest {
 
     @Test
     fun `retries a transient server error and succeeds once the server recovers`() {
-        val endpoint = startServer { requestNumber -> if (requestNumber < 3) 503 else 200 }
+        val endpoint = startServer { requestNumber -> if (requestNumber < 3) 503 else 202 }
         val exporter = exporterFor(endpoint)
 
         exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("checkout", null, "i-1", null, "run-1"), emptyList()))
@@ -189,7 +189,7 @@ class HttpExporterTest {
                 while (!socket.isClosed) {
                     val connection = socket.accept()
                     synchronized(stalledBodyConnections) { stalledBodyConnections += connection }
-                    connection.getOutputStream().write("HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\n".toByteArray())
+                    connection.getOutputStream().write("HTTP/1.1 202 Accepted\r\nContent-Length: 10\r\n\r\n".toByteArray())
                     connection.getOutputStream().flush()
                 }
             } catch (_: IOException) {
@@ -347,7 +347,7 @@ class HttpExporterTest {
     fun `a 408 and a 429 are retried like a server error`() {
         for (status in listOf(408, 429)) {
             requestCount.set(0)
-            val endpoint = startServer { requestNumber -> if (requestNumber < 3) status else 200 }
+            val endpoint = startServer { requestNumber -> if (requestNumber < 3) status else 202 }
             val exporter = exporterFor(endpoint)
 
             exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("checkout", null, "i-1", null, "run-1"), emptyList()))
@@ -359,7 +359,7 @@ class HttpExporterTest {
 
     @Test
     fun `a bearer token is sent on every export method when configured`() {
-        val endpoint = startServer { 200 }
+        val endpoint = startServer { 202 }
         val exporter =
             HttpExporter(
                 endpoint = endpoint,
@@ -408,7 +408,7 @@ class HttpExporterTest {
 
     @Test
     fun `no Authorization header is sent when no token is configured`() {
-        val endpoint = startServer { 200 }
+        val endpoint = startServer { 202 }
         val exporter = exporterFor(endpoint)
 
         exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("checkout", null, "i-1", null, "run-1"), emptyList()))
@@ -432,7 +432,7 @@ class HttpExporterTest {
 
     @Test
     fun `constructing an exporter builds no client, and the first export builds it once`() {
-        val endpoint = startServer { 200 }
+        val endpoint = startServer { 202 }
         val built = AtomicInteger()
         val client = lazy { built.incrementAndGet().let { HttpClient.newHttpClient() } }
         val exporter = HttpExporter(endpoint = endpoint, httpClient = client)
@@ -447,7 +447,7 @@ class HttpExporterTest {
 
     @Test
     fun `two exporters sharing one lazy client build one client between them`() {
-        val endpoint = startServer { 200 }
+        val endpoint = startServer { 202 }
         val built = AtomicInteger()
         val client = lazy { built.incrementAndGet().let { HttpClient.newHttpClient() } }
         val first = HttpExporter(endpoint = endpoint, httpClient = client)

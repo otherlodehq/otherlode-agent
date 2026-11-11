@@ -17,7 +17,7 @@ import kotlin.test.assertTrue
 
 class ProbeRegistryChunkBoundsTest {
     private val resource = ResourceAttributes("checkout", "1.0.0", "instance-1", "test", "run-1")
-    private val skipReason = "too large to report: its manifest entries exceed the collector's limits"
+    private val skipReason = "too large to report: its manifest entries exceed the ingest limits"
 
     private fun small(count: Int = 2) = List(count) { ProbeMeta(ProbeKind.METHOD, "method$it", "()V", line = it) }
 

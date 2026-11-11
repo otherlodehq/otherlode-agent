@@ -6,21 +6,21 @@ import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
 /**
- * Holds the chunks of one once-per-process payload that the collector has not yet confirmed and
+ * Holds the chunks of one once-per-process payload that the receiver has not yet confirmed and
  * sends them in order. [StaticBaselineSender][dev.otherlode.instrumentation.staticscan.StaticBaselineSender]
  * and [ClassListingSender][dev.otherlode.classlisting.ClassListingSender] fix the payload.
  *
- * The payload is built once per process, so a chunk the collector never confirmed would otherwise
+ * The payload is built once per process, so a chunk the receiver never confirmed would otherwise
  * be lost for the life of the process. The builder offers the chunks and makes the first attempt
  * through [exporter]; [ExportScheduler] calls [retryPending] after a flush whose own sends the
- * collector confirmed, which is when a retry can succeed. A retry runs on the flush thread, so it
+ * receiver stored, which is when a retry can succeed. A retry runs on the flush thread, so it
  * sends one chunk through [retryExporter], which should make one attempt: a flush then holds the
  * scheduler for one request timeout at most per sender, and the shutdown flush never retries.
- * A chunk that reached the collector with its answer lost is sent twice, which a collector reads
- * as one, since it keeps received chunks by index. A chunk the collector refuses for its content
+ * A chunk that reached the receiver with its answer lost is sent twice, which a receiver reads
+ * as one, since it keeps received chunks by index. A chunk the receiver refuses for its content
  * (a 400 or 422) drops every pending chunk, since resending the same bytes would only be
- * refused again. Any other refusal keeps them, to be sent after a later flush the collector
- * confirms: a 401 while a token rotates, a 404 before a collector serves the route, a 413 since
+ * refused again. Any other refusal keeps them, to be sent after a later flush the receiver
+ * confirms: a 401 while a token rotates, a 404 before a receiver serves the route, a 413 since
  * a proxy's limit can be raised while the process runs.
  *
  * Only one thread sends at a time. A call that finds another sending returns at once rather than
@@ -86,7 +86,7 @@ open class ChunkSender<T : Any>(
                     if (status == null || status !in REFUSED_CONTENT) return failed(chunk, e)
                     log.log(
                         Level.WARNING,
-                        "otherlode: the collector refused $noun chunk ${chunkIndex(chunk) + 1} of ${chunkCount(chunk)} " +
+                        "otherlode: $noun chunk ${chunkIndex(chunk) + 1} of ${chunkCount(chunk)} was refused " +
                             "with status $status, which resending the same bytes cannot change; the $whole is not sent again",
                         e,
                     )
@@ -100,7 +100,7 @@ open class ChunkSender<T : Any>(
                 sent++
             }
             hasPending = false
-            if (failureLogged) log.log(Level.INFO, "otherlode: the $noun reached the collector after a retry")
+            if (failureLogged) log.log(Level.INFO, "otherlode: the $noun was stored after a retry")
             return true
         } finally {
             lock.unlock()
@@ -117,7 +117,7 @@ open class ChunkSender<T : Any>(
             log.log(
                 Level.WARNING,
                 "otherlode: failed to send $noun chunk ${chunkIndex(chunk) + 1} of ${chunkCount(chunk)}; it and " +
-                    "the chunks after it are sent again after a flush the collector confirms",
+                    "the chunks after it are sent again after a flush whose payloads are stored",
                 e,
             )
         }

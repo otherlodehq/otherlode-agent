@@ -81,7 +81,11 @@ class AgentTest {
     @Test
     fun `the wait for application hooks ends at the cap on a hook that never finishes, and the final flush still runs`() {
         val never = CountDownLatch(1)
-        val stuck = Thread { never.await() }.apply { isDaemon = true; start() }
+        val stuck =
+            Thread { never.await() }.apply {
+                isDaemon = true
+                start()
+            }
         val watch = ShutdownHookWatch { arrayOf(stuck) }
         val events = mutableListOf<String>()
 
@@ -104,10 +108,11 @@ class AgentTest {
     fun `the agent's own hook is not joined by its wait`() {
         val result = CompletableFuture<Boolean>()
         lateinit var self: Thread
-        self = Thread {
-            Agent.awaitApplicationHooks(ShutdownHookWatch { arrayOf(self) }, Duration.ofSeconds(30))
-            result.complete(true)
-        }.apply { isDaemon = true }
+        self =
+            Thread {
+                Agent.awaitApplicationHooks(ShutdownHookWatch { arrayOf(self) }, Duration.ofSeconds(30))
+                result.complete(true)
+            }.apply { isDaemon = true }
         self.start()
 
         assertTrue(result.get(5, java.util.concurrent.TimeUnit.SECONDS))
@@ -478,7 +483,7 @@ class AgentTest {
         val collector = HttpServer.create(InetSocketAddress("localhost", 0), 0)
         collector.createContext("/v1/otherlode/static-baseline") { exchange ->
             received.complete(ProtoPayloadCodec.decodeStaticBaseline(exchange.requestBody.readBytes()))
-            exchange.sendResponseHeaders(200, -1)
+            exchange.sendResponseHeaders(202, -1)
             exchange.close()
         }
         collector.start()
@@ -513,7 +518,7 @@ class AgentTest {
         val collector = HttpServer.create(InetSocketAddress("localhost", 0), 0)
         collector.createContext("/v1/otherlode/class-listing") { exchange ->
             received.complete(ProtoPayloadCodec.decodeClassListing(exchange.requestBody.readBytes()))
-            exchange.sendResponseHeaders(200, -1)
+            exchange.sendResponseHeaders(202, -1)
             exchange.close()
         }
         collector.start()
@@ -551,17 +556,17 @@ class AgentTest {
         val collector = HttpServer.create(InetSocketAddress("localhost", 0), 0)
         collector.createContext("/v1/otherlode/class-listing") { exchange ->
             listing.complete(ProtoPayloadCodec.decodeClassListing(exchange.requestBody.readBytes()))
-            exchange.sendResponseHeaders(200, -1)
+            exchange.sendResponseHeaders(202, -1)
             exchange.close()
         }
         collector.createContext("/v1/otherlode/manifest") { exchange ->
             manifests += ProtoPayloadCodec.decodeProbeManifest(exchange.requestBody.readBytes())
-            exchange.sendResponseHeaders(200, -1)
+            exchange.sendResponseHeaders(202, -1)
             exchange.close()
         }
         collector.createContext("/") { exchange ->
             exchange.requestBody.readBytes()
-            exchange.sendResponseHeaders(200, -1)
+            exchange.sendResponseHeaders(202, -1)
             exchange.close()
         }
         collector.start()
@@ -569,7 +574,10 @@ class AgentTest {
         val jar =
             dev.otherlode.dependencies.TestJars.write(
                 plugins.resolve("plugin.jar"),
-                listOf(dev.otherlode.dependencies.TestJars.loadableClassEntry("com.example.target.PluginOutsideTheListing")),
+                listOf(
+                    dev.otherlode.dependencies.TestJars
+                        .loadableClassEntry("com.example.target.PluginOutsideTheListing"),
+                ),
             )
 
         val running =
@@ -609,17 +617,17 @@ class AgentTest {
         }
         collector.createContext("/v1/otherlode/static-baseline") { exchange ->
             baselines += ProtoPayloadCodec.decodeStaticBaseline(exchange.requestBody.readBytes())
-            exchange.sendResponseHeaders(if (baselines.size == 1) 404 else 200, -1)
+            exchange.sendResponseHeaders(if (baselines.size == 1) 404 else 202, -1)
             exchange.close()
         }
         collector.createContext("/v1/otherlode/manifest") { exchange ->
             manifests += ProtoPayloadCodec.decodeProbeManifest(exchange.requestBody.readBytes())
-            exchange.sendResponseHeaders(200, -1)
+            exchange.sendResponseHeaders(202, -1)
             exchange.close()
         }
         collector.createContext("/") { exchange ->
             exchange.requestBody.readBytes()
-            exchange.sendResponseHeaders(200, -1)
+            exchange.sendResponseHeaders(202, -1)
             exchange.close()
         }
         collector.start()
@@ -635,7 +643,16 @@ class AgentTest {
             val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30)
             while ((listings.isEmpty() || baselines.isEmpty()) && System.nanoTime() < deadline) Thread.onSpinWait()
             assertTrue(listings.isNotEmpty() && baselines.isNotEmpty())
-            assertTrue(listings.first().resource.manifestConfirmed.not() && baselines.first().resource.manifestConfirmed.not())
+            assertTrue(
+                listings
+                    .first()
+                    .resource.manifestConfirmed
+                    .not() &&
+                    baselines
+                        .first()
+                        .resource.manifestConfirmed
+                        .not(),
+            )
 
             val testClasses = AgentTest::class.java.protectionDomain.codeSource.location
             java.net.URLClassLoader(arrayOf(testClasses), null).use {
@@ -659,7 +676,7 @@ class AgentTest {
         collector.createContext("/") { exchange ->
             paths += exchange.requestURI.path
             exchange.requestBody.readBytes()
-            exchange.sendResponseHeaders(200, -1)
+            exchange.sendResponseHeaders(202, -1)
             exchange.close()
         }
         collector.start()
@@ -699,7 +716,7 @@ class AgentTest {
                     }
                 runIds.computeIfAbsent(path) { ConcurrentHashMap.newKeySet() } += runId
                 if (path == "static-baseline") baselineReceived.complete(Unit)
-                exchange.sendResponseHeaders(200, -1)
+                exchange.sendResponseHeaders(202, -1)
                 exchange.close()
             }
         }
@@ -734,7 +751,7 @@ class AgentTest {
         collector.createContext("/") { exchange ->
             val bytes = exchange.requestBody.readBytes()
             if (exchange.requestURI.path == "/v1/otherlode/manifest") manifests += ProtoPayloadCodec.decodeProbeManifest(bytes)
-            exchange.sendResponseHeaders(200, -1)
+            exchange.sendResponseHeaders(202, -1)
             exchange.close()
         }
         collector.start()
@@ -780,7 +797,7 @@ class AgentTest {
         val collector = HttpServer.create(InetSocketAddress("localhost", 0), 0)
         collector.createContext("/") { exchange ->
             exchange.requestBody.readBytes()
-            exchange.sendResponseHeaders(200, -1)
+            exchange.sendResponseHeaders(202, -1)
             exchange.close()
         }
         collector.start()
@@ -814,7 +831,7 @@ class AgentTest {
         val collector = HttpServer.create(InetSocketAddress("localhost", 0), 0)
         collector.createContext("/v1/otherlode/static-baseline") { exchange ->
             received.complete(ProtoPayloadCodec.decodeStaticBaseline(exchange.requestBody.readBytes()))
-            exchange.sendResponseHeaders(200, -1)
+            exchange.sendResponseHeaders(202, -1)
             exchange.close()
         }
         collector.start()
@@ -1049,7 +1066,7 @@ class AgentTest {
         collector.createContext("/") { exchange ->
             val bytes = exchange.requestBody.readBytes()
             if (exchange.requestURI.path == "/v1/otherlode/manifest") manifests += ProtoPayloadCodec.decodeProbeManifest(bytes)
-            exchange.sendResponseHeaders(200, -1)
+            exchange.sendResponseHeaders(202, -1)
             exchange.close()
         }
         collector.start()
@@ -1085,7 +1102,7 @@ class AgentTest {
         val collector = HttpServer.create(InetSocketAddress("localhost", 0), 0)
         collector.createContext("/") { exchange ->
             exchange.requestBody.readBytes()
-            exchange.sendResponseHeaders(200, -1)
+            exchange.sendResponseHeaders(202, -1)
             exchange.close()
         }
         collector.start()
@@ -1116,7 +1133,7 @@ class AgentTest {
         collector.createContext("/") { exchange ->
             val bytes = exchange.requestBody.readBytes()
             if (exchange.requestURI.path == "/v1/otherlode/manifest") manifests += ProtoPayloadCodec.decodeProbeManifest(bytes)
-            exchange.sendResponseHeaders(200, -1)
+            exchange.sendResponseHeaders(202, -1)
             exchange.close()
         }
         collector.start()
