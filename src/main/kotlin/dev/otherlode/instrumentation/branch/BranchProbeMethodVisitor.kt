@@ -8,8 +8,8 @@ import net.bytebuddy.jar.asm.Opcodes
 import net.bytebuddy.jar.asm.commons.AnalyzerAdapter
 
 /**
- * Splits each [ConditionalJump] into two private edges, one per outcome. It splits each
- * `TABLESWITCH`/`LOOKUPSWITCH` into one private edge per case, plus the default. Every edge
+ * Splits each [ConditionalJump] into two private edges, one per outcome, and each
+ * `TABLESWITCH`/`LOOKUPSWITCH` into one private edge per case plus the default. Every edge
  * increments its own slot in the class's shared counts array, which [probeArray] loads:
  *
  * ```
@@ -22,54 +22,23 @@ import net.bytebuddy.jar.asm.commons.AnalyzerAdapter
  *                                    continue:
  * ```
  *
- * No new edge is shared with any other control flow. So a probe only increments for the outcome
- * it stands for. This holds regardless of what the original jump target is also used for
- * elsewhere: a loop back-edge, an if/else merge point, two switch cases falling into the same
- * code, and so on. Inserting a counter directly at an original target would instead conflate
- * every outcome that shares it.
+ * Every frame the received bytes carry passes through as it is. A label this visitor inserts gets a
+ * frame only when [frameTracker] is set. A jump or switch the analyser has no state for throws
+ * [IllegalStateException] naming [location].
  *
- * [allocateSlots] hands out this site's slots, relative to [probeIndexBase]. Given the number of
- * outcomes the site needs, it returns the first slot, then advances its own running total by
- * that many. This lets sites of different arity (a two-outcome jump next to an N-way switch)
- * still pack into contiguous slots, in the same order
- * [dev.otherlode.instrumentation.OtherlodeInstrumentation] lays out from
- * [BranchSiteAnalyzer]'s output. It returns [NO_SLOT] when the array has no room left, and the
- * site is then emitted exactly as it was, with no probe.
- *
- * [droppedOrdinals] names sites this method's analysis dropped, by their encounter index among
- * every tracked conditional and switch in this method, counted from zero. A dropped
- * site's ordinal is still counted here, in step with [BranchSiteAnalyzer], but it is emitted
- * unchanged with no call to [allocateSlots]: a dropped site never asked for a slot in the first
- * place, so it never counts against the mismatch check [BranchProbeAsmVisitorWrapper] runs.
- *
- * [throwingDefaultOrdinals] names, in the same numbering, the switches whose default only throws
- * an exception the compiler added. Such a switch asks for one slot per case and none for its
- * default, and its default edge, fillers included, goes straight to the original default with no
- * probe.
- *
- * [unprobedOutcomes] gives, in the same numbering, the conditionals with one outcome only a hash
- * collision reaches, and that outcome's offset (see [BranchSite.unprobedOutcome]). Such a
- * conditional asks for one slot, for its other outcome, and the unprobed edge goes straight to its
- * target.
- *
- * [swappedOrdinals] names, in the same numbering, the conditionals that test the opposite of the
- * class file's jump the analysis numbered, because an earlier transformer inverted them. Every
- * offset above is the class file's: offset 0 is the class file's taken edge. For a swapped
- * conditional that is this jump's fall-through, so the two edges trade slots, and an unprobed
- * outcome trades sides with them.
- *
- * Every frame the received bytes carry is passed through as it is. A label this visitor inserts
- * gets a frame only when [frameTracker], the ASM analyser upstream of this visitor, is given, which
- * is for a class that has frames. Such a label has one predecessor, the jump or switch it sits
- * on, and the probes add no local and leave the operand stack as they found it, so the frame there
- * is the analyser's state at that instruction with the operands the jump consumes popped. The
- * continuation label sits where the original next instruction was, which may carry a frame of its
- * own. That frame covers every predecessor of the instruction, so it replaces the inserted one: the
- * inserted frame is held and written before the next instruction unless a frame arrives first.
- * A jump or switch the analyser has no state for throws [IllegalStateException] naming
- * [location], since no frame can be derived for it. A class that passes the type checker has a
- * frame after every unconditional jump, so this happens only for one that would not verify, or one
- * at version 50 that leans on the JVM's fallback to type inference.
+ * @property allocateSlots Given the number of outcomes a site needs, returns its first slot,
+ * relative to [probeIndexBase]. It returns [NO_SLOT] when the array has no room, and the site is
+ * then emitted unchanged with no probe.
+ * @property droppedOrdinals Dropped sites, by their encounter index among every tracked conditional
+ * and switch in this method, counted from zero. A dropped site is emitted unchanged and never
+ * calls [allocateSlots].
+ * @property throwingDefaultOrdinals In the same numbering, the switches whose default only throws.
+ * Such a switch asks for one slot per case and none for its default.
+ * @property unprobedOutcomes In the same numbering, the conditionals with one outcome that gets no
+ * probe, and that outcome's offset (see [BranchSite.unprobedOutcome]).
+ * @property swappedOrdinals In the same numbering, the conditionals that test the opposite of the
+ * class file's jump because an earlier transformer inverted them. Every offset above is the class
+ * file's, so a swapped conditional's two edges trade slots, and an unprobed outcome trades sides with them.
  */
 class BranchProbeMethodVisitor(
     methodVisitor: MethodVisitor,
@@ -84,17 +53,13 @@ class BranchProbeMethodVisitor(
 ) : MethodVisitor(Opcodes.ASM9, methodVisitor) {
     private var nextOrdinal = 0
 
-    /**
-     * The analyser upstream of this visitor, set by whoever builds the chain. Null for a class
-     * without frames, where no frame is written.
-     */
+    /** The ASM analyser upstream of this visitor. Null for a class without frames, where no frame is written. */
     var frameTracker: AnalyzerAdapter? = null
 
     private var pendingLocals: Array<Any>? = null
     private var pendingStack: Array<Any>? = null
     private var inserted = false
 
-    /** The frame after the instruction being visited pops [popCount] operands, or null for a class without frames. */
     private fun snapshot(popCount: Int): Frame? {
         val tracker = frameTracker ?: return null
         val locals = tracker.locals
@@ -106,7 +71,6 @@ class BranchProbeMethodVisitor(
         return Frame(collapse(locals, locals.size), collapse(stack, stack.size - popCount))
     }
 
-    /** The first [size] slots of [slots] with each long or double's second slot dropped, as a frame lists them. */
     private fun collapse(
         slots: List<Any>,
         size: Int,
@@ -145,7 +109,6 @@ class BranchProbeMethodVisitor(
         numStack: Int,
         stack: Array<out Any>?,
     ) {
-        // The class file's own frame at this offset covers every predecessor, the inserted edge included.
         pendingLocals = null
         pendingStack = null
         super.visitFrame(type, numLocal, local, numStack, stack)
@@ -236,8 +199,6 @@ class BranchProbeMethodVisitor(
         maxStack: Int,
         maxLocals: Int,
     ) {
-        // A probe holds the array and an index, the long loaded beside them, then a long constant: six slots
-        // above the stack the jump leaves.
         super.visitMaxs(if (inserted) maxStack + PROBE_STACK else maxStack, maxLocals)
     }
 
@@ -256,8 +217,6 @@ class BranchProbeMethodVisitor(
             return
         }
         val swapped = ordinal in swappedOrdinals
-        // The analysis numbers outcomes by the class file's jump. An inverted jump's taken edge is
-        // the class file's fall-through, so the unprobed side and the two slots both flip.
         val unprobed = unprobedOutcomes[ordinal]?.let { if (swapped) 1 - it else it }
         val slot = allocateSlots(if (unprobed == null) 2 else 1)
         if (slot == NO_SLOT) {
@@ -344,13 +303,6 @@ class BranchProbeMethodVisitor(
         probesDefault: Boolean,
     ): Int = BranchSiteAnalyzer.switchOutcomeCount(dflt, labels) - if (probesDefault) 0 else 1
 
-    /**
-     * The private edges for one switch. Every case entry that already jumps to the default label
-     * (a `TABLESWITCH` filler for a gap in the case values) is routed to the new default edge, so
-     * it counts as the default outcome it is rather than as a case of its own. When
-     * [probesDefault] is false, the new default edge is the original default label itself, so the
-     * default and its fillers pass through with no probe.
-     */
     private class SwitchEdges(
         val originalDefault: Label,
         originalLabels: Array<out Label>,
@@ -401,7 +353,6 @@ class BranchProbeMethodVisitor(
         }
     }
 
-    /** An expanded frame: its locals and operand stack, long and double entries counted once. */
     private class Frame(
         val locals: Array<Any>,
         val stack: Array<Any>,

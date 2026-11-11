@@ -7,29 +7,11 @@ import net.bytebuddy.jar.asm.Label
 import net.bytebuddy.jar.asm.MethodVisitor
 import net.bytebuddy.jar.asm.Opcodes
 
-/**
- * Records one method's real instructions as [BranchSiteAnalyzer] streams them, and forwards every
- * event to the visitor [downstream] builds. A real instruction is any `visit...Insn` event. Labels,
- * line numbers and frames are not instructions.
- *
- * Each real instruction gets an ordinal, its position in visit order counted from zero. The
- * recorder takes the ordinal before it forwards the event, so the downstream visitor reads the
- * ordinal of the instruction it is visiting from [lastOrdinal]. That ordinal is the one definition
- * that ties a call candidate to its node in the control-flow graph.
- *
- * [onEnd] receives a function that builds the recorded [MethodInstructions], once the method's
- * last event has been forwarded. Most methods have no kept site and never need them built.
- *
- * [onTracked] receives, just before [onEnd], the method's tracked instructions in
- * [SitePairing.encodedSequences]' encoding, written as they are visited so no second pass over the
- * class is needed. A method with none gets a shared empty array.
- */
 internal class InstructionRecorder(
     downstream: (InstructionRecorder) -> MethodVisitor,
     private val onTracked: (IntArray) -> Unit = {},
     private val onEnd: (() -> MethodInstructions) -> Unit,
 ) : MethodVisitor(Opcodes.ASM9) {
-    /** The ordinal of the last real instruction visited, or -1 before the first. */
     var lastOrdinal = -1
         private set
 
@@ -37,10 +19,8 @@ internal class InstructionRecorder(
     private var lines = IntArray(INITIAL_CAPACITY)
     private var currentLine = -1
 
-    /** Per ordinal, a jump's target [Label], a switch's [SwitchLabels], or null. */
     private var branchTargets = arrayOfNulls<Any>(INITIAL_CAPACITY)
 
-    /** Per ordinal, the operand [MethodInstructions.operands] describes, or null. */
     private var operands = arrayOfNulls<Any>(INITIAL_CAPACITY)
     private val tryCatchBlocks = mutableListOf<TryCatchLabels>()
     private val localVariables = mutableListOf<LocalVariableLabels>()
@@ -70,8 +50,8 @@ internal class InstructionRecorder(
         lastOrdinal = ordinal
     }
 
-    // The analyser's ClassReader pass makes its own labels and nothing else reads their info
-    // field, so it holds each label's ordinal without a map.
+    // The analyser's ClassReader pass makes its own labels and nothing else reads their `info`
+    // field, so it holds each label's ordinal.
     override fun visitLabel(label: Label) {
         label.info = lastOrdinal + 1
         super.visitLabel(label)
@@ -316,11 +296,6 @@ internal class InstructionRecorder(
     }
 }
 
-/**
- * One `try` range: real instructions from [start] up to, not including, [end] can throw to [handler].
- * [type] is the internal name of the exception type the handler catches, or null for a catch-any
- * handler, which is how compilers copy a `finally` body onto the exception path.
- */
 internal class TryCatch(
     val start: Int,
     val end: Int,
@@ -328,18 +303,12 @@ internal class TryCatch(
     val type: String? = null,
 )
 
-/**
- * The method an invoke instruction calls, as its owner, name and descriptor. For an
- * `invokedynamic`, [owner] and [name] are the bootstrap method's, and [descriptor] is the call
- * site's own.
- */
 internal data class CalledMethod(
     val owner: String,
     val name: String,
     val descriptor: String,
 )
 
-/** One local variable table entry, its range as ordinals: [start] inclusive, [end] exclusive. */
 internal data class LocalRange(
     val name: String,
     val start: Int,
@@ -347,40 +316,21 @@ internal data class LocalRange(
     val index: Int,
 )
 
-/** A field instruction's field, as [MethodInstructions.operands] holds it. */
 internal data class FieldOperand(
     val owner: String,
     val name: String,
     val descriptor: String,
 )
 
-/** A `bipush`, `sipush` or `newarray` operand, or an `ldc` constant, as [MethodInstructions.operands] holds it. */
 internal data class Constant(
     val value: Any?,
 )
 
-/** An `iinc`'s local and amount, as [MethodInstructions.operands] holds it. */
 internal data class Increment(
     val varIndex: Int,
     val amount: Int,
 )
 
-/**
- * One method's real instructions in visit order, as [InstructionRecorder] saw them.
- *
- * [lines] holds each instruction's line: the line of the nearest line number entry before it, as
- * the JVM attributes it, or -1 before the first. [targets] holds a jump's target ordinal, and a
- * switch's default ordinal followed by one ordinal per entry in its label array. A target is -1
- * when its label never came before an instruction. [caseDefaults] marks, per switch, which label
- * array entries are the default label itself. [hasSubroutine] is true when the method holds a
- * `JSR` or `RET`.
- *
- * [operands] holds, per ordinal, what [RoutineClassifier] reads from an instruction: the local
- * variable index of a load, store or `RET` as an [Int], the type of a `NEW`, `CHECKCAST`,
- * `INSTANCEOF` or `ANEWARRAY` as its internal name, the [CalledMethod] of an invoke, the
- * [FieldOperand] of a field instruction, the [Constant] of a push or `ldc`, and the [Increment] of
- * an `iinc`. It is null for every other instruction.
- */
 internal class MethodInstructions(
     val opcodes: IntArray,
     val lines: IntArray,
@@ -393,11 +343,6 @@ internal class MethodInstructions(
 ) {
     val size: Int get() = opcodes.size
 
-    /**
-     * The source name of the local in [slot] at the instruction at [ordinal], from the method's
-     * local variable table, or null when the table is absent or does not cover it. A store sits
-     * just before its variable's range opens, so the instruction after it is checked too.
-     */
     fun localName(
         ordinal: Int,
         slot: Int,
@@ -406,17 +351,12 @@ internal class MethodInstructions(
             .firstOrNull { it.index == slot && (ordinal in it.start until it.end || ordinal + 1 in it.start until it.end) }
             ?.name
 
-    /** Whether the instruction at [ordinal] is a site [BranchSiteAnalyzer] tracks: a [ConditionalJump] or a switch. */
     fun isTrackedSite(ordinal: Int): Boolean {
         val opcode = opcodes[ordinal]
         return ConditionalJump.isTracked(opcode) || opcode == Opcodes.TABLESWITCH || opcode == Opcodes.LOOKUPSWITCH
     }
 }
 
-/**
- * One source line as a guarded line range names it: [sourceFile] and [line], after SMAP mapping.
- * See [GuardAnalysis.analyze].
- */
 internal data class SourceLine(
     val sourceFile: String,
     val line: Int,
@@ -433,41 +373,16 @@ class SiteGuards internal constructor(
     val routineKinds: List<RoutineKind> = emptyList(),
 )
 
-/**
- * What [GuardAnalysis] finds for one method: each kept site's [SiteGuards] by site index, and the
- * guard of each real instruction by ordinal.
- */
 internal class MethodGuards(
     val sites: Map<Int, SiteGuards>,
     private val instructionGuards: IntArray,
 ) {
-    /** The branch index of the innermost kept outcome dominating the instruction at [ordinal], or null. */
     fun guardAt(ordinal: Int): Int? = instructionGuards.getOrNull(ordinal)?.takeIf { it >= 0 }
 }
 
-/**
- * Computes guarded code and guards for one method.
- *
- * The control-flow graph has one node per real instruction and one per kept outcome. A kept site's
- * outcome edges each pass through their own outcome node, so an outcome dominates exactly the code
- * that runs only through it. A dropped site gets no outcome nodes, so dominance looks through it
- * to the next kept outcome. Each instruction inside a `try` range has an edge to its handler.
- * Immediate dominators come from the iterative algorithm of Cooper, Harvey and Kennedy.
- */
 internal object GuardAnalysis {
     private val NO_SUCCESSORS = IntArray(0)
 
-    /**
-     * The guards of [instructions], whose tracked jumps and switches are [sites] in the same order.
-     * [firstBranchIndexes] holds each site's first branch index, in [sites] order. [sourceLineOf]
-     * names an output line's source line, or returns null for a line that is not listed.
-     * [isThrowable] tells whether a class, by internal name, is a `Throwable`, for
-     * [RoutineClassifier].
-     *
-     * Returns null when the method holds no instructions, holds a `JSR` or `RET`, or when its
-     * tracked instruction count does not match [sites]. The method then has no guarded code and no
-     * guards.
-     */
     fun analyze(
         instructions: MethodInstructions,
         sites: List<BranchSite>,
@@ -518,11 +433,6 @@ internal object GuardAnalysis {
         return MethodGuards(siteGuards, instructionGuards)
     }
 
-    /**
-     * The augmented control-flow graph: nodes `0 until realCount` are real instructions, and each
-     * kept site's outcomes follow as consecutive nodes from [firstOutcomeNode]. [successors]
-     * includes each `try` range's edges to its handler, and [normalSuccessors] leaves them out.
-     */
     internal class Graph(
         instructions: MethodInstructions,
         sites: List<BranchSite>,
@@ -531,7 +441,6 @@ internal object GuardAnalysis {
     ) {
         val realCount = instructions.size
 
-        /** Per site position, its first outcome node, or -1 for a dropped site. */
         val firstOutcomeNode = IntArray(sites.size) { -1 }
 
         val successors: Array<IntArray>
@@ -589,14 +498,6 @@ internal object GuardAnalysis {
 
         private fun validDistinct(nodes: IntArray): IntArray = nodes.filter { it >= 0 }.distinct().toIntArray()
 
-        /**
-         * A tracked site's successors. A kept conditional's taken edge and fall-through edge, and
-         * a kept switch's case edges and default edge, each go through the outcome node of the
-         * same offset [KeptBranchSite] numbers it with. A dropped site's edges go straight to
-         * their targets, except a dropped coroutine state-machine switch, which keeps only its
-         * first case; so does the edge of a throwing default or a [BranchSite.unprobedOutcome],
-         * since it has no outcome to be a guard.
-         */
         private fun siteSuccessors(
             instructions: MethodInstructions,
             ordinal: Int,
@@ -608,10 +509,6 @@ internal object GuardAnalysis {
             val targets = instructions.targets[ordinal]!!
             val caseDefaults = instructions.caseDefaults[ordinal]
             if (site.dropReason == BranchDropReason.COROUTINE_MACHINERY && caseDefaults != null) {
-                // The state machine's switch on the continuation's label enters the method body
-                // through its first case. Every other case resumes after a suspension point and
-                // rejoins the code the first case already reaches, so an edge from the switch
-                // would bypass each outcome that code sits behind. Only the first case is kept.
                 return validDistinct(intArrayOf(targets[1]))
             }
             if (site.dropReason != null) return plainSuccessors(instructions, ordinal)
@@ -638,11 +535,6 @@ internal object GuardAnalysis {
         }
     }
 
-    /**
-     * Immediate dominators over [successors] from [entry], by the iterative algorithm of Cooper,
-     * Harvey and Kennedy, and a preorder of the dominator tree so each node's dominated set is one
-     * interval of [preorder]. Nodes from [firstOutcomeNode] on are outcome nodes.
-     */
     internal class Dominance(
         successors: Array<IntArray>,
         entry: Int,
@@ -653,13 +545,10 @@ internal object GuardAnalysis {
         private val idom = IntArray(nodeCount) { -1 }
         private val nearestOutcome = IntArray(nodeCount) { -1 }
 
-        /** Nodes the entry reaches, in dominator-tree preorder. */
         val preorder: IntArray
 
-        /** Each reachable node's position in [preorder], or -1. */
         val preorderIndex = IntArray(nodeCount) { -1 }
 
-        /** Each reachable node's dominator subtree size, itself included. */
         val subtreeSize = IntArray(nodeCount)
 
         init {
@@ -692,7 +581,6 @@ internal object GuardAnalysis {
 
         fun isReachable(node: Int): Boolean = postIndex[node] >= 0
 
-        /** Whether [dominator] dominates [node]. A node dominates itself. False when either is unreachable. */
         fun dominates(
             dominator: Int,
             node: Int,
@@ -702,7 +590,6 @@ internal object GuardAnalysis {
             return start >= 0 && index >= start && index < start + subtreeSize[dominator]
         }
 
-        /** The nearest outcome node strictly above [node] in the dominator tree, or -1. */
         fun outcomeAbove(node: Int): Int = nearestOutcome[node]
 
         private fun intersect(
@@ -793,10 +680,6 @@ internal object GuardAnalysis {
         }
     }
 
-    /**
-     * Each reachable real instruction's [SourceLine], interned to a small id, and how many
-     * reachable real instructions each line holds.
-     */
     private class LineTable(
         instructions: MethodInstructions,
         private val realCount: Int,
@@ -806,7 +689,6 @@ internal object GuardAnalysis {
         private val keys = mutableListOf<SourceLine>()
         private val keyOfInstruction = IntArray(realCount) { -1 }
 
-        /** Per source file, every line that holds a reachable real instruction of this method. */
         private val codeLinesByFile: Map<String, java.util.SortedSet<Int>>
         private val totals: IntArray
         private val scratch: IntArray
@@ -831,7 +713,6 @@ internal object GuardAnalysis {
             scratch = IntArray(keys.size)
         }
 
-        /** The whole and partly guarded line ranges of [outcomeNode], from its dominator subtree. */
         fun guardedBy(
             outcomeNode: Int,
             dominance: Dominance,
@@ -856,11 +737,6 @@ internal object GuardAnalysis {
             return ranges(whole) to ranges(part)
         }
 
-        /**
-         * Merges [lines] into ranges per source file. Two lines join one range when no line
-         * between them holds code in this method, so a blank line or a comment inside an arm does
-         * not split it.
-         */
         private fun ranges(lines: List<SourceLine>): List<LineRange> {
             if (lines.isEmpty()) return emptyList()
             val sorted = lines.sortedWith(compareBy({ it.sourceFile }, { it.line }))
@@ -881,7 +757,6 @@ internal object GuardAnalysis {
             return result
         }
 
-        /** Whether no line strictly between [below] and [above] in [sourceFile] holds code in this method. */
         private fun noCodeBetween(
             sourceFile: String,
             below: Int,

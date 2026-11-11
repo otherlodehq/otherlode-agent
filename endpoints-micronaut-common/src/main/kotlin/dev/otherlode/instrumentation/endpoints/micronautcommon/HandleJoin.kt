@@ -15,8 +15,8 @@ class Handler(
 
 /**
  * Joins a method-based Micronaut route to the method it runs, reading class files and loading
- * nothing. The four reflective methods are the `getTargetMethod` of a method-based route
- * and `MethodReference`'s `getDeclaringType`, `getMethodName` and `getArgumentTypes`.
+ * nothing. It takes the reflective `getTargetMethod` of a method-based route and `MethodReference`'s
+ * `getDeclaringType`, `getMethodName` and `getArgumentTypes`.
  */
 class HandleJoin(
     private val getTargetMethod: Method,
@@ -34,11 +34,10 @@ class HandleJoin(
     }
 
     /**
-     * The method [route] runs, as the class file that declares it has it, or null when it is not
-     * method-based or not found. Micronaut names the bean class, which for an AOP bean is its
-     * generated `$Definition$Intercepted` subclass, and the argument classes resolved for that bean,
-     * so the method is found among the bean's superclasses and interfaces by its name and arguments.
-     * Class files are read; nothing is loaded.
+     * The method [route] runs, as the class file that declares it has it, or null when the route is
+     * not method-based or the method is not found. For an AOP bean Micronaut names the generated
+     * `$Definition$Intercepted` subclass, so the method is searched among the bean's superclasses
+     * and interfaces by name and arguments.
      */
     fun of(route: Any): Handler? {
         if (!getTargetMethod.declaringClass.isInstance(route)) return null
@@ -109,5 +108,4 @@ internal fun declaringMethod(
         }
 }
 
-/** The suffix of the subclass Micronaut generates for a bean with AOP advice. */
 private const val INTERCEPTED_SUFFIX = "\$Intercepted"

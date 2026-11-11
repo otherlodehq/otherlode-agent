@@ -14,33 +14,23 @@ import reactor.core.publisher.Mono;
 
 /**
  * Woven onto the exit of {@code PathResourceLookupFunction.apply(ServerRequest)}, the lookup
- * function behind {@code RouterFunctions.resources(pattern, location)}. The reactive lookup returns
- * a {@code Mono<Resource>}, so a resource is found only when the Mono emits. The advice replaces the
- * returned Mono with {@code mono.doOnNext(consumer)}, where {@link
- * OtherlodeEndpoints#resourceEmitted} builds the consumer, since advice cannot define a class or a
- * lambda. {@code doOnNext} passes every signal, the subscription and its demand through
- * unchanged, so the woven method behaves as the unwoven one apart from counting; the consumer
- * never throws.
+ * function behind {@code RouterFunctions.resources(pattern, location)}. A resource is found only
+ * when the returned {@code Mono<Resource>} emits, so the advice replaces the Mono with {@code
+ * mono.doOnNext(consumer)}, where {@link OtherlodeEndpoints#resourceEmitted} builds the consumer.
+ * The woven method behaves as the unwoven one apart from counting, and the consumer never throws.
  *
- * <p>On each emitted resource the consumer marks the request's exchange, so {@code
- * RouterFunctionMapping.setAttributes}, whose own {@code doOnNext} runs next on the same thread for
- * the same request, does not count it under the nest's path. The mark is keyed by the exchange:
- * a nested request has an attribute map of its own, and the exchange is the one object this advice
- * and {@link SetAttributesAdvice} both reach, through {@code ServerRequest.exchange()}. The consumer
- * then counts the endpoint, unless the request is a preflight or has a verb the resource handler
- * refuses, which are no call.
+ * <p>On each emitted resource the consumer marks the request's exchange, so {@link
+ * SetAttributesAdvice} does not count it under the nest's path, and then counts the endpoint. A
+ * preflight and a verb the resource handler refuses count nothing.
  *
- * <p>The key, nest pattern, verb and preflight flag are computed here, synchronously, since the
- * attributes of a nested request are not stable once the Mono is returned. The endpoint is looked
- * up here, so the template is combined only for a route the walk did not declare. It is recorded as
- * discovered when the Mono emits, not here: a lookup that finds nothing is a miss and must create
- * no endpoint.
+ * <p>The key, nest pattern, verb and preflight flag are computed synchronously, since the
+ * attributes of a nested request are not stable once the Mono is returned. The key, {@code
+ * List.of("fnres", lookupFunction, nestPattern, verb)}, matches the walk's, and the registry holds
+ * the lookup function weakly. An endpoint the walk did not declare is recorded as discovered when
+ * the Mono emits, so a lookup that finds nothing creates none.
  *
- * <p>The key, {@code List.of("fnres", lookupFunction, nestPattern, verb)}, must match the walk's.
- * The registry holds the lookup function weakly.
- *
- * <p>This method is deliberately one flat body with no private helper method of its own; see
- * {@link RegisterHandlerMethodAdvice}'s Javadoc for why.
+ * <p>The advice body is inlined into the woven method, so {@code onExit} stays one flat body with
+ * no helper methods.
  */
 public class ResourceLookupAdvice {
     private static final String MODULE = "spring-webflux";

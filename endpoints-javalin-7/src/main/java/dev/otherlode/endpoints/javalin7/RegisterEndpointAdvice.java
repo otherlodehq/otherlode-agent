@@ -9,28 +9,23 @@ import java.lang.reflect.Method;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the exit of the {@code ParsedEndpoint(Endpoint, RouterConfig)} constructor, which
- * every verb method, {@code addEndpoint}, {@code ApiBuilder} and Javalin's own plugins reach
- * through {@code InternalRouter.addHttpEndpoint}, and which runs only after the path parsed. The
+ * Woven onto the exit of the {@code ParsedEndpoint(Endpoint, RouterConfig)} constructor. The
  * instance is the dispatch key. Only an endpoint whose method {@code isHttpMethod()} is declared:
  * before, after, beforeMatched, afterMatched and the WebSocket upgrade handlers are not endpoints.
- * A WebSocket route never builds a {@code ParsedEndpoint}.
  *
  * <p>The handler join names {@code handle} and the class declaring it for a named class, and the
- * method the lambda calls for a hidden one. {@code SseHandler} and {@code VueHandler} are
- * Javalin's own wrappers, so an endpoint whose {@code handle} they declare gets no join. While
- * {@code ApiBuilder.crud} runs on this thread, {@link CrudAdvice} has opened a registration scope
- * and the five endpoints it registers through lambdas join to the {@code CrudHandler}'s methods
- * by verb and path. Any other registration inside the scope keeps its own join.
- *
- * <p>This method is deliberately one flat body with no private helper method of its own; see the
- * Spring MVC module's {@code RegisterHandlerMethodAdvice} Javadoc for why.
+ * method the lambda calls for a hidden one. An endpoint whose {@code handle} is declared by
+ * {@code SseHandler} or {@code VueHandler} gets no join. While {@code ApiBuilder.crud} runs on
+ * this thread, the endpoints it registers through lambdas join to the {@code CrudHandler}'s
+ * methods by verb and path, through the scope {@link CrudAdvice} opened.
  */
 public class RegisterEndpointAdvice {
     private static final String MODULE = "javalin-7";
     private static final String HANDLE_DESCRIPTOR = "(Lio/javalin/http/Context;)V";
     private static final String ITEM_DESCRIPTOR = "(Lio/javalin/http/Context;Ljava/lang/String;)V";
 
+    // Advice inlines only this method's bytecode, so a helper call here would stay a real call that
+    // the target loader cannot resolve. Keep the body flat.
     @Advice.OnMethodExit(suppress = Throwable.class)
     public static void onExit(@Advice.This Object parsed, @Advice.Argument(0) Endpoint endpoint) {
         try {

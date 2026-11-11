@@ -6,40 +6,23 @@ import java.security.MessageDigest
  * Derives the branch key of each kept branch outcome, and the site key of each kept site, from the
  * site's condition fingerprint.
  *
- * [compute] returns a key for every kept outcome it can name safely, keyed by
- * `(siteIndex, outcome offset)`. An outcome missing from the result has no key: the agent could
- * not name it safely, and a collector treats it as an outcome it has never seen.
- *
- * [computeSiteKeys] returns a key for every kept site, keyed by `siteIndex`. It uses the same rules,
- * so a site has a key exactly when at least one of its outcomes has one. A site key digests the same input as a
- * branch key without the outcome token, under its own derivation tag, so it never equals a branch
- * key.
- *
- * Two tracked sites in one method collide when they share a [BranchSite.conditionFingerprint] and
- * [BranchSite.inlinedFromClassName]. Dropped sites count toward a collision, since whether a kept
- * site gets a key must depend on the method's bytecode alone, not on scope configuration. A site
- * with a null fingerprint never gets a key and never takes part in a collision group, so it costs
- * no other site its key.
+ * An outcome or site missing from a result has no key, because the agent could not name it safely.
+ * Two tracked sites in one method collide, and get no key, when they share a
+ * [BranchSite.conditionFingerprint] and [BranchSite.inlinedFromClassName]. Dropped sites count
+ * toward a collision. A site with a null fingerprint never gets a key and never takes part in a
+ * collision.
  */
 object BranchKeys {
-    /** The derivation's version, folded into the digest input so a change to the derivation changes every key. */
     private const val DERIVATION_TAG = "v1"
 
-    /** The site key derivation's own tag and version. It differs from [DERIVATION_TAG], so a site key never equals a branch key. */
     private const val SITE_DERIVATION_TAG = "site-v1"
 
     private const val SEPARATOR = "\u0000"
 
-    /** The key is the first 16 bytes of the digest, two hex digits each. */
     private const val HEX_CHARS = 32
 
     private val HEX_DIGITS = "0123456789abcdef".toCharArray()
 
-    /**
-     * One method's tracked sites collide when they share a [conditionFingerprint] and
-     * [inlinedFromClassName]. A switch's [conditionFingerprint] never covers its case keys, so
-     * this identity does not need them.
-     */
     private data class CollisionIdentity(
         val methodName: String,
         val methodDescriptor: String,
@@ -51,7 +34,7 @@ object BranchKeys {
      * Computes the branch key of every kept outcome of [sites], one class's analysed branch
      * sites, keyed by `(siteIndex, outcome offset)`. [className] is the class's own name, dotted.
      * [reportedName] gives the method name a key digests from the method's real name and
-     * descriptor, so a method that reports under another name is keyed by that name.
+     * descriptor.
      */
     fun compute(
         sites: List<BranchSite>,
@@ -71,9 +54,9 @@ object BranchKeys {
     }
 
     /**
-     * Computes the site key of every kept site of [sites], one class's analysed branch sites, keyed
-     * by `siteIndex`. [className] is the class's own name, dotted. A site is missing from the
-     * result exactly when [compute] gives none of its outcomes a key. [reportedName] is as for [compute].
+     * Computes the site key of every kept site of [sites], keyed by `siteIndex`. A site is missing
+     * from the result exactly when [compute] gives none of its outcomes a key. [className] and
+     * [reportedName] are as for [compute].
      */
     fun computeSiteKeys(
         sites: List<BranchSite>,
@@ -93,10 +76,6 @@ object BranchKeys {
         val outcomeTokens: List<String?>,
     )
 
-    /**
-     * The kept sites of [sites] that can be named safely: each has a fingerprint, shares no
-     * [CollisionIdentity] with another tracked site, dropped sites included, and has outcome tokens.
-     */
     private fun nameableSites(
         sites: List<BranchSite>,
         reportedName: (name: String, descriptor: String) -> String,
@@ -132,18 +111,6 @@ object BranchKeys {
         return nameable
     }
 
-    /**
-     * The outcome token of each of [site]'s outcomes, in offset order, or null when the site
-     * cannot be named safely. A conditional's two outcomes are `taken` and `fallthrough`,
-     * matching the taken and fall-through edges [BranchProbeMethodVisitor] emits. A switch's
-     * `caseKeys` must carry exactly one entry per case outcome, and the default's token follows
-     * them; a switch whose `caseKeys` is null or the wrong size gets no token for any of its
-     * outcomes.
-     *
-     * A rebuilt switch's case is named by its label, as `label:<kind>:<text>`, so adding, removing
-     * or reordering a case leaves every other case's token alone. Two cases with one label, such
-     * as two class patterns of one type, get no token.
-     */
     private fun outcomeTokensOf(site: BranchSite): List<String?>? {
         val labels = site.caseLabels
         if (labels != null) {
@@ -171,7 +138,6 @@ object BranchKeys {
 
     private val sha256: ThreadLocal<MessageDigest> = ThreadLocal.withInitial { MessageDigest.getInstance("SHA-256") }
 
-    /** The parts of one site's digest input that every one of its outcomes shares, encoded once. */
     private class DigestInput(
         val className: ByteArray,
         site: BranchSite,
@@ -184,18 +150,6 @@ object BranchKeys {
         val fingerprint = utf8(fingerprint)
     }
 
-    /**
-     * Hex of the first 16 bytes of the SHA-256 digest of the tag, the class name, the site's method
-     * name, method descriptor, origin class, fingerprint and [outcomeToken], joined with a
-     * `\u0000` separator, which no name and no token the agent builds contains; only a string
-     * constant inside the fingerprint could. The tag leads the text, so a later change to a
-     * derivation changes the digest input, not only its output. A site key passes a null
-     * [outcomeToken] and adds nothing after the fingerprint.
-     *
-     * The parts go to the digest one `update` at a time, which hashes the bytes of the joined
-     * text: encoding each part alone gives the same bytes, since no character pair straddles a
-     * separator.
-     */
     private fun digest(
         tag: ByteArray,
         input: DigestInput,

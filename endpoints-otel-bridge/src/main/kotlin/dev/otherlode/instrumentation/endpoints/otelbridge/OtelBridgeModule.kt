@@ -11,10 +11,8 @@ import net.bytebuddy.matcher.ElementMatchers.named
 import net.bytebuddy.matcher.ElementMatchers.namedOneOf
 import net.bytebuddy.matcher.ElementMatchers.takesArguments
 
-/** The unshaded class name a plain `opentelemetry-instrumentation-api` dependency loads under. */
 internal const val UNSHADED_EXTRACTOR_NAME = "io.opentelemetry.instrumentation.api.semconv.http.HttpServerAttributesExtractor"
 
-/** The same class's name inside the OpenTelemetry Java agent's own shaded jar, verified against a real 2.31.1 agent jar. */
 internal const val SHADED_EXTRACTOR_NAME =
     "io.opentelemetry.javaagent.shaded.instrumentation.api.semconv.http.HttpServerAttributesExtractor"
 
@@ -23,11 +21,6 @@ private const val PREFIX_ADVICE_CLASS = "dev.otherlode.endpoints.otelbridge.Rout
 
 private const val SPRING_ROUTE_SUPPORT_SIMPLE_NAME = "HttpRouteSupport"
 
-/**
- * The classes holding OpenTelemetry's route prefixers: the Java agent's servlet and JAX-RS
- * bootstrap helpers, and the Spring MVC library instrumentation's route support for each servlet
- * namespace. A deployment loads only some of them.
- */
 internal val PREFIXER_NAMES: List<String> =
     listOf(
         "io.opentelemetry.javaagent.bootstrap.servlet.ServletContextPath",
@@ -37,26 +30,18 @@ internal val PREFIXER_NAMES: List<String> =
     )
 
 /**
- * Route bridge endpoint module. Counts the route OpenTelemetry's own HTTP server instrumentation
- * resolved for a request, for a framework this project has no dedicated endpoint module for. It
- * only ever discovers endpoints by dispatch and never declares one, since OpenTelemetry learns a
- * route only when a request ends on it.
+ * Route bridge endpoint module. Counts the route OpenTelemetry's HTTP server instrumentation
+ * resolved for a request, for a framework without a dedicated endpoint module. It discovers
+ * endpoints by dispatch only and never declares one.
  *
- * Matches both the unshaded `opentelemetry-instrumentation-api` artifact's own
- * `HttpServerAttributesExtractor` and the OpenTelemetry Java agent's relocated copy of the same
- * class, and weaves [OnEndAdvice] onto the exit of `onEnd`. [OnEndAdvice] is written once against
- * the unshaded names; for the relocated copy, [AdviceBinder] rewrites every `io/opentelemetry/...`
- * reference in its bytecode to the agent's `io/opentelemetry/javaagent/shaded/...` prefix before
- * binding, so one advice class serves both deployments.
+ * It weaves [OnEndAdvice] onto the exit of `onEnd` in both the unshaded
+ * `HttpServerAttributesExtractor` and the OpenTelemetry Java agent's relocated copy, for which
+ * [AdviceBinder] rewrites the `io/opentelemetry/...` references to the agent's
+ * `io/opentelemetry/javaagent/shaded/...` prefix. It weaves [RoutePrefixAdvice] onto the exit of
+ * each OpenTelemetry route prefixer found loaded, so the application root and servlet path do not
+ * make a second endpoint of a route a framework module already counts.
  *
- * It also weaves [RoutePrefixAdvice] onto the exit of each of OpenTelemetry's route prefixers it
- * finds loaded, which records the unprefixed route a prefixed one was built from. [OnEndAdvice]
- * resolves the final route back through that table, so the application root and servlet path
- * OpenTelemetry adds do not make a second endpoint of a route a framework module already counts.
- * A deployment without a prefixer, or with one this module has not read, is unaffected: the route
- * stays as OpenTelemetry reported it.
- *
- * Off by default. It is always discovered, and [dev.otherlode.Agent] drops it unless
+ * Off by default. [dev.otherlode.Agent] drops it unless
  * [dev.otherlode.config.AgentConfig.otelBridgeEnabled] is set.
  */
 class OtelBridgeModule : EndpointModule {
@@ -82,18 +67,6 @@ class OtelBridgeModule : EndpointModule {
     }
 }
 
-/**
- * The `io/opentelemetry/...` internal-name prefix rewrite [OnEndAdvice] needs to weave onto
- * [typeName], keyed only on whether [typeName] is the shaded or the unshaded extractor name.
- * Empty for the unshaded name, since [OnEndAdvice] is already written against it directly.
- *
- * [AdviceBinder.hook] tries prefixes longest first, so the order these are written in here is for
- * readability only.
- *
- * `internal` rather than `private` so [OtelBridgeModuleTest] can pin the exact rewrite this
- * module asks for, directly, without needing the real relocated OpenTelemetry javaagent jar on
- * the test classpath to prove `transform` chose the right prefixes for the shaded name.
- */
 internal fun remapPrefixesFor(typeName: String): Map<String, String> =
     if (typeName == SHADED_EXTRACTOR_NAME) {
         mapOf(

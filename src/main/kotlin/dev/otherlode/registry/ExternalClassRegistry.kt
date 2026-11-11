@@ -12,33 +12,20 @@ import java.util.concurrent.atomic.AtomicLong
  * The out-of-scope classes the adopter's code references, each with where the transform found it,
  * resolved to a dependency and delivered once per name.
  *
- * [record] runs on transforming threads and only remembers a location string. Resolution runs on the
- * export thread, or on the scan thread through [mappingFor], since it can read a jar, and waits for
- * [isListingComplete], since before the startup listing has finished a jar on the classpath would be
- * registered as discovered by load. A name
- * whose location [resolveLocation] maps to no dependency (a jar of the adopter's own, an agent jar,
- * an unsupported scheme) is resolved once and never sent. A name no loader could find is sent as
- * absent.
+ * [record] only remembers a location string. Resolution runs on the export thread, or on the scan
+ * thread through [mappingFor], and waits for [isListingComplete]. A name whose location
+ * [resolveLocation] maps to no dependency (a jar of the adopter's own, an agent jar, an unsupported
+ * scheme) is resolved once and never sent. A name no loader could find is sent as absent.
  *
  * The static baseline records names it has already mapped through [recordResolved] and sends the
- * mapping [mappingFor] returns with the chunk that first references the name. The manifest sends
- * it too, and a collector keeps the first mapping it holds for a name, so both payloads agree.
+ * mapping [mappingFor] returns. The manifest sends the same mapping.
  *
- * A name that maps to a dependency is held while [isDependencySendable] is false for that id. It is
- * neither delivered nor dropped, and a later compute offers it. An absent name names no dependency
- * and is never held.
- *
- * Delivery follows [DependencyRegistry]'s snapshot pattern: [computeManifestEntries] stages entries
- * onto the snapshot it returns, and [advanceManifest] marks exactly those delivered once the send
- * carrying them is confirmed.
+ * A name that maps to a dependency is held while [isDependencySendable] is false for that id. An
+ * absent name is never held.
  */
 class ExternalClassRegistry(
     private val isListingComplete: () -> Boolean = { false },
     private val resolveLocation: (String) -> Int? = { null },
-    /**
-     * Whether a mapping to this dependency id may go out. A mapping waits until its dependency's
-     * own entry may go out; see [DependencyRegistry.isSendable].
-     */
     private val isDependencySendable: (Int) -> Boolean = { true },
 ) {
     private class Entry(
@@ -59,8 +46,8 @@ class ExternalClassRegistry(
     }
 
     /**
-     * One computed manifest chunk, together with the entries it staged. [advanceManifest] marks
-     * exactly those delivered.
+     * One computed manifest chunk. Pass it to [advanceManifest] once the send carrying it is
+     * confirmed.
      */
     class ManifestSnapshot internal constructor(
         val externalClasses: List<ExternalClass>,
@@ -70,7 +57,6 @@ class ExternalClassRegistry(
     private val entries = ConcurrentHashMap<String, Entry>()
     private val nextSequence = AtomicLong(0)
 
-    /** The first sequence number past the backlog; -1 until the first compute after the listing. */
     @Volatile
     private var backlogEnd: Long = -1
 
@@ -78,10 +64,10 @@ class ExternalClassRegistry(
     private var backlogDelivered = false
 
     /**
-     * True once every name recorded before the first compute after the listing completed has
-     * gone out on a confirmed send, or resolved to no dependency. A name recorded later never holds
-     * it back. False before that first compute, so false for good when the listing never
-     * completes. Once true, it stays true.
+     * True once every name recorded before the first compute after the listing completed has gone
+     * out on a confirmed send, or resolved to no dependency. A name recorded later never holds it
+     * back. False before that first compute, so false for good when the listing never completes.
+     * Once true, it stays true.
      */
     val isBacklogDelivered: Boolean
         get() {
@@ -110,9 +96,7 @@ class ExternalClassRegistry(
 
     /**
      * Records [className] (dotted) as already resolved: to dependency [dependencyId], or as absent
-     * when it is null. The static baseline records this way, having mapped the name from the
-     * startup listing's class index rather than from a loader. The first recording of a name wins,
-     * whichever way it was made.
+     * when it is null. The first recording of a name wins, whichever way it was made.
      */
     fun recordResolved(
         className: String,
@@ -126,9 +110,9 @@ class ExternalClassRegistry(
     }
 
     /**
-     * The mapping [computeManifestEntries] sends for [className], delivered or not, or null when the
-     * name was never recorded, the listing has not completed, or the name maps to no dependency.
-     * The static baseline carries this same mapping.
+     * The mapping [computeManifestEntries] sends for [className], delivered or not, or null when
+     * the name was never recorded, the listing has not completed, or the name maps to no
+     * dependency.
      */
     fun mappingFor(className: String): ExternalClass? {
         if (!isListingComplete()) return null
@@ -136,12 +120,12 @@ class ExternalClassRegistry(
     }
 
     /**
-     * Returns chunks of at most [maxPerChunk] entries, each weighing one, covering every name not yet
-     * delivered that is absent or maps to a dependency [isDependencySendable] allows, in the order
-     * the names were first recorded. Resolves any name not yet resolved first. Empty until the
-     * dependency listing completes, and when there is nothing to send. The first call after the
-     * listing completes fixes the backlog that [isBacklogDelivered] waits for. Nothing is marked
-     * delivered here; see [advanceManifest].
+     * Returns chunks of at most [maxPerChunk] entries, covering every name not yet delivered that
+     * is absent or maps to a dependency [isDependencySendable] allows, in the order the names were
+     * first recorded. Resolves any name not yet resolved first. Empty until the dependency listing
+     * completes, and when there is nothing to send. The first call after the listing completes
+     * fixes the backlog that [isBacklogDelivered] waits for. Nothing is marked delivered here; see
+     * [advanceManifest].
      */
     fun computeManifestEntries(maxPerChunk: Int): List<ManifestSnapshot> {
         if (!isListingComplete()) return emptyList()

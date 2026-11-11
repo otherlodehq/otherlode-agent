@@ -9,17 +9,16 @@ import net.bytebuddy.asm.Advice;
 
 /**
  * Woven onto the entry of the Netty server's {@code RoutingInBoundHandler.handleRouteMatch}, which
- * runs once per request that matched a route, before the filters and the handler. A status route
- * reaches it too, as a {@code StatusRouteMatch}, and counts nothing; a {@code UriRouteMatch}
- * counts.
+ * runs once per request that matched a route, before the filters and the handler. A {@code
+ * UriRouteMatch} counts. A status route arrives as a {@code StatusRouteMatch} and counts nothing.
  *
- * <p>The match's {@code UriRoute} is the key {@code Micronaut3Module.declare} registered it under.
- * A route no registration saw is recorded at dispatch, with no handler join. A HEAD route whose
- * method carries the {@code @Get} stereotype is the one Micronaut adds beside a {@code @Get}, so it
- * is recorded against the GET endpoint of the same template.
+ * <p>The match's {@code UriRoute} is the key {@code Micronaut3Module.declare} registered the route
+ * under. A route no registration saw is recorded at dispatch, with no handler join. A HEAD route
+ * whose method carries the {@code @Get} stereotype is the one Micronaut adds beside a {@code @Get},
+ * so it is recorded against the GET endpoint of the same template.
  *
- * <p>This method is deliberately one flat body with no private helper method of its own; see the
- * Spring MVC module's {@code RegisterHandlerMethodAdvice} Javadoc for why.
+ * <p>The advice body is inlined into the woven method, so {@code onEnter} stays one flat body with
+ * no helper methods.
  */
 public class DispatchAdvice {
     private static final String MODULE = "micronaut-3";

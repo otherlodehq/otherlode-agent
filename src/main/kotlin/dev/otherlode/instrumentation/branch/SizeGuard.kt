@@ -19,11 +19,7 @@ enum class SizeGuardReason(
     /** A method's code is capped at 65535 bytes; weaving past it fails the whole class. */
     CLASS_FILE_LIMIT("would not fit a class file", SizeGuard.CODE_LENGTH_LIMIT),
 
-    /**
-     * The entry probe alone can take the method past `HugeMethodLimit`, judged at the entry probe's
-     * largest encoding. Dropping branch probes cannot bring it back under, so nothing is dropped and
-     * the method is only named.
-     */
+    /** The entry probe alone can take the method past `HugeMethodLimit`. The method is named and no branch probe is dropped. */
     ENTRY_PROBE_ALONE("can be carried past the compile limit by its entry probe alone", SizeGuard.HUGE_METHOD_LIMIT),
 }
 
@@ -57,7 +53,10 @@ data class CodeSizeBound(
 
 /** What [SizeGuard.apply] found for one class. */
 class SizeGuardResult(
-    /** The bound for every method that has at least one tracked site, dropped or kept. */
+    /**
+     * The bound for every method that has at least one tracked site, dropped or kept, unless its entry probe
+     * alone takes it past 65535 bytes.
+     */
     val bounds: Map<Pair<String, String>, CodeSizeBound>,
     /** The methods whose branch probes were dropped. */
     val guarded: Map<Pair<String, String>, SizeGuardVerdict>,
@@ -69,7 +68,6 @@ class SizeGuardResult(
     }
 }
 
-/** One tracked site as [SizeGuard] weighs it: a switch has [outcomes] blocks, a two-way jump ignores it. */
 internal class SiteCost(
     val isSwitch: Boolean,
     val outcomes: Int,
@@ -77,46 +75,17 @@ internal class SiteCost(
 )
 
 /**
- * Keeps weaving from pushing a method past two limits: HotSpot's `HugeMethodLimit` of 8000 bytes,
- * above which a method is never JIT-compiled, and the class file's 65535 bytes of code per method,
- * above which the class cannot be written and is skipped whole.
+ * Keeps weaving from pushing a method past HotSpot's `HugeMethodLimit` of 8000 bytes, above which a method
+ * is never JIT-compiled, or past the class file's 65535 bytes of code per method, above which the class
+ * cannot be written and is skipped whole.
  *
  * [apply] bounds each method's woven code length from its length in the class file and its tracked
- * sites, and when the bound crosses a limit it drops every one of that method's still-kept branch
- * sites as [BranchDropReason.SIZE_GUARD]. A dropped site is emitted unchanged and keeps its
- * identity, as for any other drop, and the method keeps its entry probe, so a missing branch
- * finding is a missed finding and never a false one.
+ * sites. When the bound crosses a limit, it drops every still-kept branch site of that method as
+ * [BranchDropReason.SIZE_GUARD], unless the entry probe alone takes the method past that limit or past
+ * 65535. The method keeps its entry probe.
  *
- * The 8000 decision reads the class file alone, so an instance reports the same manifest whatever
- * transformer ran ahead of this agent. The 65535 decision reads the larger of the class file and
- * the received bytes, since the rewrite walks the received bytes and an earlier transformer may
- * have grown them.
- *
- * The bound is the original length plus an upper bound on each construct the weave inserts. Each
- * constant below is read from what [BranchProbeMethodVisitor] and the entry probe emit:
- *
- * - [ARRAY_LOAD] 3: `ldc_w` of the dynamic constant, or `invokestatic` of the accessor. Never more.
- * - [INDEX_PUSH] 3: `iconst`, `bipush` and `sipush` take 1 to 3 bytes; an index past 32767 is an
- *   `ldc` (2) or `ldc_w` (3).
- * - [PROBE_INCREMENT] 11: the load, the index, then `dup2 laload lconst_1 ladd lastore`, 5 bytes.
- * - [ENTRY_PROBE] 11: the same increment.
- * - [TWO_WAY_SITE] 28: a conditional becomes `jump taken; probe; goto continue; taken: probe; goto
- *   target`, 31 bytes in place of the jump's 3. A site with one probed outcome takes less.
- * - [SWITCH_CASE] 14: each case, and the default when probed, gets a block of a probe and a `goto`.
- *   The switch instruction itself keeps its size.
- * - [SWITCH_PADDING] 3: a switch pads to a four-byte boundary, so code inserted before it moves the
- *   padding by up to three bytes either way. Every switch counts, a dropped one included, since it is
- *   emitted unchanged but still moves.
- *
- * The bound counts the probes the site's outcomes ask for, and the original count for a switch
- * (one block per case entry plus the default), so it is never below what the rewriter emits.
- *
- * ASM widens a jump whose offset does not fit 16 bits: `goto` to `goto_w` (2 more bytes) and a
- * conditional to an inverted jump over a `goto_w` (5 more). An offset cannot exceed the code length,
- * so while the bound without widening is at most [WIDENING_THRESHOLD] (32767) nothing widens, and
- * above it [WIDENING_PER_JUMP] bytes are added for every jump the woven method could hold: the
- * method's own jumps plus the two a two-way site inserts and the one per switch block. That counts
- * every jump as widened, which over-states what ASM does and never under-states it.
+ * The 8000 decision reads the class file alone. The 65535 decision reads the larger of the class file
+ * and the received bytes.
  */
 object SizeGuard {
     /** HotSpot's `HugeMethodLimit`: a method over it is never compiled. */
@@ -132,26 +101,22 @@ object SizeGuard {
     const val INDEX_PUSH = 3
     const val PROBE_INCREMENT = ARRAY_LOAD + INDEX_PUSH + 5
 
-    /** The entry probe is one increment at the first instruction and nothing else: no jump, `nop` or frame. */
     const val ENTRY_PROBE = PROBE_INCREMENT
 
-    /** A conditional jump with a 16-bit offset. */
     private const val CONDITIONAL_JUMP = 3
 
-    /** A `goto` with a 16-bit offset. */
     const val GOTO = 3
 
-    /** What a conditional gains when both outcomes are probed: its 3-byte jump becomes 31 bytes, so 28 more. */
+    /** What a conditional gains when both outcomes are probed. */
     const val TWO_WAY_SITE = 2 * (PROBE_INCREMENT + GOTO) + GOTO - CONDITIONAL_JUMP
     const val SWITCH_CASE = PROBE_INCREMENT + GOTO
     const val SWITCH_PADDING = 3
 
-    /** The most ASM adds when it widens one jump: a conditional becomes an inverted jump over a `goto_w`. */
+    /** The most ASM adds when it widens one jump. */
     const val WIDENING_PER_JUMP = 5
 
     private const val TWO_WAY_INSERTED_JUMPS = 2
 
-    /** What [SitePairing.outcomeBounds] gives for a two-way jump, which has no switch outcomes. */
     private const val TWO_WAY = 0
 
     /**
@@ -188,25 +153,11 @@ object SizeGuard {
         return unwidened + WIDENING_PER_JUMP * (jumpCount() + insertedJumps)
     }
 
-    /** [length] with the entry probe and every switch's padding, which is what a method with no branch probe weighs. */
     private fun entryOnly(
         length: Int,
         sites: List<SiteCost>,
     ): Int = length + ENTRY_PROBE + SWITCH_PADDING * sites.count { it.isSwitch }
 
-    /**
-     * Judges each method [isProbed] accepts against [classBytes]'s code lengths, and drops the sites
-     * of one whose bound crosses a limit: [sites] is updated in place and the method's ordinals join
-     * [droppedOrdinalsByMethod]. [receivedBytes] are the bytes the rewrite will walk when they differ
-     * from [classBytes]; the 65535 limit is tested against the larger length, and above 32767 bytes
-     * the received method's own jumps are counted from them. [jumpOpcodes] gives a method's recorded
-     * class-file opcodes, or null when none were recorded.
-     *
-     * A method with at most 8000 bytes of code that the entry probe alone pushes past 8000 is named in
-     * [SizeGuardResult.entryPastLimit] and loses nothing, whether or not it has sites, since the
-     * guard walks every probed method's length and not only those with sites. A class whose method
-     * lengths cannot be read is left alone. [classReader] reads [classBytes] when the caller has one.
-     */
     internal fun apply(
         sites: MutableList<BranchSite>,
         classBytes: ByteArray,
@@ -232,10 +183,8 @@ object SizeGuard {
             val costs = indices.map { SiteCost(sites[it].isSwitch, sites[it].outcomeCount, sites[it].dropReason != null) }
             val receivedLength = received?.get(key) ?: original
             val longest = maxOf(original, receivedLength)
-            // The entry probe alone overflows: nothing the guard drops saves the class, which is skipped and reported.
             if (entryOnly(longest, costs) > CODE_LENGTH_LIMIT) continue
             val bound = boundOf(original, costs) { jumpOpcodes(key)?.count { isJump(it) } ?: 0 }
-            // Bytes an earlier transformer added may hold jumps of their own, so each is counted from the received method.
             val longestBound =
                 if (longest == original) {
                     bound
@@ -274,16 +223,6 @@ object SizeGuard {
         return SizeGuardResult(bounds, guarded, entryPast)
     }
 
-    /**
-     * The methods of a stored plan whose branch probes must go when the plan is woven again against
-     * [receivedBytes]: every method in [methods] that still has a kept site and whose bound over the
-     * received length crosses 65535. The caller leaves such a method out of the branch rewrite
-     * altogether, which keeps the plan's slots as they are and allocates none of them, so its branch
-     * counts stay where they were. [sequences] are the plan's encoded tracked instructions and
-     * [dropped] its dropped ordinals. The bound counts a switch's outcomes as its entries not bound
-     * for the default, plus the default, which is never below the exact count. A method whose entry
-     * probe alone overflows is left, as at the first weave.
-     */
     internal fun reweaveGuarded(
         receivedBytes: ByteArray,
         methods: Collection<Pair<String, String>>,
@@ -316,7 +255,6 @@ object SizeGuard {
             null
         }
 
-    /** Every method's count of `goto`, conditional and `jsr` instructions, which are the jumps ASM may widen. */
     private fun jumpCounts(bytes: ByteArray): Map<Pair<String, String>, Int> {
         val counts = HashMap<Pair<String, String>, Int>()
         try {
@@ -351,10 +289,8 @@ object SizeGuard {
     private fun isJump(opcode: Int): Boolean =
         opcode in Opcodes.IFEQ..Opcodes.JSR || opcode == Opcodes.IFNULL || opcode == Opcodes.IFNONNULL
 
-    /** The `Code` attribute's code length of each method, keyed by name and descriptor, read from the method table alone. */
     internal fun codeLengths(classBytes: ByteArray): Map<Pair<String, String>, Int> = codeLengths(ClassReader(classBytes))
 
-    /** [codeLengths] over a reader the caller already holds. */
     internal fun codeLengths(reader: ClassReader): Map<Pair<String, String>, Int> {
         val buffer = CharArray(reader.maxStringLength)
         var offset = reader.header + CLASS_HEADER_REST
@@ -386,12 +322,9 @@ object SizeGuard {
         return at
     }
 
-    /** access_flags, this_class and super_class. */
     private const val CLASS_HEADER_REST = 6
 
-    /** A field or method's access_flags, name_index and descriptor_index. */
     private const val MEMBER_HEADER = 6
 
-    /** An attribute's name_index and attribute_length. */
     private const val ATTRIBUTE_HEADER = 6
 }

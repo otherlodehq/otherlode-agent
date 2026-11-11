@@ -7,19 +7,13 @@ import java.util.ServiceConfigurationError
 import java.util.ServiceLoader
 
 /**
- * Finds every [EndpointModule] on [classLoader] with [ServiceLoader].
- *
- * Walks [ServiceLoader.iterator] by hand instead of collecting it into a list directly. The JDK's
- * own iterator defers a provider's classloading and construction to the [Iterator.next] call that
- * reaches it, so a single misconfigured provider (a `META-INF/services` entry naming a class no
- * longer on the classpath, a provider whose constructor throws) surfaces as a
- * [ServiceConfigurationError] from that one [Iterator.next] call rather than from
- * [ServiceLoader.load] itself. Catching it there and moving on means one broken module cannot
- * hide every other module behind it.
+ * Finds every [EndpointModule] with [ServiceLoader]. A provider that fails to load is logged and
+ * skipped, so one broken module does not hide the others.
  */
 object EndpointModules {
     private val log by agentLogger(EndpointModules::class.java.name)
 
+    /** The modules found on [classLoader], sorted by name. */
     fun discover(classLoader: ClassLoader = EndpointModules::class.java.classLoader): List<EndpointModule> {
         val modules = mutableListOf<EndpointModule>()
         val iterator = ServiceLoader.load(EndpointModule::class.java, classLoader).iterator()

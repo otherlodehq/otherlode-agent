@@ -8,10 +8,6 @@ import net.bytebuddy.utility.JavaModule
 import java.lang.instrument.Instrumentation
 import java.security.ProtectionDomain
 
-/**
- * The bytes of the class the endpoint pipeline is transforming on this thread, if any, and the
- * modules the pre-filter found could take it.
- */
 internal object CurrentClassFile {
     private class Current(
         val internalName: String?,
@@ -21,16 +17,8 @@ internal object CurrentClassFile {
 
     private val current = ThreadLocal<Current?>()
 
-    /**
-     * The bytes being transformed on this thread, when the class being transformed is
-     * [internalName], or null otherwise.
-     */
     fun bytesOf(internalName: String): ByteArray? = current.get()?.takeIf { it.internalName == internalName }?.bytes
 
-    /**
-     * The modules that could take the class being transformed when it is [internalName], or null
-     * when this thread has no candidate set for it.
-     */
     fun candidatesOf(internalName: String): List<EndpointModule>? = current.get()?.takeIf { it.internalName == internalName }?.candidates
 
     internal fun <T> during(
@@ -49,13 +37,6 @@ internal object CurrentClassFile {
     }
 }
 
-/**
- * Wraps [delegate] so that [CurrentClassFile] holds the bytes it is given while it runs. A
- * transform can load another class on the same thread, so the previous bytes are restored after.
- *
- * With a [preFilter], a class no module could take returns null without calling [delegate], and
- * the candidates are recorded beside the bytes for the raw matchers.
- */
 internal class CurrentClassFileTransformer(
     private val delegate: ResettableClassFileTransformer,
     private val preFilter: EndpointPreFilter? = null,

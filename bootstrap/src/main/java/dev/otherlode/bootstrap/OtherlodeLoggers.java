@@ -8,17 +8,14 @@ import java.util.function.Supplier;
 /**
  * The only way the agent asks for a {@link System.Logger}.
  *
- * <p>The boot loader defines this class, so the JDK treats the caller as a system class and hands
- * out a surrogate logger. A caller from the application loader would make the JDK create the
- * {@code java.util.logging.LogManager} at once, before the application can choose its own with the
- * {@code java.util.logging.manager} property.
+ * <p>The boot loader defines this class, so without a {@code System.LoggerFinder} bridge the JDK
+ * hands out a surrogate logger and does not create the {@code java.util.logging.LogManager} at
+ * once.
  *
- * <p>A {@code System.LoggerFinder} bridge, such as {@code log4j-jpl}, gets no surrogate: the first
- * logger requested for a system class starts the bridge's backend. While a bridge is present, a
- * logger from {@link #get} writes through the fallback set by {@link #setFallback} until the gate
- * opens, so an application can configure its logging in {@code main} first. The gate opens by
- * itself {@link #GATE_SECONDS} seconds after the first request. {@link #openGate} opens it at once;
- * the agent calls that only when the JVM is shutting down.
+ * <p>While a {@code System.LoggerFinder} bridge such as {@code log4j-jpl} is present, a logger
+ * from {@link #get} writes through the fallback set by {@link #setFallback} until the gate opens.
+ * The gate opens by itself {@link #GATE_SECONDS} seconds after the first request, or at once
+ * through {@link #openGate}.
  */
 public final class OtherlodeLoggers {
     /** How long the gate stays closed at most. */
@@ -97,7 +94,10 @@ public final class OtherlodeLoggers {
         return Math.max(0, TimeUnit.NANOSECONDS.toMillis(left));
     }
 
-    /** Returns once the gate is open. Opens it when {@link #GATE_SECONDS} have passed. Returns at once with no bridge. */
+    /**
+     * Returns once the gate is open, or when the thread is interrupted, with its interrupt status set. Opens it when
+     * {@link #GATE_SECONDS} have passed. Returns at once with no bridge.
+     */
     public static void awaitGate() {
         if (!Bridge.PRESENT) {
             return;

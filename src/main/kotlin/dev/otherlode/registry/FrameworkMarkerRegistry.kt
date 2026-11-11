@@ -14,7 +14,7 @@ class FrameworkMarkerDefinition(
     val classSets: List<List<String>>,
 )
 
-/** The markers the agent looks for. Each is proved by a fixture in `framework-markers` before it is listed. */
+/** The markers the agent looks for. */
 object FrameworkMarkers {
     val ALL: List<FrameworkMarkerDefinition> =
         listOf(
@@ -68,9 +68,8 @@ object FrameworkMarkers {
 /**
  * The framework markers seen in this run and which of them a confirmed manifest has carried.
  *
- * [observe] reads the names of classes the JVM has already defined and never resolves a class, so
- * a marker is seen only when its classes loaded without the agent's help. A marker once seen stays
- * seen: the wire has no retraction.
+ * [observe] reads the names of classes the JVM has already defined and never resolves a class. A
+ * marker once seen stays seen.
  */
 class FrameworkMarkerRegistry(
     private val markers: List<FrameworkMarkerDefinition> = FrameworkMarkers.ALL,
@@ -92,7 +91,7 @@ class FrameworkMarkerRegistry(
 
     /**
      * Records every marker not yet seen that has a class set wholly among [loaded]'s names, stamped
-     * [seenAt]. A name lookup per class and nothing else.
+     * [seenAt].
      */
     fun observe(
         loaded: Array<Class<*>>,
@@ -112,7 +111,10 @@ class FrameworkMarkerRegistry(
         }
     }
 
-    /** Whether some marker in the list has not been seen yet, so the loaded classes are still worth reading. */
+    /**
+     * Whether some marker in the list has not been seen yet, so the loaded classes are still worth
+     * reading.
+     */
     fun hasUnseen(): Boolean = seen.size < markers.size
 
     /** Every marker seen so far, in the fixed list's order. */
@@ -128,7 +130,10 @@ class FrameworkMarkerRegistry(
         return if (due.isEmpty()) null else ManifestSnapshot(due)
     }
 
-    /** Marks every marker [snapshot] carried as delivered. Call it only once that manifest is confirmed. */
+    /**
+     * Marks every marker [snapshot] carried as delivered. Call it only once that manifest is
+     * confirmed.
+     */
     fun advanceManifest(snapshot: ManifestSnapshot) {
         for (marker in snapshot.markers) seen[marker.id]?.delivered = true
     }

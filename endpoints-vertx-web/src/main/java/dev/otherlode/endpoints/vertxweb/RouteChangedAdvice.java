@@ -8,8 +8,8 @@ import net.bytebuddy.asm.Advice;
  * which change what a route declares after it has entered a router. The event is {@code
  * {"changed", router, route}}.
  *
- * <p>This method is deliberately one flat body with no private helper method of its own; see the
- * Spring MVC module's {@code RegisterHandlerMethodAdvice} Javadoc for why.
+ * <p>The advice body is inlined into the woven method, so {@code onExit} stays one flat body with
+ * no helper methods.
  */
 public class RouteChangedAdvice {
     private static final String MODULE = "vertx-web";

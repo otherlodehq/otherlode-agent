@@ -7,8 +7,8 @@ import net.bytebuddy.asm.Advice;
  * Woven onto the exit of {@code RouterImpl.clear()}, which drops every route and tells nobody.
  * The event is {@code {"clear", router}}.
  *
- * <p>This method is deliberately one flat body with no private helper method of its own; see the
- * Spring MVC module's {@code RegisterHandlerMethodAdvice} Javadoc for why.
+ * <p>The advice body is inlined into the woven method, so {@code onExit} stays one flat body with
+ * no helper methods.
  */
 public class RoutesClearedAdvice {
     private static final String MODULE = "vertx-web";

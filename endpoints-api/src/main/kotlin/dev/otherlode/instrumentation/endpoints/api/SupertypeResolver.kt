@@ -7,16 +7,19 @@ import java.util.Collections
 import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
 
-/** Thrown when a supertype can be neither described from the pool nor loaded, so the class extending it can never be defined. */
+/**
+ * Thrown when a supertype can be neither described from the pool nor loaded, so the class extending
+ * it can never be defined.
+ */
 class UndefinableTypeException(
     typeName: String,
 ) : RuntimeException("$typeName cannot be described or loaded", null, false, false)
 
 /**
- * What a [SupertypeResolver] remembers for one class loader: which supertypes loaded, and which
- * were found definable with everything above them. Neither answer is held by a strong reference to a
- * class, so a cache kept for a loader never keeps that loader alive through its own entries. A module
- * extends it to keep answers of its own, and overrides [isKnown] to say which names those answers cover.
+ * What a [SupertypeResolver] remembers for one class loader: which supertypes loaded and which
+ * were found definable. It holds no strong reference to a class, so a cache kept for a loader
+ * never keeps that loader alive. A module extends it to keep answers of its own and overrides
+ * [isKnown] to say which names those answers cover.
  */
 open class SupertypeCache {
     private val loaded = ConcurrentHashMap<String, LoadAnswer>()
@@ -79,22 +82,11 @@ class SupertypeCaches<C : SupertypeCache>(
  * Reads a type's supertypes, erased, for [loader]'s classes, leaving out those [skipped] names.
  * It holds [loader] weakly, so a matcher built on it never keeps a retired loader alive.
  *
- * The agent's pool resolves lazily (`TypePool.Default.WithLazyResolution`), so `asErasure()` hands
- * back a description that throws only when something reads it. A supertype the pool has no class
- * file for is therefore detected here by reading it, then asked of [loader] with
- * `Class.forName(name, false, loader)`. A class defined with no reachable class file, such as an
- * interface OpenTelemetry's agent generates in memory, loads, and is described from the loaded class.
- * One that does not load is a class [loader] cannot define, and [UndefinableTypeException] says so.
- * One that loads but whose methods cannot be reflected, because a type in a signature is absent, is
- * not undefinable, since the JVM resolves signature types lazily: the error reaches the caller, which
+ * A supertype the pool has no class file for is asked of [loader] with
+ * `Class.forName(name, false, loader)` and described from the loaded class. One that does not
+ * load is a class [loader] cannot define, and [UndefinableTypeException] says so. One that loads
+ * but whose methods cannot be reflected is not undefinable: the error reaches the caller, which
  * for a matcher switches its module off rather than guess.
- *
- * The load happens only when the pool had no bytes for a supertype, which is rare, and inside the
- * transform of the class that extends it, so the JVM would load that supertype next on this same
- * thread to define the class. It initialises nothing. A loader that locks itself for loading already
- * holds that lock here and re-enters it; a parallel-capable loader locks per class name. A cyclic
- * hierarchy, the only way the load could need the class being defined, is invalid and fails the
- * definition regardless.
  */
 class SupertypeResolver(
     loader: ClassLoader?,

@@ -11,34 +11,15 @@ import java.util.function.Supplier
 import kotlin.properties.ReadOnlyProperty
 import kotlin.reflect.KProperty
 
-/**
- * A logger for the agent's classes. Once the agent has put the bootstrap jar on the boot class
- * path, it logs through the boot loader's [OtherlodeLoggers], so the JDK does not create the
- * application's `java.util.logging.LogManager` on the agent's behalf. Before that, and in a JVM
- * where the jar is never appended, it writes to standard error in the format of the JDK's default
- * console logger. It never asks the JDK for a logger itself. A logger created after the install is
- * the boot loader's own, with no wrapper unless a `System.LoggerFinder` bridge is present; then
- * [OtherlodeLoggers] writes through [AgentLogger] until its gate opens.
- */
+// Asks the JDK for a logger only through OtherlodeLoggers, which the boot loader defines.
+// A request from the agent's own loader would create the application's LogManager.
 internal fun bootLogger(name: String): System.Logger =
     if (BootstrapHolder.isInstalled()) OtherlodeLoggers.get(name) else AgentLogger(name, switches = true)
 
-/**
- * Whether the agent writes its log lines to standard error whatever the application's logging
- * holds. It starts false. The shutdown hook sets it when it starts, since the JVM runs
- * `java.util.logging`'s hook at the same time, that hook resets every handler, and a line through
- * it is then lost.
- */
 internal object StandardErrorLogging {
     @Volatile var on: Boolean = false
 }
 
-/**
- * The logger of a class, as a property delegate: [bootLogger] until [StandardErrorLogging] is on,
- * then a writer to standard error in the console format of ADR 0081. The logger is made at its
- * first use, as a `by lazy` field is, and a call goes straight to the logger, so a record names
- * the class that logged.
- */
 internal fun agentLogger(name: String): ReadOnlyProperty<Any?, System.Logger> = SwitchedLogger(name)
 
 private class SwitchedLogger(
@@ -53,10 +34,8 @@ private class SwitchedLogger(
     ): System.Logger = if (StandardErrorLogging.on) standardError.value else normal.value
 }
 
-/**
- * Every overload the agent calls is overridden, because the JDK's default methods pass a null
- * parameter array to the abstract vararg overload, which Kotlin's null check rejects.
- */
+// Overrides every overload the agent calls: the JDK default methods pass a null array to the vararg
+// overload, which Kotlin's null check rejects.
 internal class AgentLogger(
     private val loggerName: String,
     private val switches: Boolean,

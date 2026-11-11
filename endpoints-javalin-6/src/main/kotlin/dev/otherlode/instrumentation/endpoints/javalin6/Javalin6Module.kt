@@ -23,7 +23,6 @@ private const val CRUD_HANDLER = "io.javalin.apibuilder.CrudHandler"
 private const val HANDLER = "io.javalin.http.Handler"
 private const val ADVICE_PACKAGE = "dev.otherlode.endpoints.javalin6"
 
-/** Javalin 6's `ParsedEndpoint` reads its endpoint through a public `getEndpoint()`; Javalin 7 exposes a field. */
 private val JAVALIN_6_PARSED_ENDPOINT: ElementMatcher<TypeDescription> =
     declaresMethod(named<MethodDescription>("getEndpoint").and(takesArguments(0)).and(isPublic()))
 
@@ -40,19 +39,13 @@ private fun parsedEndpointIsJavalin6(classLoader: ClassLoader): Boolean =
  * match the same classes and have no public `Endpoint.getHandler()`, so the module switches itself
  * off there with a `LINKAGE_ERROR` at the first registration.
  *
- * Javalin 7 keeps every hooked descriptor, so a module matching by name would weave a release it
- * was not built for and fail on it. This one accepts `ParsedEndpoint` only when it declares
- * `getEndpoint()`, and `ApiBuilder` only on a class loader whose `ParsedEndpoint` has that shape.
+ * It accepts `ParsedEndpoint` only when it declares `getEndpoint()`, and `ApiBuilder` only on a
+ * class loader whose `ParsedEndpoint` has that shape, so it does not weave Javalin 7.
  *
- * The exit of the `ParsedEndpoint` constructor declares an endpoint, after the path parsed. The
- * entry of `ParsedEndpoint.handle` counts it, which Javalin's HTTP lifecycle task reaches once
- * per request for the first match, after the before-handlers: a request one of them rejects,
- * redirects or skips is not counted. The match itself is inlined and compiler-generated, so
- * nothing earlier can be hooked.
- *
- * `ApiBuilder.crud` registers a `CrudHandler`'s five endpoints through lambdas of Javalin's own.
- * Its entry and exit open and close a registration scope in the bootstrap seam, which the
- * registration advice reads to join each endpoint to the handler's method.
+ * The exit of the `ParsedEndpoint` constructor declares an endpoint. The entry of
+ * `ParsedEndpoint.handle` counts it. The entry and exit of `ApiBuilder.crud` open and close a
+ * registration scope that the registration advice reads to join each endpoint to the handler's
+ * method.
  */
 class Javalin6Module : EndpointModule {
     override val name: String = "javalin-6"

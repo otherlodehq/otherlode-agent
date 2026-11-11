@@ -19,24 +19,6 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipException
 import java.util.zip.ZipInputStream
 
-/**
- * Reads the [JarContents] of a jar nested inside another, the way Spring Boot reads it: from the
- * nested jar's central directory, so the library classpath is never inflated.
- *
- * A nested jar the outer jar stores uncompressed is read by random access: the end of central
- * directory record, the ZIP64 records when present, the central directory, and then only the
- * local entries whose data is needed, the `pom.properties` files and the manifest. A nested jar
- * the outer jar compresses is streamed with [ZipInputStream], since random access into it would
- * inflate it anyway.
- *
- * A ZIP64 end record found through the locator before the end record is used whenever its fields
- * agree with the end record's, saturated or not, as the JDK's `ZipFile` decides. Fewer bytes than a
- * record after the last central record are ignored, since Spring Boot reads only the records the end
- * record counts.
- *
- * Every stream opened is closed before the read returns, and only the central directory and the
- * needed entries are held in memory, never the jar.
- */
 internal object NestedJarReader {
     private const val END_SIGNATURE = 0x06054b50
     private const val END_SIZE = 22
@@ -54,11 +36,6 @@ internal object NestedJarReader {
     private const val SATURATED_16 = 0xFFFF
     private const val SATURATED_32 = 0xFFFFFFFFL
 
-    /**
-     * The contents of [entry], a nested jar of [outer]. Throws for a jar that cannot be read: a
-     * [ZipException] naming what was wrong with a malformed stored jar, what parsing its manifest or a
-     * `pom.properties` throws, or what [ZipInputStream] throws for a compressed one.
-     */
     fun read(
         outer: JarFile,
         entry: JarEntry,
@@ -176,14 +153,6 @@ internal object NestedJarReader {
             return null
         }
 
-        /**
-         * The ZIP64 end record that the locator just before [endPosition] points to, or null when no
-         * locator precedes the end record, no record answers it, or a field of the record disagrees
-         * with an unsaturated field of the end record, as the JDK's `ZipFile` decides. The record is
-         * looked for at the locator's offset, where it must end by the locator, as the JDK and Spring
-         * Boot look for it. In a zip with a prefix that offset misses, so it is then looked for just
-         * before the locator, where its own size field must place it.
-         */
         private fun zip64End(
             endPosition: Long,
             total: Long,

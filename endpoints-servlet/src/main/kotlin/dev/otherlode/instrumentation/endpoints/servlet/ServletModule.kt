@@ -27,7 +27,7 @@ private const val ADVICE = "dev.otherlode.endpoints.servlet.ServletServiceAdvice
 private val NAMESPACES = listOf("javax", "jakarta")
 private val SERVLET_MARKERS = NAMESPACES.map { "$it/servlet/Servlet.class" }
 private val SERVLET_INTERFACES = NAMESPACES.map { "$it.servlet.Servlet" }.toSet()
-/** Built at run time, since `shadowJar` rewrites a constant that starts with `kotlin`. */
+// Built at run time, since shadowJar rewrites a constant that starts with kotlin.
 private val KOTLIN_PREFIX = listOf("kot", "lin", ".").joinToString("")
 
 private val SKIPPED_SUPERTYPE_PREFIXES = listOf("java.", "jdk.", "sun.", "com.sun.", KOTLIN_PREFIX)
@@ -37,11 +37,6 @@ private val SERVICE_DESCRIPTOR_MARKER = "/servlet/ServletResponse;)".toByteArray
 
 private fun isSkippedSupertype(name: String): Boolean = SKIPPED_SUPERTYPE_PREFIXES.any { name.startsWith(it) }
 
-/**
- * Whether [type] is, or extends or implements, a servlet interface, and every supertype it needs to
- * be defined can be described or loaded. A supertype that can be neither means [type] can never be
- * defined, so it is not a servlet this module can count.
- */
 private fun isServlet(
     type: TypeDescription,
     resolver: SupertypeResolver,
@@ -94,7 +89,6 @@ private fun containsMarker(haystack: ByteArray): Boolean {
     return false
 }
 
-/** Whether a loader can see a servlet API, looked up once per loader and held weakly. */
 private class ServletApiGate : ElementMatcher<ClassLoader?> {
     private val answers = Collections.synchronizedMap(WeakHashMap<ClassLoader, Boolean>())
 
@@ -111,16 +105,11 @@ private class ServletApiGate : ElementMatcher<ClassLoader?> {
  * Endpoint module for plain servlets, covering the `javax.servlet` and `jakarta.servlet`
  * namespaces with one module compiled against Servlet 4.0. See ADR 0074.
  *
- * A request is counted at the entry of the servlet's public `service(ServletRequest,
- * ServletResponse)`, for a `REQUEST`, `FORWARD` or `INCLUDE` dispatch, against the mapping the
- * container matched (`HttpServletRequest.getHttpServletMapping`, or the include mapping attribute). The advice is woven onto every servlet class that
- * declares that method, `HttpServlet` included, and a request is counted by exactly one of the
- * frames it passes through: the keys of a servlet are bound only for the most derived class that
- * declares the method (see [ServletShapes]).
- *
- * A servlet context is declared at the first `REQUEST`, `FORWARD` or `INCLUDE` dispatch that reaches a hooked servlet in it,
- * from its servlet registrations, and again before each manifest for a mapping added since (see [ServletContexts]). Servlets another
- * module counts behind, and a container's own servlets, are left out.
+ * A request counts at the entry of the servlet's public `service(ServletRequest,
+ * ServletResponse)`, against the mapping the container matched. Exactly one of the frames a
+ * request passes through counts it. A servlet context is declared at the first dispatch that
+ * reaches a hooked servlet in it, and again before each manifest for a mapping added since.
+ * Servlets another module counts behind, and a container's own servlets, are left out.
  */
 class ServletModule : EndpointModule {
     override val name: String = MODULE_NAME
@@ -132,8 +121,8 @@ class ServletModule : EndpointModule {
     override fun classLoaderMatcher(): ElementMatcher<in ClassLoader> = apiGate
 
     /**
-     * Whether [classFile] holds the text `/servlet/ServletResponse;)`. Every method [serviceMethod]
-     * accepts has a descriptor that ends its arguments with it, stored as a constant pool entry.
+     * Whether [classFile] holds the text `/servlet/ServletResponse;)`, which the descriptor of every
+     * `service` method this module hooks contains.
      */
     override fun classFileMayMatch(classFile: ByteArray): Boolean = containsMarker(classFile)
 
@@ -141,8 +130,8 @@ class ServletModule : EndpointModule {
 
     /**
      * A supertype the pool has no class file for is asked of [classLoader] (see
-     * [SupertypeResolver]): one that cannot be loaded means the class can never be defined, so the
-     * answer is no match, and one that loads is read from the loaded class.
+     * [SupertypeResolver]). One that cannot be loaded means the class can never be defined, so the
+     * answer is no match.
      */
     override fun typeMatcher(classLoader: ClassLoader?): ElementMatcher<in TypeDescription> {
         val resolver = SupertypeResolver(classLoader, supertypeCaches.cacheFor(classLoader), ::isSkippedSupertype)

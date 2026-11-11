@@ -4,28 +4,11 @@ import java.lang.instrument.ClassFileTransformer
 import java.security.ProtectionDomain
 
 /**
- * Captures the received bytes: a class's bytes as they reach this agent's transformer chain, after
- * every earlier transformer.
- *
- * ByteBuddy's transform callback only exposes type metadata, not the buffer. The analysis reads the
- * class file, through the class's own loader, so an instance reports the same shape whatever ran
- * ahead of it; the probes are woven into the received bytes, so an earlier transformer's changes
- * survive. When the two differ, which is what JaCoCo's agent or AspectJ's weaver leaves,
- * [dev.otherlode.instrumentation.branch.SitePairing] lines up each method's branch sites between
- * them, and needs these bytes to do it. When the loader serves no class file for the class (bytes
- * defined from memory), these are the bytes the analysis reads.
- *
- * The bytes are captured on a retransformation or redefinition too. Weaving a class again pairs
- * the bytes that arrive then against the class file's tracked instructions its first weave stored,
- * not against the class file itself.
- *
- * Registered retransformation-capable immediately before ByteBuddy's own transformer, which is
- * registered the same way. The JVM calls the transformers within that group in registration order,
- * so this one always sees a class just before ByteBuddy does, on the same thread. Bytes are kept
- * per thread in a small most-recently-used map rather than a single slot, because resolving a type
- * inside ByteBuddy's transform can trigger nested class loads (the agent's own classes on first
- * use, for example) whose transformer calls would otherwise overwrite the bytes of the class still
- * being transformed.
+ * Captures a class's bytes as they reach this agent's transformer chain, after every earlier
+ * transformer, on a load, retransformation or redefinition. It must be registered
+ * retransformation-capable immediately before ByteBuddy's own transformer, so that it sees each
+ * class just before ByteBuddy does, on the same thread. Bytes are kept per thread and per class, since
+ * a nested class load during a transform must not overwrite the bytes of the class being transformed.
  */
 class ClassBytesCapture(
     private val isCandidate: (internalName: String) -> Boolean,
@@ -50,19 +33,13 @@ class ClassBytesCapture(
         return null
     }
 
-    /** Returns and forgets the bytes captured for [internalName] on this thread, or null if none were. */
+    /** Returns and removes the bytes captured for [internalName] on this thread, or null if none were. */
     fun take(internalName: String): ByteArray? = recent.get().remove(internalName)
 
     /** Returns the bytes captured for [internalName] on this thread without forgetting them, or null if none were. */
     fun peek(internalName: String): ByteArray? = recent.get()[internalName]
 
     private companion object {
-        /**
-         * Bounds how many classes' bytes one thread can hold at once. Entries are consumed by the
-         * transform that follows them, so this only ever holds candidates the type matcher turned
-         * away by shape (synthetic, generated at runtime, a coroutine continuation) or classes
-         * already loaded that this agent never wove, until they age out.
-         */
         const val MAX_ENTRIES_PER_THREAD = 64
     }
 }

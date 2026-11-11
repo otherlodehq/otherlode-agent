@@ -7,23 +7,17 @@ package dev.otherlode.instrumentation.branch
  */
 enum class BranchDropReason {
     /**
-     * The site is a copy of a Kotlin inline function's body, planted by kotlinc's inliner at the
-     * call site, whose origin class the include rules leave out of scope.
+     * The site is a copy of a Kotlin inline function's body whose origin class the include rules leave
+     * out of scope.
      */
     INLINED_OUT_OF_SCOPE,
 
-    /**
-     * The site is part of the state machine kotlinc weaves into a suspend function or suspend
-     * lambda: the switch on the continuation's `label`, a compare against the suspended marker,
-     * or the preamble's re-entry tests.
-     */
+    /** The site is part of the state machine kotlinc weaves into a suspend function or suspend lambda. */
     COROUTINE_MACHINERY,
 
     /**
-     * The site is one of the jumps a compiler adds when it lowers a `switch`, `when` or `match`
-     * over a string or an enum: a switch on `hashCode()`, an `equals` check that only picks a case
-     * index, or a null check on the subject. The source's own cases are read from the lowering
-     * instead.
+     * The site is a jump a compiler adds when it lowers a `switch`, `when` or `match` over a string or an
+     * enum: a switch on `hashCode()`, an `equals` check that only picks a case index, or a null check on the subject.
      */
     SWITCH_LOWERING,
 
@@ -35,10 +29,8 @@ enum class BranchDropReason {
     SIZE_GUARD,
 
     /**
-     * The site is a check a JPA enhancer added to the adopter's own method: EclipseLink's weaving put
-     * it before the first line-number entry, such as a getter's test of `_persistence_listener`, or
-     * OpenJPA's `if (clear) pcSetDetachedState(null)` before a return of a hand-written `writeObject`.
-     * The method keeps its probe and its other branch probes.
+     * The site is a check a JPA enhancer (EclipseLink or OpenJPA) added to the adopter's own method. The
+     * method keeps its other probes.
      */
     JPA_WEAVING,
 }

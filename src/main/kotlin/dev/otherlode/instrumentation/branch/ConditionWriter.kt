@@ -19,11 +19,6 @@ internal class LocalVariable(
     val descriptor: String,
 )
 
-/**
- * One method's instructions as [ConditionFingerprinter] recorded them, with what [ConditionWriter]
- * needs besides: the labels placed before each instruction, the exception handler labels, the
- * local variable table, and the start of each tracked site's window.
- */
 internal class MethodInstructionsView(
     val insns: List<Insn>,
     val labelsAt: Map<Int, List<Label>>,
@@ -31,14 +26,12 @@ internal class MethodInstructionsView(
     val local: (varIndex: Int, instructionIndex: Int) -> LocalVariable?,
     val windowStartOf: (siteInstructionIndex: Int) -> Int?,
 ) {
-    /** The instruction index each label is placed before. */
     val indexOfLabel: Map<Label, Int> by lazy {
         val result = HashMap<Label, Int>()
         for ((index, labels) in labelsAt) for (label in labels) result.putIfAbsent(label, index)
         result
     }
 
-    /** The index of every jump and switch that can go to each label. */
     val jumpSources: Map<Label, List<Int>> by lazy {
         val result = HashMap<Label, MutableList<Int>>()
         for ((index, insn) in insns.withIndex()) {
@@ -58,25 +51,7 @@ internal class MethodInstructionsView(
     }
 }
 
-/**
- * Writes a branch site's condition in the class's source language, as a list of parts.
- *
- * The writer walks the site's fingerprint window with a stack of expression trees and reads the
- * site's jump the way its fall-through side sees it: the jump's own test, negated. A switch's
- * condition is its subject. An instruction or call it has no rule for becomes a placeholder. When
- * the whole condition would be one placeholder, the site has no condition and the writer returns
- * an empty list.
- *
- * Compiler idioms are read back to source only in shapes confirmed against `javap` output.
- * Kotlin runtime owners are matched by suffix, since the shaded jar rewrites `kotlin/` literals in
- * this agent's own code.
- */
 internal object ConditionWriter {
-    /**
-     * The condition of the site at [siteIndex] in [method], from the window that starts at
-     * [windowStart]. [ownerInternalName] is the class that declares the method. [isEnum] tells
-     * whether a class, by internal name, is an enum, and answers false when it cannot tell.
-     */
     fun write(
         method: MethodInstructionsView,
         windowStart: Int,
@@ -98,11 +73,6 @@ internal object ConditionWriter {
         return Renderer(language).render(expression)
     }
 
-    /**
-     * The value on top of the operand stack just before instruction [end], walked from
-     * [windowStart], as parts. It is empty when the walk fails or the value is only a
-     * placeholder. [ConditionFingerprinter] writes a lowered switch's subject with it.
-     */
     fun writeValue(
         method: MethodInstructionsView,
         windowStart: Int,
@@ -115,12 +85,6 @@ internal object ConditionWriter {
         return Renderer(language).render(value)
     }
 
-    /**
-     * `subject == "literal"` when [equal] is true, and `subject != "literal"` when it is false.
-     * The subject is the value [writeValue] reads, or a placeholder when it cannot be read.
-     * [ConditionFingerprinter] writes each string case check a lowering keeps as a plain site with
-     * this.
-     */
     fun writeLiteralEquality(
         method: MethodInstructionsView,
         windowStart: Int,
@@ -162,8 +126,6 @@ internal object ConditionWriter {
             return desc.startsWith("L") && desc.endsWith(";") && isEnum(desc.substring(1, desc.length - 1))
         }
 
-        // kotlinc compiles `==` between enum values to if_acmp. Identity is equality for an enum,
-        // so `==` is exact there, while `===` is the only true reading for any other class.
         val identityIsEquality = { left: Expr, right: Expr ->
             names.language == SourceLanguage.KOTLIN && (isEnumValue(left) || isEnumValue(right))
         }
@@ -178,15 +140,10 @@ internal object ConditionWriter {
             else -> false
         }
 
-    /** Thrown inside the writer when the window cannot be read, such as a stack underflow. */
     private class Unwritable : RuntimeException(null, null, false, false)
 
     private fun unwritable(): Nothing = throw Unwritable()
 
-    /**
-     * An expression tree node. [desc] is the JVM descriptor of the value when it is known, and
-     * [size] is its width in stack words.
-     */
     private sealed class Expr(
         val desc: String?,
         val size: Int = if (desc == "J" || desc == "D") 2 else 1,
@@ -196,7 +153,6 @@ internal object ConditionWriter {
             size: Int = if (desc == "J" || desc == "D") 2 else 1,
         ) : Expr(desc, size)
 
-        /** Source text that needs no parentheses in any position, such as a name or a literal. */
         class Atom(
             val text: String,
             desc: String?,
@@ -215,7 +171,6 @@ internal object ConditionWriter {
             val internalName: String,
         ) : Expr("Ljava/lang/Class;")
 
-        /** A `NEW` whose constructor has not run yet. */
         class Uninit(
             val internalName: String,
         ) : Expr("L$internalName;")
@@ -271,11 +226,6 @@ internal object ConditionWriter {
             val array: Expr,
         ) : Expr("I")
 
-        /**
-         * The `-1`, `0` or `1` an `LCMP`, `FCMPx`, `DCMPx` or Kotlin's `Intrinsics.compare` leaves.
-         * [nanResult] is what the instruction gives when either operand is NaN, or null for a
-         * compare of integers.
-         */
         class Compare(
             val left: Expr,
             val right: Expr,
@@ -286,26 +236,17 @@ internal object ConditionWriter {
             val elements: List<Expr>,
         ) : Expr("Ljava/lang/String;")
 
-        /**
-         * A narrowing conversion of [operand] to the primitive [desc]. Each language writes it its
-         * own way: Kotlin `x.toInt()`, Java `(int) x`, Scala `x.toInt`.
-         */
         class Convert(
             val operand: Expr,
             desc: String,
         ) : Expr(desc)
 
-        /**
-         * [inner] seen through a cast, a box, an unbox or a widening conversion: it renders as
-         * [inner] with a new type.
-         */
         class Retyped(
             val inner: Expr,
             desc: String?,
         ) : Expr(desc)
     }
 
-    /** A binary operator. Each language spells and ranks some of them its own way. */
     private enum class Op {
         MUL,
         DIV,
@@ -331,7 +272,6 @@ internal object ConditionWriter {
         val isRelation: Boolean get() = this in LT..REF_NE
     }
 
-    /** How the relation each jump tests, against zero or between two ints, reads when it does not jump. */
     private fun fallThroughRelation(opcode: Int): Op =
         when (opcode) {
             Opcodes.IFEQ, Opcodes.IF_ICMPEQ -> Op.NE
@@ -370,11 +310,6 @@ internal object ConditionWriter {
             else -> unwritable()
         }
 
-    /**
-     * The expression that is true exactly when [expression] is false. Equality flips, which holds
-     * for NaN too. An ordering relation does not flip, since `!(a > b)` and `a <= b` differ when an
-     * operand is NaN.
-     */
     private fun negate(expression: Expr): Expr =
         when {
             expression is Expr.Not -> {
@@ -394,7 +329,6 @@ internal object ConditionWriter {
             }
         }
 
-    /** A relation between [left] and [right], with an `int` constant written as a `char` or a `boolean` to match the other side. */
     private fun relation(
         op: Op,
         left: Expr,
@@ -440,9 +374,7 @@ internal object ConditionWriter {
         return "'$body'"
     }
 
-    /** Reads a site's jump or switch against the stack its window leaves. */
     private object FallThrough {
-        /** [identityIsEquality] tells whether an `if_acmp` between two values reads as `==` rather than as identity. */
         fun read(
             site: Insn,
             stack: MutableList<Expr>,
@@ -507,9 +439,6 @@ internal object ConditionWriter {
             val compare = unwrap(value) as? Expr.Compare
             return when {
                 compare != null -> {
-                    // A NaN operand makes a float or double compare give its nanResult. When that
-                    // value also falls through, the source relation is false there, so the
-                    // condition is written as the jump's own relation, negated.
                     val nan = compare.nanResult
                     if (nan != null && holds(op, nan)) {
                         Expr.Not(Expr.Binary(complement(op), compare.left, compare.right, "Z"))
@@ -543,11 +472,9 @@ internal object ConditionWriter {
     private val INT_LIKE = setOf("I", "S", "B", "C")
     private const val STRING = "Ljava/lang/String;"
 
-    /** How names read in the class's source language. */
     private class Names(
         val language: SourceLanguage,
     ) {
-        /** A local's name as the source wrote it. Kotlin marks inlined copies with `$iv` and extension receivers with `$this$`. */
         fun local(name: String): String {
             if (language != SourceLanguage.KOTLIN) return name
             var result = name
@@ -555,7 +482,6 @@ internal object ConditionWriter {
             return if (result.startsWith(EXTENSION_RECEIVER_PREFIX)) "this" else result
         }
 
-        /** A class's simple name, or null when it has none a source file could write, such as an anonymous class. */
         fun simpleName(internalName: String): String? {
             val simple = internalName.substringAfterLast('/').substringAfterLast('$')
             return simple.takeIf { IDENTIFIER.matches(it) }
@@ -568,7 +494,6 @@ internal object ConditionWriter {
         }
     }
 
-    /** Walks a window, one instruction at a time, keeping a stack of expressions. */
     private class Evaluator(
         private val method: MethodInstructionsView,
         private val windowStart: Int,
@@ -578,12 +503,10 @@ internal object ConditionWriter {
         private val insns = method.insns
         private val language = names.language
 
-        /** Null while the walk is past an instruction that never falls through. */
         private var stack: MutableList<Expr>? = mutableListOf()
         private val pending = HashMap<Label, MutableList<List<Expr>>>()
         private val walkedJumps = HashSet<Int>()
 
-        /** The stack just before instruction [end], or null when the window cannot be read. */
         fun stackBefore(end: Int): MutableList<Expr>? {
             for (i in windowStart until end) {
                 if (i > windowStart && !mergeAt(i)) return null
@@ -594,13 +517,6 @@ internal object ConditionWriter {
             return stack
         }
 
-        /**
-         * Joins the stacks that reach instruction [index] through the labels placed before it.
-         * A value that is the same on every path is kept, and any other becomes a placeholder. A
-         * label reached from outside what this walk has seen, such as a jump from before the
-         * window or back from later in the method, makes every value there a placeholder. Returns
-         * false when no stack at all is known there.
-         */
         private fun mergeAt(index: Int): Boolean {
             val labels = method.labelsAt[index] ?: return true
             var unknownSource = false
@@ -757,7 +673,6 @@ internal object ConditionWriter {
             }
         }
 
-        /** The type a load opcode fixes. An `ILOAD` could be a boolean, a char or an int, and an `ALOAD` anything. */
         private fun loadDescriptor(opcode: Int): String? =
             when (opcode) {
                 Opcodes.LLOAD -> "J"
@@ -842,7 +757,6 @@ internal object ConditionWriter {
             if (returnDesc != "V") s += result
         }
 
-        /** A call read back to the source that compiled to it, or null when it is an ordinary call. */
         private fun idiom(
             insn: Insn.MethodCall,
             receiver: Expr?,
@@ -919,12 +833,6 @@ internal object ConditionWriter {
             s += if (isConcat) concat(insn.bootstrapMethodArguments, args) ?: Expr.Hole(returnDesc) else Expr.Hole(returnDesc)
         }
 
-        /**
-         * A `makeConcatWithConstants` recipe as a `+` chain. `\u0001` takes the next argument,
-         * `\u0002` the next constant, and any other character is literal text. The chain starts
-         * with `""` when its first element would not make it a string concatenation: in Kotlin
-         * whenever the first element is not a string, and in Java when neither of the first two is.
-         */
         private fun concat(
             bootstrapArguments: Array<out Any>,
             args: List<Expr>,
@@ -1285,12 +1193,6 @@ internal object ConditionWriter {
                 insn.descriptor == "()${UNBOX_NAMES.getValue(insn.name)}"
     }
 
-    /**
-     * The name of the Kotlin property whose getter is [name], or null when [name] is not shaped
-     * like one: `getX` with no parameters and a result, or `isX` returning a boolean. A name like
-     * `getURL` could come from a property `URL` or `url`, so it is left as a call. `getClass` is
-     * `javaClass` in Kotlin, so it is left as a call too.
-     */
     private fun propertyName(
         name: String,
         descriptor: String,
@@ -1304,18 +1206,6 @@ internal object ConditionWriter {
         return null
     }
 
-    /**
-     * scalac's `a == b` on two references, in both Scala 2 and Scala 3:
-     *
-     * ```
-     * <a> <b> astore t; dup; ifnonnull L1; pop; aload t; ifnull T; goto F
-     * L1: aload t; invokevirtual Object.equals; ifeq F
-     * T: ...
-     * ```
-     *
-     * The `ifeq` site reads as `a == b`, and the `ifnull` site as `b != null`. The `ifnonnull`
-     * site needs no rule: its own window reads as `a == null`.
-     */
     private object ScalaEquality {
         fun match(
             method: MethodInstructionsView,
@@ -1364,7 +1254,6 @@ internal object ConditionWriter {
         }
     }
 
-    /** Turns an expression tree into condition parts, with the parentheses each language needs. */
     private class Renderer(
         private val language: SourceLanguage,
     ) {
@@ -1398,7 +1287,6 @@ internal object ConditionWriter {
             parts += ConditionPart(ConditionPartKind.PLACEHOLDER, "")
         }
 
-        /** Writes [expression], in parentheses when it binds less tightly than [minimum]. */
         private fun emit(
             expression: Expr,
             minimum: Int,
@@ -1659,7 +1547,6 @@ internal object ConditionWriter {
                 }
             }
 
-        /** How tightly [expression] binds in this language. Higher binds tighter. */
         private fun precedence(expression: Expr): Int =
             when (expression) {
                 is Expr.Retyped -> {
@@ -1732,7 +1619,6 @@ internal object ConditionWriter {
                 else -> 30
             }
 
-        /** Kotlin ranks every named infix function (`and`, `shl`) above `is`, `is` above comparison, and comparison above equality. */
         private fun kotlinPrecedence(op: Op): Int =
             when {
                 op.isRelation && op in setOf(Op.LT, Op.LE, Op.GT, Op.GE) -> 50
@@ -1740,7 +1626,6 @@ internal object ConditionWriter {
                 else -> 60
             }
 
-        /** Scala ranks an operator by its first character, and an operator made of letters (`eq`) lowest of all. */
         private fun scalaPrecedence(op: Op): Int =
             when (op) {
                 Op.SHL, Op.SHR, Op.USHR, Op.LT, Op.LE, Op.GT, Op.GE -> 50
@@ -1764,6 +1649,7 @@ internal object ConditionWriter {
     private val PRIMITIVE_NAMES =
         mapOf("I" to "Int", "J" to "Long", "F" to "Float", "D" to "Double", "B" to "Byte", "C" to "Char", "S" to "Short")
 
+    // Matched by suffix, since the shaded jar rewrites `kotlin/` literals in this agent's code.
     private const val INTRINSICS_SUFFIX = "/jvm/internal/Intrinsics"
     private const val BOXES_RUN_TIME = "scala/runtime/BoxesRunTime"
     private const val OBJECT_EQUALITY = "(Ljava/lang/Object;Ljava/lang/Object;)Z"

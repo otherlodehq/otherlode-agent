@@ -31,7 +31,7 @@ public final class OtherlodeShutdownHooks {
         return kept == null ? null : kept.keySet().toArray(new Thread[0]);
     }
 
-    /** Forgets the table. A test calls this between runs. */
+    /** Forgets the table. */
     public static void forget() {
         table = null;
     }

@@ -12,18 +12,12 @@ import java.lang.System.Logger.Level
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Adapts [EndpointRegistry] to the [OtherlodeEndpoints.Resolver] shape the endpoint seam calls
- * through. [OtherlodeEndpoints] lives in the bootstrap module and cannot reference [EndpointRegistry]
- * directly, so every call it forwards passes through the untyped [Any] shapes [Resolver][OtherlodeEndpoints.Resolver]
- * declares; this is the one place those are cast back to [EndpointRegistry.EndpointEntry].
+ * Adapts [EndpointRegistry] to the [OtherlodeEndpoints.Resolver] the endpoint seam calls through.
+ * [modules], indexed by [EndpointModule.name], is who [declare] routes a framework object to.
  *
- * [modules], indexed by [EndpointModule.name], is who [declare] routes a framework object to: the
- * module that owns a framework is the only code that knows how to walk one of its objects.
- *
- * A handler join that names a method passes through [handlerForwarders] on its way in, from
- * [register] and [attachHandler], so a pass-through becomes the method it forwards to.
- * A dispatch path reports its method through [attachHandler]. A join that names only a class, as
- * [recordDispatch] takes, is left as reported, since the table is keyed by method.
+ * A handler join that names a method passes through [handlerForwarders] in [register] and
+ * [attachHandler], so a pass-through becomes the method it forwards to. [recordDispatch] names only
+ * a class and is left as reported.
  */
 class RegistryResolver(
     private val registry: EndpointRegistry,
@@ -39,12 +33,8 @@ class RegistryResolver(
     override fun lookup(key: Any): Any? = registry.lookup(key)
 
     /**
-     * Declares an endpoint, or holds it until the transform that declared it has produced bytes;
-     * see [PendingDeclarations].
-     *
-     * A held declaration returns null rather than the entry. Nothing that declares from inside a
-     * transform uses the return value, and the seam already answers null when a module is
-     * disabled or no resolver is installed yet, so callers handle it.
+     * Declares an endpoint, or holds it until the transform that declared it has produced bytes (see
+     * [PendingDeclarations]). A held declaration returns null.
      */
     override fun register(
         key: Any,
@@ -107,17 +97,9 @@ class RegistryResolver(
     ): Any? = registry.recordDispatchIfUnowned(key, framework, verb, verbatimTemplate, contextPath, handlerClass, kindOf(templateKind))
 
     /**
-     * Routes [frameworkObject] to the [EndpointModule] named [module], which walks it and
-     * registers whatever it finds through [OtherlodeEndpoints.register].
-     *
-     * An unknown module name is logged once and ignored: nothing registered a module under that
-     * name, so there is nothing to hand the object to. A module whose walk throws is as broken as
-     * one whose advice throws, so it goes through [OtherlodeEndpoints.moduleFailed] like an advice
-     * failure: the module is switched off at the seam, its dispatch advice stops counting, and it
-     * lands in the manifest's disabled list. A walk that fails partway through cannot be trusted
-     * to have found every route, and a half-declared list would let a collector call an endpoint
-     * never called when it merely went undeclared; no data for that framework is the safer
-     * report than partial data.
+     * Routes [frameworkObject] to the [EndpointModule] named [module], which registers what it finds.
+     * An unknown module name is logged once and ignored. A module whose walk throws goes through
+     * [OtherlodeEndpoints.moduleFailed], like an advice failure.
      */
     override fun declare(
         module: String,
@@ -163,7 +145,6 @@ class RegistryResolver(
     }
 }
 
-/** Maps a seam kind constant to the wire's; a value this build does not know reads as unspecified. */
 internal fun disabledKindOf(kind: Int): DisabledEndpointModuleKind =
     when (kind) {
         OtherlodeEndpoints.KIND_LINKAGE_ERROR -> DisabledEndpointModuleKind.LINKAGE_ERROR

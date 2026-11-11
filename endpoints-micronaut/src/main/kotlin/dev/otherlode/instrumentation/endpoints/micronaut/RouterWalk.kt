@@ -18,19 +18,7 @@ private const val ANNOTATION_METADATA = "io.micronaut.core.annotation.Annotation
 internal const val GET_STEREOTYPE = "io.micronaut.http.annotation.Get"
 internal const val ON_OPEN_ANNOTATION = "io.micronaut.websocket.annotation.OnOpen"
 
-/**
- * Reads the URI routes of a Micronaut `Router` and registers each one as an endpoint.
- *
- * No Micronaut type is on this class's own class loader, so every one is reached by name through
- * the loader the router came from. Every method is resolved on a public interface, never on the
- * implementing class, which may not be public.
- */
 internal class RouterWalk {
-    /**
-     * Registers the URI routes of [router], keyed by the `UriRouteInfo` instance that dispatch
-     * returns. A route is registered once however often the router lists it. A HEAD route that
-     * Micronaut adds beside a `@Get` and a WebSocket route are not declared.
-     */
     fun declare(router: Any) {
         val loader = router.javaClass.classLoader
         val routerType = Class.forName(ROUTER, false, loader)

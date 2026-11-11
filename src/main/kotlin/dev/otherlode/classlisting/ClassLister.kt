@@ -29,40 +29,10 @@ import java.util.jar.Manifest
  * Lists the classes the startup classpath holds under the include rules, by name, without reading
  * a class file.
  *
- * Which files are read, and at which paths, is [ClasspathWalker]'s: each entry of [classPath]
- * (split on [File.pathSeparator]), every file a manifest `Class-Path` attribute reaches from one,
- * and an exploded Spring Boot application's libraries, as the JVM's loaders read them. A root that
- * does not exist holds nothing, as the JVM ignores it. Any file on the classpath is read as a jar,
- * whatever its extension, as the system loader does:
- *
- * - A Spring Boot fat jar or executable war the system loader reads contributes the classes under `BOOT-INF/classes/` or
- *   `WEB-INF/classes/`, named without that prefix, the classes at its own root, and the classes of
- *   each nested jar Boot's launcher puts on the classpath.
- * - Any other jar contributes its classes, a jar that names an agent included: the include rules
- *   already leave out the classes of this agent.
- *
- * A directory is walked. A directory whose `META-INF/MANIFEST.MF` marks an exploded Spring Boot
- * application is read the way its launcher reads it: the classes under `BOOT-INF/classes/` or
- * `WEB-INF/classes/` without that prefix, the classes at its root, and the classes of every
- * library the walker finds for it.
- *
- * A class counts by the static baseline's rule ([isClassEntry]). In a jar, a multi-release entry
- * under `META-INF/versions/N/` also counts, by its path after that prefix, since a class can exist
- * only there. A name is listed when [TypeMatchPolicy.isIncluded] admits it.
- *
- * While it lists, the lister collects the roots it read: each jar, each class folder, and each
- * nested jar or classes folder of a Spring Boot application, as the key of the code-source location
- * the JVM's loaders give a class from it. When the listing is complete, it hands the keys and the
- * listed names to [onRoots], so the run can tell a class loaded from any other root (ADR 0085).
- *
- * The result is complete or absent. A server reads a class's absence from a complete listing as
- * proof that the build lacks it, so a listing with a hole would turn an unreadable jar into removed
- * code. [list] logs one WARNING and returns null when a root that exists, a jar or a nested jar
- * cannot be read, when an exploded application's classpath index is malformed (Boot does not
- * launch then), when [classPath] is empty or has an empty element (which the JVM reads as the
- * working directory), when [modulePath] or [mainModule] is set, since this lister reads neither a
- * module path nor a linked image's main module, and when [upgradeModulePath] is set or
- * `--patch-module` is among [jvmArguments], since either puts classes in a module of the boot layer.
+ * It lists what [ClasspathWalker] reaches from [classPath], including Spring Boot fat jars and
+ * exploded applications. A class counts by [isClassEntry], or as a multi-release entry by its path
+ * after `META-INF/versions/N/`, and is listed when [TypeMatchPolicy.isIncluded] admits it. A
+ * complete listing hands the keys of the roots it read and the listed names to [onRoots] (ADR 0085).
  */
 class ClassLister(
     private val includes: List<String>,
@@ -77,7 +47,13 @@ class ClassLister(
     private val log by agentLogger(ClassLister::class.java.name)
     private val classifier = JarClassifier(includes, excludes)
 
-    /** The sorted, distinct, dotted names of the listed classes, or null when the classpath could not be read whole. */
+    /**
+     * The sorted, distinct, dotted names of the listed classes. Returns null and logs one WARNING
+     * when the listing would be partial: a root that exists, a jar or a nested jar cannot be read, an
+     * exploded application's classpath index is malformed, [classPath] is empty or has an empty
+     * element, [modulePath] or [mainModule] is set, [upgradeModulePath] is set, [jvmArguments]
+     * returns null, or `--patch-module` is among [jvmArguments].
+     */
     fun list(): List<String>? {
         if (modulePath.isNotBlank() || mainModule.isNotBlank()) {
             return refuse("this JVM runs from a module path or a linked image, which the class listing does not read")
@@ -103,7 +79,6 @@ class ClassLister(
             )
             return null
         } catch (e: Exception) {
-            // The walker hands a failure to read a file to the visitor, so what reaches here failed outside any one file.
             log.log(
                 Level.WARNING,
                 "otherlode: could not walk the classpath for the class listing, so no class listing is sent: ${e.message ?: e}",
@@ -120,7 +95,6 @@ class ClassLister(
         return null
     }
 
-    /** Adds to [names] what each file the walker reaches holds, and ends the walk at the first file it cannot read. */
     private inner class Listing(
         private val names: MutableSet<String>,
         private val roots: MutableSet<String>,
@@ -196,7 +170,6 @@ class ClassLister(
             val libPrefixes = bootLibPrefixes(manifest.mainAttributes)
             addRoot(CodeSourceLocation.OnDisk(root.toPath()))
             APPLICATION_CLASSES_PREFIXES.forEach { addRoot(CodeSourceLocation.OnDisk(root.toPath().resolve(it))) }
-            // The walker reads the library folders, so they are not walked here.
             walk(root.toPath(), skip = { folder -> libPrefixes.any { folder.startsWith(it) } }) { relative ->
                 addApplicationEntry(relative, names)
             }
@@ -220,10 +193,6 @@ class ClassLister(
         }
     }
 
-    /**
-     * Calls [visit] with the root-relative, `/`-separated path of every file under [root], leaving
-     * out each folder whose path, ending in `/`, [skip] accepts.
-     */
     private fun walk(
         root: Path,
         skip: (String) -> Boolean = { false },
@@ -262,28 +231,15 @@ class ClassLister(
         )
     }
 
-    /**
-     * Adds an entry of a Spring Boot application, packed or exploded, by its path: under
-     * `BOOT-INF/classes/` or `WEB-INF/classes/` it is named without that prefix, and anywhere
-     * else by its whole path.
-     */
     private fun addApplicationEntry(
         path: String,
         names: MutableSet<String>,
     ) {
         val prefix = APPLICATION_CLASSES_PREFIXES.firstOrNull { path.startsWith(it) }
-        // A multi-release jar packed under BOOT-INF/classes keeps its variants at
-        // BOOT-INF/classes/META-INF/versions/N/, which only the stripped name shows.
         val name = if (prefix != null) path.removePrefix(prefix) else path
         jarClassPath(name)?.let { addIfIncluded(it, names) }
     }
 
-    /**
-     * The class path of a jar entry: the entry itself by the static baseline's rule, or a
-     * multi-release jar's versioned entry by its path after `META-INF/versions/N/`. Naming a
-     * versioned copy of a class that also has a base entry adds nothing, and a class that exists
-     * only as a versioned entry is listed, since the JVM loads it.
-     */
     private fun jarClassPath(entryName: String): String? = if (isClassEntry(entryName)) entryName else versionedClassPath(entryName)
 
     private fun addJarClasses(
@@ -317,7 +273,6 @@ class ClassLister(
         }
     }
 
-    /** [entryName] is a class entry's path relative to its root, with `/` separators. */
     private fun addIfIncluded(
         entryName: String,
         names: MutableSet<String>,
@@ -326,13 +281,11 @@ class ClassLister(
         if (TypeMatchPolicy.isIncluded(name, includes, excludes)) names += name
     }
 
-    /** Carries the file the listing could not read and why out of the walk. */
     private class ListingFailed(
         val location: String,
         override val cause: Throwable,
     ) : Exception(cause)
 
-    /** A nested jar [location], written `outer!/entry`, that could not be read. */
     private class NestedJarException(
         val location: String,
         cause: Exception,
@@ -345,10 +298,6 @@ class ClassLister(
     }
 }
 
-/**
- * The JVM's input arguments, or null when the JVM has no `java.management` module, as a linked image
- * can leave it out. Only that module's runtime bean still sees `--patch-module` after startup.
- */
 private fun inputArguments(): List<String>? {
     if (ModuleLayer.boot().findModule("java.management").isEmpty) return null
     return java.lang.management.ManagementFactory.getRuntimeMXBean().inputArguments

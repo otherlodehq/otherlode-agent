@@ -7,10 +7,10 @@ import net.bytebuddy.asm.Advice;
  * Woven onto the entry of {@code RouterImpl.handle(HttpServerRequest)}. Only a root router
  * receives the server request, since a mounted router is entered through {@code handleContext}.
  * The router itself, not an event array, goes to the module, which declares the routes reachable
- * from it before the request is matched and costs one lookup on the request path once they are.
+ * from it.
  *
- * <p>This method is deliberately one flat body with no private helper method of its own; see the
- * Spring MVC module's {@code RegisterHandlerMethodAdvice} Javadoc for why.
+ * <p>The advice body is inlined into the woven method, so {@code onEnter} stays one flat body with
+ * no helper methods.
  */
 public class RootRequestAdvice {
     private static final String MODULE = "vertx-web";

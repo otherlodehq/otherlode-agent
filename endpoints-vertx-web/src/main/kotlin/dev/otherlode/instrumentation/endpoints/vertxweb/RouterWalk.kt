@@ -36,20 +36,15 @@ private val LIBRARY_PREFIXES =
         "io.opentelemetry.instrumentation.",
     )
 
-/** Stands for a root router's own use in a dispatch key; no mount point a request can give equals it. */
 private const val ROOT_CHAIN = "\u0000root"
 
-/** Stands for a router's one parameterised mount chain in a dispatch key; its mount point holds matched values. */
 private const val PARAMETERISED_CHAIN = "\u0000parameterised"
 
 private const val HANDLE_DESCRIPTOR = "(Lio/vertx/ext/web/RoutingContext;)V"
 private const val ERASED_HANDLE_DESCRIPTOR = "(Ljava/lang/Object;)V"
 
-/**
- * The Vert.x Web types and methods the walk reads, resolved by name from the loader the router
- * came from. Vert.x is not on the agent's own loader, and only the public API is read: on Vert.x
- * Web 5 the implementation package is exported to a few Vert.x modules and no one else.
- */
+// Reads only Vert.x Web's public API: Vert.x Web 5 exports its implementation package to a few Vert.x
+// modules and no one else.
 private class Api(
     private val loader: ClassLoader?,
 ) {
@@ -77,7 +72,6 @@ private class Api(
         (methods.invoke(route) as Collection<*>?).orEmpty().map { methodName.invoke(it) as String }.ifEmpty { listOf("*") }
 }
 
-/** A mount path chain: [prefix] is the mount point a router sees, null at a root, and a parameterised mount has matched values in place of it at run time. */
 private class Chain(
     val prefix: String?,
     val parameterised: Boolean,
@@ -95,18 +89,6 @@ private class Join(
     val descriptor: String?,
 )
 
-/**
- * Declares the routes of every router reachable from a root router, as endpoints, with the
- * template, the verbs and the handler join each has at the time.
- *
- * Vert.x Web gives a route no way to read its handlers, so those come from [graph]. A router
- * reached through more than one chain, as a root or through a mount, declares one endpoint per
- * chain, each keyed by the route and the chain: a root's own use, a static mount's mount point,
- * or its one parameterised mount, whose mount point holds the matched values at run time and so
- * is any mount point that is neither. A router reached through two parameterised mounts, from any
- * roots, cannot say which one a request came through, so the walk fails, which switches the module
- * off. A route `subRouter` is mounting is not declared until the mount is complete.
- */
 internal class RouterWalk(
     private val graph: RouterGraph,
 ) {
@@ -121,7 +103,6 @@ internal class RouterWalk(
         return Api(loader).also { apis[loader] = WeakReference(it) }
     }
 
-    /** Declares the routes reachable from [root] and returns the routers it reached. Call it under the graph's lock. */
     fun declare(root: Any): List<Any> {
         val api = apiFor(root.javaClass.classLoader)
         val reached = IdentityHashMap<Any, Reached>()

@@ -8,61 +8,36 @@ import dev.otherlode.export.ProbeKind
 import dev.otherlode.export.UnreadShape
 
 /**
- * Source-location metadata for one probe slot, used only to build the manifest payload.
+ * Source-location metadata for one probe slot, used to build the manifest payload. A field that
+ * applies to one [ProbeKind] is empty, null or false on the others.
  *
- * [inline] marks a probe belonging to a Kotlin inline function, or a branch inside one: a Kotlin
- * caller copies the body into the call site instead of invoking this method, so a zero hit total
+ * [inline] marks a probe in a Kotlin inline function, or a branch inside one, so a zero hit total
  * is not evidence the code never ran.
  *
- * [parameterIndex], [parameterName], and [overridable] apply only to an [ProbeKind.OPTIONAL_ARGUMENT]
- * probe. [methodName] and [methodDescriptor] on such a probe name the target function the
- * parameter belongs to, not the synthetic `$default` method or the Scala default getter the probe
- * actually sits in, and [inline] is the target's own inline flag. [line] on such a probe is the
- * line of the parameter's default value, not the target's line.
+ * On an [ProbeKind.OPTIONAL_ARGUMENT] probe, [methodName], [methodDescriptor] and [inline] describe
+ * the target function the parameter belongs to, not the synthetic `$default` method or Scala
+ * default getter the probe sits in, and [line] is the line of the parameter's default value.
+ * [parameterIndex], [parameterName] and [overridable] apply only to it. [targetClassName] is set
+ * only when the target is in a different class from the probe's own.
  *
- * [targetClassName] is set only for an [ProbeKind.OPTIONAL_ARGUMENT] probe whose target lives in a
- * different class from the probe's own, the cross-class shape a Scala constructor default getter
- * takes. Null whenever the target is in the probe's own class.
+ * Only a [ProbeKind.METHOD] probe sets [calls] (the in-scope call edges read from the method's own
+ * bytecode), [referencedClasses] (the out-of-scope classes it references, dotted, with JDK classes
+ * and classes read from a classpath directory dropped), [lambdaBody], [branchSites] (the kept
+ * branch sites, in site index order), [static] (the method has `ACC_STATIC`; false for a
+ * constructor and the type initializer's probe), [parameterNames], [genericSignature],
+ * [extensionReceiver] and [outsideCaller]. See [dev.otherlode.export.ProbeLocation] and
+ * [dev.otherlode.export.OutsideCaller].
  *
- * [calls] is populated only for a [ProbeKind.METHOD] probe: the in-scope call edges read from
- * that method's own bytecode at transform time.
+ * Only a [ProbeKind.BRANCH] probe sets [branchKey], [siteIndex] and [inlinedFromClassName].
+ * [branchKey] is an opaque lowercase hex token naming the outcome across builds and instances,
+ * compared only for equality, or null when the agent cannot name it safely. [inlinedFromClassName]
+ * is dotted and set when the site is code kotlinc copied from an inline function whose origin class
+ * is in scope.
  *
- * [inlinedFromClassName] is set only for a [ProbeKind.BRANCH] probe that is a kept inlined copy:
- * a site inside code kotlinc copied from an inline function's body into this probe's own method,
- * whose origin class is in scope. Dotted, or null when the probe is the class's own code.
- *
- * [generatedBy] is set for a [ProbeKind.METHOD] probe, for a [ProbeKind.BRANCH] probe as the
- * mark of the method it sits in, and for a [ProbeKind.OPTIONAL_ARGUMENT] probe as its target's
- * mark. See [GeneratedBy].
- *
- * [unreadShape] is set where [generatedBy] is, the same way, and never beside a mark: the probe's
- * code has the outline of compiler output but matches no shape the agent has read. See [UnreadShape].
- *
- * [referencedClasses] is populated only for a [ProbeKind.METHOD] probe: the out-of-scope classes
- * that method's bytecode references, dotted, with JDK classes and classes read from a classpath
- * directory already dropped.
- *
- * [branchKey] is set only for a [ProbeKind.BRANCH] probe: an opaque lowercase hex token naming
- * this outcome across builds and instances, compared only for equality. Null when the agent
- * cannot name the outcome safely.
- *
- * [lambdaBody] is set only for a [ProbeKind.METHOD] probe whose method is a lambda body. See
- * [dev.otherlode.export.ProbeLocation.lambdaBody].
- *
- * [branchSites] is set only for a [ProbeKind.METHOD] probe: the method's kept branch sites, in
- * site index order. [siteIndex] is set only for a [ProbeKind.BRANCH] probe and names its site. See
- * [dev.otherlode.export.ProbeLocation.branchSites].
- *
- * [static] is set only for a [ProbeKind.METHOD] probe whose method has `ACC_STATIC`. It is false
- * for a constructor and for the type initializer's probe. See
- * [dev.otherlode.export.ProbeLocation.static].
- *
- * [parameterNames], [genericSignature] and [extensionReceiver] are set only for a
- * [ProbeKind.METHOD] probe, and are empty or false for the type initializer's probe. See
- * [dev.otherlode.export.ProbeLocation.parameterNames].
- *
- * [outsideCaller] is set only for a [ProbeKind.METHOD] probe whose method has an outside caller.
- * See [dev.otherlode.export.OutsideCaller].
+ * [generatedBy] is set for a METHOD probe, for a BRANCH probe as the mark of the method it sits in,
+ * and for an OPTIONAL_ARGUMENT probe as its target's mark. See [GeneratedBy]. [unreadShape] is set
+ * where [generatedBy] is, and never beside a mark: the code has the outline of compiler output but
+ * matches no shape the agent has read. See [UnreadShape].
  */
 data class ProbeMeta(
     val kind: ProbeKind,

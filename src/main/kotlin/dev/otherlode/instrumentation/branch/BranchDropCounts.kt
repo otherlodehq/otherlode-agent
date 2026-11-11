@@ -3,13 +3,8 @@ package dev.otherlode.instrumentation.branch
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Thread-safe totals of branch sites dropped across every class this agent instruments, broken
+ * Thread-safe totals of branch sites dropped across every class the agent instruments, broken
  * down by [BranchDropReason], plus how many classes dropped at least one site.
- *
- * [dev.otherlode.instrumentation.OtherlodeInstrumentation] calls [record] once per
- * transformed class. [dev.otherlode.export.ExportScheduler] reads [total],
- * [countOf], and [classesWithDrops] to log one summary line the first time a flush finds the
- * total above zero.
  */
 class BranchDropCounts {
     private val countsByReason: Map<BranchDropReason, AtomicLong> = BranchDropReason.entries.associateWith { AtomicLong(0) }

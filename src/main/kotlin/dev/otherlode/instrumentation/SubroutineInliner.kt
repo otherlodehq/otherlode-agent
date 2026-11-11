@@ -14,34 +14,11 @@ import net.bytebuddy.jar.asm.Opcodes
 import net.bytebuddy.jar.asm.commons.JSRInlinerAdapter
 import net.bytebuddy.pool.TypePool
 
-/**
- * Rewrites the `jsr` and `ret` subroutines of a class file below version 51 into straight-line
- * code, which is what every later reader of the class has to see. A subroutine is how javac 1.4.1
- * and older, and ecj, compile a `finally`; the JVM forbids them from version 51 (JVMS 4.9.1). The
- * class is inlined before the analysis counts its branch sites and before the rewrite adds probes,
- * so both read the same instructions and the sites the analysis numbers are the sites the rewrite
- * finds: inlining gives a site in a subroutine one copy per call. At version 50 with frames, ASM's
- * `AnalyzerAdapter`, which the branch tier reads each frame from, also needs it, since it rejects
- * `jsr`/`ret`.
- *
- * Two entry points cover the two readers. [inline] rewrites bytes, for the analysis and the pairing
- * of a class file with the bytes another transformer left. [wrapper] is the visitor for the rewrite
- * ByteBuddy runs over the received bytes. Each runs ASM's [JSRInlinerAdapter] on every method, and
- * the adapter is deterministic, so a class inlined by either path yields the same instruction
- * sequence, except that [inline] serialises the result, and a conditional jump over 32 KB in an
- * inlined copy is widened there and not on the visitor path.
- */
 internal object SubroutineInliner {
-    /** The first class-file version whose methods may not contain `jsr` or `ret` (JVMS 4.9.1). */
     const val FIRST_SUBROUTINE_FREE_VERSION = 51
 
-    /** Whether a class file of [majorVersion] may contain `jsr` or `ret`. */
     fun mayHaveSubroutines(majorVersion: Int): Boolean = majorVersion in 1 until FIRST_SUBROUTINE_FREE_VERSION
 
-    /**
-     * [classFile] with its subroutines inlined, or [classFile] itself, the same array, when its
-     * version is 51 or above or it has none, so a class that needs nothing keeps its bytes.
-     */
     fun inline(classFile: ByteArray): ByteArray {
         if (classFile.size < HEADER_BYTES) return classFile
         val version = ((classFile[6].toInt() and 0xff) shl 8) or (classFile[7].toInt() and 0xff)
@@ -102,14 +79,8 @@ internal object SubroutineInliner {
         return found
     }
 
-    /**
-     * The visitor wrapper that inlines each method's subroutines in the class ByteBuddy rewrites,
-     * when the class file's version is below 51 and a no-op otherwise. ByteBuddy's `Compound` wraps
-     * in the order the wrappers were added to the builder, so the first added is nearest the class
-     * writer and the last added is the first to see a method read from the class. This wrapper
-     * therefore has to be added after every probe wrapper, so that none of them sees a
-     * `jsr`.
-     */
+    // Add this wrapper after every probe wrapper. The last one added is the first to see a method,
+    // and no probe wrapper may see a `jsr`.
     fun wrapper(): AsmVisitorWrapper =
         object : AsmVisitorWrapper.AbstractBase() {
             override fun wrap(

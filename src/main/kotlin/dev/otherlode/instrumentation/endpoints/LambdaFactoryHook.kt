@@ -22,12 +22,9 @@ import java.lang.invoke.MethodHandleInfo
 import java.lang.reflect.Field
 
 /**
- * The members of the JDK's lambda factory that [LambdaFactoryHook] reads: a no-argument method
- * on [factoryClass] that returns the spun `Class`, and two fields it declares or inherits. The
- * advice in `SpinInnerClassAdvice` reads the fields [JDK] names.
- *
- * These are JDK internals. [JDK] was checked against JDK 17, 21, 22, 25, 26 and 27. A test swaps one
- * name to simulate a JDK where a member is gone.
+ * The members of the JDK's lambda factory that [LambdaFactoryHook] reads: a no-argument method on
+ * [factoryClass] that returns the spun `Class`, and two fields it declares or inherits. The advice
+ * in `SpinInnerClassAdvice` reads the fields [JDK] names.
  */
 data class LambdaFactoryShape(
     val factoryClass: String,
@@ -35,10 +32,7 @@ data class LambdaFactoryShape(
     val interfaceClassField: String,
     val implInfoField: String,
 ) {
-    /**
-     * Checks the running JDK by reflection, without touching any member. Returns why the shape
-     * does not match, or null when it does.
-     */
+    /** Checks the running JDK by reflection. Returns why the shape does not match, or null when it does. */
     fun problem(): String? {
         val factory =
             try {
@@ -78,7 +72,6 @@ data class LambdaFactoryShape(
     }
 
     companion object {
-        /** The members as the JDK names them. */
         val JDK =
             LambdaFactoryShape(
                 factoryClass = "java.lang.invoke.InnerClassLambdaMetafactory",
@@ -91,12 +84,8 @@ data class LambdaFactoryShape(
 
 /**
  * Watches the JDK's lambda factory so a handler written as a lambda or a method reference can be
- * named.
- *
- * The factory class is loaded before `premain` runs, so the hook retransforms it. It adds advice
- * to one method and changes nothing else in the class. It installs only when [shape] matches the
- * running JDK. When the shape does not match, or the retransform fails, it logs one line and
- * installs nothing. Hidden handlers then get no join, as they would without the hook.
+ * named. It retransforms the factory class and installs only when [shape] matches the running JDK.
+ * When the shape does not match, or the retransform fails, it logs one line and installs nothing.
  */
 class LambdaFactoryHook(
     private val shape: LambdaFactoryShape = LambdaFactoryShape.JDK,
@@ -106,8 +95,8 @@ class LambdaFactoryHook(
     private var transformer: ResettableClassFileTransformer? = null
 
     /**
-     * Records lambda classes for [handlerInterfaces] from here on. Returns whether the hook is on.
-     * An empty set installs nothing and logs nothing.
+     * Records lambda classes for [handlerInterfaces]. Returns whether the hook is on. An empty set
+     * installs nothing and logs nothing.
      */
     fun install(
         instrumentation: Instrumentation,
@@ -141,7 +130,7 @@ class LambdaFactoryHook(
         }
     }
 
-    /** Stops recording and restores the lambda factory's own bytecode. Does nothing if the hook is off. */
+    /** Stops recording and restores the lambda factory's bytecode. Does nothing if the hook is off. */
     fun uninstall(instrumentation: Instrumentation) {
         val current = transformer ?: return
         transformer = null
@@ -169,10 +158,7 @@ class LambdaFactoryHook(
                 )
             }
 
-    /**
-     * The advice is inlined into `java.base`, a named module that cannot read the seam's unnamed
-     * module on the bootstrap loader until this edge exists.
-     */
+    // The advice is inlined into java.base, which cannot read the seam's unnamed module until this edge exists.
     private fun addJavaBaseReadEdge(instrumentation: Instrumentation) {
         val seamModule = Class.forName(BootstrapHolder.ENDPOINTS_CLASS_NAME, false, null).module
         val javaBase = Any::class.java.module

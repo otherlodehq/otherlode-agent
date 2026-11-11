@@ -22,9 +22,8 @@ import dev.otherlode.export.UnreadShape as WireUnreadShape
 public enum class ProbeKind { METHOD, BRANCH, OPTIONAL_ARGUMENT, INITIALIZER_RETURNED, INITIALIZER_THREW }
 
 /**
- * What compiled a method into existence rather than the adopter writing its body, read from
- * bytecode shape alone. A [ProbeRef] whose method is not generated holds null instead of a value of
- * this enum. Values may be added in a minor release, so a `when` over this enum needs an `else` branch.
+ * What compiled a method into existence rather than the adopter writing its body. A [ProbeRef]
+ * whose method is not generated holds null instead of a value of this enum. Values may be added in a minor release, so a `when` over this enum needs an `else` branch.
  */
 public enum class GeneratedBy {
     /** An enum's `values`, `valueOf` or `getEntries`. */
@@ -334,10 +333,6 @@ internal fun DependencyDiscoverySource.toWire(): WireDependencyDiscoverySource =
         DependencyDiscoverySource.LOAD -> WireDependencyDiscoverySource.LOAD
     }
 
-/**
- * Throws for [WireDisabledEndpointModuleKind.UNSPECIFIED]: an agent of this testkit's version always
- * says what switched a module off, and the collector refuses a payload from any other version.
- */
 internal fun WireDisabledEndpointModuleKind.toTestkit(): DisabledEndpointModuleKind =
     when (this) {
         WireDisabledEndpointModuleKind.UNSPECIFIED -> {

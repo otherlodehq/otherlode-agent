@@ -31,42 +31,36 @@ import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.random.Random
 
 /**
- * Flushes on a fixed interval. Each instance picks a random offset within
- * that interval before its first flush. Without this, a fleet of instances
- * started around the same time would all flush on the same wall-clock tick,
- * overwhelming the receiver at once.
- *
- * Logs through `java.lang.System.Logger`, not a logging framework. This
- * keeps agent-internal warnings off the target app's classpath.
+ * Flushes the registries to an [Exporter] on a fixed interval. Each instance waits a random offset
+ * within the interval before its first flush, so a fleet started together does not flush on the
+ * same tick.
  */
 class ExportScheduler(
     private val config: AgentConfig,
     /**
-     * Stamped on every delta batch and manifest this scheduler sends. The agent passes the same
-     * value to the static baseline, so all three payloads carry one run id. Required, with no
-     * default: a scheduler that made its own would name a different run from the baseline.
+     * Stamped on every delta batch and manifest this scheduler sends. Pass the same value to the
+     * static baseline, so all three payloads carry one run id.
      */
     private val resource: ResourceAttributes,
     private val registry: ProbeRegistry,
-    /** Endpoint hit and manifest state; see [EndpointRegistry]. */
+    /** Endpoint hit and manifest state. */
     private val endpointRegistry: EndpointRegistry,
     exporter: Exporter,
-    /** Source of the first-flush jitter. Injectable so a test can pin the initial delay to zero. */
+    /** Source of the first-flush jitter. */
     private val random: Random = Random.Default,
     /** Upper bound on changed probes per delta POST; see [ProbeRegistry.computeDeltaBatches]. */
     private val maxDeltasPerBatch: Int = DEFAULT_MAX_DELTAS_PER_BATCH,
     /** Upper bound on manifest entries per POST, each weighed as [ProbeRegistry.computeManifestDeltas] weighs it. */
     private val maxManifestEntriesPerChunk: Int = DEFAULT_MAX_MANIFEST_ENTRIES_PER_CHUNK,
-    /** Dropped branch site totals; see [maybeLogBranchDrops]. */
+    /** Dropped branch site totals, logged once by the first flush that finds any. */
     private val branchDropCounts: BranchDropCounts = BranchDropCounts(),
-    /** Unread shape totals; see [maybeLogUnreadShapes]. */
+    /** Unread shape totals, logged once by the first flush that finds any. */
     private val unreadShapeCounts: UnreadShapeCounts = UnreadShapeCounts(),
-    /** The adopter's named callback annotations and which were seen; see [maybeLogUnseenCallbackAnnotations]. */
+    /** The adopter's named callback annotations and which were seen. */
     private val callbackAnnotations: ConfiguredCallbackAnnotations = ConfiguredCallbackAnnotations(config.callbackAnnotations),
     /**
      * Confirms classes the registry withholds and finds classes that loaded but reached no
-     * transformer; see [maybeSweep]. Null when nothing supplied one, which is every test that does
-     * not exercise the sweep.
+     * transformer. Null when there is none.
      */
     private val loadedClassSweep: LoadedClassSweep? = null,
     /** Dependencies found on the startup classpath, delivered on the manifest. */
@@ -76,58 +70,35 @@ class ExportScheduler(
     /** Framework markers the sweep saw, delivered on the manifest. */
     private val frameworkMarkers: FrameworkMarkerRegistry = FrameworkMarkerRegistry(),
     /**
-     * Static baseline chunks the receiver has not confirmed yet, sent again, one per flush, after
-     * a flush whose own sends it confirmed. Null when the static baseline is off.
+     * Resends the static baseline chunks the receiver has not confirmed, one per scheduled flush
+     * whose own sends were all confirmed. Null when the static baseline is off.
      */
     private val staticBaselineSender: StaticBaselineSender? = null,
-    /**
-     * Class listing chunks the receiver has not confirmed yet, sent again like the static
-     * baseline's. Null when the class listing is off.
-     */
+    /** Resends class listing chunks the same way. Null when the class listing is off. */
     private val classListingSender: ClassListingSender? = null,
-    /**
-     * The startup dependency listing, run at the top of the first flush so that flush's sweep and
-     * manifest see every dependency. The default has nothing to run.
-     */
+    /** The startup dependency listing, run at the top of the first flush. */
     private val dependencyListing: DependencyListingRun = DependencyListingRun {},
-    /**
-     * Removes leftover files from earlier processes, run at the top of the first scheduled flush
-     * so it stays off `premain` and out of the shutdown flushes. The default removes nothing.
-     */
+    /** Removes leftover files from earlier processes, run at the top of the first scheduled flush. */
     private val startupCleanup: () -> Unit = {},
-    /**
-     * Releases transform-time caches of loaders that went quiet, called once per flush after its
-     * sends, the shutdown flush excepted. The default releases nothing.
-     */
+    /** Releases transform-time caches of loaders that went quiet, called once per scheduled flush after its sends. */
     private val releaseQuietCaches: () -> Unit = {},
-    /**
-     * What the run can see of the verifier's rejections, drained after the sweep on every flush and
-     * stamped on every manifest. The default sees none.
-     */
+    /** What the run can see of the verifier's rejections, drained after the sweep on every flush. */
     private val verifierWatch: VerifierRejectionWatch = VerifierRejectionWatch.NOT_WATCHED,
     /**
      * Whether the run's class listing missed a root (ADR 0085), stamped on every manifest. Once it
-     * returns true it must return true for good. The default is never blind.
+     * returns true it must keep returning true.
      */
     private val classListingBlind: () -> Boolean = { false },
     /**
      * Run before each manifest's disabled endpoint modules and endpoints are read, with the flush
-     * interval and whether this is the final flush, so a module that settles what it declares does
-     * so before that manifest is built. The default does nothing.
+     * interval and whether this is the final flush.
      */
     private val beforeManifest: (graceMillis: Long, finalFlush: Boolean) -> Unit = { _, _ -> },
-    /** Milliseconds since the epoch, for the times a flush stamps. Injectable so a test controls it. */
+    /** Milliseconds since the epoch, for the times a flush stamps. */
     private val clock: () -> Long = System::currentTimeMillis,
-    /**
-     * Whether the run counts as starting from its start until its class loading settles (ADR 0086).
-     * The agent sets it. The default is false, which gives a scheduler no starting phase, as for
-     * every test that does not exercise it.
-     */
+    /** Whether the run counts as starting until its class loading settles (ADR 0086). */
     private val hasStartingPhase: Boolean = false,
-    /**
-     * Milliseconds on a clock that only moves forward, for how long the run has been starting
-     * (ADR 0086), so a wall-clock step cannot end it early. Injectable so a test controls it.
-     */
+    /** Milliseconds on a clock that only moves forward, for how long the run has been starting (ADR 0086). */
     private val monotonicMillis: () -> Long = { System.nanoTime() / 1_000_000 },
 ) {
     private val log by agentLogger(ExportScheduler::class.java.name)
@@ -140,13 +111,11 @@ class ExportScheduler(
     private val receivedBytesClassesLogged = AtomicBoolean(false)
     private val callbackAnnotationsChecked = AtomicBoolean(false)
 
-    /** When this scheduler was built, which is at agent start; see [maybeLogUnseenCallbackAnnotations]. */
     private val startedAt = clock()
     private val cacheReleaseFailureLogged = AtomicBoolean(false)
     private val beforeManifestFailureLogged = AtomicBoolean(false)
     private val startupCleanupRan = AtomicBoolean(false)
 
-    /** Set once a manifest carrying `dependenciesListed = true` was confirmed; see [sendDependenciesListedIfDue]. */
     private val dependenciesListedSent = AtomicBoolean(false)
     private var flushesSinceSweep = 1
     private val sweepLock = Any()
@@ -160,16 +129,11 @@ class ExportScheduler(
             starting = hasStartingPhase,
         )
 
-    /** Runs the two sends of each flush side by side; see [flush]. Two threads, created once, not two per tick. */
     private val sendPool: ExecutorService =
         Executors.newFixedThreadPool(2) { runnable ->
             Thread(runnable, "otherlode-export-send").apply { isDaemon = true }
         }
 
-    /**
-     * The early shutdown flush's sends, kept apart from [sendPool] so a send it stopped waiting for
-     * never holds a thread the final flush needs. Its threads start only when the early flush runs.
-     */
     private val earlySendPool: ExecutorService =
         Executors.newFixedThreadPool(2) { runnable ->
             Thread(runnable, "otherlode-export-early-send").apply { isDaemon = true }
@@ -194,14 +158,11 @@ class ExportScheduler(
     }
 
     /**
-     * The first flush of a graceful JVM exit: a normal flush, run at once, so counts the application
-     * made so far are on their way while its own shutdown hooks run. The scheduled executor is
-     * stopped first and a flush already in flight finishes before this one starts. Bounded by
-     * [budget] in total: its sends stop being waited for at the deadline, and it starts no hit
-     * batch or manifest chunk after that. It sends no static baseline or class listing retry. A send it
-     * stopped waiting for can still be running when [flushOnShutdown] starts. It runs on its own
-     * threads, the final flush does not wait for it, and it cannot clear a pending state a later
-     * flush set.
+     * The first flush of a graceful JVM exit: a normal flush, run at once, so the counts made so far
+     * are on their way while the application's shutdown hooks run. It stops the scheduled executor
+     * first and waits for a flush in flight. It is bounded by [budget] in total: its sends stop
+     * being waited for at the deadline, and it starts no hit batch or manifest chunk after that. It
+     * sends no static baseline or class listing retry.
      */
     fun flushAtShutdownStart(budget: Duration) {
         val deadlineNanos = System.nanoTime() + budget.toNanos()
@@ -225,17 +186,10 @@ class ExportScheduler(
     /**
      * Best-effort final flush for a graceful JVM exit, bounded by [budget] in total.
      *
-     * The scheduled executor is stopped first, and any flush already in flight on it is allowed
-     * to finish before the final one starts. An early flush from [flushAtShutdownStart] that is
-     * still running its last send does not hold the final flush back.
-     *
-     * [budget] is shared between waiting for the in-flight flush and running the final one. If
-     * the in-flight flush is deep in retries against an unreachable receiver and uses it all
-     * up, the final flush is skipped. That in-flight flush already carried the latest snapshot
-     * it could take, so what is lost is bounded by the hits since it started, and shutdown never
-     * stretches past what an orchestrator's termination grace period allows.
-     *
-     * An interrupt of the calling thread does not end any wait here.
+     * It stops the scheduled executor and waits for a flush in flight, then runs the final flush.
+     * The budget covers both, and the final flush is skipped when the wait uses it all. An early
+     * flush from [flushAtShutdownStart] that is still running its last send does not hold the final
+     * flush back. An interrupt of the calling thread does not end any wait.
      */
     fun flushOnShutdown(budget: Duration) {
         val deadlineNanos = System.nanoTime() + budget.toNanos()
@@ -248,8 +202,6 @@ class ExportScheduler(
                 return
             }
         }
-        // Thread.join(0) waits with no limit, so a budget that ran out while waiting above (or
-        // one that was zero to begin with) must skip the final flush rather than start it.
         val remaining = remainingMillis(deadlineNanos)
         if (remaining <= 0L) {
             log.log(Level.WARNING, "otherlode: no shutdown budget left for the final flush; skipping it")
@@ -295,12 +247,6 @@ class ExportScheduler(
         }
     }
 
-    /**
-     * Waits for one of a flush's sends. A flush with a deadline waits only until it, and the final
-     * flush only until [CLOSING_RESERVE_MILLIS] before it, so its closing batch still has time to go
-     * out. A send it stops waiting for runs [onTimeout], which marks what it carried as pending, and
-     * counts as unconfirmed.
-     */
     private fun awaitSend(
         send: Future<Boolean>,
         final: Boolean,
@@ -331,81 +277,20 @@ class ExportScheduler(
     private fun remainingMillis(deadlineNanos: Long): Long = maxOf(0L, (deadlineNanos - System.nanoTime()) / 1_000_000)
 
     /**
-     * One flush attempt. Sends whatever manifest entries haven't gone out
-     * yet, and the delta since the last acknowledged baseline.
+     * One flush attempt. It sends the manifest entries not yet sent and the delta since the last
+     * acknowledged baseline, on two threads at once. The delta batch is sent even when empty, so a
+     * receiver can tell an idle instance from a crashed one. A failed send leaves its state where it
+     * is, and a later flush retries it. This never throws.
      *
-     * The delta batch is sent even when empty. A receiver otherwise has no
-     * way to tell an instance that's alive but idle from one that's crashed
-     * or lost its network path. An empty batch acts as a liveness heartbeat.
+     * [final] is true only for the flush [flushOnShutdown] runs. It ends with one empty delta batch
+     * carrying `finalFlush`, after every other send.
      *
-     * Neither send has an explicit retry queue. A failure just leaves the
-     * relevant state where it is, so the next tick retries it naturally.
-     * [dev.otherlode.export.HttpExporter] still wraps
-     * each individual send in its own capped exponential backoff, for a
-     * transient failure within one attempt.
+     * [early] marks the flush [flushAtShutdownStart] runs. A nonzero [deadlineNanos], a
+     * `System.nanoTime` value, bounds how long a flush waits for each send. A send it stops waiting
+     * for is marked pending. An early flush starts no hit batch or manifest chunk after the deadline.
      *
-     * The two main sends run concurrently, not one after the other. Each can take
-     * a while to fail on its own (multiple retries, each with its own
-     * timeout) if the receiver is unreachable. Run back to back, a single
-     * flush's worst case could take roughly twice one flush interval,
-     * meaning the liveness heartbeat above would arrive far less often than
-     * configured during exactly the outage it exists to report. Running
-     * them side by side keeps one flush's worst case close to a single
-     * send's worst case instead of the sum of both.
-     *
-     * Up to two more manifest sends follow on the send pool, once both main sends have ended. A
-     * second manifest send runs only when this flush's confirmed delta sends released a dependency
-     * that no manifest has carried yet. It carries that dependency and the mappings
-     * held on it, so they go out in the same flush as their counts. Then an empty manifest carries
-     * `dependenciesListed`, when the flag is due, no confirmed manifest has carried it, and every
-     * send of this flush was confirmed. Neither extra send runs during an outage, so a flush's worst
-     * case stays that of one send.
-     *
-     * This method runs under `scheduleAtFixedRate`, which stops calling a
-     * task forever the first time it lets a throwable escape, with nothing
-     * logged. So `sendManifestDelta` and `sendDeltaBatch` each wrap their
-     * own registry call (`compute*`) and exporter call in one catch of
-     * `Throwable`, not `Exception`: a `NoClassDefFoundError` from a class
-     * first touched on the export path is as fatal to the schedule as any
-     * exception, and would otherwise stop every future flush, heartbeat
-     * included. The outer catch here covers what the sends cannot, such as
-     * a rejected submission after [stop].
-     *
-     * The run's verifier rejections are drained after the sweep and before the sends, the shutdown
-     * flush included. A manifest carrying a higher unplaced total than any confirmed one, or the
-     * blind class listing flag when none has, is sent after the main sends when nothing else
-     * carried it; see [sendUnplacedIfDue].
-     *
-     * A flush that starts with pending counts sends an empty delta batch first, on its own, and a
-     * flush that clears them ends with another; see [DeliveryState] and [sendDeltaBatch].
-     *
-     * [final] is true only for the flush [flushOnShutdown] runs. That flush ends with one empty
-     * delta batch carrying `finalFlush`, after every hit batch and every manifest send, so a
-     * receiver can tell an instance that ended cleanly from one that went silent, and the batch
-     * carries the pending state those sends left. No other batch carries it.
-     *
-     * Manifest content the run produced counts as pending counts until it is confirmed, like a hit
-     * batch: a manifest send that fails, or stops the sends after it, marks the run pending since
-     * the start of the flush, and a pass that confirms every manifest send clears it. When the newest
-     * payload a receiver accepted no longer says the run's state, as when a send of the flush was
-     * refused after the flush's payloads were stamped, or starting ended, the flush sends one more
-     * heartbeat that says so, unless a delta batch or heartbeat of it failed without a refusal.
-     *
-     * The shutdown flush waits for each send only until [CLOSING_RESERVE_MILLIS] before its
-     * deadline, then marks what that send carried as pending and closes. A send it stopped waiting
-     * for can still finish after the closing batch.
-     *
-     * [early] marks the flush [flushAtShutdownStart] runs. With a [deadlineNanos] it waits for each
-     * send only until the deadline, marks what a send it stopped waiting for carried as pending,
-     * and starts no hit batch or manifest chunk after the deadline. Its sends run on their own threads. It
-     * sends no static baseline or class listing retry.
-     *
-     * Each flush has a number, [flushId] when the caller drew it, so the shutdown flushes are
-     * numbered in the order they are called. A flush clears a pending state only when no later
-     * flush marked it, and a mark is ignored when a later flush has cleared it. An early flush's
-     * send that ends after the final flush began therefore cannot say nothing is pending while the
-     * final flush's content is not confirmed, and cannot hold the run pending once the final flush
-     * confirmed everything, since that flush sent what the early one had not.
+     * [flushId] numbers the flush when the caller drew it. A flush clears a pending state only when
+     * no later flush marked it, and a mark is ignored when a later flush has cleared it.
      */
     fun flush(
         final: Boolean = false,
@@ -431,7 +316,6 @@ class ExportScheduler(
                 else -> delivery.observeFlushStart(inScope, unconfirmed)
             }
             if (early && remainingMillis(deadlineNanos) <= 0L) return
-            // Read after the sweep, so this flush's delta sends carry the counts of this generation.
             val generation = dependencyRegistry.countGeneration
             val deliveredBefore = dependencyRegistry.deliveredGeneration
             val sends =
@@ -489,8 +373,6 @@ class ExportScheduler(
                 if (!sendClosingHeartbeat(sends)) allConfirmed = false
             } else {
                 if (roomForMore() && !sends.outage && delivery.stateNotYetSaid() && !sendCatchUpHeartbeat(sends)) allConfirmed = false
-                // One chunk per sender per flush, and none from a shutdown flush, so a slow
-                // resend never holds up a heartbeat or spends the shutdown budget.
                 if (allConfirmed && !early) {
                     staticBaselineSender?.retryPending()
                     classListingSender?.retryPending()
@@ -502,12 +384,6 @@ class ExportScheduler(
         }
     }
 
-    /**
-     * Moves the verifier messages collected since the last flush into the registry, before this
-     * flush's sends, so what they name goes out on the same manifest. Guarded like the sweep: a
-     * failure may have lost what it drained, so it counts one unplaced failure, is logged, and the
-     * flush goes on.
-     */
     private fun drainVerifierRejections() {
         try {
             verifierWatch.drainInto(registry, clock())
@@ -521,7 +397,6 @@ class ExportScheduler(
         }
     }
 
-    /** Calls [beforeManifest]; a failure is logged once and never reaches the flush. */
     private fun runBeforeManifest(final: Boolean) {
         try {
             beforeManifest(config.flushInterval.toMillis(), final)
@@ -532,7 +407,6 @@ class ExportScheduler(
         }
     }
 
-    /** Calls [releaseQuietCaches]; a failure is logged once and never reaches the flush. */
     private fun releaseCaches() {
         try {
             releaseQuietCaches()
@@ -543,30 +417,6 @@ class ExportScheduler(
         }
     }
 
-    /**
-     * Runs the sweep before this flush's sends, so what it finds goes out on the same manifest
-     * rather than waiting a whole cycle.
-     *
-     * The two directions the sweep serves keep different cadences. Confirmation
-     * ([ProbeRegistry.confirmFrom], [EndpointRegistry.confirmFrom]) runs on every flush a class
-     * awaits it, since a class held back stays held back until it is confirmed, and waiting ten
-     * flushes would delay every class's first manifest by that much. The forward, unreported-class
-     * direction is the expensive part, an `isCandidate` filter over every class the JVM holds, and
-     * runs on the first flush and then every tenth; the shutdown flush always runs it, so an instance that ends cleanly
-     * always gives a final answer.
-     *
-     * Before the dependency listing completes, the walk is skipped entirely, with no call into the
-     * sweep at all, when there is nothing for either direction to do: no class or declaring
-     * class awaiting confirmation, every framework marker seen, and the forward direction not due.
-     * `getAllLoadedClasses` allocates an array of every class the JVM holds. A process that loads
-     * no marker leaves one unseen for good, so with the shipped list the walk runs on every flush.
-     * Once the listing completes the walk runs on every flush, since the sweep counts the classes
-     * loaded from each dependency from the same array, and the forward direction runs with it,
-     * since the walk is paid anyway. Confirmation keeps its cadence.
-     *
-     * Guarded like the sends are: this runs under `scheduleAtFixedRate`, which stops calling a
-     * task forever the first time one lets a throwable escape.
-     */
     private fun maybeSweep(final: Boolean) {
         val sweep = loadedClassSweep ?: return
         val countsDependencies = dependencyRegistry.isListingComplete
@@ -587,11 +437,6 @@ class ExportScheduler(
         }
     }
 
-    /**
-     * Logs one INFO line naming the branch sites dropped so far, the first time a flush finds the
-     * total above zero. Nothing is logged on a flush that finds no drops yet, and nothing is
-     * logged again once it has. See [BranchDropCounts].
-     */
     private fun maybeLogBranchDrops() {
         if (branchDropsLogged.get()) return
         val total = branchDropCounts.total()
@@ -612,14 +457,6 @@ class ExportScheduler(
         }
     }
 
-    /**
-     * Logs one WARNING counting the methods and branch outcomes reported as unread shapes, by
-     * family, the first time a flush finds any. It names each Scala 3 release the agent has not
-     * read and, when some classes name no compiler the agent could read, says how many methods
-     * those are and that a hand-written override of case-class plumbing is counted there too.
-     * Nothing is logged on a flush that finds none yet, and nothing is logged again once it has.
-     * See [UnreadShapeCounts].
-     */
     private fun maybeLogUnreadShapes() {
         if (unreadShapesLogged.get()) return
         val total = unreadShapeCounts.total()
@@ -688,11 +525,6 @@ class ExportScheduler(
             "($families)."
     }
 
-    /**
-     * Logs one INFO line counting the classes analysed from the bytes they arrived as, the first
-     * time a flush finds any. A class whose loader serves no class file has no source of shape other
-     * than those bytes, and another agent may have changed them. See [UnreadShapeCounts].
-     */
     private fun maybeLogReceivedBytesClasses() {
         if (receivedBytesClassesLogged.get()) return
         val classes = unreadShapeCounts.receivedBytesClasses()
@@ -706,15 +538,6 @@ class ExportScheduler(
         )
     }
 
-    /**
-     * Logs one INFO line naming each configured callback annotation not yet seen on a method, in the
-     * order and spelling the adopter wrote them. It is decided once, at the first flush that runs
-     * [UNSEEN_CALLBACK_ANNOTATIONS_AFTER] or more after start, or at the final flush if that comes
-     * first, and not revisited. An earlier flush can run before the application has loaded its
-     * classes, since the first one is jittered from zero and a test run flushes every second. A
-     * correctly spelled name whose classes have not loaded is still named, so this is INFO. See
-     * [ConfiguredCallbackAnnotations].
-     */
     private fun maybeLogUnseenCallbackAnnotations(
         final: Boolean,
         now: Long,
@@ -732,7 +555,6 @@ class ExportScheduler(
         )
     }
 
-    /** [n] followed by [one] or [many]. */
     private fun count(
         n: Long,
         one: String,
@@ -754,23 +576,6 @@ class ExportScheduler(
             UnreadShape.TRAIT_FORWARDER -> "Scala trait forwarders"
         }
 
-    /**
-     * The run's delivery state, stamped onto every delta batch and manifest just before it is sent
-     * (ADR 0068). [pendingSince] is 0 when every hit the run has sent and all its manifest content
-     * was confirmed, otherwise the start of the flush in which the unconfirmed content began.
-     * [nextSequence] numbers the payloads from 1.
-     *
-     * A run that [starting] says so on every payload, apart from the pending state (ADR 0087),
-     * until a scheduled flush finds that classes have loaded, that none has loaded for at least one
-     * flush interval, that no class awaits the sweep's confirmation, and that the run is at least
-     * one interval old; until 10 intervals have passed; or until a final flush that finds no
-     * in-scope class loaded since the early shutdown flush and none awaiting confirmation
-     * (ADR 0086). Ages are read from [monotonic]. Once ended it never comes back.
-     *
-     * One lock guards the sequence, the pending state and the starting state. A flush's manifest and delta sends run on two threads, and a
-     * payload's number and the state it carries must be drawn together: any payload numbered after
-     * a change of the state then read the state after it.
-     */
     private class DeliveryState(
         private val verifierRejectionsWatched: Boolean,
         private val unplacedVerificationFailures: () -> Long,
@@ -795,7 +600,6 @@ class ExportScheduler(
         private var acceptedPendingSince = 0L
         private var acceptedStarting = false
 
-        /** Records that a receiver accepted the payload stamped with these values. */
         fun accepted(
             sequence: Long,
             pendingSince: Long,
@@ -814,7 +618,6 @@ class ExportScheduler(
         private var unplacedDelivered = 0L
         private var blindDelivered = false
 
-        /** Numbers a flush, from 1, in the order flushes start. */
         fun nextFlushId(): Long = synchronized(lock) { ++lastFlushId }
 
         private fun pendingSince(): Long =
@@ -829,14 +632,6 @@ class ExportScheduler(
             return !startingEnded
         }
 
-        /**
-         * Called at the start of a scheduled flush, after the sweep, with the in-scope class count
-         * and the classes still awaiting the sweep's confirmation. The count's last change is kept
-         * with its time, so flushes that run back to back after a slow one do not shorten the quiet
-         * window. Ends starting when classes have loaded, the count has not moved for at least one
-         * interval, nothing awaits confirmation and the run is at least one interval old, or when
-         * the cap has passed. The early shutdown flush never calls it.
-         */
         fun observeFlushStart(
             inScopeCount: Long,
             unconfirmed: Long,
@@ -858,20 +653,12 @@ class ExportScheduler(
             }
         }
 
-        /** The in-scope class count the early shutdown flush read after its sweep; -1 when none ran. */
         private var shutdownCount = -1L
 
-        /** Called by the early shutdown flush after its sweep, with the in-scope class count. */
         fun observeShutdownStart(inScopeCount: Long) {
             synchronized(lock) { shutdownCount = inScopeCount }
         }
 
-        /**
-         * Called by the final flush after its sweep. Ends starting when the JVM loaded no in-scope
-         * class since the early shutdown flush and none awaits confirmation, as for a batch job
-         * whose work is done. A JVM stopped while its application was still starting keeps loading
-         * through shutdown, so it stays pending. Without an early flush, starting does not end here.
-         */
         fun endStartingAtExit(
             inScopeCount: Long,
             unconfirmed: Long,
@@ -883,16 +670,10 @@ class ExportScheduler(
             }
         }
 
-        /** Whether hits or manifest content are unconfirmed. */
         fun isPending(): Boolean = synchronized(lock) { pendingSince() != 0L }
 
         fun hitsPending(): Boolean = synchronized(lock) { hitsPendingSince != 0L }
 
-        /**
-         * Called when a hit batch of flush [flushId] was sent and not confirmed. Keeps the earlier
-         * start if already pending. Ignored when a later flush confirmed every hit batch, since that
-         * flush carried what this one did.
-         */
         fun markPending(
             flushStart: Long,
             flushId: Long,
@@ -904,11 +685,6 @@ class ExportScheduler(
             }
         }
 
-        /**
-         * Called when manifest content the run produced is not confirmed by flush [flushId]: a send
-         * failed, or sends stopped before a chunk was sent. Keeps the earlier start if already pending.
-         * Ignored when a later flush confirmed all manifest content.
-         */
         fun markManifestPending(
             flushStart: Long,
             flushId: Long,
@@ -920,10 +696,6 @@ class ExportScheduler(
             }
         }
 
-        /**
-         * Called when every hit batch of flush [flushId] was confirmed. Clears nothing when a later
-         * flush marked hits pending. Manifest content may still hold the run pending.
-         */
         fun clearHits(flushId: Long) {
             synchronized(lock) {
                 if (flushId < hitsMarkedBy) return
@@ -932,10 +704,6 @@ class ExportScheduler(
             }
         }
 
-        /**
-         * Called when a pass of flush [flushId] confirmed every manifest send and left no manifest
-         * content outstanding. Clears nothing when a later flush marked manifest content pending.
-         */
         fun clearManifest(flushId: Long) {
             synchronized(lock) {
                 if (flushId < manifestMarkedBy) return
@@ -944,13 +712,6 @@ class ExportScheduler(
             }
         }
 
-        /**
-         * Whether the newest payload a receiver accepted says something the state no longer
-         * holds: pending while the state is clean, nothing pending while hits or manifest content
-         * are, or starting after starting ended (ADR 0082, ADR 0087). The newest accepted payload
-         * is what the server reads, so a run that dies after such a flush would otherwise read its
-         * lost hits as evidence. False before any payload was accepted.
-         */
         fun stateNotYetSaid(): Boolean =
             synchronized(lock) {
                 acceptedSequence != 0L &&
@@ -966,10 +727,6 @@ class ExportScheduler(
                 )
             }
 
-        /**
-         * Stamps the sequence, the pending state, whether the run watches the verifier and the
-         * unplaced total, all read under the lock so one manifest carries one consistent view.
-         */
         fun stamp(manifest: ProbeManifest): ProbeManifest =
             synchronized(lock) {
                 manifest.copy(
@@ -982,7 +739,6 @@ class ExportScheduler(
                 )
             }
 
-        /** Records that a manifest carrying [total] unplaced failures, and [blind], was confirmed. */
         fun confirmStamped(
             total: Long,
             blind: Boolean,
@@ -993,22 +749,16 @@ class ExportScheduler(
             }
         }
 
-        /**
-         * Whether the registry's unplaced total is above the highest one a confirmed manifest
-         * carried, or the listing went blind and no confirmed manifest has said so.
-         */
         fun stampedStateAheadOfDelivered(): Boolean =
             synchronized(lock) { unplacedVerificationFailures() > unplacedDelivered || (classListingBlind() && !blindDelivered) }
     }
 
-    /** The one place a delta batch reaches the exporter, so none skips [DeliveryState.stamp]. */
     private fun sendStamped(batch: DeltaBatch) {
         val stamped = delivery.stamp(batch)
         exporter.exportDeltaBatch(stamped)
         delivery.accepted(stamped.payloadSequence, stamped.countsPendingSince, stamped.starting)
     }
 
-    /** The one place a manifest reaches the exporter, so none skips [DeliveryState.stamp]. */
     private fun sendStamped(manifest: ProbeManifest) {
         val stamped = delivery.stamp(manifest)
         exporter.exportManifest(stamped)
@@ -1019,22 +769,12 @@ class ExportScheduler(
     private fun hasHits(batch: DeltaBatch): Boolean =
         batch.deltas.isNotEmpty() || batch.endpointDeltas.isNotEmpty() || batch.dependencyDeltas.isNotEmpty()
 
-    /**
-     * One outgoing [DeltaBatch], together with the probe snapshot and the endpoint and dependency
-     * snapshots it carries. A confirmed send advances exactly these, and nothing else.
-     */
     private class DeltaSend(
         val batch: DeltaBatch,
         val probeSnapshot: ProbeRegistry.DeltaSnapshot?,
         val riders: List<Rider<DeltaBatch>>,
     )
 
-    /**
-     * A chunk from a registry other than the probe registry, packed onto a probe delta batch or a
-     * class manifest chunk: its weight against the entry cap, its encoded weight against the byte
-     * and element bounds, how it adds itself to the payload, and how its registry marks it
-     * delivered once that payload's send is confirmed.
-     */
     private class Rider<T>(
         val size: Int,
         val weight: PayloadWeight,
@@ -1042,44 +782,6 @@ class ExportScheduler(
         val advance: () -> Unit,
     )
 
-    /**
-     * Sends probe, endpoint and dependency deltas together, advancing each snapshot only once its
-     * send is confirmed. A refused send (an [ExportFailedException] with [ExportFailedException.refused])
-     * does not stop the loop: it is logged, its snapshots stay where they were, and the next batch
-     * is sent. Any other failure stops the loop. The sends already confirmed stay advanced, the
-     * rest are recomputed and resent on the next flush.
-     *
-     * Pending counts (ADR 0068) move at two points. A hit batch, one carrying at least one probe,
-     * endpoint or dependency delta, that is sent and not confirmed makes the run pending since
-     * [flushStart] when it was not already. A flush that sent and confirmed every hit batch it
-     * built then clears it and ends with an empty batch stamped after the change. A flush that
-     * starts pending leads with an empty batch on its own, so the field reaches the receiver even
-     * when the hit batch is refused for its size. An empty batch carries no counts: its outcome
-     * never moves the state, and a refusal of it counts against nothing. Any other failure of it
-     * ends the loop like one of a hit batch.
-     *
-     * When every hit batch in the loop is confirmed, the counts of counting generation
-     * [generation] have reached the receiver, and this records it
-     * ([DependencyRegistry.markCountsDelivered]).
-     *
-     * The shutdown flush ([final]) ends with one more empty batch that carries `finalFlush`, which
-     * [flush] sends after this loop and the manifest sends, whatever happened to them, so it
-     * carries the pending state both left. No other batch of the flush carries `finalFlush`. The
-     * shutdown flush sends no empty batch of its own before that one, since the closing batch is
-     * its liveness signal, and it replaces the one a clearing flush would send. When anything the
-     * loop does not account for throws, such as computing the batches, the shutdown flush marks the
-     * run pending before it closes, so the run never ends cleanly with its hits unconfirmed and
-     * nothing pending.
-     *
-     * `flushComplete` is set on at most one batch of a flush, the last one the flush sends, and
-     * only when every delta batch the flush sent before it was confirmed, empty batches included.
-     * It is decided when the batch is built, from the sends so far. A flush that started clean
-     * carries it on the last batch of the loop. A flush that started with pending hits carries it on its
-     * closing heartbeat. The shutdown flush carries it on its closing `finalFlush` batch. A failure
-     * of any kind, including one before the first send, leaves it off every later batch.
-     *
-     * Returns whether the loop ran to its end with every hit batch confirmed.
-     */
     private fun sendDeltaBatch(
         final: Boolean,
         generation: Long,
@@ -1097,10 +799,6 @@ class ExportScheduler(
         return confirmed
     }
 
-    /**
-     * The shutdown flush's last send, after the hit batches and the manifest sends, so it carries
-     * the pending state they left. Returns false when it failed without a refusal.
-     */
     private fun sendClosingHeartbeat(sends: FlushSends): Boolean =
         try {
             sendHeartbeat(sends, finalFlush = true, flushComplete = sends.allConfirmed)
@@ -1110,11 +808,6 @@ class ExportScheduler(
             false
         }
 
-    /**
-     * Tells the receiver the run's state, when the newest payload it accepted no longer says it:
-     * a send was refused after the flush's payloads were stamped, the last pending state was
-     * cleared, or starting ended. Returns false when it failed without a refusal.
-     */
     private fun sendCatchUpHeartbeat(sends: FlushSends): Boolean =
         try {
             sendHeartbeat(sends, finalFlush = false, flushComplete = false)
@@ -1183,15 +876,6 @@ class ExportScheduler(
         return true
     }
 
-    /**
-     * Whether every delta batch a flush has sent so far was confirmed. A batch that was sent and
-     * refused or failed, a failure before any batch was sent, and a delta send the shutdown flush
-     * stopped waiting for make it false for the rest of the flush. [outage] is set when a delta
-     * batch or a heartbeat failed without a refusal, whatever the status: the receiver, or
-     * Otherlode behind it, is not taking payloads. The flush's threads and its send pool read and
-     * write it. [flushId] numbers the flush for [DeliveryState]. [stopsAtNanos], when not 0, is the
-     * time after which the flush starts no send.
-     */
     private class FlushSends(
         val pendingAtStart: Boolean,
         val hitsWerePending: Boolean,
@@ -1217,10 +901,6 @@ class ExportScheduler(
         }
     }
 
-    /**
-     * Sends an empty delta batch. A refusal is logged and the caller goes on; any other failure
-     * propagates. Either marks [sends] unconfirmed.
-     */
     private fun sendHeartbeat(
         sends: FlushSends,
         finalFlush: Boolean,
@@ -1258,21 +938,6 @@ class ExportScheduler(
             advance = { dependencyRegistry.advanceDeltas(snapshot) },
         )
 
-    /**
-     * Packs endpoint and dependency delta snapshots onto probe delta batches, in [riders] order.
-     * Each goes on the first batch with room for it, room being [maxDeltasPerBatch] minus that
-     * batch's weight so far, and the encoded bytes and element count of [PayloadKind.DELTA_BATCH]; a
-     * snapshot that fits nowhere becomes its own [DeltaBatch] with no probe deltas, which a later
-     * rider may then share. At the default [maxDeltasPerBatch], a rider of fixed-size deltas
-     * breaks no bound on its own.
-     *
-     * [probeBatches] is never empty: [ProbeRegistry.computeDeltaBatches] always returns at least
-     * one batch as the liveness heartbeat. That batch is where every rider lands when nothing else
-     * changed, so a flush with only endpoint or dependency activity still sends exactly one
-     * [DeltaBatch], carrying both the heartbeat and those deltas.
-     *
-     * No batch built here carries `finalFlush`; the shutdown flush's closing batch does.
-     */
     private fun composeDeltaSends(
         probeBatches: List<ProbeRegistry.DeltaSnapshot>,
         riders: List<Rider<DeltaBatch>>,
@@ -1301,47 +966,12 @@ class ExportScheduler(
         val riders = mutableListOf<Rider<DeltaBatch>>()
     }
 
-    /**
-     * One outgoing [ProbeManifest], together with the probe snapshot and the riders (endpoint,
-     * dependency, external-class and framework-marker chunks) it carries. A confirmed send advances exactly these, and nothing else.
-     */
     private class ManifestSend(
         val manifest: ProbeManifest,
         val probeSnapshot: ProbeRegistry.ManifestSnapshot?,
         val riders: List<Rider<ProbeManifest>>,
     )
 
-    /**
-     * Sends only the probes, endpoints, dependencies, external classes and framework markers not yet
-     * included in a successfully delivered manifest.
-     *
-     * This runs on the first flush, not at agent startup. By the first
-     * flush, classes have actually started loading, so there are probes to
-     * send. Classes that register later (lazy singletons, or a code path
-     * run for the first time) are still picked up on a later flush. They
-     * are not permanently left out just because an earlier send already
-     * succeeded. The same holds for endpoints: a discovery-source upgrade
-     * or a handler join learned after an earlier delivery is picked up the
-     * same way. A dependency, and a mapping to it, goes out only once its
-     * counts were delivered; see [DependencyRegistry.isSendable].
-     *
-     * A disabled endpoint module not yet delivered goes first, alone on a manifest, before any
-     * class chunk is built. Its record is the only thing that tells a receiver the endpoints
-     * earlier manifests declared are no longer counted, so it never waits behind a class chunk
-     * and never also rides an endpoint chunk.
-     *
-     * Class chunks are built, sent and advanced one at a time, so the first flush holds one
-     * chunk rather than the whole manifest, and the first failure stops the send before the next
-     * chunk is built. Riders are computed up front, in chunks their registries bound by weight.
-     *
-     * `dependenciesListed` is read once, after the riders are computed and before the
-     * first send, so every chunk of one call carries the same value.
-     *
-     * Returns whether every send in the loop was confirmed. A call with
-     * nothing to send returns true. A failure, a refusal included, or an exception while computing
-     * the chunks marks the run's manifest content pending since [flushStart] (ADR 0068), and a call
-     * that confirms everything it computed clears it.
-     */
     private fun sendManifestDelta(
         final: Boolean,
         flushStart: Long,
@@ -1425,19 +1055,6 @@ class ExportScheduler(
             advance = { externalClassRegistry.advanceManifest(chunk) },
         )
 
-    /**
-     * Packs endpoint, dependency, external-class and framework-marker chunks onto class manifest chunks, in [riders] order. Each
-     * rider goes on the first manifest with room for it, room being [maxManifestEntriesPerChunk]
-     * minus that manifest's weight so far, and the encoded bytes and element count of
-     * [PayloadKind.MANIFEST]. A rider that fits nowhere, including when there are no
-     * class chunks at all, becomes its own [ProbeManifest] with no probes, which a later rider may
-     * then share.
-     *
-     * Lazy: a class chunk is taken from [classChunks] only when the consumer asks for the next
-     * send, and riders are placed chunk by chunk, each chunk taking every waiting rider that fits
-     * in order. That puts every rider where first-fit over all the chunks at once would, without
-     * building a later chunk before an earlier one was sent.
-     */
     private fun manifestSends(
         classChunks: Sequence<ProbeRegistry.ManifestSnapshot>,
         riders: List<Rider<ProbeManifest>>,
@@ -1481,19 +1098,9 @@ class ExportScheduler(
             for (builder in own) yield(finish(builder))
         }
 
-    /**
-     * Whether this instance records references, stamped on every manifest it sends: true exactly
-     * when include rules are set. The agent refuses to start without them, so a running agent
-     * always sends true; with an empty list nothing is instrumented and nothing is recorded, and
-     * false says so.
-     */
     private val referencesRecorded: Boolean
         get() = config.includePackages.isNotEmpty()
 
-    /**
-     * Whether a manifest built at this point may say `dependenciesListed`: every startup dependency and every
-     * mapping recorded before the listing ended has gone out on a confirmed manifest.
-     */
     private val dependenciesListed: Boolean
         get() = dependencyRegistry.isStartupListingDelivered && externalClassRegistry.isBacklogDelivered
 
@@ -1505,12 +1112,6 @@ class ExportScheduler(
             dependenciesListed = dependenciesListed,
         )
 
-    /**
-     * Sends an empty manifest carrying `dependenciesListed` when it is due and no confirmed
-     * manifest has carried it yet. Without this, an instance with nothing else to send would never
-     * tell the receiver that its listing is complete. [flush] calls this only when every other
-     * send of the flush was confirmed. Guarded like the other sends; see [flush].
-     */
     private fun sendDependenciesListedIfDue(sends: FlushSends) {
         try {
             if (dependenciesListedSent.get() || !dependenciesListed) return
@@ -1521,13 +1122,6 @@ class ExportScheduler(
         }
     }
 
-    /**
-     * Sends an empty manifest when the run's unplaced verification failures rose above the total
-     * any confirmed manifest carried, or its class listing went blind and no confirmed manifest
-     * said so, and nothing else of this flush carried it. Every manifest
-     * stamps the current total, so a flush with class chunks to send needs no extra one. [flush]
-     * calls this only when every other send of the flush was confirmed. Guarded like the other sends.
-     */
     private fun sendUnplacedIfDue(
         flushStart: Long,
         sends: FlushSends,
@@ -1552,11 +1146,7 @@ class ExportScheduler(
         fun admits(rider: Rider<ProbeManifest>): Boolean =
             size + rider.size <= maxManifestEntriesPerChunk && PayloadKind.MANIFEST.admits(weight + rider.weight)
 
-        // Every list the chunker weighted, call edges, references and branch sites included, so
-        // packing a rider onto this one cannot overshoot the cap. A bucket missing here reads as
-        // weightless and absorbs a full chunk; edges, references and sites nest inside each probe
-        // location or class record rather than sitting beside it, which is why they need summing
-        // rather than a list size.
+        // Sums every list the chunker weights, or a rider packed onto this one can overshoot the cap.
         var size =
             manifest.probes.size +
                 manifest.probes.sumOf { probe ->
@@ -1572,29 +1162,22 @@ class ExportScheduler(
     }
 
     companion object {
-        /** Built at run time, since `shadowJar` rewrites a constant that starts with `kotlin`. */
+        // Built at run time, since `shadowJar` rewrites a constant that starts with `kotlin`.
         private val KOTLINX_PACKAGE = listOf("kot", "linx").joinToString("")
 
         /** Flush intervals after the agent's start at which a run stops counting as starting (ADR 0086). */
         const val STARTING_CAP_INTERVALS: Long = 10
 
-        /**
-         * How long after start the unseen callback annotations are first judged. Long enough for an
-         * application to have started and loaded its handlers.
-         */
+        /** How long after start the unseen callback annotations are first judged. */
         val UNSEEN_CALLBACK_ANNOTATIONS_AFTER: Duration = Duration.ofMinutes(5)
 
-        /** A delta is a few dozen bytes on the wire, so this is well under a megabyte per POST. */
+        /** The default upper bound on changed probes per delta POST. */
         const val DEFAULT_MAX_DELTAS_PER_BATCH: Int = 20_000
 
-        /** A probe location carries class and method strings, so it is roughly ten times a delta's size. */
+        /** The default upper bound on manifest entries per POST. */
         const val DEFAULT_MAX_MANIFEST_ENTRIES_PER_CHUNK: Int = 5_000
 
-        /**
-         * How many flushes pass between sweeps, about ten minutes at the default interval. Not
-         * an option: nobody can pick a better number without knowing what the walk costs on their
-         * own application, and the finding it produces does not go stale.
-         */
+        /** How many flushes pass between forward-direction sweeps while the dependency listing is incomplete. */
         const val SWEEP_EVERY_N_FLUSHES: Int = 10
 
         /** What the shutdown flush keeps of its budget for its closing batch. */

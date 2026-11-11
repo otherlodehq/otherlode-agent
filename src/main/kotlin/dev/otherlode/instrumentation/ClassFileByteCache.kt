@@ -11,32 +11,11 @@ import java.util.WeakHashMap
 /**
  * A JVM-wide, bounded cache of class-file bytes, in front of [ClassFileLocator.ForClassLoader].
  *
- * Every transform reads the class files of the supertypes and referenced types of the class it
- * weaves, and most of those reads repeat one another: a nested-jar loader answers each in tens of
- * microseconds, which adds up across thousands of classes. Bytes are cached rather than parsed
- * descriptions, which are far heavier for the same saving.
- *
- * Entries are keyed by class loader and binary name. A loader is held weakly, so a retired loader
- * and its entries become collectible; the bootstrap loader (`null`) is a key of its own. A name no
- * loader can provide is cached too, so a type an application names but never ships is asked for
- * once. The total weight of cached bytes is capped at [capBytes], evicting the least recently used
- * entry first; a negative entry weighs [NEGATIVE_WEIGHT] so that a flood of misses is bounded as
- * well. A lock guards the map, which costs little beside a class-file read.
- *
- * Three reads do not go through it, and use [uncachedLocatorFor]: a class's own class file when it
- * is first analysed, which is read once anyway; the comparison a re-weave makes between the class
- * file and the one the class was woven from (ADR 0053), where a cached copy of a class that was
- * HotSwapped would let edited code through on the old plan; and an out-of-scope supertype the
- * override walk reads, whose header it keeps in a cache of its own (ADR 0064).
- *
- * Each lookup or store marks its loader active. [takeActiveLoaders] reports the marked loaders and
- * clears the marks, and [dropLoadersNotIn] drops the entries of every loader that is neither in the
- * set it is given nor marked since, which is how the agent releases the entries of a loader that has
- * stopped defining classes. A dropped entry refills on demand.
- *
- * An entry can be wrong only for a class whose file appears or changes during the process, a miss
- * for one that is added later or bytes for one that is rewritten; only [dropLoader] or [dropAll]
- * fixes it. The arrays handed out are shared, so a reader must not modify them.
+ * Entries are keyed by class loader and binary name. Loaders are held weakly, and the bootstrap
+ * loader (`null`) is a key of its own. A name no loader can provide is cached too. The total weight
+ * of cached bytes is capped at [capBytes], and the least recently used entry goes first. A cached
+ * entry can be wrong for a class whose file appears or changes during the process, until the entry
+ * is dropped or evicted. The arrays handed out are shared and must not be modified.
  */
 class ClassFileByteCache(
     private val capBytes: Long = DEFAULT_CAP_BYTES,
@@ -83,7 +62,7 @@ class ClassFileByteCache(
     }
 
     /**
-     * The loaders (null for the bootstrap loader) that looked up or stored an entry since the last
+     * Returns the loaders (null for the bootstrap loader) that looked up or stored an entry since the last
      * call, and clears the marks.
      */
     fun takeActiveLoaders(): Set<ClassLoader?> {
@@ -98,8 +77,8 @@ class ClassFileByteCache(
     }
 
     /**
-     * Forgets the entries of every loader that is not in [keep] and has not been marked active since
-     * the marks were last cleared. Takes this cache's lock only.
+     * Forgets the entries of every loader that is not in [keep] and was not marked active since the marks
+     * were last cleared. Takes this cache's lock only.
      */
     fun dropLoadersNotIn(keep: Set<ClassLoader?>) {
         synchronized(this) {
@@ -212,11 +191,6 @@ class ClassFileByteCache(
         override fun close() = Unit
     }
 
-    /**
-     * A weak reference to a loader plus the name of a class, with the loader's identity hash fixed
-     * at construction so a key that is still in the map after its loader is cleared keeps hashing
-     * where it was stored.
-     */
     private class Key(
         classLoader: ClassLoader?,
         private val name: String,
@@ -250,10 +224,8 @@ class ClassFileByteCache(
 
         /**
          * A locator that reads [classLoader] (null for the bootstrap loader) directly, bypassing every cache.
-         *
-         * The bootstrap loader's resource lookup does not see a jar appended to its search at run
-         * time, as OpenTelemetry's agent appends its own, so a class of that jar has no supertypes
-         * to describe. The jar is a `-javaagent` jar, which is on the system class path too.
+         * For the bootstrap loader it also reads the system loader. A re-weave's comparison with the class
+         * file must use it, since a cached copy may predate a HotSwap.
          */
         fun uncachedLocatorFor(classLoader: ClassLoader?): ClassFileLocator =
             if (classLoader != null) {

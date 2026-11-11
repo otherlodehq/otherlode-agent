@@ -3,31 +3,12 @@ package dev.otherlode.instrumentation
 import dev.otherlode.instrumentation.branch.BranchProbeAsmVisitorWrapper
 import java.util.WeakHashMap
 
-/** A woven `$default` method's per-method constants for its omission probes. */
 internal class DefaultSiteBinding(
     val base: Int,
     val optionalBits: Int,
     val maskParameterIndex: Int,
 )
 
-/**
- * How the method tier wove one class: everything a later weave of the same class needs to repeat
- * it without reading anything again, so the class keeps its field, its array and its slot
- * numbering.
- *
- * Held for the life of the class's loader, so it is kept compact. Every method the weave touched
- * has an index into [signatures], which holds its name and then its descriptor, interned, and into
- * [ints], which holds [STRIDE] values per method: its entry slot, its branch run's base and count,
- * its omission base, optional bits and mask parameter index, and flags. A method whose branches
- * paired at the first weave also has an entry in [branchData]: the class file's tracked
- * instructions as [dev.otherlode.instrumentation.branch.SitePairing] encodes them, then the
- * dropped, throwing-default and unprobed-outcome ordinals the rewriter needs, each list prefixed
- * by its length.
- *
- * [classFileHash] is [WovenClasses.hashOf] the class file the first weave read, when it read one.
- * [majorVersion] is the class-file version of the bytes the first weave rewrote; it picks the
- * [ProbeArrayForm], and a later weave uses the same one so the class keeps the members it has.
- */
 internal class WeavePlan private constructor(
     val classFileHash: Long,
     val hasClassFileHash: Boolean,
@@ -47,16 +28,12 @@ internal class WeavePlan private constructor(
     @Volatile
     private var logged = 0
 
-    /** The `<clinit>` probe's slot, or null when the class has no type initializer probe. */
     val typeInitializerProbeIndex: Int? get() = typeInitializerSlot.takeIf { it >= 0 }
 
-    /** The slot counting each normal return of the `<clinit>`, or null when the class has no type initializer probe. */
     val initializerReturnedProbeIndex: Int? get() = initializerReturnedSlot.takeIf { it >= 0 }
 
-    /** The slot counting the `<clinit>` leaving by a throw, or null when the class has no type initializer probe. */
     val initializerThrewProbeIndex: Int? get() = initializerThrewSlot.takeIf { it >= 0 }
 
-    /** Whether this is the first time [kind] is logged for this class; later calls return false. */
     fun firstLog(kind: Int): Boolean =
         synchronized(this) {
             if (logged and kind != 0) {
@@ -67,7 +44,6 @@ internal class WeavePlan private constructor(
             }
         }
 
-    /** The plan unpacked into lookups for one weave; built per weave and dropped after it. */
     fun view(): View {
         val entrySlots = HashMap<Pair<String, String>, Int>()
         val runs = HashMap<Pair<String, String>, BranchProbeAsmVisitorWrapper.MethodSlots>()
@@ -102,12 +78,10 @@ internal class WeavePlan private constructor(
         return View(entrySlots, runs, eligible, sequences, dropped, throwing, unprobed, defaults)
     }
 
-    /** One weave's lookups, keyed by method name and descriptor. */
     class View(
         val entrySlots: Map<Pair<String, String>, Int>,
         val branchRuns: Map<Pair<String, String>, BranchProbeAsmVisitorWrapper.MethodSlots>,
         val branchEligible: Set<Pair<String, String>>,
-        /** The class file's tracked instructions of each branch-eligible method with bytecode, encoded. */
         val sequences: Map<Pair<String, String>, IntArray>,
         private val dropped: Map<Pair<String, String>, Set<Int>>,
         private val throwingDefaults: Map<Pair<String, String>, Set<Int>>,
@@ -130,7 +104,6 @@ internal class WeavePlan private constructor(
         ): Map<Int, Int> = unprobed[name to descriptor] ?: emptyMap()
     }
 
-    /** Collects one first weave's plan, method by method. */
     class Builder(
         private val classFileHash: Long?,
         private val layoutHash: Long,
@@ -166,11 +139,6 @@ internal class WeavePlan private constructor(
             slot: Int,
         ) = apply { row(name, descriptor)[ENTRY_SLOT] = slot }
 
-        /**
-         * Marks a method whose branches paired, with the class file's tracked instructions and the
-         * rewriter's ordinals. [sequence] is never left out: a later weave pairs the method against
-         * it, and an empty one pairs only with bytes that have no tracked instruction either.
-         */
         fun branchEligible(
             name: String,
             descriptor: String,
@@ -243,16 +211,12 @@ internal class WeavePlan private constructor(
     }
 
     companion object {
-        /** A refused re-weave, logged once per class. */
         const val LOGGED_REFUSAL = 1
 
-        /** Methods whose branches stopped pairing, logged once per class. */
         const val LOGGED_FROZEN = 2
 
-        /** A re-weave that failed for another reason, logged once per class. */
         const val LOGGED_FAILURE = 4
 
-        /** A re-weave left a method out of the branch rewrite for size, logged once per class. */
         const val LOGGED_SIZE_GUARD = 8
 
         private const val ENTRY_SLOT = 0
@@ -267,27 +231,9 @@ internal class WeavePlan private constructor(
     }
 }
 
-/**
- * The [WeavePlan] of every class the method tier wove, so a later call for the same loaded class
- * (another agent's retransformation, or a redefinition) can weave it again without renumbering
- * anything and without reading anything but its class file, for one check.
- *
- * A transformer is handed the same arguments for a retransformation and a redefinition, and the
- * bytes it receives depend on what ran ahead of it, which can differ from the first load: another
- * agent's capable transformer may add its own probes, or skip a class it rewrote at load. So
- * nothing here is keyed on the received bytes. The bytes that arrive are paired against the class
- * file's tracked instructions the plan stored. The one thing that rules a weave out is a class
- * file that is readable and differs from the one the plan was made from, since the plan's slots
- * describe that one.
- *
- * Keyed by the defining loader, held weakly, and the class name: the registry's own notion of
- * a class. A collected loader's entries go with it. A class the bootstrap loader defines is
- * never woven, so a null loader is never recorded and never found.
- */
 internal class WovenClasses {
     private val byLoader = WeakHashMap<ClassLoader, MutableMap<String, WeavePlan>>()
 
-    /** Remembers how [className], defined by [classLoader], was woven. */
     fun record(
         classLoader: ClassLoader?,
         className: String,
@@ -297,7 +243,6 @@ internal class WovenClasses {
         synchronized(byLoader) { byLoader.getOrPut(classLoader) { HashMap() }[className] = plan }
     }
 
-    /** How [className] defined by [classLoader] was woven, or null if this agent never wove it. */
     fun find(
         classLoader: ClassLoader?,
         className: String,
@@ -307,13 +252,10 @@ internal class WovenClasses {
     }
 
     companion object {
-        private const val OFFSET_BASIS = -3750763034362895579L // FNV-1a 64-bit offset basis
-        private const val PRIME = 1099511628211L // FNV-1a 64-bit prime
+        private const val OFFSET_BASIS = -3750763034362895579L
+        private const val PRIME = 1099511628211L
 
-        /**
-         * FNV-1a 64 over [bytes]. Written here rather than taken from `MessageDigest`, so no
-         * security provider is initialised inside a transformer.
-         */
+        // FNV-1a 64 by hand: MessageDigest would initialise a security provider inside a transformer.
         fun hashOf(bytes: ByteArray): Long {
             var hash = OFFSET_BASIS
             for (byte in bytes) {

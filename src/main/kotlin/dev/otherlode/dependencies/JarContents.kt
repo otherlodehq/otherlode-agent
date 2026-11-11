@@ -9,22 +9,6 @@ import java.util.jar.Manifest
 import java.util.zip.ZipException
 import java.util.zip.ZipInputStream
 
-/**
- * What the dependency listing needs from one jar: the names of the classes it holds, its
- * `pom.properties` files and its manifest. Read in one pass over the jar's entries, from a
- * [JarFile] for a jar on disk. [NestedJarReader] reads a jar stored inside another from its central
- * directory, and streams one the outer jar compresses through a [ZipInputStream].
- *
- * [classNames] are dotted, distinct, and counted by [isClassEntry], the same rule the static
- * baseline scan uses. [versionedClassNames] are the dotted names of the classes a multi-release
- * jar keeps under `META-INF/versions/N/`, named by their path after that prefix; the class listing
- * reads them, since a class can live only there. [pomProperties] holds every entry at
- * `META-INF/maven/<group>/<artifact>/pom.properties`, in entry order.
- *
- * A jar with no entries at all is rejected with a [ZipException]. [ZipInputStream] reads bytes
- * that are not a zip as an empty stream rather than failing, so without this check a corrupt
- * nested jar would be listed by its filename with no classes.
- */
 internal class JarContents(
     val classNames: Set<String>,
     val pomProperties: List<Properties>,
@@ -54,11 +38,6 @@ internal class JarContents(
             return JarContents(classNames, poms, jarFile.manifest, versioned)
         }
 
-        /**
-         * Reads every entry of [stream] and leaves it open. The manifest is read from its entry by
-         * name rather than through [java.util.jar.JarInputStream], which finds it only when it is
-         * among the first entries.
-         */
         fun of(stream: ZipInputStream): JarContents {
             val classNames = linkedSetOf<String>()
             val versioned = linkedSetOf<String>()

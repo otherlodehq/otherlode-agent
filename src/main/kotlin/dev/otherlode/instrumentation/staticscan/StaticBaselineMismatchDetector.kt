@@ -3,20 +3,12 @@ package dev.otherlode.instrumentation.staticscan
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Detects a class that registers dynamically without having been in the static baseline
- * computed at startup: proof the static scan missed it for this process, most likely because
- * this deployment's classloading is discovered by something other than the JVM's own launch
- * arguments (an app server's own deploy config, a plugin loader scanning a directory).
- *
- * This is a purely local, diagnostic signal. It needs no collector: [knownClassNames] is this
- * same process's own scan result, not anything received back over the wire.
+ * Detects a class that registers dynamically without having been in the static baseline computed at
+ * startup, which shows the static scan missed it for this process. It is a local diagnostic and needs
+ * no collector.
  */
 class StaticBaselineMismatchDetector {
-    /**
-     * Every class name the static scan saw, in any bucket (declared, unreadable, unprobed).
-     * A class the scan saw but could not classify is still not a blind spot. Null until the scan
-     * for this process completes; no comparison is possible before then.
-     */
+    /** Every class name the static scan saw, in any bucket. Null until the scan completes, so no comparison is possible before then. */
     @Volatile
     var knownClassNames: Set<String>? = null
 

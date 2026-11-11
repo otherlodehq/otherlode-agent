@@ -10,18 +10,15 @@ import org.springframework.web.reactive.handler.AbstractHandlerMapping;
 
 /**
  * Woven onto the exit of {@code AbstractUrlHandlerMapping.registerHandler(String, Object)}, the
- * registration hook shared by every URL-mapped handler mapping, {@code SimpleUrlHandlerMapping}
- * and Spring Boot's static-resource and webjars mappings among them. The {@code String[]} overload
- * delegates to this one, so advising only this signature covers both once. The advice does not
- * run for a registration that throws.
+ * registration hook shared by every URL-mapped handler mapping. The {@code String[]} overload
+ * delegates to this one. The advice does not run for a registration that throws.
  *
- * <p>A URL-mapped handler carries no verb, so the endpoint has the verb {@code *}. Spring stores
- * the pattern after {@code initFullPathPattern}, which only adds a leading slash, and a request
- * reports that stored string as its best matching pattern, so the key is built from the same
- * call. The join is the handler's class alone.
+ * <p>A URL-mapped handler carries no verb, so the endpoint has the verb {@code *}. The key is built
+ * from {@code initFullPathPattern}, the same call Spring uses for the pattern a request reports as
+ * its best match. The join is the handler's class alone.
  *
- * <p>This method is deliberately one flat body with no private helper method of its own; see
- * {@link RegisterHandlerMethodAdvice}'s Javadoc for why.
+ * <p>The advice body is inlined into the woven method, so {@code onExit} stays one flat body with
+ * no helper methods.
  */
 public class RegisterUrlHandlerAdvice {
     private static final String MODULE = "spring-webflux";

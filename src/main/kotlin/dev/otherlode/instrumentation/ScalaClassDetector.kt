@@ -5,16 +5,7 @@ import net.bytebuddy.jar.asm.ClassReader
 import net.bytebuddy.jar.asm.ClassVisitor
 import net.bytebuddy.jar.asm.Opcodes
 
-/**
- * Detects the marker scalac writes onto every class file it compiles: a `Scala` class attribute
- * for Scala 3, or a `ScalaSig` class attribute for Scala 2's pickled signature. ASM has no built-in
- * handling for either name, so a class carrying one still reaches [ClassVisitor.visitAttribute] as
- * a generic, unparsed attribute; only its type name is read here.
- *
- * [TypeMatchPolicy.methodMatcher] uses this to tell a scalac lambda body (`$anonfun$...`, or
- * Scala 3's `<owner>$$anonfun$N`) apart from an unrelated synthetic method of the same shape on a
- * class scalac never compiled, which must stay excluded.
- */
+/** Detects the `Scala` (Scala 3) or `ScalaSig` (Scala 2) class attribute that scalac writes onto every class file it compiles. */
 object ScalaClassDetector {
     private val SCALA_ATTRIBUTE_TYPES = setOf("Scala", "ScalaSig")
 
@@ -22,12 +13,8 @@ object ScalaClassDetector {
     fun isScalaAttribute(attribute: Attribute): Boolean = attribute.type in SCALA_ATTRIBUTE_TYPES
 
     /**
-     * Whether [classBytes] carries a `Scala` or `ScalaSig` class attribute.
-     *
-     * Reads the class file's structure directly, allocating nothing: the only class attribute names
-     * that matter are the two constant-pool entries spelling them, so the walk remembers those
-     * indexes and compares each class attribute's name index against them. A class file this walk
-     * cannot follow goes to the ASM reader, which answers or throws as it always did.
+     * Whether [classBytes] carries a `Scala` or `ScalaSig` class attribute. Throws what ASM's `ClassReader`
+     * throws for bytes that neither reader can follow.
      */
     fun isScalaClass(classBytes: ByteArray): Boolean = scanClassAttributes(classBytes) ?: readWithAsm(classBytes)
 

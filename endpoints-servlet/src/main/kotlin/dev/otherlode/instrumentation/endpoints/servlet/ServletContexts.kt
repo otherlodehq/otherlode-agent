@@ -9,17 +9,12 @@ internal const val MODULE_NAME = "servlet"
 
 private val CONTEXT_TYPES = setOf("javax.servlet.ServletContext", "jakarta.servlet.ServletContext")
 
-/** A servlet registration read from a context: its name, its class name and every mapping it holds. */
 private class Registration(
     val name: String,
     val className: String?,
     val mappings: List<String>,
 )
 
-/**
- * The servlet API methods the module calls on a context, found on the API's public interfaces of
- * whichever namespace the context implements, so no servlet type has to load in the agent's loader.
- */
 private class ServletApi(
     contextType: Class<*>,
 ) {
@@ -87,7 +82,6 @@ private class ServletApi(
     }
 }
 
-/** A mapping outside the specification's five forms. */
 private class UnsupportedMapping(
     message: String,
 ) : RuntimeException(message)
@@ -98,22 +92,6 @@ private class Held(
     val declared = HashSet<String>()
 }
 
-/**
- * The servlet contexts the module has declared, held weakly, and what it declared for each.
- *
- * A context is declared at the first `REQUEST`, `FORWARD` or `INCLUDE` dispatch that reaches a hooked servlet in it, a servlet
- * left out included, from its servlet registrations: every mapping of every registration that is
- * neither an owned servlet nor a container servlet. The
- * module reads the registrations of every held context again before each manifest, so a mapping
- * added since is declared within one flush interval.
- *
- * A mapping outside the specification's five forms, or a servlet class whose class file cannot be
- * read, disables the module with `ROUTE_WALK_FAILED`, and it declares nothing from that read. So does
- * any throw while a context is read for the first time.
- *
- * A held context that throws `IllegalStateException` when it is read again has been destroyed by its
- * container, as on undeploy or shutdown. The module drops it and keeps the endpoints it declared.
- */
 internal class ServletContexts(
     private val shapes: ServletShapes,
 ) {
@@ -122,10 +100,6 @@ internal class ServletContexts(
     @Volatile
     private var held: Array<Held> = emptyArray()
 
-    /**
-     * Declares [context] the first time it is handed over, and does nothing for one already held. A
-     * request that arrives while the first one declares waits for it, so it finds the endpoints.
-     */
     fun declare(context: Any) {
         if (isHeld(context)) return
         synchronized(lock) {
@@ -136,7 +110,6 @@ internal class ServletContexts(
         }
     }
 
-    /** Reads the registrations of every held context again and declares what was added. */
     fun refreshAll() {
         synchronized(lock) {
             held = held.filter { it.get() != null }.toTypedArray()
@@ -157,10 +130,6 @@ internal class ServletContexts(
         return false
     }
 
-    /**
-     * Reads [context] and declares what is new. Returns false when [dropDestroyed] is set and the container
-     * destroyed the context, which throws `IllegalStateException` from the read.
-     */
     private fun refresh(
         entry: Held,
         context: Any,

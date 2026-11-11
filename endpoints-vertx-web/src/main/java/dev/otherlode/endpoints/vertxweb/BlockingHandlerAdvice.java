@@ -9,8 +9,8 @@ import net.bytebuddy.asm.Advice;
  * route, handler}} with the handler as written, which the module swaps in for the decorator the
  * next {@link HandlerAddedAdvice} event on the route carries.
  *
- * <p>This method is deliberately one flat body with no private helper method of its own; see the
- * Spring MVC module's {@code RegisterHandlerMethodAdvice} Javadoc for why.
+ * <p>The advice body is inlined into the woven method, so {@code onEnter} stays one flat body with
+ * no helper methods.
  */
 public class BlockingHandlerAdvice {
     private static final String MODULE = "vertx-web";

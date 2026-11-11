@@ -17,41 +17,30 @@ import java.util.function.Consumer;
 /**
  * The one seam inlined framework advice calls to record and count HTTP endpoints.
  *
- * <p>Lives in the bootstrap classloader, next to {@link OtherlodeProbeArrays}, so advice woven into
- * Spring's, Ktor's, or the JDK's own classes can reach it from any classloader at all. The agent
- * itself lives on the system loader and cannot be referenced from here, so it plugs its endpoint
- * registry in through {@link #install(Resolver)} at premain.
+ * <p>Lives in the bootstrap classloader, so advice woven into any classloader's classes can reach
+ * it. The agent plugs its endpoint registry in through {@link #install(Resolver)} at premain.
  *
- * <p>Every method here is safe to call at any time, from any thread, before or after {@link
- * #install}, and never throws. A framework's own request path calls these methods directly;
- * letting an exception escape from here would mean a bug in this agent breaks the application it
- * is only supposed to be observing. Every delegate call is wrapped in a {@code try/catch
- * (Throwable)}: a failure is logged once and the call returns null or does nothing, never more.
+ * <p>Every method is safe to call from any thread, before or after {@link #install}, and never
+ * throws. Before {@link #install}, {@link #register}, {@link #recordDispatch}, {@link
+ * #recordDispatchIfUnowned}, {@link #declare}, {@link #moduleFailed} and {@link #moduleDisabled}
+ * are buffered and replayed in order once a resolver is installed. A call other than {@link
+ * #moduleFailed} or {@link #moduleDisabled} that finds the buffer full is dropped and disables its
+ * module.
  *
- * <p>A framework can register or dispatch to an endpoint before the agent has installed its
- * resolver: a class can initialise during premain, or this seam can be reachable from the
- * bootstrap loader before {@code Agent.start} finishes wiring the registry. {@link #register},
- * {@link #recordDispatch}, {@link #recordDispatchIfUnowned}, {@link #declare}, {@link
- * #moduleFailed} and {@link #moduleDisabled} buffer a small record for that window instead of dropping the call on the floor,
- * and {@link #install} replays the buffer in order once a resolver is in hand. The buffer is bounded, since an adopter who never installs an agent at all
- * (a dependency pulled in by mistake, a misconfigured attach) must not leak memory for the life of
- * the process.
- *
- * <p>The seam also remembers which method each handler lambda calls. A handler written as a
- * lambda or a method reference reaches a framework as a hidden class, whose name is not stable
- * and joins to nothing. Advice on the JDK's lambda factory calls {@link #recordLambdaClass}
- * as each such class is spun, and the framework advice calls {@link #lambdaImplementation} to get
- * the method back.
+ * <p>A resolver failure is logged once per method and module. A method that returns an entry
+ * returns null when the call is buffered or dropped, its module is disabled or the resolver throws.
  */
 public final class OtherlodeEndpoints {
-
     /** The template is a path: normalised, with any context path folded in. */
     public static final int TEMPLATE_PATH = 0;
 
     /** The template is the regular expression a framework matches a route by, kept exactly as written. */
     public static final int TEMPLATE_REGEX = 1;
 
-    /** The template is a servlet mapping no path can express, such as {@code *.do} or the default mapping {@code /}, kept exactly as written. */
+    /**
+     * The template is a servlet mapping no path can express, such as {@code *.do} or the default
+     * mapping {@code /}, kept exactly as written.
+     */
     public static final int TEMPLATE_SERVLET_PATTERN = 2;
 
     /** Implemented by the agent; backs every entry point below with the real endpoint registry. */
@@ -98,8 +87,8 @@ public final class OtherlodeEndpoints {
 
     /**
      * The method a lambda class calls: its owner's {@link Class#getName()}, its name, and its JVM
-     * descriptor. The descriptor is the method's own, so it starts with any values the lambda
-     * captured.
+     * descriptor. The descriptor is the method's own, not the interface's, so it can start with values
+     * the lambda captured.
      */
     public static final class LambdaImplementation {
         public final String className;
@@ -121,7 +110,6 @@ public final class OtherlodeEndpoints {
         FAILURE,
     }
 
-    /** One call this seam could not deliver yet, held until {@link #install} replays it. */
     private static final class BufferedRecord {
         final RecordKind kind;
         final String module;
@@ -261,14 +249,8 @@ public final class OtherlodeEndpoints {
     private static boolean bufferOverflowLogged;
 
     private static volatile Resolver resolver;
-
-    /**
-     * The same resolver as {@link #resolver}, published only once {@link #install} has replayed
-     * the buffer. A call that finds it set skips {@link #BUFFER_LOCK}, which every request through
-     * a dispatch hook would otherwise take. A call that finds it null takes the lock and reads
-     * {@link #resolver}, so it waits for a replay in progress, except on the replaying thread
-     * itself, where a replayed declare reaches {@link #register} and must not buffer again.
-     */
+    // Set only after install has replayed the buffer. The slow path reads resolver instead, so a
+    // declare replayed on the installing thread reaches register without buffering again.
     private static volatile Resolver ready;
 
     private static final Set<String> DISABLED_MODULES = ConcurrentHashMap.newKeySet();
@@ -284,17 +266,8 @@ public final class OtherlodeEndpoints {
     }
 
     /**
-     * Installs the resolver every entry point below delegates to, then replays whatever was
-     * buffered before this call in the order it arrived.
-     *
-     * <p>Replaying happens under the same lock that guards buffering, so a call to {@link
-     * #register} or {@link #recordDispatch} racing this one either lands in the buffer and gets
-     * replayed here, or finds the resolver already installed and skips buffering entirely; there
-     * is no window where a call is buffered after the replay has already run.
-     *
-     * <p>Calling this again, whether with the same resolver or a different one, replaces
-     * it; a second call has nothing left to replay, since the first call already drained the
-     * buffer.
+     * Installs the resolver every entry point delegates to, then replays the calls buffered before
+     * it in arrival order. A second call replaces the resolver and has nothing to replay.
      */
     public static void install(Resolver newResolver) {
         synchronized (BUFFER_LOCK) {
@@ -334,11 +307,10 @@ public final class OtherlodeEndpoints {
     }
 
     /**
-     * Like {@link #register(String, Object, String, String, String, String, String, String)}, and
-     * {@code templateKind} is one of {@link #TEMPLATE_PATH}, {@link #TEMPLATE_REGEX} and {@link
+     * Like {@link #register(String, Object, String, String, String, String, String, String)}, with
+     * {@code templateKind} one of {@link #TEMPLATE_PATH}, {@link #TEMPLATE_REGEX} and {@link
      * #TEMPLATE_SERVLET_PATTERN}, saying what {@code verbatimTemplate} is. A regex or servlet
-     * pattern template is kept exactly as written, never merged with a template of another kind
-     * that reads the same, and {@code contextPath} is not folded into it.
+     * pattern template is kept as written and {@code contextPath} is not folded into it.
      */
     public static Object register(
             String module,
@@ -386,7 +358,7 @@ public final class OtherlodeEndpoints {
         return recordDispatch(module, key, verb, verbatimTemplate, contextPath, handlerClass, TEMPLATE_PATH);
     }
 
-    /** Like {@link #recordDispatch(String, Object, String, String, String, String)}, for a template of the given kind; see {@link #register(String, Object, String, String, String, String, String, String, int)}. */
+    /** Like {@link #recordDispatch(String, Object, String, String, String, String)}, for a template of the given kind. */
     public static Object recordDispatch(
             String module,
             Object key,
@@ -415,11 +387,9 @@ public final class OtherlodeEndpoints {
     }
 
     /**
-     * Like {@link #recordDispatch}, but for a route bridge module reading an identity another
-     * instrumentation layer already resolved rather than one it matched itself: the identity
-     * might already belong to an endpoint a framework module owns. Returns null and binds nothing
-     * when it does; otherwise behaves exactly like {@link #recordDispatch}. Buffers before a
-     * resolver is installed, the same as {@link #recordDispatch}.
+     * Like {@link #recordDispatch}, for a route bridge module reading an identity another
+     * instrumentation layer already resolved. Returns null and binds nothing when the identity
+     * already belongs to an endpoint a framework module owns.
      */
     public static Object recordDispatchIfUnowned(
             String module, Object key, String verb, String verbatimTemplate, String contextPath, String handlerClass) {
@@ -457,16 +427,10 @@ public final class OtherlodeEndpoints {
     }
 
     /**
-     * Hands a framework object to a module for it to walk on its own, for a framework whose
-     * routes are not readable from a registration hook's own arguments and instead require
-     * visiting an object the framework builds internally, such as Spring's {@code
-     * RouterFunction}. Buffers before a resolver is installed.
-     *
-     * <p>Unlike {@link #register} and {@link #recordDispatch}, this does not itself record an
-     * endpoint. It only delivers {@code frameworkObject} to the module named by {@code module},
-     * which is expected to call {@link #register} itself for whatever it finds. A buffered call
-     * holds a strong reference to {@code frameworkObject} until {@link #install} replays it,
-     * bounded the same way the rest of the buffer already is.
+     * Hands a framework object to a module to walk, for a framework whose routes are not readable
+     * from a registration hook's arguments, such as Spring's {@code RouterFunction}. This records
+     * no endpoint itself; the module calls {@link #register} for what it finds. Buffers before a
+     * resolver is installed.
      */
     public static void declare(String module, Object frameworkObject) {
         if (isDisabledFast(module)) return;
@@ -488,17 +452,12 @@ public final class OtherlodeEndpoints {
     }
 
     /**
-     * What OpenTelemetry's route prefixers did to a route: each recorded pair maps a route a
-     * prefixer returned to the route it was given. The route bridge reads the final route at span
-     * end and resolves it back through this table, so a route the bridge reports matches the one a
-     * framework module declared.
+     * Maps each route an OpenTelemetry route prefixer returned to the route it was given, so the
+     * route a route bridge reads at span end resolves back to the one a framework module declared.
      *
-     * <p>Routes are low-cardinality, so the table holds at most {@code capacity} entries. A full
-     * table adds nothing more and keeps what it has, so a translation is never replaced by another
-     * route's. A prefixed route that two different routes were given for is ambiguous: it stays in
-     * the table as such and resolves to itself, and so is a prefixed route an unprefixed application
-     * also serves as its own. A call is a map read once its pair is known, and
-     * never throws.
+     * <p>The table holds at most {@code capacity} entries; once full it adds nothing and keeps
+     * what it has. A prefixed route given by two different routes is ambiguous and resolves to
+     * itself. Calls never throw.
      */
     public static final class RoutePrefixTable {
         private static final int MAX_STEPS = 8;
@@ -512,10 +471,9 @@ public final class OtherlodeEndpoints {
         }
 
         /**
-         * Records that a prefixer turned {@code unprefixed} into {@code prefixed}. A null or empty
-         * route records nothing. A route the prefixer left unchanged, as an application at the
-         * root context does, is recorded as a pair with itself, so a different pair for the same
-         * route, from another application, makes it ambiguous in either order.
+         * Records that a prefixer turned {@code unprefixed} into {@code prefixed}. A null route or an
+         * empty {@code unprefixed} records nothing. A route the prefixer left unchanged is recorded as a pair with
+         * itself, so a different pair for the same route makes it ambiguous in either order.
          */
         public void record(String prefixed, String unprefixed) {
             if (prefixed == null || unprefixed == null || unprefixed.isEmpty()) return;
@@ -558,8 +516,7 @@ public final class OtherlodeEndpoints {
     /**
      * The verb a functional route is counted under for a request method named {@code method}: the
      * method itself when it is one of GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS and TRACE, else
-     * {@code *}. A null method is {@code *} too. The verb is for an endpoint found at dispatch; a
-     * declared route is looked up under the request's own method first.
+     * {@code *}. A null method is {@code *} too.
      */
     public static String standardVerb(String method) {
         if (method == null) return "*";
@@ -597,7 +554,7 @@ public final class OtherlodeEndpoints {
         }
     }
 
-    /** Increments an endpoint's hit count. A no-op for a null entry, which is what every other method above returns on failure. */
+    /** Increments an endpoint's hit count. A null entry is a no-op. */
     public static void hit(Object entry) {
         if (entry == null) return;
         Resolver current = resolver;
@@ -613,8 +570,7 @@ public final class OtherlodeEndpoints {
 
     /**
      * Marks {@code request} as one a functional resources route matched on this thread, so the
-     * route mapping's own dispatch hook, which runs next for the same request, does not count it
-     * again under its enclosing nest's path.
+     * route mapping's dispatch hook does not count it again.
      */
     public static void resourceServed(Object request) {
         RESOURCE_SERVED.set(new WeakReference<>(request));
@@ -633,19 +589,15 @@ public final class OtherlodeEndpoints {
 
     /**
      * Returns the consumer a reactive {@code resources(pattern, location)} route runs on each
-     * resource its lookup emits. Advice cannot define a class or a lambda, so the consumer is built
-     * here. It takes no Reactor type: the advice passes it to {@code Mono.doOnNext}.
+     * resource its lookup emits. It takes no Reactor type: advice passes it to {@code
+     * Mono.doOnNext}.
      *
-     * <p>When the resource arrives the consumer marks {@code exchange} through {@link
-     * #resourceServed}, so the route mapping's own dispatch hook, which runs next on the same
-     * thread for the same request, does not count it under its nest's path. It then counts the
-     * endpoint, unless {@code key} is null, which stands for a request that is no call: a preflight
-     * or a verb the resource handler refuses. {@code entry} is the endpoint the advice resolved for
-     * {@code key}, or null when it is not declared; the consumer then looks {@code key} up again and
-     * records a discovered endpoint under {@code verb} and {@code template} only when a resource was
-     * served, so a lookup that finds nothing never creates one.
-     *
-     * <p>The consumer never throws, since it runs inside the application's reactive chain.
+     * <p>The consumer marks {@code exchange} through {@link #resourceServed}, then counts the
+     * endpoint unless {@code key} is null, which stands for a request that is no call, such as a
+     * preflight. {@code entry} is the endpoint the advice resolved for {@code key}, or null when
+     * it is not declared; the consumer then looks {@code key} up again and records a discovered
+     * endpoint under {@code verb} and {@code template} only when a resource was served. The
+     * consumer never throws.
      */
     public static Consumer<Object> resourceEmitted(
             String module, Object exchange, Object entry, Object key, String verb, String template) {
@@ -805,13 +757,6 @@ public final class OtherlodeEndpoints {
         disable(module, kind, reason);
     }
 
-    /**
-     * Every entry point that names a module short-circuits for a disabled one without reaching the
-     * resolver; {@link #hit} names none, and a disabled module's advice stops reaching it once
-     * {@link #lookup} returns null. Only the first disable for a given module logs or does anything
-     * further, so the first kind stands; a module already known to be broken does not need a second
-     * report.
-     */
     private static void disable(String module, int kind, String reason) {
         if (module == null) return;
         if (!FAILURE_LOGGED.add(module)) return;
@@ -846,18 +791,13 @@ public final class OtherlodeEndpoints {
     }
 
     /**
-     * Remembers the method a lambda class calls, when the lambda is for a handler interface.
-     *
-     * <p>The advice on the JDK's lambda factory calls this for every lambda class the JVM spins.
-     * A class for any other interface costs one set lookup and is not kept. A method whose owner
-     * is itself hidden is not kept either, since its name would join to nothing. An abstract method
-     * is not kept, since the method that runs depends on the receiver. Entries are held
-     * weakly by the lambda class, so an unloaded lambda class drops out. This never throws.
+     * Remembers the method a lambda class calls, when the lambda is for a handler interface. A
+     * lambda class for another interface, a method whose owner is hidden and an abstract method
+     * are not kept. Entries are held weakly by the lambda class. This never throws.
      */
     public static void recordLambdaClass(Class<?> lambdaClass, Class<?> interfaceClass, MethodHandleInfo implementation) {
-        // This runs inside the JDK's lambda factory. A lambda or method reference anywhere on this
-        // path would ask that factory for a class while it is still building one, and could recurse
-        // without end. Keep this method and everything it calls free of both.
+        // Runs inside the JDK's lambda factory. A lambda or method reference on this path would ask
+        // the factory for a class while it is still building one and could recurse without end.
         try {
             if (lambdaClass == null || interfaceClass == null || implementation == null) return;
             if (!handlerInterfaces.contains(interfaceClass.getName())) return;
@@ -897,13 +837,6 @@ public final class OtherlodeEndpoints {
         return anyDisabled && module != null && DISABLED_MODULES.contains(module);
     }
 
-    /**
-     * Appends to the buffer while holding {@link #BUFFER_LOCK}. When the buffer is already full, a
-     * record other than a disable is dropped and its module is disabled instead, with one disable
-     * record held for it, so the dropped calls read as a disabled module rather than as absence. A
-     * disable record is kept past the cap: there is at most one per module, and losing one would
-     * leave a module off with the server unaware of it.
-     */
     private static void buffer(BufferedRecord record) {
         if (BUFFER.size() >= BUFFER_CAPACITY && record.kind != RecordKind.FAILURE) {
             String module = record.module;
@@ -980,7 +913,6 @@ public final class OtherlodeEndpoints {
         }
     }
 
-    /** Logs once per (module, operation) pair, since a broken resolver would otherwise log on every request. */
     private static void logDelegateFailure(String module, String operation, Throwable t) {
         String key = operation + ":" + (module == null ? "(none)" : module);
         if (DELEGATE_FAILURE_LOGGED.add(key)) {

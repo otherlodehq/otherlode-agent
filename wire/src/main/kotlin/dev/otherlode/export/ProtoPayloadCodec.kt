@@ -55,8 +55,7 @@ import dev.otherlode.proto.UnreportedClass as ProtoUnreportedClass
 
 /**
  * Encodes and decodes [DeltaBatch], [ProbeManifest], [StaticBaseline] and [ClassListing] to and from the wire
- * schema defined in `otherlode.proto`. This lets an [Exporter] implementation, or anything reading
- * what one sent, work without depending on the generated protobuf classes directly.
+ * schema defined in `otherlode.proto`, without exposing the generated protobuf classes.
  */
 object ProtoPayloadCodec {
     fun encode(batch: DeltaBatch): ByteArray = toProto(batch).toByteArray()
@@ -77,7 +76,7 @@ object ProtoPayloadCodec {
 
     /**
      * The encoded size and element count of [batch], with the fields the exporter stamps just before
-     * it sends set to their widest values, so a weight taken before stamping still bounds the payload.
+     * it sends set to their widest values.
      */
     fun weightOf(batch: DeltaBatch): PayloadWeight =
         weightOf(
@@ -136,21 +135,19 @@ object ProtoPayloadCodec {
         )
 
     /**
-     * What one entry adds to a payload that holds it in a repeated field: its tag, its length prefix
-     * and its encoding, and the elements it brings. These functions weigh the entries of each payload
-     * kind. The weight of a payload is at most the weight of its empty form plus the weights of its
-     * entries.
+     * An upper bound on what one entry adds to a payload that holds it in a repeated field: its tag, its
+     * length prefix, its encoding and the elements it brings. A delta overload returns the widest any delta
+     * of its type encodes to. The weight of a payload is at most the weight of its empty form plus the
+     * weights of its entries.
      */
     fun entryWeight(
         @Suppress("UNUSED_PARAMETER") delta: ProbeDelta,
     ): PayloadWeight = widestProbeDelta
 
-    /** What one endpoint delta adds to a delta batch: the widest any endpoint delta encodes to. */
     fun entryWeight(
         @Suppress("UNUSED_PARAMETER") delta: EndpointDelta,
     ): PayloadWeight = widestEndpointDelta
 
-    /** What one dependency delta adds to a delta batch: the widest any dependency delta encodes to. */
     fun entryWeight(
         @Suppress("UNUSED_PARAMETER") delta: DependencyDelta,
     ): PayloadWeight = widestDependencyDelta
@@ -170,62 +167,45 @@ object ProtoPayloadCodec {
         entry(ProtoDeltaBatch.DEPENDENCY_DELTAS_FIELD_NUMBER, toProto(DependencyDelta(-1, Long.MIN_VALUE, Long.MIN_VALUE)))
     }
 
-    /** What one probe location adds to a manifest. The other overloads weigh the other entry kinds the same way. */
     fun entryWeight(location: ProbeLocation): PayloadWeight = entry(ProtoProbeManifest.PROBES_FIELD_NUMBER, toProto(location))
 
-    /** What one [SkippedClass] adds to its payload. */
     fun entryWeight(skipped: SkippedClass): PayloadWeight = entry(ProtoProbeManifest.SKIPPED_CLASSES_FIELD_NUMBER, toProto(skipped))
 
-    /** What one [EndpointLocation] adds to its payload. */
     fun entryWeight(location: EndpointLocation): PayloadWeight = entry(ProtoProbeManifest.ENDPOINTS_FIELD_NUMBER, toProto(location))
 
-    /** What one [DisabledEndpointModule] adds to its payload. */
     fun entryWeight(module: DisabledEndpointModule): PayloadWeight =
         entry(ProtoProbeManifest.DISABLED_ENDPOINT_MODULES_FIELD_NUMBER, toProto(module))
 
-    /** What one [ClassLocation] adds to its payload. */
     fun entryWeight(location: ClassLocation): PayloadWeight = entry(ProtoProbeManifest.CLASS_LOCATIONS_FIELD_NUMBER, toProto(location))
 
-    /** What one [UnreportedClass] adds to its payload. */
     fun entryWeight(unreported: UnreportedClass): PayloadWeight =
         entry(ProtoProbeManifest.UNREPORTED_CLASSES_FIELD_NUMBER, toProto(unreported))
 
-    /** What one [DependencyLocation] adds to its payload. */
     fun entryWeight(location: DependencyLocation): PayloadWeight = entry(ProtoProbeManifest.DEPENDENCIES_FIELD_NUMBER, toProto(location))
 
-    /** What one [ClassReferences] adds to its payload. */
     fun entryWeight(references: ClassReferences): PayloadWeight =
         entry(ProtoProbeManifest.CLASS_REFERENCES_FIELD_NUMBER, toProto(references))
 
-    /** What one [ExternalClass] adds to its payload. */
     fun entryWeight(externalClass: ExternalClass): PayloadWeight =
         entry(ProtoProbeManifest.EXTERNAL_CLASSES_FIELD_NUMBER, toProto(externalClass))
 
-    /** What one [ExternalClass] adds to a [StaticBaseline]. */
     fun baselineEntryWeight(externalClass: ExternalClass): PayloadWeight =
         entry(ProtoStaticBaseline.EXTERNAL_CLASSES_FIELD_NUMBER, toProto(externalClass))
 
-    /** What one [FailedClass] adds to its payload. */
     fun entryWeight(failed: FailedClass): PayloadWeight = entry(ProtoProbeManifest.FAILED_CLASSES_FIELD_NUMBER, toProto(failed))
 
-    /** What one [ClassFailedToInitialize] adds to its payload. */
     fun entryWeight(failed: ClassFailedToInitialize): PayloadWeight =
         entry(ProtoProbeManifest.CLASSES_FAILED_TO_INITIALIZE_FIELD_NUMBER, toProto(failed))
 
-    /** What one [FrameworkMarker] adds to its payload. */
     fun entryWeight(marker: FrameworkMarker): PayloadWeight = entry(ProtoProbeManifest.FRAMEWORK_MARKERS_FIELD_NUMBER, toProto(marker))
 
-    /** What one [DeclaredClass] adds to its payload. */
     fun entryWeight(declared: DeclaredClass): PayloadWeight = entry(ProtoStaticBaseline.DECLARED_CLASSES_FIELD_NUMBER, toProto(declared))
 
-    /** What one [UnreadableClass] adds to its payload. */
     fun entryWeight(unreadable: UnreadableClass): PayloadWeight =
         entry(ProtoStaticBaseline.UNREADABLE_CLASSES_FIELD_NUMBER, toProto(unreadable))
 
-    /** What one [UnprobedClass] adds to its payload. */
     fun entryWeight(unprobed: UnprobedClass): PayloadWeight = entry(ProtoStaticBaseline.UNPROBED_CLASSES_FIELD_NUMBER, toProto(unprobed))
 
-    /** What one class name adds to a [ClassListing]. */
     fun classNameWeight(className: String): PayloadWeight =
         PayloadWeight(CodedOutputStream.computeStringSize(ProtoClassListing.CLASS_NAMES_FIELD_NUMBER, className).toLong(), 1)
 
@@ -510,8 +490,7 @@ object ProtoPayloadCodec {
             branchIndex = if (location.hasBranchIndex()) location.branchIndex else null,
             inline = location.inline,
             parameterIndex = if (location.hasParameterIndex()) location.parameterIndex else null,
-            // parameter_name has no wire presence bit: an omission probe's name is "" precisely
-            // when its target has no debug info, so the field is only meaningful for that kind.
+            // parameter_name has no presence bit, so only an optional-argument probe reads it.
             parameterName = if (kind == ProbeKind.OPTIONAL_ARGUMENT) location.parameterName else null,
             overridable = location.overridable,
             targetClassName = location.targetClassName.ifEmpty { null },
@@ -904,8 +883,7 @@ object ProtoPayloadCodec {
             GeneratedBy.CLASS_DELEGATION -> ProtoGeneratedBy.CLASS_DELEGATION
         }
 
-    // Never written inside an origin oneof, but a peer can still set the oneof to its zero value, so it
-    // reads as unset, the same as an absent oneof.
+    // A peer can set an origin oneof to its zero value, which reads as unset.
     private fun fromProto(generatedBy: ProtoGeneratedBy): GeneratedBy =
         when (generatedBy) {
             ProtoGeneratedBy.GENERATED_BY_UNSPECIFIED -> GeneratedBy.NONE

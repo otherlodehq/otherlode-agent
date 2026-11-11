@@ -14,13 +14,12 @@ import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
 
 /**
  * Woven onto {@code AbstractHandlerMethodMapping.registerMapping(mapping, handler, method)}, the
- * public method for registering a handler method in code. Spring Boot Actuator registers every
- * operation this way, and it never passes through {@code registerHandlerMethod}, so without this
- * advice those endpoints would be found only once called and never listed as never called.
+ * public method for registering a handler method in code. Spring Boot Actuator registers its
+ * operations this way, bypassing {@code registerHandlerMethod}. It declares endpoints as
+ * {@link RegisterHandlerMethodAdvice} does, with the arguments in this method's order.
  *
- * <p>The body is {@link RegisterHandlerMethodAdvice}'s with the arguments in this method's order.
- * It is a copy rather than a shared helper for the reason that class's Javadoc gives: advice
- * inlines only its own method body.
+ * <p>The advice body is inlined into the woven method, so {@code onEnter} stays one flat body with
+ * no helper methods.
  */
 public class RegisterMappingAdvice {
     private static final String MODULE = "spring-webmvc";
@@ -37,19 +36,11 @@ public class RegisterMappingAdvice {
 
             Class<?> handlerType = null;
             if (handler instanceof String) {
-                // A bean registered by name is resolved through the mapping's own context.
-                // getApplicationContext() is public on ApplicationObjectSupport in every
-                // supported Spring version; it is null only before the mapping is initialised,
-                // which never happens for a registration, but a null is handled anyway.
                 BeanFactory applicationContext = ((ApplicationObjectSupport) mapping).getApplicationContext();
                 if (applicationContext != null) handlerType = applicationContext.getType((String) handler);
             } else if (handler != null) {
                 handlerType = handler.getClass();
             }
-            // An endpoint whose handler cannot be named is still an endpoint: it is registered
-            // with no join rather than dropped, so it can never read as absent. The join names the
-            // class that declares the method, where its probe lives: a mapping inherited from a
-            // base controller or an interface default method is not declared on the bean's class.
             String beanTypeName =
                     handlerType == null ? null : ClassUtils.getUserClass(method.getDeclaringClass()).getName();
             String methodName = beanTypeName == null ? null : method.getName();

@@ -12,26 +12,6 @@ import java.security.ProtectionDomain
 import java.util.WeakHashMap
 import java.util.jar.JarFile
 
-/**
- * Finds the dependency a loaded class came from, by its [ProtectionDomain].
- *
- * Two caches keep each location to one resolution per process. The first is keyed by the
- * protection domain in a [WeakHashMap]: `ProtectionDomain` does not override `equals`, so the key is
- * the object itself, and holding it weakly never pins a class loader. The second is keyed by the
- * code-source location's string form, since many domains (one per loader) can share a location.
- * Both keep negative answers too.
- *
- * A location is matched first against the origins the startup listing recorded, both the
- * dependencies it registered and the jars it judged not to be one. A jar the listing never saw (a
- * war's `WEB-INF/lib` opened by an app server after `premain`, a library Spring Boot unpacked to
- * `java.io.tmpdir`, a jar a runtime `URLClassLoader` reads) is read and judged by the listing's own
- * rules through [classifier]. A dependency whose identity is already registered, such
- * as an unpacked copy of a listed jar, maps to that record; any other is registered as discovered
- * by load. A directory, an unsupported scheme and a location that fails to resolve are not
- * dependencies; a failure is logged at DEBUG, once per location since the answer is cached.
- *
- * Every public call is synchronized, so the resolver is safe to share between threads.
- */
 internal class DependencyResolver(
     private val registry: DependencyRegistry,
     private val classifier: JarClassifier,
@@ -42,7 +22,6 @@ internal class DependencyResolver(
     private val byDomain = WeakHashMap<ProtectionDomain, Int>()
     private val byLocation = HashMap<String, Int>()
 
-    /** The dependency id [domain]'s classes belong to, or null when they belong to none. */
     @Synchronized
     fun resolve(domain: ProtectionDomain): Int? {
         val cached = byDomain[domain]
@@ -53,7 +32,6 @@ internal class DependencyResolver(
         return id
     }
 
-    /** The dependency id for a code-source location's string form, or null. */
     @Synchronized
     fun resolveLocation(location: String): Int? {
         val cached = byLocation.getOrPut(location) { compute(location) ?: NOT_A_DEPENDENCY }
@@ -93,7 +71,6 @@ internal class DependencyResolver(
         )
     }
 
-    /** Maps [listed] to its existing record by identity, or registers it as discovered by load. */
     private fun discovered(listed: ListedDependency?): Int? {
         if (listed == null) return null
         registry.idForKey(DependencyRegistry.identityKey(listed.identities))?.let { return it }
@@ -112,7 +89,6 @@ internal class DependencyResolver(
 
         fun readFlat(path: Path): JarContents = JarFile(path.toFile()).use(JarContents::of)
 
-        /** Reads [entryName] out of [outerJar] with [NestedJarReader], as the startup listing does. */
         fun readNested(
             outerJar: Path,
             entryName: String,

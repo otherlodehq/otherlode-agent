@@ -14,35 +14,24 @@ import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
 
 /**
  * Woven onto {@code RequestMappingInfoHandlerMapping.handleMatch(RequestMappingInfo, String,
- * HttpServletRequest)}, Spring MVC's dispatch point. It runs once per matched request, with the
- * winning {@link RequestMappingInfo} narrowed to the patterns that matched, best match first, and
- * the matched verb, before the handler runs.
+ * HttpServletRequest)}, Spring MVC's dispatch point. It runs once per matched request, before the
+ * handler, with the winning {@link RequestMappingInfo} narrowed to the patterns that matched, best
+ * match first, and the matched verb.
  *
- * <p>This advice is written against the {@code javax} servlet types and bound to the {@code
- * jakarta} ones, by prefix, when the woven method takes them, so one class covers every Spring
- * Framework major version this agent supports. A lookup {@code HandlerMappingIntrospector} makes
- * for Spring Security or CORS arrives with the request wrapped in its own request class, an async
- * redispatch has the dispatcher type {@code ASYNC}, and a CORS preflight is answered by Spring's
- * preflight handler. None of the three is a call of the route it matches. Neither is a lookup
- * made before {@code DispatcherServlet.doService} has set {@code
- * DispatcherServlet.WEB_APPLICATION_CONTEXT_ATTRIBUTE} on the request, which it does before {@code
- * doDispatch} in Spring 5.3, 6 and 7, so every dispatch carries it: OpenTelemetry's Spring MVC
- * instrumentation looks the route up from its filter after the chain returns, and when an inner
- * filter answered the request that is the first lookup. Nor is a second lookup on a request that is
- * still a {@code REQUEST} dispatch but already carries {@code
- * HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE}, which only the first lookup sets. A forward or
- * an include has its own dispatcher type and counts.
+ * <p>A lookup that is not a call of the route it matches counts nothing: one made by {@code
+ * HandlerMappingIntrospector}, an async redispatch, a CORS preflight, a lookup made before {@code
+ * DispatcherServlet.doService} set {@code DispatcherServlet.WEB_APPLICATION_CONTEXT_ATTRIBUTE} on
+ * the request, and a second lookup on a {@code REQUEST} dispatch that already carries {@code
+ * HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE}. A forward or an include counts.
  *
- * <p>The {@link RequestMappingInfo} handed to this method is a new object built per request by
- * {@code getMatchingCondition}, never the one {@link RegisterHandlerMethodAdvice} saw at
- * registration, so it cannot serve as a dispatch key by identity. The same {@code
- * List.of(pattern, verb)} key is rebuilt here instead, from the same two accessors {@link
- * RegisterHandlerMethodAdvice} used, so both sides agree by value. This allocates one small list
- * per request, accepted the same way {@link RegisterHandlerMethodAdvice} accepts its own
- * per-registration allocation, since a request already allocates far more than this to reach here.
+ * <p>The advice is written against the {@code javax} servlet types and bound to the {@code
+ * jakarta} ones by prefix, so one class covers every supported Spring Framework major version.
  *
- * <p>This method is deliberately one flat body with no private helper method of its own; see
- * {@link RegisterHandlerMethodAdvice}'s Javadoc for why.
+ * <p>The {@link RequestMappingInfo} is built per request, so the key is rebuilt by value as {@code
+ * List.of(pattern, verb)}, the key {@link RegisterHandlerMethodAdvice} registers.
+ *
+ * <p>The advice body is inlined into the woven method, so {@code onEnter} stays one flat body with
+ * no helper methods.
  */
 public class HandleMatchAdvice {
     private static final String MODULE = "spring-webmvc";

@@ -5,13 +5,11 @@ import net.bytebuddy.asm.Advice;
 
 /**
  * Woven onto the exit of the {@code DefaultRouter(Collection)} constructor, which every other
- * constructor reaches. The router has built all its {@code UriRoute} objects by then. The router
- * goes unopened to {@link OtherlodeEndpoints#declare}, which hands it to
- * {@code Micronaut3Module.declare}, which holds it until a dispatch point is constructed and then
- * reads its routes.
+ * constructor reaches. It passes the router unopened to {@link OtherlodeEndpoints#declare}, which
+ * hands it to {@code Micronaut3Module.declare}.
  *
- * <p>This method is deliberately one flat body with no private helper method of its own; see the
- * Spring MVC module's {@code RegisterHandlerMethodAdvice} Javadoc for why.
+ * <p>The advice body is inlined into the woven method, so {@code onExit} stays one flat body with
+ * no helper methods.
  */
 public class DeclareRoutesAdvice {
     private static final String MODULE = "micronaut-3";

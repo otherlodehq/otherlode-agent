@@ -13,53 +13,25 @@ import org.springframework.web.util.pattern.PathPattern;
 
 /**
  * Woven onto {@code RouterFunctionMapping.setAttributes(HttpServletRequest, ServerRequest,
- * HandlerFunction)}, the point functional routing has already matched a request to a route and is
- * about to hand it to the winning handler. It runs once per matched request, before the handler
- * runs.
+ * HandlerFunction)}, where functional routing has matched a request to a route and is about to hand
+ * it to the handler. It runs once per matched request.
  *
- * <p>This advice is written against the {@code javax} servlet types and bound to the {@code
- * jakarta} ones, by prefix, when the woven method takes them. A lookup {@code
- * HandlerMappingIntrospector} makes for Spring Security or CORS arrives with the request wrapped
- * in its own request class, an async redispatch has the dispatcher type {@code ASYNC}, and a CORS
- * preflight is answered by Spring's preflight handler. None of the three is a call. A request a
- * {@code resources(pattern, location)} route matched is counted by {@link ResourceLookupAdvice},
- * which marks it: inside a nest its matching pattern is the nest's own path, and a filter wraps its
- * handler, so neither would say which route served it. A resource handler this module did not
- * declare, behind a lookup function the walk could not read, is not discovered here either. A
- * {@code resources(predicate, resource)} route is counted here, under its own key, since its
- * predicate sets the matching pattern; a resource handler is never counted as an ordinary route
- * that shares its nest's path.
+ * <p>The advice is written against the {@code javax} servlet types and bound to the {@code
+ * jakarta} ones, by prefix, when the woven method takes them. An introspector lookup, an async
+ * redispatch and a CORS preflight are no call. A request a {@code resources(pattern, location)}
+ * route matched is counted by {@link ResourceLookupAdvice}, not here. A {@code
+ * resources(predicate, resource)} route is counted here under its own key.
  *
- * <p>The matched pattern lives under {@link RouterFunctions#MATCHING_PATTERN_ATTRIBUTE} in {@code
- * request.attributes()} at this point; {@code setAttributes} itself only removes that attribute
- * after this advice's own entry point has already run. Its value is a {@code PathPattern} on
- * every version this advice was checked against, but is read defensively as either a {@code
- * PathPattern} or a plain {@code String}, since nothing in the surrounding API contract promises
- * the attribute stays a {@code PathPattern} forever.
+ * <p>The dispatch key is {@code List.of("fn", pattern, verb)} and must match the key in {@code
+ * SpringWebMvcModule.declare}. It names no handler, since Spring hands a filtered route a new handler
+ * function on every request. A second lookup with verb {@code "*"} covers a route declared as
+ * unconstrained. A route found by neither lookup is recorded at dispatch. Its handler join is the
+ * method named by {@link OtherlodeEndpoints#lambdaImplementation} for a hidden lambda class, or
+ * {@code handle} on the class that declares that method otherwise. A handler of Spring's {@code
+ * RouterFunctionDsl} gets no join.
  *
- * <p>The handler join names the method functional routing actually invokes: a {@code
- * HandlerFunction} whose class is not hidden reports {@code handle} and the class that declares
- * it, read through {@code getMethod("handle", ServerRequest.class)} since every implementation
- * must override that method publicly to satisfy the interface. A hidden class, spun for a Java or
- * Kotlin lambda or method reference through {@code invokedynamic}, has no stable name across runs.
- * For one of those, the join names the method the lambda calls, as {@link
- * OtherlodeEndpoints#lambdaImplementation} recorded it when the JDK spun the class. When nothing
- * was recorded, the class, method, and descriptor are all null. A handler that resolves to Spring's
- * own Kotlin DSL class, {@code RouterFunctionDsl}, gets no join either. A route the declare walk
- * registered already carries this join from registration, so the reflection here runs only for a
- * route discovered at dispatch, never on the per-request path, which stays one attribute read and
- * a lookup.
- *
- * <p>The dispatch key built here, {@code List.of("fn", pattern, verb)}, must match {@code
- * SpringWebMvcModule.declare}'s own key exactly, the same value-equality convention the
- * annotation-mapped side of this module uses for {@link HandleMatchAdvice} and {@link
- * RegisterHandlerMethodAdvice}. It names no handler, since Spring hands a filtered route a new
- * handler function on every request. A second lookup with verb {@code "*"} covers a route declared as
- * unconstrained; either miss means a route this module has not seen register, discovered here
- * instead of dropped.
- *
- * <p>This method is deliberately one flat body with no private helper method of its own; see
- * {@link RegisterHandlerMethodAdvice}'s Javadoc for why.
+ * <p>The advice body is inlined into the woven method, so {@code onEnter} stays one flat body with
+ * no helper methods.
  */
 public class SetAttributesAdvice {
     private static final String MODULE = "spring-webmvc";
@@ -80,7 +52,6 @@ public class SetAttributesAdvice {
             @Advice.Argument(2) Object handlerFunction) {
         try {
             boolean resourceServed = OtherlodeEndpoints.takeResourceServed(servletRequest);
-            // Spring passes a null handler when no route matched.
             if (handlerFunction == null || resourceServed) return;
             if (INTROSPECTOR_REQUEST.equals(servletRequest.getClass().getName())
                     || servletRequest.getAttribute(DISPATCHER_CONTEXT) == null
@@ -94,7 +65,6 @@ public class SetAttributesAdvice {
                         return;
                     }
                 } catch (RuntimeException e) {
-                    // Spring Security's firewall throws for a header value it refuses; Spring refuses the request after this.
                     return;
                 }
             }
@@ -105,8 +75,6 @@ public class SetAttributesAdvice {
                             ? (String) patternValue
                             : ((PathPattern) patternValue).getPatternString();
 
-            // Spring 5.3 returns null for a verb outside its HttpMethod enum (PROPFIND, say), which
-            // only a route with no method predicate can serve, so it is looked up as "*".
             HttpMethod httpMethod = request.method();
             String verb = httpMethod == null ? "*" : httpMethod.name();
 

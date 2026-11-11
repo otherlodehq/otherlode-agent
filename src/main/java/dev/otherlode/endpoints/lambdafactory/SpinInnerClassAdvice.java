@@ -8,15 +8,12 @@ import net.bytebuddy.asm.Advice;
  * Woven onto the exit of {@code java.lang.invoke.InnerClassLambdaMetafactory.spinInnerClass()},
  * which returns the hidden class the JDK spins for one lambda or method reference. It hands that
  * class, the functional interface it implements, and the method it calls to {@link
- * OtherlodeEndpoints#recordLambdaClass}, so an endpoint whose handler is a lambda can be joined to
- * the method that holds its code.
- *
- * <p>{@code interfaceClass} and {@code implInfo} are fields the factory inherits from {@code
- * AbstractValidatingLambdaMetafactory} in the same package. {@code LambdaFactoryShape.JDK} names
- * the same members, and the hook installs only after it has checked them on the running JDK.
+ * OtherlodeEndpoints#recordLambdaClass}.
  *
  * <p>This advice is inlined into {@code java.base}, so it may only call the bootstrap seam. It
  * must not contain a lambda or a method reference: either would call the method it is woven into.
+ * The field names must match {@code LambdaFactoryShape.JDK}, which checks them on the running JDK
+ * before the hook installs.
  */
 public class SpinInnerClassAdvice {
     @Advice.OnMethodExit(suppress = Throwable.class)

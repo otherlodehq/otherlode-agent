@@ -4,9 +4,8 @@ package dev.otherlode.registry
  * Turns a framework's own route spelling into one identity template, so the same endpoint
  * compares equal across frameworks and across differently spelled path parameters.
  *
- * The grammar is narrow on purpose: strip regex constraints, collapse wildcards, spell an optional
- * parameter one way, keep everything else as written. A framework's original spelling still travels on the wire for display; only
- * the identity used to merge endpoints across instances and frameworks goes through this.
+ * The grammar strips regex constraints, collapses wildcards, spells an optional parameter one way
+ * and keeps everything else as written.
  */
 object RouteTemplateNormalizer {
     /**
@@ -16,19 +15,16 @@ object RouteTemplateNormalizer {
      * The result always starts with a slash and never ends with one, except the root template
      * `/`, which is also what an empty or blank [verbatim] normalises to. Runs of slashes
      * collapse to one, and a slash inside a parameter's braces belongs to its regex, not to the
-     * path. Every path parameter such as `{id}` keeps its name and the literal text around it,
-     * so `{id:\d+}.{ext}` becomes `{id}.{ext}`; any regex constraint inside the braces is
-     * dropped, and surrounding whitespace is trimmed. Ktor's `{name?}` optional marker is kept.
-     * Any wildcard or tail segment, whichever framework's spelling wrote it, collapses to one `*`
-     * segment: `*`, `**`, `{...}`, `{name...}`, and `{*name}` all mean the same thing here. A `*`
-     * written inside a segment rather than as the whole segment, such as a file extension
-     * wildcard like `*.txt`, is left exactly as written, since it is not a whole-segment wildcard.
-     * Micronaut's `{name:?}` becomes `{name?}` and its optional segment `{/name}` becomes a segment
-     * of its own, `{name?}`, so `/books{/id}` is `/books/{id?}`. A whole-segment `{+name}` and
-     * Javalin's whole-segment `<name>` collapse to `*` like the other tails. A form whose meaning
-     * would be a guess, such as `{.name}`, `{;name}`, `{name*}`, `{a,b}`, `{?q}`, `{&q}`, `{#f}`,
-     * `{/a,b}`, or a `<name>` sharing its segment with other text, is kept as written. An unclosed
-     * brace is kept as written.
+     * path. A path parameter keeps its name and the literal text around it, so `{id:\d+}.{ext}`
+     * becomes `{id}.{ext}`. A regex constraint inside the braces is dropped, and whitespace around the
+     * name is trimmed. Ktor's `{name?}` optional marker is kept.
+     * A whole-segment wildcard or tail collapses to one `*` segment: `*`, `**`, `{...}`,
+     * `{name...}`, `{*name}`, `{+name}` and Javalin's `<name>`. A `*` inside a segment, such as
+     * `*.txt`, is kept. Micronaut's `{name:?}` becomes `{name?}` and its optional segment `{/name}`
+     * becomes a segment of its own, `{name?}`, so `/books{/id}` is `/books/{id?}`. A form whose
+     * meaning would be a guess, such as `{.name}`, `{;name}`, `{name*}`, `{a,b}`, `{?q}`, `{&q}`,
+     * `{#f}`, `{/a,b}`, a `<name>` sharing its segment with other text, or an unclosed brace, is
+     * kept as written.
      */
     fun normalize(
         verbatim: String,
@@ -107,7 +103,6 @@ object RouteTemplateNormalizer {
         return name.isNotEmpty() && name.none { it == ',' || it == '*' } && name[0] !in ".;?&#+/"
     }
 
-    /** The index of the brace closing the one at [open], or -1 when it never closes. */
     private fun matchingBrace(
         text: String,
         open: Int,

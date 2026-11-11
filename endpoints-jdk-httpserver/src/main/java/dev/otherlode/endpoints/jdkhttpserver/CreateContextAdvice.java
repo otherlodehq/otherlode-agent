@@ -8,34 +8,23 @@ import java.lang.reflect.Method;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto both overloads of {@code ServerImpl.createContext}, reporting the new context to the
- * endpoint seam as a registered endpoint. A context is a prefix match with no verb constraint, so
- * the verb is always {@code "*"} and the verbatim template is the context's own path exactly as
- * registered. The one-argument overload creates a context with no handler yet, reported here as a
- * null handler class; {@link SetHandlerAdvice} fills it in once one is attached.
+ * Woven onto both overloads of {@code ServerImpl.createContext}, reporting the new context as a
+ * registered endpoint. A context is a prefix match with no verb constraint, so the verb is {@code
+ * "*"} and the verbatim template is the context's path as registered. The one-argument overload
+ * creates a context with no handler yet, reported with a null handler class; {@link
+ * SetHandlerAdvice} fills it in once a handler is attached.
  *
- * <p>When a handler is present and its class is not hidden ({@link Class#isHidden()} false), the
- * handler join names the method the framework actually invokes, {@code handle}, and the class that
- * declares it, which is the handler's own class for an override and a shared base class for a
- * subclass that inherits {@code handle}. A hidden class, spun for a Java or Kotlin lambda or
- * method reference through {@code invokedynamic}, has no stable name across runs. For one of
- * those, the join names the method the lambda calls, as {@link
- * OtherlodeEndpoints#lambdaImplementation} recorded it when the JDK spun the class. Its
- * descriptor is that method's own, so it includes any captured values. When nothing was recorded,
- * the class, method, and descriptor are all null. That happens for a class spun before the hook
- * was installed, on a JVM where the hook is off, or for a class another spinner made.
- *
- * <p>The handler-class lookup is inlined here rather than shared with {@link SetHandlerAdvice} and
- * {@link FindContextAdvice} through a helper class: {@code ServerImpl} loads on the bootstrap
- * classloader, an {@link net.bytebuddy.asm.Advice} class's own bytecode is inlined directly into
- * it, but a helper class it merely called into would not be. Such a call would fail to resolve
- * from the bootstrap loader with a {@link NoClassDefFoundError}, since this module's own classes
- * live on the system loader.
+ * <p>A handler class that is not hidden joins to {@code handle} and the class that declares it. A
+ * hidden class (a lambda or method reference) joins to the method the lambda calls, as {@link
+ * OtherlodeEndpoints#lambdaImplementation} recorded it. When nothing was recorded, the class,
+ * method and descriptor are all null.
  */
 public class CreateContextAdvice {
     private static final String MODULE = "jdk-httpserver";
     private static final String HANDLE_DESCRIPTOR = "(Lcom/sun/net/httpserver/HttpExchange;)V";
 
+    // Advice inlines only this method's bytecode, and the woven JDK class cannot resolve a helper
+    // class from this module. Keep the body flat.
     @Advice.OnMethodExit(suppress = Throwable.class)
     public static void onExit(@Advice.Return HttpContext context) {
         try {

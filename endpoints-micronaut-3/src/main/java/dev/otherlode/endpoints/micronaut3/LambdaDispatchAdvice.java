@@ -10,18 +10,16 @@ import net.bytebuddy.asm.Advice;
 
 /**
  * Woven onto the entry of micronaut-aws 3.x's {@code MicronautLambdaContainerHandler.handleRequest}
- * that takes the {@code MicronautAwsProxyRequest}, not its synthetic bridge that takes {@code Object}
- * and calls it. The handler builds its own {@code RouteExecutor}, so neither Netty's nor
- * micronaut-servlet's dispatch point is reached. {@code MicronautRequestReader} put the route the
- * request matched in the request's {@code ROUTE_MATCH} attribute before this runs; a request that
- * matched none, a CORS preflight with no {@code OPTIONS} route included, carries none.
+ * that takes the {@code MicronautAwsProxyRequest}, not its synthetic bridge that takes {@code Object}.
+ * It counts the route that {@code MicronautRequestReader} stored in the request's {@code
+ * ROUTE_MATCH} attribute. A request that matched no route carries none and counts nothing.
  *
- * <p>The counting is {@code DispatchAdvice}'s: the match's {@code UriRoute} is the registered key,
+ * <p>Counting follows {@code DispatchAdvice}: the match's {@code UriRoute} is the registered key,
  * an unseen route is recorded without a handler join, and a HEAD route beside a {@code @Get}
  * counts against the GET endpoint.
  *
- * <p>This method is deliberately one flat body with no private helper method of its own; see the
- * Spring MVC module's {@code RegisterHandlerMethodAdvice} Javadoc for why.
+ * <p>The advice body is inlined into the woven method, so {@code onEnter} stays one flat body with
+ * no helper methods.
  */
 public class LambdaDispatchAdvice {
     private static final String MODULE = "micronaut-3";

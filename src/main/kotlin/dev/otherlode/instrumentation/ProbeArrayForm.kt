@@ -9,37 +9,15 @@ import net.bytebuddy.jar.asm.Opcodes
 import net.bytebuddy.matcher.ElementMatchers.named
 import net.bytebuddy.utility.JavaConstant
 
-/** Loads a woven class's counts array onto the operand stack; see [ProbeArrayForm]. */
+/** Loads a woven class's counts array onto the operand stack. */
 fun interface ProbeArrayLoad {
     /** Emits the instructions that leave the class's `long[]` on the stack: one slot, no local needed. */
     fun load(methodVisitor: MethodVisitor)
 }
 
-/**
- * How the probes of one woven class reach its counts array, chosen from the class-file version of
- * the bytes being woven. The version does not change across a class's re-weaves, so a retransformation
- * produces the form the class was first woven with and the JVM never sees a member added or removed.
- *
- * A class initializes its supertypes first, and a supertype's initializer can run the class's code
- * before the class's own `<clinit>` has run. A field `<clinit>` fills is null for that window, so a
- * probe cannot read it unguarded.
- *
- * - [DynamicConstant], from version 55: every probe loads the array with `ldc` of a dynamic
- *   constant bootstrapped by [OtherlodeProbeArrays.probeArray]. Nothing is added to the class.
- * - [Accessor], below 55: the class keeps the field, filled by a `<clinit>` prelude or, in a class
- *   with no `<clinit>`, by the accessor's slow path, and every probe calls a private static synthetic
- *   accessor that returns the field or, while it is null, the array [OtherlodeProbeArrays.resolve]
- *   hands out.
- * - [PreludeOnly], an interface below version 52: it cannot have a private method and has no code
- *   outside its `<clinit>`, so only the prelude exists.
- *
- * [ProbeArrayMembers] writes the field, the prelude and the accessors.
- */
 internal sealed class ProbeArrayForm : ProbeArrayLoad {
-    /** Whether the class gets the `$otherlodeProbeCounts` field and the `<clinit>` prelude that fills it. */
     abstract val hasField: Boolean
 
-    /** A dynamic constant bootstrapped from the holder; the class gets no field, prelude or method. */
     class DynamicConstant(
         layoutHash: Long,
         probeCount: Int,
@@ -64,7 +42,6 @@ internal sealed class ProbeArrayForm : ProbeArrayLoad {
         }
     }
 
-    /** A call to the class's own accessor, [ProbeArrayForm.PROBE_ARRAY_ACCESSOR]. */
     class Accessor(
         private val ownerInternalName: String,
         private val ownerIsInterface: Boolean,
@@ -81,7 +58,6 @@ internal sealed class ProbeArrayForm : ProbeArrayLoad {
             )
     }
 
-    /** No probe site outside `<clinit>`: the prelude fills the field and increments the `<clinit>` slot. */
     data object PreludeOnly : ProbeArrayForm() {
         override val hasField: Boolean get() = true
 
@@ -90,33 +66,22 @@ internal sealed class ProbeArrayForm : ProbeArrayLoad {
     }
 
     companion object {
-        /** Name of the field a class below version 55 holds its counts array in. */
         const val PROBE_ARRAY_FIELD = "\$otherlodeProbeCounts"
 
-        /** Name of the private static synthetic accessor a class below version 55 loads its array through. */
         const val PROBE_ARRAY_ACCESSOR = "\$otherlodeProbes"
 
-        /** Name of the accessor's slow path, called while the field is still null. */
         const val PROBE_ARRAY_SLOW_PATH = "\$otherlodeProbesResolve"
 
-        /**
-         * A field added only to bytes handed back for a refused re-weave of a class woven with a
-         * dynamic constant, so the JVM rejects them as a schema change and the woven class keeps running.
-         */
         const val REFUSAL_MARKER_FIELD = "\$otherlodeRefused"
 
-        /** First class-file major version whose constant pool may hold a dynamic constant (Java 11). */
         const val DYNAMIC_CONSTANT_VERSION = 55
 
-        /** First class-file major version whose interfaces may declare private methods (Java 8). */
         const val INTERFACE_PRIVATE_METHOD_VERSION = 52
 
-        /** Stand-in when no bytes are readable at all: the accessor form needs nothing past Java 8. */
         private const val UNKNOWN_VERSION = INTERFACE_PRIVATE_METHOD_VERSION
 
         private const val ARRAY_FACTORY_DESCRIPTOR = "()[J"
 
-        /** The major version in [classFile]'s header, or [UNKNOWN_VERSION] when there is no header to read. */
         fun majorVersionOf(classFile: ByteArray?): Int =
             if (classFile != null && classFile.size >= 8) {
                 ((classFile[6].toInt() and 0xff) shl 8) or (classFile[7].toInt() and 0xff)
@@ -124,11 +89,6 @@ internal sealed class ProbeArrayForm : ProbeArrayLoad {
                 UNKNOWN_VERSION
             }
 
-        /**
-         * Whether a class woven at [wovenVersion] can be woven again in the same form from bytes at
-         * [receivedVersion]: a form chosen for one version may be illegal at the other, a dynamic
-         * constant below 55 or a private accessor on an interface below 52.
-         */
         fun sameForm(
             wovenVersion: Int,
             receivedVersion: Int,
@@ -145,7 +105,6 @@ internal sealed class ProbeArrayForm : ProbeArrayLoad {
                 else -> 1
             }
 
-        /** The form for [type], a class of [majorVersion] whose registered layout is [layoutHash] with [probeCount] probes. */
         fun of(
             majorVersion: Int,
             type: TypeDescription,

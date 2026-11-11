@@ -21,9 +21,8 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Where a dependency's bytes live on this instance, kept so a loaded class can be matched back to
- * the jar it came from. Never sent: the wire carries only [DependencyLocation.location], a display
- * string.
+ * Where a dependency's bytes live on this instance. Never sent: the wire carries only
+ * [DependencyLocation.location], a display string.
  */
 sealed interface DependencyOrigin {
     /** A jar file on the classpath, by its absolute path. */
@@ -42,48 +41,23 @@ sealed interface DependencyOrigin {
  * Tracks the dependencies this instance has seen, one record per identity key, and delivers each
  * record to the collector once.
  *
- * A dependency's identity key is the sorted list of its `group:artifact` pairs ([identityKey]),
- * never its version, so two jars carrying the same libraries at different versions are one
- * dependency. Ids are per instance, assigned in registration order from 0, like
- * [EndpointRegistry]'s endpoint ids.
+ * The identity key ([identityKey]) is the sorted list of a dependency's `group:artifact` pairs,
+ * never its version. Ids are per instance, assigned from 0 in registration order.
  *
- * Manifest delivery follows [EndpointRegistry]'s snapshot pattern: [computeManifestEntries] stages
- * records onto the snapshot it returns, and [advanceManifest] marks exactly those delivered once
- * the send carrying them is confirmed. A record never changes after registration, so unlike an
- * endpoint it needs no version, only a delivered flag.
+ * A record is held back from the manifest until its loaded-class count has reached the collector
+ * ([isSendable]).
  *
- * Each record also holds the distinct class names the sweep has matched to it ([recordLoaded]).
- * Their count goes out as a cumulative total through [computeDeltas] and [advanceDeltas], the same
- * snapshot pattern, whenever it differs from the last total delivered.
+ * Constructed with `indexClassNames`, the registry also keeps a class index from class name to
+ * dependency id, the first registration of a name winning. [releaseClassIndex] drops it.
  *
- * Constructed with `indexClassNames`, the registry also keeps a class index: every class name of
- * every dependency the startup listing registers, mapped to that dependency's id, the first
- * registration of a name winning as the classpath search order would. The static baseline maps its
- * references through it ([dependencyForClass]), since it has no defining loader to ask. Without the
- * flag no index is kept: it costs memory in proportion to the dependencies' class count. For the
- * same reason the baseline releases it ([releaseClassIndex]) once it has been read.
+ * A location under the home folder is stored with the home written as `~`.
  *
- * A record is held back from the manifest until its loaded-class count has reached the collector,
- * so a collector never reads a used jar as unloaded. Each counting sweep ends with [markCounted],
- * which opens a counting generation. A record takes the first generation that finds it
- * registered. Once every delta send computed after that sweep is confirmed, the export thread calls
- * [markCountsDelivered] with it. [computeManifestEntries] offers only records whose generation has
- * been delivered this way ([isSendable]).
- *
- * A record's location is for display, and a jar under the user's home folder, such as one in
- * `~/.m2`, would put the user's name on the wire. So [register] stores it with the home folder
- * written as `~` ([withHomeAsTilde]), and [homeDirectory] is `user.home` unless a test sets it.
- * A location can be a real path, so when the home folder is reached through a symbolic link, its
- * real path, read once when the registry is built, is written as `~` too ([withAnyHomeAsTilde]).
- *
- * Safe to use from several threads: the listing registers, the sweep records loads and
- * registers jars found at load on the scheduler thread, and the send pool computes and advances.
+ * Safe to use from several threads.
  */
 class DependencyRegistry(
     indexClassNames: Boolean = false,
     private val homeDirectory: String? = System.getProperty("user.home"),
 ) {
-    /** [homeDirectory] and, when it differs, its real path. Both are written as `~`. */
     private val homePrefixes: List<String> =
         listOfNotNull(homeDirectory, realPathOf(homeDirectory))
             .distinctBy { it.trimEnd('/', '\\') }
@@ -100,7 +74,7 @@ class DependencyRegistry(
         TIMED_OUT,
     }
 
-    /** One tracked dependency. Instantiable only by [DependencyRegistry]. */
+    /** One tracked dependency. */
     class DependencyEntry internal constructor(
         val dependencyId: Int,
         val identities: List<DependencyIdentity>,
@@ -113,21 +87,16 @@ class DependencyRegistry(
         @Volatile
         internal var delivered: Boolean = false
 
-        /** Every distinct class name a sweep has matched to this dependency, kept for the life of the process. */
         internal val loadedClassNames: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
-        /** Stamped by the first [computeDeltas] that sees a non-zero total; 0 until then. */
         @Volatile
         internal var firstLoadedAt: Long = 0
 
-        /** The counting generation that first counted this dependency; 0 until a [markCounted] sees it. */
         @Volatile
         internal var countedInGeneration: Long = 0
 
-        /** The last loaded-class total a confirmed delta send carried. */
         internal var lastDelivered: Long = 0
 
-        /** Sequence number of the newest [DeltaSnapshot] applied to [lastDelivered]; see [advanceDeltas]. */
         internal var lastAppliedDeltaSequence: Long = 0
 
         internal fun toLocation(): DependencyLocation =
@@ -135,8 +104,8 @@ class DependencyRegistry(
     }
 
     /**
-     * One computed manifest chunk, together with the entries it staged. [advanceManifest] marks
-     * exactly those delivered.
+     * One computed manifest chunk. Pass it to [advanceManifest] once the send carrying it is
+     * confirmed.
      */
     class ManifestSnapshot internal constructor(
         val dependencies: List<DependencyLocation>,
@@ -144,8 +113,7 @@ class DependencyRegistry(
     )
 
     /**
-     * One computed delta batch, together with the totals it was built from. [advanceDeltas] takes
-     * this back, so a snapshot confirmed late never marks totals it did not carry as delivered.
+     * One computed delta batch. Pass it to [advanceDeltas] once the send carrying it is confirmed.
      */
     class DeltaSnapshot internal constructor(
         val deltas: List<DependencyDelta>,
@@ -175,16 +143,15 @@ class DependencyRegistry(
     private var startupListingDelivered = false
 
     /**
-     * True once the startup listing has finished and every dependency it found is registered.
-     * Stays false when the listing failed, so nothing reads the registry as the full startup
-     * classpath when it is not.
+     * True once the startup listing has finished and every dependency it found is registered. Stays
+     * false when the listing failed.
      */
     val isListingComplete: Boolean
         get() = listingComplete
 
     /**
-     * Records that the startup listing finished, releasing every [awaitListing]. Does nothing
-     * after [markListingFailed], since a failed listing leaves a partial registry.
+     * Records that the startup listing finished and releases every [awaitListing]. Does nothing
+     * after [markListingFailed].
      */
     fun markListingComplete() {
         synchronized(this) {
@@ -195,8 +162,8 @@ class DependencyRegistry(
     }
 
     /**
-     * Records that the startup listing failed, releasing every [awaitListing] at once rather than
-     * leaving it to wait out its timeout. [isListingComplete] stays false.
+     * Records that the startup listing failed and releases every [awaitListing].
+     * [isListingComplete] stays false. Does nothing after [markListingComplete].
      */
     fun markListingFailed() {
         synchronized(this) {
@@ -215,25 +182,25 @@ class DependencyRegistry(
         }
     }
 
-    /** The id of the dependency the class index maps [className] (dotted) to, or null. Always null without the index. */
+    /**
+     * The id of the dependency the class index maps [className] (dotted) to, or null. Always null
+     * without the index.
+     */
     fun dependencyForClass(className: String): Int? = classIndex?.get(className)
 
     /** How many class names the class index holds; 0 without the index or once it is released. */
     val classIndexSize: Int
         get() = classIndex?.size ?: 0
 
-    /**
-     * Drops the class index and stops keeping one, so its memory is not held for the life of the
-     * process once the static baseline, its one reader, has been filtered.
-     */
+    /** Drops the class index and stops keeping one. */
     fun releaseClassIndex() {
         classIndex = null
     }
 
     /**
      * Registers a dependency and returns its id. A dependency whose identity key is already
-     * registered keeps the record it has, first registration wins, and this returns that record's
-     * id. [identities] must not be empty.
+     * registered keeps its record, and this returns that record's id. [identities] must not be
+     * empty.
      *
      * With the class index kept, each of [classNames] not yet indexed is mapped to the returned id.
      */
@@ -279,21 +246,23 @@ class DependencyRegistry(
             }.dependencyId
 
     /**
-     * The id of the dependency registered with [origin], compared by canonical path so a symlinked
-     * or relative classpath entry still matches the location the JVM reports. Null when none was.
+     * The id of the dependency registered with [origin], compared by canonical path, or null when
+     * none was.
      */
     fun idForOrigin(origin: DependencyOrigin): Int? = entriesByOrigin[origin.canonical()]?.dependencyId
 
     /**
-     * Records that the startup listing read the jar at [origin] and judged it not a dependency (an
-     * agent jar, a Spring Boot fat jar, a jar of the adopter's own), so the sweep treats it as
-     * such without reading it a second time.
+     * Records that the startup listing judged the jar at [origin] not a dependency, so the sweep
+     * does not read it again.
      */
     fun recordNotADependency(origin: DependencyOrigin) {
         judgedNotDependencies += origin.canonical()
     }
 
-    /** Whether the startup listing judged the jar at [origin] not a dependency, compared by canonical path. */
+    /**
+     * Whether the startup listing judged the jar at [origin] not a dependency, compared by
+     * canonical path.
+     */
     fun isJudgedNotADependency(origin: DependencyOrigin): Boolean = origin.canonical() in judgedNotDependencies
 
     /** The id of the dependency registered under [identityKey], or null. */
@@ -311,10 +280,9 @@ class DependencyRegistry(
     }
 
     /**
-     * Returns batches of at most [maxPerBatch] deltas, each weighing one entry, covering every
-     * dependency whose distinct loaded-class total differs from its last delivered total. Empty
-     * when nothing changed. Stamps a dependency's first-loaded time the first time a compute sees
-     * its total above zero, so the time has the precision of a flush.
+     * Returns batches of at most [maxPerBatch] deltas, covering every dependency whose distinct
+     * loaded-class total differs from its last delivered total. Empty when nothing changed. Stamps
+     * a dependency's first-loaded time the first time a compute sees its total above zero.
      *
      * Nothing is marked delivered here; see [advanceDeltas].
      */
@@ -360,20 +328,16 @@ class DependencyRegistry(
     val countGeneration: Long
         get() = countGenerations.get()
 
-    /** The newest counting generation whose counts a confirmed delta send carried; see [markCountsDelivered]. */
+    /**
+     * The newest counting generation whose counts a confirmed delta send carried; see
+     * [markCountsDelivered].
+     */
     val deliveredGeneration: Long
         get() = deliveredGenerations.get()
 
     /**
      * Records that a counting sweep finished. This opens the next counting generation and stamps it
      * on every record that no earlier generation has stamped.
-     *
-     * No lock guards registration against this. After the listing completes, a jar is registered
-     * inside a sweep's count, through `resolveLocation` on a send thread, or through it on the static
-     * baseline's scan thread. The first two never overlap this call, because each flush waits for
-     * its sends before the next sweep runs. A jar the scan thread registers between a sweep's count
-     * and this call takes that sweep's generation, and its zero is right: no class of it was in the
-     * sweep's snapshot, or the sweep would have registered it first.
      */
     @Synchronized
     fun markCounted() {
@@ -405,13 +369,12 @@ class DependencyRegistry(
 
     /**
      * Whether any record is sendable ([isSendable]) and has not gone out on a confirmed manifest.
-     * A mapping is held only on such a record, so false means nothing is waiting on a release.
      */
     fun hasSendableUndelivered(): Boolean = entriesByKey.values.any { !it.delivered && isSendable(it) }
 
     /**
      * True once the startup listing is complete and every record it registered has gone out on a
-     * confirmed manifest. A record discovered by load never holds it back. It stays false after a
+     * confirmed manifest. A record discovered by load never holds it back. Stays false after a
      * failed listing. Once true, it stays true.
      */
     val isStartupListingDelivered: Boolean
@@ -428,9 +391,9 @@ class DependencyRegistry(
     fun entries(): List<DependencyEntry> = entriesByKey.values.sortedBy { it.dependencyId }
 
     /**
-     * Returns chunks of at most [maxPerChunk] dependencies, each weighing one entry, covering every
-     * dependency not yet delivered whose counts have been delivered ([isSendable]), in id order.
-     * Empty when there is nothing to send. Nothing is marked delivered here; see [advanceManifest].
+     * Returns chunks of at most [maxPerChunk] dependencies, covering every dependency not yet
+     * delivered whose counts have been delivered ([isSendable]), in id order. Empty when there is
+     * nothing to send. Nothing is marked delivered here; see [advanceManifest].
      */
     fun computeManifestEntries(maxPerChunk: Int): List<ManifestSnapshot> =
         chunkedByWeight(
@@ -468,13 +431,6 @@ class DependencyRegistry(
     }
 }
 
-/**
- * [location] with a leading [home] written as `~`, as in `~/.m2/repository/x.jar` or
- * `~/app.jar!/BOOT-INF/lib/x.jar`. Only a whole leading folder matches, followed by `/` or `\`,
- * so `/home/al` leaves `/home/alice/x.jar` alone. On Windows, where paths ignore case, so does the
- * match. A null, blank or root [home] changes nothing, nor does a location that does not start
- * with it, such as `BOOT-INF/lib/x.jar`.
- */
 internal fun withHomeAsTilde(
     location: String,
     home: String?,
@@ -490,10 +446,6 @@ internal fun withHomeAsTilde(
     }
 }
 
-/**
- * [location] with the longest of [homes] that leads it written as `~`, by [withHomeAsTilde]'s
- * whole-folder rule. Only one home is replaced.
- */
 internal fun withAnyHomeAsTilde(
     location: String,
     homes: List<String>,
@@ -505,10 +457,6 @@ internal fun withAnyHomeAsTilde(
     return location
 }
 
-/**
- * The real path of [home] with every symbolic link followed, or null when [home] is null or
- * blank, cannot be resolved, or is not a valid path.
- */
 private fun realPathOf(home: String?): String? {
     if (home.isNullOrBlank()) return null
     return try {

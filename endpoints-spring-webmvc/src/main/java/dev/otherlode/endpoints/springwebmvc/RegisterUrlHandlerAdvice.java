@@ -11,18 +11,12 @@ import org.springframework.util.ClassUtils;
  * Woven onto {@code AbstractUrlHandlerMapping.registerHandler(String, Object)}, the registration
  * hook shared by every URL-mapped handler mapping: {@code SimpleUrlHandlerMapping}, {@code
  * BeanNameUrlHandlerMapping}, and Spring Boot's static-resource and webjars mappings. It runs once
- * per URL path as a mapping builds its route table. The array-argument overload,
- * {@code registerHandler(String[], String)}, delegates to this single-path overload, so advising
- * only this signature covers both without weaving twice.
+ * per URL path. The {@code registerHandler(String[], String)} overload delegates to this one.
  *
- * <p>A URL-mapped handler carries no verb, so every endpoint this advice declares uses verb
- * {@code "*"}, the same convention {@link HandleMatchAdvice} uses for an unconstrained {@code
- * RequestMapping}. The handler behind a URL mapping is an object, not a method, so the join
- * attached here is class-only; {@link RegisterHandlerMethodAdvice} is what attaches a method join,
- * for the annotation-mapped handlers it covers.
+ * <p>Every endpoint declared here uses verb {@code "*"} and joins to the handler's class only.
  *
- * <p>This method is deliberately one flat body with no private helper method of its own; see
- * {@link RegisterHandlerMethodAdvice}'s Javadoc for why.
+ * <p>The advice body is inlined into the woven method, so {@code onEnter} stays one flat body with
+ * no helper methods.
  */
 public class RegisterUrlHandlerAdvice {
     private static final String MODULE = "spring-webmvc";
@@ -35,15 +29,11 @@ public class RegisterUrlHandlerAdvice {
         try {
             Class<?> handlerType = null;
             if (handler instanceof String) {
-                // A bean registered by name is resolved through the mapping's own context, the
-                // same lookup RegisterHandlerMethodAdvice uses for a name-registered controller.
                 BeanFactory applicationContext = ((ApplicationObjectSupport) mapping).getApplicationContext();
                 if (applicationContext != null) handlerType = applicationContext.getType((String) handler);
             } else if (handler != null) {
                 handlerType = handler.getClass();
             }
-            // An endpoint whose handler cannot be named is still an endpoint: it is registered
-            // with no join rather than dropped, so it can never read as absent.
             String handlerClassName = handlerType == null ? null : ClassUtils.getUserClass(handlerType).getName();
 
             List<String> key = List.of(urlPath, "*");

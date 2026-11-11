@@ -14,22 +14,16 @@ import java.util.Deque;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto {@code RoutingRoot.executeResult}, Ktor's own dispatch point. It runs once per
- * matched request, with the winning node already resolved, before that node's own handler
- * pipeline runs. {@code executeResult} is private and {@code suspend}, so on the JVM it takes a
- * trailing {@code Continuation} parameter; matching it by name alone and binding argument index 1
- * (the node, after the {@code PipelineContext} at index 0) is what {@link Advice.Argument} needs
- * here, since a {@code suspend} method's real parameter count is not what its Kotlin signature
- * shows.
+ * Woven onto {@code RoutingRoot.executeResult}, Ktor's dispatch point. It records one hit per
+ * matched request. When {@link HandleAdvice} never registered the node, the advice builds the verb
+ * and path template from the selectors up to the root and records the endpoint as discovered by
+ * dispatch.
  *
- * <p>{@link HandleAdvice} registers under the node's own identity, so the first lookup here
- * usually succeeds. A node this module never saw register, such as one whose {@code handle} ran
- * before this module installed, falls back to walking the same node up to the root inline and
- * recording it as discovered by dispatch, so the hit is never dropped. The walk is duplicated from
- * {@link HandleAdvice} rather than shared; see that class's Javadoc for why.
+ * <p>{@code executeResult} is private and {@code suspend}, so it takes a trailing {@code
+ * Continuation}. The node is argument index 1, after the {@code PipelineContext}.
  *
- * <p>This method is deliberately one flat body with no private helper method of its own; see the
- * Spring MVC module's {@code RegisterHandlerMethodAdvice} Javadoc for why.
+ * <p>The advice body is inlined into the woven method, so {@code onEnter} stays one flat body with
+ * no helper methods.
  */
 public class ExecuteResultAdvice {
     private static final String MODULE = "ktor-3";
@@ -37,8 +31,8 @@ public class ExecuteResultAdvice {
     @Advice.OnMethodEnter(suppress = Throwable.class)
     public static void onEnter(@Advice.Argument(1) Object route) {
         try {
-            // executeResult is a suspend function: each resumption re-enters it from its
-            // continuation with null arguments, and only the first entry is a dispatch.
+            // A suspend function re-enters from its continuation with null arguments; only the
+            // first entry is a dispatch.
             if (route == null) return;
             Object entry = OtherlodeEndpoints.lookup(MODULE, route);
             if (entry == null) {

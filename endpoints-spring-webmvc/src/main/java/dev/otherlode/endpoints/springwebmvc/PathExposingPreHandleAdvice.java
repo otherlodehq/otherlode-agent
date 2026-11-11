@@ -9,34 +9,27 @@ import org.springframework.util.ClassUtils;
 
 /**
  * Woven onto {@code AbstractUrlHandlerMapping$PathExposingHandlerInterceptor.preHandle}, the
- * dispatch point shared by every URL-mapped handler mapping. Only {@code DispatcherServlet} runs
- * an interceptor, once per dispatch, so a lookup {@code HandlerMappingIntrospector} makes for
- * Spring Security or CORS never reaches it. The interceptor holds the matched pattern and the
- * path within the mapping, both resolved before the handler runs. A request stopped before the
- * interceptors run, by a {@code Last-Modified} answer of 304 (Spring 5.3 and 6) or a refused CORS
- * request, is not counted.
+ * dispatch point shared by every URL-mapped handler mapping. Only {@code DispatcherServlet} runs an
+ * interceptor, once per dispatch, so a lookup by {@code HandlerMappingIntrospector} never reaches
+ * it. A request stopped before the interceptors run, by a {@code Last-Modified} answer of 304
+ * (Spring 5.3 and 6) or a refused CORS request, is not counted. An async redispatch and a CORS
+ * preflight count nothing.
  *
- * <p>This advice is written against the {@code javax} servlet types and bound to the {@code
- * jakarta} ones, by prefix, when the woven method takes them. An async redispatch and a CORS
- * preflight are no call.
+ * <p>The advice is written against the {@code javax} servlet types and bound to the {@code
+ * jakarta} ones by prefix.
  *
- * <p>The dispatch key built here, {@code List.of(bestMatchingPattern, "*")}, must match {@link
- * RegisterUrlHandlerAdvice} exactly, the same value-equality convention {@link HandleMatchAdvice}
- * and {@link RegisterHandlerMethodAdvice} use for this module's annotation-mapped side. A lookup
- * miss means a handler this module has not seen register, and the dispatch is still recorded
- * rather than dropped.
+ * <p>The key, {@code List.of(bestMatchingPattern, "*")}, matches {@link RegisterUrlHandlerAdvice}.
+ * A lookup miss means a handler this module did not see register, and the dispatch is recorded.
  *
  * <p>When no registered path matches, Spring falls back to the root handler for {@code "/"} or the
  * {@code "/*"} handler for anything else, and passes the raw lookup path as both the pattern and
- * the path within the mapping. Recording that path would add one endpoint per distinct URL and
- * leave {@code "/*"} uncounted. A match through a registered pattern has a path within the mapping
- * that differs from its pattern, and a direct match is a registered key, so a miss whose two
- * strings are equal is a fallback. A fallback for {@code "/"} served by a root handler {@link
- * RegisterRootHandlerAdvice} declared counts against {@code "/"}, looked up by that handler, and
- * any other fallback against {@code "/*"}.
+ * the path within the mapping. A miss whose two strings are equal is therefore a fallback. A
+ * fallback for {@code "/"} served by a root handler {@link RegisterRootHandlerAdvice} declared
+ * counts against {@code "/"}, looked up by that handler, and any other fallback against {@code
+ * "/*"}.
  *
- * <p>This method is deliberately one flat body with no private helper method of its own; see
- * {@link RegisterHandlerMethodAdvice}'s Javadoc for why.
+ * <p>The advice body is inlined into the woven method, so {@code onEnter} stays one flat body with
+ * no helper methods.
  */
 public class PathExposingPreHandleAdvice {
     private static final String MODULE = "spring-webmvc";

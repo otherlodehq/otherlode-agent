@@ -6,28 +6,13 @@ import dev.otherlode.registry.DefinitionAttempt
 import java.lang.System.Logger.Level
 
 /**
- * Holds endpoint registrations a module made while ByteBuddy was rewriting a class, until that
- * rewrite is known to have succeeded.
+ * Holds endpoint registrations a module made while ByteBuddy was rewriting a class, until the rewrite
+ * is known to have succeeded. The slot is per thread, since ByteBuddy runs a class's transform and
+ * result callbacks back to back on the loading thread.
  *
- * A module that reads its routes off a class's own annotations declares them from inside the
- * transform callback, which ByteBuddy runs before it rewrites and validates the bytes. Declaring
- * straight into the registry there publishes endpoints for a class that may still fail to weave:
- * the class then serves requests with no advice on it, the endpoint's hit count stays at zero,
- * and a collector reads "never called" for a route the framework is serving. Probes face the same
- * hazard and get the same answer: hold the declarations, and commit them only once the rewrite has
- * produced bytes.
- *
- * What a commit runs it runs for one declaring class, whose name [begin] took. Each staged
- * declaration receives that class, so the registry can hold the endpoints back until the JVM has
- * defined it.
- *
- * One slot per thread, with no key. ByteBuddy runs the transform callback, the rewrite and the
- * result callbacks back to back on the loading thread, and its `CircularityLock` holds a
- * per-thread entry throughout, so one thread has at most one class in flight.
- *
- * A module that declares its routes at runtime instead, by walking a framework object once the
- * application has built it, is not staging: no transform is in flight on that thread, [stage]
- * declines the work, and the caller registers directly.
+ * [begin] opens the slot for a declaring class and [discard] drops it. Each staged declaration
+ * receives that class, so the registry can hold the endpoints back until the JVM has defined it.
+ * When no transform is in flight, [stage] declines and the caller registers directly.
  */
 class PendingDeclarations internal constructor() {
     private val log by agentLogger(PendingDeclarations::class.java.name)
@@ -40,9 +25,9 @@ class PendingDeclarations internal constructor() {
     }
 
     /**
-     * Holds [declaration] if this thread is inside a transform and returns true. Returns false
-     * when nothing is in flight, leaving the caller to run it. A committed [declaration] receives
-     * the class whose transform staged it.
+     * Holds [declaration] and returns true if this thread is inside a transform. Otherwise returns
+     * false and the caller runs it. A committed [declaration] receives the class whose transform
+     * staged it.
      */
     fun stage(declaration: (DeclaringClass) -> Unit): Boolean {
         val pending = staged.get() ?: return false
@@ -52,21 +37,8 @@ class PendingDeclarations internal constructor() {
 
     /**
      * Starts holding declarations on this thread for the class named [className], and returns how
-     * many are held already.
-     *
-     * Every module whose type matcher matched a class gets its own transform callback, and
-     * ByteBuddy runs them all for that one class before it rewrites anything, so this is called
-     * once per matching module rather than once per class. Only the first call opens the list. A
-     * later one leaves what earlier modules staged in place and reports the size, which its
-     * caller keeps as the mark to [rollbackTo] if its own module throws.
-     *
-     * ByteBuddy's default fallback strategy can run a whole transform twice, retrying with a
-     * different type description after a `LinkageError` and with no listener call in between to
-     * close the list. It only retries a class being retransformed, and only when the class is
-     * described from its loaded `Class` first; the endpoint pipeline describes every class from
-     * its bytes, so the second pass cannot happen here. On a retransformation the pipeline rolls
-     * back whatever a module declared anyway. It would be harmless regardless: declaring one
-     * endpoint key twice is the same endpoint.
+     * many are held already. When this thread already holds a list, the call keeps it and reports
+     * its size, which the caller keeps as the mark to [rollbackTo].
      */
     fun begin(className: String): Int {
         val pending = staged.get()
@@ -75,28 +47,12 @@ class PendingDeclarations internal constructor() {
         return 0
     }
 
-    /**
-     * Drops everything staged past [mark], for a module that threw partway through declaring.
-     *
-     * Its own routes are only half read by then, and half a route list is worse than none: a
-     * route the walk never reached looks like one the framework does not serve, rather than one
-     * nobody called. Modules that already finished keep what they staged.
-     */
+    /** Drops everything staged past [mark], for a module that threw partway through declaring. */
     fun rollbackTo(mark: Int) {
         val pending = staged.get()?.declarations ?: return
         while (pending.size > mark) pending.removeAt(pending.size - 1)
     }
 
-    /**
-     * Runs what this thread staged, in the order it was declared, and stops holding. Each
-     * declaration receives the class [begin] named, defined by [classLoader], with the definition
-     * attempt [captureAttempt] reads. It is read only when something was staged.
-     *
-     * A declaration that throws is logged and the rest still run. Declaring an endpoint must
-     * never disturb the application, which is why the seam swallows a failure of its own. Letting
-     * one escape here would reach ByteBuddy's error path instead, and that discards the rewritten
-     * class, so one bad route would cost the whole class its advice.
-     */
     internal fun commit(
         classLoader: ClassLoader?,
         captureAttempt: () -> DefinitionAttempt? = DefinitionAttempt.Companion::capture,
@@ -109,6 +65,7 @@ class PendingDeclarations internal constructor() {
             try {
                 declaration(declaring)
             } catch (t: Throwable) {
+                // A throw out of commit would reach ByteBuddy's error path, which discards the rewritten class.
                 log.log(
                     Level.WARNING,
                     "otherlode: an endpoint a module declared during a transform could not be registered; the rest of " +

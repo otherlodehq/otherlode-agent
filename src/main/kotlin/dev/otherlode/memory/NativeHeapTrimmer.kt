@@ -9,41 +9,28 @@ import java.util.Locale
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit
 
-/**
- * What the trimmer asks of the JVM. The real one is [JmxNativeHeap]; a test supplies its own.
- * No type in this file names a `java.management` class, so the agent starts on a JVM without that
- * module; the real heap loads it on the trim thread.
- */
+// No type in this file may name a `java.management` class, or the agent fails to start on a JVM
+// without that module.
 internal interface NativeHeap {
-    /** Readies the JVM's management beans. Its first call initialises `java.util.logging`. */
     fun open()
 
-    /**
-     * The value of the JVM option `TrimNativeHeapInterval`, or null when this JVM has no such option.
-     */
     fun jvmTrimInterval(): String?
 
-    /** Runs the JDK's native heap trim and returns the text it answers. Throws [NoTrimCommand] when the JVM has none. */
     fun trim(): String
 }
 
-/** Thrown by a [NativeHeap] whose JVM has no native heap trim command. */
 internal class NoTrimCommand : Exception(null, null, false, false)
 
-/** Runs [NativeHeapTrimmer]'s trim on a timer. A test supplies its own to run the trim by hand. */
 internal interface TrimSchedule {
-    /** Runs [task] after [initialDelay], then again [period] after each run ends. */
     fun start(
         initialDelay: Duration,
         period: Duration,
         task: Runnable,
     )
 
-    /** Ends the schedule. A later run does not start. */
     fun stop()
 }
 
-/** [TrimSchedule] on one daemon thread named `otherlode-trim`, which exists only once [start] runs. */
 internal class ThreadTrimSchedule : TrimSchedule {
     @Volatile
     private var executor: ScheduledThreadPoolExecutor? = null
@@ -64,18 +51,6 @@ internal class ThreadTrimSchedule : TrimSchedule {
     }
 }
 
-/**
- * Returns the native memory the JVM has freed to the operating system, every [interval], on Linux.
- * glibc keeps freed memory in its arenas, and the resident size of a long-running JVM grows by
- * what C2 compilation leaves there. The JDK's `System.trim_native_heap` command returns it.
- *
- * It does nothing when [interval] is zero or [osName] does not start with `Linux`. The first trim
- * runs one [interval] after [start]. The first run waits for the agent's logging gate, then reads
- * the JVM option `TrimNativeHeapInterval`; a JVM that already trims on its own ends this trimmer.
- * The trimmer also ends when the JVM has no trim command, including a JVM without the
- * `java.management` or `jdk.management` module, when it answers that the trim is not available,
- * and when a trim throws. An ended trimmer never trims again. Nothing here throws into the host.
- */
 internal class NativeHeapTrimmer(
     private val interval: Duration,
     private val osName: String = System.getProperty("os.name").orEmpty(),
@@ -91,13 +66,11 @@ internal class NativeHeapTrimmer(
     private var firstRunDone = false
     private var jvm: NativeHeap? = null
 
-    /** Schedules the trims, or does nothing when [interval] is zero or the OS is not Linux. */
     fun start() {
         if (interval.isZero || !osName.startsWith("Linux")) return
         schedule.start(interval, interval, ::run)
     }
 
-    /** Ends the schedule. */
     fun stop() {
         ended = true
         schedule.stop()

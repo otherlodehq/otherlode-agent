@@ -11,47 +11,7 @@ import net.bytebuddy.jar.asm.MethodVisitor
 import net.bytebuddy.jar.asm.Opcodes
 import net.bytebuddy.jar.asm.Type
 
-/**
- * Reads a switch over a string or an enum, and javac's pattern switch, back to the cases the
- * source names.
- *
- * Each shape below was confirmed with `javap -c -l -p` on javac 17 and 21, kotlinc 2.2.21, scalac
- * 2.13.15 and scalac 3.3.4 output. A switch that differs from every shape in any detail is not
- * read, and its sites stay as they are.
- *
- * - javac, string: `astore t; iconst_m1; istore i; aload t; hashCode; switch`, then per hash case a
- *   chain of `aload t; ldc "s"; String.equals; ifeq next; <k>; istore i; goto D`, then
- *   `D: iload i; switch`. The switch at `D` is rebuilt with the literal whose check stores each
- *   case key. The hash switch and every `equals` check are lowering.
- * - kotlinc and scalac, string: a hash switch on a temporary whose every case starts a chain of
- *   `equals` checks against a literal with that hash. There is no second switch. The hash switch
- *   and its null check are lowering. Each `equals` check stays a plain site, whose condition is
- *   written as `subject == "literal"` or `subject != "literal"`.
- * - javac and kotlinc, enum: a switch on `map[subject.ordinal()]`, where `map` is javac's
- *   `$SwitchMap$` or kotlinc's `$EnumSwitchMapping$` array. The switch is rebuilt with the
- *   constant each map value stands for, read from the map class's static initialiser. kotlinc's
- *   null check on a nullable subject is lowering, and case key `-1` is `null`.
- * - javac, pattern switch: a switch on the index `SwitchBootstraps.typeSwitch` or `enumSwitch`
- *   returns. The switch is rebuilt with the bootstrap argument each index names, and `-1` is
- *   `null`. A `when` guard's own conditional and its restart jump are left alone.
- *
- * A rebuilt switch whose default only constructs and throws `MatchException`,
- * `IncompatibleClassChangeError` or kotlinc's `NoWhenBranchMatchedException` has a throwing
- * default. The source has no default there.
- */
 internal object SwitchLowering {
-    /**
-     * One lowered switch in a method, by instruction index.
-     *
-     * [lowering] holds the tracked jumps and switches the compiler added. [rebuilt] is the switch
-     * whose cases are the source's cases, with [caseLabels] one per case outcome in the order
-     * [BranchProbeMethodVisitor] numbers them, and [throwingDefault] true when its default only
-     * throws. It is null when the lowering has no such switch. [caseChecks] holds each `equals`
-     * check that stays a plain site. The subject is the value on top of the stack just before
-     * [subjectEnd]. [kindToken] names the lowering, so the rebuilt site's fingerprint never
-     * names the temporary. [enumClass] is the enum a map switch maps, whose name stands in for
-     * the map class in that fingerprint, and null for any other switch.
-     */
     class Reading(
         val lowering: List<Int>,
         val rebuilt: Int?,
@@ -63,11 +23,6 @@ internal object SwitchLowering {
         val enumClass: String? = null,
     )
 
-    /**
-     * One `equals` check of a string case, at instruction [jump], that stays a plain site.
-     * [collisionOnly] is true for the last check in its hash bucket: its not-equal side is reached
-     * only by a different string with the same hash code, so it has no outcome of its own.
-     */
     class CaseCheck(
         val jump: Int,
         val literal: String,
@@ -75,26 +30,11 @@ internal object SwitchLowering {
         val collisionOnly: Boolean = false,
     )
 
-    /**
-     * What [scan] found in one method: the [readings] of the switches it could read back to their
-     * source cases, and the [unreadCollisions] it could not, one per hash bucket of a switch on
-     * `String.hashCode()` that no reading covers.
-     */
     class Scan(
         val readings: List<Reading>,
         val unreadCollisions: List<CaseCheck>,
     )
 
-    /**
-     * The lowered switches in [insns]. [indexOfLabel] places each label before an instruction.
-     * [depthAt] gives the operand stack depth before each instruction, or -1 when it is unknown.
-     * [enumMappings] reads the map arrays a class declares.
-     *
-     * A switch on `String.hashCode()` that no reading covers has its buckets' last `equals` checks
-     * listed in [Scan.unreadCollisions], each with [CaseCheck.collisionOnly] set. The source never
-     * writes a switch on a string's hash code over a chain of `equals` checks against literals with
-     * that hash, so the shape is a compiler's lowering in a form this object does not read.
-     */
     fun scan(
         insns: List<Insn>,
         indexOfLabel: Map<Label, Int>,
@@ -121,24 +61,17 @@ internal object SwitchLowering {
         return Scan(readings, unreadCollisions)
     }
 
-    /**
-     * Whether the switch at [index] in [insns] tests the value `String.hashCode()` returns, which
-     * holds when the call is the instruction right before it. Every compiler's string switch
-     * lowering has this form, and so does an adopter's own `switch (s.hashCode())`.
-     */
     fun switchesOnStringHashCode(
         insns: List<Insn>,
         index: Int,
     ): Boolean = insns.getOrNull(index - 1) == STRING_HASH_CODE
 
-    /** Whether [insn] reads javac's or kotlinc's enum map array. */
     fun isEnumMapRead(insn: Insn): Boolean =
         insn is Insn.Field &&
             insn.opcode == Opcodes.GETSTATIC &&
             insn.descriptor == "[I" &&
             (insn.name.startsWith(JAVAC_MAP_PREFIX) || insn.name.startsWith(KOTLIN_MAP_PREFIX))
 
-    /** One case entry of a switch that is not a filler for a gap: its key and its target. */
     private class CaseEntry(
         val key: Int,
         val target: Label,
@@ -183,7 +116,6 @@ internal object SwitchLowering {
                 else -> error("not a switch")
             }
 
-        /** The switch's case entries in label-array order, leaving out a filler that jumps to the default. */
         private fun casesOf(switch: Int): List<CaseEntry> =
             when (val insn = insns[switch]) {
                 is Insn.TableSwitch -> {
@@ -211,11 +143,6 @@ internal object SwitchLowering {
 
         private fun isStringHashCode(index: Int): Boolean = insns.getOrNull(index) == STRING_HASH_CODE
 
-        /**
-         * An `equals` check against a literal on local [temp] at [index]: `aload t; ldc "s"` as
-         * javac and kotlinc write it, or `ldc "s"; aload t` as scalac writes it, then
-         * `String.equals` (or `Object.equals` from scalac) and `ifeq` or `ifne`.
-         */
         private fun equalsCheckAt(
             index: Int,
             temp: Int,
@@ -237,7 +164,6 @@ internal object SwitchLowering {
             return literal to jump
         }
 
-        /** javac's string switch. See [SwitchLowering]. */
         fun javacString(hash: Int): Reading? {
             if (!isStringHashCode(hash - 1)) return null
             val temp = varAt(hash - 2, Opcodes.ALOAD) ?: return null
@@ -270,7 +196,6 @@ internal object SwitchLowering {
             return Reading(lowering, indexSwitch, labels, throwsOnly(indexSwitch), emptyList(), hash - 5, "STRING-SWITCH")
         }
 
-        /** kotlinc's and scalac's string match, with no second switch. See [SwitchLowering]. */
         fun hashMatch(hash: Int): Reading? {
             if (!isStringHashCode(hash - 1)) return null
             val temp = varAt(hash - 2, Opcodes.ALOAD) ?: return null
@@ -282,7 +207,6 @@ internal object SwitchLowering {
                         hash - 3
                     }
 
-                    // kotlinc on a nullable subject: `aload t; ifnull <default>; aload t; hashCode`.
                     jumpAt(hash - 3, Opcodes.IFNULL)?.let { at(it.target) } == defaultIndex &&
                         varAt(hash - 4, Opcodes.ALOAD) == temp &&
                         varAt(hash - 5, Opcodes.ASTORE) == temp -> {
@@ -290,7 +214,6 @@ internal object SwitchLowering {
                         hash - 5
                     }
 
-                    // scalac: `aload t; ifnonnull L; iconst_0; goto S; L: aload t; hashCode; S: switch`.
                     jumpAt(hash - 3, Opcodes.GOTO)?.let { at(it.target) } == hash &&
                         intAt(hash - 4) == 0 &&
                         jumpAt(hash - 5, Opcodes.IFNONNULL)?.let { at(it.target) } == hash - 2 &&
@@ -330,23 +253,12 @@ internal object SwitchLowering {
             return Reading(lowering, null, emptyList(), false, checks, store, "STRING-MATCH")
         }
 
-        /**
-         * The last `equals` check of each bucket of the switch at [hash], when it switches on
-         * `String.hashCode()` of a local and every bucket is a chain of `equals` checks against
-         * literals whose hash code is the bucket's key. Empty when any bucket is not such a chain.
-         * Each check is listed as [CaseCheck.collisionOnly]: its not-equal side is reached only by a
-         * different string with the same hash code. The prologue before the hash call and the code
-         * after the checks are not looked at, so it covers a lowering whose frame this object does
-         * not read, javac's two-switch form included.
-         */
         fun unreadStringBuckets(
             hash: Int,
             isCompilerTemp: (slot: Int, instructionIndex: Int) -> Boolean,
         ): List<CaseCheck> {
             if (!isStringHashCode(hash - 1)) return emptyList()
             val temp = varAt(hash - 2, Opcodes.ALOAD) ?: return emptyList()
-            // A lowering hashes a temporary the compiler made; an adopter who writes
-            // `switch (s.hashCode())` hashes a local of their own, which the table names.
             if (!isCompilerTemp(temp, hash - 2)) return emptyList()
             val lasts = mutableListOf<CaseCheck>()
             for (entry in casesOf(hash)) {
@@ -370,12 +282,6 @@ internal object SwitchLowering {
             return lasts
         }
 
-        /**
-         * Where control lands from [index] after any chain of `goto`s, or null when one leads
-         * nowhere known. A coverage agent's probe before a `goto` is stepped over: JaCoCo plants
-         * `aload <probes>; <index>; iconst_1; bastore` on the collision path and the default path
-         * alike.
-         */
         private fun throughGotos(index: Int): Int? {
             var current = index
             repeat(MAX_GOTO_CHAIN) {
@@ -392,7 +298,6 @@ internal object SwitchLowering {
                 intAt(index + 2) == 1 &&
                 plainAt(index + 3, Opcodes.BASTORE)
 
-        /** A switch on javac's or kotlinc's enum map. See [SwitchLowering]. */
         fun enumMapping(
             switch: Int,
             enumMappings: EnumSwitchMappings,
@@ -407,8 +312,6 @@ internal object SwitchLowering {
             val mapIndex: Int
             val subjectEnd: Int
             if (plainAt(switch - 3, Opcodes.SWAP)) {
-                // kotlinc: `<subject>; getstatic map; swap; ordinal; iaload`, with an optional
-                // `dup; ifnonnull L; pop; iconst_m1; goto S` null check before `L: getstatic`.
                 mapIndex = switch - 4
                 if (!isMapField(mapIndex, KOTLIN_MAP_OWNER_SUFFIX, KOTLIN_MAP_PREFIX)) return null
                 val nullCheck = mapIndex - 4
@@ -426,8 +329,6 @@ internal object SwitchLowering {
                     subjectEnd = mapIndex
                 }
             } else {
-                // javac: `getstatic map; <subject>; ordinal; iaload`, where the subject leaves
-                // exactly one value above the map.
                 val depth = depthAt.getOrNull(switch - 2) ?: return null
                 if (depth < 2) return null
                 mapIndex = (switch - 3 downTo 0).firstOrNull { depthAt[it] == depth - 2 && depthAt[it + 1] == depth - 1 } ?: return null
@@ -457,7 +358,6 @@ internal object SwitchLowering {
                 field.owner.endsWith(ownerSuffix)
         }
 
-        /** javac's switch on the index `SwitchBootstraps.typeSwitch` or `enumSwitch` returns. See [SwitchLowering]. */
         fun bootstrapSwitch(switch: Int): Reading? {
             val call = insns.getOrNull(switch - 1) as? Insn.InvokeDynamic ?: return null
             val bootstrap = call.bootstrapMethod
@@ -488,13 +388,6 @@ internal object SwitchLowering {
             return Reading(emptyList(), switch, labels, throwsOnly(switch), emptyList(), switch - 6, "PATTERN-SWITCH ${bootstrap.name}")
         }
 
-        /**
-         * Whether [switch]'s default only throws: `new X; dup; invokespecial X.<init>()V; athrow`
-         * for `IncompatibleClassChangeError` (javac 17) and `NoWhenBranchMatchedException`
-         * (kotlinc), or with `aconst_null; aconst_null` and `(String, Throwable)` for
-         * `MatchException` (javac 21). kotlinc's class is matched by suffix, since the shaded jar
-         * rewrites `kotlin/` literals.
-         */
         private fun throwsOnly(switch: Int): Boolean {
             val start = at(defaultOf(switch)) ?: return false
             val created = (insns.getOrNull(start) as? Insn.TypeOp)?.takeIf { it.opcode == Opcodes.NEW }?.type ?: return false
@@ -518,7 +411,6 @@ internal object SwitchLowering {
                 plainAt(constructor + 1, Opcodes.ATHROW)
         }
 
-        /** A class pattern's type as the source names it, such as `Circle` for `Shapes$Circle`, or `String[]`. */
         private fun simpleName(type: Type): String? =
             when (type.sort) {
                 Type.OBJECT -> {
@@ -538,13 +430,10 @@ internal object SwitchLowering {
             }
     }
 
-    /** The longest `goto` chain [throughGotos] follows before giving up. */
     private const val MAX_GOTO_CHAIN = 8
 
-    /** The most `equals` checks one hash bucket is followed through, far past any real collision chain. */
     private const val MAX_BUCKET_CHAIN = 1000
 
-    /** How many instructions JaCoCo's probe takes: the array load, the index, the `1`, the store. */
     private const val COVERAGE_PROBE_LENGTH = 4
     private const val STRING_OWNER = "java/lang/String"
     private val STRING_HASH_CODE = Insn.MethodCall(Opcodes.INVOKEVIRTUAL, STRING_OWNER, "hashCode", "()I")
@@ -552,6 +441,7 @@ internal object SwitchLowering {
     private const val SWITCH_BOOTSTRAPS = "java/lang/runtime/SwitchBootstraps"
     private const val MATCH_EXCEPTION = "java/lang/MatchException"
     private const val INCOMPATIBLE_CLASS_CHANGE = "java/lang/IncompatibleClassChangeError"
+    // Matched by suffix because the shaded jar relocates `kotlin/` in string literals.
     private const val NO_WHEN_BRANCH_SUFFIX = "/NoWhenBranchMatchedException"
     private const val JAVAC_MAP_PREFIX = "\$SwitchMap\$"
     private const val KOTLIN_MAP_PREFIX = "\$EnumSwitchMapping\$"
@@ -560,10 +450,9 @@ internal object SwitchLowering {
 }
 
 /**
- * The enum map arrays a class declares, read from its static initialiser: javac's `$SwitchMap$`
- * arrays on a synthetic class, and kotlinc's `$EnumSwitchMapping$` arrays on `$WhenMappings`. A
- * class's bytes come from [lookup], through the class loader's resources, and the class is never
- * loaded. Each class is read once. A class the lookup cannot read, or throws on, has no maps.
+ * The enum map arrays a class declares, read from its static initialiser: javac's `$SwitchMap$` arrays
+ * and kotlinc's `$EnumSwitchMapping$` arrays. [lookup] returns a class's bytes and the class is never
+ * loaded. A class the lookup cannot read, or throws on, has no maps.
  */
 class EnumSwitchMappings(
     private val lookup: (internalName: String) -> ByteArray?,
@@ -586,12 +475,6 @@ class EnumSwitchMappings(
             }
         }
 
-    /**
-     * Reads each `<array>[E.C.ordinal()] = n` store in the static initialiser. The array is a
-     * `getstatic` of the map field, as javac writes it, or a local that a later `aload; putstatic`
-     * stores into the field, as kotlinc writes it. A map with two stores of one value, or with
-     * constants of two enums, is left out.
-     */
     private fun read(bytes: ByteArray): Map<String, Mapping> {
         val entries = HashMap<String, MutableList<Triple<String, String, Int>>>()
         ClassReader(bytes).accept(
@@ -616,14 +499,9 @@ class EnumSwitchMappings(
             }.toMap()
     }
 
-    /**
-     * Follows the static initialiser's instructions for the store pattern [read] describes.
-     * [pendingByLocal] holds a kotlinc local's stores until its `putstatic` names the field.
-     */
     private class InitializerVisitor(
         private val entries: MutableMap<String, MutableList<Triple<String, String, Int>>>,
     ) : MethodVisitor(Opcodes.ASM9) {
-        /** Where a store's array came from: a `getstatic` of a map field, or a local. */
         private sealed interface Target {
             data class Field(
                 val name: String,

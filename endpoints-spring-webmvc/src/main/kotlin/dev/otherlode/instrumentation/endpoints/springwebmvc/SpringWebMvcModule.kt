@@ -22,7 +22,6 @@ private const val PATH_RESOURCE_LOOKUP_FUNCTION = "org.springframework.web.servl
 private const val ROUTER_FUNCTION_MAPPING = "org.springframework.web.servlet.function.support.RouterFunctionMapping"
 private const val FUNCTION_PACKAGE = "org.springframework.web.servlet.function"
 
-/** `HandlerFunction.handle`'s descriptor, the same on every supported Spring version. */
 private const val HANDLE_DESCRIPTOR =
     "(Lorg/springframework/web/servlet/function/ServerRequest;)Lorg/springframework/web/servlet/function/ServerResponse;"
 
@@ -50,48 +49,23 @@ private const val JAKARTA_SERVLET_PREFIX = "jakarta/servlet/"
 
 /**
  * Endpoint module for Spring MVC (`spring-webmvc`), covering Spring Framework 5.3, 6.x and 7.x
- * with one module. A dispatch advice reads the servlet request, whose package is `javax` in
- * Spring 5.3 and `jakarta` from 6.0. Each is written once against `javax` and, when the woven
- * method takes `jakarta` types, bound with the `javax/servlet/` prefix rewritten to
- * `jakarta/servlet/` (see [servletRemap]), so a hook never weaves where its types do not exist.
+ * with one module. Each dispatch advice is written once against `javax.servlet` and, when the
+ * woven method takes `jakarta` types, bound with the `javax/servlet/` prefix rewritten to
+ * `jakarta/servlet/`.
  *
- * `AbstractHandlerMethodMapping.registerHandlerMethod` is the registration hook: it runs once per
- * handler method as Spring builds its route table. `registerMapping` is the second one, for a
- * handler method registered in code. `RequestMappingInfoHandlerMapping.handleMatch`
- * is the dispatch point: it runs once per matched request, before the handler runs, with the
- * winning `RequestMappingInfo` already narrowed to the matched pattern and verb. A lookup Spring's
- * `HandlerMappingIntrospector` makes, an async redispatch and a CORS preflight reach every
- * dispatch point and are no call.
- *
- * A Spring Boot Actuator endpoint registers through `registerMapping` on a
- * `RequestMappingInfoHandlerMapping` subclass, so it is declared there and counted by
- * `handleMatch`. `AbstractUrlHandlerMapping` covers the URL-mapped side instead:
- * `SimpleUrlHandlerMapping`, `BeanNameUrlHandlerMapping`, and Spring Boot's static-resource and
- * webjars mappings all extend it. Its `registerHandler` and `setRootHandler` are that hierarchy's
- * registration hooks. Its dispatch point is `PathExposingHandlerInterceptor.preHandle`, which only
- * `DispatcherServlet` runs.
- *
- * `RouterFunctionMapping` covers Spring's functional routing style. Its routes are declared as a
- * `RouterFunction` object built once and revealed only to a visitor, never through a registration
- * hook's own arguments, so this side uses the second seam call, [declare], instead: advice on the
- * exit of `afterPropertiesSet` hands the `RouterFunction` the mapping holds to [declare], which walks it with a
- * [Proxy] implementing `RouterFunctions.Visitor` (and, for each route's predicate, a second
- * [Proxy] implementing `RequestPredicates.Visitor`), since neither visitor type is on this
- * module's own classloader. `setAttributes` is this style's dispatch point: it runs once per
- * matched request, after functional routing has already resolved the winning pattern and handler.
- * A `resources(pattern, location)` route has no pattern attribute of its own and a new handler
- * per request, so it is counted at the exit of its `PathResourceLookupFunction.apply`; a
- * `resources(predicate, resource)` route is counted at `setAttributes` under its own key.
+ * Annotation-mapped endpoints are declared at `registerHandlerMethod` and `registerMapping` and
+ * counted at `handleMatch`. URL-mapped endpoints are declared at `registerHandler` and
+ * `setRootHandler` and counted at `PathExposingHandlerInterceptor.preHandle`. Functional routes
+ * are declared by [declare], which walks the `RouterFunction` of a `RouterFunctionMapping`, and
+ * counted at `setAttributes` or, for `resources(pattern, location)`, at
+ * `PathResourceLookupFunction.apply`. An introspector lookup, an async redispatch and a CORS
+ * preflight are no call.
  */
 class SpringWebMvcModule : EndpointModule {
     override val name: String = FUNCTIONAL_ROUTE_STACK.moduleName
 
     private val walk = FunctionalRouteWalk(FUNCTIONAL_ROUTE_STACK)
 
-    /**
-     * A functional route's handler passed as a lambda or a method reference is a `HandlerFunction`
-     * lambda. The name is the same in Spring 5.3, 6.2 and 7.0.
-     */
     override val handlerInterfaces: Set<String> = setOf(FUNCTIONAL_ROUTE_STACK.handlerFunctionClass)
 
     override val typeNames: Set<String> =
@@ -197,14 +171,6 @@ class SpringWebMvcModule : EndpointModule {
     override fun declare(frameworkObject: Any) = walk.declare(frameworkObject)
 }
 
-/**
- * The prefix rewrite that turns an advice class written against `javax.servlet` into one bound to
- * `jakarta.servlet`, or none when the woven method takes `javax` types or the shape is not found.
- * [type] picks the type to inspect from the declared method of [typeDescription] named [method]
- * with [arguments] parameters, so the answer comes from the woven method's own signature and a
- * class loader that sees both packages cannot mislead it. A method that is not found gets no
- * rewrite, and its hook then matches nothing, which the pipeline reports as `HOOK_UNMATCHED`.
- */
 private fun servletRemap(
     typeDescription: TypeDescription,
     method: String,
@@ -222,7 +188,6 @@ private fun servletRemap(
     }
 }
 
-/** The return type of `ServerRequest.servletRequest()`, which is the servlet request class of the Spring in use. */
 private fun servletRequestType(serverRequest: TypeDescription.Generic): TypeDescription.Generic? =
     serverRequest
         .asErasure()

@@ -7,17 +7,12 @@ import net.bytebuddy.jar.asm.Opcodes
 import net.bytebuddy.jar.asm.Type
 
 /**
- * What a method's class file says about its signature beyond the descriptor. A consumer uses it
- * to write the signature as the source did.
+ * What a method's class file says about its signature beyond the descriptor.
  *
- * [parameterNames] holds one name per descriptor parameter, in order, or is empty. See
- * [ParameterNameReader] for where the names come from.
- *
- * [genericSignature] is the method's `Signature` attribute as the class file writes it, or empty
- * when the method has none.
- *
- * [extensionReceiver] is true when the first name is a Kotlin extension receiver's. kotlinc names
- * that parameter `$this$<function>`, and older kotlinc named it `$receiver`.
+ * [parameterNames] holds one name per descriptor parameter, in order, or is empty.
+ * [genericSignature] is the method's `Signature` attribute, or empty when the method has none.
+ * [extensionReceiver] is true when the first name is a Kotlin extension receiver's, which kotlinc
+ * names `$this$<function>` (older kotlinc: `$receiver`).
  */
 data class SourceSignature(
     val parameterNames: List<String>,
@@ -39,12 +34,10 @@ data class SourceSignature(
         }
 
         /**
-         * Picks a method's parameter names. [methodParameters] holds the `MethodParameters`
-         * attribute's names, a null for an unnamed entry, or is null when the method has no such
-         * attribute. It wins when it names every descriptor parameter. Otherwise each parameter's
-         * name is [namesBySlot]'s entry for the slot the parameter occupies. An instance method's
-         * `this` takes slot 0, and a `long` or `double` takes two slots. When any slot has no
-         * name, the result is empty, so a list is never partial.
+         * Picks a method's parameter names. [methodParameters] holds the `MethodParameters` names, null for
+         * an unnamed entry, or is null when the method has no such attribute. It wins when it names every
+         * descriptor parameter. Otherwise each name is [namesBySlot]'s entry for the parameter's slot.
+         * The result is empty when any slot has no name, so a list is never partial.
          */
         fun pickNames(
             descriptor: String,
@@ -68,15 +61,6 @@ data class SourceSignature(
     }
 }
 
-/**
- * Reads the parameter names of one method while passing every event on to [delegate]. It hands
- * the chosen names to [onEnd] from [visitEnd]. See [SourceSignature.pickNames].
- *
- * A LocalVariableTable entry counts only when its range starts at the method's first
- * instruction. A compiler can reuse a slot for a later local, and that entry names the local, not
- * the parameter. The first instruction's label is the one label [visitLabel] sees before any
- * instruction.
- */
 internal class ParameterNameReader(
     access: Int,
     private val descriptor: String,

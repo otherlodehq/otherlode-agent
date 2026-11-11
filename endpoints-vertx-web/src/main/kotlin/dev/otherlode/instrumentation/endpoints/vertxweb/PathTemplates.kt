@@ -9,20 +9,11 @@ private fun parameter(name: String) = Regex(":($name)(?:::$name)?")
 private val narrowParameter = parameter(NARROW_NAME)
 private val extendedParameter = parameter(EXTENDED_NAME)
 
-/**
- * Turns Vert.x Web's `:name` and 5.2's `:name::type` into `{name}`. The name pattern is the one
- * Vert.x reads its own paths with, including the `io.vertx.web.route.param.extended-pattern`
- * system property.
- */
 internal fun toTemplate(path: String): String {
     val pattern = if (java.lang.Boolean.getBoolean(EXTENDED_PATTERN_PROPERTY)) extendedParameter else narrowParameter
     return pattern.replace(path) { "{${it.groupValues[1]}}" }
 }
 
-/**
- * The mount point a sub-router mounted on [path] sees inside a parent whose mount point is
- * [parent], composed as `RoutingContextWrapper` composes it.
- */
 internal fun composeMountPoint(
     parent: String?,
     path: String,
@@ -46,11 +37,6 @@ private fun joinPath(
         else -> prefix + path
     }
 
-/**
- * The template of a path route under [prefix], the mount path chain it is reached through, or
- * null at a root router. [path] is `Route.getPath()`, which has lost the trailing `*` of a path
- * that is not [exact]. A route with no path matches everything under its mount.
- */
 internal fun pathTemplate(
     prefix: String?,
     path: String?,
@@ -61,7 +47,6 @@ internal fun pathTemplate(
     return toTemplate(if (exact) joined else "$joined*")
 }
 
-/** The template of a regex route: the mount path chain's prefix followed by the regex source as written. */
 internal fun regexTemplate(
     prefix: String?,
     source: String,

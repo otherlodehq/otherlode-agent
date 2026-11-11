@@ -26,55 +26,32 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Wires every discovered [EndpointModule]'s registration and dispatch advice into the JVM.
+ * Wires every discovered [EndpointModule]'s registration and dispatch advice into the JVM through its own
+ * `AgentBuilder` pipeline, separate from the method tier's.
  *
- * This is a separate `AgentBuilder`/transformer pipeline from
- * [dev.otherlode.instrumentation.OtherlodeInstrumentation]: the method tier has its own type
- * strategy and writes its members and branch probes in ASM, while an endpoint module only ever adds
- * advice to an existing method body, which stock `DECORATE` supports (see [install]).
+ * When any module names a handler interface, [install] also installs a [LambdaFactoryHook]. It checks
+ * the JDK against [lambdaFactoryShape]. [handlerForwarders] is the forwarder table the method tier fills.
  *
- * When any module names a handler interface, [install] also installs a [LambdaFactoryHook], so a
- * handler written as a lambda or a method reference can be named. [lambdaFactoryShape]
- * is what that hook checks the JDK against. [handlerForwarders] is the forwarder table the method
- * tier fills, which turns a reported pass-through into the method it forwards to.
- *
- * The transformer is retransformation-capable, so it runs after every agent whose transformer is
- * not, and another agent's retransformation of a class it wove reaches it, with bytes that do not
- * carry its advice. It weaves its advice into those bytes again, which changes no schema, and
- * declares nothing a second time; without that the retransformation would drop the advice.
+ * The transformer is retransformation-capable. Another agent's retransformation of a class it wove
+ * reaches it with bytes that carry none of its advice, and it weaves the advice in again.
  */
 class EndpointInstrumentation(
     private val registry: EndpointRegistry,
     private val modules: List<EndpointModule>,
     lambdaFactoryShape: LambdaFactoryShape = LambdaFactoryShape.JDK,
     private val handlerForwarders: HandlerForwarders = HandlerForwarders(),
-    /** The cache the JAX-RS supertype walk and every other class-file read of this tier goes through. */
     private val classFileCache: ClassFileByteCache = ClassFileByteCache(),
-    /** Where the lambda factory hook records a class it failed to retransform. */
     ownRetransformationFailures: OwnRetransformationFailures = OwnRetransformationFailures(),
-    /** Which class loaders cannot see `dev.otherlode.bootstrap`; shared with the method tier. */
     private val bootstrapVisibilityGuard: BootstrapVisibilityGuard = BootstrapVisibilityGuard(),
 ) {
     private val log by agentLogger(EndpointInstrumentation::class.java.name)
     private val agentClassLoader = EndpointInstrumentation::class.java.classLoader
     private val lambdaFactoryHook = LambdaFactoryHook(lambdaFactoryShape, ownRetransformationFailures)
 
-    /** Endpoints a module declared during a transform, held until that transform produces bytes. */
     private val pendingDeclarations = PendingDeclarations()
 
-    /**
-     * Whether the class ByteBuddy is handling on this thread is already loaded, which makes the call
-     * a retransformation or a redefinition. Set from the listener's discovery callback, which
-     * ByteBuddy makes before it matches or transforms anything, and cleared when it completes.
-     */
     private val alreadyLoaded = ThreadLocal<Boolean?>()
 
-    /**
-     * Every module whose raw matcher accepted the class ByteBuddy is handling on this
-     * thread. The listener's error callback gets no module, so this is how it knows whose hooks a
-     * failed weave lost. One thread has one class in flight (see [PendingDeclarations]), so the
-     * record is per thread and is cleared when the class is done.
-     */
     private val matchedModules = ThreadLocal<MutableSet<EndpointModule>?>()
 
     private fun recordMatched(module: EndpointModule) {
@@ -86,16 +63,8 @@ class EndpointInstrumentation(
         matched += module
     }
 
-    /** Modules whose advice failed to weave again on a retransformation, each logged once. */
     private val reweaveFailureLogged = ConcurrentHashMap.newKeySet<String>()
 
-    /**
-     * The classes, by loader, whose first weave failed, each with the modules that stayed on for it
-     * since [EndpointModule.weaveFailureLeavesNothingPartial] holds. Such a class runs without that
-     * module's advice and declared nothing, so a later failed re-weave of it loses nothing and
-     * switches the module off no more than the first failure did. The bootstrap loader is keyed as
-     * null.
-     */
     private val firstWeaveFailed = WeakHashMap<ClassLoader?, MutableMap<String, MutableSet<String>>>()
 
     private fun recordFirstWeaveFailed(
@@ -114,17 +83,8 @@ class EndpointInstrumentation(
         module: EndpointModule,
     ): Boolean = synchronized(firstWeaveFailed) { firstWeaveFailed[classLoader]?.get(typeName)?.contains(module.name) == true }
 
-    /** How many declarations from a transform this thread is holding; for tests. */
     internal fun pendingDeclarationCount(): Int = pendingDeclarations.pendingCount()
 
-    /**
-     * One [AdviceBinder] per target classloader, since Spring's own types (unlike the JDK's
-     * `HttpServer`, which loads on the bootstrap loader) live on the application's classloader,
-     * for example Spring Boot's `LaunchedClassLoader`, not this agent's own. A [WeakHashMap] under
-     * [adviceBinderLock] keeps a retired classloader collectible instead of pinning it for the
-     * life of the process; the bootstrap loader is a `null` key at the JVM level, which
-     * [WeakHashMap] cannot hold, so it is cached separately in [bootLoaderAdviceBinder].
-     */
     private val adviceBinderLock = Any()
     private val adviceBindersByLoader = WeakHashMap<ClassLoader, AdviceBinder>()
     private var bootLoaderAdviceBinder: AdviceBinder? = null
@@ -139,12 +99,10 @@ class EndpointInstrumentation(
         }
 
     /**
-     * Installs the bootstrap holder (idempotent if [dev.otherlode.instrumentation.OtherlodeInstrumentation]
-     * already installed it), points the endpoint seam at this registry, adds a module read edge
-     * from every boot module a module declares needing one, then installs one `AgentBuilder`
-     * covering every discovered module's type matcher and advice, registered
-     * retransformation-capable with nothing retransformed. Last, it installs the lambda factory
-     * hook for every handler interface a module names, if there is one.
+     * Installs the bootstrap holder, points the endpoint seam at this registry, adds a module read edge
+     * from every boot module a module declares needing one, and registers one retransformation-capable
+     * `AgentBuilder` covering every discovered module, with nothing retransformed. It installs the lambda
+     * factory hook when a module names a handler interface. Returns the transformer.
      */
     fun install(instrumentation: Instrumentation): ResettableClassFileTransformer {
         BootstrapHolder.install(instrumentation)
@@ -160,25 +118,13 @@ class EndpointInstrumentation(
         var builder: AgentBuilder =
             AgentBuilder
                 .Default()
-                // DECORATE only weaves advice into existing method bodies; it never adds a field
-                // or a type initializer. ByteBuddy's type validation is left on here: DECORATE
-                // never describes the type for it, so what remains is the check of the written
-                // bytes against the class-file version, the one guard on the advice an endpoint
-                // module weaves.
                 .with(AgentBuilder.TypeStrategy.Default.DECORATE)
                 .with(AgentBuilder.InitializationStrategy.NoOp.INSTANCE)
-                // Describes an already-loaded class from the bytes passed in, which are the ones
-                // the advice is woven into, rather than from its Class object. On a first load
-                // every strategy reads the pool.
                 .with(AgentBuilder.DescriptionStrategy.Default.POOL_ONLY)
                 .with(classFileCache.locationStrategy())
                 .disableClassFormatChanges()
-                // Replaces AgentBuilder's own default ignore matcher, which skips bootstrap-loader
-                // classes among others. The JDK's own HttpServer classes load on the bootstrap
-                // loader, and an endpoint module needs to match them. A class a framework generated
-                // at runtime is ignored too: a proxy of a resource class inherits its annotations'
-                // meaning and calls the real method through super, so weaving both would count
-                // every call twice.
+                // The default ignore matcher skips bootstrap classes, which endpoint modules need to match.
+                // Runtime-generated proxies are ignored too, since a proxy and its target would count each call twice.
                 .ignore(
                     nameStartsWith<TypeDescription>(TypeMatchPolicy.AGENT_PACKAGE_PREFIX)
                         .or(ElementMatcher { type -> TypeMatchPolicy.isRuntimeGenerated(type.name) }),
@@ -187,10 +133,6 @@ class EndpointInstrumentation(
         for (module in modules) {
             builder =
                 builder.type(rawMatcher(module, ::recordMatched)).transform { typeBuilder, typeDescription, classLoader, _, _ ->
-                    // Anything the module declares from here is held until the rewrite produces
-                    // bytes; see PendingDeclarations. The mark is where this module's own
-                    // declarations start, since another module matching the same class may have
-                    // staged some already.
                     val mark = pendingDeclarations.begin(typeDescription.name)
                     if (classLoader != null && bootstrapVisibilityGuard.refusal(classLoader) != null) {
                         pendingDeclarations.rollbackTo(mark)
@@ -203,23 +145,13 @@ class EndpointInstrumentation(
                     }
                     if (alreadyLoaded.get() == true) return@transform reweave(module, typeBuilder, typeDescription, classLoader, mark)
                     try {
-                        // A view of the cached binder that records this call's hooks alone; see
-                        // AdviceBinder.forCall.
                         val binder = adviceBinderFor(classLoader).forCall()
                         val woven = module.transform(typeBuilder, typeDescription, binder, classLoader)
                         stageDisableForUnmatchedHook(module, binder, typeDescription, mark)
                         woven
                     } catch (t: Throwable) {
-                        // This catch is why a throwing module needs the rollback: it returns the
-                        // builder unchanged, so the transform still succeeds as far as ByteBuddy
-                        // is concerned, the listener commits, and whatever this module declared
-                        // before it threw would land in the registry for a class that never got
-                        // its advice.
-                        //
-                        // The rollback covers this class only. moduleFailed below switches the
-                        // module off for the whole process, so routes it already declared for
-                        // earlier classes keep their manifest rows while their advice stops
-                        // counting. The disabled list is the only signal for that.
+                        // The builder is returned unchanged, so ByteBuddy sees success: the rollback keeps this
+                        // module's partial declarations out of the registry.
                         pendingDeclarations.rollbackTo(mark)
                         log.log(Level.WARNING, "otherlode: endpoint module ${module.name} failed to transform ${typeDescription.name}", t)
                         OtherlodeEndpoints.moduleFailed(module.name, OtherlodeEndpoints.KIND_TRANSFORM_FAILED, t)
@@ -228,8 +160,6 @@ class EndpointInstrumentation(
                 }
         }
 
-        // AgentBuilder.Default.makeRaw returns a ResettableClassFileTransformer; the interface
-        // this chain ends on declares only the supertype.
         val transformer = CurrentClassFileTransformer(builder.makeRaw() as ResettableClassFileTransformer, EndpointPreFilter(modules))
         instrumentation.addTransformer(transformer, true)
 
@@ -240,14 +170,6 @@ class EndpointInstrumentation(
         return transformer
     }
 
-    /**
-     * Stages a switch-off of [module] when one of the hooks it attached while transforming
-     * [typeDescription] matches no method `Advice` can weave: ByteBuddy writes such a class
-     * unchanged and reports success, so the lost hook would otherwise go unseen. What the module
-     * declared for this class is dropped, and the hooks that did match stay woven but inert once the module is off. The switch-off
-     * is staged beside the declarations, so it is committed with the class's transformation and
-     * dropped if that fails.
-     */
     private fun stageDisableForUnmatchedHook(
         module: EndpointModule,
         binder: AdviceBinder,
@@ -271,15 +193,6 @@ class EndpointInstrumentation(
         }
     }
 
-    /**
-     * Weaves [module]'s advice into the bytes passed in for an already-loaded class, by another
-     * agent's retransformation or a redefinition, and drops whatever the module declared while doing
-     * it, since the class's endpoints were declared when it first loaded. A module that throws here
-     * is switched off as [OtherlodeEndpoints.KIND_TRANSFORM_FAILED]: the bytes passed in hold none
-     * of this tier's advice, being the class file before it on a retransformation and the
-     * redefiner's bytes on a redefinition, so the class runs untracked. The failure is logged once
-     * per module.
-     */
     private fun reweave(
         module: EndpointModule,
         typeBuilder: DynamicType.Builder<*>,
@@ -305,8 +218,8 @@ class EndpointInstrumentation(
         }
 
     /**
-     * Calls [EndpointModule.beforeManifest] on every module. A module that throws is switched off as
-     * a module whose advice threw is, and the others still run, so this never fails the export.
+     * Calls [EndpointModule.beforeManifest] on every module. A module that throws is switched off and
+     * the others still run, so this never fails the export.
      */
     fun beforeManifest(
         graceMillis: Long,
@@ -331,17 +244,6 @@ class EndpointInstrumentation(
         lambdaFactoryHook.uninstall(instrumentation)
     }
 
-    /**
-     * Adds a module read edge from every boot module an [EndpointModule] names in
-     * [EndpointModule.bootModulesNeedingSeamRead] to the endpoint seam's own module, the same way
-     * OpenTelemetry's agent reaches `jdk.httpserver`. The seam lives on the bootstrap loader's
-     * unnamed module precisely so any classloader can reach it, but a named module's own module
-     * descriptor still gates what it is allowed to read, so `jdk.httpserver`'s own classes cannot
-     * call into the seam without this edge.
-     *
-     * A name the boot layer does not have is logged at DEBUG and skipped: a framework on the class
-     * path, or a JDK module this runtime image left out, needs no edge.
-     */
     private fun addSeamReadEdges(instrumentation: Instrumentation) {
         val bootModuleNames = modules.flatMapTo(sortedSetOf()) { it.bootModulesNeedingSeamRead }
         if (bootModuleNames.isEmpty()) return
@@ -360,21 +262,14 @@ class EndpointInstrumentation(
         private val matcherLog by agentLogger(EndpointInstrumentation::class.java.name)
 
         /**
-         * The matcher [install] registers for [module], which calls [onMatched] with [module] when it
-         * accepts a class: first false at once when the pre-filter recorded candidates for this class
-         * and [module] is not among them, then its [EndpointModule.classLoaderMatcher],
-         * so a loader the module rejects never has a class parsed for it, then
-         * [EndpointModule.classFileMayMatch] on the class's bytes, when this thread is transforming that class, and
-         * last [EndpointModule.typeMatcher] for the defining loader.
+         * The matcher [install] registers for [module]. It calls [onMatched] with [module] when it accepts a
+         * class. It checks the pre-filter's candidates, then [EndpointModule.classLoaderMatcher], then
+         * [EndpointModule.classFileMayMatch] on the class's bytes when this thread is transforming that
+         * class, then [EndpointModule.typeMatcher] for the defining loader.
          *
-         * A matcher, loader or type, that throws cannot say whether the module wanted the class, so the module is
-         * switched off as [OtherlodeEndpoints.KIND_TRANSFORM_FAILED] and answers no from then on.
-         * The throw never leaves this matcher: ByteBuddy runs every module's matcher in one
-         * transform call, and an exception from one would abort the weave for all of them.
-         *
-         * The type matcher is built once for each loader and kept weakly by it, since the default
-         * form builds a new `namedOneOf` for every call and this runs for every class the
-         * pre-filter passes. A module's matcher must therefore not hold the loader it was built for.
+         * A matcher that throws switches the module off as [OtherlodeEndpoints.KIND_TRANSFORM_FAILED], and
+         * it answers no from then on. The type matcher is built once per loader and held weakly, so a
+         * module's matcher must not hold the loader it was built for.
          */
         fun rawMatcher(
             module: EndpointModule,
@@ -418,16 +313,6 @@ class EndpointInstrumentation(
         }
     }
 
-    /**
-     * Commits what a transform declared once its bytes exist, and reports a transform failure
-     * ByteBuddy caught on its own, outside any module's own try/catch.
-     *
-     * `onTransformation` runs only after `make()` has produced the bytes, so an endpoint declared
-     * from inside the transform callback reaches the registry only for a class that really was
-     * woven. The registry then publishes it once the JVM is known to have defined that class; see
-     * [EndpointRegistry]. `onComplete` runs whatever the outcome, so a failed transform's
-     * declarations are dropped rather than left staged on the thread.
-     */
     private inner class EndpointTransformListener : AgentBuilder.Listener.Adapter() {
         override fun onDiscovery(
             typeName: String,
@@ -461,9 +346,7 @@ class EndpointInstrumentation(
                 "otherlode: endpoint instrumentation failed for $typeName, class will run without endpoint tracking",
                 throwable,
             )
-            // On a failed re-weave the JVM keeps the bytes it passed in, which hold none of this
-            // tier's advice, and the routes the first weave declared stay. So a module that stays on
-            // after a failed first weave is switched off here, unless that first weave failed too.
+            // A failed re-weave leaves the class without this tier's advice but with the routes its first weave declared.
             for (module in matchedModules.get().orEmpty()) {
                 if (module.weaveFailureLeavesNothingPartial) {
                     if (!loaded) {

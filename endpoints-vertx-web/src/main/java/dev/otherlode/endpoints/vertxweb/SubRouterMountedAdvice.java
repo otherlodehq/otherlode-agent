@@ -11,8 +11,8 @@ import net.bytebuddy.asm.Advice;
  * {@code {"mount", router, route, child}}, or {@code {"mountFailed", router, route}} when the call
  * throws. The router is the one the mount route belongs to.
  *
- * <p>This method is deliberately one flat body with no private helper method of its own; see the
- * Spring MVC module's {@code RegisterHandlerMethodAdvice} Javadoc for why.
+ * <p>The advice bodies are inlined into the woven method, so the advice methods stay flat bodies
+ * with no helper methods.
  */
 public class SubRouterMountedAdvice {
     private static final String MODULE = "vertx-web";

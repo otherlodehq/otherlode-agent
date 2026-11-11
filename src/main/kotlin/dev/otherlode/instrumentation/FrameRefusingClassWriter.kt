@@ -7,19 +7,7 @@ import net.bytebuddy.utility.AsmClassReader
 import net.bytebuddy.utility.AsmClassWriter
 import java.util.concurrent.atomic.AtomicLong
 
-/**
- * The class writer factory the agent's ByteBuddy uses. Every class it writes goes through ASM's own
- * writer, never the Class File API's, and that writer never computes a stack map frame: its
- * `getCommonSuperClass`, the one hook ASM calls to merge two types while computing frames, throws.
- * The frames in a woven class are the ones the received bytes carry plus the ones the branch tier
- * writes itself, so a path that would ask for a merge has recomputed a frame the agent meant to
- * keep, and fails the transform where it would otherwise guess a type.
- *
- * ByteBuddy reaches a class writer only through [AsmClassWriter.Factory], so no other writer exists
- * for the Class File API path to bypass this one.
- */
 internal object FrameRefusingClassWriter : AsmClassWriter.Factory {
-    /** How often a frame merge was asked for, which is how often a transform was failed by one. */
     val refusals: Long get() = merges.get()
 
     private val merges = AtomicLong()

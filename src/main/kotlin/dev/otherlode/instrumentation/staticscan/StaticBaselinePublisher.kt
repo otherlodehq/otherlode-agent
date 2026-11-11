@@ -8,27 +8,17 @@ import dev.otherlode.registry.ProbeRegistry
 import java.lang.System.Logger.Level
 
 /**
- * Runs one static baseline scan and publishes the result: primes the
- * [StaticBaselineMismatchDetector], sweeps the classes that already registered dynamically before
- * the scan finished, and sends the scan to the receiver in chunks.
+ * Runs one static baseline scan and publishes the result: primes the [StaticBaselineMismatchDetector],
+ * checks the classes that registered dynamically before the scan finished, and sends the scan to the
+ * receiver in chunks carrying [includeRules].
  *
- * The sweep exists because the detector can only compare a registration against a scan that has
- * completed. Every class loaded during startup, which is exactly when an app server deploys its
- * WAR, registers before this scan finishes and would otherwise never be checked at all.
+ * References pass through [filterReferences] before chunking. Without one, or when it throws an [Exception],
+ * every reference list is emptied. A scan holding a class too large for one chunk is not sent, and the agent
+ * logs one WARNING that names the class and the bound.
  *
- * References are passed through [filterReferences] before chunking, so the chunk weights count
- * only what is sent; in the agent that is [BaselineReferenceFilter], which waits for the dependency
- * listing. Without one, or when it throws, every reference list is emptied, since unfiltered lists
- * would carry JDK names and names nothing maps, and losing the references is better than losing
- * the baseline.
- *
- * A scan holding a class too large for one chunk is not sent at all, and the agent logs one WARNING
- * that names the class and the bound; see [StaticBaselineChunker].
- *
- * Every chunk carries [includeRules], the rules the scan applied. Chunks are sent in order
- * through [sender], and the first failure stops the send. The chunks left are sent again after a
- * later flush whose payloads the receiver stores. Until they arrive Otherlode holds a partial scan,
- * which it recognises from `chunk_count` and never diffs as if it were complete.
+ * Chunks are sent in order through [sender], and the first failure stops the send. A refusal of the content
+ * (400 or 422) drops every chunk not yet sent. After any other failure, the chunks left are sent again after
+ * a later flush whose payloads the receiver stores.
  */
 class StaticBaselinePublisher(
     private val scan: () -> StaticScanResult,
@@ -43,9 +33,8 @@ class StaticBaselinePublisher(
     private val log by agentLogger(StaticBaselinePublisher::class.java.name)
 
     /**
-     * Scans, checks the classes registered so far against the scan, and sends the baseline. A
-     * failure is logged once and ends the run without an uncaught throwable. Only a
-     * [VirtualMachineError] is rethrown, after it is logged, since the JVM itself is failing.
+     * Scans, checks the classes registered so far against the scan, and sends the baseline. A failure is
+     * logged once and ends the run. Only a [VirtualMachineError] is rethrown, after it is logged.
      */
     fun run(resource: ResourceAttributes) {
         try {
@@ -93,7 +82,6 @@ class StaticBaselinePublisher(
     }
 
     companion object {
-        /** Entries are mostly declared methods; at their wire size this is well under a megabyte per POST. */
         const val DEFAULT_MAX_ENTRIES_PER_CHUNK: Int = 20_000
     }
 }

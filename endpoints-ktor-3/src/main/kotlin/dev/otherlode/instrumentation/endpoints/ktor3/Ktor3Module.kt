@@ -16,21 +16,7 @@ private const val ADVICE_PACKAGE = "dev.otherlode.endpoints.ktor3"
 
 /**
  * Endpoint module for Ktor 3 (`ktor-3`), covering the `io.ktor:ktor-server-core-jvm` 3.x line.
- *
- * `Route` became an interface in Ktor 3, with `RoutingNode` as the concrete class carrying
- * `parent`, `selector`, and `handle`, and `RoutingRoot` as the root that owns `executeResult`.
- * `RoutingNode.handle` is the registration hook: it runs once per handler lambda as application
- * code builds the routing tree, with the handler and the node it was attached to both in hand.
- * `RoutingRoot.executeResult` is the dispatch point: it runs once per matched request, before that
- * node's own handler pipeline runs, with the winning node already resolved. Both are advised
- * instead of the public `RoutingCallStarted` event, whose subscription would need advice to
- * implement a Kotlin function type; see [dev.otherlode.endpoints.ktor3.HandleAdvice]
- * for the full reasoning.
- *
- * The node object itself is the identity this module keys endpoints under, since it is exactly
- * what both `handle` and `executeResult` hand over. A route selector that contributes nothing to a
- * path (headers, content type, query parameters, host, `AndRouteSelector`/`OrRouteSelector`) means
- * such a route merges with any sibling sharing the same path, an accepted v1 simplification.
+ * `RoutingNode.handle` registers each route and `RoutingRoot.executeResult` records each dispatch.
  */
 class Ktor3Module : EndpointModule {
     override val name: String = "ktor-3"

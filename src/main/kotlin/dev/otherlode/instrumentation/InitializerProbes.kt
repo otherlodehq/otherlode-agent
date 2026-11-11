@@ -14,28 +14,14 @@ import net.bytebuddy.jar.asm.MethodVisitor
 import net.bytebuddy.jar.asm.Opcodes
 import net.bytebuddy.pool.TypePool
 
-/**
- * The returned and threw slots of a `<clinit>` (ADR 0071), written as ASM events.
- *
- * The returned slot is incremented before each `return` of the original body. The threw slot is
- * incremented in one catch-all handler that wraps the original body, after the prelude and the
- * entry increment, and rethrows the caught throwable. The handler is the last entry of the
- * exception table, so it sees only what leaves the body, and the frames the class arrived with are
- * kept.
- */
 internal object InitializerProbes {
     private const val TYPE_INITIALIZER = "<clinit>"
     private const val VOID_DESCRIPTOR = "()V"
     private const val THROWABLE = "java/lang/Throwable"
     private const val MAJOR_VERSION_MASK = 0xffff
 
-    /** The handler holds the caught throwable under a probe increment. */
     private const val HANDLER_STACK = 1 + MethodProbes.PROBE_STACK
 
-    /**
-     * The wrapper that writes both slots into the `<clinit>` of a class woven in [form].
-     * [classHasFrames] says whether a version 50 class carries stack map frames.
-     */
     fun wrapper(
         form: ProbeArrayForm,
         returnedSlot: Int,
@@ -250,11 +236,7 @@ internal object InitializerProbes {
             super.visitMaxs(maxOf(maxStack + MethodProbes.PROBE_STACK, HANDLER_STACK), maxLocals)
         }
 
-        /**
-         * Opens the catch range at the first instruction or label of the body. ASM delivers every
-         * original `visitTryCatchBlock` before it, and the writer appends handlers in call order,
-         * so the handler declared here is the last entry of the exception table.
-         */
+        // ASM delivers every original visitTryCatchBlock first, so this handler is the last exception table entry.
         private fun begin() {
             if (started) return
             started = true

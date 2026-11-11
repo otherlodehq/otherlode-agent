@@ -7,42 +7,27 @@ import java.util.List;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the exit of {@code HttpServerAttributesExtractor.onEnd}, the one point OpenTelemetry's
- * own HTTP server instrumentation calls once per server span, after every {@code
- * HttpServerRoute.update} source-priority call has already settled the final route. Span end,
- * not {@code HttpServerRoute.update} itself, is the read point because {@code update} fires
- * several times per request as higher-priority sources override lower ones, so no single call to
- * it knows the eventual winner.
+ * Woven onto the exit of {@code HttpServerAttributesExtractor.onEnd}, which OpenTelemetry's HTTP
+ * server instrumentation calls once per server span, after the final route is settled. The advice
+ * counts that route as an endpoint.
  *
  * <p>Compiled against the unshaded {@code opentelemetry-instrumentation-api} artifact, verified at
- * its oldest supported 2.x release, 2.0.0. {@link
- * dev.otherlode.instrumentation.endpoints.otelbridge.OtelBridgeModule} binds this
- * same class a second way for the OpenTelemetry Java agent's own relocated copy of {@code
- * HttpServerAttributesExtractor}, with every {@code io/opentelemetry/...} reference in this
- * class's bytecode rewritten to that agent's {@code io/opentelemetry/javaagent/shaded/...} prefix
- * before binding, so one advice class serves both deployments.
+ * 2.0.0, its oldest supported release. {@link
+ * dev.otherlode.instrumentation.endpoints.otelbridge.OtelBridgeModule} binds the same class for the
+ * OpenTelemetry Java agent's relocated copy of the extractor.
  *
- * <p>The route is first resolved through the table {@link RoutePrefixAdvice} fills, which takes
- * off the application root and servlet path OpenTelemetry put in front of it, so a request a
- * framework module counted under its own template is not counted again under the prefixed one. A
- * route no recorded prefixer built is used as it is.
+ * <p>The route is first resolved through the table {@link RoutePrefixAdvice} fills, which removes
+ * the application root and servlet path OpenTelemetry put in front of it. A route no recorded
+ * prefixer built is used as it is.
  *
- * <p>A Vert.x Web route reaches OpenTelemetry spelled {@code /users/:id}. A segment that is
- * {@code :name}, or {@code :name::type} as Vert.x Web 5.2 writes a typed parameter, becomes
- * {@code {name}} before anything is looked up, so a request the {@code vertx-web} module counted
- * under {@code /users/{id}} is not counted again. A colon anywhere else in a segment stays. The name
- * pattern follows Vert.x's {@code io.vertx.web.route.param.extended-pattern} property.
+ * <p>A Vert.x Web route reaches OpenTelemetry spelled {@code /users/:id}. A segment that is {@code
+ * :name}, or {@code :name::type} as Vert.x Web 5.2 writes a typed parameter, becomes {@code
+ * {name}}. A colon anywhere else in a segment stays. The name pattern follows Vert.x's {@code
+ * io.vertx.web.route.param.extended-pattern} property.
  *
- * <p>A route this bridge reads for an identity another endpoint module already owns is left
- * alone: {@link OtherlodeEndpoints#lookup} misses for a key no framework module ever bound, and {@link
- * OtherlodeEndpoints#recordDispatchIfUnowned} then refuses to bind it either, since an entry for that
- * identity already exists under a different framework name. The request goes uncounted here, so
- * a request the owning module counted is never counted twice. A request the owner did not count,
- * because it disabled itself or because a framework with no module of its own served the same
- * identity, is lost; that is accepted. A key {@code recordDispatchIfUnowned} has already refused
- * stays unbound, so the same identity repeats this one map miss and one refusal on every later
- * request for it; that repeated cost is small and accepted rather than adding a sentinel binding to
- * skip it.
+ * <p>A route whose identity another endpoint module already owns is not counted: {@link
+ * OtherlodeEndpoints#recordDispatchIfUnowned} refuses to bind it, so a request the owning module
+ * counted is never counted twice.
  */
 public class OnEndAdvice {
     private static final String MODULE = "otel";

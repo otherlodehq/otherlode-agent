@@ -4,10 +4,7 @@ import java.lang.ref.ReferenceQueue
 import java.lang.ref.WeakReference
 import java.util.concurrent.ConcurrentHashMap
 
-/**
- * A concurrent map from an object, compared by identity and held weakly, to a value. A value must
- * not reach its own key strongly, or the entry is never collected.
- */
+// A value must not reach its own key strongly, or the entry is never collected.
 internal class WeakIdentityMap<V : Any> {
     private interface Id {
         val target: Any?
@@ -40,10 +37,8 @@ internal class WeakIdentityMap<V : Any> {
     private val map = ConcurrentHashMap<Any, V>()
     private val collected = ReferenceQueue<Any>()
 
-    /** The value held for [key], or null. */
     operator fun get(key: Any): V? = map[StrongId(key)]
 
-    /** The value held for [key], made by [create] and held when there is none. */
     fun getOrPut(
         key: Any,
         create: () -> V,
@@ -56,7 +51,6 @@ internal class WeakIdentityMap<V : Any> {
         return map.computeIfAbsent(WeakId(key, collected)) { create() }
     }
 
-    /** Holds [value] for [key], replacing any value held. */
     fun put(
         key: Any,
         value: V,
@@ -69,9 +63,7 @@ internal class WeakIdentityMap<V : Any> {
         map[WeakId(key, collected)] = value
     }
 
-    /** The values whose keys are still reachable. */
     fun liveValues(): List<V> = map.entries.filter { (it.key as Id).target != null }.map { it.value }
 
-    /** How many entries the map holds, collected ones included until the next [getOrPut]. */
     fun size(): Int = map.size
 }

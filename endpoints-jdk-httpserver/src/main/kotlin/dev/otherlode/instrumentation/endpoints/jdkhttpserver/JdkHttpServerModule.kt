@@ -16,42 +16,24 @@ private const val CONTEXT_LIST = "sun.net.httpserver.ContextList"
 private const val ADVICE_PACKAGE = "dev.otherlode.endpoints.jdkhttpserver"
 
 /**
- * Endpoint module for the JDK's own `com.sun.net.httpserver.HttpServer`.
+ * Endpoint module for the JDK's own `com.sun.net.httpserver.HttpServer`. It hooks
+ * `sun.net.httpserver.ServerImpl` and two package-private types it works through, never
+ * `HttpServer` itself:
  *
- * `HttpServer.create` returns a `sun.net.httpserver.HttpServerImpl` (or `HttpsServerImpl`), both
- * of which delegate registration and dispatch to one `sun.net.httpserver.ServerImpl`. This module
- * hooks `ServerImpl` and two package-private types it works through, never `HttpServer` itself:
- *
- * - `ServerImpl.createContext` (both overloads, matched by name) is the registration hook. It
- *   constructs and returns the `HttpContextImpl` for a path, with or without a handler.
- * - `HttpContextImpl.setHandler` is how a context created without a handler gets one later. It is
- *   declared on the public `HttpContext` API, so `HttpContextImpl` only overrides it.
+ * - `ServerImpl.createContext` (both overloads) is the registration hook.
+ * - `HttpContextImpl.setHandler` gives a context created without a handler its handler.
  * - `ContextList.findContext(String protocol, String path)`, the two-argument overload, is the
- *   dispatch point: it is the one call the request path makes, per incoming request, to match a
- *   path to its context. It returns the matched context before that context's handler runs, and a
- *   null return is the framework's own 404 path, which counts nothing. The three-argument overload
- *   (`boolean exact`) backs `contains`/`remove`, never the request path, so it is left alone.
+ *   dispatch point. A null return is the framework's own 404 path, which counts nothing. The
+ *   three-argument overload backs `contains` and `remove` and is left alone.
  *
  * A context path is a prefix match with no verb constraint, so every endpoint this module
- * declares has verb `"*"` and a verbatim template equal to `HttpContext.getPath()` exactly as
- * registered.
- *
- * `HttpContextImpl` and `ContextList` are package-private, so every advice class here is typed
- * against the public `com.sun.net.httpserver.HttpContext`/`HttpHandler` supertypes instead, which
- * is a legal [net.bytebuddy.asm.Advice.Return]/[net.bytebuddy.asm.Advice.This] target for a
- * subtype's own method body.
+ * declares has verb `"*"` and a verbatim template equal to `HttpContext.getPath()` as registered.
  */
 class JdkHttpServerModule : EndpointModule {
     override val name: String = "jdk-httpserver"
 
-    /**
-     * `jdk.httpserver` is a named module and cannot read the endpoint seam's own module, which
-     * lives on the bootstrap loader's unnamed module. [dev.otherlode.instrumentation.endpoints.EndpointInstrumentation.install]
-     * adds the read edge this module declares needing.
-     */
     override val bootModulesNeedingSeamRead: Set<String> = setOf("jdk.httpserver")
 
-    /** A handler passed to `createContext` or `setHandler` as a lambda or method reference is an `HttpHandler` lambda. */
     override val handlerInterfaces: Set<String> = setOf("com.sun.net.httpserver.HttpHandler")
 
     override val typeNames: Set<String> = setOf(SERVER_IMPL, HTTP_CONTEXT_IMPL, CONTEXT_LIST)

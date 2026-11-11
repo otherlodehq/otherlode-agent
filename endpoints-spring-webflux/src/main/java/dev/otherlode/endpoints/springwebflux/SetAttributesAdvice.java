@@ -13,34 +13,27 @@ import org.springframework.web.util.pattern.PathPattern;
 
 /**
  * Woven onto the entry of {@code RouterFunctionMapping.setAttributes(Map, ServerRequest,
- * HandlerFunction)}, which functional routing calls once functional routing has matched a request to
- * a route and before the handler runs. Argument 0 is the exchange's attribute map, which holds the
- * matched pattern under {@link RouterFunctions#MATCHING_PATTERN_ATTRIBUTE}. A CORS preflight, an
- * {@code OPTIONS} request carrying both {@code Origin} and {@code Access-Control-Request-Method},
- * reaches this method and is no call.
+ * HandlerFunction)}, which functional routing calls once it has matched a request to a route and
+ * before the handler runs. Argument 0 is the exchange's attribute map, which holds the matched
+ * pattern under {@link RouterFunctions#MATCHING_PATTERN_ATTRIBUTE}. A CORS preflight counts
+ * nothing.
  *
  * <p>A request a {@code resources(pattern, location)} route matched is counted by {@link
- * ResourceLookupAdvice}, which marks the request's exchange. Inside a nest the matching pattern is
- * the nest's own path and a filter wraps the handler, so neither would say which route served it.
- * A {@code resources(predicate, resource)} route is counted here under its own key, since its
- * predicate sets the matching pattern, and is never counted as an ordinary route that shares its
- * nest's path.
+ * ResourceLookupAdvice}, which marks the request's exchange. A {@code resources(predicate,
+ * resource)} route is counted here under its own key.
  *
  * <p>The join names the method functional routing invokes. A handler whose class is not hidden
- * reports {@code handle} and the class that declares it. A hidden class, spun for a lambda or a
- * method reference, reports the method the lambda calls, as {@link
- * OtherlodeEndpoints#lambdaImplementation} recorded it, and nothing when it recorded nothing. A
- * handler that resolves to one of Spring's own Kotlin DSL classes reports nothing. A route the walk
- * declared already carries its join, so the reflection runs only for a route found at dispatch.
+ * reports {@code handle} and the class that declares it. A hidden class reports the method the
+ * lambda calls, as {@link OtherlodeEndpoints#lambdaImplementation} recorded it, and nothing when it
+ * recorded nothing. A handler that resolves to one of Spring's own Kotlin DSL classes reports
+ * nothing. A route the walk declared already carries its join.
  *
- * <p>The key, {@code List.of("fn", pattern, verb)}, must match the walk's. It names no handler,
- * since Spring hands a filtered route a new handler function on every request. A second lookup with
- * the verb {@code *} covers a route declared without one. {@code ServerRequest.method()} is null
- * on Spring 5.3 for a verb outside its {@code HttpMethod} enum, which only a route with no method
- * predicate can serve.
+ * <p>The key, {@code List.of("fn", pattern, verb)}, matches the walk's. It names no handler, since
+ * Spring hands a filtered route a new handler function on every request. A second lookup with the verb {@code *} covers a route declared without one. {@code
+ * ServerRequest.method()} is null on Spring 5.3 for a verb outside its {@code HttpMethod} enum.
  *
- * <p>This method is deliberately one flat body with no private helper method of its own; see
- * {@link RegisterHandlerMethodAdvice}'s Javadoc for why.
+ * <p>The advice body is inlined into the woven method, so {@code onEnter} stays one flat body with
+ * no helper methods.
  */
 public class SetAttributesAdvice {
     private static final String MODULE = "spring-webflux";

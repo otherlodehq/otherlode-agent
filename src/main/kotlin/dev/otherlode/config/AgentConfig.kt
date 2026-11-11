@@ -10,10 +10,8 @@ import java.util.UUID
  * Agent options, passed as comma-separated key=value pairs on the
  * `-javaagent:otherlode-agent.jar=key=value,key=value` command line.
  *
- * A value cannot contain a comma, since the comma is the pair separator and
- * there is no quoting. A value that needs one is set through the matching
- * system property or environment variable instead, as is a secret such as
- * a token, which a command line shows to every user on the host; see [parse].
+ * A value cannot contain a comma. Set such a value, and a secret such as a token, through the
+ * matching system property or environment variable; see [parse].
  */
 data class AgentConfig(
     /**
@@ -24,7 +22,7 @@ data class AgentConfig(
     /**
      * The group the service belongs to, as OpenTelemetry's `service.namespace`. When no Otherlode source
      * sets it, it comes from OpenTelemetry's own settings. It has no default: null is the
-     * unspecified namespace. The agent never works one out for itself.
+     * unspecified namespace.
      */
     val serviceNamespace: String?,
     /**
@@ -46,9 +44,8 @@ data class AgentConfig(
     val exportUrl: String,
     /**
      * Sent to the receiver as `Authorization: Bearer <token>`. Prefer the `OTHERLODE_AUTH_TOKEN`
-     * environment variable over the `authToken` agent option: a `-javaagent` argument is visible
-     * to every user on the host through `ps` and `/proc/<pid>/cmdline`, so a secret passed that
-     * way is readable by anyone who can list processes.
+     * environment variable over the `authToken` agent option, since a `-javaagent` argument is
+     * visible to every user on the host.
      */
     val authToken: String?,
     /** How often the agent flushes. Set in whole seconds by `flushIntervalSeconds`; held as a [Duration]. */
@@ -71,44 +68,34 @@ data class AgentConfig(
      */
     val excludePackages: List<String>,
     /**
-     * Off unless explicitly enabled. A full classpath scan reads every class under the include
-     * rules, a cost that scales with the adopter's classpath, so it does not inherit this agent's
-     * usual "on unless configured otherwise" default.
+     * Off unless explicitly enabled. The static baseline reads every class under the include rules.
      */
     val staticBaselineEnabled: Boolean,
     /**
      * On by default. Once per process, a background thread lists the names of the classes the
-     * classpath holds under the include rules and the agent sends them as a class listing. With it
-     * off, the server can never prove a class of this run's build is gone.
+     * classpath holds under the include rules and the agent sends them as a class listing.
      */
     val classListingEnabled: Boolean,
     /**
      * On by default. When false, [dev.otherlode.Agent] logs one line and does
-     * nothing else: no bootstrap holder, no transformer, no exporter, no scheduler. Lets an
-     * adopter bake `-javaagent` into a container image and switch the agent off per deployment
-     * with `OTHERLODE_ENABLED=false`, with no image rebuild.
+     * nothing else: no bootstrap holder, no transformer, no exporter, no scheduler.
      */
     val enabled: Boolean,
     /**
-     * On by default. One switch for every endpoint module (Spring, Ktor, `jdk.httpserver`,
-     * JAX-RS) and the OpenTelemetry route bridge; [disabledEndpointModules] keeps single modules off.
-     * A module matches only when its framework is present, and one whose advice or transform throws,
-     * a `LinkageError` against an unsupported version included, switches itself off and is reported
-     * in `disabled_endpoint_modules`. When false, every module that would have installed is reported
+     * On by default. One switch for every endpoint module and the OpenTelemetry route bridge;
+     * [disabledEndpointModules] keeps single modules off.
+     * A module whose advice or transform throws switches itself off and is reported in
+     * `disabled_endpoint_modules`. When false, every module that would have installed is reported
      * there as kept off by configuration.
      */
     val endpointsEnabled: Boolean,
     /**
-     * Off by default, unlike [endpointsEnabled]: the route bridge module hooks OpenTelemetry's own
-     * internal classes rather than the framework that serves the request, so its correctness
-     * depends on the OpenTelemetry agent's version, not on any framework's. An adopter opts in
-     * knowingly, for a framework no other module covers.
+     * Off by default, unlike [endpointsEnabled]. The route bridge module hooks OpenTelemetry's own
+     * internal classes, so it depends on the OpenTelemetry agent's version.
      */
     val otelBridgeEnabled: Boolean,
     /**
-     * Off by default. Marks every payload of this run as a test run, for an agent in a JVM that
-     * runs the adopter's tests. A receiver then uses the run's call edges only to name the tests
-     * that call production code.
+     * Off by default. Marks every payload of this run as a test run.
      */
     val testRun: Boolean,
     /**
@@ -120,8 +107,7 @@ data class AgentConfig(
     val callbackAnnotations: List<CallbackAnnotationName>,
     /**
      * Endpoint module names the adopter keeps from installing, in the order written, trimmed and
-     * without blanks. Empty unless `disabledEndpointModules` is set. The names are not checked here:
-     * only the discovered modules say which names are real.
+     * without blanks. Empty unless `disabledEndpointModules` is set. The names are not checked.
      */
     val disabledEndpointModules: List<String>,
     /**
@@ -129,11 +115,12 @@ data class AgentConfig(
      * accepts it. A set [exportUrl] the agent cannot use, a plain http [exportUrl] on an
      * `otherlode.dev` host while [authToken] is set, and an [authToken] with a character outside
      * `!` to `~`, each add one. [dev.otherlode.Agent] logs each as an ERROR, unless [enabled] is false,
-     * and turns itself off for this JVM. No message quotes the token, or any of the URL but an underscore host.
+     * and turns itself off for this JVM. No message quotes the token, or any of the URL but an
+     * underscore host.
      */
     val refusals: List<String> = emptyList(),
 ) {
-    /** Names the service, its instance and the export URL, and masks [authToken], so a printed configuration holds no secret. */
+    /** Prints the service name, instance id and export URL, and masks [authToken]. */
     override fun toString(): String =
         "AgentConfig(serviceName=$serviceName, serviceInstanceId=$serviceInstanceId, exportUrl=$exportUrl, " +
             "authToken=${if (authToken == null) "null" else "****"})"
@@ -142,10 +129,7 @@ data class AgentConfig(
         /** OpenTelemetry's name for a Java service that names none. */
         const val DEFAULT_SERVICE_NAME = "unknown_service:java"
 
-        /**
-         * The environment a test run reports to when no source names one. A receiver that drops
-         * the test-run flag still keeps the run apart from production.
-         */
+        /** The environment a test run reports to when no source names one. */
         const val TEST_RUN_ENVIRONMENT = "test"
 
         private const val DEFAULT_EXPORT_URL = "http://localhost:4319"
@@ -179,30 +163,17 @@ data class AgentConfig(
             )
 
         /**
-         * Every option in [KNOWN_KEYS] resolves the same way: the agent-args string wins, then a
-         * JVM system property, then an environment variable, then the option's own built-in
-         * default. [OptionNames] derives the property and environment variable names from the
-         * option name itself, so the three sources can never drift apart from each other.
+         * Parses [agentArgs] into a config. Every option resolves the same way: the agent-args
+         * string wins, then a JVM system property, then an environment variable, then the option's
+         * default. [OptionNames] gives the property and variable names. A blank value at any source
+         * counts as unset.
          *
-         * A blank value at any source counts as unset and falls through to the next one, so a
-         * blank `authToken` option leaves `OTHERLODE_AUTH_TOKEN` in force.
-         *
-         * The service name, the namespace, the version and the environment go on past Otherlode's three sources, in
-         * this order, and the first value that is not blank wins:
-         *
-         * 1. OpenTelemetry's own settings, resolved as its Java agent resolves them by
-         *    [OtelResourceSettings.resolve]: each of `otel.service.name` and
-         *    `otel.resource.attributes` from its system property, else its environment variable;
-         *    the name from `otel.service.name`, else `service.name` in the attributes.
-         * 2. For the name only, [detectServiceName], which runs only when every source above is
-         *    empty.
-         * 3. For the name only, [DEFAULT_SERVICE_NAME].
-         * 4. For the environment only, [TEST_RUN_ENVIRONMENT] when [testRun] is on.
-         *
-         * The instance id is never read from OpenTelemetry: it is a fresh random UUID per process unless
-         * an Otherlode source sets it.
-         *
-         * [OtelResourceSettings] lists the resource-attribute keys each value reads.
+         * The service name, namespace, version and environment go on past those three sources, and
+         * the first value that is not blank and that the identity checks accept wins: OpenTelemetry's
+         * own settings ([OtelResourceSettings]),
+         * then for the name only [detectServiceName] and [DEFAULT_SERVICE_NAME], and for the
+         * environment only [TEST_RUN_ENVIRONMENT] when [testRun] is on. The instance id is never read
+         * from OpenTelemetry: it is a random UUID per process unless an Otherlode source sets it.
          */
         fun parse(
             agentArgs: String?,
@@ -278,12 +249,6 @@ data class AgentConfig(
             )
         }
 
-        /**
-         * Walks the three sources for [key] in precedence order: the agent-args option, then the
-         * matching system property, then the matching environment variable. A blank value at any
-         * source is treated as unset, so it falls through instead of masking a value from a
-         * lower-precedence source.
-         */
         private fun resolveOption(
             key: String,
             options: Map<String, String>,
@@ -294,12 +259,6 @@ data class AgentConfig(
                 ?: valueOrNull(systemProperties(OptionNames.systemProperty(key)))
                 ?: valueOrNull(env(OptionNames.environmentVariable(key)))
 
-        /**
-         * Walks the three sources for [key] as [resolveOption] does, for a value of the service's
-         * identity. A value that [screen] skips falls through to the next source, as a blank one
-         * does. The default screen, [ServiceIdentityValues.usable], is the one for a service name
-         * or namespace.
-         */
         private fun resolveIdentity(
             key: String,
             options: Map<String, String>,
@@ -319,7 +278,6 @@ data class AgentConfig(
             val source: String,
         )
 
-        /** [resolveOption], with the name of the source that gave the value. */
         private fun resolveSourced(
             key: String,
             options: Map<String, String>,
@@ -333,10 +291,6 @@ data class AgentConfig(
             return valueOrNull(env(variable))?.let { Sourced(it, "the environment variable $variable") }
         }
 
-        /**
-         * The refusal for a token that holds a character outside `!` to `~`, or null. It names the
-         * source of the token, never the token or its length.
-         */
         private fun tokenRefusal(
             key: String,
             token: String,
@@ -352,7 +306,6 @@ data class AgentConfig(
 
         private fun valueOrNull(raw: String?): String? = raw?.trim()?.ifBlank { null }
 
-        /** [detect]'s name, trimmed, or null when it finds none or throws. This runs in `premain`. */
         private fun detectedServiceName(detect: () -> String?): String? =
             try {
                 valueOrNull(detect())
@@ -360,11 +313,6 @@ data class AgentConfig(
                 null
             }
 
-        /**
-         * Accepts `true`/`false` case-insensitively. Any other non-blank value logs a WARNING
-         * and falls back to [default], the same way an out-of-range [parseFlushInterval] value
-         * does, rather than silently reading as false.
-         */
         private fun parseBoolean(
             key: String,
             raw: String?,
@@ -379,18 +327,6 @@ data class AgentConfig(
             return parsed
         }
 
-        /**
-         * A trailing dot on a prefix is dropped so `com.acme.` and `com.acme` mean the same thing;
-         * [dev.otherlode.instrumentation.TypeMatchPolicy] matches on package boundaries
-         * either way, so `com.acme` never also matches `com.acmeinternal`. Shared by
-         * `includePackages` and `excludePackages`, which use the same `;`-separated syntax.
-         *
-         * A prefix written as a glob (`com.acme.*`) or a path (`com/acme`) matches no class name, so
-         * it is dropped with a warning naming the spelling that would match. That spelling is never
-         * applied: the rewrite can be broader than the adopter meant (`com.*.shop` would become
-         * `com`, taking in every library under it). An include list left empty this way makes the
-         * agent refuse to start, as any empty include list does.
-         */
         private fun parsePackagePrefixes(raw: String?): List<String> {
             val prefixes =
                 raw
@@ -417,13 +353,6 @@ data class AgentConfig(
                 ?.filter { it.isNotEmpty() }
                 .orEmpty()
 
-        /**
-         * Splits a `;`-separated list of annotation type names. An entry is kept when it has a package
-         * and every dot-separated part is a Java identifier, so `com.acme.Bus$Handler` and
-         * `com.acme.Bus.Handler` are both kept. Any other entry is dropped with one WARNING that
-         * suggests a corrected spelling when the obvious repairs (a leading `@`, `/` for `.`, a
-         * trailing `.class`) produce a well-formed name. Dropping every entry is not an error.
-         */
         private fun parseCallbackAnnotations(raw: String?): List<CallbackAnnotationName> {
             val entries =
                 raw
@@ -448,10 +377,6 @@ data class AgentConfig(
             return kept
         }
 
-        /**
-         * Whether [name] has at least two dot-separated parts, each a Java identifier. A trailing
-         * `.class` is a class literal, not a type name, though `class` passes as an identifier part.
-         */
         private fun isTypeName(name: String): Boolean {
             val parts = name.split('.')
             return parts.size >= 2 &&
@@ -463,27 +388,6 @@ data class AgentConfig(
                 }
         }
 
-        /**
-         * The exporter appends `/v1/otherlode/...` to this, so a trailing slash is dropped rather than
-         * producing a `//` in every request path. The scheme is lowercased, since URL schemes are
-         * case-insensitive and anything reading the URL afterwards can then compare it
-         * exactly; the host and path are kept as given. A value that is not an absolute http(s) URL
-         * with a host is refused: left as is, `URI.create` would throw on every attempt of every
-         * flush, and falling back to the default would send the payloads and the token to an address
-         * nobody chose. A query string or a fragment is refused the same way, since the appended path
-         * would land inside it.
-         *
-         * A host name with an underscore, such as a Docker Compose service name, gets its own
-         * reason. `java.net.URI` parses it with no host, and the JDK's `HttpClient` refuses such a
-         * URI too, so the value cannot be used; without the reason the message would read as if the
-         * URL had no host at all.
-         *
-         * A URL with a user name or password is refused too. The JDK's `HttpClient` never sends
-         * userinfo, and the URL appears in the message of every failed send.
-         *
-         * Returns the URL and the refusal message. A refusal never quotes the value, apart from the
-         * host of a URL that holds no userinfo. The URL of a refusal is the default and is not used.
-         */
         private fun parseExportUrl(sourced: Sourced?): Pair<String, String?> {
             if (sourced == null) return DEFAULT_EXPORT_URL to null
             val trimmed = sourced.value.trimEnd('/')
@@ -531,10 +435,6 @@ data class AgentConfig(
             return (scheme.lowercase() + trimmed.substring(scheme.length)) to null
         }
 
-        /**
-         * The refusal for a plain http [exportUrl] whose host is `otherlode.dev` or a subdomain of it, or
-         * null. It names the [source] of the URL and never quotes the URL.
-         */
         private fun plainHttpOtherlodeRefusal(
             exportUrl: String,
             source: String,
@@ -548,23 +448,12 @@ data class AgentConfig(
 
         private val IPV4_LOOPBACK = Regex("""127(\.\d{1,3}){3}""")
 
-        /**
-         * True for a host written as `localhost` in any case, an IPv4 address in 127.0.0.0/8 or `[::1]`.
-         * It reads the text only and never resolves a name.
-         */
         private fun isLoopbackHost(host: String): Boolean {
             if (host.equals("localhost", ignoreCase = true) || host == "[::1]") return true
             if (!IPV4_LOOPBACK.matches(host)) return false
             return host.split('.').all { it.toInt() in 0..255 }
         }
 
-        /**
-         * Falls back to the default for a value that is not a whole number of seconds from 1 to
-         * one day. [dev.otherlode.export.ExportScheduler] builds its schedule after both
-         * transformers are installed: `scheduleAtFixedRate` throws for a non-positive period,
-         * and the interval in milliseconds overflows a `long` for a huge one. Either failure
-         * would leave classes woven with nothing ever exported.
-         */
         private fun parseFlushInterval(raw: String?): Duration {
             if (raw == null) return DEFAULT_FLUSH_INTERVAL
             val seconds = raw.toLongOrNull()?.takeIf { it in 1..MAX_FLUSH_INTERVAL.seconds }
@@ -594,11 +483,6 @@ data class AgentConfig(
             return Duration.ofMinutes(minutes)
         }
 
-        /**
-         * Splits [agentArgs] into its options and the unknown keys worth a warning. A fragment that is
-         * not `key=value` with a known key, after an `authToken` pair, may be the rest of a token that
-         * holds a comma. The parser keeps such a fragment as before but logs no text of it.
-         */
         private fun parseOptions(agentArgs: String?): Pair<Map<String, String>, Set<String>> {
             if (agentArgs.isNullOrBlank()) return emptyMap<String, String>() to emptySet()
             val options = LinkedHashMap<String, String>()

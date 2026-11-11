@@ -12,31 +12,19 @@ import dev.otherlode.export.UnprobedClass
 import dev.otherlode.export.UnreadableClass
 
 /**
- * Splits one [StaticScanResult] into [StaticBaseline] chunks of bounded size, so a large
- * classpath never produces a single POST the collector might refuse.
+ * Splits one [StaticScanResult] into [StaticBaseline] chunks of bounded size. A chunk closes when the
+ * next entry would take it past [maxEntriesPerChunk], or past the encoded bytes or element count that
+ * [PayloadKind.STATIC_BASELINE] allows, measured by [ProtoPayloadCodec]. A declared class weighs one, plus
+ * its methods, their calls, its branch sites by [dev.otherlode.export.BranchSite.chunkWeight], its referenced
+ * classes and the mappings it carries. An unreadable or unprobed class weighs one.
  *
- * A chunk closes when the next entry would take it past one of three bounds. The first is
- * [maxEntriesPerChunk]. A declared class counts as its number of methods, plus the total number of
- * call edges across those methods, plus its methods' branch sites by
- * [dev.otherlode.export.BranchSite.chunkWeight], plus one for its own class record, plus one per
- * referenced class on its methods and on the class itself, plus one per mapping it carries, mirroring the weighting
- * [dev.otherlode.registry.ProbeRegistry] gives a manifest class for the same reason; every
- * unreadable or unprobed class counts as one. The other two are the encoded bytes and the element
- * count of [PayloadKind.STATIC_BASELINE], measured by [ProtoPayloadCodec] on the encoding the
- * exporter sends.
+ * Classes are never split across chunks. A declared class heavier than [maxEntriesPerChunk] gets a chunk
+ * of its own. A class that breaks the byte or element bound alone makes [chunk] throw
+ * [ClassTooLargeException] and produce no chunk. A mapping in [StaticScanResult.externalClasses] travels
+ * in the chunk of the first declared class that references its name. Every chunk carries the same
+ * resource, [includeRules] and [scannedAt], and its own `chunkIndex` out of `chunkCount`.
  *
- * A mapping in [StaticScanResult.externalClasses] travels in the chunk of the first declared class
- * that references its name, so a class and the mappings of its references commit together. Its
- * encoded size and element count count toward that chunk's bounds like the class's own.
- *
- * Classes are never split across chunks, so a declared class heavier than [maxEntriesPerChunk]
- * gets a chunk of its own. A class that breaks the byte or element bound on its own cannot be
- * sent, and a scan without it would be complete and wrong, so [chunk] throws
- * [ClassTooLargeException] and produces no chunk. Every chunk carries the same resource,
- * [includeRules] and [scannedAt], and its own `chunkIndex` out of `chunkCount`, so a collector can
- * tell when it holds the whole scan.
- *
- * Always produces at least one chunk: an empty scan is still a statement ("nothing declared").
+ * [chunk] produces at least one chunk, so an empty scan is still a statement.
  */
 object StaticBaselineChunker {
     fun chunk(

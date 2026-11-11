@@ -6,35 +6,19 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Holds the messages of the {@code VerifyError}s the JVM constructs, from the moment a constructor
- * runs until the export thread drains them.
+ * Holds the messages of the {@code VerifyError}s the JVM constructs until the export thread
+ * drains them.
  *
  * <p>The agent weaves both constructors of {@code java.lang.VerifyError} to call {@link
  * #record(String)}. A link-time {@code VerifyError} is constructed while the failing class's
  * initialisation lock is held, so {@link #record} must not block, load, link, allocate beyond one
- * array store, log or throw. It claims a slot with {@code AtomicLong.getAndIncrement}, stores the
- * reference and publishes it with a second increment. A call that finds the ring full counts one
- * overflow and stores nothing. {@link #warm()} runs every path once at install, so no class is
- * loaded or linked from inside a constructor.
+ * array store, log or throw. {@link #warm()} runs every path once at install for that reason.
  *
- * <p>The ring is a fixed array of {@link #CAPACITY} references. {@link #drain()} swaps in an empty
- * array and reads the one it took, so the ring holds up to {@link #CAPACITY} messages between two
- * drains. A writer that read the old array before the swap may store into it after the drain read
- * it; the drain keeps each array for later drains until it is read in full or has aged out. When it
- * lets an array go it seals it, so a writer that claims a slot afterwards counts an overflow, and it
- * counts each claimed slot it never read as overflow. A slot read is cleared, so a message is held
- * only until it is drained.
- *
- * <p>The JVM verifies a rejected class again, and builds the same message again, each time the
- * class is used, so one rejected class on a busy path would fill the ring. {@link #record} keeps the
- * last messages it stored in a table of {@link #SEEN} entries indexed by hash code and skips a
- * message equal to the one its entry holds. A message is entered only once it is stored, so one the
- * full ring turned away is kept when it comes again, and a race at worst stores a copy. A message
- * stored in a slot that was sealed before the drain read it is counted as overflow and may then be
- * skipped when it comes again, so its class goes unnamed while the run's unplaced count says so.
+ * <p>The ring holds up to {@link #CAPACITY} messages between two drains. A call that finds it
+ * full counts one overflow and stores nothing. A message equal to one stored recently is skipped,
+ * since the JVM builds the same message each time it verifies a rejected class again.
  */
 public final class OtherlodeVerifierMessages {
-
     /** How many messages the ring holds between two drains. */
     public static final int CAPACITY = 8192;
 
@@ -82,7 +66,7 @@ public final class OtherlodeVerifierMessages {
         RING.record(null);
     }
 
-    /** A bounded ring of message references. Public so a test can use a small capacity. */
+    /** A bounded ring of message references. */
     public static final class Ring {
         private static final int MAX_DRAINS_WHILE_INCOMPLETE = 3;
 
@@ -179,10 +163,6 @@ public final class OtherlodeVerifierMessages {
             }
         }
 
-        /**
-         * Lets {@code slots} go: every later claim on it lands past the capacity and counts its own
-         * overflow, and each slot claimed before the seal that holds no message yet counts as one.
-         */
         private void seal(Slots slots, List<String> out) {
             long sealed = Math.min(slots.claimed.getAndAdd(capacity), capacity);
             read(slots, out);

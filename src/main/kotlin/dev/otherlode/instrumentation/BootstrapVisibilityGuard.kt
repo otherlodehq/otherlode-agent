@@ -5,13 +5,9 @@ import dev.otherlode.bootstrap.OtherlodeProbeArrays
 import java.util.WeakHashMap
 
 /**
- * Finds the class loaders that cannot resolve `dev.otherlode.bootstrap`. A woven class names
- * [OtherlodeProbeArrays] and resolves it through its defining loader, so a loader that does not
- * delegate that package to the bootstrap loader (JBoss Modules without `jboss.modules.system.pkgs`,
- * Apache Felix without `org.osgi.framework.bootdelegation`) fails the class at its first probe.
- *
- * The answer is cached once per loader, weakly, and holds no reference to the loader. It is read at
- * transform time only. One instance serves both tiers, so each loader gets one WARNING.
+ * Finds the class loaders that cannot resolve `dev.otherlode.bootstrap`, such as JBoss Modules
+ * without `jboss.modules.system.pkgs`. A class woven for such a loader would fail at its first
+ * probe. The answer is cached per loader, weakly.
  */
 class BootstrapVisibilityGuard {
     private val log by agentLogger(BootstrapVisibilityGuard::class.java.name)
@@ -19,7 +15,7 @@ class BootstrapVisibilityGuard {
 
     /**
      * The reason [classLoader] cannot weave classes, or null when it can. The first call that finds
-     * a loader blind to the holder logs the one WARNING for that loader.
+     * a loader blind to the holder logs one WARNING for that loader.
      */
     fun refusal(classLoader: ClassLoader?): String? {
         if (classLoader == null) return null

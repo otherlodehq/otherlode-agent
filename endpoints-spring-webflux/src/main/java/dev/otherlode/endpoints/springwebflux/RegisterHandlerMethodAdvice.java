@@ -18,20 +18,16 @@ import org.springframework.web.util.pattern.PathPattern;
  * registration hook for every annotated controller method Spring WebFlux detects. It runs once per
  * handler method as the route table is built, and does not run for a registration that throws.
  *
- * <p>Reactive patterns are always {@code PathPattern}s. A mapping with no path holds the empty
- * pattern, which the seam normalises to {@code /}.
+ * <p>A mapping with no path holds the empty pattern, which the seam normalises to {@code /}. The
+ * dispatch key, {@code List.of(pattern, verb)}, matches {@link HandleMatchAdvice}.
  *
- * <p>The dispatch key, {@code List.of(pattern, verb)}, must match {@link HandleMatchAdvice}: both
- * build it from the same two accessors, and {@link List#equals} gives value equality with no key
- * type of our own that the framework's classloader would need to see.
+ * <p>The join names the class that declares the method. A handler bean whose type cannot be
+ * resolved is still an endpoint, with no join.
  *
- * <p>The join names the class that declares the method, where its probe lives. A handler bean whose
- * type cannot be resolved is still an endpoint, with no join.
- *
- * <p>This method is deliberately one flat body with no private helper method of its own: {@link
- * Advice} inlines only the bytecode of the annotated method, so a call to a helper, even one on this
- * class, would remain a real call in the woven bytecode and require the target classloader to
- * resolve this advice class at runtime.
+ * <p>{@code onExit} is deliberately one flat body with no private helper method: {@link Advice}
+ * inlines only the bytecode of the annotated method, so a call to a helper, even one on this class,
+ * would remain a real call in the woven bytecode and require the target classloader to resolve this
+ * advice class at runtime. The other advice classes of this module follow the same rule.
  */
 public class RegisterHandlerMethodAdvice {
     private static final String MODULE = "spring-webflux";

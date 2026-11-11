@@ -12,29 +12,18 @@ enum class UnreadCause {
     /** The class names no compiler the agent can read: a Scala 2 class, or a Scala 3 class with no readable `.tasty`. */
     VERSION_BLIND,
 
-    /**
-     * The class can hold no hand-written plumbing, such as an enum's companion, so its unmatched
-     * plumbing is scalac's in a shape the rules do not read, whatever the release.
-     */
+    /** The class can hold no hand-written plumbing, such as an enum's companion, so its unmatched plumbing is unread whatever the release. */
     UNREAD_STRUCTURE,
 
-    /**
-     * The class holds members a compiler plugin fills in beside members the adopter wrote, and
-     * the bytecode does not tell them apart: a `@Serializer(forClass = ...)` object (ADR 0078).
-     */
+    /** The class holds compiler-plugin members beside hand-written ones that the bytecode does not tell apart (ADR 0078). */
     PLUGIN_FILLED,
 }
 
 /**
  * Thread-safe totals of the methods reported as unread shapes across every class this agent
- * instruments, by [UnreadShape] family, with the Scala 3 releases the agent has not read that
- * they came from. Branch outcomes reported as unread shapes are totalled apart, in families of
- * their own, and so are the classes analysed from the bytes they arrived as.
- *
- * [dev.otherlode.instrumentation.OtherlodeInstrumentation] calls [record] and [recordOutcomes] once
- * per transformed class that has any. [dev.otherlode.export.ExportScheduler] reads [total], [countOf],
- * [outcomeTotal] and [unreadReleases] to log one summary the first time a flush finds either total
- * above zero.
+ * instruments, by [UnreadShape] family, with the Scala 3 releases the agent has not read. Branch
+ * outcomes reported as unread shapes, and classes analysed from the bytes they arrived as, are
+ * totalled apart.
  */
 class UnreadShapeCounts {
     private val countsByFamily: Map<UnreadShape, AtomicLong> =
@@ -49,11 +38,9 @@ class UnreadShapeCounts {
     private val receivedBytesClasses = ConcurrentHashMap.newKeySet<String>()
 
     /**
-     * Adds [className]'s unread methods, keyed by family, the first time a class of that name is
-     * recorded, so a class two loaders define counts once. Notes [release], the Scala 3 release that
-     * compiled it when the agent has not read it, and [cause], why its methods are unread. Returns true the first time [className] is recorded with
-     * a [release], which is when its caller logs the per-class warning, even when an earlier
-     * definition of the class named no release.
+     * Adds [className]'s unread methods by family, the first time a class of that name is recorded, so
+     * a class two loaders define counts once. Notes [release] and [cause]. Returns true the first time
+     * [className] is recorded with a non-null [release].
      */
     fun record(
         className: String,
@@ -72,10 +59,9 @@ class UnreadShapeCounts {
     }
 
     /**
-     * Adds [className]'s branch outcomes that are unread shapes, keyed by family, the first time a
-     * class of that name is recorded. An outcome is unread because its code has the outline of
-     * compiler output that no source produces, so these are counted under
-     * [UnreadCause.UNREAD_STRUCTURE] and name no release.
+     * Adds [className]'s unread branch outcomes by family, the first time a class of that name is
+     * recorded. They are totalled apart from the unread methods, count under no [UnreadCause] and name no
+     * release.
      */
     fun recordOutcomes(
         className: String,

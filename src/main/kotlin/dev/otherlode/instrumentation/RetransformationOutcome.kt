@@ -5,12 +5,6 @@ import net.bytebuddy.description.type.TypeDescription
 import net.bytebuddy.dynamic.DynamicType
 import net.bytebuddy.utility.JavaModule
 
-/**
- * Collects what went wrong while the agent retransformed [target] through Byte Buddy. Byte Buddy
- * reports a failed transform to `onError` and leaves the class as it was, and the JVM's own
- * refusal arrives in `onComplete`. Either one is a [failure], and every class it names goes to
- * [ownFailures].
- */
 internal class RetransformationOutcome(
     private val target: String,
     private val ownFailures: OwnRetransformationFailures,
@@ -19,7 +13,6 @@ internal class RetransformationOutcome(
     private var transformed = false
     private var error: String? = null
 
-    /** Why the retransformation did not take, or null when [target] was transformed and nothing failed. */
     fun failure(): String? = error ?: if (transformed) null else "$target was not transformed"
 
     override fun onTransformation(

@@ -1,22 +1,12 @@
 package dev.otherlode.instrumentation
 
 /**
- * FNV-1a over a class's method and branch-site signatures.
- *
- * [dev.otherlode.instrumentation.OtherlodeInstrumentation] hands the signatures to [of]
- * in one specific order: the same order it uses to assign probe array slots. That order has to
- * matter for the hash. Otherwise, two loads of a class with the same signatures, but a different
- * declaration order, would hash the same. [dev.otherlode.registry.ProbeRegistry]
- * would then treat the layout as unchanged, and hand back the old array and old metadata. But the
- * new bytecode wires different slots to different methods and branches. Reusing the old array
- * would silently swap whose hits get attributed to which probe.
- *
- * Hashing in slot-assignment order avoids this. A reorder then produces a different hash, so the
- * registry correctly treats it as a new layout and allocates a fresh array.
+ * FNV-1a over a class's method and branch-site signatures. Callers pass the signatures in probe
+ * array slot order, so a reorder of the slots changes the hash.
  */
 object ProbeLayoutHash {
-    private const val OFFSET_BASIS = -3750763034362895579L // FNV-1a 64-bit offset basis
-    private const val PRIME = 1099511628211L // FNV-1a 64-bit prime
+    private const val OFFSET_BASIS = -3750763034362895579L
+    private const val PRIME = 1099511628211L
 
     /** The layout entry of a class that declares a `<clinit>`: its entry probe and its returned and threw slots. */
     const val TYPE_INITIALIZER_ENTRY = "<clinit>()V#typeinit+outcomes"

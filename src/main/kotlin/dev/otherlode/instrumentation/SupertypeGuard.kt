@@ -6,25 +6,9 @@ import net.bytebuddy.dynamic.ClassFileLocator
 import net.bytebuddy.jar.asm.ClassReader
 import net.bytebuddy.pool.TypePool
 
-/**
- * Refuses a class whose own supertype is absent. The JVM cannot define such a class, with the agent
- * or without it, so weaving one would publish probes for a class that never defines.
- *
- * The walk reads each supertype's class file through [classFileCache] for the class's loader and
- * takes the superclass and interface names from the class-file header, transitively, with a visited
- * set so a cycle ends. A type whose class file the loader does not serve, or whose bytes do not
- * parse, is missing; that includes a supertype defined at runtime with no class file, and every
- * supertype when the loader serves no class files at all. A name under `java.` is present without a
- * read: the JVM defines those from the boot or platform loader whatever the class's own loader says.
- */
 internal class SupertypeGuard(
     private val classFileCache: ClassFileByteCache,
 ) {
-    /**
-     * The first missing type among the superclass and interfaces of [type], and of theirs in turn,
-     * depth first, or null. [type]'s own supertypes are named by its description, which the weave
-     * already holds; the rest come from class files read through [classLoader].
-     */
     fun missingSupertype(
         type: TypeDescription,
         classLoader: ClassLoader?,
@@ -51,7 +35,6 @@ internal class SupertypeGuard(
         return null
     }
 
-    /** The supertype names in [name]'s class-file header, or null when the class file cannot be read. */
     private fun headerOf(
         name: String,
         locator: ClassFileLocator,
@@ -71,24 +54,16 @@ internal class SupertypeGuard(
     }
 }
 
-/**
- * Why the transform of a class failed on purpose: the JVM cannot define it, or its loader cannot
- * resolve the probes. [message] reads as a predicate of the class: the listener logs it after the
- * class name as one WARNING with no stack trace, unless [logged] says the cause was logged already,
- * and records it as the class's skip reason.
- */
 internal class SupertypeRefusal private constructor(
     message: String,
     val logged: Boolean = false,
 ) : IllegalStateException(message) {
     internal companion object {
-        /** The JVM cannot define the class: its supertype [supertype] could not be read from its loader. */
         fun undefinable(supertype: String) =
             SupertypeRefusal(
                 "cannot be defined: its supertype $supertype could not be read from its loader, so it is not instrumented",
             )
 
-        /** The class's loader cannot see the probe holder; the guard logged one WARNING for the loader. */
         fun blindLoader(reason: String) = SupertypeRefusal(reason, logged = true)
     }
 }

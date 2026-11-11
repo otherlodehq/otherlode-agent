@@ -41,51 +41,32 @@ private val PATH_NAMES = NAMESPACES.map { "$it.Path" }.toSet()
 private val VERB_NAMES = NAMESPACES.flatMap { namespace -> VERBS.map { verb -> "$namespace.$verb" } }.toSet()
 private val HTTP_METHOD_NAMES = NAMESPACES.map { "$it.HttpMethod" }.toSet()
 
-/** Built at run time, since `shadowJar` rewrites a constant that starts with `kotlin`. */
+// Built at run time: shadowJar rewrites a constant that starts with `kotlin`.
 private val KOTLIN_PREFIX = listOf("kot", "lin", ".").joinToString("")
 
-/**
- * A supertype named under one of these prefixes can never itself carry a JAX-RS annotation, so a
- * supertype walk never recurses into one. This bounds every walk in this module: the JDK's own
- * type hierarchy (`Object`, `Serializable`, `Comparable`, and the `jdk.`/`sun.` internals behind
- * every bootstrap-loaded class, which reach this matcher too because the endpoint pipeline does
- * not ignore the bootstrap loader), Kotlin's own supertypes, and the JAX-RS specification's own
- * interfaces are all excluded from view, leaving only an adopter's own API interfaces and abstract
- * base classes to visit.
- */
 private val SKIPPED_SUPERTYPE_PREFIXES = listOf("java.", "jdk.", "sun.", "com.sun.", KOTLIN_PREFIX, "jakarta.", "javax.")
 
 private val ELIGIBLE_METHOD: ElementMatcher.Junction<MethodDescription> =
     not(isStatic<MethodDescription>()).and(not(isAbstract())).and(not(isNative())).and(not(isSynthetic()))
 
 /**
- * Endpoint module for JAX-RS, covering both the `javax.ws.rs` and `jakarta.ws.rs` namespaces with
- * one module and no compile-time dependency on either.
+ * Endpoint module for JAX-RS, covering the `javax.ws.rs` and `jakarta.ws.rs` namespaces with one
+ * module and no compile-time dependency on either.
  *
- * JAX-RS has no registration hook comparable to Spring's handler-method mapping or Ktor's
- * `handle`: a resource class declares its routes purely through annotations, read once by the
- * framework's own runtime when it builds its route table. There is nothing to advise for
- * "declaration", so this module reads the annotations itself, directly from the [TypeDescription]
- * ByteBuddy hands to [transform], and calls the endpoint seam from this ordinary Kotlin code
- * rather than from woven advice. That is safe here specifically because this code runs inside the
- * agent's own JVM context, never inlined into the resource class's bytecode: the Kotlin-intrinsics
- * hazard that keeps [dev.otherlode.endpoints.jaxrs.ResourceMethodAdvice] a Java class
- * does not apply to a class that is only ever loaded on the agent's own classloader.
+ * A resource class declares its routes through annotations, so this module reads them from the
+ * [TypeDescription] ByteBuddy hands to [transform] and registers each endpoint through the
+ * endpoint seam from this Kotlin code, not from woven advice.
  *
- * Method-level annotations are inherited by the specification's own rule: a method the concrete
- * class declares with no JAX-RS annotation of its own inherits the annotations of the method it
- * overrides or implements. Class-level `@Path` is not inherited per the specification, but Jersey
- * honours one declared on a superclass or interface, as does Quarkus REST (RESTEasy Reactive), so
- * this module does too, only when one of them is present on the resource class's own loader. See [resolveAnnotationSource] and
- * [resolveClassPath].
+ * A method the concrete class declares with no JAX-RS annotation of its own inherits the
+ * annotations of the method it overrides or implements. A class-level `@Path` on a supertype is
+ * inherited only when Jersey or Quarkus REST (RESTEasy Reactive) is on the resource class's loader.
  *
- * [jerseyPresent] and [restEasyReactivePresent] answer whether Jersey, or RESTEasy Reactive's server
- * classes, are on a resource class's own loader; each default reads a marker resource off that
- * loader without loading any class, once per loader. A test supplies its own function to force
- * either branch. The constructor is `@JvmOverloads` so [java.util.ServiceLoader], which needs a genuine no-argument constructor at
- * the bytecode level, can still instantiate this class.
+ * [jerseyPresent] and [restEasyReactivePresent] answer whether Jersey, or RESTEasy Reactive's
+ * server classes, are on a resource class's loader. A test supplies its own function to force
+ * either branch.
  */
 class JaxRsModule
+    // Keeps the no-argument constructor that java.util.ServiceLoader needs.
     @JvmOverloads
     constructor(
         private val jerseyPresent: (ClassLoader?) -> Boolean = ::isJerseyPresent,
@@ -102,31 +83,19 @@ class JaxRsModule
         private val loaderGate = JaxRsLoaderGate()
 
         /**
-         * A concrete class is in scope if it, or any supertype in its superclass chain or
-         * interface graph, carries `@Path`, or declares a method carrying `@Path` or one of the
-         * seven standard verb annotations.
+         * A concrete class is in scope if it, or any supertype in its superclass chain or interface
+         * graph, carries `@Path`, or declares a method carrying `@Path` or one of the seven
+         * standard verb annotations. A supertype that can be neither described nor loaded means
+         * the class can never be defined, so it does not match.
          *
-         * The class's own declared annotations and methods are checked first, since that already
-         * covers the common case of a resource class with no supertype of its own. Only when that
-         * check fails does this walk supertypes at all, bounded by [SKIPPED_SUPERTYPE_PREFIXES]. A
-         * supertype the [net.bytebuddy.pool.TypePool] has no class file for is asked of the class's
-         * loader instead (see [SupertypeResolver]): one that cannot be loaded means the class can
-         * never be defined, so the answer is no match, and one that loads is read from the loaded
-         * class.
-         *
-         * A custom verb annotation built on `@HttpMethod` (see [resolveVerb]) is not part of this
-         * check: a method carrying only such an annotation, with no `@Path` anywhere in scope,
-         * would not bring the class into scope. This is an accepted v1 gap no fixture in this
-         * module's tests hits, since every custom-verb method here sits under a class already
-         * matched by its own `@Path`.
+         * A method carrying only a custom `@HttpMethod` annotation does not bring a class into
+         * scope.
          */
         override fun typeMatcher(): ElementMatcher<in TypeDescription> = typeMatcher(null)
 
         /**
-         * [typeMatcher] with the supertype walk's answers cached per [classLoader], so a loader
-         * that carries JAX-RS does not re-read the same supertype's class file for every class
-         * that extends it. A `null` loader, which the no-argument form passes, caches nothing,
-         * since a matcher that is not told the loader cannot keep two loaders' names apart.
+         * [typeMatcher] with the supertype walk's answers cached per [classLoader]. A `null`
+         * loader caches nothing.
          */
         override fun typeMatcher(classLoader: ClassLoader?): ElementMatcher<in TypeDescription> {
             val cache = supertypeCaches.cacheFor(classLoader)
@@ -138,32 +107,20 @@ class JaxRsModule
         }
 
         /**
-         * Accepts only a loader that can see a JAX-RS API's `Path` class as a resource, so a loader
-         * with no JAX-RS has no class parsed for this module. The answer is a resource lookup, never
-         * a class load, cached per loader. The bootstrap and platform loaders never carry a JAX-RS
-         * API and are rejected without a lookup.
+         * Accepts only a loader that can see a JAX-RS API's `Path` class as a resource, found
+         * without loading a class and cached per loader. The bootstrap and platform loaders are
+         * rejected without a lookup.
          */
         override fun classLoaderMatcher(): ElementMatcher<in ClassLoader> = loaderGate
 
         /**
          * Reads every eligible declared method for a verb and a route template, binds
-         * [dev.otherlode.endpoints.jaxrs.ResourceMethodAdvice], registers each method
-         * found through the endpoint seam, then weaves the advice onto exactly those methods.
-         *
-         * Binding comes before registering on purpose, so the step most likely to fail leaves
-         * nothing declared rather than a half-read route list. Reading an annotation off a type
-         * description can throw too, for an annotation type the pool cannot resolve, which is
-         * why the rollback in `EndpointInstrumentation` matters and not only this ordering.
-         *
-         * Beyond that, nothing declared here reaches the registry until the rewrite has produced
-         * bytes: the declarations are staged per transform and committed by
-         * `EndpointInstrumentation`'s listener, which also covers a failure inside ByteBuddy's
-         * own weaving after this method returns.
+         * [dev.otherlode.endpoints.jaxrs.ResourceMethodAdvice], registers each method found
+         * through the endpoint seam, then weaves the advice onto exactly those methods.
          *
          * A method with neither a verb annotation nor `@Path`, own or inherited, is not an
-         * endpoint and is left alone. A method with `@Path` but no verb is a sub-resource locator:
-         * it registers with verb `*`, the same convention this project's other
-         * unconstrained-verb endpoints already use.
+         * endpoint and is left alone. A method with `@Path` but no verb is a sub-resource locator
+         * and registers with verb `*`.
          */
         override fun transform(
             builder: DynamicType.Builder<*>,
@@ -171,9 +128,6 @@ class JaxRsModule
             advice: AdviceBinder,
             classLoader: ClassLoader?,
         ): DynamicType.Builder<*> {
-            // With no class-level @Path the class is no root resource: a sub-resource reached
-            // through a locator, which counts on the locator, or a class only Jersey would serve.
-            // Declaring it at a prefix-less template would name an endpoint that does not exist.
             val resolver = SupertypeResolver(classLoader, supertypeCaches.cacheFor(classLoader), ::isSkippedSupertype)
             val classPath = resolveClassPath(typeDescription, classLoader, resolver) ?: return builder
             val matched =
@@ -203,27 +157,6 @@ class JaxRsModule
             return builder.visit(wrapper)
         }
 
-        /**
-         * The annotation source for [method]: itself if it carries any annotation in either JAX-RS
-         * namespace, otherwise the method it overrides or implements, per the specification's
-         * annotation inheritance rule.
-         *
-         * Any JAX-RS annotation on [method] itself, including one with no bearing on routing such
-         * as `@Produces`, switches inheritance off entirely: a method that only adds a produced
-         * media type to an otherwise-inherited operation is not itself a JAX-RS method by the
-         * specification's own rule, and reports as such here too.
-         *
-         * The superclass chain is searched first, nearest first, then every interface [type]
-         * declares, depth-first in declaration order with each interface's own superinterfaces
-         * visited before its next sibling. The first candidate found carrying a JAX-RS annotation
-         * wins. When the interface search finds more than one candidate and two of them disagree
-         * on verb or path, the first in declaration order still wins, and this logs a WARNING once
-         * for the life of this module naming the class and method.
-         *
-         * A method found with no JAX-RS annotation anywhere, own or inherited, is returned as-is:
-         * [resolveVerb] and [pathValue] both read no verb and no path from it, so the caller skips
-         * it as not an endpoint.
-         */
         private fun resolveAnnotationSource(
             method: MethodDescription.InDefinedShape,
             type: TypeDescription,
@@ -280,18 +213,6 @@ class JaxRsModule
             target: MethodDescription.InDefinedShape,
         ): Boolean = sameSignature(candidate, target) && hasOwnJaxRsAnnotation(candidate)
 
-        /**
-         * The class-level route prefix for [type]: its own `@Path` when it has one, otherwise a
-         * supertype's, in Jersey's order ([findInheritedClassPath]) when [jerseyPresent] says Jersey
-         * is on [classLoader], or in Quarkus REST's ([findQuarkusInheritedClassPath]) when only
-         * [restEasyReactivePresent] says RESTEasy Reactive is.
-         *
-         * A supertype `@Path` found while neither is present is not used, since neither classic
-         * RESTEasy nor the specification inherits a class-level annotation; this logs an INFO line once per
-         * class, for at most [IGNORED_CLASS_PATH_LOG_LIMIT] classes over the life of this module,
-         * naming the class, so an adopter running another runtime can see why it declares no
-         * endpoints. Null when nothing applies.
-         */
         private fun resolveClassPath(
             type: TypeDescription,
             classLoader: ClassLoader?,
@@ -311,12 +232,6 @@ class JaxRsModule
             return null
         }
 
-        /**
-         * Jersey's own resolution order (`ModelHelper.getAnnotatedResourceClass`): walking up the
-         * superclass chain, the first class carrying `@Path` wins outright; failing that, the first
-         * direct interface carrying one, taken from the nearest class in the chain that has such an
-         * interface, [type] itself included.
-         */
         private fun findInheritedClassPath(
             type: TypeDescription,
             resolver: SupertypeResolver,
@@ -335,13 +250,6 @@ class JaxRsModule
             return foundInterfacePath
         }
 
-        /**
-         * Quarkus REST's resolution (`ResteasyReactiveScanner`): a class-level `@Path` on a direct
-         * abstract superclass, or failing that on an interface the class or a superclass implements
-         * directly. A concrete superclass's `@Path` is the superclass's own and is not inherited.
-         * Quarkus promotes the abstract class's subclass only when it is the only one, which this
-         * class-at-a-time reading cannot know (ADR 0020).
-         */
         private fun findQuarkusInheritedClassPath(
             type: TypeDescription,
             resolver: SupertypeResolver,
@@ -355,7 +263,6 @@ class JaxRsModule
             return null
         }
 
-        /** The verb for [source], or null if it carries neither a standard verb annotation nor a custom one. */
         private fun resolveVerb(source: AnnotationSource): String? {
             for (annotation in source.declaredAnnotations) {
                 val annotationType = annotation.annotationType
@@ -369,29 +276,17 @@ class JaxRsModule
             return null
         }
 
-        /** The raw `value` of a `@Path` annotation declared directly on [source], or null if there is none. */
         private fun pathValue(source: AnnotationSource): String? {
             val annotation = source.declaredAnnotations.firstOrNull { it.annotationType.name in PATH_NAMES } ?: return null
             return annotation.getValue("value").resolve(String::class.java)
         }
 
-        /** Whether [a] and [b] resolve to the same verb and the same `@Path` value, used to detect an interface conflict. */
         private fun sameVerbAndPath(
             a: AnnotationSource,
             b: AnnotationSource,
         ): Boolean = resolveVerb(a) == resolveVerb(b) && pathValue(a) == pathValue(b)
     }
 
-/**
- * Joins [classPath] and [methodPath], trimming surrounding slashes off each before joining so
- * neither an empty class-level `@Path` nor a missing one produces a doubled slash. Empty becomes
- * the root template `/`.
- *
- * Any regex constraint inside a `{name: pattern}` segment, such as JAX-RS's own `{id: \d+}`, is
- * left as written here: [dev.otherlode.registry.RouteTemplateNormalizer] strips it
- * later, from the verbatim template this function returns, the same way it already does for every
- * other framework's raw route spelling.
- */
 private fun combineTemplate(
     classPath: String,
     methodPath: String?,
@@ -400,13 +295,11 @@ private fun combineTemplate(
     return if (segments.isEmpty()) "/" else segments.joinToString("/", prefix = "/")
 }
 
-/** Whether [source] carries any annotation in either JAX-RS namespace, not only a verb or `@Path`. */
 private fun hasOwnJaxRsAnnotation(source: AnnotationSource): Boolean =
     source.declaredAnnotations.any { annotation ->
         NAMESPACES.any { namespace -> annotation.annotationType.name.startsWith("$namespace.") }
     }
 
-/** Whether [type] itself, ignoring any supertype, carries `@Path` or declares a method carrying `@Path` or a standard verb. */
 private fun declaresOwnPathOrVerb(type: TypeDescription): Boolean =
     pathAnnotated(type) || type.declaredMethods.any { pathAnnotated(it) || verbAnnotated(it) }
 
@@ -414,11 +307,6 @@ private fun pathAnnotated(source: AnnotationSource): Boolean = source.declaredAn
 
 private fun verbAnnotated(source: AnnotationSource): Boolean = source.declaredAnnotations.any { it.annotationType.name in VERB_NAMES }
 
-/**
- * Whether [type] is a JAX-RS resource in scope: it, or a supertype, carries a route annotation, and
- * every supertype it needs to be defined can be described or loaded. A supertype that can be
- * neither means [type] can never be defined, so it is not in scope.
- */
 private fun inScope(
     type: TypeDescription,
     cache: RouteAnnotationCache,
@@ -430,14 +318,6 @@ private fun inScope(
         false
     }
 
-/**
- * Whether any supertype of [type], superclass chain or interface graph, carries `@Path` or
- * declares a method carrying `@Path` or a standard verb. See [SKIPPED_SUPERTYPE_PREFIXES] for the
- * walk's bound. A supertype name being walked is not entered again, which guards against a
- * cyclical or diamond interface graph, and an answer that depended on that guard is not cached.
- * Throws [UndefinableTypeException] when a supertype the walk reaches can be neither described nor
- * loaded.
- */
 private fun hasInheritedPathOrVerb(
     type: TypeDescription,
     cache: RouteAnnotationCache,
@@ -468,7 +348,6 @@ private fun hasInheritedPathOrVerb(
     return resolver.interfaceErasures(type).any { walk(it) }
 }
 
-/** An access-ordered LRU of supertype name to whether that supertype or anything above it carries a JAX-RS route annotation. */
 private class RouteAnnotationCache : SupertypeCache() {
     private val entries =
         object : LinkedHashMap<String, Boolean>(16, 0.75f, true) {
@@ -487,7 +366,6 @@ private class RouteAnnotationCache : SupertypeCache() {
     }
 }
 
-/** Whether a loader can see a JAX-RS API, looked up once per loader and held weakly. */
 private class JaxRsLoaderGate : ElementMatcher<ClassLoader?> {
     private val answers = Collections.synchronizedMap(WeakHashMap<ClassLoader, Boolean>())
 
@@ -507,7 +385,6 @@ private fun sameSignature(
     b: MethodDescription,
 ): Boolean = a.internalName == b.internalName && a.descriptor == b.descriptor
 
-/** Whether a marker resource is visible on a loader, looked up once per loader and never loading a class. */
 private class MarkerPresence(
     private val marker: String,
 ) {
@@ -525,8 +402,6 @@ private class MarkerPresence(
 private val JERSEY_PRESENCE = MarkerPresence(JERSEY_MARKER_RESOURCE)
 private val RESTEASY_REACTIVE_PRESENCE = MarkerPresence(RESTEASY_REACTIVE_MARKER_RESOURCE)
 
-/** Whether Jersey is present on [classLoader] (the system loader when null). */
 private fun isJerseyPresent(classLoader: ClassLoader?): Boolean = JERSEY_PRESENCE.isPresentOn(classLoader)
 
-/** Whether RESTEasy Reactive's server classes are present on [classLoader] (the system loader when null). */
 private fun isRestEasyReactivePresent(classLoader: ClassLoader?): Boolean = RESTEASY_REACTIVE_PRESENCE.isPresentOn(classLoader)

@@ -4,31 +4,23 @@ import dev.otherlode.registry.DependencyRegistry
 import java.security.ProtectionDomain
 
 /**
- * Counts the distinct classes loaded from each dependency, from the loaded-class array the sweep
- * takes on every flush.
- *
- * Counts nothing until [DependencyRegistry.isListingComplete], so a jar on the startup classpath is
- * never registered as discovered by load; the first count after the listing completes picks up
- * everything already loaded. A name is added to its dependency's set once and stays there when the
- * class unloads, so a total never falls.
- *
- * Arrays, primitives, hidden classes, and classes with no protection domain or code source (the
- * bootstrap and platform loaders' classes) are skipped. A hidden class carries its host's
- * protection domain, so a lambda would otherwise count against its host's jar beyond the classes
- * that jar holds.
+ * Counts the distinct classes loaded from each dependency. Counts nothing until
+ * [DependencyRegistry.isListingComplete]. Arrays, primitives, hidden classes, and classes with no
+ * protection domain or code source are skipped. A class name stays in its dependency's set when
+ * the class unloads, so a total never falls.
  */
 class LoadedDependencyCounter internal constructor(
     private val registry: DependencyRegistry,
     private val resolve: (ProtectionDomain) -> Int?,
 ) {
-    /** Resolves classes by the [JarClassifier] rules, judging a jar the listing never saw under [includes] and [excludes]. */
+    /** Judges a jar the listing never saw by [JarClassifier] rules built from [includes] and [excludes]. */
     constructor(registry: DependencyRegistry, includes: List<String>, excludes: List<String>) :
         this(registry, DependencyResolver(registry, JarClassifier(includes, excludes))::resolve)
 
     /**
-     * Adds every class in [loaded] to the dependency it came from, once the listing is complete.
-     * Then it marks a counting generation ([DependencyRegistry.markCounted]). A jar this call
-     * registered takes that generation too. A call that throws partway marks nothing.
+     * Adds every class in [loaded] to the dependency it came from, then marks a counting generation
+     * ([DependencyRegistry.markCounted]). Does nothing until the listing is complete. A call that
+     * throws partway marks nothing.
      */
     fun count(loaded: Array<Class<*>>) {
         if (!registry.isListingComplete) return

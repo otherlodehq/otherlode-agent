@@ -10,26 +10,6 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import net.bytebuddy.jar.asm.ClassReader
 
-/**
- * Watches where the classes the include rules admit load from, and says when one loads from a root
- * the run's class listing did not read (ADR 0085).
- *
- * The listing hands its roots and names over through [listingRead] when it is complete. A class
- * counts when [TypeMatchPolicy.isIncluded] admits its name and it is not runtime-generated. A class
- * with a code source is judged by its location, compared once: a location seen by a counted class
- * is remembered, so a root that loads a thousand classes costs one comparison. A class with no code
- * source, as a loader that defines classes with no protection domain gives them, is judged by its
- * name: the listing lacks it, so it came from somewhere the listing did not read. What is seen
- * before the listing finished is judged when it does, and so is every class already loaded then,
- * through [listingRead]'s `loaded`. A class of the JDK says nothing, as the agent never instruments
- * one: a named module of the boot layer that the boot or platform loader defines, or whose name
- * starts with `java.` or `jdk.` and whose version is the JDK's own. An application module there, from an upgrade module path or a
- * linked image, is judged as any other class. A run whose listing never completes is never
- * blind.
- *
- * [isBlind] turns true once and stays true. Register this as a plain transformer: it reads the
- * protection domain and changes no class.
- */
 internal class ClassListingWatch(
     private val includes: List<String>,
     private val excludes: List<String>,
@@ -38,13 +18,10 @@ internal class ClassListingWatch(
     private val blind = AtomicBoolean(false)
     private val lock = Any()
 
-    /** Each location a counted class loaded from, with the first such class's name. */
     private val seen = ConcurrentHashMap<String, String>()
 
-    /** Counted classes with no code source, seen before the listing finished. Bounded like [seen]. */
     private val unlocated = ConcurrentHashMap.newKeySet<String>()
 
-    /** Set when [seen] or [unlocated] was full before the listing finished, so something went unjudged. */
     @Volatile
     private var overflowed = false
 
@@ -54,14 +31,8 @@ internal class ClassListingWatch(
     @Volatile
     private var listed: Set<String>? = null
 
-    /** Whether a class the include rules admit loaded from a root the listing did not read. */
     val isBlind: Boolean get() = blind.get()
 
-    /**
-     * Records the roots and names of a complete listing, and judges everything seen so far against
-     * them: what this transformer saw, and the classes in [loaded], which the JVM loaded before it
-     * was registered.
-     */
     fun listingRead(
         roots: Set<String>,
         names: Set<String>,
@@ -111,7 +82,6 @@ internal class ClassListingWatch(
         classfileBuffer: ByteArray,
     ): ByteArray? = transform(null, loader, className, classBeingRedefined, protectionDomain, classfileBuffer)
 
-    /** Whether [module] is a module of the JDK. */
     private fun isJdk(module: Module?): Boolean {
         if (module == null || !module.isNamed || module.layer !== ModuleLayer.boot()) return false
         val loader = module.classLoader
@@ -178,13 +148,12 @@ internal class ClassListingWatch(
         return Blind(className, null)
     }
 
-    /** Marks the run blind and logs it once, outside [lock], since logging can load classes. */
+    // Call outside the lock, since logging can load classes.
     private fun report(found: Blind?) {
         if (found == null || !blind.compareAndSet(false, true)) return
         log.log(Level.INFO, "otherlode: ${found.what}, so Otherlode removes no class from this environment while this run is live")
     }
 
-    /** Why the run is blind, as the log line says it. */
     private class Blind(
         val what: String,
     ) {
@@ -202,10 +171,8 @@ internal class ClassListingWatch(
     }
 
     private companion object {
-        /** The version every module of the JDK carries, read from `java.base`. */
         val JDK_VERSION: String? = Any::class.java.module.descriptor?.rawVersion()?.orElse(null)
 
-        /** Bounds what is remembered for a JVM that makes a loader and a location for every request. */
         const val MAX_LOCATIONS = 4096
     }
 }

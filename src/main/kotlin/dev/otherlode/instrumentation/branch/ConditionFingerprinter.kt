@@ -11,36 +11,30 @@ import net.bytebuddy.jar.asm.Opcodes
 import net.bytebuddy.jar.asm.Type
 
 /**
- * Builds each tracked branch site's condition fingerprint, as a second, independent `ClassReader`
- * pass over a class's original bytecode.
+ * Builds each tracked branch site's condition fingerprint from a class's original bytecode, in its own
+ * `ClassReader` pass ([analyze]) or teed into another visitor's pass.
  *
  * The fingerprint is the canonical text of the instructions from the last point in the method
  * where the operand stack was empty up to the site's own jump or switch. [BranchSiteAnalyzer]
  * attaches fingerprint `i` of a method to that method's `i`-th tracked site, in the same encounter
  * order it numbers sites itself, dropped sites included.
- *
- * This visits every method regardless of any method filter, since [BranchSiteAnalyzer] decides
- * afterwards which methods it kept sites for.
  */
 object ConditionFingerprinter {
-    /** A counter a compiler appends to a synthetic method's name, as in `access$000`. */
     private val TRAILING_COUNTER = Regex("""\$\d+$""")
 
-    /** A method name a compiler gave a lambda body: javac's `lambda$`, kotlinc's `$lambda$`, scalac's `$anonfun$`. */
     private fun isLambdaBodyName(name: String): Boolean = name.startsWith("lambda$") || "\$lambda\$" in name || "\$anonfun\$" in name
 
     /**
      * One method's ordered fingerprints and, for a switch site, its case keys. Both lists are
-     * indexed by encounter ordinal. [conditionOf] writes the condition of the site at an ordinal
-     * from the same window as its fingerprint, and gives an empty list when that site has no
-     * window or [ConditionWriter] cannot write it.
+     * indexed by encounter ordinal. [conditionOf] gives the condition of the site at an ordinal,
+     * or an empty list when that site has no window or [ConditionWriter] cannot write it.
      *
      * [unreadCollisionOutcomes] holds, by ordinal, the outcome offset of each `equals` check's
      * not-equal side that only a hash collision can reach, in a switch on `String.hashCode()` that
      * [SwitchLowering] could not read: 0 when the check jumps on not-equal, 1 when it falls through.
      *
-     * [stringHashCodeSwitches] holds the ordinal of each switch on `String.hashCode()`, by
-     * [SwitchLowering.switchesOnStringHashCode]. Its case keys are hash codes of strings.
+     * [stringHashCodeSwitches] holds the ordinal of each switch on `String.hashCode()`. Its case
+     * keys are hash codes of strings.
      */
     class MethodResult(
         val fingerprints: List<String?>,
@@ -75,14 +69,10 @@ object ConditionFingerprinter {
     )
 
     /**
-     * [language] is the class's source language, which decides how [MethodResult.conditionOf]
-     * writes a condition. [isEnum] tells whether a class, by internal name, is an enum, and
+     * Fingerprints every method of [classBytes], keyed by name and descriptor. [language] decides
+     * how a condition is written. [isEnum] tells whether a class, by internal name, is an enum, and
      * answers false when it cannot tell. [enumMappings] reads the enum map arrays another class
-     * declares, for [MethodResult.loweredSwitches]. [reader] reads [classBytes], for a caller that
-     * already holds one.
-     *
-     * This walks the class on its own. [BranchSiteAnalyzer] feeds a [FingerprintCollection] from its own walk
-     * instead, so the class is decoded once.
+     * declares. [reader] reads [classBytes], for a caller that already holds one.
      */
     fun analyze(
         classBytes: ByteArray,
@@ -117,15 +107,6 @@ object ConditionFingerprinter {
         return collection.results() ?: throw collection.failure!!
     }
 
-    /**
-     * The fingerprints of one class's methods, collected from a walk someone else drives.
-     * [methodVisitor] wraps each method's own visitor so it sees the same events that visitor does.
-     *
-     * An exception from the fingerprinting side is caught there: it switches this collection off for
-     * the rest of the class, [results] answers null, and the wrapped visitor never sees it. A failure
-     * costs fingerprints, never the walk. [newVisitor] builds a method's fingerprinting visitor
-     * around the callback that receives its result, and exists so a test can substitute one that fails.
-     */
     internal class FingerprintCollection(
         private val ownerInternalName: String,
         private val language: SourceLanguage,
@@ -135,14 +116,11 @@ object ConditionFingerprinter {
     ) {
         private val results = HashMap<Pair<String, String>, MethodResult>()
 
-        /** The exception that switched this collection off, or null while it is on. */
         var failure: Exception? = null
             private set
 
-        /** Every method's result keyed by name and descriptor, or null once fingerprinting has failed. */
         fun results(): Map<Pair<String, String>, MethodResult>? = if (failure == null) results else null
 
-        /** [delegate] with a fingerprinting visitor for the method beside it. [delegate] may be null. */
         fun methodVisitor(
             name: String,
             descriptor: String,
@@ -316,11 +294,6 @@ object ConditionFingerprinter {
         }
     }
 
-    /**
-     * One raw bytecode instruction, recorded with just enough data to compute its stack effect
-     * and its fingerprint token. Internal, not private, so [stackEffect]'s opcode families are
-     * each directly testable without building bytecode by hand for every case.
-     */
     internal sealed interface Insn {
         data class Plain(
             val opcode: Int,
@@ -395,13 +368,11 @@ object ConditionFingerprinter {
         ) : Insn
     }
 
-    /** A `visitLabel` event recorded in encounter order alongside the instruction list. */
     private class LabelMark(
         val label: Label,
         val instructionIndex: Int,
     )
 
-    /** One `LocalVariableTable` entry, resolved after the whole method body has been visited. */
     private class LocalVarEntry(
         val name: String,
         val descriptor: String,
@@ -410,12 +381,6 @@ object ConditionFingerprinter {
         val end: Label,
     )
 
-    /**
-     * Visits one method's instructions, and in [visitEnd] resolves stack depth, local variable
-     * names and the fingerprint window for each tracked site. [onResult] receives the method's
-     * fingerprints and case keys, one entry per tracked site in encounter order, and a way to
-     * write each site's condition later.
-     */
     private class ConditionFingerprintMethodVisitor(
         private val language: SourceLanguage,
         private val ownerInternalName: String,
@@ -565,9 +530,6 @@ object ConditionFingerprinter {
             val caseKeys = ArrayList<List<Int>?>(trackedSites)
             val stringHashCodeSwitches = HashSet<Int>()
 
-            // A forward jump or switch records the depth its target enters with, before that
-            // label is reached. A backward target is never looked up here, since this method has
-            // already moved past its position by the time the jump is visited.
             val forwardDepthOfLabel = mutableMapOf<Label, Int>()
 
             var depth: Int? = 0
@@ -655,8 +617,6 @@ object ConditionFingerprinter {
                     },
                     windowStartOf = { windowStartBySite[it] },
                 )
-            // With no local variable table, every local looks like a compiler temporary, so no
-            // collision side is taken for an unread lowering.
             val isCompilerTemp = { slot: Int, index: Int -> localVars.isNotEmpty() && localAt(slot, index) == null }
             val scan = if (hasSwitch) SwitchLowering.scan(insns, instructionIndexOfLabel, depthAt, enumMappings, isCompilerTemp) else null
             val loweredSwitches =
@@ -691,13 +651,6 @@ object ConditionFingerprinter {
             )
         }
 
-        /**
-         * The switches [SwitchLowering] reads in this method, [readings], by site ordinal. A switch whose
-         * lowering names an instruction that is not a tracked site is left out. A rebuilt site's
-         * fingerprint is its [SwitchLowering.Reading.kindToken] followed by the subject's window,
-         * with any enum map read replaced by a token naming the enum class. It is null when no
-         * point before the subject is known to leave the stack empty.
-         */
         private fun loweredSwitches(
             readings: List<SwitchLowering.Reading>,
             view: MethodInstructionsView,
@@ -759,7 +712,6 @@ object ConditionFingerprinter {
             }
         }
 
-        /** Whether [insn] is a site [BranchSiteAnalyzer] tracks: a [ConditionalJump] or any switch. */
         private fun isTrackedSite(insn: Insn): Boolean =
             when (insn) {
                 is Insn.Jump -> ConditionalJump.isTracked(insn.opcode)
@@ -767,7 +719,6 @@ object ConditionFingerprinter {
                 else -> false
             }
 
-        /** [BranchProbeMethodVisitor]'s case order for a switch: label-array order, skipping entries whose label is the default. */
         private fun caseKeysOf(insn: Insn): List<Int>? =
             when (insn) {
                 is Insn.TableSwitch -> {
@@ -787,11 +738,6 @@ object ConditionFingerprinter {
                 }
             }
 
-        /**
-         * The fingerprint text for the window `[zeroPoint, siteIndex]`, or null when [zeroPoint]
-         * is null: the site was reached while the operand stack depth was unknown, or no earlier
-         * point in the method is known to have left the stack empty.
-         */
         private fun windowFingerprint(
             zeroPoint: Int?,
             siteIndex: Int,
@@ -806,7 +752,6 @@ object ConditionFingerprinter {
             return windowBuilder.toString()
         }
 
-        /** The jump or switch targets, forward or backward, an instruction hands the stack depth on to. */
         private fun jumpTargets(insn: Insn): List<Label> =
             when (insn) {
                 is Insn.Jump -> listOf(insn.target)
@@ -815,12 +760,6 @@ object ConditionFingerprinter {
                 else -> emptyList()
             }
 
-        /**
-         * Opcodes after which control never falls through to the next instruction: `GOTO`,
-         * `ATHROW`, every `xRETURN`, a switch, and `RET`. `RET` returns to its `JSR` caller rather
-         * than falling through, the same as a method return; `JSR`/`RET` are obsolete bytecode
-         * this agent does not expect to instrument.
-         */
         private fun hasNoFallThrough(insn: Insn): Boolean =
             when (insn) {
                 is Insn.Jump -> insn.opcode == Opcodes.GOTO
@@ -831,12 +770,6 @@ object ConditionFingerprinter {
             }
     }
 
-    /**
-     * The stack effect of one instruction, in JVM stack words (a `long` or `double` counts as
-     * two). ByteBuddy's shaded ASM carries no asm-analysis `Analyzer` or `Frame`, so this is a
-     * hand-written table over each opcode family; the agent's own `AnalyzerAdapter` tracks frames for
-     * the branch rewrite, not stack depth for a fingerprint.
-     */
     internal fun stackEffect(insn: Insn): Int =
         when (insn) {
             is Insn.Plain -> plainStackEffect(insn.opcode)
@@ -977,7 +910,7 @@ object ConditionFingerprinter {
         descriptor: String,
     ): Int {
         val packed = Type.getArgumentsAndReturnSizes(descriptor)
-        // ASM's own packing bakes in an implicit receiver word, which INVOKESTATIC never pushes.
+        // ASM's packed size counts an implicit receiver word, which INVOKESTATIC never pushes.
         val argumentsSize = if (opcode == Opcodes.INVOKESTATIC) (packed ushr 2) - 1 else packed ushr 2
         val returnSize = packed and 0x03
         return returnSize - argumentsSize
@@ -1014,14 +947,12 @@ object ConditionFingerprinter {
             else -> 1
         }
 
-    /** The canonical text for one instruction in a fingerprint window. */
     private fun tokenFor(
         insn: Insn,
         instructionIndex: Int,
         localNameAt: (varIndex: Int, instructionIndex: Int) -> String?,
     ): String = StringBuilder().also { appendToken(it, insn, instructionIndex, localNameAt) }.toString()
 
-    /** Appends [tokenFor]'s text for [insn] to [out]. */
     private fun appendToken(
         out: StringBuilder,
         insn: Insn,
@@ -1113,15 +1044,6 @@ object ConditionFingerprinter {
         }
     }
 
-    /**
-     * `INVOKEDYNAMIC`'s call site name and descriptor, the bootstrap handle's owner and name, and
-     * every bootstrap argument, so a string concatenation's constant text and a method
-     * reference's target are part of the condition. A `Handle` argument naming a lambda body
-     * leaves its name out: javac, kotlinc and scalac name it after the enclosing method and a
-     * counter (`lambda$foo$0`, `foo$lambda$0`, `$anonfun$foo$1`) that shifts when another lambda
-     * is added elsewhere in the class. Any other handle keeps its name, less a trailing
-     * `$<digits>`.
-     */
     private fun invokeDynamicToken(insn: Insn.InvokeDynamic): String {
         val args =
             insn.bootstrapMethodArguments.joinToString(",") { argument ->
@@ -1134,7 +1056,6 @@ object ConditionFingerprinter {
         return "INVOKEDYNAMIC ${insn.name} ${insn.descriptor} ${insn.bootstrapMethod.owner}.${insn.bootstrapMethod.name} [$args]"
     }
 
-    /** An `LDC` constant's tag and value. A string escapes `;` and `\` so it cannot be mistaken for token structure. */
     private fun ldcToken(value: Any?): String =
         when (value) {
             is Int -> "I:$value"

@@ -9,8 +9,8 @@ import net.bytebuddy.asm.Advice;
  * route exposes no handlers, so this is how the module learns them. The event is {@code
  * {"handler", router, route, handler}}.
  *
- * <p>This method is deliberately one flat body with no private helper method of its own; see the
- * Spring MVC module's {@code RegisterHandlerMethodAdvice} Javadoc for why.
+ * <p>The advice body is inlined into the woven method, so {@code onExit} stays one flat body with
+ * no helper methods.
  */
 public class HandlerAddedAdvice {
     private static final String MODULE = "vertx-web";

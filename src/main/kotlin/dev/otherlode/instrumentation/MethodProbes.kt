@@ -12,23 +12,11 @@ import net.bytebuddy.jar.asm.Opcodes
 import net.bytebuddy.jar.asm.Type
 import net.bytebuddy.pool.TypePool
 
-/**
- * The entry and omission probes, written as ASM events at the first instruction of a method. Both
- * leave the operand stack as they found it and use no local, label or jump, so a method's frames
- * and line numbers are the received ones (ADR 0061).
- *
- * An entry probe is `probes[slot]++`. An omission probe, at the top of a Kotlin `$default` method,
- * adds the caller's mask bit for each optional parameter to that parameter's slot, so a supplied
- * parameter adds zero. Both are the same non-atomic read-modify-write as every other probe (ADR 0003).
- */
 internal object MethodProbes {
-    /** Deepest operand stack either probe reaches: the array, the index, the loaded `long`, then a `long` or an `int` and a shift count. */
     const val PROBE_STACK = 6
 
-    /** The first 32 optional parameters of a `$default` method are counted: one mask `int`. */
     private const val MASK_BITS = 32
 
-    /** The wrapper that writes `probes[slot]++` at the entry of each method [slotBySignature] names. */
     fun entry(
         form: ProbeArrayLoad,
         slotBySignature: Map<Pair<String, String>, Int>,
@@ -49,7 +37,6 @@ internal object MethodProbes {
             }
         }
 
-    /** The wrapper that writes the omission probes at the entry of each `$default` method [bindings] names. */
     fun omission(
         form: ProbeArrayLoad,
         bindings: Map<Pair<String, String>, DefaultSiteBinding>,
@@ -72,7 +59,6 @@ internal object MethodProbes {
             }
         }
 
-    /** The local variable slot of the parameter at [parameterIndex], counting `this` and two slots for a `long` or `double`. */
     private fun maskLocal(
         access: Int,
         descriptor: String,

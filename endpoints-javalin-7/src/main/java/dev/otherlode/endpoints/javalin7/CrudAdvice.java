@@ -6,20 +6,16 @@ import io.javalin.apibuilder.CrudHandler;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto {@code ApiBuilder.crud(String, CrudHandler, RouteRole...)}, which the other
- * {@code crud} overloads call. It registers the five endpoints of a {@code CrudHandler} before it
- * returns, each through a lambda or a method reference of Javalin's, so the lambda's own name
- * would join to nothing of the application's. The entry opens a registration scope on this
- * thread that holds the handler and the two paths {@code crud} registers under, which are the
- * prefixed path and that path without its last segment's parameter. The exit closes it, also when
- * {@code crud} throws. {@link RegisterEndpointAdvice} reads the scope for each registration.
- *
- * <p>This method is deliberately one flat body with no private helper method of its own; see the
- * Spring MVC module's {@code RegisterHandlerMethodAdvice} Javadoc for why.
+ * Woven onto {@code ApiBuilder.crud(String, CrudHandler, RouteRole...)}. The entry opens a
+ * registration scope on this thread that holds the handler and the two paths {@code crud}
+ * registers under. The exit closes it, also when {@code crud} throws. {@link
+ * RegisterEndpointAdvice} reads the scope for each registration.
  */
 public class CrudAdvice {
     private static final String MODULE = "javalin-7";
 
+    // Advice inlines only this method's bytecode, so a helper call here would stay a real call that
+    // the target loader cannot resolve. Keep the body flat.
     @Advice.OnMethodEnter(suppress = Throwable.class)
     public static void onEnter(@Advice.Argument(0) String path, @Advice.Argument(1) CrudHandler crudHandler) {
         String itemPath = null;

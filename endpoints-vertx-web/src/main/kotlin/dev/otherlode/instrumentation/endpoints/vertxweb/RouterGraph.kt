@@ -4,17 +4,7 @@ import java.lang.ref.WeakReference
 
 private const val BLOCKING_HANDLER_DECORATOR = "io.vertx.ext.web.impl.BlockingHandlerDecorator"
 
-/**
- * What the module has learned about the routers of one JVM from the events its advice raises:
- * which route mounts which router, each route's regex source and context handlers, and when each
- * router last changed. Objects are held weakly, so a router an application discards is forgotten.
- *
- * A change to a router moves a generation counter. A root router's request compares it with the
- * generation the root was last declared at, and only a root with a changed router among those it
- * reached declares again.
- */
 internal class RouterGraph {
-    /** What the events say about one route. Read and written under the graph's lock. */
     internal class RouteInfo {
         var regexSource: String? = null
         var handlerCount = 0
@@ -43,7 +33,6 @@ internal class RouterGraph {
     private val routes = WeakIdentityMap<RouteInfo>()
     private val roots = WeakIdentityMap<RootRecord>()
 
-    /** Applies one event an advice raised; the first element names its kind. */
     fun apply(event: Array<*>) {
         synchronized(lock) {
             when (event[0]) {
@@ -91,14 +80,9 @@ internal class RouterGraph {
         }
     }
 
-    /** What the events said about [route], or null when none named it. Call it only from the `declare` function [declareFrom] runs. */
+    // Call only from the declare callback, which runs under the graph lock.
     fun infoOf(route: Any): RouteInfo? = routes[route]
 
-    /**
-     * Runs [declare] for [root] when it has never been declared, or a router it reached changed
-     * since. [declare] returns the routers it reached. A root that is current costs a map lookup
-     * and two volatile reads.
-     */
     fun declareFrom(
         root: Any,
         declare: (Any) -> List<Any>,

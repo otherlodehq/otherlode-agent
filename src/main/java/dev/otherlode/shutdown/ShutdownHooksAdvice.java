@@ -7,8 +7,7 @@ import net.bytebuddy.asm.Advice;
 /**
  * Woven onto the entry of {@code java.lang.ApplicationShutdownHooks.runHooks}. It hands the
  * class's own {@code hooks} field, the table of application hooks, to {@link
- * OtherlodeShutdownHooks#offer}. The field is read directly, with no reflection, and nothing in
- * {@code java.base} is opened to any module.
+ * OtherlodeShutdownHooks#offer}.
  *
  * <p>This advice is inlined into {@code java.base}, so it may only call the bootstrap seam.
  */

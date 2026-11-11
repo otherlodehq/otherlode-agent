@@ -4,63 +4,37 @@ import dev.otherlode.export.ConditionPart
 import dev.otherlode.export.UnreadShape
 
 /**
- * One tracked branch point found in a class: either a two-outcome [ConditionalJump] or a
+ * One tracked branch point found in a class: a two-outcome conditional jump or a
  * `TABLESWITCH`/`LOOKUPSWITCH`.
  *
- * [siteIndex] is assigned once per class by [BranchSiteAnalyzer], in the class file's encounter
- * order across all its methods. [BranchProbeMethodVisitor] numbers the same sites by their ordinal
- * within each method, with no shared state, walking the received bytes; the two agree because
- * both track the same instructions, and [SitePairing] has checked that each probed method's
- * tracked instructions line up one for one.
- *
- * [outcomeCount] is the number of outcomes this site numbers. A conditional jump has 2 (taken,
- * not-taken). A switch has the case count plus one for the default.
- *
- * [dropReason] is set when the site gets no probe at all; see [BranchDropReason].
- * [line] and [inlinedFromClassName] describe an inlined copy: a site inside code kotlinc copied
- * from an inline function's body into this site's method. [inlinedFromClassName] is null for the
- * class's own code, and set to the origin class, dotted, otherwise; [line] is the origin's own
- * source line for a kept copy, and this method's own line otherwise. A dropped copy carries its
- * origin too, so that [BranchKeys] tells it apart from the class's own code whatever the scope.
- *
- * [conditionFingerprint] is the site's canonical fingerprint text, built by [ConditionFingerprinter]
- * from the instructions between the last point the operand stack was empty and the site's own jump
- * or switch. It is null when the site cannot be fingerprinted with confidence.
- *
- * [caseKeys] is set only for a switch: one entry per case outcome, in the exact order
- * [BranchProbeMethodVisitor] numbers case outcomes, so `caseKeys.size + 1 == outcomeCount` holds.
- * Null for a conditional, and null for a switch in a method [ConditionFingerprinter] could not
- * read.
- *
- * [isSwitch] is true for a `TABLESWITCH` or `LOOKUPSWITCH`, and false for a conditional jump. A
- * switch with one case also has two outcomes, so [outcomeCount] alone cannot tell the two apart.
- *
- * [condition] is the expression the site tests, written by [ConditionWriter] from the same window
- * as [conditionFingerprint]. It is empty for a dropped site and for a site the writer could not
- * write.
- *
- * [caseLabels] is set only for a switch [SwitchLowering] rebuilt from a string or enum lowering:
- * one label per case outcome, in the same order as [caseKeys], each the constant, literal or type
- * the source names. [throwingDefault] is true when that switch's default only throws an exception
- * the compiler added. The default then keeps its branch index but gets no probe, and the site does
- * not list it.
- *
- * [unprobedOutcome] is set for a conditional whose outcome at that offset only a hash collision can
- * reach: the not-equal side of the last `equals` check in a hash bucket of kotlinc's string `when`
- * or scalac's string `match`. It is treated the same way as a throwing default.
- *
- * [unreadShape] is set on a kept site whose operand comes from a continuation's `label` field or
- * from the suspended marker, in a suspend-shaped method, in a shape [CoroutineShapes] does not
- * read. Every outcome of the site is then an unread shape of that family. [unreadOutcome] is the
- * offset of the one outcome of a string switch lowering that [SwitchLowering] could not read,
- * which only a hash collision can reach; it is an unread shape of
- * [UnreadShape.STRING_SWITCH] and still gets its probe.
- *
- * [stringHashCodeSwitch] is true for a switch on the value `String.hashCode()` returns, so each of
- * its [caseKeys] is the hash code of a string. The agent drops that switch from a lowering
- * [SwitchLowering] reads, so only a switch the agent left plain reaches the wire with it set. It
- * comes from the same [ConditionFingerprinter] result as [caseKeys], so a switch with no case keys
- * is never marked.
+ * @property siteIndex Assigned once per class by [BranchSiteAnalyzer], in the class file's encounter
+ * order across all its methods.
+ * @property outcomeCount A conditional jump has 2 outcomes. A switch has its case count plus one for the default.
+ * @property dropReason Set when the site gets no probe at all; see [BranchDropReason].
+ * @property line The source line of the site. For a kept inlined copy it is the origin's own line.
+ * @property inlinedFromClassName The dotted origin class when the site is a copy of an inline
+ * function's body kotlinc planted in this method, otherwise null. A dropped copy carries it too.
+ * @property conditionFingerprint The site's canonical fingerprint text, built by
+ * [ConditionFingerprinter], or null when the site cannot be fingerprinted with confidence.
+ * @property caseKeys For a switch, one entry per case outcome, in the order [BranchProbeMethodVisitor]
+ * numbers case outcomes, so `caseKeys.size + 1 == outcomeCount`.
+ * Null for a conditional and for a switch [ConditionFingerprinter] could not read.
+ * @property isSwitch True for a `TABLESWITCH` or `LOOKUPSWITCH`. A one-case switch also has two outcomes.
+ * @property condition The expression the site tests, written by [ConditionWriter]. Empty for a
+ * dropped site and for a site the writer could not write.
+ * @property caseLabels For a switch [SwitchLowering] rebuilt from a string or enum lowering, one
+ * label per case outcome, in the order of [caseKeys].
+ * @property throwingDefault True when a rebuilt switch's default only throws an exception the
+ * compiler added. The default keeps its branch index but gets no probe.
+ * @property unprobedOutcome The offset of a conditional's outcome that only a hash collision can
+ * reach. It is treated like a throwing default.
+ * @property unreadShape Set on a kept site in a suspend-shaped method whose operand comes from a
+ * continuation's `label` field or the suspended marker, in a shape [CoroutineShapes] does not read.
+ * Every outcome of the site is then an unread shape of that family.
+ * @property unreadOutcome The offset of the one outcome of a string switch lowering that
+ * [SwitchLowering] could not read. It is an unread shape of [UnreadShape.STRING_SWITCH] and still gets its probe.
+ * @property stringHashCodeSwitch True for a switch on `String.hashCode()`, so each of [caseKeys] is
+ * a string's hash code.
  */
 data class BranchSite(
     val methodName: String,
@@ -81,10 +55,7 @@ data class BranchSite(
     val unreadOutcome: Int? = null,
     val stringHashCodeSwitch: Boolean = false,
 ) {
-    /**
-     * The offsets of the outcomes that get a probe, in offset order: every outcome less a
-     * throwing default and an [unprobedOutcome]. Empty for a dropped site.
-     */
+    /** The offsets of the outcomes that get a probe, in offset order. Empty for a dropped site. */
     val probedPositions: List<Int>
         get() =
             when {

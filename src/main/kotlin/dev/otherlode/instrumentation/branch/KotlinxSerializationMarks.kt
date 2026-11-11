@@ -13,36 +13,7 @@ import net.bytebuddy.jar.asm.Opcodes
 import net.bytebuddy.jar.asm.signature.SignatureReader
 import net.bytebuddy.jar.asm.signature.SignatureVisitor
 
-/**
- * The kotlinx.serialization compiler plugin's output, marked from bytecode shape alone (ADR 0078).
- * Four kinds of class are read:
- *
- * - A `$serializer` class that [serializerClass] accepts. The K2 frontend marks it synthetic, so
- *   only the K1 frontend, which Kotlin 1.9 and every release under `-language-version 1.9` use,
- *   leaves it to probe. Its `serialize`, `deserialize`, `childSerializers`, `getDescriptor`,
- *   `typeParametersSerializers`, constructors and `getTypeSerialN` are [GeneratedBy.KOTLINX_SERIALIZATION].
- * - The companion, or the object, of a serializable class whose `serializer()` takes one
- *   `KSerializer` per type parameter, as [companionSerializers] reads it. The plugin refuses to
- *   compile a `serializer()` of that descriptor the adopter wrote there, so its body need not be
- *   read. `generatedSerializer()` beside `@KeepGeneratedSerializer` is read by its body.
- * - A class-form lambda that builds the lazy cached serializer, as [lambdaClass] reads it from the
- *   outer class's type initializer.
- * - A `@Serializer(forClass = ...)` object, whose `serialize`, `deserialize` and `getDescriptor`
- *   are [UnreadShape.KOTLINX_SERIALIZER_OBJECT]: the plugin fills in the ones the adopter did not
- *   write, and nothing in the bytecode tells which.
- *
- * A class is serializable when it carries `@Serializable`, or an annotation whose own class
- * carries `@MetaSerializable`. An annotation the class file does not keep, and a class compiled
- * without the plugin, are outside what these rules can see.
- *
- * Every shape was read with `javap` from kotlinc 1.9.25, 2.1.21, 2.2.21 and 2.4.20, each with its
- * own plugin. kotlinx is the adopter's library and the agent does not relocate it. The names are
- * still built at run time: `shadowJar` rewrites any string in the agent's own classes that starts
- * with `kotlin`, which includes `kotlinx`. Names under `kotlin` itself are matched by shape for the
- * same reason, as [BranchSiteAnalyzer] matches `kotlin.Metadata`.
- */
 internal object KotlinxSerializationMarks {
-    /** The marks one class gets. */
     class Result(
         val generated: Map<Pair<String, String>, GeneratedBy>,
         val unread: Map<Pair<String, String>, UnreadShape>,
@@ -52,6 +23,7 @@ internal object KotlinxSerializationMarks {
         }
     }
 
+    // shadowJar rewrites any string in the agent's classes that starts with "kotlin", so kotlinx names are built at run time.
     private val ROOT = String(charArrayOf('k', 'o', 't', 'l', 'i', 'n', 'x'))
     private val SERIALIZATION = "$ROOT/serialization"
     private val K_SERIALIZER = "$SERIALIZATION/KSerializer"
@@ -88,12 +60,6 @@ internal object KotlinxSerializationMarks {
     private const val TYPE_SERIAL_PREFIX = "typeSerial"
     private const val CLINIT = "<clinit>"
 
-    /**
-     * What the plugin made in the class [internalClassName]. [classBytes] is the class,
-     * [methodAccess] its declared methods, and [lookup] reads another class by internal name. The
-     * result is empty without reading anything when the class has none of the outlines the four
-     * rules look for.
-     */
     fun of(
         classBytes: ByteArray,
         internalClassName: String,
@@ -210,7 +176,6 @@ internal object KotlinxSerializationMarks {
         }
     }
 
-    /** Whether [profile] carries `@Serializable`, or an annotation whose class carries `@MetaSerializable`, read through [lookup]. */
     private fun isSerializable(
         profile: Profile,
         lookup: (String) -> ByteArray?,
@@ -221,14 +186,6 @@ internal object KotlinxSerializationMarks {
                     lookup.profileOf(descriptor.substring(1, descriptor.length - 1))?.annotations?.contains(META_SERIALIZABLE_DESC) == true
             }
 
-    /**
-     * The class whose `serializer()` [candidate] holds: [candidate] itself when it is a serializable
-     * object, or a serializable companion; otherwise the serializable class that holds [candidate]
-     * as its companion. A companion sits in a static field of its outer class under its own simple
-     * name, and it has a companion's outline, as [hasOnlyCompanionConstructors] reads it. Null for
-     * anything else, such as a plain class with a `serializer()` of its own, or another class,
-     * interface or enum the adopter nests and holds in a companion property of the same name.
-     */
     private fun serializableOwnerOf(
         candidate: Profile,
         lookup: (String) -> ByteArray?,
@@ -256,11 +213,6 @@ internal object KotlinxSerializationMarks {
         }
     }
 
-    /**
-     * Whether [profile] has the outline kotlinc gives every companion: a final class that is no
-     * enum, abstract class or interface, with a private no-argument constructor and at most one
-     * other, a synthetic one taking a `DefaultConstructorMarker` that is not deprecated.
-     */
     private fun hasOnlyCompanionConstructors(profile: Profile): Boolean {
         val notCompanionKinds = Opcodes.ACC_ENUM or Opcodes.ACC_ABSTRACT or Opcodes.ACC_INTERFACE
         if (profile.access and Opcodes.ACC_FINAL == 0 || profile.access and notCompanionKinds != 0) return false
@@ -306,7 +258,6 @@ internal object KotlinxSerializationMarks {
             if (isSerializable(owner, lookup)) {
                 listOf(owner) + companions
             } else {
-                // A serializable companion of a plain class has its cached serializer built in the class's type initializer.
                 val serializableCompanions = companions.filter { isSerializable(it, lookup) }
                 if (serializableCompanions.isEmpty()) emptyList() else listOf(owner) + serializableCompanions
             }
@@ -381,7 +332,6 @@ internal object KotlinxSerializationMarks {
         }
     }
 
-    /** Whether [descriptor] is `(Encoder, value)V` with exactly one value of any type, as `KSerializer.serialize` is. */
     private fun isEncoderAndOneValue(descriptor: String): Boolean {
         val prefix = "($ENCODER_DESC"
         if (!descriptor.startsWith(prefix) || !descriptor.endsWith(")V")) return false
@@ -550,7 +500,6 @@ internal object KotlinxSerializationMarks {
         val methods: List<MethodInfo>,
     )
 
-    /** One instruction a method body holds; [op] is -1 for a kind of instruction no shape here uses. */
     private class Insn(
         val op: Int,
         val owner: String = "",

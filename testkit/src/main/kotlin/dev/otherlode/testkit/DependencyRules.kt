@@ -2,31 +2,17 @@ package dev.otherlode.testkit
 
 import dev.otherlode.export.DependencyDiscoverySource
 
-/*
- * The collector's dependency rules, applied within one test JVM. A copy of the demo stub
- * collector's `DependencyReport.kt`, kept separate because the demo is not a library, the precedent
- * [OtherlodeTestCollector.unreachedClusters] set for the call-graph rule. The two must give the
- * same answer for the same input: `DependencyRulesTest` ports the demo's `DependencyReportTest`
- * case for case, so a change to one rule set without the other shows up as a failing test in one of
- * them.
- */
-
-/** One library a dependency carries, as one instance's listing named it. [groupId] is empty for a filename-derived identity. */
+// Mirrors the demo's DependencyReport.kt rule for rule: a change to one needs the same change in the other.
 internal data class DependencyIdentityView(
     val groupId: String,
     val artifactId: String,
     val version: String,
 ) {
-    /**
-     * `group:artifact`, the cross-instance name, with `\`, `:` and `,` in either id escaped by a
-     * backslash as the server escapes them (its ADR 0086).
-     */
     val key: String get() = "${escape(groupId)}:${escape(artifactId)}"
 
     private fun escape(id: String) = id.replace("\\", "\\\\").replace(":", "\\:").replace(",", "\\,")
 }
 
-/** One instance's `DependencyLocation`, with that instance's own [dependencyId]. */
 internal data class DependencyView(
     val dependencyId: Int,
     val identities: List<DependencyIdentityView>,
@@ -34,7 +20,6 @@ internal data class DependencyView(
     val classCount: Int?,
     val location: String,
 ) {
-    /** The distinct [DependencyIdentityView.key]s, sorted and joined with `,`, which name the dependency across instances. */
     val identityKey: String get() =
         identities
             .map { it.key }
@@ -43,29 +28,19 @@ internal data class DependencyView(
             .joinToString(",")
 }
 
-/** Where one referenced class name lives on one instance: a dependency id, or absent. */
 internal data class ExternalClassView(
     val dependencyId: Int?,
     val absent: Boolean,
 )
 
-/** Which payload a [HeldReferences] came from, which decides whether it can be live. */
 internal enum class ReferenceOrigin {
-    /** A METHOD probe's `referenced_classes`: live when the method has hits on any instance. */
     MANIFEST_METHOD,
 
-    /** A class's `ClassReferences`: live when the instance's manifest names the class, since it loaded. */
     MANIFEST_CLASS,
 
-    /** A declared method or class in the static baseline: never live on its own. */
     BASELINE,
 }
 
-/**
- * The out-of-scope class names one site in the adopter's code references. [methodName] and
- * [methodDescriptor] are null for a class-level site. [inline] marks an inline method, whose own
- * references never count, since its Kotlin callers carry copies of them.
- */
 internal data class HeldReferences(
     val className: String,
     val methodName: String?,
@@ -76,11 +51,6 @@ internal data class HeldReferences(
     val hits: Long = 0L,
 )
 
-/**
- * Everything one instance said about dependencies. [baselineComplete] is true only when the
- * instance sent at least one static scan and every chunk of it arrived. [loadedClassNames] is every
- * class the instance's manifest named, so every class that loaded.
- */
 internal data class InstanceDependencyView(
     val instanceId: String,
     val referencesRecorded: Boolean,
@@ -92,7 +62,6 @@ internal data class InstanceDependencyView(
     val loadedClassNames: Set<String> = emptySet(),
 )
 
-/** One dependency merged across instances by its identity key, with its status. */
 internal data class DependencyFinding(
     val identityKey: String,
     val status: DependencyUsage,
@@ -104,34 +73,12 @@ internal data class DependencyFinding(
     val sites: List<DependencyReferenceSite>,
 )
 
-/**
- * The rules' output. [referencesUnavailable] is true when no instance recorded references, so
- * nothing past loaded or unloaded is claimed.
- */
 internal data class DependencyReport(
     val findings: List<DependencyFinding>,
     val absentReferences: List<AbsentReference>,
     val referencesUnavailable: Boolean,
 )
 
-/**
- * Applies the dependency rules across [instances]. A dependency every listing counted no class in is
- * resources only, and nothing more is claimed. Otherwise it is unloaded when some instance listed
- * it from the startup classpath and no instance loaded a class from it. Past that, only the
- * instances that list it and record references are consulted, and with none it reads as loaded: a
- * reference is a referenced class whose `ExternalClass` mapping on that instance names the
- * dependency, and it is live when held by a non-inline method with hits on any instance or by a
- * class that loaded. Baseline references are never live. A baseline reference held by a class in
- * [failedClassNames] is a failed site when its instance's baseline is complete, since that is
- * the scan the server reads. A dependency with a failed site and no live reference is failed to
- * load. A class that any instance loaded is never failed,
- * even when it is in [failedClassNames]. A class in [failedToInitializeClassNames] loaded but can
- * never run: its class-level reference is not live, and a reference of its methods is live only
- * through a hit. Such a site with no live reference is a failed-to-initialise site, and a
- * dependency with one and no live reference, and no failed-to-load site, is failed to initialise.
- * With a complete baseline from every one of those instances, a dependency with no reference is unreferenced and one with references but no live
- * one is unreached; otherwise the two merge into no live reference, which is true either way.
- */
 internal fun computeDependencyReport(
     instances: List<InstanceDependencyView>,
     failedClassNames: Set<String> = emptySet(),
@@ -183,8 +130,6 @@ internal fun computeDependencyReport(
                     absentSites.getOrPut(referenced) { mutableSetOf() } += site
                     continue
                 }
-                // A mapping to no known dependency is a jar of the adopter's own or an agent jar,
-                // and neither is a dependency.
                 val identityKey = mapping.dependencyId?.let(identityKeys::get) ?: continue
                 referencesByDependency.getOrPut(identityKey) { mutableSetOf() } += site to liveSite
             }
@@ -198,8 +143,6 @@ internal fun computeDependencyReport(
             .map { (identityKey, listings) ->
                 val loaded = listings.maxOf { (instance, dependency) -> instance.loadedClassesTotal[dependency.dependencyId] ?: 0L }
                 val references = referencesByDependency[identityKey].orEmpty()
-                // Only an instance that lists the dependency can hold a reference to it, so only
-                // those decide whether levels 2 and 3 apply and whether the baseline splits them.
                 val judging = listings.map { (instance, _) -> instance }.filter { it.referencesRecorded }
                 val status =
                     when {

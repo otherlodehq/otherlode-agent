@@ -13,17 +13,14 @@ import dev.otherlode.export.BranchSite as BranchSitePayload
 /**
  * One outcome of a [KeptBranchSite]: its class-wide [branchIndex], its [role] in the site, the
  * [caseKey] of a [BranchRole.CASE] when the switch's case keys are known, and its [branchKey] when
- * [BranchKeys] can name it. [guardedLines] and [partlyGuardedLines] are its guarded code, from
- * [GuardAnalysis].
+ * one can be named. [guardedLines] and [partlyGuardedLines] are its guarded code.
  *
  * [caseLabel] is the source's label for a [BranchRole.CASE] of a rebuilt switch, and empty
  * otherwise. Such a case has no [caseKey].
  *
- * [routine] is the outcome's routine kind from [RoutineClassifier], or [RoutineKind.NONE].
- *
- * [unreadShape] says the outcome sits in compiler output the agent does not read, or is
- * [UnreadShape.NONE]. An outcome is routine or an unread shape, so [routine] is [RoutineKind.NONE]
- * whenever this is set.
+ * [routine] is the outcome's routine kind, or [RoutineKind.NONE]. [unreadShape] says the outcome
+ * sits in compiler output the agent does not read, or is [UnreadShape.NONE]. [routine] is
+ * [RoutineKind.NONE] whenever [unreadShape] is set.
  */
 data class KeptBranchOutcome(
     val branchIndex: Int,
@@ -48,7 +45,7 @@ data class KeptBranchSite(
     val outcomes: List<KeptBranchOutcome>,
     val guard: Int? = null,
 ) {
-    /** This site as the manifest and the static baseline send it. */
+    /** This site as the wire payload. */
     fun toPayload(): BranchSitePayload =
         BranchSitePayload(
             siteIndex = site.siteIndex,
@@ -81,20 +78,6 @@ data class KeptBranchSite(
         }
 
     companion object {
-        /**
-         * The kept sites of [sites], one class's analysed branch sites in [BranchSite.siteIndex]
-         * order, with each outcome numbered and keyed. [className] is the class's own name,
-         * dotted. [guards] holds what [GuardAnalysis] found for each site, by site index. A site
-         * it has no entry for has no guard, guards no lines, and has no routine outcome.
-         *
-         * Each site's first branch index comes from [firstBranchIndexes]. A dropped site is not
-         * listed, and neither is a throwing default or a [BranchSite.unprobedOutcome], whose
-         * branch index stays unused. [guards] lists a site's outcomes in probed order, and
-         * the branch keys by outcome offset.
-         *
-         * [reportedName] gives the name a method's keys digest, from its real name and descriptor;
-         * see [BranchKeys.compute].
-         */
         internal fun of(
             sites: List<BranchSite>,
             className: String,
@@ -143,12 +126,6 @@ data class KeptBranchSite(
             return kept
         }
 
-        /**
-         * Each site's first branch index, in [sites] order: the sum of [BranchSite.outcomeCount]
-         * over every earlier site in the class. Dropped sites count, so a kept site's branch
-         * indexes do not shift when an earlier site is dropped. [of] and [GuardAnalysis] both
-         * number outcomes from this.
-         */
         internal fun firstBranchIndexes(sites: List<BranchSite>): IntArray {
             val result = IntArray(sites.size)
             var next = 0
@@ -165,14 +142,6 @@ data class KeptBranchSite(
             val caseLabel: List<ConditionPart> = emptyList(),
         )
 
-        /**
-         * Each outcome's role and case key or label, in offset order. [BranchProbeMethodVisitor]
-         * counts a conditional's taken edge at offset 0 and its fall-through at offset 1. It
-         * counts a switch's cases in [BranchSite.caseKeys] order and the default last. A switch
-         * whose case keys are unknown or do not match its outcome count still lists its cases, with
-         * no case key. A rebuilt switch names each case by its label and no key. Every offset has
-         * a role, a throwing default included; [of] leaves out the ones that get no probe.
-         */
         private fun rolesOf(site: BranchSite): List<Role> {
             val caseKeys = site.caseKeys
             if (!site.isSwitch && caseKeys == null) return listOf(Role(BranchRole.TAKEN), Role(BranchRole.FALL_THROUGH))

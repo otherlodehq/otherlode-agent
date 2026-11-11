@@ -11,38 +11,18 @@ import java.time.Duration
 
 /**
  * Filters a static scan's references and maps each one kept to its dependency, without a defining
- * loader.
+ * loader. One referenced name resolves, in order:
  *
- * At transform time a reference is looked up through the loader defining the referencing class.
- * The scan has no such loader, and in a Spring Boot fat jar the system loader cannot see
- * `BOOT-INF/lib` at all, so this works from what the agent has already read: the scan's own class
- * names and the startup listing's class index ([DependencyRegistry.dependencyForClass]). One
- * referenced name resolves, in order:
+ * 1. Provided by the platform or bootstrap loader: dropped.
+ * 2. Seen by the scan in a directory root or under `BOOT-INF/classes` or `WEB-INF/classes`: dropped.
+ * 3. In the startup listing's class index ([DependencyRegistry.dependencyForClass]): kept, and
+ *    recorded into [externalClasses] as that dependency's.
+ * 4. Seen by the scan at the root of a jar the listing did not register as a dependency: dropped.
+ * 5. Anything else: kept and recorded nowhere, so a collector ignores it until the transform path maps it.
  *
- * 1. Provided by the platform or bootstrap loader: a JDK class, dropped.
- * 2. Seen by the scan in a directory root or under `BOOT-INF/classes`/`WEB-INF/classes`: the
- *    adopter's own, dropped.
- * 3. In the class index: kept, and recorded as that dependency's.
- * 4. Seen by the scan at the root of a jar the listing did not register as a dependency (the
- *    adopter's own jar, an agent jar): dropped.
- * 5. Anything else: kept, and recorded nowhere. The scan cannot tell a class that is truly absent
- *    from one in a jar only a runtime loader will open (a plugin directory, a war's `WEB-INF/lib`),
- *    and since the first recording of a name wins, an absent verdict here would stand even after
- *    the transform path found the jar. Left unmapped, the name is ignored by a collector until the
- *    transform path maps it, if it ever does.
- *
- * Step 3 comes before step 4 because on a flat classpath the scan walks every jar, dependencies
- * included, so a name seen in a jar is the adopter's only when no dependency holds it.
- *
- * Mappings are recorded into [externalClasses], and the filtered result carries what
- * [ExternalClassRegistry.mappingFor] returns for each kept name, so the baseline and the manifest
- * send the same mapping; a name the transform path recorded first keeps that recording.
- *
- * [filter] first runs [dependencyListing] if no one has, on the scan's own thread, so the scan never
- * waits for a flush that may be a minute away; then it waits up to [listingWait] for the startup
- * listing to end. If it failed or is still running, every reference list is emptied: with no
- * dependencies there is nothing to map a name to.
- * A failure is logged at INFO, a timeout at WARNING, one line either way.
+ * The filtered result carries what [ExternalClassRegistry.mappingFor] returns for each kept name.
+ * [filter] runs [dependencyListing] first if no one has, then waits up to [listingWait] for the
+ * listing to end. If it failed or is still running, every reference list is emptied.
  */
 class BaselineReferenceFilter(
     private val dependencies: DependencyRegistry,
@@ -54,9 +34,8 @@ class BaselineReferenceFilter(
     private val log by agentLogger(BaselineReferenceFilter::class.java.name)
 
     /**
-     * [result] with JDK and adopter's-own names dropped from every reference list, every kept name
-     * recorded. The class index is released afterwards, whatever the outcome, since nothing else
-     * reads it.
+     * [result] with dropped names removed from every reference list and every kept name recorded. The
+     * [DependencyRegistry] class index is released afterwards, whatever the outcome.
      */
     fun filter(result: StaticScanResult): StaticScanResult {
         try {
@@ -108,11 +87,6 @@ class BaselineReferenceFilter(
         )
     }
 
-    /**
-     * Whether [name] is kept. A kept name the class index maps is recorded into [externalClasses].
-     * Every kept name with a mapping, the ones the transform path recorded first included, absent
-     * ones too, has that mapping added to [mappings].
-     */
     private fun resolve(
         name: String,
         result: StaticScanResult,

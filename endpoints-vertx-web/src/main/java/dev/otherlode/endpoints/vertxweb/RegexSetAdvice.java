@@ -9,8 +9,8 @@ import net.bytebuddy.asm.Advice;
  * on Vert.x Web 5 the agent cannot read the implementation package, so the source is taken here.
  * The event is {@code {"regex", router, route, source}}.
  *
- * <p>This method is deliberately one flat body with no private helper method of its own; see the
- * Spring MVC module's {@code RegisterHandlerMethodAdvice} Javadoc for why.
+ * <p>The advice body is inlined into the woven method, so {@code onExit} stays one flat body with
+ * no helper methods.
  */
 public class RegexSetAdvice {
     private static final String MODULE = "vertx-web";

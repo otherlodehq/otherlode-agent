@@ -7,29 +7,14 @@ import net.bytebuddy.jar.asm.MethodVisitor
 import net.bytebuddy.jar.asm.Opcodes
 
 /**
- * How each method's tracked instructions in the class file line up with the same method's in the
- * received bytes, when an earlier transformer has rewritten the class.
+ * Pairs each method's tracked instructions (conditional jumps, `TABLESWITCH` and `LOOKUPSWITCH`) in the
+ * class file with the same method's in the received bytes, when an earlier transformer has rewritten the class.
  *
- * The analysis reads the class file and the rewrite walks the received bytes, so the two numberings
- * have to agree before a probe planted in the received bytes can stand for a site the class file
- * describes. Per method, the Nth tracked instruction in the class file (a [ConditionalJump], a
- * `TABLESWITCH` or a `LOOKUPSWITCH`, in encounter order, the same rule [BranchProbeMethodVisitor]
- * numbers by) pairs with the Nth in the received bytes:
- *
- * - the same conditional opcode keeps the outcome order;
- * - the inverse conditional opcode (`IFEQ` and `IFNE`, `IF_ACMPEQ` and `IF_ACMPNE`, `IFNULL` and
- *   `IFNONNULL`, and so on) swaps the two outcomes, so the received jump's taken edge counts what
- *   the class file's fall-through did, and the other way round. This is the shape a coverage agent
- *   leaves when it inverts a jump to plant its own probe;
- * - a switch pairs with a switch of the same kind, the same keys (or the same bounds, for a
- *   `TABLESWITCH`), and the same entries sent to the default, with the outcome order kept;
- * - anything else, a different number of tracked instructions, or a method the received bytes do
- *   not declare, leaves the method in [unpairedMethods].
- *
- * A method in [unpairedMethods] gets no branch probes at all. Every other method's ordinals carry
- * over one to one, so the class-file ordinals the analysis hands the rewriter (dropped sites,
- * throwing defaults, unprobed outcomes) name the same instructions in the received bytes, and
- * [swappedOrdinalsOf] names the conditionals whose two outcome slots trade places.
+ * The Nth tracked instruction in the class file pairs with the Nth in the received bytes when it is the same
+ * conditional opcode, the inverse conditional opcode (which swaps the two outcomes), or a switch of the same
+ * kind with the same keys or bounds and the same entries sent to the default. Any other difference,
+ * a different count, or a method the received bytes do not declare leaves the method in [unpairedMethods].
+ * A method in [unpairedMethods] gets no branch probes.
  */
 class SitePairing private constructor(
     /** Methods, by name and descriptor, whose sites did not pair, in class-file order. */
@@ -43,9 +28,8 @@ class SitePairing private constructor(
     ): Boolean = (name to descriptor) !in unpairedMethods
 
     /**
-     * This pairing with each of [methods] left unpaired, whatever the bytes held. [classFileOrder]
-     * lists the methods this pairing was asked about in class-file order, and [unpairedMethods]
-     * keeps that order.
+     * This pairing with each of [methods] also left unpaired. [classFileOrder] is the order
+     * [unpairedMethods] keeps.
      */
     fun withUnpaired(
         methods: Collection<Pair<String, String>>,
@@ -61,7 +45,7 @@ class SitePairing private constructor(
 
     /**
      * The per-method ordinals of [name]/[descriptor]'s conditionals that arrive inverted in the
-     * received bytes. Empty for an unpaired method and for one with nothing inverted.
+     * received bytes. Empty for an unpaired method.
      */
     fun swappedOrdinalsOf(
         name: String,
@@ -73,8 +57,8 @@ class SitePairing private constructor(
         val IDENTICAL = SitePairing(emptySet(), emptyMap())
 
         /**
-         * Pairs [methods] (name and descriptor, as the class file declares them) between
-         * [classFile] and [receivedBytes]. A method neither declares is not checked at all.
+         * Pairs [methods] (name and descriptor) between [classFile] and [receivedBytes]. A method
+         * neither declares is not checked.
          */
         fun of(
             classFile: ByteArray,
@@ -98,20 +82,14 @@ class SitePairing private constructor(
         }
 
         /**
-         * Each of [methods]' tracked instructions in [classFile], encoded as [ofStored] reads them,
-         * so a later weave can pair against them without reading the class file. A method the
-         * class file does not declare is left out.
+         * Each of [methods]' tracked instructions in [classFile], encoded for [ofStored]. A method
+         * the class file does not declare is left out.
          */
         fun encodedSequences(
             classFile: ByteArray,
             methods: Collection<Pair<String, String>>,
         ): Map<Pair<String, String>, IntArray> = trackedInstructions(classFile, methods.toSet()).mapValues { (_, list) -> encode(list) }
 
-        /**
-         * For each tracked instruction of an [encodedSequences] stream, in order: 0 for a conditional
-         * jump, else an upper bound on the switch's outcomes, its entries not bound for the default
-         * plus the default.
-         */
         internal fun outcomeBounds(encoded: IntArray): List<Int> =
             decode(encoded).map {
                 when (it) {
@@ -122,9 +100,8 @@ class SitePairing private constructor(
             }
 
         /**
-         * Pairs [receivedBytes] with class-file tracked instructions [encodedSequences] produced,
-         * method by method. With no [receivedBytes] there is nothing to pair against, and every
-         * method in [stored] is unpaired.
+         * Pairs [receivedBytes] with tracked instructions that [encodedSequences] produced. With no
+         * [receivedBytes], every method in [stored] is unpaired.
          */
         fun ofStored(
             stored: Map<Pair<String, String>, IntArray>,
@@ -145,12 +122,6 @@ class SitePairing private constructor(
             return SitePairing(unpaired, swapped)
         }
 
-        /**
-         * One int per conditional jump (its opcode); for a `TABLESWITCH` its opcode, the bounds, the
-         * entry count and a 0 or 1 per entry for "goes to the default"; for a `LOOKUPSWITCH` its
-         * opcode, the key count, the keys, then the same 0 or 1 per key. No conditional opcode is a
-         * switch opcode, so the stream reads back unambiguously.
-         */
         private fun encode(list: List<TrackedInstruction>): IntArray {
             val out = ArrayList<Int>()
             for (instruction in list) {
@@ -203,7 +174,6 @@ class SitePairing private constructor(
             return list
         }
 
-        /** The ordinals [actual] inverts, or null when the two lists do not pair. */
         private fun pairOne(
             expected: List<TrackedInstruction>,
             actual: List<TrackedInstruction>,
@@ -230,7 +200,6 @@ class SitePairing private constructor(
             return swaps
         }
 
-        /** The conditional opcode that tests the opposite of [opcode], or -1 for anything else. */
         internal fun inverse(opcode: Int): Int =
             when (opcode) {
                 Opcodes.IFEQ -> Opcodes.IFNE
@@ -252,7 +221,6 @@ class SitePairing private constructor(
                 else -> -1
             }
 
-        /** Each of [wanted]'s tracked instructions in [bytes], per method, in encounter order. */
         private fun trackedInstructions(
             bytes: ByteArray,
             wanted: Collection<Pair<String, String>>,
@@ -278,20 +246,17 @@ class SitePairing private constructor(
         }
     }
 
-    /** One instruction [BranchProbeMethodVisitor] would number, reduced to what pairing compares. */
     private sealed interface TrackedInstruction {
         data class Jump(
             val opcode: Int,
         ) : TrackedInstruction
 
-        /** [toDefault] marks each entry of the jump table that goes to the default label. */
         data class TableSwitch(
             val min: Int,
             val max: Int,
             val toDefault: List<Boolean>,
         ) : TrackedInstruction
 
-        /** [toDefault] marks each key whose target is the default label. */
         data class LookupSwitch(
             val keys: List<Int>,
             val toDefault: List<Boolean>,

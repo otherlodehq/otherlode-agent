@@ -7,11 +7,8 @@ import javax.management.MBeanServer
 import javax.management.ObjectName
 import javax.management.ReflectionException
 
-/**
- * [NativeHeap] over the JDK's management beans. The startup thread loads this class but only the
- * `otherlode-trim` thread links it, which needs the `java.management` module. It must not extend a
- * `java.management` type, or loading it would need that module on the startup thread.
- */
+// The startup thread loads this class and only the `otherlode-trim` thread links it. It must not
+// extend a `java.management` type, or loading it needs that module on the startup thread.
 internal object JmxNativeHeap : NativeHeap {
     private const val OPTION = "TrimNativeHeapInterval"
     private const val OPERATION = "systemTrimNativeHeap"

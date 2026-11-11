@@ -16,52 +16,30 @@ import net.bytebuddy.pool.TypePool
 
 /**
  * Hosts the branch-tracking tier's raw ASM rewrite inside ByteBuddy's own class-transform
- * pipeline. This weaves branch probes in the same pass as the method-entry probes,
- * instead of using a second, competing transformer.
+ * pipeline, so branch probes are woven in the same pass as the method-entry probes.
  *
- * Rewriting a conditional jump into two edges introduces new basic blocks, each needing a stack map
- * frame. No frame is ever computed. [mergeReader] asks for expanded frames, every frame the received
- * bytes carry is passed through as it is, and [BranchProbeMethodVisitor] writes a frame at each label
- * it inserts from the state of an ASM `AnalyzerAdapter` placed in front of it. The branch tier
- * writes no frame in a class below version 50, nor in one at version 50 without a StackMapTable
- * ([classHasFrames]): the analyser has no state after an unconditional jump in a class without
- * frames, and the JVM verifies such a class by type inference. The probe-array accessor writes one
- * frame at every version below 55, which ASM writes as a `StackMap` attribute below 50 that HotSpot ignores.
- * The writer is not asked to compute maximums either: [BranchProbeMethodVisitor.visitMaxs] adds the
- * probes' peak of six operand stack slots to a method it put a probe in.
+ * No frame is computed: every frame the received bytes carry passes through, and
+ * [BranchProbeMethodVisitor] writes one at each label it inserts. A class below version 50, or at
+ * version 50 without a StackMapTable ([classHasFrames] false), gets no branch frames.
  *
- * [probeArray] emits the load of the class's counts array at every probe.
- *
- * [probeIndexBase] is where branch slots start in the class's shared probe array. Method-entry
+ * @property probeIndexBase Where branch slots start in the class's shared probe array. Method-entry
  * probes occupy `[0, probeIndexBase)`.
- *
- * [branchSlotCapacity] is how many branch slots the array actually has, as sized from
- * [BranchSiteAnalyzer]'s pass over the class file, less the sites of methods [SitePairing] could
- * not pair with the received bytes this rewrite walks. The rewrite must never allocate past it: a
- * site that would is left as the original instruction, uninstrumented, rather than emitting an
- * increment that would throw `ArrayIndexOutOfBoundsException` inside the application's own
- * method. A site count that differs from the analysis in either direction means the bytes being
- * rewritten do not line up with the bytes analysed, so [visitEnd] throws `IllegalStateException`
- * and the whole class is skipped and reported through the standard transform-failure path, rather
- * than being left instrumented with branch metadata that describes the wrong outcomes.
- *
- * [droppedOrdinalsByMethod] names each method's dropped sites by their per-method encounter
- * ordinal; a method absent from it, or every method when the default is left in place, has nothing
- * dropped. [throwingDefaultOrdinalsByMethod] names, in the same numbering, each method's switches
- * whose default only throws and gets no probe, and [unprobedOutcomesByMethod] each method's
- * conditionals with an outcome that gets no probe, with that outcome's offset.
- * [swappedOrdinalsByMethod] names, in the same numbering, each method's conditionals that arrive
- * testing the opposite of the class file's jump, as [SitePairing] found them; see
- * [BranchProbeMethodVisitor].
- *
- * [slotsByMethod], when given, is each method's own run of slots, relative to [probeIndexBase], so
- * a method's slots land where the analysis numbered them whatever order the rewriter meets the
- * methods in. A method it has nothing for has no slots. Each method must then ask for exactly its
- * own run's [MethodSlots.count]: a method asking for more would otherwise write into the next
- * method's slots while the class-wide total still matched, so [visitEnd] throws on the first method
- * whose count differs, the same way it throws on a class-wide difference. A site that would run
- * past its method's slots is left uninstrumented, as one past the array is. Left null, slots are
- * handed out in the order the rewriter meets the sites, checked only class-wide.
+ * @property branchSlotCapacity How many branch slots the array has. The default, `Int.MAX_VALUE`, means
+ * unbounded and unchecked. A site that would allocate past it is left uninstrumented. When a capacity
+ * is given and the slots the rewrite wants differ from it, [visitEnd] throws `IllegalStateException`
+ * and the class is skipped through the transform-failure path.
+ * @property droppedOrdinalsByMethod Each method's dropped sites by their per-method encounter ordinal.
+ * @property throwingDefaultOrdinalsByMethod In the same numbering, each method's switches whose default only
+ * throws and gets no probe.
+ * @property unprobedOutcomesByMethod Each method's conditionals with an outcome that gets no probe, with that
+ * outcome's offset.
+ * @property swappedOrdinalsByMethod In the same numbering, each method's conditionals that arrive
+ * testing the opposite of the class file's jump, as [SitePairing] found them.
+ * @property slotsByMethod When given, each method's own run of slots, relative to [probeIndexBase]. A
+ * method it returns null for has no slots, and a site that would run past its method's run is left
+ * uninstrumented.
+ * [visitEnd] throws `IllegalStateException` for the first method whose wanted count differs from
+ * its run's [MethodSlots.count]. When null, slots go out in encounter order and are checked class-wide only.
  */
 class BranchProbeAsmVisitorWrapper(
     private val eligibleMethods: (name: String, descriptor: String) -> Boolean,
@@ -75,7 +53,10 @@ class BranchProbeAsmVisitorWrapper(
     private val slotsByMethod: ((name: String, descriptor: String) -> MethodSlots?)? = null,
     private val classHasFrames: Boolean = true,
 ) : AsmVisitorWrapper {
-    /** One method's run of branch slots: the first at [base], relative to the branch slots' start, and [count] in all. */
+    /**
+     * One method's run of branch slots: the first at [base], relative to the branch slots' start, and
+     * [count] in all.
+     */
     data class MethodSlots(
         val base: Int,
         val count: Int,
@@ -87,9 +68,8 @@ class BranchProbeAsmVisitorWrapper(
 
         /**
          * Whether the frames of [classFile] are to be kept and extended: false only for a class at
-         * version 50 with no stack map frame in any method, which the JVM verifies by type
-         * inference. Every other class, unreadable bytes and null included, answers true; below 50
-         * there is no frame to write whatever this says.
+         * version 50 with no stack map frame in any method. Every other class, unreadable bytes and
+         * null included, answers true.
          */
         fun carriesFrames(classFile: ByteArray?): Boolean {
             if (classFile == null || classFile.size < CLASS_VERSION_OFFSET + 2) return true
@@ -173,7 +153,6 @@ class BranchProbeAsmVisitorWrapper(
                 val delegate = super.visitMethod(access, name, descriptor, signature, exceptions)
                 if (!eligibleMethods(name, descriptor)) return delegate
                 val key = name to descriptor
-                // Null when slots run class-wide in encounter order; otherwise this method's own run.
                 val own = slotsByMethod?.let { it(name, descriptor) ?: MethodSlots(0, 0) }
                 if (own != null) wantedByMethod.putIfAbsent(key, 0)
                 var nextInMethod = own?.base

@@ -16,51 +16,7 @@ import net.bytebuddy.jar.asm.Type
 import net.bytebuddy.matcher.ElementMatchers.named
 import net.bytebuddy.pool.TypePool
 
-/**
- * Writes the members a class below version 55 gets so its probes can reach their counts array, and
- * the marker a refused re-weave adds, as ASM events on the class being decorated (ADR 0060). A
- * decoration cannot define a member, so these are written directly.
- *
- * For a [ProbeArrayForm] with a field the class gets:
- *
- * - the field `$otherlodeProbeCounts`, a `long[]`. It is `private static final synthetic` in a
- *   class that has its own `<clinit>`, `private static synthetic` in a class that has none, and
- *   `public static final synthetic` in an interface, where the JVMS requires it. A private field
- *   is part of the default `serialVersionUID` of a serializable class only when it is neither
- *   static nor transient, and so is the presence of a `<clinit>`; the class gets no added
- *   `<clinit>` so that weaving leaves that value as it was;
- * - a prelude at the start of its `<clinit>`, or in an interface a new `<clinit>` holding only the
- *   prelude when it has none:
- *
- *   ```
- *   ldc          "<class name>"
- *   ldc2_w       <layout hash>
- *   ldc          <probe count>
- *   ldc          <this class>
- *   invokevirtual java/lang/Class.getClassLoader()
- *   invokestatic OtherlodeProbeArrays.resolve(String, long, int, ClassLoader) long[]
- *   putstatic    <this class>.$otherlodeProbeCounts
- *   ```
- *
- *   followed, when the class has a type initializer probe, by an increment of its slot;
- * - for [ProbeArrayForm.Accessor] only, the private static synthetic accessor every probe calls and
- *   the slow path it falls back on while the field is null. In a class with no `<clinit>` the slow
- *   path stores the array in the field, so later calls read it there.
- *
- * The prelude adds no branch and no local, so it needs no stack map frame and leaves every frame of
- * the original `<clinit>` where it was. The class literal is `ldc <class>` from version 49 and
- * `ldc "<name>"` then `Class.forName` below it.
- *
- * The prelude runs ahead of the class's own initializer, so a probed static method called from that
- * initializer finds the field set, and the `<clinit>` probe is counted even when the original body
- * after it throws. The field is still null before the prelude runs, which a supertype's initializer
- * can precede, so probes in a class with the field read it through [ProbeArrayForm.Accessor] and not
- * directly.
- *
- * Every argument of the prelude is a constant, so a retransformation weaves the same instructions.
- */
 internal object ProbeArrayMembers {
-    /** The wrapper that gives a class woven in [form] its field, prelude and, for an accessor form, its accessors. */
     fun wrapper(
         form: ProbeArrayForm,
         className: String,
@@ -72,7 +28,6 @@ internal object ProbeArrayMembers {
         return wrapping { MembersVisitor(it, form, className, layoutHash, probeCount, typeInitializerProbeIndex) }
     }
 
-    /** The wrapper that adds the marker field of a refused re-weave; see [ProbeArrayForm.REFUSAL_MARKER_FIELD]. */
     fun refusalMarkerWrapper(): AsmVisitorWrapper = wrapping { RefusalMarkerVisitor(it) }
 
     private fun wrapping(visitor: (ClassVisitor) -> ClassVisitor): AsmVisitorWrapper =
@@ -247,24 +202,6 @@ internal object ProbeArrayMembers {
             )
         }
 
-        /**
-         * The accessor:
-         *
-         * ```
-         * getstatic    <this class>.$otherlodeProbeCounts
-         * dup
-         * ifnonnull    done
-         * pop
-         * invokestatic <this class>.$otherlodeProbesResolve()
-         * done:
-         * areturn
-         * ```
-         *
-         * It does not store the resolved array: a final static field is written only by its class's
-         * `<clinit>`, and the array is the one the prelude stores later. The slow path stores it in
-         * a class with no `<clinit>`. The frame at `done` is
-         * written from version 50, where the verifier requires one, and left out below it.
-         */
         private fun writeAccessor() {
             val visitor = cv.visitMethod(PRIVATE_SYNTHETIC, ProbeArrayForm.PROBE_ARRAY_ACCESSOR, ARRAY_FACTORY_DESCRIPTOR, null, null)
             val done = Label()
@@ -289,11 +226,6 @@ internal object ProbeArrayMembers {
             visitor.visitEnd()
         }
 
-        /**
-         * The slow path, the prelude's call, so the accessor stays small enough for C1 to inline.
-         * In a class with no `<clinit>` the field is not final and the slow path stores the array in
-         * it; resolving returns the same array each time.
-         */
         private fun writeSlowPath() {
             val visitor = cv.visitMethod(PRIVATE_SYNTHETIC, ProbeArrayForm.PROBE_ARRAY_SLOW_PATH, ARRAY_FACTORY_DESCRIPTOR, null, null)
             visitor.visitCode()

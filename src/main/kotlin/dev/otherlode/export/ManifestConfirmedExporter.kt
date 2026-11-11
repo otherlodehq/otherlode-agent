@@ -2,9 +2,7 @@ package dev.otherlode.export
 
 /**
  * Sets [ResourceAttributes.manifestConfirmed] on every payload just before [delegate] sends it, to
- * the value [confirmed] gives at that moment. A payload already built keeps the value it was sent
- * with. Every sender of the process goes through one of these over the same source, so the four
- * payload kinds cannot disagree.
+ * the value [confirmed] gives at that moment.
  */
 class ManifestConfirmedExporter(
     private val delegate: Exporter,

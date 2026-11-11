@@ -21,7 +21,6 @@ private const val FUNCTION_PACKAGE = "org.springframework.web.reactive.function.
 private const val PATH_RESOURCE_LOOKUP_FUNCTION = "$FUNCTION_PACKAGE.PathResourceLookupFunction"
 private const val ROUTER_FUNCTION_MAPPING = "$FUNCTION_PACKAGE.support.RouterFunctionMapping"
 
-/** `HandlerFunction.handle`'s descriptor, the same on every supported Spring version. */
 private const val HANDLE_DESCRIPTOR =
     "(Lorg/springframework/web/reactive/function/server/ServerRequest;)Lreactor/core/publisher/Mono;"
 
@@ -46,27 +45,17 @@ private const val ADVICE_PACKAGE = "dev.otherlode.endpoints.springwebflux"
 
 /**
  * Endpoint module for Spring WebFlux (`spring-webflux`), covering Spring Framework 5.3, 6.x and
- * 7.x with one module. Every hook has the same name and descriptor on all three, and WebFlux takes
- * no servlet type, so no advice is rebound by namespace.
+ * 7.x with one module. No advice is rebound by namespace.
  *
- * `AbstractHandlerMethodMapping.registerHandlerMethod` and `registerMapping` declare annotated
- * controllers; Spring Boot Actuator registers through the second. `RequestMappingInfoHandlerMapping.handleMatch`
- * counts them once per matched request, before the handler runs, with the mapping narrowed to the
- * patterns and verb that matched.
+ * Annotated controllers are declared by `AbstractHandlerMethodMapping.registerHandlerMethod` and
+ * `registerMapping`, and counted at `RequestMappingInfoHandlerMapping.handleMatch`. URL-mapped
+ * handlers are declared by `AbstractUrlHandlerMapping.registerHandler` and counted at the exit of
+ * `lookupHandler`. Functional routes are declared by walking the `RouterFunction` that
+ * `RouterFunctionMapping.afterPropertiesSet` hands to [declare], with the walk the Spring MVC module
+ * shares, and counted at `setAttributes`. A `resources(pattern, location)` route is counted when its
+ * `PathResourceLookupFunction` emits a resource.
  *
- * `AbstractUrlHandlerMapping.registerHandler` declares URL-mapped handlers, and the exit of
- * `lookupHandler` counts a request one of them matched. The reactive side has no root handler, no
- * default fallback and no path-exposing interceptor.
- *
- * `RouterFunctionMapping` covers functional routing. The exit of `afterPropertiesSet` hands the
- * mapping's `RouterFunction` to [declare], which walks it with the walk the Spring MVC module
- * shares, and `setAttributes` counts a request once a route matched. A `resources(pattern,
- * location)` route has no pattern attribute and a new handler per request, so it is counted when
- * its `PathResourceLookupFunction` emits a resource; a `resources(predicate, resource)` route is
- * counted at `setAttributes` under its own key.
- *
- * A CORS preflight reaches every dispatch hook and is no call. WebFlux has no
- * `HandlerMappingIntrospector` and no asynchronous redispatch.
+ * A CORS preflight counts nothing.
  */
 class SpringWebFluxModule : EndpointModule {
     override val name: String = FUNCTIONAL_ROUTE_STACK.moduleName

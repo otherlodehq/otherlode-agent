@@ -8,10 +8,10 @@ import dev.otherlode.registry.ProbeRegistry
  * installed, and every manifest the run sends says so. [drainInto] moves the messages the hook
  * collected into the registry, and runs on the export thread.
  *
- * A name in [ownFailures] is dropped: the agent's own retransformation of that class failed, so the
- * `VerifyError` is not a refusal to link it. A message in no read format, and each message the ring
- * lost to overflow, adds to the run's unplaced total. [carried] and [carriedOverflow] are what the
- * hook's own check at install drained besides its own message; the first [drainInto] reads them.
+ * A class whose retransformation by the agent itself failed is dropped. A message in no read
+ * format, and each message the ring lost to overflow, adds to the run's unplaced total. [carried] and
+ * [carriedOverflow] are messages and overflow drained before the watch was built; the first [drainInto]
+ * reads them.
  */
 class VerifierRejectionWatch(
     val watched: Boolean,

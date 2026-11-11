@@ -15,11 +15,6 @@ private const val WAR_LAUNCHER = ".WarLauncher"
 private val JAR_LIB_PREFIXES = listOf("BOOT-INF/lib/")
 private val WAR_LIB_PREFIXES = listOf("WEB-INF/lib/", "WEB-INF/lib-provided/")
 
-/**
- * The entry prefixes Spring Boot's launcher reads library jars from, for a fat jar or an exploded
- * one with these manifest [attributes]: `BOOT-INF/lib/`, or `WEB-INF/lib/` and
- * `WEB-INF/lib-provided/` for an executable war.
- */
 internal fun bootLibPrefixes(attributes: Attributes): List<String> {
     val isWar =
         attributes.getValue(BOOT_LIB)?.trim()?.startsWith(WAR_PREFIX) == true ||
@@ -27,19 +22,6 @@ internal fun bootLibPrefixes(attributes: Attributes): List<String> {
     return if (isWar) WAR_LIB_PREFIXES else JAR_LIB_PREFIXES
 }
 
-/**
- * The nested jars Spring Boot's launcher puts on the classpath, in the outer jar's entry order:
- * every entry that is not a directory under one of [bootLibPrefixes], at any depth and whatever
- * its extension.
- *
- * The classpath index is not consulted. `Launcher.getClassPathIndex` returns null unless the
- * archive is exploded, so a packaged `java -jar` launch ignores it, and `JarLauncher` and
- * `WarLauncher` select these prefixes themselves in `isLibraryFileOrClassesDirectory` (read from
- * the loader bytecode Boot 4.1.1 packages). The index can leave a jar out that still runs, such as
- * `spring-boot-jarmode-tools`.
- *
- * Shared by the dependency listing and the class listing, so both open the same nested jars.
- */
 internal fun nestedJarNames(
     jarFile: JarFile,
     attributes: Attributes,
@@ -53,31 +35,11 @@ internal fun nestedJarNames(
         .toList()
 }
 
-/**
- * A file a `Class-Path` attribute names. [isDirectory] is true when its URL ends in `/`: the JDK
- * reads such an entry only as a directory of classes, and any other entry only as a jar, whatever
- * is on disk at [file].
- */
 internal data class ClassPathEntry(
     val file: File,
     val isDirectory: Boolean,
 )
 
-/**
- * The files [manifest]'s `Class-Path` names, resolved the way the JDK's `URLClassPath` resolves
- * them for a jar on disk. The value splits on the whitespace `StringTokenizer` splits on. Each
- * entry is a URL relative to [jar]. An entry whose protocol is not `file` (compared ignoring
- * case) is dropped, and so is a jar entry whose host is neither empty nor `localhost`, as the
- * system loader drops both. A directory entry, one that ends in `/`, is read whatever its host. A
- * path is read from the URL's file part with its `%` escapes decoded, so a space arrives as `%20`,
- * and characters `java.net.URI` refuses, such as `[` and `]`, are kept.
- *
- * @throws MalformedURLException when a token is not a valid URL. The system loader drops the whole
- * jar then, so the caller asks the running JDK ([jdkLoadsFrom]) whether it reads the jar at all.
- *
- * Shared by the dependency listing, the class listing and the static baseline, so all three parse
- * `Class-Path` the same way.
- */
 internal fun classPathEntries(
     jar: File,
     manifest: Manifest?,
@@ -90,15 +52,12 @@ internal fun classPathEntries(
         val resolved = URL(base, tokens.nextToken())
         if (!"file".equals(resolved.protocol, ignoreCase = true)) continue
         val host = resolved.host.orEmpty()
-        // The JDK reads a directory URL's local path whatever its host, and a jar URL only when
-        // the host is empty or localhost.
         if (!resolved.file.endsWith("/") && host.isNotEmpty() && !host.equals("localhost", ignoreCase = true)) continue
         entries += ClassPathEntry(File(percentDecoded(resolved.file)), isDirectory = resolved.file.endsWith("/"))
     }
     return entries
 }
 
-/** [path] with each `%XX` escape decoded as UTF-8 bytes, and every other character kept. */
 private fun percentDecoded(path: String): String {
     if ('%' !in path) return path
     val raw = path.toByteArray(Charsets.UTF_8)

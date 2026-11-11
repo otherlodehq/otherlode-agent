@@ -13,43 +13,9 @@ import net.bytebuddy.jar.asm.MethodVisitor
 import net.bytebuddy.jar.asm.Opcodes
 import net.bytebuddy.jar.asm.Type
 
-/**
- * The methods scalac emits from a declaration rather than from a body the adopter wrote, marked
- * from bytecode shape alone. Nothing here decodes `ScalaSig` or TASTy, and no line number is read:
- * each generated method is recognised by its body, which is fixed compiler output whatever the
- * source layout. Every shape below was read out of `javap -c -p` over the
- * `:fixtures-scala2` and `:fixtures-scala3` modules, compiled with Scala 2.13.15 and 3.3.4
- * (`Targets.scala` and `CaseShapes.scala`). A body that is not exactly one of these marks nothing,
- * so a release that writes a shape not read here leaves that method unmarked.
- *
- * Those two releases are the baseline. The shapes other releases write are read beside them, never
- * in place of them, each from `javap -c -p` over the same fixtures compiled by that release
- * (`fixtures-compilers/scalac`, which `ScalacMatrixTest` compares against the baseline marks):
- *
- * - Scala 2.12.20: `hashCode` without the `productPrefix` mix, `equals` in source order,
- *   `productElement` throwing through `Integer.toString`, and a private `readResolve` on every
- *   serializable module class ([ClassShape.readResolveMatches]). These are read only in a class
- *   2.12 may have written ([CaseClass.mayBeScala212]), and the `readResolve` only in a Scala 2
- *   module class with no `writeReplace`.
- * - Scala 2.13.17 and later, Scala 3.3.7 and later on the 3.3 line and 3.7.1 and later: `hashCode`
- *   with the prefix hash folded into a constant ([matchesHashCode]).
- * - Scala 3.3.8, 3.8.4 and later: `equals` through `Objects.equals` ([compareElements]).
- * - Scala 3.7.0 and later: `fromProduct` reading the elements into locals first ([matchesFromProduct]).
- * - Scala 3.7.3 to 3.8.3: `equals` through a copy of the cast instance ([matchesEqualsScala3]).
- * - Scala 3.9.0: `productElement` and `productElementName` throwing through
- *   `IndexOutOfBoundsException.<init>(int)` ([matchesIndexed]).
- *
- * A Scala 3 `enum`'s plumbing ([enumPlumbing]) was read from every release from 3.3.3 to 3.10.0.
- * Its bodies are those of 3.3.4 with three exceptions: 3.3.3 words `valueOf`'s and `fromOrdinal`'s
- * failures differently and, with 3.4.0 and 3.4.1, passes the companion to a singleton case's
- * constructor in `$new`; 3.8.4 and later leave `scala.Product` out of the enum class's interfaces,
- * which the rules do not read; and the singleton case's `hashCode`, `String.hashCode` of the case
- * name, is written from 3.3.7 on the 3.3 line and from 3.7.3.
- */
 internal object ScalaGeneratedMethods {
     private const val MODULE_FIELD = "MODULE\$"
 
-    /** Scala 3.3.3's `valueOf` message recipe, which names no enum. */
     private const val OLD_NO_CASE_RECIPE = "enum case not found: \u0001"
     private const val OUTER_FIELD = "\$outer"
     private const val OBJECT = "java/lang/Object"
@@ -81,32 +47,21 @@ internal object ScalaGeneratedMethods {
     private const val SOME = "scala/Some"
     private const val OPTION_DESCRIPTOR = "Lscala/Option;"
 
-    /** The flags scalac gives the static field of each enum case in the enum's companion, `ACC_ENUM` aside. */
     private const val PLAIN_CASE_FIELD_FLAGS = Opcodes.ACC_PUBLIC or Opcodes.ACC_STATIC or Opcodes.ACC_FINAL
 
-    /** The flags scalac gives the instance field that keeps a singleton case in the companion of an enum declared inside a class or a method. */
     private const val INSTANCE_CASE_FIELD_FLAGS = Opcodes.ACC_PRIVATE or Opcodes.ACC_FINAL
 
-    /** A field's visibility, `static` and `final` bits, without `transient` or the deprecation ASM reports as a flag. */
     private const val FIELD_KIND_FLAGS =
         Opcodes.ACC_PUBLIC or Opcodes.ACC_PROTECTED or Opcodes.ACC_PRIVATE or Opcodes.ACC_STATIC or Opcodes.ACC_FINAL
 
-    /** The access bit scalac sets on the symbol of an enum case, and so on the accessor of a singleton case in an instance companion. */
     private const val ENUM_CASE_ACCESSOR_FLAG = 0x4000
 
-    /** The seed of scalac's `hashCode` fold, `0xcafebabe`. */
     private const val HASH_SEED = -889275714
 
-    /** Scala 3's `_1`, `_2` and on, which a case class gets for each element. */
     private val ELEMENT_ALIAS = Regex("_([1-9]\\d*)")
 
-    /** Scala 2's accessor for a `private` or `protected` element, `a$access$0` for element 0 named `a`. */
     private val ACCESS_ACCESSOR = Regex("(.+)\\\$access\\\$(\\d+)")
 
-    /**
-     * The four `scala.Product` members every case class declares, a case object's module class
-     * included, in both Scala versions: `javap` over `Cc`, `Multi`, `Round`, `Empty` and `Solo$`.
-     */
     private val CASE_CLASS_SIGNATURE =
         setOf(
             "canEqual" to "(Ljava/lang/Object;)Z",
@@ -115,16 +70,12 @@ internal object ScalaGeneratedMethods {
             "productPrefix" to "()Ljava/lang/String;",
         )
 
-    /** The names [companionPlumbing] can mark; a class declaring none of them has no partner to read. */
     private val COMPANION_METHODS = setOf("apply", "unapply", "toString", "fromProduct")
 
-    /** The only element types scalac 2.13.15 specialises `Tuple2` on, by descriptor. */
     private val TUPLE2_SPECIALISED = setOf("I", "J", "D", "C", "Z")
 
-    /** The descriptor of an enum companion's `fromOrdinal`: an `int` in, an object type out. */
     private val FROM_ORDINAL_DESCRIPTOR = Regex("\\(I\\)L[^;\\[]+;")
 
-    /** The descriptor shape of an enum companion's `valueOf`: a `String` in, an object type out. */
     private val VALUE_OF_DESCRIPTOR = Regex("\\(L$STRING;\\)L[^;\\[]+;")
 
     private val WRITE_REPLACE = "writeReplace" to "()Ljava/lang/Object;"
@@ -132,34 +83,11 @@ internal object ScalaGeneratedMethods {
     private val READ_RESOLVE = "readResolve" to "()Ljava/lang/Object;"
     private val PRODUCT_ELEMENT_NAME = "productElementName" to "(I)Ljava/lang/String;"
 
-    /**
-     * The generated methods of the Scala class [classBytes], keyed by name and descriptor. The
-     * caller has already found a `Scala` or `ScalaSig` attribute on the class. [lookup] reads other
-     * classes as bytes, never loading them: a companion's partner, and for an enum its class,
-     * companion, singleton-case class and parameterised cases. A lookup that returns null or throws marks
-     * nothing on the partner's account.
-     *
-     * Each method gets at most one mark, tried in this order: [GeneratedBy.STATIC_FORWARDER] (see
-     * [ClassShape.staticForwarders]), then [GeneratedBy.ENUM] on a Scala 3 enum's plumbing (see
-     * [enumPlumbing]), then [GeneratedBy.CASE_CLASS] on a case class's own plumbing
-     * (see [caseClassPlumbing]), then [GeneratedBy.CASE_CLASS] on a companion's (see
-     * [companionPlumbing]), then [GeneratedBy.SCALA_OBJECT] (see [ClassShape.writeReplaceMatches]
-     * and [ClassShape.readResolveMatches]).
-     *
-     * A class whose name ends in `$` reads its partner only when it declares an instance method
-     * named `apply`, `unapply`, `toString` or `fromProduct`: without one, the companion rule has
-     * nothing to mark, whatever the partner turns out to be.
-     */
     fun of(
         classBytes: ByteArray,
         lookup: (internalName: String) -> ByteArray?,
     ): Map<Pair<String, String>, GeneratedBy> = marksOf(readShape(classBytes), readOnce(lookup)).generated
 
-    /**
-     * The forwarders of the Scala class [classBytes] and nothing else: a value class's boxed
-     * methods and a trait's forwarders, as [of] marks them, and the methods a call passes through.
-     * [lookup] reads the value class's companion and the traits the class has as supertypes.
-     */
     fun forwarders(
         classBytes: ByteArray,
         lookup: (internalName: String) -> ByteArray?,
@@ -169,46 +97,19 @@ internal object ScalaGeneratedMethods {
         return Forwarders(marks.generated, marks.passThrough)
     }
 
-    /** What [forwarders] found: the marked methods ([generated]) and those a call passes through ([passThrough]). */
     class Forwarders(
         val generated: Map<Pair<String, String>, GeneratedBy>,
         val passThrough: Set<Pair<String, String>>,
     )
 
-    /**
-     * What [analyse] found in one Scala class: its generated methods ([generated], what [of]
-     * returns), and the methods that sit in an outline of compiler output but match none of the
-     * shapes read ([unread], by family). [passThrough] is the subset of the forwarders that a call
-     * passes through and that [generated] cannot tell from the rest: a value class's boxed methods.
-     * [unreadRelease] is the Scala 3 release that compiled the
-     * class when [unread] holds methods because that release is not on the read list, and null when
-     * the class names no compiler (Scala 2, or Scala 3 with no readable `.tasty`) or the unread
-     * methods are none. A method is in one map at most.
-     */
     class Result(
         val generated: Map<Pair<String, String>, GeneratedBy>,
         val unread: Map<Pair<String, String>, UnreadShape>,
         val unreadRelease: String?,
-        /** Why [unread] holds methods; null when it holds none. */
         val cause: UnreadCause? = null,
         val passThrough: Set<Pair<String, String>> = emptySet(),
     )
 
-    /**
-     * [of] plus the unread shapes of the class. An outline method the rules leave unmarked is an
-     * unread shape unless the class names its compiler and the agent has read that compiler, in
-     * which case the method is hand-written and stays ordinary (ADR 0054). A method scalac refuses to
-     * let the adopter write ([isEnumCaseClass], [isRefusedInEnumCompanion]), and a case accessor only
-     * scalac can give an enum's companion ([enumCaseAccessorKeys]), stay unread shapes on a read
-     * release too: there they are scalac's in a shape the rules do not read, such as one with
-     * backticked case names. So does every `valueOf(String)` of an enum's companion when none reads
-     * as scalac's, the adopter's beside it included ([companionCaseKeys]). The companion of a local enum counts when [pairEnumCompanion] pairs it,
-     * even if a class the pairing needs cannot be read; an object the adopter wrote that only looks like
-     * one is not held. A method with a forwarder's call shape that the exact rule could not decide
-     * because a class it needed could not be read is a [UnreadShape.TRAIT_FORWARDER] on every
-     * release, a read one included: the adopter did not write it, or scalac routes calls around it. [releaseOf] is asked, with the class's internal name, only when such a method
-     * exists and the class is Scala 3's.
-     */
     fun analyse(
         classBytes: ByteArray,
         reader: (internalName: String) -> ByteArray?,
@@ -265,11 +166,6 @@ internal object ScalaGeneratedMethods {
         }
     }
 
-    /**
-     * Whether this is the class of an enum case, every method of which scalac writes: a case has no
-     * body, and scalac rejects any other subclass of an enum (E125). It is a class whose superclass
-     * is a Scala 3 enum class. Only the superclass's header is read.
-     */
     private fun ClassShape.isEnumCaseClass(lookup: (String) -> ByteArray?): Boolean {
         val parent = superName?.takeIf { it != OBJECT } ?: return false
         return try {
@@ -280,41 +176,11 @@ internal object ScalaGeneratedMethods {
         }
     }
 
-    /**
-     * Whether scalac refuses a hand-written method [key] in an enum's companion, so a method of that
-     * name and descriptor there can only be its own: `values`, `valueOf`, `fromOrdinal`, `$new` and
-     * `ordinal(Object)`, a hand-written one being a double definition. Only those in the outline are
-     * asked, and the outline lists `values`, `valueOf` and `$new` only for the enums scalac writes
-     * them for, and lists the adopter's methods the JVM knows as `valueOf(String)` only when none
-     * reads as scalac's ([companionCaseKeys]). A companion's `ordinal(E)` and `writeReplace` can be
-     * written by hand and are not held.
-     */
     private fun isRefusedInEnumCompanion(key: Pair<String, String>): Boolean {
         val (name, descriptor) = key
         return name in REFUSED_COMPANION_METHODS || (name == "ordinal" && descriptor == "(L$OBJECT;)I")
     }
 
-    /**
-     * The enum class a Scala 3 class is the companion of, and whether the pairing is certain. A class
-     * implementing `scala.deriving.Mirror$Sum` whose name ends in `$` is paired by name when the class
-     * named like it without the `$` is an enum class, which covers a top-level enum's companion and
-     * that of an enum nested in an object or a class. Otherwise it is paired as the companion of a
-     * local enum, one declared in a method, whose name does not follow from the enum's
-     * (`Host$Suit$1` and `Host$Suit$3$`), when all of these hold:
-     *
-     * 1. it has no `MODULE$`;
-     * 2. P, the return type of its one `fromOrdinal(I)L...;` that is not a bridge, is an enum class.
-     *    scalac refuses a second one from the adopter, and writes a bridge with a wider return when
-     *    the companion extends a trait declaring `fromOrdinal`;
-     * 3. P and the class have the same `EnclosingMethod`, and the class lists P in its `InnerClasses`;
-     * 4. a class it lists in `InnerClasses` extends P and either has it as its outer class, a
-     *    parameterised case, or is enclosed by it, a singleton case's anonymous class.
-     *
-     * Only an enum case may extend P (E125) and every enum has a case (E145), so a class passing the
-     * first three steps that no listed class ties to P is an object the adopter wrote, and the pairing
-     * is null. When a class the last step needs cannot be read, neither answer is certain and the
-     * pairing is not [EnumPairing.certain].
-     */
     private fun pairEnumCompanion(
         shape: ClassShape,
         lookup: (String) -> ByteArray?,
@@ -346,7 +212,6 @@ internal object ScalaGeneratedMethods {
         return if (unreadable) EnumPairing(enumClass, false, true) else null
     }
 
-    /** The enum class of a companion, [certain] unless a class [pairEnumCompanion] reads could not be read, and whether the companion is [local]. */
     private class EnumPairing(
         val enumClass: ClassShape,
         val certain: Boolean,
@@ -355,17 +220,9 @@ internal object ScalaGeneratedMethods {
 
     private val REFUSED_COMPANION_METHODS = setOf("values", "valueOf", "fromOrdinal", "\$new")
 
-    /** A Scala 2 class marked serializable, as scalac writes a `writeReplace` or `readResolve` only for one. */
     private val ClassShape.isSerializable: Boolean
         get() = "java/io/Serializable" in interfaces || "scala/Serializable" in interfaces
 
-    /**
-     * A Scala value class: a final class that extends `Object`, declares one instance field and has
-     * a companion module class declaring `$extension` methods. scalac puts the body of each of the
-     * class's methods in the companion, as `<name>$extension` taking the field's value first, and
-     * keeps a boxed method of the same name in the class that calls it. [isCase] is true for a case
-     * class, whose plumbing is such a pair too.
-     */
     private class ValueClass(
         val shape: ClassShape,
         val companion: ClassShape,
@@ -376,17 +233,10 @@ internal object ScalaGeneratedMethods {
         val type: Type = Type.getType(field.descriptor)
         val isCase: Boolean = CASE_CLASS_SIGNATURE.all { shape.methods[it]?.isStatic == false }
 
-        /** Whether Scala 2.12 may have written this class; see [CaseClass.mayBeScala212]. */
         val mayBeScala212: Boolean get() = !shape.isScala3 && PRODUCT_ELEMENT_NAME !in shape.methods
 
-        /** `getstatic <Companion>.MODULE$`. */
         val module: Insn = Insn.Field(Opcodes.GETSTATIC, moduleName, MODULE_FIELD, "L$moduleName;")
 
-        /**
-         * The one instruction that reads the field from `this`: `getfield`, or a call to a method of
-         * the class that is only `aload_0; getfield; return` (the accessor of a public `val`, or the
-         * mangled one scalac adds for a private one).
-         */
         val reads: List<Insn> =
             listOf(Insn.Field(Opcodes.GETFIELD, shape.internalName, field.name, field.descriptor)) +
                 shape.methods
@@ -407,17 +257,13 @@ internal object ScalaGeneratedMethods {
                         )
                     }
 
-        /** A load of the value parameter or of a local with the field's type. */
         fun load(slot: Int): Insn = Insn.Var(type.getOpcode(Opcodes.ILOAD), slot)
 
-        /** The return for the field's type. */
         fun back(): Insn = Insn.Plain(type.getOpcode(Opcodes.IRETURN))
 
-        /** The class an instance of the field's type is tested against in Scala 2's `canEqual$extension`. */
         val boxedType: String get() = boxedName(type) ?: type.internalName
     }
 
-    /** The value class [shape] is, and the one it is the companion of; each null when [shape] is neither. */
     private class ValueSides(
         val boxed: ValueClass?,
         val companion: ValueClass?,
@@ -428,11 +274,6 @@ internal object ScalaGeneratedMethods {
         lookup: (String) -> ByteArray?,
     ): ValueSides = ValueSides(valueClassOf(shape, lookup), valueClassCompanionOf(shape, lookup))
 
-    /**
-     * Whether [shape] has the structure of a class that [forwarderOutlineOf] may list: a value
-     * class or its companion, a trait with a static `m$`, or a class with an unmarked method `m`
-     * that calls a static `m$` and lists an interface.
-     */
     private fun mayHaveForwarders(
         shape: ClassShape,
         sides: ValueSides,
@@ -457,7 +298,6 @@ internal object ScalaGeneratedMethods {
                     }
             }
 
-    /** The value class [shape] is, when its companion can be read, else null. */
     private fun valueClassOf(
         shape: ClassShape,
         lookup: (String) -> ByteArray?,
@@ -469,7 +309,6 @@ internal object ScalaGeneratedMethods {
         return readClass(module, lookup)?.let { valueClassFrom(shape, it) }
     }
 
-    /** The value class that [companion] belongs to, when its partner can be read, else null. */
     private fun valueClassCompanionOf(
         companion: ClassShape,
         lookup: (String) -> ByteArray?,
@@ -492,11 +331,6 @@ internal object ScalaGeneratedMethods {
         return if (companion.isModuleClass && hasExtension) ValueClass(shape, companion, field) else null
     }
 
-    /**
-     * The forwarders of [shape]: those of a value class (see [valueClassForwarders]) and of a class
-     * or trait that mixes a trait in (see [traitForwarders]). The value class's are also the
-     * methods a call passes through, which the mark alone does not tell from a method that does work.
-     */
     private fun forwarderMarks(
         shape: ClassShape,
         lookup: (String) -> ByteArray?,
@@ -515,19 +349,8 @@ internal object ScalaGeneratedMethods {
         return Marks(generated, passThrough, trait.undecided)
     }
 
-    /** The name of a Scala default-argument getter, which ADR 0023 treats on its own. */
     private val DEFAULT_GETTER_NAME = Regex(".*\\\$default\\\$\\d+")
 
-    /**
-     * The boxed methods of the value class [valueClass] that only forward: an instance method whose
-     * body is exactly `getstatic <Companion>.MODULE$`, `aload_0`, the read of the field, each
-     * parameter loaded in order, `invokevirtual <Companion>.<name>$extension`, which scalac 2.12
-     * suffixes with a number for an overload, taking the field's
-     * type and then the method's own parameter types, and the return; the companion declares that
-     * method. A case value class's plumbing ([isCasePlumbing]) is [GeneratedBy.CASE_CLASS], every
-     * other forwarder [GeneratedBy.VALUE_CLASS]. The companion's method holds the code and is never
-     * marked here. Read from `javap -c` over `RichInt`, `Weight`, `Flag`, `Meters` and `Label`.
-     */
     private fun valueClassForwarders(valueClass: ValueClass): Map<Pair<String, String>, GeneratedBy> {
         val result = LinkedHashMap<Pair<String, String>, GeneratedBy>()
         for ((key, method) in valueClass.shape.methods) {
@@ -549,16 +372,11 @@ internal object ScalaGeneratedMethods {
         return result
     }
 
-    /**
-     * Whether [target] is the name scalac gives the `$extension` method of the value-class method
-     * [name]: `name$extension`, or in Scala 2.12 `name$extension` and a number when [name] is overloaded.
-     */
     private fun isExtensionOf(
         name: String,
         target: String,
     ): Boolean = target.startsWith(name + EXTENSION) && target.drop(name.length + EXTENSION.length).all(Char::isDigit)
 
-    /** Whether [key] is one of the members scalac writes for a case class, as the boxed side of [valueClass] has it. */
     private fun isCasePlumbing(
         valueClass: ValueClass,
         key: Pair<String, String>,
@@ -579,13 +397,6 @@ internal object ScalaGeneratedMethods {
         }
     }
 
-    /**
-     * The companion methods of [valueClass] that are scalac's. A `hashCode$extension` and an
-     * `equals$extension` whose bodies are the ones scalac writes ([matchesHashCodeExtension] and
-     * [matchesEqualsExtension]) are [GeneratedBy.VALUE_CLASS], or [GeneratedBy.CASE_CLASS] in a
-     * case class. The rest of a case class's companion plumbing is [GeneratedBy.CASE_CLASS]:
-     * see [matchesCaseExtension]. The class's own `m$extension` is never marked.
-     */
     private fun valueClassCompanionMarks(valueClass: ValueClass): Map<Pair<String, String>, GeneratedBy> {
         val element = valueClass.type.descriptor
         val mark = if (valueClass.isCase) GeneratedBy.CASE_CLASS else GeneratedBy.VALUE_CLASS
@@ -606,16 +417,6 @@ internal object ScalaGeneratedMethods {
         return result
     }
 
-    /**
-     * The `hashCode$extension` of a value class over a field of type T, read from `javap -c` over
-     * a value class of each primitive type, a `String`, a type parameter and an array:
-     *
-     * - a primitive: `load; Box.hashCode(T); ireturn` (Scala 2); `load; BoxesRunTime.boxTo...;
-     *   Box.hashCode(); ireturn` (Scala 3); Scala 3.10.0 also writes `load; ireturn` for an `int`,
-     *   `short`, `byte` or `char`, and for a `boolean` `load; ifeq; 1231; ireturn; 1237; ireturn`.
-     * - a reference: `aload; <Type>.hashCode(); ireturn` with the field's class or `Object` as the
-     *   owner; Scala 3.10.0 writes `Objects.hashCode(Object)` instead.
-     */
     private fun matchesHashCodeExtension(
         valueClass: ValueClass,
         body: List<Insn>,
@@ -653,25 +454,6 @@ internal object ScalaGeneratedMethods {
         return body in alternatives
     }
 
-    /**
-     * The `equals$extension(T, Object)` of a value class over a field of type T, with the other
-     * object in slot `1 + size(T)`. Scala 3.3.4:
-     *
-     * ```
-     * aload o; astore a; aload a; instanceof X; ifeq NO
-     * aload a; ifnonnull SOME; aconst_null; [unbox T | checkcast T]; goto JOIN
-     * SOME: aload a; checkcast X; invokevirtual X.<field>()T
-     * JOIN: store v; [load v; store c]            (the copy: 3.7.3 to 3.8.3, and 3.10.0)
-     * load T; load v; <compare>; iconst_1; goto END; MISS: iconst_0; END: ireturn
-     * NO: iconst_0; ireturn
-     * ```
-     *
-     * Scala 2.13.15 tests `instanceof X` through a pair of jumps, reads the other object from the
-     * parameter with a null check only for a reference field, and ends at one `ireturn`; see the
-     * body below. The comparison is `if_icmpne`, `lcmp`, `dcmpl` or `fcmpl` then `ifne`,
-     * `if_acmpne` for an array, `BoxesRunTime.equals` for a type parameter, and for a `String` the
-     * null-safe `Object.equals` that case classes get, or `Objects.equals` in Scala 3.3.8, 3.8.4 and later.
-     */
     private fun matchesEqualsExtension(
         valueClass: ValueClass,
         body: List<Insn>,
@@ -762,10 +544,6 @@ internal object ScalaGeneratedMethods {
         return m.matched
     }
 
-    /**
-     * The comparison that ends `equals$extension`'s test, with both operands of [type] on the
-     * stack, jumping to [fail] when they differ.
-     */
     private fun Match.compareValues(
         type: Type,
         fail: String,
@@ -825,18 +603,6 @@ internal object ScalaGeneratedMethods {
         }
     }
 
-    /**
-     * The plumbing a case value class's companion holds besides `hashCode$extension` and
-     * `equals$extension`, for a field of type T and the class `X` (`javap -c` over `Meters` and
-     * `Label`): `apply(T)T` and, in Scala 3, `unapply(T)T` are `load; return`; Scala 2's
-     * `unapply(T)Option` builds `Some(value)` behind a test of a new `X` that is never null. `copy$extension(T, T)T`
-     * returns its second parameter, and `copy$default$1$extension(T)T` and Scala 3's
-     * `_1$extension(T)T` their first. `canEqual$extension` tests its argument against `X` (Scala 3) or
-     * against the field's class (Scala 2), `productArity$extension` is 1, `productPrefix$extension`
-     * the class's name, and `toString$extension` and Scala 2's `productIterator$extension` run
-     * `ScalaRunTime` on a new `X`. `productElement$extension` and `productElementName$extension` are
-     * [matchesIndexedExtension].
-     */
     private fun matchesCaseExtension(
         valueClass: ValueClass,
         name: String,
@@ -915,7 +681,6 @@ internal object ScalaGeneratedMethods {
         }
     }
 
-    /** `getstatic ScalaRunTime$.MODULE$; new X; dup; load; invokespecial X.<init>(T)V; invokevirtual ScalaRunTime$.<name>; return`. */
     private fun runtimeCallOnNew(
         valueClass: ValueClass,
         name: String,
@@ -931,11 +696,6 @@ internal object ScalaGeneratedMethods {
             Insn.Plain(Type.getReturnType(descriptor).getOpcode(Opcodes.IRETURN)),
         )
 
-    /**
-     * Scala 2's `unapply(T)Option` of a case value class: `new X; dup; load; invokespecial
-     * X.<init>(T)V; ifnonnull SOME; getstatic None$.MODULE$; areturn; SOME: new Some; dup; load; box;
-     * invokespecial Some.<init>(Object)V; areturn`.
-     */
     private fun matchesUnapplyExtension(
         valueClass: ValueClass,
         body: List<Insn>,
@@ -958,14 +718,6 @@ internal object ScalaGeneratedMethods {
         return m.matched
     }
 
-    /**
-     * `productElement$extension(T, int)` ([names] false) or `productElementName$extension` ([names]
-     * true) of a case value class, which has the one element at index 0. It is the shape of
-     * [matchesIndexed] with the index in slot `1 + size(T)` and the value read from slot 1: in
-     * Scala 3 `aload_0; load; invokevirtual <Companion>._1$extension(T)T`, then the box and
-     * `areturn`, or `goto SHARED` for a primitive that is boxed once at the end; in Scala 2 `load`
-     * and the box. The out-of-range case is [matchesIndexed]'s, with the same four wordings.
-     */
     private fun matchesIndexedExtension(
         valueClass: ValueClass,
         body: List<Insn>,
@@ -1064,27 +816,6 @@ internal object ScalaGeneratedMethods {
         }
     }
 
-    /**
-     * The forwarders scalac writes for a trait's concrete method. In a class that has the trait
-     * T as a supertype, an instance method `m` is marked when its body is exactly `aload_0`, each
-     * parameter loaded in order, `invokestatic T.m$` taking T and then the method's parameter types
-     * and returning its type, and the return; T is an interface that declares that static method
-     * and a default method `m` with the same descriptor as the class's. In a trait, the static
-     * `m$` is marked when its body is exactly each parameter loaded in order, T first,
-     * `invokespecial T.m` and the return. The trait's default `m` holds the code and is never
-     * marked here. Scala 3 before 3.8 writes the class's forwarder as a bridge. A default-argument
-     * getter (`m$default$N`) is left to ADR 0023.
-     *
-     * Two more forwarders share the mark. A class that implements a Java interface J gets an
-     * instance method for each default method of J whose body is exactly `aload_0`, each parameter
-     * loaded in order, `invokespecial J.m` with the method's own name and descriptor, and the
-     * return. J must be a direct interface of the class; when [lookup] reads J, it must also declare
-     * `m` as a default method. A class that extends a specialised function gets `apply(I)I` as
-     * `aload_0`, the parameters, `invokevirtual` of its own `apply$mcII$sp` with the same descriptor,
-     * and the return, where the class declares that twin and a supertype that [lookup] reads, such as
-     * `scala/Function1`, declares it too; scalac holds the body in the twin and calls it, so
-     * `apply(I)I` itself never runs. A twin no supertype declares is the adopter's own method.
-     */
     private fun traitForwarders(
         shape: ClassShape,
         lookup: (String) -> ByteArray?,
@@ -1137,28 +868,16 @@ internal object ScalaGeneratedMethods {
         return TraitForwarders(result, undecided)
     }
 
-    /**
-     * What [traitForwarders] found: the methods it marks ([marked]), and those with a forwarder's
-     * call shape that it could not decide because a class it needed could not be read
-     * ([undecided]). A forwarder's target that was read and does not declare the method is not
-     * undecided: that method is the adopter's.
-     */
     private class TraitForwarders(
         val marked: Set<Pair<String, String>>,
         val undecided: Set<Pair<String, String>>,
     )
 
-    /** Whether [this] is an interface that declares [key] as a method with a body and no receiver restriction. */
     private fun ClassShape.declaresDefault(key: Pair<String, String>): Boolean {
         val method = methods[key]
         return access and Opcodes.ACC_INTERFACE != 0 && method != null && !method.isStatic && method.access and Opcodes.ACC_ABSTRACT == 0
     }
 
-    /**
-     * The name of the specialised twin `m$mc<return><parameters>$sp` of the method [key] when every
-     * type in its descriptor is a primitive and [shape] declares that twin with the same
-     * descriptor, else null.
-     */
     private fun specialisedTwinOf(
         shape: ClassShape,
         key: Pair<String, String>,
@@ -1171,11 +890,6 @@ internal object ScalaGeneratedMethods {
         return twin.takeIf { !method.isStatic && method.access and Opcodes.ACC_ABSTRACT == 0 }
     }
 
-    /**
-     * Whether a supertype in [declared] declares the instance method [twin] with [descriptor]: true
-     * when one does, null when none does and some supertype could not be read, false when all were
-     * read and none does.
-     */
     private fun declaresTwinAbove(
         declared: Map<String, ClassShape?>,
         twin: String,
@@ -1185,7 +899,6 @@ internal object ScalaGeneratedMethods {
         return if (declared.values.any { it == null }) null else false
     }
 
-    /** The static `m$` of the trait [shape] that only calls its default `m`; see [traitForwarders]. */
     private fun traitEntries(shape: ClassShape): Set<Pair<String, String>> =
         shape.methods
             .filter { (key, method) ->
@@ -1212,10 +925,6 @@ internal object ScalaGeneratedMethods {
                 }
             }.keys
 
-    /**
-     * Every superclass and interface of [shape], by internal name, each read once. A type [lookup]
-     * cannot read maps to null.
-     */
     private fun supertypeShapes(
         shape: ClassShape,
         lookup: (String) -> ByteArray?,
@@ -1235,7 +944,6 @@ internal object ScalaGeneratedMethods {
 
     private const val MAX_SUPERTYPES = 64
 
-    /** The marks of one class, and the methods among them that a call passes through and [generated] cannot tell apart. */
     private class Marks(
         val generated: Map<Pair<String, String>, GeneratedBy>,
         val passThrough: Set<Pair<String, String>>,
@@ -1270,31 +978,12 @@ internal object ScalaGeneratedMethods {
             for ((key, mark) in valueClassCompanionMarks(valueClass)) result.putIfAbsent(key, mark)
         }
         if (shape.isModuleClass && shape.writeReplaceMatches()) result.putIfAbsent(WRITE_REPLACE, GeneratedBy.SCALA_OBJECT)
-        // Scala 2.12 writes the readResolve and no writeReplace; 2.13 the reverse, and Scala 3 neither.
-        // A hand-written writeReplace beside 2.12's readResolve does not make it the adopter's.
         if (!shape.isScala3 && shape.isModuleClass && !shape.writeReplaceMatches() && shape.readResolveMatches()) {
             result.putIfAbsent(READ_RESOLVE, GeneratedBy.SCALA_OBJECT)
         }
         return Marks(result, forwarders.passThrough, forwarders.undecided)
     }
 
-    /**
-     * The outline of compiler output in [shape]: each method scalac writes for a plumbing family,
-     * named by its name and the descriptor derived from the class itself, whatever its body is,
-     * for the methods [generated] left unmarked. The outlines follow the order the marks are tried
-     * in, so a method is in the first family that names it:
-     *
-     * - [UnreadShape.STATIC_FORWARDER]: a static, non-synthetic, non-bridge method whose `$` twin
-     *   declares an instance method of the same name and descriptor.
-     * - [UnreadShape.SCALA_ENUM]: a Scala 3 enum's plumbing ([enumOutline]).
-     * - [UnreadShape.CASE_CLASS]: a case class's own plumbing ([caseClassOutline]) and its
-     *   companion's ([companionOutline]).
-     * - [UnreadShape.SCALA_OBJECT]: a module class's `writeReplace()` and, in Scala 2, `readResolve()`
-     *   when the class declares no `writeReplace`; in Scala 2, only for a serializable module class.
-     *
-     * A method outside every outline, such as a field accessor or a hand-written overload with
-     * another descriptor, is the adopter's code.
-     */
     private fun outlineOf(
         shape: ClassShape,
         lookup: (String) -> ByteArray?,
@@ -1322,9 +1011,6 @@ internal object ScalaGeneratedMethods {
                 add(companionOutline(shape, partner), UnreadShape.CASE_CLASS)
             }
         }
-        // Scala 3 gives every object a writeReplace. Scala 2 writes one (2.13) or a readResolve
-        // (2.12) only for a serializable object, so a readResolve beside scalac's own writeReplace
-        // is the adopter's, while one beside a hand-written writeReplace may be 2.12's.
         if (shape.isModuleClass && (shape.isScala3 || shape.isSerializable)) {
             add(listOf(WRITE_REPLACE), UnreadShape.SCALA_OBJECT)
             if (!shape.isScala3 && !shape.writeReplaceMatches()) add(listOf(READ_RESOLVE), UnreadShape.SCALA_OBJECT)
@@ -1332,11 +1018,6 @@ internal object ScalaGeneratedMethods {
         return result
     }
 
-    /**
-     * The outlines of the value-class and trait-forwarder families in [shape], for the methods
-     * [generated] left unmarked. [outlineOf] leaves them out, since a Scala 3 class from a read
-     * release holds hand-written code there.
-     */
     private fun forwarderOutlineOf(
         shape: ClassShape,
         lookup: (String) -> ByteArray?,
@@ -1372,7 +1053,6 @@ internal object ScalaGeneratedMethods {
         return statics.keys.filter { twin.methods[it]?.isStatic == false }
     }
 
-    /** The descriptors a `copy` or an `apply` returning [returnType] has: each primary constructor's parameters, an outer reference left out. */
     private fun constructionDescriptors(
         shape: ClassShape,
         returnType: String,
@@ -1385,13 +1065,6 @@ internal object ScalaGeneratedMethods {
                 "(${parameters.drop(outer).joinToString("") { it.descriptor }})$returnType"
             }
 
-    /**
-     * Mirrors [enumPlumbing]: the methods of an enum class, its companion (the case accessors of an
-     * instance companion included, and that of a local enum whether or not [pairEnumCompanion] could
-     * read every class it needs), a singleton case and a parameterised case that the enum rules
-     * read, with the descriptors they read them with. The companion's `valueOf` depends on what
-     * [generated] marks ([companionCaseKeys]).
-     */
     private fun enumOutline(
         shape: ClassShape,
         lookup: (String) -> ByteArray?,
@@ -1441,15 +1114,6 @@ internal object ScalaGeneratedMethods {
         )
     }
 
-    /**
-     * The `values`, `valueOf` and `$new` of the companion [shape] of [enumClass] that scalac writes
-     * for [cases]: `values` and `valueOf` only when every case is a singleton, `$new` only when one
-     * is, and all three when the cases cannot be read, an empty list included, since every enum has a
-     * case (E145). scalac infers `valueOf`'s result, which a supertype's `valueOf(String)` can widen,
-     * and the adopter can write methods the JVM knows as `valueOf(String)` beside it, overrides and
-     * bridge targets among them. So `valueOf` is every [isCompanionValueOf] method when [generated]
-     * marks none of them, and none otherwise.
-     */
     private fun companionCaseKeys(
         shape: ClassShape,
         enumClass: ClassShape,
@@ -1467,16 +1131,8 @@ internal object ScalaGeneratedMethods {
         ) + if (allSingleton && valueOf.none { it in generated }) valueOf else emptyList()
     }
 
-    /** Whether [key] could be the `valueOf(String)` scalac writes in an enum's companion, whatever object it returns. */
     private fun isCompanionValueOf(key: Pair<String, String>): Boolean = key.first == "valueOf" && VALUE_OF_DESCRIPTOR.matches(key.second)
 
-    /**
-     * The members scalac writes for a case class, whatever their bodies: the Product and
-     * `equals`, `hashCode` and `toString` members, `copy` (not on a case object) with the primary
-     * constructor's parameters, and an accessor per element, Scala 3's `_N()` or Scala 2's
-     * `<field>$access$N()`. When the elements cannot be worked out, the accessors are the methods
-     * named in either spelling with no parameters.
-     */
     private fun caseClassOutline(case: CaseClass): List<Pair<String, String>> {
         val string = "L$STRING;"
         val keys =
@@ -1516,11 +1172,6 @@ internal object ScalaGeneratedMethods {
         return keys
     }
 
-    /**
-     * The boxed methods of [valueClass] whose companion declares the instance method `m$extension`,
-     * or one with a numbered suffix as scalac 2.12 writes for an overload, taking the field's type and
-     * then the method's parameters, whatever their bodies.
-     */
     private fun valueClassBoxedOutline(valueClass: ValueClass): List<Pair<String, String>> =
         valueClass.shape.methods.keys.filter { (name, descriptor) ->
             val method = valueClass.shape.methods.getValue(name to descriptor)
@@ -1533,22 +1184,11 @@ internal object ScalaGeneratedMethods {
                 }
         }
 
-    /** The `hashCode$extension` and `equals$extension` of the companion of [valueClass], whatever their bodies. */
     private fun valueClassCompanionOutline(valueClass: ValueClass): List<Pair<String, String>> {
         val element = valueClass.type.descriptor
         return listOf("hashCode$EXTENSION" to "($element)I", "equals$EXTENSION" to "(${element}L$OBJECT;)Z")
     }
 
-    /**
-     * The instance methods of [shape] that a trait forwarder could be, whatever their bodies: a
-     * method of a class with an interface among the supertypes its own interfaces lead to that
-     * declares the static `m$` taking that interface and the method's parameters, and a default `m`
-     * with the method's descriptor, and whose body calls that `m$`. The same holds for a method
-     * whose body has an `invokespecial` of a direct interface's method with its own name and
-     * descriptor (the interface, when read, declaring a default), and for one that has an
-     * `invokevirtual` of its own class's specialised `m$mc...$sp` twin. A method with a body of its
-     * own is not in the outline. A default-argument getter is left out.
-     */
     private fun traitForwarderOutline(
         shape: ClassShape,
         lookup: (String) -> ByteArray?,
@@ -1593,7 +1233,6 @@ internal object ScalaGeneratedMethods {
         }
     }
 
-    /** Whether [call], in the method [key] of [shape], is an `invokespecial` of the same method on a direct interface. */
     private fun callsJavaDefault(
         shape: ClassShape,
         key: Pair<String, String>,
@@ -1601,7 +1240,6 @@ internal object ScalaGeneratedMethods {
     ): Boolean =
         call.opcode == Opcodes.INVOKESPECIAL && call.name == key.first && call.descriptor == key.second && call.owner in shape.interfaces
 
-    /** Whether [call], in the method [key] of [shape], is an `invokevirtual` of the method's specialised twin on [shape]. */
     private fun callsSpecialisedTwin(
         shape: ClassShape,
         key: Pair<String, String>,
@@ -1612,10 +1250,6 @@ internal object ScalaGeneratedMethods {
             call.descriptor == key.second &&
             call.name == specialisedTwinOf(shape, key)
 
-    /**
-     * Whether the method [key] of [shape] calls its specialised twin and no supertype read from
-     * [supertypes] leaves the twin undeclared.
-     */
     private fun callsSpecialisedTwinIn(
         shape: ClassShape,
         key: Pair<String, String>,
@@ -1628,7 +1262,6 @@ internal object ScalaGeneratedMethods {
             .any { it is Insn.Call && callsSpecialisedTwin(shape, key, it) } &&
             declaresTwinAbove(supertypes(), specialisedTwinOf(shape, key).orEmpty(), key.second) != false
 
-    /** The static `m$` of the trait [shape] that has a default `m` twin, whatever its body; see [traitEntries]. */
     private fun traitEntryOutline(shape: ClassShape): List<Pair<String, String>> {
         if (shape.access and Opcodes.ACC_INTERFACE == 0) return emptyList()
         return shape.methods.keys.filter { key ->
@@ -1649,21 +1282,11 @@ internal object ScalaGeneratedMethods {
         }
     }
 
-    /**
-     * The members a case value class has beside those [caseClassOutline] lists, whatever their
-     * bodies: `copy` and its default getter, which take and return the field's type.
-     */
     private fun valueCaseOutline(valueClass: ValueClass): List<Pair<String, String>> {
         val element = valueClass.type.descriptor
         return listOf("copy" to "($element)$element", "copy\$default\$1" to "()$element")
     }
 
-    /**
-     * The members scalac writes in the companion of a case value class, whatever their bodies: the
-     * `$extension` twin of each member of the class, and `apply` and `unapply` taking and returning
-     * the field's type (Scala 2's `unapply` returns an `Option`). A twin the Scala version does not
-     * write is not in the class and so not in the outline.
-     */
     private fun valueCaseCompanionOutline(valueClass: ValueClass): List<Pair<String, String>> {
         val element = valueClass.type.descriptor
         val scala3 = valueClass.companion.isScala3
@@ -1686,7 +1309,6 @@ internal object ScalaGeneratedMethods {
         )
     }
 
-    /** The members scalac writes in the companion of the case class [partner], whatever their bodies. */
     private fun companionOutline(
         companion: ClassShape,
         partner: CaseClass,
@@ -1714,15 +1336,6 @@ internal object ScalaGeneratedMethods {
     private fun declaresCompanionCandidate(shape: ClassShape): Boolean =
         shape.methods.any { (key, method) -> !method.isStatic && key.first in COMPANION_METHODS }
 
-    /**
-     * The class a companion [shape] pairs with. For an inner or local companion it is the one
-     * class other than itself that the companion's own `InnerClasses` attribute lists beside the
-     * same outer class, under the same [sourceName] and with no trailing `$`: scalac names a local
-     * case class and its companion `Outer$Local$1` and `Outer$Local$2$` in Scala 2.13.15, simple
-     * names `Local$1` and `Local$2$`, and `Outer$Local$1` and `Outer$Local$3$` in Scala 3.3.4,
-     * simple names `Local` and `Local$`. Otherwise it is the class named like [shape] without the
-     * trailing `$`, as for `Cc$` and `Cc`, or `Outer$Inner$` and `Outer$Inner`.
-     */
     private fun partnerName(shape: ClassShape): String {
         val self = shape.innerClasses.firstOrNull { it.name == shape.internalName }
         if (self != null) {
@@ -1739,13 +1352,6 @@ internal object ScalaGeneratedMethods {
         return shape.internalName.removeSuffix("$")
     }
 
-    /**
-     * The source name scalac gives the class [internalName] in `productPrefix` and a companion's
-     * `toString`: the simple name from its `InnerClasses` [entry], or the name after the package
-     * for a top-level class, without the trailing `$` of an object's class. A local class, one whose
-     * entry names no outer class, also loses the `$<n>` Scala 2.13.15 appends to its simple name
-     * (`Local$1` and `Local$2$`, both `Local`).
-     */
     private fun sourceName(
         internalName: String,
         entry: InnerClassEntry?,
@@ -1757,21 +1363,18 @@ internal object ScalaGeneratedMethods {
 
     private val LOCAL_SUFFIX = Regex("\\$\\d+$")
 
-    /** A local or anonymous class's `EnclosingMethod` attribute: the class that encloses it and, when a method does, its name and descriptor. */
     private data class EnclosingMethod(
         val owner: String,
         val name: String?,
         val descriptor: String?,
     )
 
-    /** One declared field: its access flags, name and descriptor. */
     private class FieldShape(
         val access: Int,
         val name: String,
         val descriptor: String,
     )
 
-    /** One exception-table entry, its range and target as instruction indices. */
     private data class Handler(
         val start: Int,
         val end: Int,
@@ -1779,7 +1382,6 @@ internal object ScalaGeneratedMethods {
         val type: String?,
     )
 
-    /** One entry of a class's `InnerClasses` attribute, with the access flags it records for the nested class. */
     private class InnerClassEntry(
         val name: String,
         val outerName: String?,
@@ -1787,11 +1389,6 @@ internal object ScalaGeneratedMethods {
         val access: Int,
     )
 
-    /**
-     * One declared method: its access flags and its instructions, [code], null for a method with
-     * none. [body] is the same list, and null for a method with a try-catch block too: no shape
-     * here has a handler, so only a constructor's opening stores are ever read past one.
-     */
     private class MethodShape(
         val access: Int,
     ) {
@@ -1801,19 +1398,12 @@ internal object ScalaGeneratedMethods {
 
         val body: List<Insn>? get() = code?.takeIf { !hasHandler }
 
-        /**
-         * Whether the method invokes a constructor of its own class on itself: it has more
-         * `invokespecial <own class>.<init>` calls than `new <own class>` instructions. Every
-         * auxiliary constructor does, while a primary constructor that builds another instance of
-         * its own class (`Node`) pairs each such call with a `new`.
-         */
         var delegatesToOwnConstructor = false
 
         val isStatic: Boolean get() = access and Opcodes.ACC_STATIC != 0
         val isPrivate: Boolean get() = access and Opcodes.ACC_PRIVATE != 0
     }
 
-    /** What the marking rules ask of one class, read in one pass over its bytes. */
     private class ClassShape(
         val internalName: String,
         val isScala: Boolean,
@@ -1829,30 +1419,15 @@ internal object ScalaGeneratedMethods {
         val fields: List<FieldShape>,
         val enclosingMethod: EnclosingMethod? = null,
     ) {
-        /** A class compiled for a Scala `object`: its name ends in `$` and it holds its own instance in `MODULE$`. */
         val isModuleClass: Boolean get() = internalName.endsWith("$") && hasOwnModuleField
 
-        /**
-         * Whether [descriptor] names this class's primary constructor: a constructor that does not
-         * delegate to another of its own class, as an auxiliary constructor always does (see
-         * [MethodShape.delegatesToOwnConstructor]).
-         */
         fun isPrimaryConstructor(descriptor: String): Boolean = methods["<init>" to descriptor]?.delegatesToOwnConstructor == false
 
-        /** This class's own source name; see [ScalaGeneratedMethods.sourceName]. */
         val sourceName: String get() = sourceName(internalName, innerClasses.firstOrNull { it.name == internalName })
 
         fun instanceMethods(): List<Pair<Pair<String, String>, List<Insn>>> =
             methods.mapNotNull { (key, method) -> method.body?.takeIf { !method.isStatic }?.let { key to it } }
 
-        /**
-         * The static forwarders: a method that is static, not synthetic, not a bridge and has a body,
-         * whose instructions are exactly `getstatic <ThisClass>$.MODULE$`, each parameter loaded in
-         * declaration order with the load opcode for its type, `invokevirtual <ThisClass>$.<its own
-         * name and descriptor>`, and the return opcode for its return type. Both Scala versions emit
-         * forwarders with flags `ACC_PUBLIC, ACC_STATIC` and that body, on an object's own class and
-         * on a case class for its companion's methods.
-         */
         fun staticForwarders(): Set<Pair<String, String>> {
             val excluded = Opcodes.ACC_SYNTHETIC or Opcodes.ACC_BRIDGE
             val moduleClass = "$internalName$"
@@ -1871,12 +1446,6 @@ internal object ScalaGeneratedMethods {
                 }.mapTo(mutableSetOf()) { it.key }
         }
 
-        /**
-         * Whether the class declares a private `writeReplace()Ljava/lang/Object;` whose instructions
-         * are exactly `new scala/runtime/ModuleSerializationProxy`, `dup`, `ldc` of the class itself,
-         * `invokespecial ModuleSerializationProxy.<init>(Ljava/lang/Class;)V` and `areturn`. Scala 3
-         * gives every object that method and Scala 2 every case-class companion.
-         */
         fun writeReplaceMatches(): Boolean {
             val method = methods[WRITE_REPLACE] ?: return false
             return method.isPrivate &&
@@ -1890,11 +1459,6 @@ internal object ScalaGeneratedMethods {
                 )
         }
 
-        /**
-         * Whether the class declares a private `readResolve()Ljava/lang/Object;` whose instructions
-         * are exactly `getstatic <Class>.MODULE$` and `areturn`. Scala 2.12.20 gives every
-         * serializable module class that method, and 2.13.15 and later and Scala 3 give none.
-         */
         fun readResolveMatches(): Boolean {
             val method = methods[READ_RESOLVE] ?: return false
             return method.isPrivate &&
@@ -1903,16 +1467,6 @@ internal object ScalaGeneratedMethods {
         }
     }
 
-    /**
-     * Reads [classBytes] once for [ClassShape]. A class is Scala 3's when it carries a `TASTY`
-     * attribute, or when it carries neither `ScalaSig` nor `ScalaInlineInfo`. Over the fixture
-     * modules, Scala 3.3.4 writes `Scala` on every class and `TASTY` beside it on a top-level
-     * one, and never `ScalaSig` or `ScalaInlineInfo`; Scala 2.13.15 writes `ScalaSig` on a
-     * top-level class, `Scala` on a module, inner or local class, and `ScalaInlineInfo` on all of
-     * them but an object's mirror class, and never `TASTY`. The top-level attributes alone would
-     * leave an inner or local case class, which carries only `Scala` in Scala 3.3.4, undecided.
-     * With [bodiesOf], only the methods it names get their instructions read.
-     */
     private fun readShape(
         classBytes: ByteArray,
         bodiesOf: Set<Pair<String, String>>? = null,
@@ -2033,13 +1587,6 @@ internal object ScalaGeneratedMethods {
         )
     }
 
-    /**
-     * One element of a case class: a parameter of its first parameter list, which scalac stores in
-     * a field of the same name and reads back through [accessor]. Scala 2.13.15 reads a `private`
-     * or `protected` element through a public `<name>$access$<index>`, and every other element, in
-     * both versions, through the accessor named like the field; a private accessor is called with
-     * `invokespecial` (`javap` over `Priv` and `Hidden`).
-     */
     private class Element(
         val index: Int,
         val name: String,
@@ -2048,54 +1595,19 @@ internal object ScalaGeneratedMethods {
         private val accessorPrivate: Boolean,
         private val owner: String,
     ) {
-        /** The call that reads this element from an instance already on the stack, from inside [owner]. */
         val read: Insn get() = Insn.Call(if (accessorPrivate) Opcodes.INVOKESPECIAL else Opcodes.INVOKEVIRTUAL, owner, accessor, "()$type")
 
-        /** The same read from another class, which only a non-private accessor allows. */
         val readFromOutside: Insn? get() = if (accessorPrivate) null else read
 
         val isPrimitive: Boolean get() = type.sort in Type.BOOLEAN..Type.DOUBLE
     }
 
-    /**
-     * A case class, or a case object's module class: a class carrying a Scala attribute that
-     * declares `canEqual(Ljava/lang/Object;)Z`, `productArity()I`,
-     * `productElement(I)Ljava/lang/Object;` and `productPrefix()Ljava/lang/String;`. The interface
-     * list is not consulted: Scala 2.13.15 leaves `scala.Product` out of it when a supertype already
-     * brings `Product`, as for `case class Round(r: Double) extends Figure`.
-     *
-     * [arity] is the constant `productArity` returns, and [elements] the fields the class's
-     * constructor stores its first [arity] parameters in, each with an accessor. scalac's primary
-     * constructor opens with one `aload_0`, parameter load and `putfield` per stored parameter, in
-     * parameter order, the first parameter list first; a second list's parameter is stored only if
-     * the body uses it, and a body `val` is assigned after the super call (`javap` over `TwoLists`,
-     * `Svc`, `BodyVal` and `Outer$Inner`, whose outer reference is stored after its element).
-     * Element `i` must be stored from parameter `i`, counted after the outer reference of an inner
-     * or local class: Scala 2.13.15 passes an element that overrides a supertype's `val` to the
-     * supertype's constructor and stores none of it (`Q`), and a constructor that skips a
-     * parameter gives no elements rather than a shifted list.
-     * Declaration order is no substitute: Scala 2.13.15 declares a body `lazy val`'s field before
-     * the elements' fields. An auxiliary constructor opens with its call to the primary one and
-     * contributes nothing. The stores are read even from a constructor with a try-catch block,
-     * which a `try` in the class body puts there (`TryBody`), since they come before any handler.
-     * Scala 2.13.15 reads a `private` or `protected` element through `<name>$access$<index>`, a name
-     * Scala 3.3.4 never gives an element's accessor, so a Scala 3 class always reads its elements
-     * through the accessor named like the field. [arity] and [elements] are each null when the
-     * class does not have that shape, and then no method whose body depends on the elements is
-     * marked.
-     */
     private class CaseClass(
         val shape: ClassShape,
     ) {
         val name: String get() = shape.internalName
         val isObject: Boolean get() = shape.isModuleClass
 
-        /**
-         * Whether Scala 2.12 may have written this class: a Scala 2 class with no
-         * `productElementName`, which 2.13 writes for every case class and case object and 2.12 for
-         * none. The shapes only 2.12 writes are read only in such a class, so a 2.13 method written
-         * by hand in 2.12's shape stays the adopter's.
-         */
         val mayBeScala212: Boolean get() = !shape.isScala3 && PRODUCT_ELEMENT_NAME !in shape.methods
 
         val arity: Int? =
@@ -2131,14 +1643,6 @@ internal object ScalaGeneratedMethods {
                 }
             }
 
-        /**
-         * The fields, by name and descriptor, that the constructor [descriptor] with [body] stores
-         * its parameters in before anything else: the run of `aload_0`, a load of the next
-         * parameter's slot and a `putfield` of that parameter's type on this class with which it
-         * opens, the first stored parameter being the first one after an outer reference. A
-         * constructor whose first parameter has the type of the class's `$outer` field takes an
-         * outer reference there.
-         */
         private fun storedParameters(
             descriptor: String,
             body: List<Insn>,
@@ -2170,48 +1674,12 @@ internal object ScalaGeneratedMethods {
             descriptor: String,
         ): Boolean = shape.methods.containsKey(name to descriptor)
 
-        /** Whether the class's `canEqual` is the one scalac writes: `aload_1; instanceof <Class>; ireturn`. */
         val hasGeneratedCanEqual: Boolean
             get() = shape.methods["canEqual" to "(L$OBJECT;)Z"]?.takeIf { !it.isStatic }?.body == generatedCanEqual(name)
 
-        /**
-         * Whether scalac may have left the `canEqual` call out of this class's `equals`. It does so
-         * when the class is final and its `canEqual` is scalac's own: Scala 2.13.15's `equalsCore`
-         * tests `clazz.isFinal && syntheticCanEqual`, and Scala 3.3.4's
-         * `SyntheticMembers.equalsBody` keeps the call unless the class is final and declares no
-         * `canEqual` of the adopter's. Bytecode shows only that a `canEqual` has scalac's body, and
-         * an adopter's `o.isInstanceOf[UC]` compiles to that same body while scalac still calls it
-         * (`UC`), so for a final class with such a `canEqual` the call may be present or absent. In
-         * every other class it is present (`UC2`, whose `canEqual` is `false`).
-         */
         val equalsMayOmitCanEqual: Boolean get() = shape.isFinal && hasGeneratedCanEqual
     }
 
-    /**
-     * The plumbing scalac 3 writes for an `enum`, read from `javap -c -p` over `Suit`, `Planet`,
-     * `Shape`, `Level`, `EnumHost.Mode`, `Hue` and `Color` in `Enums.scala`, `Switches.scala` and
-     * `Scala3Only.scala`; `Dir`, `Metal` and `JavaEnumHost.Gear` in `JavaEnums.scala`; and `Tone` and
-     * `Mark` in `EnumsExtendingClass.scala`; the enums of `ClassNestedEnums.scala` and
-     * `EnumHolder.Inner` in `Enums.scala`; and the enums declared in methods in `LocalEnums.scala`.
-     * Four kinds of class carry it, told apart by structure only scalac writes:
-     *
-     * - The enum class: abstract, `ACC_ENUM` and implementing `scala.reflect.Enum`, whatever it
-     *   extends: `Object`, `java.lang.Enum` or a class of the adopter's ([enumClassPlumbing]). scalac
-     *   sets `ACC_ENUM` only on an enum and its cases.
-     * - Its companion, which implements `scala.deriving.Mirror$Sum` and is paired with an enum class
-     *   ([pairEnumCompanion], [enumCompanionPlumbing]). It is a module class with the cases in static
-     *   fields, or, for an enum declared inside a class or in a method, a class with no `MODULE$` that
-     *   keeps them in instance fields.
-     * - The class of a singleton case: final, implementing `scala.runtime.EnumValue` and
-     *   `scala.deriving.Mirror$Singleton`, extending an enum class ([singletonCasePlumbing]). The
-     *   companion of a local enum is found from the case ([enumFamilyOf]).
-     * - A parameterised case, a final case class extending an enum class ([parameterisedCasePlumbing]).
-     *   Only its `ordinal` is enum plumbing; the rest is the case class rules' to mark.
-     *
-     * The enum class and the companion are read together: every question about a case's name or ordinal
-     * is answered from the companion ([enumCases]). When the cases cannot be read, the rules that need
-     * a case's name or ordinal mark nothing, and the rest still apply.
-     */
     private fun enumPlumbing(
         shape: ClassShape,
         lookup: (String) -> ByteArray?,
@@ -2231,7 +1699,6 @@ internal object ScalaGeneratedMethods {
         return if (singleton) singletonCasePlumbing(shape, family) else parameterisedCasePlumbing(shape, family)
     }
 
-    /** Whether the class is a Scala 3 enum class: see [enumPlumbing]. */
     private fun ClassShape.isEnumClass(): Boolean = isEnumClass(access, interfaces)
 
     private fun isEnumClass(
@@ -2239,21 +1706,6 @@ internal object ScalaGeneratedMethods {
         interfaces: List<String>,
     ): Boolean = access and Opcodes.ACC_ENUM != 0 && access and Opcodes.ACC_ABSTRACT != 0 && ENUM in interfaces
 
-    /**
-     * The cases of the enum [enumName], in ordinal order, read from this companion; null when they
-     * cannot be read. Only an enum case extends a Scala 3 enum class (E125), and a parameterised
-     * case's class is final with an inner name, so the parameterised cases are the final classes the
-     * companion's `InnerClasses` lists under the enum or the companion that extend the enum without
-     * implementing `scala.runtime.EnumValue`. Every release from 3.3.3 lists them there, while only
-     * 3.9.0 and earlier also write a static companion field for each. Each one's ordinal is the constant its
-     * `ordinal()` returns. The singletons take the ordinals the parameterised cases leave, in field
-     * order, which is declaration order. In a module companion a singleton case is a static
-     * `ACC_ENUM` field. In a companion with no `MODULE$`, that of an enum declared inside a class or a method, it
-     * is a private final instance field of the enum type whose same-named accessor returns the
-     * enum type and has the bit scalac sets only on an enum case's symbol, which a field the adopter
-     * wrote lacks. A listed final class that cannot be read, a parameterised case with no constant
-     * ordinal, or ordinals that are not all distinct and below the case count leave the cases unread.
-     */
     private fun ClassShape.enumCases(
         enumName: String,
         lookup: (String) -> ByteArray?,
@@ -2288,12 +1740,6 @@ internal object ScalaGeneratedMethods {
             .sortedBy { it.ordinal }
     }
 
-    /**
-     * The `InnerClasses` entries of this companion that may be parameterised cases of the enum
-     * [enumName]: final classes with an inner name not ending in `$`, listed under the enum or the
-     * companion. Reading each class tells a case, which extends the enum without implementing
-     * `scala.runtime.EnumValue`, from a class of the adopter's.
-     */
     private fun ClassShape.parameterisedCaseCandidates(enumName: String): List<InnerClassEntry> =
         innerClasses
             .filter {
@@ -2302,19 +1748,16 @@ internal object ScalaGeneratedMethods {
                     it.innerName?.endsWith("$") == false
             }.distinctBy { it.name }
 
-    /** One case of an enum: its source name, its ordinal and where the companion keeps it. */
     private sealed class EnumCase(
         val name: String,
         val ordinal: Int,
     ) {
-        /** A singleton case, the [field] of the companion that keeps it. */
         class Singleton(
             name: String,
             ordinal: Int,
             val field: FieldShape,
         ) : EnumCase(name, ordinal)
 
-        /** A parameterised case, the class [className]. */
         class Parameterised(
             name: String,
             ordinal: Int,
@@ -2324,13 +1767,11 @@ internal object ScalaGeneratedMethods {
 
     private fun ClassShape.declaresConstantOrdinal(): Boolean = constantOrdinal() != null
 
-    /** The constant `ordinal()I` returns, null when its body is anything else. */
     private fun ClassShape.constantOrdinal(): Int? {
         val body = methods[ORDINAL]?.body ?: return null
         return if (body.size == 2 && body[1] == Insn.Plain(Opcodes.IRETURN)) (body[0] as? Insn.IntConstant)?.value else null
     }
 
-    /** [lookup] asked at most once for each class; a failure is kept as no class. */
     private fun readOnce(lookup: (String) -> ByteArray?): (String) -> ByteArray? {
         val read = HashMap<String, ByteArray?>()
         return { internalName ->
@@ -2360,41 +1801,25 @@ internal object ScalaGeneratedMethods {
             null
         }
 
-    /**
-     * An enum class and its companion, with the cases the companion names, [cases] being null when they cannot be read.
-     * [local] is true when the companion was paired as that of a local enum ([pairEnumCompanion]).
-     */
     private class EnumFamily(
         val enumClass: ClassShape,
         val companion: ClassShape,
         val cases: List<EnumCase>?,
         val local: Boolean = false,
-        /** Whether [host] is an interface, a trait, whose lazy accessor is called with `invokeinterface`. */
         val hostInterface: Boolean = false,
     ) {
-        /** The class whose method declares a local enum, which holds the lazy accessor of its companion. */
         val host: String? get() = if (local) companion.enclosingMethod?.owner else null
 
         val singletonType: String = "L${enumClass.internalName};"
 
-        /** Whether the companion keeps its cases in instance fields read through accessors, as one with no `MODULE$` does. */
         val instanceCases: Boolean get() = !companion.isModuleClass
         val singletons: List<EnumCase.Singleton>? get() = cases?.filterIsInstance<EnumCase.Singleton>()
 
-        /** Whether every case is a singleton, the shape that gives the companion a `$values` array. */
         val allSingleton: Boolean get() = !cases.isNullOrEmpty() && cases.all { it is EnumCase.Singleton }
 
-        /** The ordinal of the singleton case called [name], -1 when there is none or the cases cannot be read. */
         fun singletonOrdinalOf(name: String): Int = singletons?.firstOrNull { it.name == name }?.ordinal ?: -1
     }
 
-    /**
-     * The family of [enumClass] that the case class [caseShape] belongs to. The companion is found by
-     * name; the companion of an enum declared inside a class has no `MODULE$`. A local enum's companion
-     * is not named like its enum, so it is found from the case: a [singleton] case's anonymous class is
-     * enclosed by it, and a parameterised case lists it as its outer class. It counts only when it
-     * pairs with [enumClass] ([pairEnumCompanion]).
-     */
     private fun enumFamilyOf(
         caseShape: ClassShape,
         singleton: Boolean,
@@ -2427,12 +1852,6 @@ internal object ScalaGeneratedMethods {
         return EnumFamily(enumClass, companion, companion.enumCases(enumClass.internalName, lookup), pairing.local, hostInterface)
     }
 
-    /**
-     * The four `scala.Product` mixin forwarders of an enum class, each `Product`'s static method
-     * called with `this`: `productIterator`, `productPrefix`, `productElementName` and
-     * `productElementNames`. The static forwarders on the same class are marked
-     * [GeneratedBy.STATIC_FORWARDER] first.
-     */
     private fun enumClassPlumbing(shape: ClassShape): Set<Pair<String, String>> =
         shape
             .instanceMethods()
@@ -2460,13 +1879,6 @@ internal object ScalaGeneratedMethods {
                 }
             }.mapTo(mutableSetOf()) { it.first }
 
-    /**
-     * The companion's `values`, `valueOf` (whatever object it returns), `fromOrdinal`, `$new` and
-     * `ordinal` (with its bridge), each only when its body is the one scalac writes for this enum's
-     * cases. `writeReplace` is the object rule's. An enum with a parameterised case gets no `values`,
-     * `valueOf` or `$values`, a `$new` only when it has a singleton case, and a `fromOrdinal` that
-     * tests ordinals instead of indexing the array.
-     */
     private fun enumCompanionPlumbing(
         family: EnumFamily,
         lookup: (String) -> ByteArray?,
@@ -2529,14 +1941,6 @@ internal object ScalaGeneratedMethods {
         return result
     }
 
-    /**
-     * The per-case accessors of an instance companion, each with the body `aload_0; getfield
-     * <companion>.<field>; areturn` over the field that keeps the case. A singleton case's accessor is
-     * `<Case>()L<enum>;` over the field of that name. A parameterised case's, which scalac writes
-     * for the case's companion object, is `<Case>()L<case class>$;` over the instance field of that
-     * type it reads, named `<Case>$lzy<n>` ([caseObjectField]), and only for a case [enumCases]
-     * listed, whose name the adopter cannot declare again.
-     */
     private fun enumCaseAccessors(family: EnumFamily): Map<Pair<String, String>, List<Insn>> {
         val companion = family.companion
         val result = LinkedHashMap<Pair<String, String>, List<Insn>>()
@@ -2564,12 +1968,6 @@ internal object ScalaGeneratedMethods {
         return result
     }
 
-    /**
-     * The instance field of [companion] that keeps the companion object of the parameterised case
-     * [caseName], of type [type]: the field the case's accessor reads, when it is named
-     * `<caseName>$lzy<n>`. scalac numbers `n` per source file, so an earlier lazy value, member
-     * object or case of that name in the file raises it.
-     */
     private fun caseObjectField(
         companion: ClassShape,
         caseName: String,
@@ -2583,14 +1981,6 @@ internal object ScalaGeneratedMethods {
         return read.name.takeIf { named && declared }
     }
 
-    /**
-     * The per-case accessors of the instance companion [shape] that only scalac writes, by name and
-     * descriptor, whatever their bodies: a no-argument method returning the enum type with the bit
-     * scalac sets on an enum case's symbol, and the accessor `<Case>()L<case class>$;` of each
-     * parameterised case, whose name the adopter cannot declare again. A listed class that cannot be
-     * read counts as a case, so its accessor stays held when neither answer is certain. Empty for a
-     * module companion.
-     */
     private fun enumCaseAccessorKeys(
         shape: ClassShape,
         enumClass: ClassShape,
@@ -2616,7 +2006,6 @@ internal object ScalaGeneratedMethods {
         return result
     }
 
-    /** `getstatic $values; invokevirtual <array>.clone; checkcast <array>; areturn`, or `aload_0; getfield $values; ...` in an instance companion. */
     private fun matchesEnumValues(
         family: EnumFamily,
         method: MethodShape,
@@ -2633,13 +2022,11 @@ internal object ScalaGeneratedMethods {
             )
     }
 
-    /** Whether the companion declares the `$values` array, static in a module companion and an instance field otherwise. */
     private fun EnumFamily.hasValuesField(): Boolean =
         companion.fields.singleOrNull { it.name == VALUES_FIELD && it.descriptor == "[$singletonType" }?.let {
             (it.access and Opcodes.ACC_STATIC != 0) != instanceCases
         } == true
 
-    /** The load of the `$values` array: `getstatic`, or `aload_0; getfield` in an instance companion. */
     private fun EnumFamily.loadValues(): List<Insn> {
         val array = "[$singletonType"
         return if (instanceCases) {
@@ -2649,11 +2036,6 @@ internal object ScalaGeneratedMethods {
         }
     }
 
-    /**
-     * Whether [name] is how a no-case message names the enum of [family]: its source name after the last `.`, and for a
-     * local enum, which scalac names with one `_$` per enclosing term, a name that starts with the package of the enum
-     * class, ends with `.`, one or more `_$` and the source name, and holds no space.
-     */
     private fun namesEnum(
         name: String,
         family: EnumFamily,
@@ -2667,7 +2049,6 @@ internal object ScalaGeneratedMethods {
             Regex("\\.(?:_\\$)+" + Regex.escape(enumClass.sourceName) + "$").containsMatchIn(name)
     }
 
-    /** The string-concatenation call that builds scalac's `has no case with <what>` message. */
     private fun Match.noCaseMessage(
         family: EnumFamily,
         what: String,
@@ -2688,11 +2069,6 @@ internal object ScalaGeneratedMethods {
         }
     }
 
-    /**
-     * `new <exception>; dup; <argument>; <message call>; invokespecial <init>(String); athrow`. Scala
-     * 3.3.3 words both differently: `valueOf`'s message is `"enum case not found: " + s`, with no enum
-     * name, and `fromOrdinal` passes the ordinal's string with no message call at all.
-     */
     private fun Match.throwNoCase(
         family: EnumFamily,
         exception: String,
@@ -2713,7 +2089,6 @@ internal object ScalaGeneratedMethods {
         step(Insn.Plain(Opcodes.ATHROW))
     }
 
-    /** The string-concatenation call with exactly [recipe]. */
     private fun Match.concatWithRecipe(recipe: String) {
         take { insn ->
             (insn as? Insn.Dynamic)?.takeIf { call ->
@@ -2726,10 +2101,6 @@ internal object ScalaGeneratedMethods {
         }
     }
 
-    /**
-     * The return of a matched case: `aload_0; pop; getstatic <companion>.<case>; areturn`, or
-     * `aload_0; invokevirtual <companion>.<case>(); areturn` in an instance companion.
-     */
     private fun Match.returnCase(
         family: EnumFamily,
         case: EnumCase.Singleton,
@@ -2744,16 +2115,6 @@ internal object ScalaGeneratedMethods {
         step(areturn())
     }
 
-    /**
-     * `valueOf(String)`, in the two lowerings of the string match it is. Both open `aload_1; astore s`.
-     * With one or two cases, a chain per case in declaration order: `ldc <name>; aload s;
-     * Object.equals; ifeq NEXT; <return the case>`. With three or more, a switch on the string's hash
-     * (`aload s; ifnonnull H; iconst_0; goto S; H: aload s; String.hashCode; S:`), a `tableswitch` when
-     * the hashes are dense (`case X, Y, Z`) and a `lookupswitch` otherwise, whose buckets are in key
-     * order, each the same test followed by `goto DEFAULT`. The tail is `throw new IllegalArgumentException(
-     * "enum <enum> has no case with name: " + s)`. Two cases whose names share a hash share a bucket,
-     * a lowering not read here. An enum with a parameterised case has no `valueOf`.
-     */
     private fun matchesEnumValueOf(
         family: EnumFamily,
         method: MethodShape,
@@ -2808,18 +2169,6 @@ internal object ScalaGeneratedMethods {
             }.matched
     }
 
-    /**
-     * `fromOrdinal(int)`, in two shapes. With only singleton cases it indexes `$values` inside a
-     * `Throwable` handler that rethrows as `NoSuchElementException`: `getstatic $values; iload_1;
-     * aaload; goto END; H: pop; <throw>; nop; nop; athrow; END: areturn`, the handler covering the
-     * first three instructions. An instance companion loads the array with `aload_0; getfield $values`
-     * and its handler covers four. An enum with a parameterised case tests ordinals instead,
-     * `iload_1; istore k` then, with one or two singleton cases, per case `<ordinal>; iload k;
-     * if_icmpne NEXT; <return the case>`, and with three or more `iload k` and a switch on the
-     * singleton ordinals whose targets return each case, before the throw. An enum with no singleton
-     * case is only the throw. The ordinal of a case is its position among all the cases, parameterised
-     * ones included, so a singleton's ordinal is not its position among the singletons.
-     */
     private fun matchesEnumFromOrdinal(
         family: EnumFamily,
         method: MethodShape,
@@ -2875,13 +2224,6 @@ internal object ScalaGeneratedMethods {
         return switch.matched
     }
 
-    /**
-     * The private `$new(int, String)`: `new <singleton class>; dup; aload_2; iload_1; invokespecial
-     * <init>(String, int); areturn`, where the class reads as the singleton-case class of this enum.
-     * Scala 3.3.3, 3.4.0 and 3.4.1 also pass the companion: `aload_0` after `iload_1`, to
-     * `<init>(String, int, <companion>)`. An instance companion, that of an enum declared inside a
-     * class or a method, always does and reads only that form.
-     */
     private fun matchesEnumNew(
         family: EnumFamily,
         method: MethodShape,
@@ -2923,23 +2265,6 @@ internal object ScalaGeneratedMethods {
     private fun ClassShape.isEnumSingletonOf(enumClass: ClassShape): Boolean =
         isScala3 && isFinal && superName == enumClass.internalName && ENUM_VALUE in interfaces && MIRROR_SINGLETON in interfaces
 
-    /**
-     * A singleton case's class. Its `canEqual`, `productArity`, `productElement` and
-     * `productElementName` call `EnumValue`'s static twin with `this` (and the argument), its
-     * `fromProduct` calls `Mirror$Singleton.fromProduct$` and has a bridge returning `Object`, and its
-     * private `readResolve` is `getstatic <companion>.MODULE$; aload_0; invokevirtual ordinal;
-     * invokevirtual <companion>.fromOrdinal; areturn`, with `aload_0; getfield $outer` in place of the
-     * `getstatic` when the companion has no `MODULE$` and the class's `$outer` field is of its type.
-     * The companion of a local enum is reached through the host's lazy accessor instead
-     * ([localReadResolve]).
-     * The name and ordinal come in two forms. Cases that share a class (`case A, B`) keep them in the
-     * fields `$name$N` and `_$ordinal$N` of one suffix and read them with `getfield`; a case with its
-     * own class (`case A extends E(1)`) returns constants, and the name must be a singleton case of
-     * the companion whose ordinal is the constant `ordinal` returns. `productPrefix` and `toString` return the name, and `hashCode`
-     * (Scala 3.3.7 and later on the 3.3 line, 3.7.3 and later) is `String.hashCode` of it. A singleton
-     * of a Java-compatible enum has only the forwarders and a `productPrefix` that is
-     * `aload_0; invokevirtual <this class>.name; areturn`.
-     */
     private fun singletonCasePlumbing(
         shape: ClassShape,
         family: EnumFamily,
@@ -3035,7 +2360,6 @@ internal object ScalaGeneratedMethods {
         return result
     }
 
-    /** The tail of a singleton case's `readResolve`: `aload_0; invokevirtual ordinal; invokevirtual <companion>.fromOrdinal; areturn`. */
     private fun resolvedOrdinal(
         self: String,
         companion: String,
@@ -3048,18 +2372,6 @@ internal object ScalaGeneratedMethods {
             areturn(),
         )
 
-    /**
-     * The `readResolve` body of a local enum's singleton case, built from the names [body] uses where
-     * scalac generates them, or null when [body] is not one of these shapes. It reaches the companion
-     * through the lazy accessor of the host, the class whose method declares the enum, passing the
-     * `LazyRef` the companion was created with. The host is `getstatic <host>.MODULE$` for an object
-     * or `this.$outer.<outer accessor>()` for a class, the accessor being a method of the companion
-     * that returns the host. The `LazyRef` is a field of the companion, read through `this.$outer`,
-     * or of a case with constructor arguments, read from `this`. The accessor is `invokevirtual
-     * <host>.<accessor>(LazyRef)<companion>`, or `invokeinterface` when the host is a trait. The
-     * names of the outer accessor, the field and the host's accessor are free; the owners and
-     * descriptors are not.
-     */
     private fun localReadResolve(
         shape: ClassShape,
         family: EnumFamily,
@@ -3114,11 +2426,6 @@ internal object ScalaGeneratedMethods {
             resolvedOrdinal(self, companion.internalName, family.singletonType)
     }
 
-    /**
-     * The instructions that push a singleton case's name: `ldc <name>` for a name that is a singleton
-     * case of the companion, or `aload_0; getfield $name$N` of a private final `String` field. Null
-     * for anything else.
-     */
     private fun singletonNameLoad(
         shape: ClassShape,
         family: EnumFamily,
@@ -3143,7 +2450,6 @@ internal object ScalaGeneratedMethods {
         }
     }
 
-    /** Whether [body] reads the `_$ordinal$N` field whose suffix is the one of the `$name$N` field [nameLoad] reads. */
     private fun singletonOrdinalLoad(
         shape: ClassShape,
         nameLoad: List<Insn>,
@@ -3157,10 +2463,6 @@ internal object ScalaGeneratedMethods {
             body == listOf(aload(0), Insn.Field(Opcodes.GETFIELD, shape.internalName, field, "I"), Insn.Plain(Opcodes.IRETURN))
     }
 
-    /**
-     * A parameterised case's `ordinal`: `<n>; ireturn`, where this class is a parameterised case of
-     * the family and `n` is its ordinal ([enumCases]).
-     */
     private fun parameterisedCasePlumbing(
         shape: ClassShape,
         family: EnumFamily,
@@ -3180,33 +2482,6 @@ internal object ScalaGeneratedMethods {
     private fun caseClassOf(shape: ClassShape): CaseClass? =
         if (shape.isScala && CASE_CLASS_SIGNATURE.all { shape.methods[it]?.isStatic == false }) CaseClass(shape) else null
 
-    /**
-     * The plumbing methods of [case]: each instance method whose name and descriptor are one of the
-     * members below and whose body is the one scalac writes for it in this class. A field
-     * accessor is never one; the adopter declared it. Neither is a member the adopter overrode,
-     * unless the override is instruction for instruction what scalac writes, in which case it is
-     * the generated code. A shape only one Scala version writes counts only in a class of that
-     * version (see [readShape]). Shapes, read from `javap -c` over both versions:
-     *
-     * - `canEqual`: `aload_1; instanceof <Class>; ireturn`.
-     * - `productPrefix`: `ldc "<source name>"; areturn`.
-     * - `productArity`: the element count; `ireturn`. Marked only when `productElement` is marked
-     *   too, since the bounds of its dispatch carry the count scalac knew: a hand-written
-     *   `productArity` returning fewer than the elements (`Lie2`) finds that many stored fields and
-     *   would otherwise pass. A class whose elements are unknown has none.
-     * - `productIterator`: `ScalaRunTime$.typedProductIterator(this)` (2.13) or `Product.productIterator$(this)` (3).
-     * - `productElementNames`: `Product.productElementNames$(this)`, in both.
-     * - `toString`: `ScalaRunTime$._toString(this)`; for a case object `ldc "<source name>"; areturn`.
-     * - `hashCode`: see [matchesHashCode].
-     * - `equals`: see [matchesEqualsScala2] and [matchesEqualsScala3].
-     * - `productElement` and `productElementName`: see [matchesIndexed]. A Scala 2 case object's
-     *   `productElementName` is `Product.productElementName$(this, n)` instead.
-     * - `copy`: see [matchesConstruction].
-     * - Scala 3's `_N()`: `aload_0`, the element's read, its return. Only in a Scala 3 class (see
-     *   [readShape]), since Scala 2.13.15 never writes one.
-     * - Scala 2's `<name>$access$<index>()`: `aload_0; getfield <name>`, its return. Only in a
-     *   Scala 2 class, since Scala 3.3.4 never writes one.
-     */
     private fun caseClassPlumbing(case: CaseClass): Set<Pair<String, String>> {
         val self = case.name
         val scala3 = case.shape.isScala3
@@ -3294,7 +2569,6 @@ internal object ScalaGeneratedMethods {
             }.mapTo(mutableSetOf()) { it.first }
     }
 
-    /** `getstatic ScalaRunTime$.MODULE$; aload_0; invokevirtual ScalaRunTime$.<name>`, and the return for its result. */
     private fun runtimeCall(
         name: String,
         descriptor: String,
@@ -3306,7 +2580,6 @@ internal object ScalaGeneratedMethods {
             Insn.Plain(Type.getReturnType(descriptor).getOpcode(Opcodes.IRETURN)),
         )
 
-    /** A mixin forwarder to `scala.Product`'s static `<name>`, passing `this` and, [withIndex], the `int` argument. */
     private fun productForwarder(
         name: String,
         descriptor: String,
@@ -3319,7 +2592,6 @@ internal object ScalaGeneratedMethods {
             areturn(),
         )
 
-    /** Scala 3's `_N()`: `aload_0`, a read of element `N - 1`, and the return for its type. */
     private fun matchesElementAlias(
         case: CaseClass,
         name: String,
@@ -3337,7 +2609,6 @@ internal object ScalaGeneratedMethods {
             body == listOf(aload(0), element.read, Insn.Plain(element.type.getOpcode(Opcodes.IRETURN)))
     }
 
-    /** Scala 2's `<name>$access$<index>()`: `aload_0; getfield <name>` and the return for its type. */
     private fun matchesAccessAccessor(
         case: CaseClass,
         name: String,
@@ -3357,17 +2628,6 @@ internal object ScalaGeneratedMethods {
             )
     }
 
-    /**
-     * Whether [body] is `new <target>; dup`, optionally the outer reference, every parameter of
-     * [descriptor] loaded in order from slot 1, `invokespecial <target>.<init>` taking the outer
-     * reference's type and those parameters, and `areturn`; and that constructor is [targetShape]'s
-     * primary one (see [ClassShape.isPrimaryConstructor]), so that a hand-written `copy` or
-     * `apply` that builds through an auxiliary constructor is left alone. This is a case class's
-     * `copy` and a companion's `apply` in both versions. The
-     * outer reference of an inner or local case class is `aload_0; getfield <outerOwner>.$outer`,
-     * or, in Scala 2.13.15's `copy` of an inner class, `aload_0; invokevirtual <outerOwner>.<...>$$outer()`
-     * when [outerAccessor] allows it (`javap` over `Outer$Inner` and the local `Local`).
-     */
     private fun matchesConstruction(
         body: List<Insn>,
         target: String,
@@ -3387,11 +2647,6 @@ internal object ScalaGeneratedMethods {
         return m.matched && targetShape.isPrimaryConstructor(constructor)
     }
 
-    /**
-     * Reads an inner class's outer reference from `this`: `aload_0` then `getfield
-     * <owner>.$outer`, or, when [accessor] allows it, `invokevirtual <owner>.<name>()` for a method
-     * whose name ends in `$$outer`. Returns the reference's descriptor.
-     */
     private fun Match.outerReference(
         owner: String,
         accessor: Boolean,
@@ -3409,31 +2664,6 @@ internal object ScalaGeneratedMethods {
     private fun Insn.Call.isOuterAccessor(owner: String): Boolean =
         opcode == Opcodes.INVOKEVIRTUAL && this.owner == owner && name.endsWith("\$\$outer") && descriptor.startsWith("()L")
 
-    /**
-     * `hashCode`, in three shapes read from both versions. A case object's is `ldc <hash of its
-     * source name>; ireturn` (`Solo$`: 2582783, `"Solo".hashCode()`). A case class with no element
-     * of a primitive type, `Empty` and `One` among them, has `ScalaRunTime$._hashCode(this)`. Any
-     * other case class has scalac's fold: seed `0xcafebabe`, `Statics.mix` with
-     * `productPrefix().hashCode()`, one `Statics.mix` per element in order, and
-     * `Statics.finalizeHash(acc, <arity>)`. Each element is read through its accessor and hashed
-     * with `Statics.longHash`, `doubleHash` or `floatHash` for `long`, `double` and `float`,
-     * `anyHash` for a reference, `1231` or `1237` for a `boolean`, and as it is for `int`, `char`,
-     * `byte` and `short` (`javap` over `Mixed`, `Hidden` and `Priv`).
-     *
-     * Three releases change that, each read with `javap` over the fixtures:
-     *
-     * - Scala 2.12.20 leaves the `productPrefix` mix out of the fold: the seed is stored and the
-     *   first element's mix follows it. That is read only in a class 2.12 may have written
-     *   ([CaseClass.mayBeScala212]).
-     * - Scala 2.13.17 and later, Scala 3.3.7 and later on the 3.3 line, and 3.7.1 and later (3.3.4
-     *   to 3.3.6, 3.4 to 3.6 and 3.7.0 write the older form), fold the prefix mix's argument into a constant, `productPrefix().hashCode()`
-     *   evaluated by the compiler (`sipush 2176` for `Cc`). A case class with no element is then
-     *   `ldc <that constant>; ireturn` (`Empty`: 67081517), and one with no primitive element is
-     *   `MurmurHash3$.productHash(this, <seed mixed with that constant>, true)`: `getstatic
-     *   MurmurHash3$.MODULE$; aload_0; ldc <constant>; iconst_1; invokevirtual productHash(Product,
-     *   int, boolean)`. The constant there is `MurmurHash3.mix(0xcafebabe, productPrefix().hashCode())`,
-     *   computed here, so a different literal is not scalac's.
-     */
     private fun matchesHashCode(
         case: CaseClass,
         body: List<Insn>,
@@ -3474,7 +2704,6 @@ internal object ScalaGeneratedMethods {
             step(mix)
             store(Opcodes.ISTORE, "acc")
         }
-        // Only Scala 2.12 leaves the prefix mix out.
         if (case.mayBeScala212) m.optional(prefixMix) else m.prefixMix()
         for (element in elements) {
             m.load(Opcodes.ILOAD, "acc")
@@ -3524,7 +2753,6 @@ internal object ScalaGeneratedMethods {
         return m.matched
     }
 
-    /** `Statics.mix` and `MurmurHash3.mix`: a Murmur3 step of [hash] with [data], then the rotate and multiply that close it. */
     private fun murmurMix(
         hash: Int,
         data: Int,
@@ -3539,18 +2767,6 @@ internal object ScalaGeneratedMethods {
     private const val MURMUR_C2 = 0x1b873593
     private const val MURMUR_ADD = 0xe6546b64L.toInt()
 
-    /**
-     * The element comparisons of `equals`: every element of a primitive type first, then every
-     * other one when [primitivesFirst], each in element order, each read through its accessor from
-     * `this` and from the other instance in slot [other] (`javap` over `Mixed`, whose `String`
-     * element comes before its `int` in the source and after it here). Scala 2.12.20 compares in
-     * source order instead, so [primitivesFirst] is false for it. A mismatch jumps to [fail]:
-     * `if_icmpne` for `int`, `boolean`, `char`, `byte` and `short`; `lcmp`, `dcmpl` or `fcmpl` then
-     * `ifne` for `long`, `double` and `float`; for a reference, either `BoxesRunTime.equals` then
-     * `ifeq`, which scalac writes for a generic element, or the null-safe `Object.equals` it writes
-     * for `String` and `Option` elements. Scala 3.3.8, 3.8.4 and later write `java.util.Objects.equals`
-     * then `ifeq` for the null-safe case instead, which [objectsEquals] allows.
-     */
     private fun Match.compareElements(
         elements: List<Element>,
         other: String,
@@ -3611,7 +2827,6 @@ internal object ScalaGeneratedMethods {
         }
     }
 
-    /** The null-safe `equals` of a reference element, as 2.13.15 and 3.3.4 inline it; [i] keeps its labels apart. */
     private fun Match.nullSafeEquals(
         i: Int,
         fail: String,
@@ -3630,36 +2845,6 @@ internal object ScalaGeneratedMethods {
         label("next$i")
     }
 
-    /**
-     * Scala 2.13.15's `equals`, read from `javap -c` over `Mixed`, `One`, `Priv`, `Empty`,
-     * `Outer$Inner` and the final `FT`, `F1`, `FE`, `FinalOuter$FIn` and `FinalHolder$FObj`:
-     *
-     * ```
-     * aload_0; aload_1; if_acmpeq TRUE          (absent with no elements)
-     * aload_1; astore a; aload a; instanceof X; ifeq NO
-     * [aload a; checkcast X; <outer>; aload_0; <outer>; if_acmpne NO]   (an inner class)
-     * [iconst_1; ifeq NO]                       (an inner class, when X is final)
-     * iconst_1; goto TEST
-     * NO: goto NO2
-     * NO2: iconst_0; goto TEST
-     * TEST: ifeq FALSE
-     * aload_1; checkcast X; astore b            (with no elements: aload_1; checkcast X, and no b)
-     * <comparisons against b, failing to FALSE>
-     * aload b; aload_0; invokevirtual canEqual; ifeq FALSE   (may be absent; see [CaseClass.equalsMayOmitCanEqual])
-     * TRUE: iconst_1; goto END
-     * FALSE: iconst_0
-     * END: ireturn
-     * ```
-     *
-     * A final class with no elements has its own shape instead, whatever its `canEqual`
-     * (`FE`, and `FZC`, which declares its own): `aload_1; astore a; aload a; instanceof X;
-     * ifeq NO; [iconst_1; ifeq NO]; iconst_1; ireturn; NO: goto NO2; NO2: iconst_0; ireturn`, the
-     * bracketed part only for an inner class (`FinalOuter$FInEmpty`).
-     *
-     * Scala 2.12.20 writes the same bodies but compares the elements in source order, so a
-     * reference element before a primitive one keeps its place (`Mixed`); [matchesEqualsScala2]
-     * tries both orders.
-     */
     private fun matchesEqualsScala2(
         case: CaseClass,
         body: List<Insn>,
@@ -3756,33 +2941,6 @@ internal object ScalaGeneratedMethods {
         return m.matched
     }
 
-    /**
-     * Scala 3.3.4's `equals`, read from `javap -c` over `Mixed`, `One`, `Priv`, `Empty`,
-     * `Outer$Inner` and the final `FT`, `F1`, `FE`, `FinalOuter$FIn` and `FinalHolder$FObj`:
-     *
-     * ```
-     * aload_0; aload_1; if_acmpeq TRUE
-     * aload_1; astore a; aload a; instanceof X; ifeq NO
-     * [aload a; checkcast X; invokevirtual <...>$$outer; aload_0; getfield $outer; if_acmpne NO]   (an inner class)
-     * aload a; checkcast X; astore b
-     * [aload b; astore c]                                                       (3.7.3 to 3.8.3)
-     * with no elements:  aload c; aload_0; invokevirtual canEqual; goto TEST
-     *                    (or iconst_1; goto TEST, see [CaseClass.equalsMayOmitCanEqual])
-     * otherwise:         <comparisons against c, failing to MISS>
-     *                    aload c; aload_0; invokevirtual canEqual; ifeq MISS   (may be absent likewise)
-     *                    iconst_1; goto JOIN; MISS: iconst_0; JOIN: goto TEST
-     * NO: iconst_0; goto TEST
-     * TEST: ifeq FALSE
-     * TRUE: iconst_1; goto END
-     * FALSE: iconst_0
-     * END: ireturn
-     * ```
-     *
-     * with `c` standing for `b` where the copy is absent. Scala 3.7.3 to 3.8.3 store the cast
-     * instance a second time, `aload b; astore c`, and read every element through the copy.
-     * Scala 3.3.8, 3.8.4 and later compare a null-safe reference element through
-     * `java.util.Objects.equals` (see [compareElements]).
-     */
     private fun matchesEqualsScala3(
         case: CaseClass,
         body: List<Insn>,
@@ -3853,35 +3011,6 @@ internal object ScalaGeneratedMethods {
         return m.matched
     }
 
-    /**
-     * `productElement` ([names] false) or `productElementName` ([names] true), read from `javap
-     * -c` over `Mixed`, `One`, `Cc`, `Round`, `Empty` and `Outer$Inner` in both versions:
-     *
-     * ```
-     * iload_1; istore k
-     * a tableswitch on k over 0 to <arity - 1>,         (every Scala 2.13.15 class, and Scala 3.3.4 with many elements)
-     *   or per element i: <i>; iload k; if_icmpne NEXT  (Scala 3.3.4 with few elements)
-     * per element, in order: its case
-     * DEFAULT: out of range
-     * [SHARED: box; areturn]
-     * ```
-     *
-     * with no dispatch at all for a class with no elements. An element's case is `ldc "<name>";
-     * areturn` for a name. For a value it is `aload_0` and a read of the element through its
-     * accessor (Scala 2.13.15) or `_N` (Scala 3.3.4), then either its `BoxesRunTime.boxTo...` and
-     * `areturn`, or `goto SHARED` when every element has one primitive type and Scala 3.3.4 boxes
-     * once at the end (`Cc`). Out of range is `iload_1; Statics.ioobe(I)`, `checkcast String` for
-     * a name, and `areturn` in Scala 2.13.15, and `new IndexOutOfBoundsException(n.toString)` and
-     * `athrow` in Scala 3.3.4, which writes a second, unreachable `athrow` after it when a
-     * `tableswitch` shares one box (`P3`, three `double` elements). Each part named for one
-     * version above counts only in a class of that version.
-     *
-     * Two releases word the out-of-range case differently, read with `javap` over `Cc`, `P3` and
-     * `Empty`: Scala 2.12.20 throws `new IndexOutOfBoundsException(Integer.toString(n))` (`new; dup;
-     * iload_1; invokestatic Integer.toString; invokespecial <init>(String); athrow`) in place of
-     * `Statics.ioobe`, and Scala 3.9.0 passes the index to `IndexOutOfBoundsException.<init>(int)`
-     * with no string conversion (`new; dup; iload_1; invokespecial <init>(I)V; athrow`).
-     */
     private fun matchesIndexed(
         case: CaseClass,
         body: List<Insn>,
@@ -3964,7 +3093,6 @@ internal object ScalaGeneratedMethods {
                     if (names) step(Insn.TypeOperand(Opcodes.CHECKCAST, STRING))
                     step(areturn())
                 }
-                // Scala 2.12's wording, in productElement only: 2.12 writes no productElementName.
                 val scala212: Match.() -> Unit = {
                     step(Insn.TypeOperand(Opcodes.NEW, OUT_OF_BOUNDS))
                     step(Insn.Plain(Opcodes.DUP))
@@ -3984,32 +3112,6 @@ internal object ScalaGeneratedMethods {
         }
     }
 
-    /**
-     * The plumbing methods of the companion [companion] of the case class [partner]. Shapes, read
-     * from `javap -c` over the companions of `Cc`, `One`, `Empty`, `Mixed`, `Priv`, `Hidden`,
-     * `Outer$Inner` and the local `Local` in both versions:
-     *
-     * - `apply`, returning the partner: see [matchesConstruction], the outer reference read from
-     *   the companion's own `$outer`.
-     * - `unapply(<partner>)`: in Scala 3.3.4, `aload_1; areturn`, or `iconst_1; ireturn` returning
-     *   `boolean` for a class with no elements. In Scala 2.13.15, see [matchesUnapplyScala2].
-     * - `toString()`: `ldc "<partner's source name>"; areturn`.
-     * - Scala 3's `fromProduct(scala.Product)`: `new <partner>; dup`, the outer reference, then
-     *   per element `aload_1; <index>; invokeinterface Product.productElement(I)` and its
-     *   `BoxesRunTime.unboxTo...`, or `checkcast` to its type unless that is `Object`, then
-     *   `invokespecial <partner>.<init>; areturn`, the constructor being the partner's primary
-     *   one. Scala 3.7.0 and later read the elements into locals before the `new` (see
-     *   [matchesFromProduct]). Its bridge returning `Object` is `aload_0;
-     *   aload_1; invokevirtual fromProduct; areturn`.
-     *
-     * The `unapply` and `fromProduct` shapes of one version count only in a companion of that
-     * version (see [readShape]): a Scala 2 companion's hand-written `unapply` returning its
-     * argument or a constant `true`, or its `fromProduct`, is the adopter's (`Id$`, `U0$`, `FP$`).
-     *
-     * A hand-written `apply(String)` in an explicit companion constructs its partner from other
-     * values than its own parameters, and is not marked. scalac 2.13.15 and 3.3.4 give no
-     * case-class companion a `readResolve`, so none is marked.
-     */
     private fun companionPlumbing(
         companion: ClassShape,
         partner: CaseClass,
@@ -4100,23 +3202,6 @@ internal object ScalaGeneratedMethods {
             }.mapTo(mutableSetOf()) { it.first }
     }
 
-    /**
-     * Scala 2.13.15's `unapply`, read from `javap -c` over the companions of `Empty`, `One`,
-     * `Outer$Inner`, `Cc`, `Box`, `Hidden`, `Priv` and `Mixed`:
-     *
-     * ```
-     * aload_1; ifnonnull SOME
-     * with no elements: iconst_0; ireturn; SOME: iconst_1; ireturn
-     * otherwise:        getstatic scala/None$.MODULE$; areturn
-     *                   SOME: new scala/Some; dup; <value>; invokespecial Some.<init>(Object); areturn
-     * ```
-     *
-     * The value of one element is `aload_1`, its read and its box. Of several, it is `new
-     * scala/TupleN; dup`, each element's `aload_1`, read and box, and `invokespecial
-     * TupleN.<init>`, except that two elements both of type `int`, `long`, `double`, `char` or
-     * `boolean` build the specialised `scala/Tuple2$mc<types>$sp` from unboxed values
-     * (`Tuple2$mcII$sp` for `Cc`, `Tuple2$mcJZ$sp` for `Hidden`).
-     */
     private fun matchesUnapplyScala2(
         partner: CaseClass,
         body: List<Insn>,
@@ -4170,15 +3255,6 @@ internal object ScalaGeneratedMethods {
         return m.matched
     }
 
-    /**
-     * Scala 3's `fromProduct`; see [companionPlumbing]. Scala 3.3.4 builds the instance in one
-     * expression, the `new` before the element reads (`javap` over `Cc`, `Mixed`, `Outer$Inner`):
-     * `new; dup; [outer]; per element: aload_1; <index>; invokeinterface productElement; <unbox or
-     * checkcast>; invokespecial <init>`. Scala 3.7.0 and later read every element into a local first
-     * and build the instance after, the locals taking slots from 2 in element order, a `long` or
-     * `double` two wide: `per element: aload_1; <index>; invokeinterface productElement; <unbox or
-     * checkcast>; <store>; then new; dup; [outer]; per element: <load>; invokespecial <init>`.
-     */
     private fun matchesFromProduct(
         companion: ClassShape,
         partner: CaseClass,
@@ -4242,7 +3318,6 @@ internal object ScalaGeneratedMethods {
         return m.matched && partner.shape.isPrimaryConstructor(constructor)
     }
 
-    /** `BoxesRunTime.boxTo...` for a primitive [type]; nothing for a reference. */
     private fun Match.box(type: Type) {
         val boxed = boxedName(type) ?: return
         step(Insn.Call(Opcodes.INVOKESTATIC, BOXES, "boxTo${boxed.substringAfterLast('/')}", "($type)L$boxed;"))
@@ -4279,18 +3354,12 @@ internal object ScalaGeneratedMethods {
         return Type.getArgumentTypes(descriptor).map { type -> Insn.Var(type.getOpcode(Opcodes.ILOAD), slot).also { slot += type.size } }
     }
 
-    /** The parameter types of [descriptor], without the parentheses. */
     private fun parameterPart(descriptor: String): String = descriptor.substring(1, descriptor.lastIndexOf(')'))
 
     private fun aload(slot: Int): Insn = Insn.Var(Opcodes.ALOAD, slot)
 
     private fun areturn(): Insn = Insn.Plain(Opcodes.ARETURN)
 
-    /**
-     * One bytecode instruction, as the matchers compare it. `iconst`, `bipush`, `sipush` and an
-     * `ldc` of an `int` are all an [IntConstant]. A jump or switch names its targets by the index
-     * of the instruction they land on.
-     */
     private sealed interface Insn {
         data class Plain(
             val opcode: Int,
@@ -4353,15 +3422,9 @@ internal object ScalaGeneratedMethods {
             val arguments: List<Any?>,
         ) : Insn
 
-        /** Any instruction no shape here contains, such as `iinc`. */
         data object Other : Insn
     }
 
-    /**
-     * Records a method's instructions as [Insn]s and hands them to [onEnd], null for a method
-     * with no code, with whether it has a try-catch block. Labels, line numbers, frames and
-     * local-variable entries are not instructions; a label only gives a jump its target index.
-     */
     private class BodyRecorder(
         private val onEnd: (code: List<Insn>?, hasHandler: Boolean, handlers: List<Handler>) -> Unit,
     ) : MethodVisitor(Opcodes.ASM9) {
@@ -4521,14 +3584,6 @@ internal object ScalaGeneratedMethods {
         }
     }
 
-    /**
-     * Walks a body once, front to back, against an expected shape. Each step consumes one
-     * instruction or fails the match; nothing is skipped, so an instruction the shape does not
-     * name fails it. A jump binds its label name to its target index the first time the name is
-     * seen, and [label] checks that the walk has reached that index; a local-variable slot is
-     * bound by name the same way. [optional] and [either] try a part of the shape and roll back
-     * when it fails.
-     */
     private class Match(
         private val insns: List<Insn>,
         private val firstLocal: Int = 2,
@@ -4585,11 +3640,6 @@ internal object ScalaGeneratedMethods {
             }
         }
 
-        /**
-         * A switch on [keys], sorted ascending, either kind scalac lowers to: a `lookupswitch` on
-         * exactly [keys], or a `tableswitch` from the first key to the last whose gaps go to
-         * [default]. Key i jumps to [cases]`[i]`.
-         */
         fun keyedSwitch(
             keys: List<Int>,
             cases: List<String>,
@@ -4626,10 +3676,8 @@ internal object ScalaGeneratedMethods {
             }
         }
 
-        /** The instruction index [name] is bound to, null while it is unbound. */
         fun labelIndex(name: String): Int? = labels[name]
 
-        /** A load of the slot bound to [name]. */
         fun load(
             opcode: Int,
             name: String,
@@ -4637,7 +3685,6 @@ internal object ScalaGeneratedMethods {
             take { insn -> (insn as? Insn.Var)?.takeIf { it.opcode == opcode && slots[name] == it.slot } }
         }
 
-        /** A store to a slot at or after [firstLocal], the first slot past `this` and the parameters, bound to [name]. */
         fun store(
             opcode: Int,
             name: String,
@@ -4645,7 +3692,6 @@ internal object ScalaGeneratedMethods {
             take { insn -> (insn as? Insn.Var)?.takeIf { it.opcode == opcode && it.slot >= firstLocal && bind(slots, name, it.slot) } }
         }
 
-        /** Runs [part]; when it fails, rolls back to where it started and returns null. */
         fun <T> optional(part: Match.() -> T): T? {
             if (!ok) return null
             val start = pos
@@ -4660,7 +3706,6 @@ internal object ScalaGeneratedMethods {
             return null
         }
 
-        /** Runs [first], or [second] when [first] fails. */
         fun either(
             first: Match.() -> Unit,
             second: Match.() -> Unit,

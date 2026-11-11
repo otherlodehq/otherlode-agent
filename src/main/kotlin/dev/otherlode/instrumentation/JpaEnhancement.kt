@@ -9,19 +9,6 @@ import net.bytebuddy.jar.asm.Label
 import net.bytebuddy.jar.asm.MethodVisitor
 import net.bytebuddy.jar.asm.Opcodes
 
-/**
- * What Ebean, EclipseLink and OpenJPA added to one entity class (ADR 0079), read from the class
- * file. Each rule applies only when the class's direct interfaces include the enhancer's marker, so
- * a class no enhancer touched reads as [NONE].
- *
- * [unprobed] holds the enhancer's methods: they get no probe and no declaration, and a call to one
- * passes through. [reportedNames] maps an OpenJPA accessor the enhancer moved to `pc<name>` to the
- * adopter's `<name>`, which is the name its probes and call edges carry.
- * [isPersistenceWeaved] says the class holds EclipseLink's weaving, and [hasLineNumbers] says which
- * of its methods carry a line-number table. [clearCheckOrdinals] gives, for an adopter's
- * `writeObject` in an OpenJPA class, the position among the method's branch sites of each
- * `if (clear) pcSetDetachedState(null)` the enhancer added.
- */
 internal class JpaEnhancement private constructor(
     val unprobed: Set<Pair<String, String>>,
     val reportedNames: Map<Pair<String, String>, String>,
@@ -29,32 +16,21 @@ internal class JpaEnhancement private constructor(
     private val linedMethods: Set<Pair<String, String>>,
     private val clearChecks: Map<Pair<String, String>, Set<Int>> = emptyMap(),
 ) {
-    /**
-     * The ordinals, among [name]/[descriptor]'s branch sites in code order (conditional jumps and
-     * switches), of the checks OpenJPA's enhancer added to it; see [ClearCheckVisitor].
-     */
     fun clearCheckOrdinals(
         name: String,
         descriptor: String,
     ): Set<Int> = clearChecks[name to descriptor] ?: emptySet()
 
-    /** Whether [name]/[descriptor] is a method the enhancer added. */
     fun isUnprobed(
         name: String,
         descriptor: String,
     ): Boolean = (name to descriptor) in unprobed
 
-    /** The name [name]/[descriptor] reports under: the adopter's name for a moved OpenJPA accessor, otherwise [name]. */
     fun reportedName(
         name: String,
         descriptor: String,
     ): String = reportedNames[name to descriptor] ?: name
 
-    /**
-     * [byMethod] with each moved OpenJPA accessor given its wrapper's value, when the wrapper has one.
-     * The enhancer moves the adopter's runtime-visible method annotations to the wrapper, and only the
-     * wrapper overrides a supertype's method.
-     */
     fun <V> fromWrappers(byMethod: Map<Pair<String, String>, V>): Map<Pair<String, String>, V> {
         if (reportedNames.isEmpty()) return byMethod
         val result = byMethod.toMutableMap()
@@ -65,7 +41,6 @@ internal class JpaEnhancement private constructor(
         return result
     }
 
-    /** Whether the class file gives [name]/[descriptor] a line-number table. */
     fun hasLineNumbers(
         name: String,
         descriptor: String,
@@ -81,7 +56,6 @@ internal class JpaEnhancement private constructor(
     )
 
     companion object {
-        /** A class no enhancer touched. */
         val NONE = JpaEnhancement(emptySet(), emptyMap(), false, emptySet())
 
         private const val ENTITY_BEAN = "io/ebean/bean/EntityBean"
@@ -107,13 +81,8 @@ internal class JpaEnhancement private constructor(
         private const val PC_SERIALIZING = "pcSerializing"
         private const val PC_SET_DETACHED_STATE = "pcSetDetachedState"
 
-        /** The names of the interfaces that mark a class an enhancer touched, in internal form. */
         private val MARKERS = setOf(ENTITY_BEAN, PERSISTENCE_WEAVED, PERSISTENCE_CAPABLE)
 
-        /**
-         * OpenJPA 4.1.1's fixed methods (`PCEnhancer`), by name and descriptor. `pcCopyField` takes
-         * the entity's own type, so it is added per class in [openJpaFixed].
-         */
         private val OPENJPA_FIXED: Set<Pair<String, String>> =
             setOf(
                 "pcGetEnhancementContractVersion" to "()I",
@@ -161,19 +130,8 @@ internal class JpaEnhancement private constructor(
         private val OPENJPA_READ_EXTERNAL = "readExternal" to "(Ljava/io/ObjectInput;)V"
         private val OPENJPA_WRITE_EXTERNAL = "writeExternal" to "(Ljava/io/ObjectOutput;)V"
 
-        /**
-         * Whether [name], with no declaration in the owner's class file, is one the Ebean enhancer
-         * could have added. Under runtime enhancement the class file predates the enhancer, so the
-         * interface rule has nothing to read there and the prefix decides.
-         */
         fun isEbeanName(name: String): Boolean = name.startsWith(EBEAN_PREFIX)
 
-        /**
-         * The methods of [classFile] that OpenJPA wrapped in [received] as the class loaded: each
-         * `m` for which [received] declares `pc<m>` with the same descriptor and [classFile] does
-         * not. Empty when [received]'s direct interfaces do not name OpenJPA's marker. No line table
-         * is read, so a class compiled without line numbers is covered too.
-         */
         fun loadTimeWrappers(
             classFile: ByteArray,
             received: ByteArray,
@@ -208,13 +166,8 @@ internal class JpaEnhancement private constructor(
             return methods
         }
 
-        /** What [classBytes] holds of an enhancer's work; see [of]. */
         fun of(classBytes: ByteArray): JpaEnhancement = of(ClassReader(classBytes))
 
-        /**
-         * What [reader]'s class holds of an enhancer's work, or [NONE] when its direct interfaces
-         * name no enhancer's marker. That check reads only the class header.
-         */
         fun of(reader: ClassReader): JpaEnhancement {
             val interfaces = reader.interfaces
             if (interfaces.none { it in MARKERS }) return NONE
@@ -352,10 +305,6 @@ internal class JpaEnhancement private constructor(
             return false
         }
 
-        /**
-         * Whether a branch about to be visited, given the instructions before it as
-         * [WovenOperand]s, most recent first, reads state EclipseLink's weaving added.
-         */
         fun readsWeavedState(
             mostRecent: WovenOperand,
             secondMostRecent: WovenOperand,
@@ -380,7 +329,6 @@ internal class JpaEnhancement private constructor(
             }
     }
 
-    /** One instruction of a `writeObject`, as far as [ClearCheckVisitor] reads it. */
     private sealed interface Step {
         data object Other : Step
 
@@ -411,16 +359,6 @@ internal class JpaEnhancement private constructor(
         ) : Step
     }
 
-    /**
-     * Reads the code of an OpenJPA class's `writeObject`, forwarding every event to [delegate], and
-     * reports through [onFound] the ordinals of the branch sites that are the enhancer's.
-     *
-     * `modifyWriteObjectMethod` starts the method with `this.pcSerializing()` stored in a new
-     * local, and puts `if (local) this.pcSetDetachedState(null)` before each return. The check is
-     * `iload local; ifeq end; aload_0; aconst_null; invokevirtual pcSetDetachedState(Object)V`
-     * with `end` the label that follows the call. A branch site is the enhancer's only when its
-     * `ifeq` is exactly that, reading the local the prologue stored.
-     */
     private class ClearCheckVisitor(
         delegate: MethodVisitor,
         private val owner: String,
@@ -583,20 +521,16 @@ internal class JpaEnhancement private constructor(
         }
     }
 
-    /** One of the instructions before a branch, as far as [readsWeavedState] reads it. */
     sealed interface WovenOperand {
-        /** A `getfield` of [name]. */
         data class FieldRead(
             val name: String,
         ) : WovenOperand
 
-        /** A call of [name] with [descriptor]. */
         data class Call(
             val name: String,
             val descriptor: String,
         ) : WovenOperand
 
-        /** Any other instruction. */
         data object Other : WovenOperand
     }
 

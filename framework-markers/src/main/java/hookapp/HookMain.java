@@ -1,9 +1,9 @@
 package hookapp;
 
 /**
- * An application with its own shutdown hook, as a framework's context close has. The hook sleeps,
- * then runs in-scope code, and the JVM exits normally. Modes: "method" calls a method of a class
- * loaded earlier, "class" first loads a class there.
+ * An application with its own shutdown hook. The hook sleeps, then runs in-scope code, and the JVM
+ * exits normally. Mode "method" calls a method of a class loaded earlier, any other mode first
+ * loads a class in the hook.
  */
 public final class HookMain {
     private HookMain() {}

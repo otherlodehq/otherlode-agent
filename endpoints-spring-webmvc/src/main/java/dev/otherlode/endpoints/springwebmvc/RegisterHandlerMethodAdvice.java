@@ -13,30 +13,24 @@ import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
 
 /**
- * Woven onto {@code AbstractHandlerMethodMapping.registerHandlerMethod}, Spring MVC's own
- * registration hook. It runs once per handler method as Spring builds its route table, for every
+ * Woven onto {@code AbstractHandlerMethodMapping.registerHandlerMethod}, Spring MVC's registration
+ * hook. It runs once per handler method as Spring builds its route table, for every
  * {@code @Controller} bean, before any request is dispatched.
  *
- * <p>The dispatch key built here, {@code List.of(pattern, verb)}, must match {@link
- * HandleMatchAdvice} exactly: both sides build the same two-element list from the same {@link
- * RequestMappingInfo} accessors, and {@link List#equals} gives them value equality with no key
- * type of our own that would need to be visible from the framework's own classloader. One small
- * list is allocated per (pattern, verb) pair at registration time, negligible next to the
- * per-request allocation {@link HandleMatchAdvice} accepts for the same reason.
+ * <p>The dispatch key, {@code List.of(pattern, verb)}, matches {@link HandleMatchAdvice}.
  *
- * <p>The context path is left out of the identity here on purpose. Reading it would need this
- * advice to name a servlet type, which would split this module by {@code javax}/{@code jakarta}
- * namespace the way {@link RequestMappingInfo} itself does not force. A context path is also
- * deployment configuration rather than part of the application's own route template, and is empty
- * by default on a Spring Boot embedded server, so the application-relative template is what this
- * module reports.
+ * <p>The join names the class that declares the method, since a mapping inherited from a base
+ * controller or an interface default method is not declared on the bean's class. A handler whose
+ * type cannot be resolved is still an endpoint, with no join.
  *
- * <p>This method is deliberately one flat body with no private helper method of its own: {@link
- * Advice} inlines only the bytecode of the annotated method itself, so a call to a helper method,
- * even one declared on this same class, would remain a real method call in the woven bytecode,
- * requiring the target classloader to resolve this advice class at runtime. The JDK
- * {@code HttpServer} module's {@code CreateContextAdvice} carries the same reasoning for calling
- * into a separate helper class; it applies equally to a helper method on the advice class itself.
+ * <p>The context path is not part of the identity. Reading it would need this advice to name a
+ * servlet type and so split the module by {@code javax}/{@code jakarta} namespace. The
+ * application-relative template is what the module reports.
+ *
+ * <p>{@code onEnter} is deliberately one flat body with no private helper method: {@link Advice}
+ * inlines only the bytecode of the annotated method, so a call to a helper, even one on this class,
+ * would remain a real call in the woven bytecode and require the target classloader to resolve this
+ * advice class at runtime. The other advice classes of this module follow the same rule.
  */
 public class RegisterHandlerMethodAdvice {
     private static final String MODULE = "spring-webmvc";
@@ -53,19 +47,11 @@ public class RegisterHandlerMethodAdvice {
 
             Class<?> handlerType = null;
             if (handler instanceof String) {
-                // A bean registered by name is resolved through the mapping's own context.
-                // getApplicationContext() is public on ApplicationObjectSupport in every
-                // supported Spring version; it is null only before the mapping is initialised,
-                // which never happens for a registration, but a null is handled anyway.
                 BeanFactory applicationContext = ((ApplicationObjectSupport) mapping).getApplicationContext();
                 if (applicationContext != null) handlerType = applicationContext.getType((String) handler);
             } else if (handler != null) {
                 handlerType = handler.getClass();
             }
-            // An endpoint whose handler cannot be named is still an endpoint: it is registered
-            // with no join rather than dropped, so it can never read as absent. The join names the
-            // class that declares the method, where its probe lives: a mapping inherited from a
-            // base controller or an interface default method is not declared on the bean's class.
             String beanTypeName =
                     handlerType == null ? null : ClassUtils.getUserClass(method.getDeclaringClass()).getName();
             String methodName = beanTypeName == null ? null : method.getName();

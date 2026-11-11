@@ -21,8 +21,7 @@ public enum class DependencyUsage {
 
     /**
      * Loaded, with no live reference, and referenced from a class that failed to load. A prompt to
-     * review, not a claim that it can go. The class may fail because of the classpath this
-     * dependency is on, and a dependency only a long-failing class uses may not be needed.
+     * review, not a claim that it can go.
      */
     FAILED_TO_LOAD,
 
@@ -40,8 +39,7 @@ public enum class DependencyUsage {
 
     /**
      * Loaded, with no live reference, and referenced from a class that failed to initialise, and
-     * from none that failed to load. A prompt to review, not a claim that it can go: the class
-     * was wanted and broke, and the dependency may be what it needs once it is fixed.
+     * from none that failed to load. A prompt to review, not a claim that it can go.
      */
     FAILED_TO_INITIALIZE,
 }
@@ -62,8 +60,7 @@ public data class DependencyIdentityRef internal constructor(
  * itself for a class-level reference ([methodName] null). [neverLoaded] is true for a site the
  * static baseline declared in a class no manifest from that instance ever named. [failedToLoad] is
  * true for a baseline site in a class that some instance failed to load and none loaded.
- * [failedToInitialize] is true for a site in a class that failed to initialise, none of whose
- * references is live.
+ * [failedToInitialize] is true for a site that is not live, in a class that failed to initialise.
  */
 @ConsistentCopyVisibility
 public data class DependencyReferenceSite internal constructor(

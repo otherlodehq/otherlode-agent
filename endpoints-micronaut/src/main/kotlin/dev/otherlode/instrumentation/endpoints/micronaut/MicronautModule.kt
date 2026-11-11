@@ -22,7 +22,6 @@ private const val URI_ROUTE_INFO = "io.micronaut.web.router.UriRouteInfo"
 private const val ADVICE_PACKAGE = "dev.otherlode.endpoints.micronaut"
 private const val ROUTE_EXECUTOR_CONSTRUCTOR_ARGUMENTS = 6
 
-/** Whether [method] returns a `Stream` of `UriRouteInfo`, which Micronaut 3's `uriRoutes()` (a stream of `UriRoute`) does not. */
 private val RETURNS_URI_ROUTE_INFOS: ElementMatcher<MethodDescription> =
     ElementMatcher { method ->
         try {
@@ -49,28 +48,19 @@ private fun routerIsMicronaut4(classLoader: ClassLoader): Boolean =
 /**
  * Endpoint module for Micronaut (`micronaut`), covering the 4.0 to 5.x lines, compiled against 4.0.0.
  *
- * The exit of the `DefaultRouter(Collection)` constructor hands the router to the module, which
- * holds it weakly. The exit of the `RouteExecutor` constructor arms the module, and a router is then
- * declared, in either order: [DispatchGate] reads its `UriRouteInfo` objects through
- * `Router.uriRoutes()`, keyed by the `UriRouteInfo` instance that dispatch returns. Every runtime
- * of Micronaut 4 and 5 finds a route through `RouteExecutor`, which `RequestLifecycle` uses: Netty,
- * micronaut-servlet and each serverless runtime built on either. A router no `RouteExecutor` is
- * constructed for declares nothing, since nothing could count its routes, and [beforeManifest]
- * reports the module off with `ROUTES_NOT_COUNTED` once the router has waited a flush interval. The exit of the
- * package-private `RouteExecutor.findRouteMatch` counts the `UriRouteInfo` of a non-null match. Micronaut's request
- * lifecycle calls it once per request, after the pre-matching filters and before argument binding:
- * a CORS preflight a filter answers, an `OPTIONS` request, a 404, a 405 and an ambiguous match
- * return no match and count nothing, and a filter that rejects the request after the match still
- * counts it.
+ * The module holds each `DefaultRouter` weakly. Once a `RouteExecutor` is constructed, which every
+ * Micronaut 4 and 5 runtime uses to find a route, [DispatchGate] declares the router's
+ * `UriRouteInfo` objects. If no `RouteExecutor` is constructed, [beforeManifest] reports the module
+ * off with `ROUTES_NOT_COUNTED` once the router has waited a flush interval.
  *
- * Micronaut 3 has no `UriRouteInfo` and no `RouteExecutor.findRouteMatch`. `DefaultRouter` is
- * accepted only with the `uriRoutes()` that returns `UriRouteInfo`, and `RouteExecutor` by name on a
- * class loader whose `DefaultRouter` has that shape, so its hook is checked like any other. This
- * module matches nothing on a 3.x application.
+ * A request counts when `RouteExecutor.findRouteMatch` returns a match. A CORS preflight a filter
+ * answers, an `OPTIONS` request, a 404, a 405 and an ambiguous match return no match and count
+ * nothing. A filter that rejects the request after the match still counts it.
  *
- * A HEAD route Micronaut adds beside each `@Get` is not declared, and a HEAD request that matches
- * one counts against the GET endpoint. A WebSocket route is not declared. `micronaut.server.context-path`
- * is part of an annotated route's template and not of a programmatic one, and stays as it is.
+ * A HEAD route that Micronaut adds beside a `@Get` and a WebSocket route are not declared. A HEAD
+ * request that matches such a route counts against the GET endpoint.
+ * `micronaut.server.context-path` is part of an annotated route's template and not of a
+ * programmatic one. This module matches nothing on a Micronaut 3 application.
  */
 class MicronautModule : EndpointModule {
     override val name: String = MODULE_NAME

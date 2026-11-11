@@ -37,65 +37,30 @@ import dev.otherlode.export.RoutineKind as WireRoutineKind
 import dev.otherlode.export.UnreadShape as WireUnreadShape
 
 /**
- * An embeddable collector that speaks the same wire protocol the Otherlode agent sends: delta
- * batches, probe manifests, and static baselines, all protobuf over plain HTTP. An adopter's test
- * runs the real agent against [exportUrl] and then asks this collector what it saw, instead of
- * querying any in-process registry.
+ * An embeddable collector that speaks the wire protocol the Otherlode agent sends. A test runs the
+ * real agent against [exportUrl], then asks this collector what the agent reported.
  *
- * Every class name in this API is the dotted binary name the manifest carries: for example
- * `com.acme.OrderService`, `com.acme.OrdersKt` for a Kotlin file's top-level functions, or
- * `com.acme.Outer$Inner` for a nested class.
+ * Class names are the dotted binary names the manifest carries, such as `com.acme.OrdersKt` for a
+ * Kotlin file's top-level functions or `com.acme.Outer$Inner` for a nested class.
  *
- * A probe query for a class or method this collector has never heard of throws
- * [UnknownProbeException] rather than reading as "confirmed never hit". Collapsing "genuinely
- * dead" and "we have no idea" into the same `false` would be exactly the silent, confident, wrong
- * failure mode the rest of this agent is built to avoid.
+ * A query for a probe, endpoint or dependency that no manifest has mentioned throws
+ * [UnknownProbeException], [UnknownEndpointException] or [UnknownDependencyException]. It never
+ * reads as "confirmed never hit". The findings merge the hits of every instance heard from, by
+ * name, so a finding names no instance.
  *
- * Endpoint queries ([wasCalled], [callCount], [neverCalled], [endpoints]) follow the same rule,
- * throwing [UnknownEndpointException] for a `(verb, route template)` no manifest has mentioned.
- * An endpoint's identity is the pair alone, never `endpoint_id`: `endpoint_id` is assigned
- * independently by each instance's own registry, so an endpoint registered by several instances
- * merges into one [EndpointRef] whose call count sums every instance's latest total, the same
- * cross-instance aggregation [hitCount] already does for method probes by class and method name.
+ * A query that rests on zero counts, such as [neverHit], [unreachedClusters] or
+ * [unreachedDependencies], throws [IllegalStateException] while an instance's zero counts are not
+ * evidence, for example when the agent's hook on `VerifyError` was not installed. [hitCount],
+ * [wasHit], [failedToLoad] and [failedToInitialize] still answer.
  *
- * The findings ([neverHit], [neverHitRoutineOutcomes], [neverHitUnreadShapes], [neverInitialized],
- * [neverInstantiated], [unreachedClusters], [neverSupplied], [alwaysSupplied]) judge the merged hits
- * of every instance heard from, by name, as the server judges every in-scope instance: a probe,
- * class or call edge one instance reported is the same one in another, whatever class id each
- * assigned it. A branch outcome is the same outcome by its branch key when it has one, and by its
- * branch index only when it has none. A finding therefore names no instance.
+ * Probes, endpoints and dependencies are keyed on the instance id alone, not on the run id each
+ * payload carries. This collector answers 400 to a payload that has an empty run id, a second run
+ * id under a known instance id, an agent version that differs from the testkit's when both are
+ * known, or fields a collector stripped. It does the same for a payload that does not decode or
+ * fails when applied. It keeps nothing from such a payload and records the reason in
+ * [rejectedPayloads]. After that, every other query and wait throws [IllegalStateException].
  *
- * Those findings, the dependency queries whose verdict rests on a method never hit
- * ([unreachedDependencies], [failedToLoadDependencies], [failedToInitializeDependencies] and a
- * [dependency] that reads so), and [unreachedClusters] rest on zero counts. A class the JVM's
- * verifier rejects fires no probe, so they throw [IllegalStateException], naming each instance and
- * why, while any instance's manifest says the agent's hook on `VerifyError` was not installed, or
- * an instance counts a `VerifyError` message in no read format. A query that reads no zero count,
- * such as [hitCount], [wasHit], [failedToLoad] or [failedToInitialize], still answers. A class that
- * failed to initialise ([failedToInitialize]) and its subtypes are left out of the findings.
- *
- * Dependency queries ([dependency], [unloadedDependencies], [unreferencedDependencies],
- * [unreachedDependencies], [failedToLoadDependencies], [failedToInitializeDependencies], [absentReferences]) apply the collector's dependency rules within this
- * one test JVM and follow the same rule again: a dependency no manifest has listed throws
- * [UnknownDependencyException], and a question the data cannot answer yet, or at all without a
- * complete static baseline, throws [IllegalStateException] instead of returning an empty list.
- * The agent sends a dependency's entry only after its loaded-class counts have been delivered, so
- * [dependency] answers once the entry arrives. The five list queries answer only once every
- * instance heard from has sent `dependencies_listed`; [awaitDependenciesListed] waits for that.
- *
- * Every probe, endpoint and dependency is keyed on its instance id alone, not on the run id every
- * payload carries. That is the same as keying on the run only while each instance id names one
- * run, which holds when this collector hears from the one agent in its own test JVM. A payload with
- * an empty run id, or with a second run id under an instance id this collector has already heard
- * from, would break that assumption. Such a payload is answered 400, nothing from it is kept, and
- * the reason is recorded in [rejectedPayloads]. A payload that does not decode, or that fails
- * while it is applied, is treated the same way, and so is one a collector forwarded after stripping
- * fields it did not know: this collector expects the agent's payloads directly and whole. So is a payload whose agent version
- * differs from this testkit's, when both are known: the two are released as one version. From then on [awaitSettled] and every other
- * query and wait throw [IllegalStateException] listing the recorded reasons, so a test fails
- * even if it never calls [rejectedPayloads].
- *
- * Close this with [close], typically from a `.use { }` block, once a test is done with it.
+ * Close this with [close], typically from a `.use { }` block.
  */
 public class OtherlodeTestCollector internal constructor(
     private val server: HttpServer,
@@ -135,17 +100,14 @@ public class OtherlodeTestCollector internal constructor(
         val unreadShape: WireUnreadShape = WireUnreadShape.NONE,
         val outsideCaller: WireOutsideCaller? = null,
     ) {
-        /** Whether the method is generated or an unread shape: no node, but looked through. */
         fun isLookedThrough(): Boolean = generatedBy != WireGeneratedBy.NONE || unreadShape != WireUnreadShape.NONE
     }
 
-    /** A class's superclass and direct interfaces, by class name, which call-edge resolution walks. */
     private data class SupertypesInfo(
         val superClassName: String?,
         val interfaceNames: List<String>,
     )
 
-    /** One declared method read from a complete static baseline scan. */
     private data class DeclaredMethodInfo(
         val methodName: String,
         val methodDescriptor: String,
@@ -160,15 +122,9 @@ public class OtherlodeTestCollector internal constructor(
         val unreadShape: WireUnreadShape = WireUnreadShape.NONE,
         val branchSites: List<BranchSite> = emptyList(),
     ) {
-        /** Whether the method is generated or an unread shape: no node, but looked through. */
         fun isLookedThrough(): Boolean = generatedBy != WireGeneratedBy.NONE || unreadShape != WireUnreadShape.NONE
     }
 
-    /**
-     * A declared class's methods and supertypes, read from a complete static baseline scan.
-     * [serviceInstanceId] names the instance whose scan produced this record, since a declared call
-     * edge's guard is a branch index in that instance's copy of the class.
-     */
     private data class DeclaredClassInfo(
         val serviceInstanceId: String,
         val methods: List<DeclaredMethodInfo>,
@@ -177,18 +133,12 @@ public class OtherlodeTestCollector internal constructor(
         val kotlinKind: KotlinKind = KotlinKind.NONE,
     )
 
-    /** One node of the call graph [unreachedClusters] resolves: a probed method, by identity alone. */
     private data class NodeKey(
         val className: String,
         val methodName: String,
         val methodDescriptor: String,
     )
 
-    /**
-     * A [NodeKey]'s reporting fields and raw, unresolved outgoing call edges. [neverLoaded] marks a
-     * node that exists only because a complete static baseline declared it; such a node has
-     * [hits] fixed at zero, since the dynamic tier never registered its class at all.
-     */
     private data class NodeInfo(
         val line: Int,
         val neverLoaded: Boolean,
@@ -197,29 +147,16 @@ public class OtherlodeTestCollector internal constructor(
         val outsideCaller: WireOutsideCaller? = null,
     )
 
-    /**
-     * One outcome across instances, as the server's `probe_locations` names it: by [branchKey] when
-     * the outcome has one, otherwise by [branchIndex]. [branchIndex] is null whenever [branchKey] is set,
-     * since an index only names an outcome within one build.
-     */
     private data class OutcomeId(
         val branchKey: String?,
         val branchIndex: Int?,
     )
 
-    /**
-     * A raw call edge with its guard resolved to the outcome it names: in the instance that reported
-     * a manifest edge, and for a declared edge in the scan's instance, else by the site identity
-     * [declaredGuard] matches. [edge] has its own raw guard cleared, since that index means nothing
-     * outside one instance. [guard] is null for an edge with no guard or whose guard names no BRANCH
-     * probe there.
-     */
     private data class GuardedEdge(
         val edge: CallEdge,
         val guard: OutcomeId?,
     )
 
-    /** One resolved call out of a method: the callee node and the outcome guarding the call. */
     private data class ResolvedCall(
         val callee: NodeKey,
         val guard: OutcomeId?,
@@ -228,49 +165,28 @@ public class OtherlodeTestCollector internal constructor(
     private class CallGraph(
         val nodes: Map<NodeKey, NodeInfo>,
         val calls: Map<NodeKey, Set<ResolvedCall>>,
-        /**
-         * Each generated method with hits, which is no node but is a caller that ran: its calls are
-         * in [calls], so what it reaches has a hit caller and joins no other cluster.
-         */
         val hitGeneratedCallers: Map<NodeKey, NodeInfo> = emptyMap(),
     ) {
-        /** The record behind [key], a node or a hit generated caller. */
         fun infoOf(key: NodeKey): NodeInfo = nodes[key] ?: hitGeneratedCallers.getValue(key)
     }
 
-    /**
-     * One node of the cluster graph [unreachedClusters] grows clusters over: a method, or, when
-     * [outcome] is set, an outcome node in that method: a never-taken outcome, standing for the
-     * code behind it. When [isClass] is true it is a class node, and [method] holds only the class
-     * name. See [classNode].
-     */
     private data class ClusterNode(
         val method: NodeKey,
         val outcome: OutcomeId? = null,
         val isClass: Boolean = false,
     )
 
-    /** One outcome of one instance's method, by its branch index in that instance. */
     private data class OutcomeKey(
         val serviceInstanceId: String,
         val method: NodeKey,
         val branchIndex: Int,
     )
 
-    /**
-     * A class node: a class that holds a class finding, standing for the never-hit [methods] the
-     * finding covers. Those methods are never nodes of their own, since they can only run through
-     * the class.
-     */
     private class ClassNode(
         val finding: ClassFinding,
         val methods: List<NodeKey>,
     )
 
-    /**
-     * One judgeable METHOD probe location merged across instances: [hits] summed, and [static] and
-     * [lambdaBody] true when any instance's probe said so.
-     */
     private data class JudgeableMethod(
         val key: NodeKey,
         val hits: Long,
@@ -278,14 +194,6 @@ public class OtherlodeTestCollector internal constructor(
         val lambdaBody: Boolean,
     )
 
-    /**
-     * What the class-finding rules say about the loaded classes. [findings] holds each class that is
-     * never initialised or never instantiated. [covered] names the never-hit methods a finding
-     * covers, which can only run through it, lambda bodies that fold into it included.
-     * [inNeverHitCode] names the lambda bodies that fold into never-hit methods that are rows of
-     * their own. [constructed] holds each class one of whose constructors ran, so a never-hit
-     * constructor of it is an unused overload.
-     */
     private class ClassJudgement(
         val findings: Map<String, ClassFinding>,
         val covered: Map<String, List<NodeKey>>,
@@ -294,25 +202,15 @@ public class OtherlodeTestCollector internal constructor(
     ) {
         val coveredMethods: Set<NodeKey> = covered.values.flatten().toSet()
 
-        /** Every method that is not a row of its own, since a class finding or a never-hit method covers it. */
         val foldedMethods: Set<NodeKey> = coveredMethods + inNeverHitCode
     }
 
-    /**
-     * An outcome node: a judgeable outcome with no hits in a method with hits, merged across
-     * instances by its method and [OutcomeId]. [ref] is the merged location's ref. [site] is the
-     * site that lists the outcome on its method's METHOD probe in the instance of the newest copy,
-     * its outcomes and guard renumbered to the merged branch indexes, or null when no manifest
-     * listed one. [siteGuard] is that site's guard, resolved in the same instance to the outcome it
-     * names, or null when the site has none or it names no BRANCH probe.
-     */
     private data class OutcomeNode(
         val ref: ProbeRef,
         val site: BranchSite?,
         val siteGuard: OutcomeId?,
     )
 
-    /** Each node's callers and callees, over method, outcome and class nodes alike. */
     private class ClusterGraph(
         val callersOf: Map<ClusterNode, Set<ClusterNode>>,
         val calleesOf: Map<ClusterNode, Set<ClusterNode>>,
@@ -323,11 +221,6 @@ public class OtherlodeTestCollector internal constructor(
         val scannedAt: Long,
     )
 
-    /**
-     * Groups every omission location naming one optional parameter across instances: see
-     * [optionalParameterFindings]. [targetClassName] is the effective target class, already
-     * resolved with `targetClassName ?: className`, not the raw wire value.
-     */
     private data class OmissionTargetKey(
         val targetClassName: String,
         val methodName: String,
@@ -335,7 +228,6 @@ public class OtherlodeTestCollector internal constructor(
         val parameterIndex: Int?,
     )
 
-    /** Cross-instance endpoint identity: the pair alone, never `endpoint_id`. See the class KDoc. */
     private data class EndpointIdentity(
         val verb: String,
         val routeTemplate: String,
@@ -347,10 +239,6 @@ public class OtherlodeTestCollector internal constructor(
         val endpointId: Int,
     )
 
-    /**
-     * A probe's identity across instances and copies of its class, as the server's `probe_locations`
-     * groups it. [outcome] is null for any kind but BRANCH.
-     */
     private data class LocationKey(
         val method: NodeKey,
         val kind: WireProbeKind,
@@ -358,14 +246,6 @@ public class OtherlodeTestCollector internal constructor(
         val outcome: OutcomeId?,
     )
 
-    /**
-     * Every probe sharing one [LocationKey], merged the way the server's `probe_locations` merges
-     * its copies. [hits] sums every copy. [inline], [static] and [lambdaBody] hold when any copy says
-     * so, [generatedBy] and [inlinedFromClassName] are the greatest any copy gives, and [overridable]
-     * holds when any copy says so. [routine] and [unreadShape] are the first non-default value in
-     * newest-first order. [newest] is the copy of the newest instance, which supplies [line],
-     * [parameterName] and [outsideCaller]. [branchIndex] is the lowest any copy gives.
-     */
     private class MergedLocation(
         val key: LocationKey,
         val members: List<Map.Entry<ProbeKey, StoredProbe>>,
@@ -386,40 +266,27 @@ public class OtherlodeTestCollector internal constructor(
     ) {
         val newest: Map.Entry<ProbeKey, StoredProbe> get() = members.first()
 
-        /** Whether the location is generated or an unread shape: no node, but looked through. */
         val isLookedThrough: Boolean get() = generatedBy != WireGeneratedBy.NONE || unreadShape != WireUnreadShape.NONE
     }
 
-    /** Scopes a per-instance id (`dependency_id`, `class_id`) or a class name to the instance that reported it. */
     private data class InstanceKey<T>(
         val serviceInstanceId: String,
         val id: T,
     )
 
-    /**
-     * One instance's static-baseline references for one declared class: the class-level list and
-     * each declared method's. Kept per instance, since unreferenced is told apart from unreached
-     * only with a complete baseline from each instance that lists the dependency.
-     */
     private data class BaselineReferences(
         val classReferences: List<String>,
         val methods: List<DeclaredMethodInfo>,
     )
 
-    /** Accumulates one static baseline scan's chunks. Only merged into [consultedDeclaredNames] once complete. */
     private class ScanProgress(
         val chunkCount: Int,
     ) {
         val received: MutableSet<Int> = ConcurrentHashMap.newKeySet()
         val declaredNames: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
-        /**
-         * Declared classes whose every declared method is inline or generated; see
-         * [OtherlodeTestCollector.neverLoaded].
-         */
         val allInlineOrGeneratedNames: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
-        /** Methods and supertypes per declared class; only merged into [consultedDeclaredClasses] once complete. */
         val declaredClasses: MutableMap<String, DeclaredClassInfo> = ConcurrentHashMap()
         val complete: Boolean get() = received.size >= chunkCount
     }
@@ -427,26 +294,17 @@ public class OtherlodeTestCollector internal constructor(
     private val lock = ReentrantLock()
     private val condition = lock.newCondition()
 
-    /**
-     * Held for writing while a handler applies one payload, and for reading by every query, so a
-     * query never sees part of a payload: a probe without its class's supertypes, say. A handler
-     * signals waiters only after releasing it, so it never waits on [lock] while holding this.
-     */
     private val stateLock = ReentrantReadWriteLock()
 
-    /** Runs [block] holding [stateLock] for writing, as a handler applying a payload does; for a test. */
     internal fun <T> whileApplying(block: () -> T): T = stateLock.write(block)
 
     private val deltaBatchSeq = AtomicLong(0)
 
-    /** Complete delta batches counted per instance; see [recordCompleteFlush]. */
     private val completeFlushCounts = ConcurrentHashMap<String, AtomicInteger>()
     private val countedFlushSequences = ConcurrentHashMap<String, MutableSet<Long>>()
 
-    /** Instances that sent a `final_flush` delta batch which carried `flush_complete`. */
     private val instancesWithCompleteFinalFlush: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
-    /** Orders a [ProbeRef] by class name, method name, line, then branch index, the same order [neverHit] sorts by. */
     private val probeRefComparator: Comparator<ProbeRef> =
         compareBy({ it.className }, { it.methodName }, { it.line }, {
             it.branchIndex
@@ -456,61 +314,38 @@ public class OtherlodeTestCollector internal constructor(
     private val probesByKey = ConcurrentHashMap<ProbeKey, StoredProbe>()
     private val nameIndex = ConcurrentHashMap<String, MutableSet<ProbeKey>>()
 
-    /**
-     * Omission probes indexed by their target's class, `targetClassName ?: className`, rather than
-     * by the probe's own declared class. A Scala constructor default getter's own class is the
-     * companion module (`Cc$`), but a query names the constructor's own class (`Cc`).
-     */
     private val omissionTargetIndex = ConcurrentHashMap<String, MutableSet<ProbeKey>>()
     private val hitsByKey = ConcurrentHashMap<ProbeKey, Long>()
     private val skippedByClassName = ConcurrentHashMap<String, SkippedClass>()
 
-    /** A class's supertypes, by name, from any manifest. Populated alongside its probes; see [handleManifest]. */
     private val supertypesByClassName = ConcurrentHashMap<String, SupertypesInfo>()
 
-    /**
-     * A class's Kotlin kind, by name, from any manifest, for [kotlinKind]. Populated the same way
-     * as [supertypesByClassName].
-     */
     private val kotlinKindByClassName = ConcurrentHashMap<String, KotlinKind>()
 
-    /** Classes a sweep found loaded where no transformer saw them, by name, from any manifest. */
     private val unreportedByClassName = ConcurrentHashMap<String, UnreportedClass>()
 
-    /** Every class name any manifest listed in `failedClasses`. See [failedToLoad]. */
     private val failedClassNames: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
-    /** Declared classes from every complete static baseline scan, by name. See [handleStaticBaseline]. */
     private val consultedDeclaredClasses = ConcurrentHashMap<String, DeclaredClassInfo>()
 
-    /**
-     * Every class name any manifest has ever mentioned: with probes, as skipped, or as unreported.
-     * All three mean the class loaded, which is what a "never loaded" claim asks about.
-     */
     private val dynamicallyKnownClassNames: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
-    /** Instance ids whose shutdown hook has sent a delta batch with `final_flush` set. See [endedCleanly]. */
     private val instancesThatEndedCleanly: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     private val scans = ConcurrentHashMap<ScanKey, ScanProgress>()
     private val completedScans: MutableSet<ScanKey> = ConcurrentHashMap.newKeySet()
     private val consultedDeclaredNames: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
-    /** Declared classes, from a complete scan, whose every declared method is inline or generated. */
     private val consultedAllInlineOrGeneratedNames: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
-    /** Latest delivered record per endpoint identity, across every instance; see [handleManifest]. */
     private val endpointRefsByIdentity = ConcurrentHashMap<EndpointIdentity, EndpointRef>()
 
-    /** Every `(instance, endpoint_id)` ever reported for an identity, so [callCount] can sum each instance's latest total. */
     private val endpointKeysByIdentity = ConcurrentHashMap<EndpointIdentity, MutableSet<InstanceEndpointKey>>()
     private val endpointHitsByKey = ConcurrentHashMap<InstanceEndpointKey, Long>()
     private val endpointFrameworkByKey = ConcurrentHashMap<InstanceEndpointKey, String>()
     private val disabledModuleNamesByInstance = ConcurrentHashMap<String, MutableSet<String>>()
     private val disabledEndpointModulesByName = ConcurrentHashMap<String, DisabledEndpointModule>()
 
-    // Dependency usage. Everything is per instance: dependency_id and class_id are assigned by each
-    // instance's own registry.
     private val dependencyLocations = ConcurrentHashMap<InstanceKey<Int>, DependencyView>()
 
     private val loadedClassesTotals = ConcurrentHashMap<InstanceKey<Int>, Long>()
@@ -520,49 +355,38 @@ public class OtherlodeTestCollector internal constructor(
     private val baselineReferences = ConcurrentHashMap<InstanceKey<String>, BaselineReferences>()
     private val instancesRecordingReferences: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
-    /** The reasons each instance gave for a class it named in `classes_failed_to_initialize`, by class name. */
     private val initializationFailures = ConcurrentHashMap<InstanceKey<String>, Set<InitializationFailure>>()
 
-    /** A class's supertypes as each instance's `ClassLocation` gave them, by class name. */
     private val supertypesByInstance = ConcurrentHashMap<InstanceKey<String>, SupertypesInfo>()
 
-    /** Instances any of whose manifests said the agent's hook on `VerifyError` was not installed. */
     private val unwatchedInstances: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
-    /** The highest `unplaced_verification_failures` each instance reported. */
     private val unplacedVerificationFailures = ConcurrentHashMap<String, Long>()
 
-    /** Every instance that sent a manifest with `dependencies_listed` set; see [awaitDependenciesListed]. */
     private val instancesWithDependenciesListed: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val instanceIds: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
-    /** Per instance, every class a manifest named as probed, skipped or unreported: every class that loaded there. */
     private val loadedClassNamesByInstance = ConcurrentHashMap<String, MutableSet<String>>()
 
-    /** The one run id accepted per instance id; see the class doc and [rejectionFor]. */
     private val runIdByInstance = ConcurrentHashMap<String, String>()
 
-    /** The order each instance was first heard from, later is larger: the testkit's stand-in for the server's run start. */
     private val instanceRanks = ConcurrentHashMap<String, Long>()
     private val instanceRankSeq = AtomicLong(0)
 
-    /** The agent version each instance's accepted payloads named; empty when the agent did not know its own. */
     private val agentVersionByInstance = ConcurrentHashMap<String, String>()
     private val rejections = CopyOnWriteArrayList<String>()
 
     @Volatile
     private var closed = false
 
-    /** The one instance a collector that [servesOneJvm] accepts: the first it heard from. */
     private val onlyInstance = AtomicReference<String?>()
 
     /** Base URL to pass as an agent's `exportUrl=` option, for example `http://localhost:54321`. */
     public val exportUrl: String = "http://localhost:${server.address.port}"
 
     /**
-     * Blocks until a delta batch arrives that was received after this call began, including an
-     * empty one: the agent sends a delta batch on every flush tick, even when nothing changed, as
-     * a liveness heartbeat. Throws [TimeoutException] if [timeout] elapses first.
+     * Blocks until a delta batch arrives that was received after this call began, even an empty
+     * one. Throws [TimeoutException] if [timeout] elapses first.
      */
     @Throws(TimeoutException::class)
     public fun awaitNextFlush(timeout: Duration) {
@@ -572,16 +396,15 @@ public class OtherlodeTestCollector internal constructor(
     }
 
     /**
-     * Blocks until every hit made before this call has reached the collector. At least one
-     * instance must have been heard from, and each instance heard from, including one first heard
-     * from after the call began, must have sent two complete flushes since the call began, or ended
-     * with a complete final flush. A complete flush is one whose delta batches before its last were
-     * all confirmed; its last batch carries `flush_complete`. The second one read its counts after the call began,
-     * so it holds every earlier hit. A retried batch counts once.
+     * Blocks until every hit made before this call has reached the collector. At least one instance
+     * must have been heard from. Each instance heard from, including one first heard from after the
+     * call began, must have sent two complete flushes since the call began, or ended with a
+     * complete final flush. A complete flush is one whose delta batches before the last were all
+     * confirmed and whose last batch carries `flush_complete`. A retried batch counts once.
      *
      * An instance that went silent, or whose final flush was not complete, never settles. Throws
      * [TimeoutException] if [timeout] elapses first, naming each instance that has not settled and
-     * why. A test that needs a manifest entry itself can still call [awaitProbe] or [awaitEndpoint].
+     * why.
      */
     @Throws(TimeoutException::class)
     public fun awaitSettled(timeout: Duration) {
@@ -592,7 +415,6 @@ public class OtherlodeTestCollector internal constructor(
         }
     }
 
-    /** Each instance heard from that has not settled, by id, with the reason; see [awaitSettled]. */
     private fun instancesNotSettled(completeFlushesAtStart: Map<String, Int>): Map<String, String> {
         val reasons = sortedMapOf<String, String>()
         for (instanceId in instanceIds) {
@@ -619,7 +441,6 @@ public class OtherlodeTestCollector internal constructor(
             reasons.entries.joinToString("; ") { (instanceId, reason) -> "$instanceId $reason" }
     }
 
-    /** Counts a complete delta batch toward [awaitSettled], once per instance and payload sequence. */
     private fun recordCompleteFlush(
         instanceId: String,
         payloadSequence: Long,
@@ -634,10 +455,9 @@ public class OtherlodeTestCollector internal constructor(
 
     /**
      * Blocks until some manifest, from any instance, has mentioned a probe for [className] and
-     * [methodName]. A manifest and a delta batch from the same flush tick are sent concurrently by
-     * the agent, so a newly loaded class's manifest entry can land after that tick's delta batch;
-     * this lets a test wait for the manifest specifically. Throws [TimeoutException] if [timeout]
-     * elapses first.
+     * [methodName]. A manifest can arrive after the delta batch of the same flush tick, so a test
+     * that needs the manifest entry waits here. Throws [TimeoutException] if [timeout] elapses
+     * first.
      */
     @Throws(TimeoutException::class)
     public fun awaitProbe(
@@ -665,7 +485,6 @@ public class OtherlodeTestCollector internal constructor(
         val deadlineNanos = System.nanoTime() + timeout.toNanos()
         lock.withLock {
             while (!predicate()) {
-                // A rejection wakes this wait, so it fails at once rather than at the timeout.
                 checkNoRejections()
                 check(!closed) { "this collector was closed while waiting: ${timeoutMessage()}" }
                 val remaining = deadlineNanos - System.nanoTime()
@@ -776,22 +595,15 @@ public class OtherlodeTestCollector internal constructor(
     }
 
     /**
-     * Every optional parameter whose combined omission total, summed over every instance, equals its
-     * target's hit total summed over every instance: every caller took the default, so the parameter
-     * can go. Each instance's omissions never exceed its own target hits, so equal sums mean equal
-     * counts in every instance. "Combined" matters because one parameter can carry more than one
-     * omission probe: a Scala constructor default gets both a module getter on the companion class
-     * and that class's own static forwarder, both resolving to the same target, so their omissions
-     * are summed and judged once rather than each read on its own; see [omissionCount]. One row per
-     * target class, method, descriptor and parameter index, however many instances reported it.
+     * Every optional parameter whose combined omission total, summed over every instance, equals
+     * its target's hit total summed over every instance: every caller took the default, so the
+     * parameter can go. The total is combined because one parameter can carry several omission
+     * probes, such as the module getter and the static forwarder of a Scala constructor default;
+     * see [omissionCount]. One row per target class, method, descriptor and parameter index.
      *
-     * Claimed only when no probe naming the parameter is overridable, since an overridable target's
-     * omissions are spread across whichever override actually ran, which the manifest cannot relate
-     * back to one total. A target with no method probe at all (an abstract interface method) is
-     * skipped, and so is an inline target, the same reason [neverHit] excludes one. When instances
-     * disagree about a probe's inline, generated or unread mark, the row is skipped, since the
-     * server's merge keeps any such mark. The row's line is the highest of the omission probes'
-     * lines, each as its newest instance reports it, leaving out `-1`; it is `-1` when every one is.
+     * Claimed only when no probe naming the parameter is overridable. A target with no method
+     * probe, or one marked inline, generated or unread, is skipped. The row's line is the highest
+     * line among its omission probes, ignoring `-1`, or `-1` when every one is.
      */
     public fun neverSupplied(): List<OptionalParameterRef> =
         checked {
@@ -801,9 +613,7 @@ public class OtherlodeTestCollector internal constructor(
     /**
      * Every optional parameter whose combined omission total, summed over every instance, stayed at
      * zero while its target was called at least once in some instance: the default value is dead.
-     * See [neverSupplied] for why "combined" matters and how instances merge. Claimed for any
-     * target, overridable or not. A target with no
-     * method probe at all, or an inline target, is skipped, the same as [neverSupplied]. Throws
+     * Claimed for any target, overridable or not. Skips the same targets as [neverSupplied]. Throws
      * [IllegalStateException] while an instance's zero counts are not evidence, as [neverHit] does.
      */
     public fun alwaysSupplied(): List<OptionalParameterRef> =
@@ -817,14 +627,6 @@ public class OtherlodeTestCollector internal constructor(
             }
         }
 
-    /**
-     * Groups every `OPTIONAL_ARGUMENT` location, merged across instances, by the parameter it
-     * names: `(target class, target method name and descriptor, parameter index)`. A group can hold
-     * more than one location when a target has more than one omission probe resolving to it, the
-     * Scala constructor case [neverSupplied] documents. A group whose target is inline, generated
-     * or an unread shape in any location gives no row. [claims] sees the group's summed omission
-     * total, its target's summed hit total, and whether any location is overridable.
-     */
     private fun optionalParameterFindings(
         claims: (omitted: Long, targetHits: Long, overridable: Boolean) -> Boolean,
     ): List<OptionalParameterRef> =
@@ -865,7 +667,6 @@ public class OtherlodeTestCollector internal constructor(
         findMethodProbesOrNull(className, methodName, methodDescriptor)
             ?: throw unknownProbe(className, methodName, methodDescriptor)
 
-    /** Like [findMethodProbes], but returns null instead of throwing when nothing matches. */
     private fun findMethodProbesOrNull(
         className: String,
         methodName: String,
@@ -880,11 +681,6 @@ public class OtherlodeTestCollector internal constructor(
                     (methodDescriptor == null || probe.methodDescriptor == methodDescriptor)
             }?.takeIf { it.isNotEmpty() }
 
-    /**
-     * Why [className] has no probes at all, when a manifest or a baseline says so: it was skipped,
-     * a sweep found it loaded where no transformer saw it, or a complete baseline declared it and
-     * no instance loaded it. Null when nothing explains it.
-     */
     private fun unknownClass(className: String): UnknownProbeException? {
         skippedByClassName[className]?.let {
             return UnknownProbeException("$className: class was matched but could not be instrumented: ${it.reason}")
@@ -920,85 +716,58 @@ public class OtherlodeTestCollector internal constructor(
     /**
      * Every probe, method or branch, that no instance reported a hit for, sorted by class name,
      * method name, line, then branch index. Probes merge across instances and across copies of a
-     * class two loaders defined, as the server merges them: a method is one row by class, name and
-     * descriptor, and a branch outcome is one row by its [ProbeRef.branchKey] when it has one and
-     * by its branch index when it has none, with the hits of every copy summed. A hit in any
-     * instance removes the row.
+     * class that two loaders defined, as the server merges them. A method is one row by class, name
+     * and descriptor. A branch outcome is one row by its [ProbeRef.branchKey], or by its branch
+     * index when it has no key. A hit in any copy removes the row.
      *
-     * Where copies disagree about a row's fields the server's choice applies. [ProbeRef.line] is the
-     * newest instance's, [ProbeRef.branchIndex] is the lowest any copy reports, a row is inline when
-     * any copy is, [ProbeRef.generatedBy] is the greatest mark any copy gives and
-     * [ProbeRef.inlinedFromClassName] the greatest name. A row is routine or an unread shape when
-     * any copy is, with the kind of the newest copy that gives one.
+     * Where copies disagree, the server's choice applies: [ProbeRef.line] is the newest instance's,
+     * [ProbeRef.branchIndex] is the lowest, [ProbeRef.generatedBy] and
+     * [ProbeRef.inlinedFromClassName] are the greatest, and a row is inline, routine or an unread
+     * shape when any copy is.
      *
-     * A probe belonging to a Kotlin inline function, or a branch inside one, is left out: a
-     * Kotlin caller copies the body into its own call site instead of invoking it, so a zero hit
-     * total is not evidence the code never ran.
+     * These are left out:
      *
-     * A generated probe is left out too: the compiler will emit the method again regardless of
-     * what the adopter does, so a zero hit total on a data class's `copy`, an enum's `values`, or
-     * the like is not a finding the adopter can act on.
+     * - probes of a Kotlin inline function and branches inside one, since a Kotlin caller copies
+     *   the body instead of invoking it
+     * - generated probes, such as a data class's `copy` or an enum's `values`
+     * - optional-argument probes; see [alwaysSupplied]
+     * - a `<clinit>`, and a constructor unless it is an unused overload, which is listed when
+     *   another constructor of its class ran
+     * - a method that can run only through a class finding ([neverInitialized],
+     *   [neverInstantiated]), a never-hit lambda body whose every creator is such a method or is
+     *   listed here, and a BRANCH probe in a method left out this way
+     * - routine outcomes, which [neverHitRoutineOutcomes] lists
+     * - unread shapes, which [neverHitUnreadShapes] lists
+     * - a class that failed to initialise ([failedToInitialize]) and its subtypes
      *
-     * An optional-argument probe is left out too, whatever its own count: an omission probe
-     * reading zero means a parameter is never omitted, which is [alwaysSupplied], not dead code.
+     * A branch site inside code that never ran folds into the row for that code, and every BRANCH
+     * probe of the site is left out. A site folds when its method was never hit, even a method that
+     * is not a row itself such as a lone constructor, or when its guard is a never-hit outcome that
+     * would be a row but for this fold. The guard is the innermost outcome in the same method that
+     * must run before the site is reached. A routine guard folds nothing, and neither does a guard
+     * that ran.
      *
-     * The class-finding rules apply as well. A `<clinit>` is never listed, since it is a class
-     * state. A constructor is listed only as an unused overload, when another constructor of its
-     * class ran. A method that can only run through a class finding ([neverInitialized],
-     * [neverInstantiated]) is left out, and so is a never-hit lambda body whose every creator is
-     * such a method or a never-hit method listed here. A BRANCH probe in a method left out this way
-     * is left out too.
-     *
-     * A branch site inside code that never ran folds into the row for that code: every BRANCH probe
-     * of the site is left out. A site folds when its method was never hit, even a method that is
-     * not a row itself such as a lone constructor, or when its guard, the innermost outcome in the
-     * same method that must run before the site is reached, is a never-hit outcome that would be a
-     * row but for this fold. A guard outcome whose own site folded still counts, so a site two
-     * levels under a never-taken outcome folds too. A routine guard folds nothing, since a routine
-     * outcome is in no finding, and neither does a guard that ran.
-     *
-     * A routine outcome is left out too, since nothing about it is worth acting on: the agent read
-     * from the bytecode that the outcome only yields a null default, only throws, or is the
-     * exception-path copy of a `finally` body. [neverHitRoutineOutcomes] lists those.
-     *
-     * An unread shape is left out too: a method whose body has the outline of compiler output but
-     * matches no shape the agent has read, a branch probe in such a method, and an outcome the agent
-     * marked unread. That is a fact about the agent, not about the adopter's code.
-     * [neverHitUnreadShapes] lists those.
-     *
-     * A class that failed to initialise ([failedToInitialize]) and its subtypes are left out too:
-     * they can never run in that JVM, so a zero count says nothing about their code.
-     *
-     * Throws [IllegalStateException] while any instance is unwatched or has an unplaced verification
-     * failure; see [neverInitialized].
+     * Throws [IllegalStateException] while an instance's zero counts are not evidence; see
+     * [neverInitialized].
      */
     public fun neverHit(): List<ProbeRef> = checkedZeroCounts { neverHitRows().filter { it.routine == null && it.unreadShape == null } }
 
     /**
      * Every never-hit BRANCH probe that [neverHit] leaves out only because its outcome is routine,
-     * each with its [ProbeRef.routine] kind, sorted as [neverHit] sorts. The server counts these
-     * apart and lists them only on request.
-     *
-     * A routine outcome of a site that folds into code that never ran, by the rule [neverHit]
-     * gives, is not listed here either: a site folds before any of its outcomes can count as
-     * routine.
+     * each with its [ProbeRef.routine] kind, sorted as [neverHit] sorts. A routine outcome of a
+     * site that folds into code that never ran, by the rule [neverHit] gives, is not listed.
      */
     public fun neverHitRoutineOutcomes(): List<ProbeRef> =
         checkedZeroCounts { neverHitRows().filter { it.routine != null && it.unreadShape == null } }
 
     /**
-     * Every never-hit METHOD or BRANCH probe that [neverHit] leaves out only because it is an unread
-     * shape, each with its [ProbeRef.unreadShape] family, sorted as [neverHit] sorts. A probe is
-     * unread when its method is, which a BRANCH probe in that method inherits, or when its own
-     * outcome is. The server counts these per family and labels the rows.
-     *
-     * An unread outcome of a site that folds into a method that never ran, by the rule [neverHit]
-     * gives, is not listed here either. The probes of an unread method do not fold: that method is
-     * no row of [neverHit], so nothing would carry them.
+     * Every never-hit METHOD or BRANCH probe that [neverHit] leaves out only because it is an
+     * unread shape, each with its [ProbeRef.unreadShape] family, sorted as [neverHit] sorts. A
+     * probe is unread when its method is, or when its own outcome is. An unread outcome of a site
+     * that folds into a method that never ran, by the rule [neverHit] gives, is not listed.
      */
     public fun neverHitUnreadShapes(): List<ProbeRef> = checkedZeroCounts { neverHitRows().filter { it.unreadShape != null } }
 
-    /** Every [neverHit] row with routine outcomes still in. */
     private fun neverHitRows(): List<ProbeRef> {
         val judgement = judgeClasses()
         val locations = mergedLocations()
@@ -1019,16 +788,6 @@ public class OtherlodeTestCollector internal constructor(
             .sortedWith(compareBy({ it.className }, { it.methodName }, { it.line }, { it.branchIndex ?: -1 }))
     }
 
-    /**
-     * Every location whose site folds into code that never ran. [candidates] are every location that
-     * is a never-hit row or routine outcome by every other rule, one per row with its copies' hits
-     * summed. A site folds when its judgeable method was never hit in any instance, whether or not
-     * the method is a row itself (a constructor that is not an unused overload is not, and its code
-     * never ran either). It also folds when its guard outcome is a BRANCH candidate that is neither
-     * routine nor an unread shape. The guard is the one the newest copy's own instance lists for the
-     * site, resolved in that instance to the outcome it names. A site in an unread method never
-     * folds, since that method is not among the judgeable ones.
-     */
     private fun foldedSites(
         locations: List<MergedLocation>,
         candidates: List<MergedLocation>,
@@ -1062,7 +821,6 @@ public class OtherlodeTestCollector internal constructor(
             }.mapTo(HashSet()) { it.key }
     }
 
-    /** The [OutcomeId] of every BRANCH probe, by the instance and branch index it is known by there. */
     private fun branchOutcomeIds(): Map<OutcomeKey, OutcomeId> {
         val ids = HashMap<OutcomeKey, OutcomeId>()
         for ((key, probe) in probesByKey) {
@@ -1080,10 +838,6 @@ public class OtherlodeTestCollector internal constructor(
     private fun WireProbeKind.isInitializerSlot(): Boolean =
         this == WireProbeKind.INITIALIZER_RETURNED || this == WireProbeKind.INITIALIZER_THREW
 
-    /**
-     * Every probe merged by [LocationKey], each location's copies ordered newest instance first,
-     * then by class id and probe index.
-     */
     private fun mergedLocations(): List<MergedLocation> {
         val routineKinds = routineKinds()
         val unreadOutcomes = unreadOutcomeShapes()
@@ -1130,10 +884,6 @@ public class OtherlodeTestCollector internal constructor(
             }
     }
 
-    /**
-     * The guard of each outcome's site, from the sites each instance's METHOD probes list. An
-     * outcome absent from the map is in a site with no guard, or in no listed site.
-     */
     private fun siteGuards(): Map<OutcomeKey, Int> {
         val guards = HashMap<OutcomeKey, Int>()
         for ((key, probe) in probesByKey) {
@@ -1147,10 +897,6 @@ public class OtherlodeTestCollector internal constructor(
         return guards
     }
 
-    /**
-     * The kind of every routine outcome, from the sites each instance's METHOD probes list. An
-     * outcome absent from the map is not routine.
-     */
     private fun routineKinds(): Map<OutcomeKey, WireRoutineKind> {
         val kinds = HashMap<OutcomeKey, WireRoutineKind>()
         for ((key, probe) in probesByKey) {
@@ -1166,10 +912,6 @@ public class OtherlodeTestCollector internal constructor(
         return kinds
     }
 
-    /**
-     * The unread shape of every outcome the agent marked unread, from the sites each instance's
-     * METHOD probes list. An outcome absent from the map is not marked; its method may still be.
-     */
     private fun unreadOutcomeShapes(): Map<OutcomeKey, WireUnreadShape> {
         val shapes = HashMap<OutcomeKey, WireUnreadShape>()
         for ((key, probe) in probesByKey) {
@@ -1185,11 +927,6 @@ public class OtherlodeTestCollector internal constructor(
         return shapes
     }
 
-    /**
-     * The unread shape of [probe]: the greater of its own, which a BRANCH probe inherits from its
-     * method and an omission probe from its target, and its outcome's, as the server takes the
-     * greater of the two. [UnreadShape.NONE] when neither is.
-     */
     private fun unreadOf(
         key: ProbeKey,
         probe: StoredProbe,
@@ -1202,7 +939,6 @@ public class OtherlodeTestCollector internal constructor(
         return if (outcome.ordinal > probe.unreadShape.ordinal) outcome else probe.unreadShape
     }
 
-    /** The routine kind of [probe], a BRANCH probe of [key]'s instance, or [RoutineKind.NONE] for any other probe. */
     private fun routineOf(
         key: ProbeKey,
         probe: StoredProbe,
@@ -1214,13 +950,6 @@ public class OtherlodeTestCollector internal constructor(
         return routineKinds[OutcomeKey(key.serviceInstanceId, method, branchIndex)] ?: WireRoutineKind.NONE
     }
 
-    /**
-     * Whether a judgeable never-hit [probe] is a [neverHit] row under the class-finding rules. A
-     * `<clinit>` is a class state, never a row. A constructor is a row only as an unused overload,
-     * when another constructor of its class ran. A method a class finding covers is not a row, and
-     * neither is a lambda body that folds into its creators. A BRANCH probe in either is not a row
-     * either.
-     */
     private fun isNeverHitRow(
         location: MergedLocation,
         judgement: ClassJudgement,
@@ -1237,24 +966,18 @@ public class OtherlodeTestCollector internal constructor(
 
     /**
      * Every class that some instance loaded, that has a judgeable static initialiser, and whose
-     * static initialiser ran in no instance, sorted by class name. Nothing used its statics and nothing
-     * created an instance. A class with no static initialiser is never listed here.
-     *
-     * Every method of such a class can only run through its initialiser, so [neverHit] and
-     * [unreachedClusters] fold them into the class.
+     * static initialiser ran in no instance, sorted by class name. [neverHit] and
+     * [unreachedClusters] fold the methods of such a class into it.
      *
      * A class that failed to initialise ([failedToInitialize]) is never listed, and neither is a
-     * class whose initialiser is still running in every instance that loaded it: a `<clinit>` that
-     * counted, with its returned and threw slots both present and neither counted, has not finished.
+     * class whose initialiser has started in every instance that loaded it but not yet returned or
+     * thrown.
      *
      * Throws [IllegalStateException] while any instance's zero counts are not evidence: an instance
      * any of whose manifests says the agent's hook on `VerifyError` was not installed, or which
-     * counts a `VerifyError` message in no read format. A class the verifier rejects fires no
-     * probe, so it would read as never initialised. The message names each such instance and why.
-     * [neverHit], [neverHitRoutineOutcomes], [neverHitUnreadShapes], [neverInstantiated],
-     * [unreachedClusters] and the dependency queries that rest on zero counts throw the same way;
-     * a query that reads no zero count, such as [hitCount], [failedToLoad] or [failedToInitialize],
-     * still answers.
+     * counts a `VerifyError` message in no read format. The message names each such instance and
+     * why. Every query that rests on a zero count throws the same way. A query that reads none,
+     * such as [hitCount], [failedToLoad] or [failedToInitialize], still answers.
      */
     public fun neverInitialized(): List<ClassFindingRef> = checkedZeroCounts { classFindingRefs(ClassFinding.NEVER_INITIALIZED) }
 
@@ -1262,19 +985,15 @@ public class OtherlodeTestCollector internal constructor(
      * Every class that some instance loaded, that is not never initialised, that has a judgeable
      * constructor and a judgeable method that is neither static nor a constructor, and none of
      * whose constructors and instance methods ran in any instance, inline and generated ones
-     * included, sorted by class name. No instance of it or of a subclass ran its constructor.
-     * A class with only static methods is never listed, and neither is an interface, which has no
-     * constructor.
+     * included, sorted by class name. A class with only static methods is never listed, and neither
+     * is an interface.
      *
-     * The constructors and instance methods of such a class can only run through an instance, so
-     * [neverHit] and [unreachedClusters] fold them into the class. Its static methods can still run,
-     * so they stay rows of their own.
-     *
-     * Left out and refused as [neverInitialized] is.
+     * [neverHit] and [unreachedClusters] fold the constructors and instance methods of such a class
+     * into it. Its static methods stay rows of their own. Excludes and throws as [neverInitialized]
+     * does.
      */
     public fun neverInstantiated(): List<ClassFindingRef> = checkedZeroCounts { classFindingRefs(ClassFinding.NEVER_INSTANTIATED) }
 
-    /** The [ClassFindingRef] of each class [judgeClasses] gives [finding], sorted by class name. */
     private fun classFindingRefs(finding: ClassFinding): List<ClassFindingRef> =
         judgeClasses()
             .findings
@@ -1297,20 +1016,11 @@ public class OtherlodeTestCollector internal constructor(
                 )
             }
 
-    /**
-     * Every judgeable METHOD probe location, none of inline, generated or an unread shape, merged across instances
-     * by class, method and descriptor.
-     */
     private fun judgeableMethods(): Map<NodeKey, JudgeableMethod> =
         mergedLocations()
             .filter { it.key.kind == WireProbeKind.METHOD && !it.inline && !it.isLookedThrough }
             .associate { it.key.method to JudgeableMethod(it.key.method, it.hits, it.static, it.lambdaBody) }
 
-    /**
-     * Every method some CREATES call edge names, with the methods whose edges name it: its
-     * creators. Reads the edges of every METHOD probe and of every complete-baseline declaration.
-     * A method never counts as its own creator.
-     */
     private fun creatorsOf(): Map<NodeKey, Set<NodeKey>> {
         val creators = mutableMapOf<NodeKey, MutableSet<NodeKey>>()
 
@@ -1333,22 +1043,6 @@ public class OtherlodeTestCollector internal constructor(
         return creators
     }
 
-    /**
-     * Applies the class-finding rules to every loaded class, over [judgeableMethods]. A class
-     * with a judgeable METHOD probe loaded, so none of these is never loaded.
-     *
-     * A class that failed to initialise, or whose initialiser is still running in every instance that
-     * loaded it, gets no finding.
-     *
-     * A class is never initialised when it has a `<clinit>` and that never ran. Otherwise it is never
-     * instantiated when it has a `<init>`, none ran, and it has a method that is neither static nor
-     * a constructor, and no method of it that is neither static nor a constructor ran, marked or
-     * not. Deserialization makes an instance without running its constructor. A never-initialised class covers every never-hit method. A never-instantiated
-     * class covers each never-hit constructor and each never-hit method that is not static.
-     *
-     * A never-hit lambda body then folds with its creators, since it can only run once one of them
-     * ran. See [foldLambdaBodies].
-     */
     private fun judgeClasses(): ClassJudgement {
         val judgeable = judgeableMethods()
         val findings = mutableMapOf<String, ClassFinding>()
@@ -1404,17 +1098,6 @@ public class OtherlodeTestCollector internal constructor(
         return ClassJudgement(findings, covered, inNeverHitCode, constructed)
     }
 
-    /**
-     * Folds each judgeable never-hit lambda body whose every creator is judgeable and never hit,
-     * and is itself covered by a class finding or a row of [neverHit]: a method other than
-     * `<clinit>` and a lone constructor. A lambda body some method created is one or the other, so
-     * nested lambda bodies fold with the outermost one. A lambda body with no known creator, or with
-     * a creator that ran, never folds.
-     *
-     * Returns the folded lambda bodies in two sets. The first fold into their own class's finding:
-     * every creator is covered by a class finding or is in that first set. The rest fold into
-     * never-hit methods that are rows of their own.
-     */
     private fun foldLambdaBodies(
         judgeable: Map<NodeKey, JudgeableMethod>,
         findings: Map<String, ClassFinding>,
@@ -1452,7 +1135,6 @@ public class OtherlodeTestCollector internal constructor(
         return intoClassFindings to (folded - intoClassFindings)
     }
 
-    /** The [ProbeRef] [neverHit] lists for [location]. */
     private fun neverHitRef(location: MergedLocation): ProbeRef =
         ProbeRef(
             className = location.key.method.className,
@@ -1470,35 +1152,15 @@ public class OtherlodeTestCollector internal constructor(
             outsideCaller = location.outsideCaller.toTestkit(),
         )
 
-    /**
-     * The agent version [serviceInstanceId] reported, or null when no payload from it has been
-     * accepted. Empty when the agent did not know its own version, as in a test JVM that runs the
-     * agent from classes.
-     */
     internal fun agentVersion(serviceInstanceId: String): String? = checked { agentVersionByInstance[serviceInstanceId] }
 
     /** Every class reported as matched but not instrumented by any manifest, distinct by class name, sorted by name. */
     public fun skippedClasses(): List<SkippedClass> = checked { skippedByClassName.values.sortedBy { it.className } }
 
-    /**
-     * Whether [serviceInstanceId] has sent a delta batch with `final_flush` set, meaning its
-     * shutdown hook ran. False both before that batch arrives and for an instance never seen at
-     * all: this collector cannot tell the two apart, since an instance the agent never contacted
-     * leaves no other trace either.
-     */
     internal fun endedCleanly(serviceInstanceId: String): Boolean = checked { serviceInstanceId in instancesThatEndedCleanly }
 
-    /** Every instance id that has sent a delta batch with `final_flush` set. See [endedCleanly]. */
     internal fun instancesEndedCleanly(): Set<String> = checked { instancesThatEndedCleanly.toSet() }
 
-    /**
-     * Class names a sweep reported as loaded but unreported, sorted. Empty until a manifest
-     * carries one.
-     *
-     * These are classes no transformer was offered, so the agent knows only that they loaded.
-     * [neverLoaded] already leaves them out; this exposes them so a test can assert the blind
-     * spot itself rather than only its absence from a claim.
-     */
     internal fun unreportedClasses(): List<String> = checked { unreportedByClassName.keys.sorted() }
 
     /**
@@ -1512,19 +1174,19 @@ public class OtherlodeTestCollector internal constructor(
      * Class names that failed to initialise, sorted: a class some instance named in
      * `classes_failed_to_initialize`, because its static initialiser threw or the JVM's verifier
      * rejected it, and every confirmed class whose supertypes in an instance's class records reach
-     * a class that instance named, and that no instance initialised. A class is initialised in an
-     * instance when its returned slot counted, if that instance sent the class's returned and threw
-     * slots, since the entry probe and every method the initialiser calls count before a throw. When
-     * the instance sent no slots for the class, any hit on a probe of it means it initialised.
+     * a class that instance named, and that no instance initialised. An interface named only because
+     * its static initialiser threw counts as such a supertype only when it has a probed instance
+     * method. A class is initialised in an instance when its returned slot counted, if that instance
+     * sent the class's returned and threw slots. When the instance sent no slots for the class, any
+     * hit on a probe of it means it initialised.
      *
      * A class that failed to initialise is a deployment to fix, never dead code, so [neverHit] and
-     * the class findings leave it out. The JVM defined it, which sets it apart from [failedToLoad].
-     * A name no instance confirmed, such as a library class the verifier rejected, is not listed,
-     * but its confirmed subtypes are.
+     * the class findings leave it out. Unlike a class in [failedToLoad], the JVM defined it. A name
+     * no instance confirmed, such as a library class the verifier rejected, is not listed, but its
+     * confirmed subtypes are.
      */
     public fun failedToInitialize(): List<String> = checked { failedToInitializeNames().sorted() }
 
-    /** The class names [failedToInitialize] lists. */
     private fun failedToInitializeNames(): Set<String> {
         if (initializationFailures.isEmpty()) return emptySet()
         val initialized = initializedClassNames()
@@ -1552,12 +1214,6 @@ public class OtherlodeTestCollector internal constructor(
         return failed.filterTo(HashSet()) { it !in initialized && it in dynamicallyKnownClassNames }
     }
 
-    /**
-     * Every class that initialised in some instance. In an instance whose manifest carries the
-     * returned and threw slots of the class, that is when its returned slot counted, since the
-     * entry probe and every method the initialiser calls count before a throw. In an instance with
-     * no slots for the class, any hit on a probe of it.
-     */
     private fun initializedClassNames(): Set<String> {
         class Evidence {
             var hasSlots = false
@@ -1579,15 +1235,6 @@ public class OtherlodeTestCollector internal constructor(
             .mapTo(HashSet()) { it.id }
     }
 
-    /**
-     * Whether [className] cannot initialise because a supertype failed, as the JVM decides (JVMS
-     * 5.4, 5.5 step 7). Linking a class links every supertype, so a supertype in [rejected]
-     * carries through any path. Initialising a class initialises its superclass and each
-     * superinterface that declares a non-abstract instance method, so a supertype in [threw] carries through the
-     * superclass chain and through an interface only when that interface is in
-     * [withDefaultMethods]. An interface cannot be told from a class on the wire, so a subinterface
-     * is read like a class that implements it, which can only withhold a claim.
-     */
     private fun carriesFailure(
         className: String,
         supertypes: Map<String, SupertypesInfo>,
@@ -1612,12 +1259,6 @@ public class OtherlodeTestCollector internal constructor(
         return false
     }
 
-    /**
-     * Every class whose initialiser is still running in each instance that loaded it. In one
-     * instance that is a `<clinit>` whose entry counted and whose returned and threw slots both
-     * exist and neither counted: it has not finished. Such a class gets no class finding, and its
-     * methods are not never-hit rows or cluster members.
-     */
     private fun classesWithInitializerRunning(): Set<String> {
         class Initializer {
             var entered = false
@@ -1656,30 +1297,17 @@ public class OtherlodeTestCollector internal constructor(
             }.keys
     }
 
-    /**
-     * What kind of class kotlinc says [className] is, from its manifest record or, for a class
-     * that never loaded, a complete static baseline's declaration. [KotlinKind.NONE] for a class
-     * with no `kotlin.Metadata`, such as a Java class. Null when no payload has named the class. A
-     * report names a [KotlinKind.FILE_FACADE] or a [KotlinKind.MULTIFILE_CLASS_PART] by its
-     * source file.
-     */
     internal fun kotlinKind(className: String): KotlinKind? =
         checked { kotlinKindByClassName[className] ?: consultedDeclaredClasses[className]?.kotlinKind }
 
     /**
-     * Class names declared by a complete static baseline scan that no manifest, from any
-     * instance, has ever mentioned as a probe's class, a skipped class or an unreported class.
+     * Class names declared by a complete static baseline scan that no manifest, from any instance,
+     * has ever mentioned as a probe's class, a skipped class or an unreported class.
      *
-     * Throws [IllegalStateException] if no static baseline scan has ever completed: an empty list
-     * would read as "nothing is dead", when the real answer is "no idea yet". A class in the
-     * unreadable or unprobed baseline buckets is never counted as declared here, so it
-     * never appears in this list either. A declared class whose every declared method is inline
-     * or generated is also excluded: Kotlin callers never invoke such a class's methods directly,
-     * and the compiler will emit a generated method again regardless of what the adopter does, so
-     * such a class never loading at all is not evidence it is dead. A class whose every declared
-     * method is inline, generated or an unread shape is excluded the same way, since an unread shape
-     * is compiler output the agent could not read. A class a manifest lists as failed to load is
-     * excluded too; [failedToLoad] lists it.
+     * Throws [IllegalStateException] if no static baseline scan has ever completed. A class in the
+     * unreadable or unprobed baseline buckets is never counted as declared. A class whose every
+     * declared method is inline, generated or an unread shape is excluded, and so is a class a
+     * manifest lists as failed to load; [failedToLoad] lists that one.
      */
     public fun neverLoaded(): List<String> {
         return checked {
@@ -1690,16 +1318,6 @@ public class OtherlodeTestCollector internal constructor(
         }
     }
 
-    /**
-     * The in-scope callees [methodName] on [className] references in its own bytecode, verbatim as
-     * the bytecode names them, deduplicated and sorted by callee class, method name, then
-     * descriptor. Every overload of [methodName] contributes its edges. Sources both a loaded
-     * class's manifest edges and a never-loaded class's complete-baseline edges, the same union
-     * [unreachedClusters] resolves against.
-     *
-     * Throws [UnknownProbeException] if no manifest probe and no complete-baseline declaration ever
-     * named [methodName] on [className]; a known method with no callees returns an empty list.
-     */
     internal fun callEdges(
         className: String,
         methodName: String,
@@ -1723,49 +1341,31 @@ public class OtherlodeTestCollector internal constructor(
      * Every unreached cluster in the call graph, applying the collector's cluster rule within this
      * one test JVM. Sorted by [UnreachedCluster.membersTotal] descending, then by root.
      *
-     * The graph holds three kinds of node. A method node comes from a manifest METHOD probe, merged
-     * across instances with hits summed, or from a non-inline declared method of a class a complete
-     * static baseline declared but no manifest ever mentioned. Such a method carries
-     * [ProbeRef.neverLoaded] `true` and line `-1`. An outcome node is a BRANCH probe with no hits,
-     * merged across instances by its method and branch key, or its branch index when it has no key,
-     * in a method node with hits. A BRANCH probe that is inline or generated is never an outcome
-     * node, by the rule that keeps its method out of the graph. A class node is a class that holds a
+     * The graph holds three kinds of node. A method node is a METHOD probe merged across instances,
+     * or a non-inline declared method of a class a complete static baseline declared but no
+     * manifest mentioned; the latter carries [ProbeRef.neverLoaded] `true` and line `-1`. An
+     * outcome node is a never-hit BRANCH probe, merged across instances, in a method node with
+     * hits; an inline or generated BRANCH probe is never one. A class node is a class that holds a
      * class finding: never loaded, [neverInitialized] or [neverInstantiated]. It stands for the
-     * never-hit methods that finding covers, which are never method nodes of their own. For a
-     * never-loaded class that is every method node of the class.
+     * never-hit methods that finding covers, which are not method nodes of their own.
      *
-     * A call edge whose guard names an outcome node counts as a call from that outcome node. Every
-     * other edge counts as a call from its method, or from the class node that stands for it. An
-     * edge into a covered method goes into its class node, and an edge between two methods one class
-     * node stands for is dropped. An outcome node has one caller: the outcome node its site's guard
-     * names, or else its method. A guard is a branch index in the instance that reported the edge
-     * or the site, so it is resolved to its outcome there before instances merge. A declared edge's
-     * guard is resolved in the scan's instance, else by its site key, role and case in the newest
-     * instance that lists such an outcome, since the scan kept may come from an instance that never
-     * loaded the class.
+     * Edges are the union of manifest and complete-baseline call edges. An edge whose guard names
+     * an outcome node counts as a call from that node. An edge into a covered method goes into its
+     * class node, and an edge between two methods of one class node is dropped. Inline methods are
+     * never nodes, so an edge into one resolves to nothing. A callee's owner resolves up through
+     * the supertypes to the first type with a matching node. A virtual call also resolves down to
+     * every known transitive subtype with one, except `<init>` and `<clinit>`.
      *
-     * A root is a never-hit node with no caller or with a caller that is a method with hits, a
-     * generated method with hits included, since code outside scope may call it. A method
-     * root with no caller is [RootKind.UNCALLED], or [RootKind.CALLED_FROM_OUTSIDE_SCOPE] when it
-     * has an outside caller, and one with a caller that has hits is
-     * [RootKind.REACHED_FROM_HIT]. An outcome root is [RootKind.UNTAKEN_OUTCOME], and a class root is
-     * [RootKind.CLASS_FINDING]. A `<clinit>` is never a root, and neither is an unjudged constructor:
-     * a never-hit `<init>` of a loaded class no instance constructed that no class finding covers,
-     * such as a utility class's private constructor. Like `<clinit>`, it is reached through but never
-     * listed or counted, and a class is listed whole without it. The cluster is the root plus every
-     * never-hit node reachable from it whose every caller is already in the cluster. An outcome or
-     * class root whose cluster holds no method or class node besides the root gives no cluster,
-     * since the root's own finding already says all there is.
+     * A root is a never-hit node with no caller, or with a caller that is a method with hits.
+     * [RootKind] names the shape. A `<clinit>` is never a root, and neither is a never-hit `<init>`
+     * of a loaded class that no instance constructed and no class finding covers. The cluster is
+     * the root plus every never-hit node reachable from it whose every caller is already in the
+     * cluster. An outcome or class root whose cluster holds no other method or class node gives no
+     * cluster.
      *
-     * A class that failed to initialise ([failedToInitialize]) is never a root or a member, though a
-     * method of it still counts as a caller, so what only it calls is neither a root nor a member
-     * either. Throws [IllegalStateException] as [neverInitialized] does.
-     *
-     * Inline methods are never nodes, so an edge into one resolves to nothing. Edges are the union
-     * of manifest and complete-baseline call edges. Resolution walks a callee's owner up through
-     * [supertypesByClassName] and complete-baseline supertypes to the first type with a matching
-     * node. For a virtual call it also walks down from the owner to every known transitive subtype
-     * with one, `<init>` and `<clinit>` excepted. See [computeCallGraph].
+     * A class that failed to initialise ([failedToInitialize]) is never a root or a member, though
+     * a method of it still counts as a caller. Throws [IllegalStateException] as [neverInitialized]
+     * does.
      */
     public fun unreachedClusters(): List<UnreachedCluster> {
         return checkedZeroCounts {
@@ -1826,15 +1426,6 @@ public class OtherlodeTestCollector internal constructor(
         }
     }
 
-    /**
-     * Grows [root]'s cluster by fixpoint: repeatedly add a never-hit node reachable from a current
-     * member, once every one of that node's callers is itself already in the cluster. Two
-     * consequences of this rule, pinned by tests: a node whose callers sit in two different
-     * clusters is added to neither, and a cycle of never-hit nodes with no outside caller produces
-     * no root at all, so it never reaches this method in the first place. Returns null for an
-     * outcome or class root when nothing it would list joined it: an outcome node, a `<clinit>` or a
-     * member in [unjudged] is never listed, and class sizes leave out a member in [unjudged].
-     */
     private fun buildCluster(
         graph: CallGraph,
         clusterGraph: ClusterGraph,
@@ -1926,10 +1517,6 @@ public class OtherlodeTestCollector internal constructor(
         )
     }
 
-    /**
-     * The [ProbeRef] a class root reports: the class alone, with an empty method name and
-     * descriptor and line `0`. It is never loaded when every method its class node stands for is.
-     */
     private fun classRootRef(
         graph: CallGraph,
         root: ClusterNode,
@@ -1949,12 +1536,6 @@ public class OtherlodeTestCollector internal constructor(
 
     private fun classNode(className: String) = ClusterNode(NodeKey(className, "", ""), isClass = true)
 
-    /**
-     * Every class node, keyed by its [ClusterNode]. A never-initialised or never-instantiated class
-     * stands for the methods [judgement], from [judgeClasses], says it covers. A class whose method
-     * nodes all come from a complete baseline, since no manifest mentioned it, is never loaded and
-     * stands for all of them. A class with no such method has no class node.
-     */
     private fun buildClassNodes(
         graph: CallGraph,
         judgement: ClassJudgement,
@@ -1972,16 +1553,6 @@ public class OtherlodeTestCollector internal constructor(
         return classNodes
     }
 
-    /**
-     * Every outcome node, keyed by its [ClusterNode]: a BRANCH location that is none of inline,
-     * generated, in an unread shape or routine, whose hits summed across instances are zero, in a
-     * method [isHit] says has hits. Locations merge by method and [OutcomeId], so one outcome
-     * reported by several instances under different branch indexes is one node. Its site is looked
-     * up by branch index in the sites the METHOD probes of the newest copy's instance list.
-     *
-     * A routine outcome and an unread-shape outcome are never nodes, since neither is a finding, so a
-     * call one guards starts at its method.
-     */
     private fun buildOutcomeNodes(isHit: (NodeKey) -> Boolean): Map<ClusterNode, OutcomeNode> {
         val branchIds = branchOutcomeIds()
         val sitesByMethod =
@@ -2025,8 +1596,6 @@ public class OtherlodeTestCollector internal constructor(
                     sitesByMethod[InstanceKey(instance, method)]
                         ?.firstOrNull { site -> site.outcomes.any { it.branchIndex == branchIndex } }
                 val guard = rawSite?.guard?.let { branchIds[OutcomeKey(instance, method, it)] }
-                // The site comes from one instance, so its indexes are renumbered to the merged ones the root
-                // and every other ref carry, as the server builds a root site from merged locations.
                 val site =
                     rawSite?.copy(
                         outcomes =
@@ -2039,14 +1608,6 @@ public class OtherlodeTestCollector internal constructor(
             }
     }
 
-    /**
-     * Links every resolved call and every outcome node into the cluster graph. A call whose guard
-     * names an outcome node in the caller's method starts at that outcome node, and any other call
-     * starts at its method. A method [coveredBy] names is replaced by its class node at either end,
-     * and a call that then starts and ends at the same node is dropped. An outcome node's one caller
-     * is the outcome node its site's guard names, when that is another outcome node, and otherwise
-     * its method.
-     */
     private fun buildClusterGraph(
         graph: CallGraph,
         outcomes: Map<ClusterNode, OutcomeNode>,
@@ -2082,32 +1643,6 @@ public class OtherlodeTestCollector internal constructor(
         return ClusterGraph(callersOf, calleesOf)
     }
 
-    /**
-     * Builds every [NodeKey] and resolves its edges against the known supertype graph. An edge
-     * resolves to the union of two lookups, either of which may find nothing: the first node up
-     * the owner's supertype chain, which is an inherited concrete declaration, and, for a virtual
-     * call, every node with the same name and descriptor on a transitive subtype of the owner.
-     * Widening starts at the owner, not at the declaring type, for two reasons: an abstract
-     * interface method has no node anywhere, so requiring the up-walk to succeed would drop every
-     * edge into a pure interface, which is the constructor-injected case supertypes exist for; and
-     * a receiver typed as the owner can only be the owner or one of its subtypes, never a sibling
-     * under some ancestor. Each resolved call keeps its raw edge's guard.
-     * Every resolved edge into a class also implies an edge into that class's `<clinit>` node
-     * when it has one, under the same guard: no bytecode ever calls `<clinit>`, the JVM runs it on
-     * the class's first active use, and a resolved call into the class is exactly such a use.
-     * Without this a never-initialised class's `<clinit>` would be an uncalled root of its own
-     * beside the cluster that actually owns it. A call from a method to itself is dropped.
-     *
-     * A generated method is no node but is not a dead end either: a lookup that lands on one
-     * continues along that method's own edges, resolved the same way, so the call reaches what
-     * the generated code runs. A Kotlin `-jvm-default=disable` stub is the case that needs it: a
-     * call typed as the interface widens down to each implementing class's stub, which is
-     * generated, and only the stub's edge reaches the default's code in `$DefaultImpls`. A
-     * generated method with hits is a caller in its own right, since code outside scope can call
-     * it, as a `HashMap` calls a data class's `hashCode`: its calls are resolved the same way and
-     * recorded in [CallGraph.hitGeneratedCallers]. An unread-shape method is treated the same way:
-     * looked through, and a caller when it has hits, but never a node.
-     */
     private fun computeCallGraph(): CallGraph {
         val nodes = buildNodes()
         val transparent = buildTransparentMethods()
@@ -2162,10 +1697,6 @@ public class OtherlodeTestCollector internal constructor(
         return CallGraph(nodes, calls, hitGeneratedCallers)
     }
 
-    /**
-     * Every generated or unread-shape method that is not inline, from manifests and complete
-     * baselines alike, with its edges: the methods [computeCallGraph] looks through rather than stopping at.
-     */
     private fun buildTransparentMethods(): Map<NodeKey, Set<CallEdge>> {
         val transparent = mutableMapOf<NodeKey, MutableSet<CallEdge>>()
         mergedLocations()
@@ -2182,16 +1713,6 @@ public class OtherlodeTestCollector internal constructor(
         return transparent
     }
 
-    /**
-     * Every node: a manifest METHOD probe, non-inline, non-generated and not an unread shape, merged across instances
-     * by (class, method, descriptor) with hits summed and edges unioned with any matching
-     * complete-baseline declaration; plus, for a class a complete scan declared that no manifest
-     * ever mentioned, each of its non-inline, non-generated, read declared methods, with zero hits. A
-     * generated method, such as a data class's `copy`, is never a node: the compiler will emit it
-     * again regardless of what the adopter does, so it can never root or extend an unreached
-     * cluster. An unread-shape method is never a node either, since it is compiler output the agent
-     * could not read.
-     */
     private fun buildNodes(): Map<NodeKey, NodeInfo> {
         val nodes = mutableMapOf<NodeKey, NodeInfo>()
         val branchIds = branchOutcomeIds()
@@ -2247,19 +1768,6 @@ public class OtherlodeTestCollector internal constructor(
         return nodes
     }
 
-    /**
-     * Resolves a declared edge's [guard], a branch index in the scan's own build, to an outcome. The
-     * scan's instance resolves it when it has a BRANCH probe there. A scan can declare a class its
-     * instance never loaded, or a method that has no branch probes there, so otherwise the outcome
-     * is matched by identity, as the server matches it: the site key of the scan's own site at the
-     * guard, and the outcome's role and case, in the newest instance whose METHOD probe lists such
-     * an outcome. A site key digests the condition's bytecode, so this holds across builds, where a
-     * bare index can name another outcome. It holds only where the role and case name one outcome:
-     * nothing resolves for a site with no key, for an outcome that shares its role and case with
-     * another in its site on either side, for a case label holding a redacted literal or a
-     * placeholder, or for a match with no branch key. An instance whose match fails those tests is
-     * passed over for the next.
-     */
     private fun declaredGuard(
         guard: Int,
         declared: DeclaredClassInfo,
@@ -2296,12 +1804,10 @@ public class OtherlodeTestCollector internal constructor(
         }
     }
 
-    /** A class's supertypes from either source: its manifest record, or a complete baseline's declaration. */
     private fun supertypesOf(className: String): SupertypesInfo? =
         supertypesByClassName[className]
             ?: consultedDeclaredClasses[className]?.let { SupertypesInfo(it.superClassName, it.interfaceNames) }
 
-    /** Every known class name's direct subtypes, from either supertypes source, for widening a virtual call down. */
     private fun buildReverseSubtypes(): Map<String, List<String>> {
         val reverse = mutableMapOf<String, MutableList<String>>()
         val classNames = supertypesByClassName.keys + consultedDeclaredClasses.keys
@@ -2313,11 +1819,6 @@ public class OtherlodeTestCollector internal constructor(
         return reverse
     }
 
-    /**
-     * Breadth-first walk from [owner] up through its supertypes to the first type with a key in
-     * [nodes] named ([name], [desc]), [owner] itself included. Null if the whole chain, as far as it is
-     * known, never reaches one.
-     */
     private fun findDeclaringType(
         nodes: Set<NodeKey>,
         owner: String,
@@ -2338,7 +1839,6 @@ public class OtherlodeTestCollector internal constructor(
         return null
     }
 
-    /** Every transitive subtype of [owner], excluding itself, that has a matching ([name], [desc]) key in [nodes]. */
     private fun widenToSubtypes(
         nodes: Set<NodeKey>,
         reverseSubtypes: Map<String, List<String>>,
@@ -2393,11 +1893,9 @@ public class OtherlodeTestCollector internal constructor(
     ): Boolean = checked { callCount(verb, routeTemplate) > 0L }
 
     /**
-     * The endpoint's call count, summed across every instance that reported it: each instance's
-     * own `hits_total` is already merged with max() against every redelivered value it sent, and
-     * this sums one such total per instance, mirroring how [hitCount] aggregates method probes
-     * across instances by class and method name. [verb] and [routeTemplate] are normalised the
-     * same way [wasCalled] normalises them. It addresses path endpoints only.
+     * The endpoint's call count, summed across every instance that reported it, taking one total
+     * per instance. [verb] and [routeTemplate] are normalised the same way [wasCalled] normalises
+     * them. It addresses path endpoints only.
      *
      * Throws [UnknownEndpointException] if no manifest ever mentioned this endpoint.
      */
@@ -2413,13 +1911,13 @@ public class OtherlodeTestCollector internal constructor(
     }
 
     /**
-     * Every endpoint at least one instance reported, of any [EndpointDiscoverySource], whose
-     * summed call count is zero, sorted by route template, then verb, then path, regex and servlet pattern in that order. An endpoint discovered by
-     * dispatch was called, so it appears here only until its first count arrives. An endpoint whose
-     * handler class failed to initialise ([failedToInitialize]) is left out, since nothing could
-     * dispatch to it. So is one whose framework module every reporting instance switched off
-     * ([disabledEndpointModules]). Throws [IllegalStateException] while an instance's zero counts are not
-     * evidence, as [neverHit] does.
+     * Every endpoint at least one instance reported, of any [EndpointDiscoverySource], whose summed
+     * call count is zero, sorted by route template, then verb, then path, regex and servlet pattern
+     * in that order. An endpoint discovered by dispatch was called, so it appears here only until
+     * its first count arrives. An endpoint whose handler class failed to initialise
+     * ([failedToInitialize]) is left out, and so is one whose framework module every reporting
+     * instance switched off ([disabledEndpointModules]). Throws [IllegalStateException] while an
+     * instance's zero counts are not evidence, as [neverHit] does.
      */
     public fun neverCalled(): List<EndpointRef> =
         checkedZeroCounts {
@@ -2498,34 +1996,27 @@ public class OtherlodeTestCollector internal constructor(
     }
 
     /**
-     * What the collector's dependency rules say about the dependency carrying `groupId:artifactId`, merged across
-     * every instance that listed it. A shaded jar carries several identities and matches any one of
-     * them. [groupId] null or empty matches a filename-derived identity, which has no group: for
-     * example `dependency(null, "commons-lang3")` for a jar with no `pom.properties`, or
-     * `dependency("com.fasterxml.jackson.core", "jackson-databind")` for one with it.
+     * What the collector's dependency rules say about the dependency carrying `groupId:artifactId`,
+     * merged across every instance that listed it. A shaded jar carries several identities and
+     * matches any one of them. [groupId] null or empty matches a filename-derived identity, which
+     * has no group, such as `dependency(null, "commons-lang3")` for a jar with no `pom.properties`.
      *
-     * The agent sends a dependency's entry only after a confirmed delta send has carried its first
-     * loaded-class count, and it holds each reference mapping to the dependency under the same
-     * condition. So this answers as soon as the entry has arrived: that instance's
-     * counts for it, and its mappings to it, have arrived by then. [awaitDependency] waits for the
-     * entry.
+     * This answers as soon as the dependency's entry has arrived; [awaitDependency] waits for the
+     * entry. The hits and reference sites that tell used from unreached arrive like any probe data,
+     * so wait for them with [awaitSettled]. A dependency is judged on the instances whose entry has
+     * arrived, so call [awaitDependenciesListed] first when several instances may have loaded the
+     * jar.
      *
-     * Two things are not covered by that. The hits and reference sites that tell used from
-     * unreached arrive like any probe data, so a test waits for them with [awaitSettled]. And a
-     * dependency is judged on the instances whose entry has arrived: with several instances, one
-     * that loaded the jar but whose entry has not arrived yet does not count. Call
-     * [awaitDependenciesListed] first when that matters.
-     *
-     * A shaded jar carries the identity of every library it bundles, so the plain jar and a
-     * shaded one can both carry `groupId:artifactId`. The dependency whose only identity it is
-     * answers then. When no single one is left, this throws [IllegalStateException] naming each
-     * candidate's [DependencyStatus.identityKey]. Which candidates there are depends on which
-     * entries have arrived, so call [awaitDependenciesListed] first when a shaded jar may carry
+     * When a plain jar and a shaded one both carry `groupId:artifactId`, the dependency whose only
+     * identity it is answers. When no single one is left, this throws [IllegalStateException]
+     * naming each candidate's [DependencyStatus.identityKey]. Which candidates there are depends on
+     * which entries have arrived, so call [awaitDependenciesListed] first when a shaded jar may carry
      * the identity.
      *
      * Throws [UnknownDependencyException] if no manifest has listed the dependency, naming the
      * identities this collector does know. Throws [IllegalStateException] when the status it would
-     * return rests on a zero count and an instance's zero counts are not evidence, as [neverHit] does.
+     * return rests on a zero count and an instance's zero counts are not evidence, as [neverHit]
+     * does.
      */
     public fun dependency(
         groupId: String?,
@@ -2566,13 +2057,13 @@ public class OtherlodeTestCollector internal constructor(
     }
 
     /**
-     * Blocks until at least one instance has been heard from and every instance heard from has
-     * sent `dependencies_listed`. The agent sets that flag once its startup listing, and every
-     * reference mapping recorded before the listing ended, has reached this collector.
+     * Blocks until at least one instance has been heard from and every instance heard from has sent
+     * `dependencies_listed`. The agent sets that flag once its startup listing, and every reference
+     * mapping recorded before the listing ended, has reached this collector.
      * [unloadedDependencies], [unreferencedDependencies], [unreachedDependencies],
-     * [failedToLoadDependencies] and [absentReferences] answer only after this point. Throws [TimeoutException] if [timeout]
-     * elapses first, naming the instances still waiting. An agent whose listing failed never sends
-     * the flag, so this times out for it.
+     * [failedToLoadDependencies] and [absentReferences] answer only after this point. Throws
+     * [TimeoutException] if [timeout] elapses first, naming the instances still waiting. An agent
+     * whose listing failed never sends the flag, so this times out for it.
      */
     @Throws(TimeoutException::class)
     public fun awaitDependenciesListed(timeout: Duration) {
@@ -2749,11 +2240,6 @@ public class OtherlodeTestCollector internal constructor(
             sites = finding.sites,
         )
 
-    /**
-     * One [InstanceDependencyView] per instance heard from, built the way the demo's stub
-     * collector builds its own, except that an unreported class counts as loaded: a sweep found it
-     * in the JVM's loaded set.
-     */
     private fun dependencyViews(): List<InstanceDependencyView> =
         instanceIds.sorted().map { instanceId ->
             val probes = probesByKey.filterKeys { it.serviceInstanceId == instanceId }
@@ -2809,14 +2295,16 @@ public class OtherlodeTestCollector internal constructor(
 
     /**
      * Why each payload this collector answered 400 was rejected, oldest first: an empty run id, a
-     * second run id under an instance id already heard from, a payload a collector forwarded after
-     * stripping fields it did not know, or a body that did not decode or could not be applied. Empty when nothing was rejected. Once it is not empty, every other
-     * query and wait throws [IllegalStateException]; this is the one method a test that expects a
-     * rejection can still call. See the class doc.
+     * second run id under an instance id already heard from, a second instance when the collector
+     * serves one test JVM, a payload whose agent version differs from the testkit's, a payload a
+     * collector forwarded after stripping fields it did not know, or a body that did not decode or
+     * could not be applied. Empty when nothing was rejected. Once it is not empty, every other query
+     * and wait throws [IllegalStateException]; this is the one method a test that expects a rejection
+     * can still call.
      */
     public fun rejectedPayloads(): List<String> = rejections.toList()
 
-    /** Stops the server. A wait in progress, or begun after this, fails at once. */
+    /** Stops the server. A wait in progress, or begun after this, fails at once unless its condition holds. */
     override fun close() {
         closed = true
         server.stop(0)
@@ -2869,9 +2357,6 @@ public class OtherlodeTestCollector internal constructor(
         val applied =
             applying(exchange, "manifest") {
                 val instanceId = manifest.resource.serviceInstanceId
-                // A class's own ClassLocation record is always staged and committed together with its
-                // probe locations (see ProbeRegistry.computeManifestDeltas), so every classId this manifest
-                // mentions in classLocations also has a matching probe location earlier in this same call.
                 val classNamesByClassId = mutableMapOf<Int, String>()
                 for (location in manifest.probes) {
                     val key = ProbeKey(instanceId, location.classId, location.probeIndex)
@@ -2914,9 +2399,6 @@ public class OtherlodeTestCollector internal constructor(
                     skippedByClassName.putIfAbsent(skipped.className, SkippedClass(skipped.className, skipped.reason))
                     dynamicallyKnownClassNames += skipped.className
                 }
-                // An unreported class loaded and reached no transformer, so the agent has nothing to say
-                // about it beyond that. Counting it as known is the whole point: without this it stays a
-                // "never loaded" answer for a class that ran. See ADR 0027.
                 for (unreported in manifest.unreportedClasses) {
                     unreportedByClassName.putIfAbsent(unreported.className, unreported)
                     dynamicallyKnownClassNames += unreported.className
@@ -2939,8 +2421,6 @@ public class OtherlodeTestCollector internal constructor(
                     val key = InstanceEndpointKey(instanceId, endpointLocation.endpointId)
                     endpointKeysByIdentity.computeIfAbsent(identity) { ConcurrentHashMap.newKeySet() }.add(key)
                     endpointFrameworkByKey[key] = endpointLocation.framework
-                    // Upserts unconditionally: a re-delivered record carries a newer handler join or
-                    // discovery source, and the latest delivery, from any instance, wins.
                     endpointRefsByIdentity[identity] =
                         EndpointRef(
                             verb = endpointLocation.verb,
@@ -2970,7 +2450,6 @@ public class OtherlodeTestCollector internal constructor(
         signalAll()
     }
 
-    /** Stores what one manifest says about classes that failed to initialise and what the agent could see of the verifier. */
     private fun storeVerifierFacts(manifest: ProbeManifest) {
         val instanceId = manifest.resource.serviceInstanceId
         for (failed in manifest.classesFailedToInitialize) {
@@ -2980,7 +2459,6 @@ public class OtherlodeTestCollector internal constructor(
         unplacedVerificationFailures.merge(instanceId, manifest.unplacedVerificationFailures, ::maxOf)
     }
 
-    /** Stores what the dependency rules read from one manifest, keyed by its instance. */
     private fun storeDependencyData(manifest: ProbeManifest) {
         val instanceId = manifest.resource.serviceInstanceId
         instanceIds += instanceId
@@ -3001,9 +2479,6 @@ public class OtherlodeTestCollector internal constructor(
                 ExternalClassView(external.dependencyId, external.absent),
             )
         }
-        // The entries go in after the mappings and the flag goes in last. A query answers once it
-        // sees an entry or the flag, and it runs outside this handler's thread, so it must never
-        // see either before the rest of the same manifest.
         for (dependency in manifest.dependencies) {
             val key = InstanceKey(instanceId, dependency.dependencyId)
             dependencyLocations[key] =
@@ -3098,10 +2573,6 @@ public class OtherlodeTestCollector internal constructor(
         signalAll()
     }
 
-    /**
-     * Answers a class listing and keeps nothing from it: no query reads a listing. A body that does
-     * not decode is rejected like any other payload's.
-     */
     private fun handleClassListing(exchange: HttpExchange) {
         val bytes = exchange.requestBody.readBytes()
         try {
@@ -3112,12 +2583,6 @@ public class OtherlodeTestCollector internal constructor(
         respond(exchange, 202)
     }
 
-    /**
-     * Throws [IllegalStateException] listing every reason in [rejectedPayloads] once there is one.
-     * Every public query and wait calls this first, so a test fails on a rejected payload even
-     * when it never looks at [rejectedPayloads]: a query answered without that payload's data
-     * could read as confirmed when it is not.
-     */
     private fun checkNoRejections() {
         val reasons = rejections.toList()
         check(reasons.isEmpty()) {
@@ -3125,12 +2590,6 @@ public class OtherlodeTestCollector internal constructor(
         }
     }
 
-    /**
-     * Throws when any instance could not see every rejection of the JVM's verifier, naming each
-     * instance and why. A class the verifier rejects fires no probe, so while an instance is
-     * unwatched or has a `VerifyError` message in no read format, a zero count says nothing about
-     * whether code ran. Every query that reads a zero count calls this.
-     */
     private fun checkZeroCountsAreEvidence() {
         val reasons =
             (unwatchedInstances + unplacedVerificationFailures.keys).sorted().mapNotNull { instance ->
@@ -3155,26 +2614,17 @@ public class OtherlodeTestCollector internal constructor(
         }
     }
 
-    /** Like [checked], and first refuses while [checkZeroCountsAreEvidence] fails. */
     private inline fun <T> checkedZeroCounts(query: () -> T): T =
         checked {
             checkZeroCountsAreEvidence()
             query()
         }
 
-    /**
-     * Runs [query] after [checkNoRejections], under [stateLock]'s read lock, so it never sees a
-     * payload half applied.
-     */
     private inline fun <T> checked(query: () -> T): T {
         checkNoRejections()
         return stateLock.read { query() }
     }
 
-    /**
-     * Null when a payload from [resource] may be kept, otherwise why not. The first run id heard
-     * under an instance id is the only one this collector accepts for it; see the class doc.
-     */
     private fun rejectionFor(
         payload: String,
         resource: ResourceAttributes,
@@ -3211,10 +2661,6 @@ public class OtherlodeTestCollector internal constructor(
             "accepted run id $accepted for that instance and keys on the instance alone"
     }
 
-    /**
-     * The rejection reason for a [payload] that [failure] stopped from decoding. An agent newer than
-     * this testkit sends one when it uses a wire value this testkit's codec does not know.
-     */
     private fun undecodable(
         payload: String,
         failure: Exception,
@@ -3222,16 +2668,9 @@ public class OtherlodeTestCollector internal constructor(
         "$payload could not be decoded ($failure); the agent may be newer than this testkit, or something other " +
             "than the agent posted to this collector's port"
 
-    /** Runs at the start of every payload's apply step; a test sets it to make that step fail. */
     @Volatile
     internal var beforeApply: () -> Unit = {}
 
-    /**
-     * Runs [apply] under [stateLock]'s write lock and returns true. A throwable from it is recorded
-     * like a rejection, answered 400 and returns false, so a payload this collector could not take
-     * in fails every later query instead of leaving it short of that payload's data. A 400 rather
-     * than a 500, since the agent would resend the same bytes on a 500 and fail the same way.
-     */
     private inline fun applying(
         exchange: HttpExchange,
         payload: String,
@@ -3248,7 +2687,6 @@ public class OtherlodeTestCollector internal constructor(
             false
         }
 
-    /** Records [reason] in [rejectedPayloads], answers 400, and keeps nothing from the payload. */
     private fun reject(
         exchange: HttpExchange,
         reason: String,
@@ -3271,16 +2709,10 @@ public class OtherlodeTestCollector internal constructor(
     }
 
     public companion object {
-        /**
-         * The text a collector's redaction writes in place of a string literal (collector ADR 0001).
-         * One placeholder can stand for different literals, so a case label holding it never
-         * identifies an outcome.
-         */
         private const val REDACTED_LITERAL = "…"
 
         private const val SETTLED_COMPLETE_FLUSHES = 2
 
-        /** A class's static initialiser, a class state and never a method row. */
         private const val CLASS_INIT = "<clinit>"
 
         private const val CONSTRUCTOR = "<init>"
@@ -3301,22 +2733,13 @@ public class OtherlodeTestCollector internal constructor(
         @JvmOverloads
         public fun start(port: Int = 0): OtherlodeTestCollector = create(port, servesOneJvm = false, testkitVersion = ownVersion())
 
-        /** Starts a collector that reads its own version as [testkitVersion], so a test can set what a jar's manifest would carry. */
         internal fun startAsVersion(
             port: Int,
             testkitVersion: String,
         ): OtherlodeTestCollector = create(port, servesOneJvm = false, testkitVersion = testkitVersion)
 
-        /**
-         * Starts the collector [dev.otherlode.testkit.junit5.OtherlodeExtension] keeps for its own
-         * test JVM. It accepts payloads from one instance only: with Gradle's `maxParallelForks`
-         * above 1, every fork's agent posts to the one fixed port, and only one fork's collector
-         * can hold it. A child JVM a test launches with the agent is a second instance too, and
-         * needs a collector of its own.
-         */
         internal fun startForOneJvm(port: Int): OtherlodeTestCollector = create(port, servesOneJvm = true, testkitVersion = ownVersion())
 
-        /** The version in this jar's manifest, empty when the classes run from a directory. */
         private fun ownVersion(): String =
             OtherlodeTestCollector::class.java.`package`
                 ?.implementationVersion
@@ -3340,14 +2763,6 @@ public class OtherlodeTestCollector internal constructor(
             return collector
         }
 
-        /**
-         * A Java thread inherits daemon status from the thread that creates it, and
-         * `HttpServer.start()` creates its dispatcher thread on whichever thread calls it. A
-         * JUnit extension that called `httpServer.start()` directly would leave that dispatcher
-         * thread non-daemon, which alone would keep the JVM from exiting even after every other
-         * thread finished. Starting the server from a short-lived daemon thread, and joining it
-         * before returning, makes the dispatcher thread daemon too.
-         */
         private fun startDaemon(httpServer: HttpServer) {
             val starter = Thread({ httpServer.start() }, "otherlode-testkit-http-starter").apply { isDaemon = true }
             starter.start()
@@ -3358,26 +2773,29 @@ public class OtherlodeTestCollector internal constructor(
 
 /**
  * One probe's identity and location, merged across every instance that reported it. See
- * [OtherlodeTestCollector] for the class name format and how instances merge. [inline] marks a
- * Kotlin inline function, or a branch inside one: a Kotlin caller copies the body instead of
- * calling it, so a zero count is no evidence the code never ran.
- * [parameterIndex], [parameterName], [overridable], and [targetClassName] are set only when [kind]
- * is [ProbeKind.OPTIONAL_ARGUMENT]. [neverLoaded] is true only for an
- * [OtherlodeTestCollector.unreachedClusters] member that exists solely because a complete static
- * baseline declared it: its [line] is `-1`, since the static scan records no line.
- * [inlinedFromClassName] is set only for a [ProbeKind.BRANCH] probe that is a kept inlined copy:
- * the dotted name of the class whose inline function the compiler copied it from.
- * [generatedBy] is set when [kind] is [ProbeKind.METHOD], for a [ProbeKind.BRANCH] probe as the
- * mark of the method it sits in, and for an [ProbeKind.OPTIONAL_ARGUMENT] probe as its target's
- * mark. [branchKey] is set only for a [ProbeKind.BRANCH] probe: an opaque lowercase hex token
- * naming this outcome across builds and instances, null when the agent could not name it safely.
- * [routine] is set only for a [ProbeKind.BRANCH] probe whose outcome the agent marked routine.
- * [unreadShape] is set for a probe whose method has the outline of compiler output but a body the
- * agent has not read, for a [ProbeKind.BRANCH] probe in such a method, for an
- * [ProbeKind.OPTIONAL_ARGUMENT] probe whose target is one, and for a [ProbeKind.BRANCH] probe whose
- * own outcome the agent marked unread. It is exclusive with [routine].
- * [outsideCaller] is set only for a [ProbeKind.METHOD] ref whose method has an outside caller. When
- * instances disagree, it comes from the newest instance's copy.
+ * [OtherlodeTestCollector] for the class name format and how instances merge.
+ *
+ * - [inline] marks a Kotlin inline function, or a branch inside one. A zero count is no evidence
+ *   the code never ran.
+ * - [parameterIndex], [parameterName], [overridable] and [targetClassName] are set only when [kind]
+ *   is [ProbeKind.OPTIONAL_ARGUMENT].
+ * - [neverLoaded] is true for an [OtherlodeTestCollector.unreachedClusters] method that exists
+ *   solely because a complete static baseline declared it, whose [line] is `-1` since the static
+ *   scan records no line, and for the class root of a never-loaded class.
+ * - [inlinedFromClassName] is set only for a [ProbeKind.BRANCH] probe that is a kept inlined copy:
+ *   the dotted name of the class whose inline function the compiler copied it from.
+ * - [generatedBy] is set when [kind] is [ProbeKind.METHOD]. For a [ProbeKind.BRANCH] probe it is
+ *   the mark of the method it sits in, and for an [ProbeKind.OPTIONAL_ARGUMENT] probe the mark of
+ *   its target.
+ * - [branchKey] is set only for a [ProbeKind.BRANCH] probe: an opaque lowercase hex token naming
+ *   this outcome across builds and instances. It is null when the agent could not name it safely.
+ * - [routine] is set only for a [ProbeKind.BRANCH] probe whose outcome the agent marked routine.
+ * - [unreadShape] is set for a probe whose method has the outline of compiler output but a body the
+ *   agent has not read, for a [ProbeKind.BRANCH] probe in such a method, for an
+ *   [ProbeKind.OPTIONAL_ARGUMENT] probe whose target is one, and for a [ProbeKind.BRANCH] probe
+ *   whose own outcome the agent marked unread. It is exclusive with [routine].
+ * - [outsideCaller] is set only for a [ProbeKind.METHOD] ref whose method has an outside caller.
+ *   When instances disagree, it comes from the newest instance's copy.
  */
 @ConsistentCopyVisibility
 public data class ProbeRef internal constructor(
@@ -3414,47 +2832,45 @@ public data class OutsideCaller internal constructor(
 
 /**
  * Which of the five root shapes an [UnreachedCluster] has. They call for different fixes, so they
- * are reported apart. Values may be added in a minor release, so a `when` over this enum needs an `else` branch.
+ * are reported apart. Values may be added in a minor release, so a `when` over this enum needs an
+ * `else` branch.
  */
 public enum class RootKind {
     /**
      * The root is a method, and at least one of its in-scope callers is a method with hits. The
-     * caller ran and its call was not behind an untaken outcome. That is mostly an override a
-     * virtual call never reached, or a call an exception cut short. [UnreachedCluster.reachedFrom]
+     * caller ran and its call was not behind an untaken outcome. [UnreachedCluster.reachedFrom]
      * names the callers.
      */
     REACHED_FROM_HIT,
 
-    /** The root is a method with no in-scope caller at all. Its caller may not exist yet, or may live outside scope. */
+    /** The root is a method with no in-scope caller at all. */
     UNCALLED,
 
     /**
      * The root is a method with no in-scope caller and an outside caller, named by
-     * [ProbeRef.outsideCaller] on [UnreachedCluster.root]. Code outside scope may call it, so it is
-     * weaker evidence for deletion than [UNCALLED].
+     * [ProbeRef.outsideCaller] on [UnreachedCluster.root].
      */
     CALLED_FROM_OUTSIDE_SCOPE,
 
     /**
      * The root is a branch outcome that was never hit, in a method with hits. Every method in the
-     * cluster runs only through it, so deleting that side of the branch removes the cluster.
+     * cluster runs only through it.
      */
     UNTAKEN_OUTCOME,
 
     /**
-     * The root is a class that holds a class finding, named by [UnreachedCluster.rootFinding]. It has
-     * no in-scope caller, or at least one caller is a method with hits, which
-     * [UnreachedCluster.reachedFrom] names. Such a cluster is listed only when it holds more than
-     * the methods the finding folds, since [OtherlodeTestCollector.neverLoaded],
-     * [OtherlodeTestCollector.neverInitialized] or [OtherlodeTestCollector.neverInstantiated] already lists
-     * the class.
+     * The root is a class that holds a class finding, named by [UnreachedCluster.rootFinding]. It
+     * has no in-scope caller, or at least one caller is a method with hits, which
+     * [UnreachedCluster.reachedFrom] names. The cluster is listed only when it holds more than the
+     * methods the finding folds.
      */
     CLASS_FINDING,
 }
 
 /**
  * A finding about a whole class rather than a method in it. A class holds at most one, the
- * strongest that applies, in the order listed. Values may be added in a minor release, so a `when` over this enum needs an `else` branch.
+ * strongest that applies, in the order listed. Values may be added in a minor release, so a `when`
+ * over this enum needs an `else` branch.
  */
 public enum class ClassFinding {
     /** A complete static baseline declared the class and no manifest ever mentioned it. See [OtherlodeTestCollector.neverLoaded]. */
@@ -3501,22 +2917,21 @@ public data class WholeClass internal constructor(
  * caller is itself in the cluster, as found by [OtherlodeTestCollector.unreachedClusters]. Deleting
  * [root] removes the whole cluster.
  *
- * [root] is a [ProbeKind.METHOD] ref for a method root. For a [RootKind.UNTAKEN_OUTCOME] root it
- * is the outcome's [ProbeKind.BRANCH] ref, the same ref [OtherlodeTestCollector.neverHit] lists for
- * it, whose class and method name the method that holds the outcome. For a
- * [RootKind.CLASS_FINDING] root it names only the class: its method name and descriptor are empty,
- * its line is `0`, and [ProbeRef.neverLoaded] is true for a never-loaded class. [rootFinding] is
- * then the class's finding, and it is null for every other kind.
+ * [root] is a [ProbeKind.METHOD] ref for a method root. For a [RootKind.UNTAKEN_OUTCOME] root it is
+ * the outcome's [ProbeKind.BRANCH] ref, the same ref [OtherlodeTestCollector.neverHit] lists for
+ * it, whose class and method name the method that holds the outcome. For a [RootKind.CLASS_FINDING]
+ * root it names only the class: its method name and descriptor are empty, its line is `0`, and
+ * [ProbeRef.neverLoaded] is true for a never-loaded class. [rootFinding] is then the class's
+ * finding, and it is null for every other kind.
  *
  * [wholeClasses] lists each class the cluster holds whole, sorted by class name. [members] lists
  * every other method, sorted the same way [OtherlodeTestCollector.neverHit] sorts its results.
- * Neither lists `<clinit>`, which is a class state, or a never-run constructor of a loaded class
- * that no code constructed and no class finding covers, such as a utility class's private
- * constructor. A method
- * root is in its own cluster, and so are a class root's methods; an outcome root is not.
- * [membersTotal] counts every method the cluster holds, and [methods] lists them all.
- * [neverLoadedClasses] counts the distinct classes with a method in the cluster that exists only
- * because a complete static baseline declared it; see [ProbeRef.neverLoaded].
+ * Neither lists `<clinit>`, or a never-run constructor of a loaded class that no code constructed
+ * and no class finding covers. A method root is in its own cluster, and so are a class root's
+ * methods; an outcome root is not. [membersTotal] counts every method the cluster holds, and
+ * [methods] lists them all. [neverLoadedClasses] counts the distinct classes with a method in the
+ * cluster that exists only because a complete static baseline declared it; see
+ * [ProbeRef.neverLoaded].
  *
  * [reachedFrom] is set for a [RootKind.REACHED_FROM_HIT] root, and for a [RootKind.CLASS_FINDING]
  * root that a method with hits calls: the methods with hits that call it, sorted the same way as
@@ -3625,12 +3040,13 @@ public data class EndpointRef internal constructor(
 
 /**
  * Thrown when a query names a `(verb, route template)` [OtherlodeTestCollector] has no endpoint for,
- * instead of reading as "confirmed never called". The message names one of two cases, checked in
+ * instead of reading as "confirmed never called". The message names one of three cases, checked in
  * this order:
  *
  * 1. At least one endpoint module is disabled. The message names every disabled
  *    module and its reason, since the unmentioned endpoint may belong to one of them.
- * 2. No manifest, from any instance, ever mentioned this endpoint.
+ * 2. A regex or servlet pattern endpoint has this template, and the query addresses path endpoints only.
+ * 3. No manifest, from any instance, ever mentioned this endpoint.
  */
 public class UnknownEndpointException internal constructor(
     message: String,

@@ -18,28 +18,13 @@ private const val ADVICE_PACKAGE = "dev.otherlode.endpoints.ktor2"
 
 /**
  * Endpoint module for Ktor 2 (`ktor-2`), covering the `io.ktor:ktor-server-core-jvm` 2.x line.
- *
- * `Route.handle` is the registration hook: it runs once per handler lambda as application code
- * builds the routing tree, with the handler and the route it was attached to both in hand.
- * `Routing.executeResult` is the dispatch point: it runs once per matched request, before that
- * route's own handler pipeline runs, with the winning route already resolved. Both are advised
- * instead of the public `RoutingCallStarted` event, whose subscription would need advice to
- * implement a Kotlin function type; see [dev.otherlode.endpoints.ktor2.HandleAdvice]
- * for the full reasoning.
- *
- * The route node object itself is the identity this module keys endpoints under, since it is
- * exactly what both `handle` and `executeResult` hand over. A route selector that contributes
- * nothing to a path (headers, content type, query parameters, host, `AndRouteSelector`/
- * `OrRouteSelector`) means such a route merges with any sibling sharing the same path, an accepted
- * v1 simplification.
+ * `Route.handle` registers each route and `Routing.executeResult` records each dispatch.
  */
 class Ktor2Module : EndpointModule {
     override val name: String = "ktor-2"
 
     override val typeNames: Set<String> = setOf(ROUTE, ROUTING)
 
-    // Ktor 3 turned `Route` and `Routing` into interfaces whose `handle` is abstract and which
-    // declare no `executeResult`, so only the Ktor 2 classes match.
     override fun typeMatcher(): ElementMatcher<in TypeDescription> =
         namedOneOf<TypeDescription>(*typeNames.toTypedArray()).and(not(isInterface()))
 

@@ -16,8 +16,7 @@ import org.springframework.web.util.pattern.PathPattern;
 /**
  * Woven onto the exit of {@code AbstractHandlerMethodMapping.registerMapping(mapping, handler,
  * method)}, the public method for registering a handler method in code. Spring Boot Actuator
- * registers every operation this way, and it never passes through {@code registerHandlerMethod},
- * so without this advice those endpoints would be found only once called.
+ * registers its operations this way, and they never pass through {@code registerHandlerMethod}.
  *
  * <p>The body is {@link RegisterHandlerMethodAdvice}'s with the arguments in this method's order.
  */

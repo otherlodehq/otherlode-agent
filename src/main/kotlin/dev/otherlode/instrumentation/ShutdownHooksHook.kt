@@ -20,15 +20,10 @@ import java.lang.instrument.Instrumentation
 
 /**
  * Weaves the entry of `java.lang.ApplicationShutdownHooks.runHooks` so each run hands the class's
- * own `hooks` field, the table of application shutdown hooks, to the bootstrap seam in
- * [OtherlodeShutdownHooks]. The agent's shutdown hook then reads the other hooks from the seam and
- * waits for them (ADR 0084). `java.base` gets a read edge to the seam and nothing is opened.
+ * `hooks` field to the bootstrap seam in [OtherlodeShutdownHooks] (ADR 0084). Install it after the
+ * bootstrap holder. When anything fails, it logs a WARNING, tries to undo the weave and [install] returns false.
  *
- * It is installed once the bootstrap holder is. When anything fails it logs one WARNING and
- * installs nothing, and [install] returns false.
- *
- * [targetClass] names the class to weave and [loader] the loader that defines it; a test names
- * another to weave a stand-in or to make the install fail.
+ * [targetClass] and [loader] name the class to weave and the loader that defines it.
  */
 class ShutdownHooksHook(
     private val ownFailures: OwnRetransformationFailures = OwnRetransformationFailures(),
@@ -38,7 +33,7 @@ class ShutdownHooksHook(
     private val log by agentLogger(ShutdownHooksHook::class.java.name)
     private var transformer: ResettableClassFileTransformer? = null
 
-    /** Installs the weave. Returns whether it is on; when it is not, one WARNING says why. */
+    /** Installs the weave. Returns whether it is on; when it is not, a WARNING says why. */
     fun install(instrumentation: Instrumentation): Boolean {
         var installed: ResettableClassFileTransformer? = null
         try {

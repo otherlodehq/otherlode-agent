@@ -7,18 +7,19 @@ import io.micronaut.web.router.UriRouteMatch;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the exit of {@code RouteExecutor.findRouteMatch(HttpRequest)}, which Micronaut's
- * request lifecycle calls once per request after the pre-matching filters and before argument
- * binding. A null return is no match and counts nothing.
+ * Woven onto the exit of {@code RouteExecutor.findRouteMatch(HttpRequest)}, which Micronaut calls
+ * once per request after the pre-matching filters and before argument binding. A null return is no
+ * match and counts nothing.
  *
- * <p>The route's {@code UriRouteInfo} is the key {@code MicronautModule.declare} registered it
- * under. A route no registration saw is recorded at dispatch, with no handler join. A HEAD route
- * whose method carries the {@code @Get} stereotype is the one Micronaut adds beside a {@code @Get},
- * so it is recorded against the GET endpoint of the same template. A WebSocket route, which
- * {@code isWebSocketRoute()} reports only for an {@code @OnMessage} method, is counted by neither.
+ * <p>The route's {@code UriRouteInfo} is the key {@code MicronautModule.declare} registered the
+ * route under. A route no registration saw is recorded at dispatch, with no handler join. A HEAD
+ * route whose method carries the {@code @Get} stereotype is the one Micronaut adds beside a
+ * {@code @Get}, so it is recorded against the GET endpoint of the same template. A WebSocket route
+ * counts nothing. {@code isWebSocketRoute()} reports one only for an {@code @OnMessage} method, so
+ * an {@code @OnOpen} method is checked by its annotation.
  *
- * <p>This method is deliberately one flat body with no private helper method of its own; see the
- * Spring MVC module's {@code RegisterHandlerMethodAdvice} Javadoc for why.
+ * <p>The advice body is inlined into the woven method, so {@code onExit} stays one flat body with
+ * no helper methods.
  */
 public class DispatchAdvice {
     private static final String MODULE = "micronaut";

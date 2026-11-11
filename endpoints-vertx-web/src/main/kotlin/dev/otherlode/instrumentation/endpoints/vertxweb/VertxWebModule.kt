@@ -19,26 +19,20 @@ private const val HANDLER = "io.vertx.core.Handler"
 private const val ADVICE_PACKAGE = "dev.otherlode.endpoints.vertxweb"
 
 /**
- * Endpoint module for Vert.x Web (`vertx-web`), covering 4.5 to 5.x, compiled against 4.5.0.
+ * Endpoint module for Vert.x Web (`vertx-web`), covering 4.5 to 5.x.
  *
- * A route enters a router at its first handler, but its path, verbs and handlers can change after
- * that, a sub-router mount looks like any route until `subRouter` marks it, and nothing says
- * routing is complete. So the module follows the router graph as it is built: the advice on
- * `RouterImpl` and `RouteImpl` raises an event for each mutation (see [RouterGraph.apply]), and
- * the entry of `RouterImpl.handle(HttpServerRequest)`, which only a root router receives, hands the
- * root to [declare]. A root declares every route reachable from it at its first request, and again
- * at a later request after a router it reached changed. A JVM whose routers never receive a request
- * declares nothing.
+ * The advice on `RouterImpl` and `RouteImpl` raises an event for each change to the router graph,
+ * and the entry of `RouterImpl.handle(HttpServerRequest)` hands the root router to [declare]. A
+ * root declares every route reachable from it at its first request, and again at a later request
+ * after a router it reached changed. A JVM whose routers never receive a request declares nothing.
  *
  * An endpoint is a route with a context handler that is not a sub-router mount. The exit of
- * `RouteState.matches` counts a route that matched, before its handler runs, so a request that
- * passes through several routes counts each, and a `reroute` counts again. A removed route is not
- * retracted. See ADR 0073.
+ * `RouteState.matches` counts a route that matched, so a request that passes through several routes
+ * counts each, and a `reroute` counts again. A removed route is not retracted. See ADR 0073.
  */
 class VertxWebModule : EndpointModule {
     override val name: String = MODULE_NAME
 
-    /** Vert.x Web 5 is a named module whose advice reads the endpoint seam, which a module on the module path cannot do unasked. */
     override val bootModulesNeedingSeamRead: Set<String> = setOf("io.vertx.web")
 
     override val handlerInterfaces: Set<String> = setOf(HANDLER)

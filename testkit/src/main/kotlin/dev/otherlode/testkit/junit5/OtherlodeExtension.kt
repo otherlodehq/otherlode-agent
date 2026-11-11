@@ -13,9 +13,7 @@ import java.util.concurrent.TimeoutException
  * A JUnit 5 extension that starts one [OtherlodeTestCollector] for the life of the test JVM and
  * hands it to any test that asks for it.
  *
- * This extension never self-attaches the agent: JUnit's own discovery can load test classes,
- * and the classes under test, before any extension runs, so the agent has to be attached with
- * the ordinary `-javaagent` flag on the test task itself.
+ * The extension does not attach the agent. Attach it with the `-javaagent` flag on the test task.
  *
  * ```kotlin
  * tasks.test {
@@ -38,11 +36,10 @@ import java.util.concurrent.TimeoutException
  * ```
  *
  * The collector binds to the port named by the `otherlode.testkit.port` system property, defaulting
- * to 4319, the port of the agent's default `exportUrl`, so a `-javaagent` flag with no explicit
- * `exportUrl` option works without further wiring. The agent always needs `includePackages`: without
- * it the agent refuses to start and no heartbeat ever arrives. [beforeAll] waits for the agent's
- * first liveness heartbeat once per test JVM, with a timeout named by the
- * `otherlode.testkit.startup.timeout.seconds` system property, defaulting to 15 seconds.
+ * to 4319, the port of the agent's default `exportUrl`. The agent always needs `includePackages`:
+ * without it the agent refuses to start and no heartbeat arrives. [beforeAll] waits once per test
+ * JVM for the agent's first liveness heartbeat, for the number of seconds in the
+ * `otherlode.testkit.startup.timeout.seconds` system property, defaulting to 15.
  */
 public class OtherlodeExtension :
     BeforeAllCallback,
@@ -68,16 +65,14 @@ public class OtherlodeExtension :
     ): Boolean = parameterContext.parameter.type == OtherlodeTestCollector::class.java
 
     /**
-     * Starts the collector in the root store if [beforeAll] has not yet: under
-     * `@TestInstance(PER_CLASS)` JUnit resolves a constructor parameter before it calls
-     * [beforeAll].
+     * Starts the collector if [beforeAll] has not run yet. Under `@TestInstance(PER_CLASS)`, JUnit
+     * resolves a constructor parameter before it calls [beforeAll].
      */
     override fun resolveParameter(
         parameterContext: ParameterContext,
         extensionContext: ExtensionContext,
     ): Any = collectorIn(extensionContext)
 
-    /** The test JVM's one collector, kept in the root store of [context] and started on first use. */
     private fun collectorIn(context: ExtensionContext): OtherlodeTestCollector {
         val collector =
             context.root
@@ -91,13 +86,8 @@ public class OtherlodeExtension :
         return collector
     }
 
-    /**
-     * What the root store holds instead of the collector itself. [OtherlodeTestCollector] is
-     * `AutoCloseable`, and from JUnit 5.13 the store closes every `AutoCloseable` value it holds
-     * when it closes, at the end of the test run and before the JVM exits. Wrapping the collector
-     * in a class that is not `AutoCloseable` keeps it listening for the agent's shutdown-hook
-     * flush on every JUnit version, which is what [startCollector]'s note relies on.
-     */
+    // Must implement neither CloseableResource nor AutoCloseable: the root store closes such values at
+    // the end of the run, and the collector has to keep listening for the agent's shutdown-hook flush.
     private class CollectorHolder(
         val collector: OtherlodeTestCollector,
     )
@@ -127,14 +117,6 @@ public class OtherlodeExtension :
                     "OtherlodeExtension has not run yet: add @ExtendWith(OtherlodeExtension::class) to a test class first",
                 )
 
-        /**
-         * The collector started here is deliberately never stopped when JUnit's root store
-         * closes at the end of the test run. The agent's own shutdown-hook flush needs the
-         * collector to still be listening at JVM exit, so the store entry is a [CollectorHolder]
-         * that implements neither `CloseableResource` nor `AutoCloseable`. Leaving the collector
-         * running cannot itself keep the test JVM alive: [OtherlodeTestCollector.start] already runs
-         * its HTTP server's dispatcher thread as a daemon thread.
-         */
         private fun startCollector(): OtherlodeTestCollector {
             val port = resolvePort()
             return try {

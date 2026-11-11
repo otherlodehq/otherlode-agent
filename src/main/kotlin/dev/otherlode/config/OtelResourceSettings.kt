@@ -4,36 +4,20 @@ import dev.otherlode.agentLogger
 import java.io.ByteArrayOutputStream
 import java.lang.System.Logger.Level
 
-/**
- * The resource values OpenTelemetry's own settings give, resolved as its Java agent resolves them.
- * [AgentConfig] falls back to these when Otherlode's own sources name no value. They are the service
- * name, the `service.namespace`, the `service.version` and the deployment environment. The instance
- * id is never read from here.
- *
- * [serviceNameSetting] is the `otel.service.name` setting. [attributes] is the parsed
- * `otel.resource.attributes` setting. Every value in both is trimmed and not blank.
- */
 internal class OtelResourceSettings(
     private val serviceNameSetting: String?,
     private val attributes: Map<String, String>,
 ) {
-    /**
-     * The service name: the `otel.service.name` setting, else the `service.name` attribute. A value
-     * that [ServiceIdentityValues.usable] skips falls through to the next one.
-     */
     val serviceName: String? =
         ServiceIdentityValues.usable(serviceNameSetting, "the otel.service.name setting")
             ?: ServiceIdentityValues.usable(attributes["service.name"], "service.name in the resource attributes")
 
-    /** The `service.namespace` attribute, unless [ServiceIdentityValues.usable] skips it. */
     val serviceNamespace: String? =
         ServiceIdentityValues.usable(attributes["service.namespace"], "service.namespace in the resource attributes")
 
-    /** The `service.version` attribute, unless [ServiceIdentityValues.withinLimit] skips it. */
     val serviceVersion: String? =
         ServiceIdentityValues.withinLimit(attributes["service.version"], "service.version in the resource attributes")
 
-    /** The `deployment.environment.name` attribute, else the older `deployment.environment`, unless [ServiceIdentityValues.withinLimit] skips it. */
     val environment: String? =
         ServiceIdentityValues.withinLimit(
             attributes["deployment.environment.name"],
@@ -44,16 +28,6 @@ internal class OtelResourceSettings(
     companion object {
         private val log by agentLogger(OtelResourceSettings::class.java.name)
 
-        /**
-         * Resolves each of `otel.service.name` and `otel.resource.attributes` as one setting. Each
-         * comes whole from its system property, else from its environment variable
-         * (`OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES`). So a set `otel.resource.attributes`
-         * property hides `OTEL_RESOURCE_ATTRIBUTES` entirely, and `OTEL_SERVICE_NAME` wins over a
-         * `service.name` in the `otel.resource.attributes` property.
-         *
-         * A blank system property counts as unset and falls through to the environment variable,
-         * as a blank value does everywhere else in [AgentConfig].
-         */
         fun resolve(
             systemProperties: (String) -> String?,
             env: (String) -> String?,
@@ -71,15 +45,6 @@ internal class OtelResourceSettings(
 
         private fun nonBlank(raw: String?): String? = raw?.trim()?.ifBlank { null }
 
-        /**
-         * Parses a resource-attributes list, `key1=value1,key2=value2`, as OpenTelemetry's Java SDK
-         * does. It splits on commas and then on the first `=` of each pair. It trims each key and
-         * value, and then percent-decodes the value by [percentDecode]. A pair with an empty
-         * value is dropped. When a key repeats, the last pair wins.
-         *
-         * If any pair has no `=` or an empty key, the whole list is discarded with one WARNING that
-         * names [source], as the OpenTelemetry specification says.
-         */
         fun parseAttributes(
             raw: String?,
             source: String,
@@ -106,11 +71,6 @@ internal class OtelResourceSettings(
             return attributes
         }
 
-        /**
-         * Decodes `%XY` escapes as UTF-8 bytes, per the W3C Baggage rules the OpenTelemetry
-         * specification points to. A `+` stays a `+`, unlike in form decoding. A `%` that is not
-         * followed by two hex digits stays as it is.
-         */
         fun percentDecode(value: String): String {
             if (value.indexOf('%') < 0) return value
             val decoded = StringBuilder(value.length)

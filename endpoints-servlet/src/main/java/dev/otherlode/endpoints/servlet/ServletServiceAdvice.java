@@ -14,52 +14,29 @@ import net.bytebuddy.asm.Advice;
 
 /**
  * Woven onto the entry of every non-abstract {@code service(ServletRequest, ServletResponse)} a
- * servlet class declares, {@code HttpServlet}'s own included. The container calls that method on
- * the servlet, so it is the servlet's entry, and a filter that answers first never reaches it.
+ * servlet class declares, {@code HttpServlet}'s own included. A filter that answers first never
+ * reaches it. The protected {@code service(HttpServletRequest, HttpServletResponse)} is not hooked.
  *
- * <p>A servlet whose public {@code service} calls {@code super.service} enters several hooked
- * frames for one request. The dispatch key carries the name of the class the frame is hooked on,
- * and the module binds a servlet's keys only for the most derived class that declares the method,
- * so exactly one frame finds an entry. The protected {@code service(HttpServletRequest,
- * HttpServletResponse)} is not hooked: {@code HttpServlet}'s public {@code service} always reaches
- * it first.
+ * <p>The dispatch key carries the name of the class the frame is hooked on, and the module binds a
+ * servlet's keys only for the most derived class that declares the method, so one frame finds an
+ * entry when a {@code service} calls {@code super.service}. A frame counts nothing when the servlet
+ * it runs on has a name of its own in its {@code ServletConfig} that differs from the mapping's,
+ * except for an include, which falls back to that servlet's own registration.
  *
- * <p>A servlet that calls another servlet's {@code service} directly enters a hooked frame on the
- * other servlet too, with the first servlet's mapping. That frame counts nothing when the servlet it
- * runs on has a name of its own in its {@code ServletConfig}, and so is not the one the container
- * matched. A servlet with no config, or none that names itself, counts.
+ * <p>A request whose mapping has no match type disables the module: with {@code LINKAGE_ERROR}
+ * when the container answers with the servlet API's default {@code getHttpServletMapping}, else
+ * with {@code ADVICE_FAILED}. On a servlet API older than 4.0, {@code getHttpServletMapping} does
+ * not link and the failure disables the module with {@code LINKAGE_ERROR}.
  *
- * <p>Every dispatch type counts at the servlet it reaches. A forward's, an error page's and an
- * asynchronous dispatch's mapping is the request's own. A dispatch back to the servlet that started
- * the asynchronous cycle counts it again.
- * An include leaves the request's mapping as the original one, so the included servlet's mapping is
- * read from the request attribute {@code RequestDispatcher.INCLUDE_MAPPING}, whose name the advice
- * builds for the namespace in use because a string constant is not rebound. When that mapping names
- * a servlet other than the hooked one, as Undertow's does (it holds the including servlet's mapping)
- * and as it does for a servlet called directly during an include, the hooked servlet's own
- * registration answers: the mapping equal to the include's servlet path when its path info is null,
- * or to that path plus {@code /*} when it is not, else nothing counts. Every counted dispatch hands
- * the context to the module. A request whose mapping has no match
- * type disables the module before anything is declared: the match type is null for the servlet API's
- * default {@code getHttpServletMapping}, which a container that does not implement Servlet 4.0
- * answers with (LINKAGE_ERROR), and for a request object that hides the real mapping
- * (ADVICE_FAILED). Otherwise the context is handed to the module, which declares it once, and the
- * first lookup uses the request's verb, the second the servlet's {@code *} verb.
+ * <p>The advice is woven into servlet classes at their own class file version, which can be 48, so
+ * it uses no string concatenation with {@code +} and no class literal. The Servlet 3.1 {@code
+ * HttpServlet} is version 51, so it calls no static interface method such as {@code List.of}. It
+ * is written against the {@code javax} servlet types and bound to the {@code jakarta} ones by
+ * prefix. A string constant is not rebound, so each request attribute name is built for the
+ * namespace in use.
  *
- * <p>The advice is woven into servlet classes at their own class file version, which can be 48. It
- * therefore holds no string concatenation with {@code +}, which compiles to {@code invokedynamic},
- * and no class literal, which version 48 cannot load.
- *
- * <p>This advice is written against the {@code javax} servlet types and bound to the {@code
- * jakarta} ones, by prefix, where the woven method takes them. On a servlet API older than 4.0
- * {@code getHttpServletMapping} does not link, and the failure disables the module with the kind
- * {@code LINKAGE_ERROR}.
- *
- * <p>The Servlet 3.1 API's {@code HttpServlet} is class file version 51, which cannot call a static
- * interface method such as {@code List.of}: the woven class would fail to verify.
- *
- * <p>This method is deliberately one flat body with no private helper method of its own; see the
- * Spring MVC module's {@code RegisterHandlerMethodAdvice} Javadoc for why.
+ * <p>The advice body is inlined into the woven method, so {@code onEnter} stays one flat body with
+ * no helper methods.
  */
 public class ServletServiceAdvice {
     private static final String MODULE = "servlet";

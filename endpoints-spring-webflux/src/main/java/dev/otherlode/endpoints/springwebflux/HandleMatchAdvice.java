@@ -16,19 +16,18 @@ import org.springframework.web.util.pattern.PathPattern;
  * Woven onto the entry of {@code RequestMappingInfoHandlerMapping.handleMatch(RequestMappingInfo,
  * HandlerMethod, ServerWebExchange)}, the dispatch point for annotated controllers. It runs once per
  * matched request, before the handler, with the {@link RequestMappingInfo} narrowed to the patterns
- * and verb that matched. The class also declares a synthetic bridge with the same name and arity,
- * which the module's matcher excludes so a request counts once.
+ * and verb that matched. The module's matcher excludes the class's synthetic bridge with the same
+ * name and arity, so a request counts once.
  *
- * <p>The narrowed patterns are a sorted set, best match first, and Spring itself takes {@code
- * iterator().next()}. The verb is the one the methods condition kept, or {@code *} for a mapping
- * with none. A CORS preflight, an {@code OPTIONS} request carrying both {@code Origin} and {@code
- * Access-Control-Request-Method}, reaches this method and is no call.
+ * <p>The pattern is the first of the narrowed patterns, which are sorted best match first. The verb
+ * is the one the methods condition kept, or {@code *} for a mapping with none. A CORS preflight
+ * counts nothing.
  *
- * <p>The {@link RequestMappingInfo} here is built per request, so the key is rebuilt by value as
- * {@code List.of(pattern, verb)}, the same two accessors {@link RegisterHandlerMethodAdvice} uses.
+ * <p>The key is rebuilt by value as {@code List.of(pattern, verb)}, from the same two accessors
+ * {@link RegisterHandlerMethodAdvice} uses.
  *
- * <p>This method is deliberately one flat body with no private helper method of its own; see
- * {@link RegisterHandlerMethodAdvice}'s Javadoc for why.
+ * <p>The advice body is inlined into the woven method, so {@code onEnter} stays one flat body with
+ * no helper methods.
  */
 public class HandleMatchAdvice {
     private static final String MODULE = "spring-webflux";

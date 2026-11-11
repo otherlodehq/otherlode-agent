@@ -10,12 +10,8 @@ import java.util.WeakHashMap
 private const val JAVALIN_COVERED = "io/javalin/router/ParsedEndpoint.class"
 private const val KTOR_COVERED = "io/ktor/server/routing/Route.class"
 
-/**
- * Servlets a framework module counts behind, matched by class hierarchy. A value is a class file a
- * class loader ships only with the releases that module covers, and a loader without it does not
- * own the servlet: Javalin 5 and Ktor 1 ship the same class names and have no module. A null value
- * means every release that has the class is covered or visibly switched off by its module.
- */
+// A value is a class file found only in the releases the owning module covers; a loader without it does not own
+// the servlet. Null means every release that has the class is covered or visibly switched off by its module.
 internal val OWNED_SERVLETS: Map<String, String?> =
     mapOf(
         "org.springframework.web.servlet.DispatcherServlet" to null,
@@ -32,7 +28,6 @@ internal val OWNED_SERVLETS: Map<String, String?> =
 
 private val JETTY_EE = listOf("ee8", "ee9", "ee10", "ee11")
 
-/** A container's own servlets, left out by exact class name: a subclass is adopter code. */
 internal val CONTAINER_SERVLETS: Set<String> =
     buildSet {
         add("org.apache.catalina.servlets.DefaultServlet")
@@ -51,39 +46,27 @@ internal val CONTAINER_SERVLETS: Set<String> =
         add("io.quarkus.undertow.runtime.QuarkusErrorServlet")
     }
 
-/** The method a servlet's request is handed to, as its class file declares it. */
 internal class Handler(
     val className: String,
     val methodName: String,
     val descriptor: String,
 )
 
-/**
- * One verb a counted servlet serves: [verb], the request methods that count against it ([requests],
- * which holds `HEAD` as well for a `GET` the class does not split off) and the [handler] that runs.
- */
 internal class ServedVerb(
     val verb: String,
     val requests: List<String>,
     val handler: Handler,
 )
 
-/** What the module does with a servlet class, decided from its class files. */
 internal sealed interface ServletShape {
-    /** A framework module's servlet, or a container's own: no endpoint here. */
     data object Left : ServletShape
 
-    /**
-     * A servlet this module counts. [entryClass] is the most derived class that declares the public
-     * `service(ServletRequest, ServletResponse)`, which is the frame the advice counts at.
-     */
     class Counted(
         val entryClass: String,
         val verbs: List<ServedVerb>,
     ) : ServletShape
 }
 
-/** A servlet class whose class file cannot be read, so its verbs and owner cannot be known. */
 internal class UnreadableServlet(
     message: String,
 ) : RuntimeException(message)
@@ -106,19 +89,9 @@ private val DO_METHODS = linkedMapOf("doGet" to "GET", "doPost" to "POST", "doPu
 private val OWN_VERB_METHODS = linkedMapOf("doHead" to "HEAD", "doOptions" to "OPTIONS", "doTrace" to "TRACE")
 private val NAMESPACES = listOf("javax", "jakarta")
 
-/**
- * Reads what a servlet class serves from the class files of its hierarchy, loading and reflecting
- * on nothing, and holds the answer per class loader.
- *
- * A servlet whose hierarchy reaches an owned servlet that its module covers on this loader (see
- * [OWNED_SERVLETS]), or that is a container servlet by exact class name, is [ServletShape.Left]. An `HttpServlet` serves the verbs of the `do*` methods its classes
- * below `HttpServlet` declare, and every verb (`*`) when one of them overrides `service`. A servlet
- * that is not an `HttpServlet` serves every verb.
- */
 internal class ServletShapes {
     private val byLoader = Collections.synchronizedMap(WeakHashMap<ClassLoader, MutableMap<String, ServletShape>>())
 
-    /** The shape of [className] as [loader] sees it. Throws [UnreadableServlet] when a class file is missing. */
     fun of(
         className: String,
         loader: ClassLoader,

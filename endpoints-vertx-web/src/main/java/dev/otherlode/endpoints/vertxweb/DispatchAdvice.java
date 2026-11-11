@@ -9,19 +9,16 @@ import net.bytebuddy.asm.Advice;
 /**
  * Woven onto the exit of {@code RouteState.matches(RoutingContextImplBase, String, boolean)},
  * which {@code RoutingContextImplBase.iterateNext} calls for each route a request tries and which
- * returns 0 when the route matched. The class is package-private, so the route and the flags are
- * read from its fields. A failure pass and a mount (an exclusive route) count nothing. A request
- * that runs through several routes counts each, and a {@code reroute} counts again.
+ * returns 0 when the route matched. A failure pass and a mount (an exclusive route) count nothing.
+ * A request that runs through several routes counts each, and a {@code reroute} counts again.
  *
- * <p>The dispatch key is the route and the chain it was reached through, with the request's verb
- * as a last element when the route lists more than one. The chain is the mount point a static
- * mount gives the router, or a marker for a root router's own use, whose mount point is null. A
- * parameterised mount's mount point holds the matched values, so a lookup that misses with a mount
- * point falls back to the marker for the router's one parameterised chain. {@code RouterWalk}
- * builds the same keys when it declares.
+ * <p>The dispatch key is the route and its chain, with the request's verb as a last element when
+ * the route lists more than one. The chain is the mount point, or a marker for a root router. A
+ * lookup that misses with a mount point falls back to the marker for the router's parameterised
+ * chain. {@code RouterWalk} builds the same keys when it declares.
  *
- * <p>This method is deliberately one flat body with no private helper method of its own; see the
- * Spring MVC module's {@code RegisterHandlerMethodAdvice} Javadoc for why.
+ * <p>The advice body is inlined into the woven method, so {@code onExit} stays one flat body with
+ * no helper methods.
  */
 public class DispatchAdvice {
     private static final String MODULE = "vertx-web";

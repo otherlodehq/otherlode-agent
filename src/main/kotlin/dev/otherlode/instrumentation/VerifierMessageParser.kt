@@ -19,13 +19,9 @@ sealed interface ParsedVerifierMessage {
 /**
  * Reads the class a `VerifyError` message names.
  *
- * HotSpot's split verifier starts a message with a reason line, then `Exception Details:` and a
- * `Location:` whose first token is the class and method. The old inference verifier starts with
- * `(class: NAME, method: ...)` or `(class: NAME) ...`. Those two formats are identical on JDK 17,
- * 21 and 25. JDK 25's class-file API builds `VerifyError`s of its own without any class failing to
- * link, in the formats of `ParserVerifier` and `VerifierImpl`, and they are recognised and
- * ignored. A null message is ignored: HotSpot never links with one, and a failed redefinition
- * builds one. Anything else is unplaced.
+ * It reads the formats of HotSpot's split verifier and of the old inference verifier. It ignores a
+ * null message and the messages JDK 25's class-file API builds without any class failing to link.
+ * Any other message is unplaced.
  */
 object VerifierMessageParser {
     private val SPLIT = Regex("^[^\\n]*\\nException Details:\\n {2}Location:\\n {4}([^.\\n]+)\\.")

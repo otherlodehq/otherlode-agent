@@ -5,20 +5,15 @@ import net.bytebuddy.asm.Advice;
 
 /**
  * Woven onto the exit of {@code RouterFunctionMapping.afterPropertiesSet()}, which fills the
- * private {@code routerFunction} field from every {@code RouterFunction} bean in the application
- * context, unless the mapping was built with a router function, which leaves it as given. Either
- * way the field is set when this method returns, before any request is dispatched.
+ * private {@code routerFunction} field. The field is set when this method returns, before any
+ * request is dispatched.
  *
- * <p>{@code routerFunction} is bound as a plain {@code Object}, never as {@code RouterFunction}:
- * this class carries no symbolic reference to that type at all. The object is handed unopened to
- * {@link OtherlodeEndpoints#declare}, which routes it to {@code SpringWebMvcModule.declare}, the one
- * piece of this module's own code that knows how to walk it. A {@code RouterFunction} only
- * reveals its routes to a visitor it accepts, something advice itself cannot implement, so this
- * takes a second seam call instead of reading registration arguments the way {@link
- * RegisterHandlerMethodAdvice} and {@link RegisterUrlHandlerAdvice} do.
+ * <p>The field is bound as a plain {@code Object}, so this class has no symbolic reference to
+ * {@code RouterFunction}. The object goes unopened to {@link OtherlodeEndpoints#declare}, which
+ * hands it to {@code SpringWebMvcModule.declare}, the only code that walks it.
  *
- * <p>This method is deliberately one flat body with no private helper method of its own; see
- * {@link RegisterHandlerMethodAdvice}'s Javadoc for why.
+ * <p>The advice body is inlined into the woven method, so {@code onExit} stays one flat body with
+ * no helper methods.
  */
 public class DeclareRouterFunctionsAdvice {
     private static final String MODULE = "spring-webmvc";

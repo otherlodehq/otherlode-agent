@@ -13,8 +13,8 @@ import java.util.jar.Manifest
 
 /**
  * One dependency the startup listing found, or the sweep found at load. [origin] is where its
- * bytes live, kept off the wire. [classNames] are the dotted names of the classes it holds, empty
- * when the listing was not asked to keep them.
+ * bytes live, kept off the wire. [classNames] are the dotted names of its classes, empty when the
+ * listing was not asked to keep them.
  */
 data class ListedDependency(
     val identities: List<DependencyIdentity>,
@@ -26,40 +26,18 @@ data class ListedDependency(
 )
 
 /**
- * Lists the dependencies on the startup classpath.
- *
- * Which files are read, at which paths and in what order is [ClasspathWalker]'s: each entry of
- * [classPath] (split on [File.pathSeparator]), the files a manifest `Class-Path` reaches from one,
- * and an exploded Spring Boot application's libraries, as the JVM's class loaders read them. The
- * order is the search order. A dependency's location is the path the walker read its jar at.
- *
- * A file on the classpath is read as a jar, whatever its extension. A missing entry and a
- * directory are never dependencies. Neither is a jar whose manifest names an agent
- * (`Premain-Class` or `Launcher-Agent-Class`), though its `Class-Path` is still followed.
- *
- * A Spring Boot fat jar or executable war (a manifest with `Spring-Boot-Classpath-Index` or
- * `Spring-Boot-Lib`) is the application, never a dependency. Its dependencies are the nested jars
- * Boot's launcher puts on the classpath (see [nestedJarNames]), each streamed from the outer jar
- * with nothing extracted to disk. An exploded application on the classpath is the same: its own
- * classes are the adopter's, and each jar its own loader reads is judged as a jar stored in a fat
- * jar is, so a library jar that names an agent is still a dependency.
- *
- * A file the walker reaches at two paths is judged once, at the first, and keeps that location.
- *
- * A jar holding any class the include rules admit is the adopter's own and not a dependency.
- * [JarClassifier] holds these rules, shared with the sweep's discovery at load.
- *
- * Two jars with one identity key ([DependencyRegistry.identityKey]) are one dependency, and the
- * first found keeps its location and class count. A jar that cannot be read is skipped with one
- * WARNING and the rest of the listing continues.
- *
- * Every jar read and judged not a dependency (an agent jar, a fat jar, a jar of the adopter's own)
- * goes to [onNotADependency], so the sweep can recognise its classes without reading it again.
- *
- * With [keepClassNames], each dependency carries the names of its classes for the registry's class
- * index, and a jar whose identity key was already found adds its names to that dependency's. A name
- * held by two jars stays with the first in search order, the one a loader would find.
- * Without it, [ListedDependency.classNames] is empty, so nothing holds them past each jar's read.
+ * Lists the dependencies on the startup classpath, in the order the JDK would search them: each
+ * entry of [classPath] (split on [File.pathSeparator]), the files a manifest `Class-Path` reaches
+ * from one, and an exploded Spring Boot application's libraries. A missing entry, a directory, a
+ * Spring Boot fat jar or executable war, and a classpath jar whose manifest names an agent are never
+ * dependencies, though an agent jar's `Class-Path` is still followed. The nested jars of a fat jar
+ * and the library jars of an exploded application are judged without the agent rule. A jar holding
+ * a class the include rules admit is the adopter's own. Two jars with one identity key
+ * ([DependencyRegistry.identityKey]) are one dependency, and the first found keeps its location and
+ * class count. A jar that cannot be read is skipped with one WARNING. Every jar read and judged not a
+ * dependency goes to [onNotADependency]. With [keepClassNames], each dependency carries the names of
+ * its classes, merged across jars with its identity key, and a name held by two jars stays with the
+ * first in search order. Without it, [ListedDependency.classNames] is empty.
  */
 class StartupClasspathLister(
     includes: List<String>,
@@ -80,11 +58,6 @@ class StartupClasspathLister(
         return found.values.toList()
     }
 
-    /**
-     * Adds [listed] to [found], merging it into an earlier jar with the same identity key. Each kept
-     * class name goes only to the first jar in search order holding it, tracked in [claimed], so a
-     * name stays with that jar even when a later jar's identity was first seen earlier still.
-     */
     private fun add(
         found: LinkedHashMap<List<String>, ListedDependency>,
         claimed: MutableSet<String>,
@@ -97,19 +70,11 @@ class StartupClasspathLister(
         if (keepClassNames) found[key] = first.copy(classNames = first.classNames + kept.classNames)
     }
 
-    /** Reports to [emit] each dependency the walker's files yield, and skips a file it cannot read with one WARNING. */
     private inner class Listing(
         private val emit: (ListedDependency) -> Unit,
     ) : ClasspathVisitor {
-        /** The real path of each file already judged. */
         private val judged = HashSet<File>()
 
-        /**
-         * Whether [jar] is judged for the first time. The walker reads a file once for each path and
-         * loader it is reached by, as the JVM does. The first read in search order is where the
-         * file's classes load from, so it decides. A second judgement could only add a record that
-         * never counts a load, or contradict the first.
-         */
         private fun firstJudgement(jar: File): Boolean =
             judged.add(runCatching { jar.toPath().toRealPath().toFile() }.getOrDefault(jar.absoluteFile))
 

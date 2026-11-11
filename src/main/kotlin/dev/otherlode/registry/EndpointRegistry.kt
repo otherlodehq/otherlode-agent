@@ -21,9 +21,8 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * The method or object a framework invokes for an endpoint. [methodName] and [descriptor] are
- * null when only the handler object's class is known, which is what a framework hands over at
- * first dispatch for a handler whose registration API never named a method.
+ * The method or object a framework invokes for an endpoint. [methodName] and [descriptor] are null
+ * when only the handler object's class is known.
  */
 data class HandlerRef(
     val className: String,
@@ -31,51 +30,29 @@ data class HandlerRef(
     val descriptor: String? = null,
 )
 
-/** Stands in for the route object an [EndpointRegistry] key list holds, once that object is held apart. */
 private val ANCHOR = Any()
 private val EXTENSION_ROUTE = Regex("/\\*\\.[^/*]+")
 
 /**
- * Tracks one probe per HTTP endpoint, counted at the point a framework matches a request to it,
- * before the handler runs. Endpoints need their own probe because a method probe alone cannot say
- * "GET /promo was never served", since a handler can back two endpoints, be a lambda the framework
- * invokes through a hidden class, or live outside `includePackages`.
+ * Tracks one probe per HTTP endpoint, counted where a framework matches a request to it, before the
+ * handler runs.
  *
- * Identity is `(verb, route template, template kind)`, the template normalised by [RouteTemplateNormalizer]
- * only when it is a path.
- * Two registrations that normalise to the same identity, even from different framework objects,
- * are one endpoint with one [EndpointEntry.endpointId] and one count. A regex or servlet pattern
- * template bypasses the normaliser and is kept exactly as given, so it never merges with a template
- * of another kind that reads the same.
+ * Identity is `(verb, route template, template kind)`, the template normalised by
+ * [RouteTemplateNormalizer] only when it is a path. Registrations with the same identity are one
+ * endpoint with one [EndpointEntry.endpointId] and one count. A regex or servlet pattern template
+ * is kept as given and never merges with a template of another kind.
  *
- * A framework module also supplies one or more dispatch keys that identify the framework's own
- * route (a Ktor route node, a JDK `HttpContext`, a list of a Spring pattern and verb). [lookup]
- * resolves a key to its entry on the request path, so normalisation runs once per endpoint rather
- * than once per request. A key made of values (a string, or a list of strings) is compared by
- * `equals`. Any other key object is a framework's own route object: it is compared by identity
- * and held weakly, so a routing tree a test or a devtools restart throws away is not kept alive
- * by its bindings. A list holding one such object beside values (Spring's functional key) is
- * held weakly on that object and compared by value otherwise. A key whose object was collected
- * is unbound; its endpoint stays.
+ * A framework module supplies dispatch keys that identify the framework's own route, and [lookup]
+ * resolves a key to its entry. A key made of values (a string, or a list of strings) is compared by
+ * `equals`. Any other key object is compared by identity and held weakly. A list holding one such
+ * object beside values is held weakly on that object and compared by value otherwise. A key whose
+ * object was collected is unbound; its endpoint stays.
  *
- * Follows the same snapshot pattern as [ProbeRegistry]: [computeDeltas]/[advanceDeltas] and
- * [computeManifestEntries]/[advanceManifest] stage state onto the returned snapshot rather than
- * directly onto the registry, so two sends in flight at once (a scheduled flush and a shutdown
- * flush) cannot mark each other's unconfirmed work as delivered.
- *
- * Unlike a class's probe locations, which are sent once and never again, an endpoint record can
- * change after it is first delivered (its discovery source upgrades, or a handler join is
- * learned later). Each entry therefore carries a version bumped on every such change; a manifest
- * snapshot remembers the version it staged per entry, and [advanceManifest] only ever raises
- * `deliveredVersion`, never lowers it. A change landing while a send is in flight is still picked
- * up by the next compute, since the version it bumped to was never staged by that in-flight send.
- *
- * An endpoint a module declares from inside a class's transform is published only once a source
- * of it is confirmed: the declaring class is confirmed defined, the endpoint was also registered
- * outside a transform or discovered by dispatch, or it has a hit. The registry keeps the state
- * ADR 0028 describes for a class's probes for each declaring class, and [confirmFrom] settles it
- * against the JVM's loaded classes under the rule of ADR 0066. The dispatch key of such an
- * endpoint is bound at once, so a hit before confirmation still counts.
+ * An endpoint a module declares from inside a class's transform is published only once a source of
+ * it is confirmed: the declaring class is confirmed defined, the endpoint was also registered
+ * outside a transform or discovered by dispatch, or it has a hit. [confirmFrom] settles the class
+ * against the JVM's loaded classes. The dispatch key is bound at once, so a hit before confirmation
+ * still counts.
  *
  * @param dispatchLimit how many identities each framework module may create at dispatch, and how
  *   many request-built keys it may bind there.
@@ -91,11 +68,7 @@ class EndpointRegistry(
         val templateKind: EndpointTemplateKind,
     )
 
-    /**
-     * One tracked endpoint. Instantiable only by [EndpointRegistry]: the constructor is
-     * `internal`, the same pattern [ProbeRegistry.DeltaSnapshot] uses to keep a type public for
-     * callers to read while construction stays with the registry that owns its invariants.
-     */
+    /** One tracked endpoint. */
     class EndpointEntry internal constructor(
         val endpointId: Int,
         val verb: String,
@@ -122,38 +95,29 @@ class EndpointRegistry(
             internal set
 
         /**
-         * Hit count, incremented once per matched request. A plain, non-atomic increment: the
-         * same accepted lost-update tradeoff [ProbeRegistry]'s count arrays make, since an
-         * occasional lost count under race does not matter for a total exported once per flush.
+         * Hit count, incremented once per matched request by [hit]. The increment is not atomic, so
+         * a concurrent hit can be lost.
          */
         @JvmField
         var count: Long = 0
 
-        /** Increments [count]. No synchronisation, so this never blocks the request path. */
+        /** Increments [count] without synchronisation. */
         fun hit() {
             count++
         }
 
-        /**
-         * True once a source other than a declaring class's transform has produced this entry: a
-         * registration outside a transform, or discovery by dispatch.
-         */
         @Volatile
         internal var anchored: Boolean = false
 
-        /** The classes whose transforms declared this entry. Replaced whole under the entry's monitor. */
         @Volatile
         internal var declaringClasses: List<DeclaringState> = emptyList()
 
-        /** Bumped on any change a collector needs to see again: creation, a discovery-source upgrade, or a new handler join. */
         @Volatile
         internal var version: Long = 1
 
-        /** The highest [version] a confirmed manifest send has carried for this entry. */
         @Volatile
         internal var deliveredVersion: Long = 0
 
-        /** The last cumulative [count] successfully delivered to the collector. */
         @Volatile
         internal var lastSent: Long = 0
 
@@ -161,7 +125,6 @@ class EndpointRegistry(
 
         internal var decreaseWarned: Boolean = false
 
-        /** Sequence number of the newest [DeltaSnapshot] applied to [lastSent]; see [advanceDeltas]. */
         internal var lastAppliedDeltaSequence: Long = 0
     }
 
@@ -177,18 +140,12 @@ class EndpointRegistry(
         val loaderId: Int,
     )
 
-    /**
-     * What the registry knows of one class that declared endpoints from its transform, and
-     * whether the JVM defined it. [watch] holds its definition attempts, its misses and whether it
-     * is confirmed or withheld for good.
-     */
     internal class DeclaringState(
         val className: String,
         val classLoaderRef: WeakReference<ClassLoader>?,
         attempt: DefinitionAttempt?,
         sequence: Long,
     ) {
-        /** The endpoints this class declared. */
         val endpoints: MutableSet<EndpointEntry> = ConcurrentHashMap.newKeySet()
 
         val watch: DefinitionWatch = DefinitionWatch(attempt, attempt == null, sequence)
@@ -203,9 +160,7 @@ class EndpointRegistry(
     }
 
     /**
-     * One computed delta batch, together with the exact per-entry counts it was built from.
-     * [advanceDeltas] takes this back rather than reading staging state off the registry, so two
-     * flushes can be in flight at once without one marking the other's hits as delivered.
+     * One computed delta batch. Pass it to [advanceDeltas] once the send carrying it is confirmed.
      */
     class DeltaSnapshot internal constructor(
         val deltas: List<EndpointDelta>,
@@ -214,16 +169,18 @@ class EndpointRegistry(
     )
 
     /**
-     * One computed manifest chunk, together with the entries it staged. [advanceManifest] marks
-     * exactly those as delivered, each endpoint at the version this snapshot staged, never at
-     * whatever version it may have reached since.
+     * One computed manifest chunk. Pass it to [advanceManifest] once the send carrying it is
+     * confirmed.
      */
     class ManifestSnapshot internal constructor(
         val endpoints: List<EndpointLocation>,
         internal val stagedEndpoints: List<Pair<EndpointEntry, Long>>,
     )
 
-    /** The disabled modules not yet delivered; [advanceDisabledModules] marks exactly these as delivered. */
+    /**
+     * The disabled modules not yet delivered; [advanceDisabledModules] marks exactly these as
+     * delivered.
+     */
     class DisabledModulesSnapshot internal constructor(
         val modules: List<DisabledEndpointModule>,
     )
@@ -231,7 +188,6 @@ class EndpointRegistry(
     private val entriesByIdentity = ConcurrentHashMap<Identity, EndpointEntry>()
     private val keyToEntry = ConcurrentHashMap<Any, EndpointEntry>()
 
-    /** Where a route object's [WeakRouteKey] is queued once the object is collected. */
     private val collectedKeys = ReferenceQueue<Any>()
     private val disabledModulesByName = ConcurrentHashMap<String, DisabledModuleEntry>()
     private val dispatchCounts = ConcurrentHashMap<String, DispatchCount>()
@@ -241,20 +197,15 @@ class EndpointRegistry(
     private val lastRegistrationSequence = AtomicLong(0)
     private val unwatchableWarned = AtomicBoolean(false)
 
-    /** Says whether [attempt] is over. Replaced by a test that scripts the answer without a second thread. */
     internal var attemptEnded: (DefinitionAttempt) -> Boolean = { it.hasEnded() }
 
     /**
-     * Resolves a dispatch key to its entry. This is the hot-path lookup a dispatch hook calls on
-     * every request: one [ConcurrentHashMap.get], null when [key] is not bound to any entry yet.
-     * A value key is looked up as it is; a route object key costs one small wrapper allocation.
+     * Resolves a dispatch key to its entry, or null when [key] is not bound to any entry yet. A
+     * dispatch hook calls this on every request: it is one [ConcurrentHashMap.get], and a route
+     * object key costs one small wrapper allocation.
      */
     fun lookup(key: Any): EndpointEntry? = keyToEntry[lookupKeyOf(key)]
 
-    /**
-     * Binds [key] to [entry], first unbinding every key whose route object was collected. Runs on
-     * registration and dispatch discovery, never on the per-request path.
-     */
     private fun bind(
         key: Any,
         entry: EndpointEntry,
@@ -266,7 +217,6 @@ class EndpointRegistry(
         keyToEntry[storedKeyOf(key)] = entry
     }
 
-    /** [key] as [keyToEntry] stores it: values as they are, a route object held weakly. */
     private fun storedKeyOf(key: Any): Any {
         if (isValue(key)) return key
         if (key is List<*>) {
@@ -277,7 +227,6 @@ class EndpointRegistry(
         return WeakRouteKey(key, collectedKeys).also { it.mapKey = it }
     }
 
-    /** [key] as a lookup in [keyToEntry] matches it, without a weak reference. */
     private fun lookupKeyOf(key: Any): Any {
         if (isValue(key)) return key
         if (key is List<*>) {
@@ -296,7 +245,6 @@ class EndpointRegistry(
             key is Enum<*> ||
             (key is List<*> && key.all(::isValue))
 
-    /** A route object, compared by identity. [WeakRouteKey] stores one and [StrongRouteKey] looks one up; they compare equal. */
     private interface RouteKey {
         val route: Any?
         val hash: Int
@@ -310,7 +258,6 @@ class EndpointRegistry(
         override val hash: Int = System.identityHashCode(route)
         override val route: Any? get() = get()
 
-        /** The [keyToEntry] key this reference is part of, removed once the route is collected. */
         @Volatile
         var mapKey: Any? = null
 
@@ -329,7 +276,6 @@ class EndpointRegistry(
         override fun equals(other: Any?): Boolean = other is RouteKey && route === other.route
     }
 
-    /** A key list with its one route object taken out as [anchor] and replaced by [ANCHOR] in [values]. */
     private class AnchoredKey(
         val anchor: RouteKey,
         val values: List<Any?>,
@@ -339,21 +285,20 @@ class EndpointRegistry(
         override fun equals(other: Any?): Boolean = other is AnchoredKey && anchor == other.anchor && values == other.values
     }
 
-    /** How many dispatch keys are bound to an entry, which a test reads to check keys do not pile up per request. */
+    /** How many dispatch keys are bound to an entry. */
     fun boundKeyCount(): Int = keyToEntry.size
 
     /**
      * Records an endpoint from a framework's own registration hook (Spring's handler-method
-     * mapping, Ktor's `handle`, `HttpServer.createContext`). Normalises [verb] and
-     * [verbatimTemplate] (with [contextPath] folded in first) into an identity, or, when [templateKind] is not
-     * [EndpointTemplateKind.PATH], keeps [verbatimTemplate] as given and ignores [contextPath], finds or creates
-     * the entry for that identity, binds [key] to it, and marks it discovered by registration.
+     * mapping, Ktor's `handle`, `HttpServer.createContext`), finds or creates the entry for its
+     * identity, binds [key] to it, and marks it discovered by registration.
      *
-     * An entry already discovered by registration is left alone: nothing changed, so there is
-     * nothing to re-send. An entry previously known only from a dispatch is upgraded, which bumps
-     * its version so the next manifest compute includes it again with the corrected source.
+     * [verb] and [verbatimTemplate] are normalised with [contextPath] folded in. When
+     * [templateKind] is not [EndpointTemplateKind.PATH], [verbatimTemplate] is kept as given and
+     * [contextPath] is ignored.
      *
-     * [handler], when given, is attached the same way [attachHandler] would.
+     * An entry first known from a dispatch is upgraded and goes out again on the next manifest
+     * compute. [handler], when given, is attached as [attachHandler] does.
      *
      * [declaringClass] is set for a registration made from inside a class's transform. The key is
      * bound at once, but the endpoint is published only once a source of it is confirmed; see the
@@ -378,22 +323,18 @@ class EndpointRegistry(
     }
 
     /**
-     * Records an endpoint the moment a request dispatches to it, for a [key] [lookup] did not
-     * resolve. Finds or creates the entry for the normalised identity, marking a newly created
-     * one as discovered by dispatch, and binds [key] to it.
+     * Records an endpoint at the moment a request dispatches to it, for a [key] that [lookup] did
+     * not resolve. Finds or creates the entry for the normalised identity, marks a new one as
+     * discovered by dispatch, and binds [key] to it. The caller calls [EndpointEntry.hit] itself.
      *
-     * [handlerClass] is attached the way [attachHandler] attaches any join: it never replaces a
-     * join that names a method, so a registration hook's fuller join survives this class-only one.
+     * [handlerClass] is attached as [attachHandler] does, so it never replaces a join that names a
+     * method.
      *
-     * A module may create at most the registry's dispatch limit of identities this way. Past it,
-     * a new identity is not created: this binds nothing and returns null, and the module logs one
-     * warning. An identity that exists already is returned, and one declared by [register] is
-     * never limited and does not count toward the limit. A module may also bind at most that many
-     * request-built keys this way. Past that limit the entry is still returned, and the key is
-     * resolved again on its next request.
-     *
-     * The caller calls [EndpointEntry.hit] itself once this returns; this method only resolves
-     * the entry.
+     * A module may create at most the dispatch limit of identities this way. Past it this binds
+     * nothing and returns null, and the registry logs one warning per module. An identity that
+     * exists already is returned, and one declared by [register] does not count toward the limit.
+     * A module may also bind at most that many request-built keys. Past it the entry is still
+     * returned, and the key is resolved again on its next request.
      */
     fun recordDispatch(
         key: Any,
@@ -412,32 +353,19 @@ class EndpointRegistry(
     }
 
     /**
-     * Like [recordDispatch], but for a route bridge module that reads an identity another
-     * instrumentation layer already resolved, rather than one it matched itself: the identity
-     * might belong to an endpoint a framework module already owns. When a different
-     * [framework] owns the normalised identity, this binds nothing and returns null, so the
-     * caller counts nothing and the other module's entry is left untouched. A framework also owns
-     * every verb on a template it serves with verb `*`, and a `HEAD` request on a template whose
-     * `GET` endpoint it owns, since frameworks answer `HEAD` from the `GET` handler. Otherwise
-     * this behaves exactly like [recordDispatch].
+     * Like [recordDispatch], for a route bridge module that reads an identity another
+     * instrumentation layer already resolved. When a different [framework] owns the normalised
+     * identity, this binds nothing and returns null.
      *
-     * A servlet context path still slips past this check: OpenTelemetry's route includes it and a
-     * framework module's identity does not, so the bridge records a second endpoint for such a
-     * route.
+     * A framework also owns every verb on a template it serves with verb `*`, a `HEAD` request on a
+     * template whose `GET` endpoint it owns, and a path template whose servlet pattern it owns:
+     * the pattern `*.ext` owns the template of a slash followed by `*.ext`, and the pattern `/`
+     * owns the templates `/` and slash-star.
      *
-     * A path template also reads as the servlet pattern OpenTelemetry's servlet instrumentation
-     * built it from. It reports an extension mapping `*.ext` with a slash in front, and the
-     * default mapping `/` as a slash and a star, or as `/` for a request on the context root. So
-     * the template with a slash before an extension mapping is owned by the servlet pattern
-     * `*.ext`, and the templates `/` and slash-star are owned by the servlet pattern `/`. A path
-     * mapping slash-star and the context root mapping are path templates the servlet module
-     * declares as such, and the ordinary identity match owns them.
-     *
-     * The ownership check and the eventual creation are not one atomic step: a second thread
-     * racing to create the same identity under a different framework between the two could still
-     * end up owning it. This is the same non-atomic tradeoff the rest of this registry already
-     * accepts for a plain count race, and correcting it would need a lock this hot path does not
-     * otherwise need.
+     * A servlet context path escapes this check: a bridge route that includes one does not match
+     * the framework module's identity, so this records a second endpoint for that route.
+     * The ownership check and the creation are not atomic, so two frameworks racing on one identity
+     * can both pass.
      */
     fun recordDispatchIfUnowned(
         key: Any,
@@ -555,7 +483,6 @@ class EndpointRegistry(
         }
     }
 
-    /** Takes one slot of [slots], or logs [warning] once through [warned] and reports false at the limit. */
     private fun reserve(
         slots: AtomicInteger,
         warned: AtomicBoolean,
@@ -585,13 +512,8 @@ class EndpointRegistry(
     }
 
     /**
-     * Attaches [handler] to [entry]'s join if none is present, or upgrades a class-only join to a
-     * full method join. A full join already present, meaning [EndpointEntry.handlerMethod] is
-     * already set, is never overwritten: registration-time joins are trusted over anything a
-     * later dispatch might offer.
-     *
-     * Any actual change bumps [EndpointEntry.version], so the entry is included in the next
-     * manifest compute even if it was already delivered.
+     * Sets [entry]'s join to [handler] unless the join already names a method. Any change bumps
+     * [EndpointEntry.version], so the entry goes out again on the next manifest compute.
      */
     fun attachHandler(
         entry: EndpointEntry,
@@ -612,11 +534,9 @@ class EndpointRegistry(
     }
 
     /**
-     * Records an endpoint module (one framework's registration/dispatch hooks) that is not
-     * instrumenting: one that switched itself off, typically on a linkage failure against an
-     * unexpected framework version, or one the configuration kept off. [kind] names which.
-     * Idempotent per module name: a repeat call keeps the first
-     * kind, reason and timestamp, the same as [ProbeRegistry.recordSkipped].
+     * Records an endpoint module that is not instrumenting: one that switched itself off, or one
+     * the configuration kept off. [kind] names which. Idempotent per module name: a repeat call
+     * keeps the first kind, reason and timestamp.
      */
     fun recordDisabledModule(
         module: String,
@@ -633,12 +553,6 @@ class EndpointRegistry(
     fun disabledModules(): List<DisabledEndpointModule> =
         disabledModulesByName.map { (module, entry) -> DisabledEndpointModule(module, entry.reason, entry.disabledAt, entry.kind) }
 
-    /**
-     * Records that [declaring] declared [entry] from its transform, and starts watching the class
-     * if it is not watched yet. A repeat declaration from a class that is not confirmed starts a
-     * new definition attempt: the old attempt, its misses and a withhold belonged to the earlier
-     * transform. A declaration from the commit that started the attempt already held starts none.
-     */
     private fun watch(
         declaring: DeclaringClass,
         entry: EndpointEntry,
@@ -675,44 +589,29 @@ class EndpointRegistry(
         )
     }
 
-    /**
-     * Whether [entry] has a source: a registration outside a transform, discovery by dispatch, a
-     * hit, or a declaring class confirmed defined.
-     */
     private fun isPublishable(entry: EndpointEntry): Boolean =
         entry.anchored || entry.count > 0 || entry.declaringClasses.any { isConfirmed(it) }
 
-    /**
-     * Whether [state]'s class has evidence of having been defined: an earlier confirmation recorded
-     * by [confirmFrom], or a hit on an endpoint that this class alone produced. A hit on an endpoint
-     * another class or source shares does not say which one served it. A hit that confirms the
-     * class also lifts a withhold.
-     */
     private fun isConfirmed(state: DeclaringState): Boolean {
         if (state.watch.isConfirmed) return true
         if (state.endpoints.any { it.count > 0 && !it.anchored && it.declaringClasses.singleOrNull() === state }) state.watch.confirm()
         return state.watch.isConfirmed
     }
 
-    /**
-     * The sequence number of the newest declaration. A sweep reads it before it takes its
-     * loaded-class snapshot and passes it to [confirmFrom], which then leaves alone every class
-     * that declared after that point.
-     */
     internal fun registrationSequence(): Long = lastRegistrationSequence.get()
 
     /**
      * Reconciles every declaring class not yet confirmed defined against [loadedClassNames], the
-     * JVM's own loaded-class names, by the rule [ProbeRegistry.confirmFrom] applies to a class's
-     * probes. A class is confirmed when its name is in that set or its classloader has been
-     * collected. A class found in neither takes a miss only when every definition attempt it has
-     * recorded has ended, and two misses withhold it for good. An unwatchable class never takes a
-     * miss.
+     * JVM's loaded-class names, by the rule [ProbeRegistry.confirmFrom] applies to a class's
+     * probes. A class is confirmed when its name is in that set or its classloader was collected. A
+     * class found in neither takes a miss only when every definition attempt it recorded has ended,
+     * and two misses withhold it until it declares endpoints again. An unwatchable class never
+     * takes a miss.
      *
-     * Returns each class this withholds for good the first time, with the number of its endpoints
-     * that no other source publishes, and never returns it again. A class whose endpoints all have
-     * another source is withheld without being returned. [registeredUpTo] is the
-     * [registrationSequence] value read before [loadedClassNames] was taken.
+     * Returns each class the first time this withholds it, with the number of its endpoints that
+     * no other source publishes. A class whose endpoints all have another source is withheld
+     * without being returned. [registeredUpTo] is the [registrationSequence] value read before
+     * [loadedClassNames] was taken.
      */
     fun confirmFrom(
         loadedClassNames: Set<String>,
@@ -738,14 +637,9 @@ class EndpointRegistry(
     fun withheldForGoodClassCount(): Int = declaringStates.values.count { !isConfirmed(it) && it.watch.isWithheld }
 
     /**
-     * Compares each entry's live count against its last successfully sent value, and returns
-     * batches of at most [maxPerBatch] endpoints whose count changed. Returns an empty list when
-     * nothing changed: unlike [ProbeRegistry.computeDeltaBatches], an endpoint delta batch has no
-     * liveness-heartbeat role, so there is no reason to send an empty one.
-     *
-     * Nothing is marked as sent here. Each returned [DeltaSnapshot] carries the counts it was
-     * built from, and [advanceDeltas] must be called with it explicitly, only once that batch is
-     * confirmed delivered.
+     * Returns batches of at most [maxPerBatch] endpoints whose live count differs from the last
+     * successfully sent value. Empty when nothing changed. Nothing is marked as sent; call
+     * [advanceDeltas] with each [DeltaSnapshot] once that batch is confirmed delivered.
      */
     fun computeDeltas(maxPerBatch: Int): List<DeltaSnapshot> {
         val batches = mutableListOf<DeltaSnapshot>()
@@ -773,11 +667,6 @@ class EndpointRegistry(
         return batches
     }
 
-    /**
-     * Logs a one-time warning the first time an endpoint's count is seen to drop. Reporting the
-     * lower value instead of silently dropping it means a future bug that does trigger this stays
-     * visible, the same reasoning behind [ProbeRegistry]'s own decrease warning.
-     */
     private fun warnOnceAboutDecrease(
         entry: EndpointEntry,
         lastSent: Long,
@@ -794,12 +683,8 @@ class EndpointRegistry(
 
     /**
      * Records [snapshot]'s per-entry counts as delivered. Call this only once that batch is
-     * confirmed delivered; a failed send must not call it, so the next attempt naturally reports
-     * the live count again.
-     *
-     * Snapshots apply newest-wins per entry, not last-caller-wins: an older snapshot confirmed
-     * after a newer one is ignored for that entry, so a confirmed higher count is never rolled
-     * back to a stale lower one.
+     * confirmed delivered. An older snapshot confirmed after a newer one is ignored per entry, so a
+     * confirmed count is never rolled back.
      */
     fun advanceDeltas(snapshot: DeltaSnapshot) {
         for ((entry, count) in snapshot.staged) {
@@ -812,14 +697,12 @@ class EndpointRegistry(
     }
 
     /**
-     * Returns chunks of at most [maxPerChunk] endpoints, covering every endpoint never delivered or
-     * changed since it was last delivered (a discovery-source upgrade, a newly attached handler).
-     * An endpoint whose only source is a declaring class not yet confirmed defined is left out
-     * until it is. Returns an empty list when there is nothing to send. Disabled modules are not
-     * here; see [computeDisabledModules].
+     * Returns chunks of at most [maxPerChunk] endpoints never delivered or changed since last
+     * delivered (a discovery-source upgrade, a newly attached handler). An endpoint whose only
+     * source is a declaring class not yet confirmed defined is left out until it is. Empty when
+     * there is nothing to send. Disabled modules are not here; see [computeDisabledModules].
      *
-     * Nothing is marked as delivered here. Each returned [ManifestSnapshot] names the version it
-     * staged per endpoint, and [advanceManifest] must be called with it explicitly, only once
+     * Nothing is marked as delivered here; call [advanceManifest] with each [ManifestSnapshot] once
      * that chunk is confirmed delivered.
      */
     fun computeManifestEntries(maxPerChunk: Int): List<ManifestSnapshot> {
@@ -836,13 +719,9 @@ class EndpointRegistry(
     }
 
     /**
-     * Marks every endpoint staged by [snapshot] as delivered, at the version [snapshot] staged,
-     * using `max()` against whatever [EndpointEntry.deliveredVersion] already holds, so a change
-     * that lands while this snapshot's send was in flight is still picked up by the next compute
-     * rather than being marked as delivered by a send that never carried it.
-     *
-     * Call this only after that chunk is confirmed delivered. A failed send must not call it, so
-     * the next attempt's compute naturally includes the same entries again.
+     * Marks every endpoint [snapshot] staged as delivered, at the version it staged, so a change
+     * that lands while the send was in flight goes out on the next compute. Call this only once
+     * that chunk is confirmed delivered.
      */
     fun advanceManifest(snapshot: ManifestSnapshot) {
         for ((entry, version) in snapshot.stagedEndpoints) {
@@ -853,11 +732,10 @@ class EndpointRegistry(
     }
 
     /**
-     * Every disabled module not yet delivered, or null when there is none. A module is sent on a
-     * manifest of its own, ahead of any class chunk, because its record is the only thing that
-     * tells a collector the endpoints earlier manifests declared are no longer counted. It is
-     * never also part of an endpoint chunk. Nothing is marked as delivered here; call
-     * [advanceDisabledModules] with the result once that manifest is confirmed.
+     * Every disabled module not yet delivered, or null when there is none. A module goes out on a
+     * manifest of its own, ahead of any class chunk, and never in an endpoint chunk. Nothing is
+     * marked as delivered here; call [advanceDisabledModules] with the result once that manifest is
+     * confirmed.
      */
     fun computeDisabledModules(): DisabledModulesSnapshot? {
         val modules =
@@ -867,7 +745,10 @@ class EndpointRegistry(
         return if (modules.isEmpty()) null else DisabledModulesSnapshot(modules)
     }
 
-    /** Marks every module [snapshot] named as delivered. Call it only once that manifest is confirmed. */
+    /**
+     * Marks every module [snapshot] named as delivered. Call it only once that manifest is
+     * confirmed.
+     */
     fun advanceDisabledModules(snapshot: DisabledModulesSnapshot) {
         for (module in snapshot.modules) {
             disabledModulesByName[module.module]?.manifestIncluded = true

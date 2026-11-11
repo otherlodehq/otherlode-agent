@@ -1,8 +1,8 @@
 package dev.otherlode.export
 
 /**
- * The limits a chunk of any payload kind is built under. The element limits are the collector's:
- * `ingest.Max*Elements` in otherlode-collector. A payload over one is refused with 413. A chunk
+ * The limits a chunk of any payload kind is built under. The element limits are the collector's
+ * `ingest.Max*Elements` in otherlode-collector, which refuses a payload over one with 413. A chunk
  * closes at [MAX_ELEMENT_PERCENT] percent of the limit for its kind, and at [MAX_ENCODED_BYTES] of
  * encoded bytes, which is half the collector's body limit.
  */
@@ -26,8 +26,8 @@ object ChunkLimits {
     const val MAX_ELEMENT_PERCENT: Long = 90
 
     /**
-     * What a chunk of riders leaves for the manifest around it: the resource, whose values are each
-     * at most 1024 bytes, and the manifest's own scalar fields.
+     * What a chunk of riders leaves for the manifest around it: the resource, whose values are each at
+     * most 1024 bytes, and the manifest's own scalar fields.
      */
     val MANIFEST_FRAME_ALLOWANCE: PayloadWeight = PayloadWeight(64L * 1024, 64)
 }
@@ -96,8 +96,7 @@ enum class PayloadKind(
 
 /**
  * An upper bound on what a part of a payload adds to its encoded size and its element count.
- * [ProtoPayloadCodec] computes it from the encoding the exporter sends, so the sum over the parts
- * of a payload is at least the payload's own size and element count.
+ * The sum over the parts of a payload is at least the payload's own size and element count.
  *
  * An element is every embedded message and every element of a repeated field, at every depth. The
  * resource counts as one. A packed repeated scalar counts one per value.

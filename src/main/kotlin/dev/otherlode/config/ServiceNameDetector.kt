@@ -8,35 +8,12 @@ import java.nio.file.Paths
 import java.util.Properties
 import java.util.jar.JarFile
 
-/**
- * Finds a service name for a JVM that names none, from the same sources and in the same order as
- * OpenTelemetry's Java agent. [AgentConfig] asks for it only when no Otherlode or OpenTelemetry setting
- * names the service.
- *
- * The agent detectors this mirrors run in this order, and the first one that finds a name wins:
- *
- * 1. `SpringBootServiceNameDetector`. [springBootName] lists its sources.
- * 2. `ManifestResourceProvider`: the `Implementation-Title` of the main jar's manifest.
- * 3. `JarServiceNameDetector`: the main jar's file name without its extension.
- *
- * The main jar is the argument after `-jar` on the process command line. Failing that, it is the
- * shortest leading part of `sun.java.command`, cut at a space, that names a regular file.
- *
- * Detection reads files, the command line, system properties and the environment. It never loads
- * an application class. Each source that fails, for any reason, gives no name, and detection moves
- * on to the next source. [detect] never throws.
- *
- * [processArguments] is the full command line after the executable, as
- * `ProcessHandle.Info.arguments` gives it. [workingDirectory] resolves the relative paths on that
- * command line, on `java.class.path`, and for the Spring Boot files read from the working directory.
- */
 internal class ServiceNameDetector(
     private val env: (String) -> String?,
     private val systemProperties: (String) -> String?,
     private val processArguments: () -> List<String>,
     private val workingDirectory: Path,
 ) {
-    /** The first name any source finds, trimmed, or null when none finds one. */
     fun detect(): String? =
         try {
             springBootName() ?: mainJar()?.let { manifestTitle(it) ?: jarName(it) }
@@ -44,21 +21,6 @@ internal class ServiceNameDetector(
             null
         }
 
-    /**
-     * The Spring Boot application name, from the first of these that sets `spring.application.name`:
-     *
-     * 1. a `--spring.application.name=` argument on the process command line;
-     * 2. the same argument in `sun.java.command`;
-     * 3. the `spring.application.name` system property;
-     * 4. the `SPRING_APPLICATION_NAME` environment variable;
-     * 5. `application.properties`, `application.yml`, then `application.yaml` in the working
-     *    directory;
-     * 6. `application.properties`, `application.yml`, `application.yaml`, `bootstrap.properties`,
-     *    `bootstrap.yml`, then `bootstrap.yaml` on the class path, all read in one pass by
-     *    [ClasspathFiles.scan] the first time a class path file is needed.
-     *
-     * A YAML file is read by [SpringYamlName], which covers block mappings only.
-     */
     fun springBootName(): String? {
         val sources: List<() -> String?> =
             listOf(
@@ -76,7 +38,6 @@ internal class ServiceNameDetector(
         return sources.firstNotNullOfOrNull { source -> textOrNull(source) }
     }
 
-    /** The main jar, or null when the JVM was not launched from one. */
     fun mainJar(): Path? = attempt { jarAfterJarFlag() } ?: attempt { jarAtStartOfCommand() }
 
     private val classpathFiles by lazy {
@@ -116,7 +77,6 @@ internal class ServiceNameDetector(
         private val SPRING_FILES_ON_CLASSPATH =
             SPRING_FILES_IN_WORKING_DIRECTORY + listOf("bootstrap.properties", "bootstrap.yml", "bootstrap.yaml")
 
-        /** A detector that reads this JVM's own command line, working directory and class path. */
         fun forThisProcess(
             env: (String) -> String?,
             systemProperties: (String) -> String?,
@@ -140,7 +100,6 @@ internal class ServiceNameDetector(
             content: ByteArray,
         ): String? =
             if (fileName.endsWith(".properties")) {
-                // Properties.load reads ISO 8859-1, as Spring does for a properties file by default.
                 Properties().apply { load(ByteArrayInputStream(content)) }.getProperty("spring.application.name")
             } else {
                 SpringYamlName.of(content.toString(Charsets.UTF_8))
@@ -159,23 +118,11 @@ internal class ServiceNameDetector(
     }
 }
 
-/**
- * The files named in one [scan] of the class path, found the way the system class loader would
- * find them as resources, without asking a class loader. Each class path entry is a directory or a
- * jar. When any entry holds `BOOT-INF/classes/`, the JVM is running a Spring Boot executable jar,
- * so every name is looked up under that prefix, as OpenTelemetry's detector does. For each name,
- * the first entry in class path order that holds it wins.
- *
- * A jar nested inside another jar, such as one under `BOOT-INF/lib/`, is never opened. The
- * `Class-Path` attribute of a jar's manifest is not followed.
- */
 internal class ClasspathFiles private constructor(
     private val found: Map<String, ByteArray>,
 ) {
-    /** The bytes of the file named [name], or null when no class path entry holds it. */
     fun read(name: String): ByteArray? = found[name]
 
-    /** What one class path entry holds: whether it has `BOOT-INF/classes/`, and the files found by path. */
     private class EntryContents(
         val holdsBootInfClasses: Boolean,
         val files: Map<String, ByteArray>,
@@ -185,13 +132,6 @@ internal class ClasspathFiles private constructor(
         private const val BOOT_INF_CLASSES = "BOOT-INF/classes/"
         private val NOTHING = EntryContents(false, emptyMap())
 
-        /**
-         * Reads every file in [names] from [classPath] in one pass. Each entry is opened at most
-         * once, and both the plain and the `BOOT-INF/classes/` path of every name are read from it
-         * then, since the prefix rule needs every entry before it can choose. [openJar] opens a
-         * jar entry. Relative entries resolve against [workingDirectory]. An entry that cannot be
-         * read holds nothing.
-         */
         fun scan(
             classPath: String?,
             workingDirectory: Path,
@@ -254,22 +194,11 @@ internal class ClasspathFiles private constructor(
     }
 }
 
-/**
- * Reads `spring.application.name` from Spring YAML text, as nested keys: `spring:`, then
- * `application:` under it, then `name:` under that. A file can hold several documents split by
- * `---`, and the first one that names the application wins.
- *
- * This covers block mappings with plain, single-quoted or double-quoted scalars and `#` comments.
- * It does not read flow mappings (`{...}`), block scalars (`|`, `>`), anchors, aliases or escapes.
- * A dotted key such as `spring.application.name:` is not read either, which matches
- * OpenTelemetry's detector.
- */
 internal object SpringYamlName {
     private val KEY_LINE = Regex("""^(?:"([^"]*)"|'([^']*)'|([^\s#'"][^:#]*?))\s*:(?:\s+(.*))?$""")
     private val COMMENT = Regex("""\s#""")
     private val TARGET = listOf("spring", "application", "name")
 
-    /** The application name in [text], or null when no document names one. */
     fun of(text: String): String? {
         var path = mutableListOf<Pair<Int, String>>()
         for (rawLine in text.removePrefix("\uFEFF").lines()) {

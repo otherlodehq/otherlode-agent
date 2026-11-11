@@ -7,49 +7,20 @@ import java.lang.System.Logger.Level
 import java.util.jar.Attributes
 import java.util.jar.Manifest
 
-/**
- * The rules for whether a jar is a dependency, shared by the startup listing and by the sweep
- * when it meets a jar the listing never saw.
- *
- * A jar on its own (one the system loader reads, or one the sweep meets through a `file:` URL) is
- * never a dependency when its manifest names an agent or marks it as a Spring Boot fat jar or
- * executable war ([kindOf]). A jar stored inside a fat jar, or one an exploded Spring Boot
- * application's own loader reads, is judged by the adopter's-own rule alone. The agent
- * rule exists because a `-javaagent` jar sits on the classpath; a jar under `BOOT-INF/lib` that
- * carries `Premain-Class`, such as `byte-buddy-agent`, is a library the application calls, not a
- * running agent, so it stays a dependency.
- *
- * A jar holding a class in the agent's own package ([TypeMatchPolicy.AGENT_PACKAGE_PREFIX]) is
- * never a dependency either, flat or nested. The agent-jar rule reads the manifest, and an unshaded
- * build of the agent carries no `Premain-Class`. This rule keeps such a build off the list when it
- * sits on a classpath beside the shaded agent jar.
- *
- * A jar holding any class [TypeMatchPolicy.isIncluded] admits is the adopter's own.
- */
 internal class JarClassifier(
     private val includes: List<String>,
     private val excludes: List<String>,
 ) {
-    // Named after the lister, whose INFO line this is, so it reads the same wherever the rule ran.
     private val log by agentLogger(StartupClasspathLister::class.java.name)
 
-    /** What a jar's manifest says it is. */
     enum class Kind {
-        /** Names `Premain-Class` or `Launcher-Agent-Class`: never a dependency. */
         AGENT,
 
-        /** A Spring Boot fat jar or executable war: the application, never a dependency. */
         BOOT_APPLICATION,
 
-        /** Anything else, judged by the adopter's-own rule. */
         ORDINARY,
     }
 
-    /**
-     * Whether [manifest] marks a Spring Boot fat jar, executable war or exploded one, whatever else
-     * it says. The class listing reads such an application by its launcher's layout even when the
-     * manifest also names an agent.
-     */
     fun isBootApplication(manifest: Manifest?): Boolean {
         val attributes = manifest?.mainAttributes ?: return false
         return BOOT_ATTRIBUTES.any { attributes.getValue(it) != null }
@@ -64,11 +35,6 @@ internal class JarClassifier(
         }
     }
 
-    /**
-     * Judges a jar that stands on its own: null unless [kindOf] its manifest is [Kind.ORDINARY]
-     * and it passes [classifyNested]. [fileName] is the jar's own name, used for the filename
-     * identity; [location] is the display string the wire carries.
-     */
     fun classifyFlat(
         contents: JarContents,
         fileName: String,
@@ -79,12 +45,6 @@ internal class JarClassifier(
         return classifyNested(contents, fileName, location, location, origin)
     }
 
-    /**
-     * Judges a jar stored inside a fat jar, or one an exploded Spring Boot application's own loader
-     * reads: null when it is the agent's or the adopter's own, else the dependency
-     * with its identity read. [displayName] names the jar in the INFO line the adopter's-own rule
-     * may log.
-     */
     fun classifyNested(
         contents: JarContents,
         fileName: String,
@@ -98,11 +58,6 @@ internal class JarClassifier(
         return ListedDependency(identity.identities, identity.identitySource, location, identity.classCount, origin, contents.classNames)
     }
 
-    /**
-     * Whether [contents] holds a class the include rules admit, logging one INFO line when it also
-     * holds classes they do not: the shaded single-jar shape, where bundled libraries are reported
-     * as the adopter's own rather than as a dependency.
-     */
     private fun isAdoptersOwn(
         contents: JarContents,
         displayName: String,

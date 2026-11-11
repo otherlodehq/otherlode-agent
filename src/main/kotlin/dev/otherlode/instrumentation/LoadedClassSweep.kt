@@ -10,31 +10,10 @@ import java.lang.System.Logger.Level
 import java.lang.instrument.Instrumentation
 
 /**
- * Walks [Instrumentation.getAllLoadedClasses] to answer two questions no transformer can, one in
- * each direction.
- *
- * The forward direction ([reportUnreported]) asks which classes the agent would have instrumented,
- * had it been offered them, that the registry never heard about at all. `java.lang.instrument`
- * refuses to call a transformer while that thread is already inside another class's transform, so
- * a class loaded from inside a transform reaches no transformer, agent or otherwise, and would
- * read as never loaded next to a static baseline that declared it.
- *
- * The reverse direction ([confirm]) asks which classes the registry did hear about that the JVM
- * never actually defined: a class ByteBuddy wove and [ProbeRegistry.register] committed, where
- * `defineClass` raised a `ClassFormatError`, or a `LinkageError` for a supertype absent at load. A
- * class the verifier rejects is defined, and a `VerifyError` hook names it instead. Left alone, such
- * a class sits in the manifest permanently at zero, which is what a collector reads as dead code.
- * The same question is put to [endpointRegistry] for a class that declared endpoints
- * from its transform.
- *
- * Both directions read [Instrumentation.getAllLoadedClasses] once per [run] call and compare it
- * against the registry from opposite sides, so one sweep serves both rather than two independent
- * walks of the same array.
- *
- * The same array feeds [dependencyCounter], when one is given, which counts the distinct classes
- * loaded from each dependency, and, on every pass, [frameworkMarkers], when given, which looks the
- * names of the classes up against the marker list. A class in the array is defined, so a marker
- * seen there is confirmed, and no class is resolved to see it.
+ * Compares [Instrumentation.getAllLoadedClasses] with the registries on each [run]. It confirms
+ * that registered classes were defined, withholds those the JVM never defined, and records loaded
+ * classes the agent would have instrumented that reached no manifest. It also hands the array to
+ * [dependencyCounter] and [frameworkMarkers] when they are given.
  */
 open class LoadedClassSweep(
     private val instrumentation: Instrumentation,
@@ -49,21 +28,9 @@ open class LoadedClassSweep(
     private var everFoundUnreported = false
 
     /**
-     * Runs the confirmation pass over every loaded class, unfiltered, and the unreported-class
-     * pass over the same array, filtered through [isCandidate], only when [runForwardPass] is
-     * true. Every call hands the array to [dependencyCounter] as well, even when either pass throws,
-     * so a failing pass never stops the dependency count. [final] additionally logs a one-line
-     * summary of how many classes were withheld for good, when that count is above zero.
-     *
-     * The confirmation pass must see every loaded name, not the forward direction's filtered
-     * candidate list. The two ask opposite questions: the forward direction asks which classes
-     * the agent *would have* instrumented that the registry never heard about, which needs the
-     * filter; the confirmation pass asks which classes the registry *did* hear about that the JVM
-     * never defined, which needs the raw set. A registered class the filter happens to drop would
-     * otherwise be counted as missing and, after two calls, withheld for good: a live class
-     * silently removed from the manifest. So both
-     * passes are derived from the one array taken here, rather than the forward direction's own
-     * filtered list.
+     * Runs the confirmation pass over every loaded class, and the unreported-class pass only when
+     * [runForwardPass] is true. The array goes to [dependencyCounter], when given, even when a pass throws.
+     * [final] logs a summary of the classes withheld for good, when there are any.
      */
     open fun run(
         runForwardPass: Boolean,
@@ -83,14 +50,6 @@ open class LoadedClassSweep(
         if (final) logShutdownSummary()
     }
 
-    /**
-     * Reconciles every registry entry not yet confirmed defined against [loaded]'s names, taken
-     * unfiltered. Logs one `WARNING` per class name [ProbeRegistry.confirmFrom] returns, and one per
-     * class [EndpointRegistry.confirmFrom] returns.
-     * Each returns a name once and never again, so this cannot repeat for the same class.
-     * [registeredUpTo] and [endpointsRegisteredUpTo] are the registries' sequences from before
-     * [loaded] was taken.
-     */
     private fun confirm(
         loaded: Array<Class<*>>,
         registeredUpTo: Long,
@@ -98,7 +57,6 @@ open class LoadedClassSweep(
     ) {
         val probesAwait = registry.unconfirmedClassCount() > 0
         val endpointsAwait = endpointRegistry.unconfirmedClassCount() > 0
-        // The walk runs on every flush once dependencies are counted; skip building the name set when nothing awaits it.
         if (!probesAwait && !endpointsAwait) return
         val loadedNames = loaded.mapTo(mutableSetOf()) { it.name }
         if (probesAwait) {
@@ -120,11 +78,6 @@ open class LoadedClassSweep(
         }
     }
 
-    /**
-     * Logs the running total of classes withheld for good, when it is above zero. Called only on
-     * the shutdown flush, so an instance that ends cleanly always gives a final answer about
-     * classes that were woven and never defined.
-     */
     private fun logShutdownSummary() {
         val withheld = registry.withheldForGoodClassCount()
         if (withheld > 0) {
@@ -139,14 +92,6 @@ open class LoadedClassSweep(
         }
     }
 
-    /**
-     * Finds classes the JVM has loaded that reached no manifest, neither as a probed class nor as
-     * a skipped one, and records them so a collector stops calling them never loaded.
-     *
-     * A name recorded by an earlier sweep can have become accounted for since, when a second
-     * classloader's copy of it registered normally. Dropping those first keeps one manifest from
-     * carrying the same name as both a probed class and an unreported one.
-     */
     private fun reportUnreported(loaded: Array<Class<*>>) {
         registry.purgeAccountedFor()
         val candidates = loaded.filter(::isCandidate).map { it.name }
@@ -155,11 +100,6 @@ open class LoadedClassSweep(
         if (newlyFound > 0) logFirstUnreportedFinding(newlyFound)
     }
 
-    /**
-     * Logs one INFO line the first time a sweep finds anything unreported, naming what it means
-     * rather than only the count. Later sweeps add to the total silently; the wire carries the
-     * classes themselves, and a line per sweep would say the same thing every few minutes.
-     */
     private fun logFirstUnreportedFinding(newlyFound: Int) {
         if (everFoundUnreported) return
         everFoundUnreported = true
@@ -170,30 +110,6 @@ open class LoadedClassSweep(
         )
     }
 
-    /**
-     * Whether a loaded class is one the agent would have instrumented, had it been offered it.
-     *
-     * ByteBuddy applies its own ignore matcher before any `.type(...)` matcher runs, and a class
-     * it ignores reaches no transform callback and no registry bucket. An include prefix can reach
-     * into the JDK's own packages (`includePackages=com` covers `com.sun.*`), and a sweep that only
-     * replicated the type matcher would then call every such JDK class a blind spot, since the gate
-     * turned it away before the type matcher ever saw it. The loader checks and the name-prefix
-     * check here are that gate: a class on the bootstrap or platform loader, and one named under
-     * ByteBuddy's own package or the reflection internals, is ignored rather than instrumented.
-     *
-     * The rest mirror `TypeMatchPolicy`: the synthetic flag, the name rules, the
-     * runtime-generated proxy names, and the coroutine-continuation check, which needs only the
-     * direct superclass's name. An array class
-     * and a hidden class are dropped too, neither of which a transformer is ever offered. A hidden
-     * class carries its own `/0x...` suffix in its name, so it could not be joined to anything a
-     * collector holds even if it were a blind spot.
-     *
-     * A multi-file part is left out on purpose. The type matcher takes that one kind of synthetic
-     * class, but only its `kotlin.Metadata` tells it apart, and reading a class's annotations
-     * resolves each annotation's own type and can load classes, which a sweep must not do in order
-     * to look. So the sweep drops every synthetic class, and a part that reached no transformer is
-     * not reported.
-     */
     private fun isCandidate(loaded: Class<*>): Boolean {
         if (loaded.isArray || loaded.isPrimitive || loaded.isHidden) return false
         if (loaded.isSynthetic) return false
@@ -208,13 +124,6 @@ open class LoadedClassSweep(
         return !isCoroutineContinuation(loaded)
     }
 
-    /**
-     * Whether [loaded] is a suspend function's own continuation class, by the same direct
-     * superclass suffix [TypeMatchPolicy] matches on. A continuation class holds no code the
-     * adopter wrote and is excluded from instrumentation, so it is not a blind spot when it never
-     * reaches a transformer. `getSuperclass` reads a name the JVM already resolved and loads
-     * nothing.
-     */
     private fun isCoroutineContinuation(loaded: Class<*>): Boolean {
         val superclassName = loaded.superclass?.name ?: return false
         return TypeMatchPolicy.CONTINUATION_SUPERCLASS_SUFFIXES.any { superclassName.endsWith(it) }

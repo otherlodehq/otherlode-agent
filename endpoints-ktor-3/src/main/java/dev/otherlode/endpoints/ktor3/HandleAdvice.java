@@ -14,41 +14,20 @@ import java.util.Deque;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto {@code RoutingNode.handle}, Ktor's own registration hook. It runs once per handler
- * lambda as application code builds the routing tree, with the handler object already in hand and
- * the node it was attached to available as {@code this}.
+ * Woven onto {@code RoutingNode.handle}, Ktor's registration hook. It registers each routing node
+ * under its own identity, with the verb and path template built from the selectors up to the root.
+ * {@link ExecuteResultAdvice} receives the same node at dispatch.
  *
- * <p>{@code Route} became an interface between Ktor 2 and 3, with {@code RoutingNode} as the
- * concrete implementation carrying {@code parent}, {@code selector}, and {@code handle}; this
- * module targets {@code RoutingNode} directly for the same reason the Ktor 2 module targets {@code
- * Route}. {@code RoutingNode.handle} is the registration hook this module uses instead of the
- * public {@code RoutingCallStarted} event, because {@code RoutingCallStarted} only fires at
- * dispatch time and subscribing to it would need advice to implement a Kotlin function type.
- * {@code handlers} itself is {@code internal} and out of reach from Java advice, but {@code
- * handle(handler)} that appends to it is public, so this advice binds there instead.
+ * <p>Only verb and path selectors contribute. A route with any other selector (headers, content
+ * type, query parameters, host, {@code AndRouteSelector}, {@code OrRouteSelector}) merges with any
+ * sibling that has the same verb and path.
  *
- * <p>The route node itself, not a rebuilt key, is the identity this advice registers under: {@code
- * this} is exactly the object {@link ExecuteResultAdvice} receives as its own {@code route}
- * argument at dispatch time, so no key needs to be reconstructed or compared by value the way
- * Spring MVC's advice has to.
+ * <p>For a suspend lambda the handler join is the lambda's class and {@code invokeSuspend}. For a
+ * class that implements the function type by hand it is the class alone. For a hidden class the
+ * class, method and descriptor are all null.
  *
- * <p>The walk from this node up to the root is duplicated in {@link ExecuteResultAdvice} rather
- * than shared: an advice class is inlined into the woven bytecode, not called into, so a helper
- * method on this class or a shared one would remain a real method call at the instrumented site,
- * needing the target classloader to resolve this advice class at runtime. Only path selectors
- * contribute a segment; anything else (headers, content type, query parameters, host, {@code
- * AndRouteSelector}/{@code OrRouteSelector}) contributes nothing, so a route built from more than
- * path and verb merges with any sibling that shares the same path, an accepted v1 simplification.
- *
- * <p>The handler join names the coroutine machinery Ktor actually calls: a suspend lambda given to
- * {@code handle} compiles to a class of its own that declares {@code invokeSuspend}, so a body
- * whose class carries that method reports {@code invokeSuspend} and its class; a named class that
- * implements the function type by hand, with no such method, reports the class alone. A hidden
- * class, generated for a lambda through {@code invokedynamic}, has no stable name
- * across runs, so its class, method, and descriptor are all reported as null instead.
- *
- * <p>This method is deliberately one flat body with no private helper method of its own; see the
- * Spring MVC module's {@code RegisterHandlerMethodAdvice} Javadoc for why.
+ * <p>The advice body is inlined into the woven method, so {@code onEnter} stays one flat body with
+ * no helper methods.
  */
 public class HandleAdvice {
     private static final String MODULE = "ktor-3";

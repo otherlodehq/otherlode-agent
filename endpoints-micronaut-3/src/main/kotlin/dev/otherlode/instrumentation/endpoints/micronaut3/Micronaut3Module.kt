@@ -27,7 +27,6 @@ private const val LAMBDA_HANDLE_REQUEST_ARGUMENTS = 3
 private const val URI_ROUTE = "io.micronaut.web.router.UriRoute"
 private const val ADVICE_PACKAGE = "dev.otherlode.endpoints.micronaut3"
 
-/** Whether [method] returns a `Stream` of `UriRoute`, which Micronaut 4's `uriRoutes()` (a stream of `UriRouteInfo`) does not. */
 private val RETURNS_URI_ROUTES: ElementMatcher<MethodDescription> =
     ElementMatcher { method ->
         try {
@@ -54,36 +53,20 @@ private fun routerIsMicronaut3(classLoader: ClassLoader): Boolean =
 /**
  * Endpoint module for Micronaut 3 (`micronaut-3`), compiled against 3.0.0.
  *
- * The exit of the `DefaultRouter(Collection)` constructor hands the router to the module, which
- * holds it weakly. The exit of the constructor of a dispatch point this module counts at arms the
- * module, and a router is then declared, in either order: [DispatchGate] reads its `UriRoute`
- * objects through `Router.uriRoutes()`, keyed by the `UriRoute` instance that
- * `UriRouteMatch.getRoute()` returns at dispatch. The dispatch points are Netty's
- * `RoutingInBoundHandler`, micronaut-servlet's `ServletHttpHandler` and micronaut-aws's
- * `MicronautLambdaContainerHandler`. A router none of them is constructed for declares nothing,
- * since nothing could count its routes, and [beforeManifest] reports the module off with
+ * The module holds each `DefaultRouter` weakly. Once a dispatch point is constructed (Netty's
+ * `RoutingInBoundHandler`, micronaut-servlet's `ServletHttpHandler` or micronaut-aws's
+ * `MicronautLambdaContainerHandler`), [DispatchGate] declares the router's `UriRoute` objects. If
+ * no dispatch point is constructed, [beforeManifest] reports the module off with
  * `ROUTES_NOT_COUNTED` once the router has waited a flush interval.
  *
- * A request counts at the entry of the Netty server's private `RoutingInBoundHandler.handleRouteMatch`
- * when the route it matched is a `UriRouteMatch`, which runs once per request before the filters
- * and the handler: a 404, a 405, an unsupported media type and a CORS preflight the server answers
- * itself reach no `UriRouteMatch`, a status route is not one, and a filter that rejects the request
- * after the match still counts it. micronaut-servlet's private `ServletHttpHandler.invokeRouteMatch`
- * is hooked the same way, and counts a route only when its verb is the request's, since the handler
- * dispatches a preflight to a route of another verb. micronaut-aws 3.x builds its own
- * `RouteExecutor`, so it counts at the entry of `MicronautLambdaContainerHandler.handleRequest`
- * for the `MicronautAwsProxyRequest`, from the `UriRouteMatch` the request already carries.
+ * A request counts when its matched route is a `UriRouteMatch`. A 404, a 405, an unsupported media
+ * type and a CORS preflight that the server answers itself reach no `UriRouteMatch`, and a status
+ * route is not one. micronaut-servlet counts a route only when its verb is the request's.
  *
- * Micronaut 4 lists `UriRouteInfo` where this lists `UriRoute`. `DefaultRouter` is accepted only
- * with the `uriRoutes()` that returns `UriRoute`. `RoutingInBoundHandler`, `ServletHttpHandler`
- * and `MicronautLambdaContainerHandler` are accepted by name on a class loader whose
- * `DefaultRouter` has that shape, so their hooks are checked like any other.
- * This module matches nothing on a Micronaut 4 or 5 application.
- *
- * A HEAD route Micronaut adds beside each `@Get` is not declared, and a HEAD request that matches
- * one counts against the GET endpoint. A WebSocket route is not declared.
- * `micronaut.server.context-path` is part of an annotated route's template and not of a
- * programmatic one, and stays as it is.
+ * A HEAD route that Micronaut adds beside a `@Get` and a WebSocket route are not declared. A HEAD
+ * request that matches such a route counts against the GET endpoint. `micronaut.server.context-path`
+ * is part of an annotated route's template and not of a programmatic one. This module matches
+ * nothing on a Micronaut 4 or 5 application.
  */
 class Micronaut3Module : EndpointModule {
     override val name: String = MODULE_NAME

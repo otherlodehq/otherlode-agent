@@ -18,12 +18,8 @@ import java.lang.instrument.Instrumentation
  * Weaves both constructors of `java.lang.VerifyError` so each construction hands its message
  * argument to the bootstrap ring in [OtherlodeVerifierMessages].
  *
- * `VerifyError` is not loaded at `premain` on every JDK, so the hook loads it and retransforms it,
- * as [dev.otherlode.instrumentation.endpoints.LambdaFactoryHook] does for the lambda factory. It
- * is installed once the bootstrap holder is. When anything fails it logs one WARNING, installs
- * nothing, and [watch] says the run is not watched.
- *
- * [targetClass] names the class to weave; a test names another to make the install fail.
+ * It needs the bootstrap holder installed. When anything fails it logs a WARNING, tries to undo
+ * any weave it made, and [watch] says the run is not watched.
  */
 class VerifyErrorHook(
     private val ownFailures: OwnRetransformationFailures = OwnRetransformationFailures(),
@@ -100,14 +96,8 @@ class VerifyErrorHook(
                 builder.visit(Advice.to(VerifyErrorAdvice::class.java).on(isConstructor()))
             }
 
-    /**
-     * Constructs one `VerifyError` through each constructor, so the woven path has resolved its
-     * references before a class fails to link under a lock, checks the weave took by finding
-     * [message] in the ring, and returns everything the drain read. [message] differs on each
-     * install, since the ring keeps a message equal to one it already stored only once. Another
-     * thread may have built a `VerifyError` since the weave went live, so the caller keeps what is
-     * not this check's own.
-     */
+    // Builds through both constructors so the woven path resolves its references before a class fails
+    // to link under a lock. The ring stores an equal message only once, so each install's message differs.
     private fun warmWovenPaths(message: String): Array<String> {
         VerifyError(message)
         VerifyError()

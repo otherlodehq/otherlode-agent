@@ -6,28 +6,17 @@ import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 
 /**
- * Holds the chunks of one once-per-process payload that the receiver has not yet confirmed and
- * sends them in order. [StaticBaselineSender][dev.otherlode.instrumentation.staticscan.StaticBaselineSender]
- * and [ClassListingSender][dev.otherlode.classlisting.ClassListingSender] fix the payload.
+ * Holds the chunks of one once-per-process payload that the receiver has not confirmed, and sends
+ * them in order. [offer] queues chunks, [sendPending] sends them through [exporter], and
+ * [retryPending] sends one through [retryExporter], which should make one attempt.
  *
- * The payload is built once per process, so a chunk the receiver never confirmed would otherwise
- * be lost for the life of the process. The builder offers the chunks and makes the first attempt
- * through [exporter]; [ExportScheduler] calls [retryPending] after a flush whose own sends the
- * receiver stored, which is when a retry can succeed. A retry runs on the flush thread, so it
- * sends one chunk through [retryExporter], which should make one attempt: a flush then holds the
- * scheduler for one request timeout at most per sender, and the shutdown flush never retries.
- * A chunk that reached the receiver with its answer lost is sent twice, which a receiver reads
- * as one, since it keeps received chunks by index. A chunk the receiver refuses for its content
- * (a 400 or 422) drops every pending chunk, since resending the same bytes would only be
- * refused again. Any other refusal keeps them, to be sent after a later flush the receiver
- * confirms: a 401 while a token rotates, a 404 before a receiver serves the route, a 413 since
- * a proxy's limit can be raised while the process runs.
+ * A chunk the receiver refuses for its content (a 400 or 422) drops every pending chunk. Any other
+ * failure keeps them for a later call. A chunk that reached the receiver with its answer lost is
+ * sent twice. Only one thread sends at a time. A call that finds chunks pending and another thread
+ * sending returns false at once.
  *
- * Only one thread sends at a time. A call that finds another sending returns at once rather than
- * wait, so the flush thread never blocks behind the builder thread's exporter backoff.
- *
- * [noun] names a chunk in the log and [whole] names what the chunks make up, as in "the static
- * baseline" and "the scan". [send] makes one export call.
+ * [noun] names a chunk in the log and [whole] names what the chunks make up. [send] makes one
+ * export call.
  */
 open class ChunkSender<T : Any>(
     private val exporter: Exporter,
@@ -41,10 +30,9 @@ open class ChunkSender<T : Any>(
     private val log by agentLogger(this::class.java.name)
     private val lock = ReentrantLock()
 
-    /** Guarded by [lock]. */
+    // pending and failureLogged are guarded by lock.
     private val pending = ArrayDeque<T>()
 
-    /** Guarded by [lock]. */
     private var failureLogged = false
 
     @Volatile
@@ -59,13 +47,13 @@ open class ChunkSender<T : Any>(
     }
 
     /**
-     * Sends up to [maxChunks] pending chunks in order, stopping at the first that fails. True when
-     * nothing is left pending; false when a chunk failed, chunks are left over, or another thread
-     * is sending.
+     * Sends up to [maxChunks] pending chunks in order, stopping at the first that fails. Returns true
+     * when nothing is left pending, and false when a chunk failed, chunks are left over, or another
+     * thread is sending.
      */
     fun sendPending(maxChunks: Int = Int.MAX_VALUE): Boolean = sendThrough(maxChunks, exporter)
 
-    /** Sends the first pending chunk through [retryExporter], with the same answer as [sendPending]. */
+    /** Sends the first pending chunk through [retryExporter], with the same result as [sendPending]. */
     fun retryPending(): Boolean = sendThrough(1, retryExporter)
 
     private fun sendThrough(
@@ -107,7 +95,6 @@ open class ChunkSender<T : Any>(
         }
     }
 
-    /** Logs the first failure that keeps the chunk; it stays pending. Called holding [lock]. */
     private fun failed(
         chunk: T,
         e: Exception,
@@ -125,7 +112,6 @@ open class ChunkSender<T : Any>(
     }
 
     private companion object {
-        /** Statuses that refuse a request's content, which the same bytes would meet again. */
         val REFUSED_CONTENT = setOf(400, 422)
     }
 }

@@ -7,11 +7,10 @@ import net.bytebuddy.asm.Advice;
  * Woven onto the exit of each OpenTelemetry route prefixer: {@code ServletContextPath.prepend} and
  * {@code JaxrsContextPath.prepend} in the Java agent's bootstrap, and {@code
  * HttpRouteSupport.prependContextPath} in the Spring MVC library instrumentation. Each takes the
- * route as its second argument and returns it with a prefix in front. The pair goes to the table
- * {@link OnEndAdvice} resolves the final route through.
+ * route as its second argument and returns it with a prefix in front. The advice records the pair
+ * in the table {@link OnEndAdvice} resolves the final route through.
  *
- * <p>References no OpenTelemetry type, so one class binds to every prefixer, whichever copy of
- * OpenTelemetry it sits in.
+ * <p>It references no OpenTelemetry type, so one class binds to every prefixer.
  */
 public class RoutePrefixAdvice {
     @Advice.OnMethodExit(suppress = Throwable.class)

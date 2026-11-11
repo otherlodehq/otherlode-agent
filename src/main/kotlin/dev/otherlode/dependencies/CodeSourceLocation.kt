@@ -8,29 +8,19 @@ import java.net.URLDecoder
 import java.nio.file.Path
 import java.nio.file.Paths
 
-/**
- * A class's code-source location, reduced to where its bytes live on disk. See [parse].
- */
 internal sealed interface CodeSourceLocation {
-    /** A file or directory, from a `file:` URL, or a `jar:file:<jar>!/` or `jar:nested:` URL naming no entry. */
     data class OnDisk(
         val path: Path,
     ) : CodeSourceLocation
 
-    /**
-     * An entry inside a jar on disk: a nested jar such as `BOOT-INF/lib/x.jar`, or a classes
-     * directory such as `BOOT-INF/classes/`.
-     */
     data class InJar(
         val outerJar: Path,
         val entryName: String,
     ) : CodeSourceLocation {
-        /** Whether the entry is a directory of classes rather than a jar. */
         val isDirectory: Boolean
             get() = entryName.endsWith("/") || entryName in CLASSES_DIRECTORIES
     }
 
-    /** A scheme this agent does not read, such as `jrt:` or `jar:http:`. */
     data object Unsupported : CodeSourceLocation
 
     companion object {
@@ -40,20 +30,6 @@ internal sealed interface CodeSourceLocation {
         private const val JAR_PREFIX = "jar:"
         private const val JAR_SEPARATOR = "!/"
 
-        /**
-         * Parses [location], a code-source URL's string form. Three shapes name bytes on disk:
-         *
-         * - `file:<path>`, a flat jar or a classes directory.
-         * - `jar:nested:<outer>/!<entry>!/`, Spring Boot 3.2 and later. The path is percent-decoded
-         *   and split at the last `/!`, and on Windows loses the slash before its drive letter, as
-         *   Boot's `NestedLocation` does.
-         * - `jar:file:<outer>!/<entry>!/`, Spring Boot 2 to 3.1, or `jar:file:<jar>!/` from a
-         *   plain `URLClassLoader` given a `jar:` URL.
-         *
-         * Schemes are matched ignoring case, as the JDK matches them: `java.net.URL` lowercases only
-         * the outermost one, so a `jar:FILE:` URL reaches here as written. Anything else is
-         * [Unsupported]. A malformed `file:` URI throws.
-         */
         fun parse(location: String): CodeSourceLocation =
             when {
                 location.startsWith(FILE_PREFIX, ignoreCase = true) -> OnDisk(filePath(location))
@@ -62,11 +38,6 @@ internal sealed interface CodeSourceLocation {
                 else -> Unsupported
             }
 
-        /**
-         * The path a `file:` URL names. A loader that built its URLs with the deprecated
-         * `File.toURL()` leaves characters such as a space unescaped, which `URI` rejects, so such
-         * a URL is read as raw path text instead.
-         */
         private fun filePath(fileUrl: String): Path =
             try {
                 Paths.get(URI(fileUrl))
@@ -75,7 +46,7 @@ internal sealed interface CodeSourceLocation {
             }
 
         private fun parseNested(rest: String): CodeSourceLocation {
-            // Boot's UrlDecoder decodes percent escapes only, so a literal '+' must survive URLDecoder.
+            // Boot decodes percent escapes only, so a literal '+' must survive URLDecoder.
             val decoded = URLDecoder.decode(rest.removeSuffix(JAR_SEPARATOR).replace("+", "%2B"), Charsets.UTF_8)
             val split = decoded.lastIndexOf("/!")
             if (split < 0) return OnDisk(nestedPath(decoded))
@@ -84,10 +55,6 @@ internal sealed interface CodeSourceLocation {
 
         private fun nestedPath(path: String): Path = Path.of(if (File.separatorChar == '\\') windowsNestedPath(path) else path)
 
-        /**
-         * Drops the leading slash a `nested:` URL puts before a Windows drive letter (`/C:/app.jar`,
-         * `///C:/app.jar`), as Boot's `NestedLocation` does before building a path on Windows.
-         */
         internal fun windowsNestedPath(path: String): String =
             when {
                 path.length > 2 && path[2] == ':' -> path.substring(1)
@@ -107,13 +74,6 @@ internal sealed interface CodeSourceLocation {
     }
 }
 
-/**
- * A key two code-source locations share when they name the same root: a jar or a folder on disk,
- * or an entry of a jar such as a nested jar or `BOOT-INF/classes/`. The files are compared by real
- * path (a file that does not exist, by absolute path), and an entry by its name without a trailing
- * slash, since Spring Boot 3.2 and later writes `BOOT-INF/classes/` where earlier versions wrote
- * `BOOT-INF/classes`. Null for an [CodeSourceLocation.Unsupported] location.
- */
 internal fun CodeSourceLocation.rootKey(): String? =
     when (this) {
         is CodeSourceLocation.OnDisk -> "disk:${realPath(path)}"
@@ -121,7 +81,6 @@ internal fun CodeSourceLocation.rootKey(): String? =
         CodeSourceLocation.Unsupported -> null
     }
 
-/** The [rootKey] of a code-source location's string form, or null when it names no root this agent reads. */
 internal fun rootKeyOf(location: String): String? =
     try {
         CodeSourceLocation.parse(location).rootKey()
