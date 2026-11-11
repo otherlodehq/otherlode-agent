@@ -47,21 +47,11 @@ multi-tenant backend.
    the database tier). No collector can be given
    an ingest URL until the front door exists. None of it blocks publishing
    the agent.
-6. **One more soak, on the release bundle. It does not block the
-   release** (Luke, 2026-11-10). The week ran the bundle of 2026-11-02,
-   and the claim path has changed in all three repos since: the agent's
-   definition watch, its generated-member marks and `manifest_confirmed`
-   (ADR 0091), the collector's bindings, and the server's stripped-run
-   veto, lost-history hold and run liveness. No soak has run them
-   together. A smoke run on `soak-1` covers the whole schedule in under
-   three hours (`soak/DESIGN.md`, "Schedule"); the memory question the
-   week added is settled (ADR 0089). `soak/DESIGN.md` holds the week's
-   result.
-   A smoke run on `soak-1` started 2026-11-10 22:37:10Z on agent
-   `02dd9002`, server `6720ed4` and collector `3d5ddc8`. `soak-2` is
-   deleted. Clean-up after the run is Luke's: delete `soak-1`, the
-   project-level SSH key gcloud added on 2026-11-01 (Compute Engine,
-   Metadata, SSH keys), and project `project-1d40b09b-5fc7-4240-bed`.
+6. **Soak clean-up is Luke's.** Delete VM `soak-1`, the project-level
+   SSH key gcloud added on 2026-11-01 (Compute Engine, Metadata, SSH
+   keys), and project `project-1d40b09b-5fc7-4240-bed`. `soak/DESIGN.md`
+   holds the week's and the smoke run's results, and ADR 0089 the trim
+   measurements.
 7. **The collector learns `manifest_confirmed` before any agent sends
    it** (ADR 0091). A collector with redaction on drops a field its
    bindings do not know and marks the payload stripped, so every run of
