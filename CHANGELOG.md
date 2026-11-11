@@ -15,7 +15,7 @@ the section being read.
 
 ## [0.1.0] - 2026-11-01
 
-The first release of the Otherlode agent and its testkit. The agent counts which methods, branches and endpoints your JVM application runs and sends the counts to an Otherlode collector, so Otherlode can show the code your traffic never reaches. Docs: https://otherlode.dev/docs.
+The first release of the Otherlode agent and its testkit. The agent counts which methods, branches and endpoints your JVM application runs and sends the counts to Otherlode, straight or through an Otherlode collector, so Otherlode can show the code your traffic never reaches. Docs: https://otherlode.dev/docs.
 
 ### Added
 
@@ -25,7 +25,7 @@ The first release of the Otherlode agent and its testkit. The agent counts which
 - **Classes, call graph and dependencies.** It reports which classes loaded or failed to, plus call edges and the jars each class references. From these Otherlode groups never-hit code into clusters and names dependencies your code never uses. With `staticBaselineEnabled=true` the agent also sends a baseline, so Otherlode can name classes that never loaded.
 - **Test runs.** With `testRun=true` a run records which tests reached your code and stays out of every finding.
 - **The testkit**, `dev.otherlode:otherlode-testkit`, a JUnit 5 collector for asserting what a test reached.
-- **Export** to a collector at `http://localhost:4319` every 60 seconds and at a graceful shutdown. Counts stay in memory while the collector is down. The agent sends names and string literals from your code in clear. Redaction is the collector's job.
+- **Export** every 60 seconds and at a graceful shutdown, to Otherlode's ingest with an ingest key or to a collector, by default at `http://localhost:4319`. Only a `202` counts as stored. Counts stay in memory while the receiver is down. The agent sends names and string literals from your code in clear; a collector can redact them. With a key set, the agent refuses a plain `http` URL to Otherlode.
 - **Native heap trim.** On Linux with glibc, the agent asks the JVM once an hour to return the native memory it has freed. `trimNativeHeapIntervalMinutes` sets the interval, and `0` turns it off.
 - **Beside other agents.** A class it can't weave safely runs unwoven and is reported. It works alongside JaCoCo, OpenTelemetry's agent and APM agents that retransform classes.
 
