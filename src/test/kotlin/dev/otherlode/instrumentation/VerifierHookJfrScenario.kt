@@ -9,11 +9,6 @@ import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.test.assertTrue
 
-/**
- * Shared by the JFR coexistence tests. On JDK 17 and 21 JFR retransforms `Error` and `Throwable`
- * when it starts, and the hook must survive that and JFR must still record the `VerifyError`s.
- * Each subclass runs in a JVM of its own and differs in when JFR starts.
- */
 abstract class VerifierHookJfrScenario {
     protected val instrumentation = VerifierHookFixtures.instrumentation()
     protected val hook = VerifyErrorHook()
@@ -40,7 +35,6 @@ abstract class VerifierHookJfrScenario {
         }
     }
 
-    /** Links a rejected class and checks both the hook and, through [recording], JFR saw its message. */
     protected fun assertBothSee(
         internalName: String,
         recording: Recording,

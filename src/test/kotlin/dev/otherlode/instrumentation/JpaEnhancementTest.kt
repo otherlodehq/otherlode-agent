@@ -28,13 +28,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Proves through the real pipeline and the static scanner, on entities that Ebean, EclipseLink and
- * OpenJPA enhanced with their own offline enhancers (`fixtures-jpa`), the rules of ADR 0079: an
- * enhancer's methods get no probe and no declaration, a call to one passes through, EclipseLink's
- * woven checks get no outcome claim, and an OpenJPA accessor moved to `pc<name>` reports under the
- * adopter's name.
- */
 class JpaEnhancementTest {
     private companion object {
         const val PACKAGE = "com.example.target.jpa"
@@ -51,17 +44,11 @@ class JpaEnhancementTest {
             )
     }
 
-    /** One library's enhanced class directory and the runtime classpath its entities need. */
     private class Library(
         val directory: File,
         val rawDirectory: File,
         val runtime: List<File>,
     ) {
-        /**
-         * A loader that serves [internalName]'s raw class file as the resource and defines [defined]
-         * for it, as a library that enhances at load time does. Its other classes come from the raw
-         * directory.
-         */
         fun loadTimeLoader(
             internalName: String,
             defined: ByteArray = classBytes(internalName),
@@ -477,11 +464,6 @@ class JpaEnhancementTest {
         fun hits(probe: ProbeLocation): Long = hits[probe.classId to probe.probeIndex] ?: 0
     }
 
-    /**
-     * Loads [simpleName] as a load-time enhancer would, runs [exercise] on an instance, and returns
-     * the probes and their hit counts. With [definedBytes] given, those bytes are defined instead of
-     * the enhanced class.
-     */
     private fun loadedAtLoadTime(
         simpleName: String,
         definedBytes: (Library, String) -> ByteArray = { library, internalName -> library.classBytes(internalName) },
@@ -596,14 +578,12 @@ class JpaEnhancementTest {
         assertEquals(4, counted.probes.count { it.kind == ProbeKind.BRANCH && it.methodName == "setOwner" })
     }
 
-    /** [bytes] without their line-number tables, so they differ from the class file and keep every branch. */
     private fun withoutDebugInfo(bytes: ByteArray): ByteArray {
         val writer = ClassWriter(0)
         ClassReader(bytes).accept(writer, ClassReader.SKIP_DEBUG)
         return writer.toByteArray()
     }
 
-    /** [bytes] without the Ebean marker and every member that starts with `_ebean_`, as a class file on disk predating the enhancer. */
     private fun withoutEbean(bytes: ByteArray): ByteArray {
         val writer = ClassWriter(0)
         ClassReader(bytes).accept(

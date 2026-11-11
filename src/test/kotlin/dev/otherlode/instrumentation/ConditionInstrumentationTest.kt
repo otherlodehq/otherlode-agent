@@ -15,20 +15,11 @@ import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-/**
- * Proves through the real transform that the demo's checkout handler sends each site's condition,
- * code parts around literal parts, and that the demo's outcomes carry their routine kinds. The
- * demo's compiled classes come from the benchmark corpus the root build already passes to tests.
- */
 class ConditionInstrumentationTest {
     private fun code(text: String) = ConditionPart(ConditionPartKind.CODE, text)
 
     private fun literal(text: String) = ConditionPart(ConditionPartKind.STRING_LITERAL, text)
 
-    /**
-     * The 1-based line of the demo's server source that holds [fragment], so the expected lines
-     * follow the source rather than being pinned. The fragment must appear on exactly one line.
-     */
     private fun demoLineOf(fragment: String): Int {
         val source =
             File(
@@ -40,7 +31,6 @@ class ConditionInstrumentationTest {
         return lines.single().index + 1
     }
 
-    /** The manifest of the demo server's main class, loaded through the real transform. */
     private fun demoManifest(): ProbeManifest {
         val demoClasses =
             File(
@@ -93,8 +83,9 @@ class ConditionInstrumentationTest {
         val value = demoLineOf("return value?.toDoubleOrNull() ?: 0.0")
         assertEquals(
             listOf(
-                // kotlinc tests `ifnonnull` for an elvis, so its null side is the fall-through, and
-                // `ifnull` for a safe call, so its null side is the taken jump.
+                // kotlinc tests `ifnonnull` for the `?: return` elvis, so its null side is the fall-through.
+                // It tests `ifnull` for the safe calls and for the elvis that unboxes to a Double, so their
+                // null side is the taken jump.
                 query to listOf(NONE, NULL_DEFAULT),
                 getOrNull to listOf(NULL_DEFAULT, NONE),
                 value to listOf(NULL_DEFAULT, NONE),

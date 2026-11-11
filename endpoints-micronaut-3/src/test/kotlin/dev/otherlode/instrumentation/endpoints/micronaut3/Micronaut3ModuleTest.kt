@@ -18,10 +18,6 @@ import kotlin.test.assertTrue
 
 private const val PACKAGE = "dev.otherlode.instrumentation.endpoints.micronaut3"
 
-/**
- * Proves [Micronaut3Module] end to end against a real embedded Netty server. The same sources run
- * against every tested Micronaut release, each compiled with that release's annotation processor.
- */
 class Micronaut3ModuleTest {
     private val declared =
         setOf(

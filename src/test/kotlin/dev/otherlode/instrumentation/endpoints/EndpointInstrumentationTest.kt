@@ -42,11 +42,6 @@ class EndpointInstrumentationTest {
     private fun frameworkLoader(): FrameworkFixtureClassLoader =
         FrameworkFixtureClassLoader(arrayOf(File("build/classes/java/test").toURI().toURL()), javaClass.classLoader)
 
-    /**
-     * Installs [EndpointInstrumentation] for real on the process-wide [Instrumentation], and only
-     * then loads a fresh definition of the named fixture class, so the transformer is already
-     * registered by the time the class first loads.
-     */
     private fun install(
         registry: EndpointRegistry,
         modules: List<EndpointModule>,
@@ -230,9 +225,6 @@ class EndpointInstrumentationTest {
 
     @Test
     fun `a module whose matcher throws leaves the class loadable and untouched`() {
-        // A matcher that throws (a supertype walk hitting an unresolvable type, say) fails inside
-        // ByteBuddy's own transform call, outside the module's try/catch, so the listener is the
-        // only thing that sees it. The class must still define, with no advice woven.
         val throwingModule =
             object : EndpointModule {
                 override val name: String = "throwing-matcher"
@@ -283,8 +275,6 @@ class EndpointInstrumentationTest {
             }
         val router = install(EndpointRegistry(), listOf(recordingModule), "com.example.framework.FakeRouter")
 
-        // A Spring CGLIB proxy of the router: named after it, so a matcher on the name or on an
-        // inherited annotation would take it, and woven twice would count every call twice.
         net.bytebuddy
             .ByteBuddy()
             .subclass(router.javaClass)
@@ -313,18 +303,11 @@ class EndpointInstrumentationTest {
         assertTrue(bootModule.canRead(seamModule))
     }
 
-    /**
-     * Drives the staging seam through a real transform, which the `PendingDeclarations` unit
-     * tests cannot: they call begin/commit/discard by hand, so nothing there would notice if
-     * [EndpointInstrumentation] stopped calling them.
-     */
     @Test
     fun `an endpoint a module declares from its transform is registered once the class is woven`() {
         val registry = EndpointRegistry()
         install(registry, listOf(DeclaringModule()), "com.example.framework.FakeRouter")
 
-        // This one would also pass with no staging at all. It is here to catch commit being
-        // dropped from the listener, which would leave the endpoint staged and never declared.
         assertEquals("/declared-in-transform", registry.endpoints().single().verbatimTemplate)
         assertEquals(0, installedEndpointInstrumentation!!.pendingDeclarationCount(), "nothing is left staged on this thread")
     }
@@ -367,8 +350,6 @@ class EndpointInstrumentationTest {
         val registry = EndpointRegistry()
         install(registry, listOf(DeclaringModule(throwAfterDeclaring = true)), "com.example.framework.FakeRouter")
 
-        // The lambda catches the throwable and hands the builder back, so the transform succeeds
-        // and the listener commits. Without the rollback, the half-read route list lands anyway.
         assertTrue(registry.endpoints().isEmpty(), "a half-read route list is worse than none")
     }
 
@@ -773,12 +754,6 @@ class EndpointInstrumentationTest {
         assertTrue(registry.disabledModules().isEmpty(), "${registry.disabledModules()}")
     }
 
-    /**
-     * Another agent's retransformation hands this tier the bytes from before it ran, so its advice
-     * has to be woven in again or the class loses it. The module's transform runs a second time,
-     * which also shows the transformer is retransformation-capable: the JVM calls no other kind on
-     * a retransformation.
-     */
     @Test
     fun `a retransformed class keeps counting through its advice and declares nothing again`() {
         val registry = EndpointRegistry()
@@ -822,12 +797,6 @@ class EndpointInstrumentationTest {
         assertEquals(1L, byId.getValue(hitId).hitsTotal, "the other module's advice was woven again")
     }
 
-    /**
-     * A module weaving a retransformed class is handed a description of the bytes passed in, which
-     * are the bytes its advice goes into, not of the loaded class. Here an earlier agent adds an
-     * annotation to a method on the retransformation, which only a description of those bytes
-     * shows.
-     */
     @Test
     fun `a module weaving a retransformed class sees the bytes passed in, not the loaded class`() {
         val instrumentation = ByteBuddyAgent.install()
@@ -875,11 +844,6 @@ class EndpointInstrumentationTest {
         assertEquals(listOf(false, true), seen, "the second description is of the annotated bytes")
     }
 
-    /**
-     * A transformer that is not retransformation-capable runs before every one that is, so one
-     * registered after this tier's still receives the bytes without the advice: the class file, or
-     * a JaCoCo agent's output when the test JVM runs one.
-     */
     @Test
     fun `a transformer registered after this tier that is not retransformation-capable runs before it`() {
         val instrumentation = ByteBuddyAgent.install()
@@ -923,21 +887,12 @@ class EndpointInstrumentationTest {
     }
 }
 
-/**
- * Declares one endpoint from inside its transform callback, the shape of a module that reads its
- * routes off a class's own annotations. [failRewrite] makes ByteBuddy's `make()` throw after the
- * callback returns; [throwAfterDeclaring] makes the callback itself throw once it has declared, on
- * every transform or, with [throwOnlyAfterFirst], on every transform after the first. Each
- * transform declares under its own key and template, so a second declaration would show as a
- * second endpoint.
- */
 private class DeclaringModule(
     private val failRewrite: Boolean = false,
     private val throwAfterDeclaring: Boolean = false,
     private val throwOnlyAfterFirst: Boolean = false,
-    // Unique per instance. A module this test disables through `moduleFailed` stays disabled for
-    // the life of the JVM, and the test JVM is shared, so a fixed name would silence the module
-    // for every later test that used it and make their assertions pass for the wrong reason.
+    // The name is unique per instance: a module disabled through `moduleFailed` stays disabled for the life
+    // of the shared test JVM.
     private val moduleName: String = "declaring-${System.nanoTime()}",
     private val template: String = "/declared-in-transform",
     private val failure: Throwable = IllegalStateException("module gave up after declaring"),
@@ -950,7 +905,6 @@ private class DeclaringModule(
 
     override val weaveFailureLeavesNothingPartial: Boolean = optOutOfWeaveFailure
 
-    /** How many times [transform] has run. */
     val transforms = AtomicInteger()
 
     override fun typeMatcher(): ElementMatcher<in TypeDescription> = named("com.example.framework.FakeRouter")
@@ -989,7 +943,6 @@ private class DeclaringModule(
     override fun declare(frameworkObject: Any) = Unit
 }
 
-/** Throws from its type matcher on every fixture-framework class it is asked about, and counts the asks. */
 private class ThrowingMatcherModule(
     override val name: String,
 ) : EndpointModule {
@@ -1014,7 +967,6 @@ private class ThrowingMatcherModule(
     override fun declare(frameworkObject: Any) = Unit
 }
 
-/** Matches nothing and runs [onBeforeManifest] where a manifest is about to be built. */
 private class ManifestHookModule(
     override val name: String,
     private val onBeforeManifest: () -> Unit,
@@ -1034,7 +986,6 @@ private class ManifestHookModule(
     ) = onBeforeManifest()
 }
 
-/** Fails inside ByteBuddy's `make()`, after the transform callback has already returned. */
 private class ThrowingAsmVisitorWrapper(
     private val failure: Throwable,
 ) : AsmVisitorWrapper {
@@ -1054,7 +1005,6 @@ private class ThrowingAsmVisitorWrapper(
     ): ClassVisitor = throw failure
 }
 
-/** [bytes] with a runtime-visible annotation of [annotationDescriptor] added to [methodName]. */
 private fun annotateMethod(
     bytes: ByteArray,
     methodName: String,
@@ -1087,10 +1037,6 @@ private fun annotateMethod(
     return writer.toByteArray()
 }
 
-/**
- * Attaches one hook to [matcher] on [className] and declares an endpoint from its transform, the
- * shape of a module whose hook may or may not find its method.
- */
 private class HookingModule(
     private val className: String,
     private val hooks: List<Pair<String, ElementMatcher<in MethodDescription>>>,

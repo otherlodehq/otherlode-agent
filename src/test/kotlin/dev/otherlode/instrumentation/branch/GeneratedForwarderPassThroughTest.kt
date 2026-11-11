@@ -9,12 +9,6 @@ import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-/**
- * Proves the generated-forwarder pass-through: a call into a `JVM_OVERLOADS`, `MULTIFILE_FACADE` or
- * `DEFAULT_IMPLS` forwarder records edges to what the forwarder calls, and a cross-class one also
- * names its owner's `<clinit>`, as any cross-class pass-through does. The forwarder's
- * own edges stay as its bytecode names them.
- */
 class GeneratedForwarderPassThroughTest {
     private companion object {
         const val TARGET = "com.example.target"
@@ -34,7 +28,6 @@ class GeneratedForwarderPassThroughTest {
             ?.resolve()
     }
 
-    /** Leaves out the synthetic methods these fixtures hold, as the method tier does. */
     private val probedByMethodTier: (String, String) -> Boolean = { name, _ -> !name.endsWith("\$default") && !name.startsWith("access\$") }
 
     private fun analyze(
@@ -176,11 +169,6 @@ class GeneratedForwarderPassThroughTest {
         )
     }
 
-    /**
-     * A class shaped as kotlinc compiles `@JvmOverloads fun f(a: Int, b: String = "x")` plus a
-     * method `g` that calls the overload `f(1)`, as Java code would: the full `f`, its synthetic
-     * `f$default` twin with one mask test, and the overload forwarding to the twin.
-     */
     private fun sameClassOverloads(owner: String): ByteArray {
         val full = "(ILjava/lang/String;)Ljava/lang/String;"
         val twinDescriptor = "(L$owner;ILjava/lang/String;ILjava/lang/Object;)Ljava/lang/String;"

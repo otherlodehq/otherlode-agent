@@ -6,17 +6,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Keeps a change from weaving every class while the agent sees less in them. [CodeSizeLimitsTest]
- * and `WovenClassVerificationTest` check that corpus classes weave, not how much the agent
- * identifies. This test weaves every benchmark corpus through the offline transformer, counts what
- * the registry built, and compares the counts with `visibility-baseline.txt`.
- *
- * A drop in a floor metric or a rise in a ceiling metric fails. Any other change prints a note.
- * `-PupdateVisibilityBaseline` rewrites the baseline source file, so an intended change shows as a
- * reviewed diff. The counts come from `ProbeRegistry.manifest`, which holds every registered class
- * because the offline registry does not withhold unconfirmed classes.
- */
 class VisibilityFloorTest {
     @Test
     fun `weaving the benchmark corpora sees at least as much as the baseline`() {

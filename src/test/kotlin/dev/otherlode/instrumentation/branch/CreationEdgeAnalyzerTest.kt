@@ -12,11 +12,6 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/**
- * Proves [BranchSiteAnalyzer]'s creation-edge facts on real kotlinc and javac output: the kind and
- * captured count of each creation edge, which methods are lambda bodies, and the class's source
- * file. Also proves the interface each creation edge names.
- */
 class CreationEdgeAnalyzerTest {
     private val includePackages = listOf("com.example.target")
 
@@ -42,7 +37,6 @@ class CreationEdgeAnalyzerTest {
             methodFilter = methodFilter,
         )
 
-    /** Leaves out `withDefault$default`, as the method tier does, so the analyser treats it as a pass-through. */
     private fun kotlinTarget() = analyze("build/classes/kotlin/test", "CreationEdgeTarget") { name, _ -> !name.endsWith("\$default") }
 
     private fun javaTarget() = analyze("build/classes/java/test", "CreationEdgeJavaTarget") { name, _ -> name != "<clinit>" }
@@ -50,7 +44,6 @@ class CreationEdgeAnalyzerTest {
     private val kotlinOwner = "com.example.target.CreationEdgeTarget"
     private val javaOwner = "com.example.target.CreationEdgeJavaTarget"
 
-    /** The interface kotlinc gives a lambda of type `(Int) -> Int`. */
     private val function1 = "kotlin.jvm.functions.Function1"
 
     @Test

@@ -14,11 +14,6 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertTrue
 
-/**
- * Proves [OtherlodeTestCollector.awaitSettled] against a real [ExportScheduler] whose flushes split
- * into several delta batches. Each cycle exercises fresh methods after the scheduler has started
- * and expects every one to be hit once the wait returns.
- */
 class SettledWaitEndToEndTest {
     private var installedTransformer: ResettableClassFileTransformer? = null
     private var installedOtherlode: OtherlodeInstrumentation? = null

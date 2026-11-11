@@ -13,7 +13,6 @@ import kotlin.test.Test
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/** A retired class loader must stay collectible after the module's matcher has matched a class in it. */
 class JaxRsModuleLoaderLeakTest {
     private class DefiningLoader(
         parent: ClassLoader,

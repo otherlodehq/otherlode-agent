@@ -26,40 +26,13 @@ import kotlin.test.assertEquals
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
-/**
- * Drives [SpringWebMvcModule.declare] against real `RouterFunction` objects, one predicate shape
- * per test, to pin what each arm of the predicate walk resolves a route's identity to.
- *
- * [SpringWebMvcModuleTest] proves the same walk end to end through a real `DispatcherServlet`, but
- * it can only reach the predicate shapes an application would normally build. The combinations
- * here (`and` of two paths, a negated predicate, a predicate the walk cannot interpret, one
- * reporting no verbs) are all legal for any `RequestPredicate` implementation to produce, and
- * several of them no `RequestPredicates` factory can: `RequestPredicates.methods()` asserts its
- * argument is non-empty, so only a predicate written by hand can hand the visitor an empty verb
- * set. Checked against the 5.3.39 sources, whose `RequestPredicate.accept` default body is
- * `visitor.unknown(this)` and whose `HttpMethodPredicate` carries that assertion.
- *
- * [SpringWebMvcModule.declare] is called directly rather than through the woven
- * `afterPropertiesSet` advice on purpose. Weaving needs `RouterFunctionMapping` to load after
- * `EndpointInstrumentation.install`, which can happen only once per JVM, and
- * [SpringWebMvcModuleTest] already spends that one chance; nothing here loads a handler-mapping
- * class at all. The registry still receives every route through the real seam, since
- * `install` is what puts the resolver behind `OtherlodeEndpoints.register`.
- */
 class SpringFunctionalRouteWalkTest {
     private val handler = HandlerFunction<ServerResponse> { ServerResponse.ok().build() }
 
-    /** A predicate whose `accept` is Spring's own default body, which reports it as unrecognisable. */
     private class OpaquePredicate : RequestPredicate {
         override fun test(request: ServerRequest): Boolean = true
     }
 
-    /**
-     * A predicate that calls `Object`'s own methods on the visitor before describing itself.
-     * A [java.lang.reflect.Proxy] receives those calls like any other, and the handler has to
-     * answer them: returning null for `hashCode` would raise a `NullPointerException` inside the
-     * framework's own `accept`.
-     */
     private class ChattyPredicate : RequestPredicate {
         override fun test(request: ServerRequest): Boolean = true
 
@@ -72,7 +45,6 @@ class SpringFunctionalRouteWalkTest {
         }
     }
 
-    /** A router function that calls `Object`'s own methods on the router visitor, then one route. */
     private class ChattyRouterFunction(
         private val handler: HandlerFunction<ServerResponse>,
     ) : RouterFunction<ServerResponse> {
@@ -87,19 +59,16 @@ class SpringFunctionalRouteWalkTest {
         }
     }
 
-    /** A router function with Spring's own default `accept`, which reports itself as unrecognisable. */
     private class OpaqueRouterFunction : RouterFunction<ServerResponse> {
         override fun route(request: ServerRequest): Optional<HandlerFunction<ServerResponse>> = Optional.empty()
     }
 
-    /** A predicate that describes itself to the visitor not at all, leaving the operand stack empty. */
     private class SilentPredicate : RequestPredicate {
         override fun test(request: ServerRequest): Boolean = true
 
         override fun accept(visitor: RequestPredicates.Visitor) = Unit
     }
 
-    /** A predicate that constrains the verb to nothing at all, which no `RequestPredicates` factory builds. */
     private class NoVerbPredicate : RequestPredicate {
         override fun test(request: ServerRequest): Boolean = true
 
@@ -128,9 +97,6 @@ class SpringFunctionalRouteWalkTest {
 
         val declared = declaredIdentities(route(bothVerbs.and(path("/report")), handler))
 
-        // No request can be both verbs at once, so this route is unreachable whichever verb the
-        // walk keeps. Pinned to say the walk resolves it to one identity rather than to none or
-        // to both, which is what a collector would have to make sense of.
         assertEquals(setOf("GET /report"), declared)
     }
 
@@ -271,11 +237,6 @@ class SpringFunctionalRouteWalkTest {
 
     @Test
     fun `declare ignores an object from the application's own loader that is not a RouterFunction`() {
-        // Any object whose loader can see `RouterFunction`, so the walk gets as far as its own
-        // type guard. The guard sits after that `Class.forName`, so an object from a loader with
-        // no Spring at all (a `String`, on the bootstrap loader) raises `ClassNotFoundException`
-        // instead of returning quietly. Unreachable through `DeclareRouterFunctionsAdvice`, whose
-        // only argument is `RouterFunctionMapping`'s own `routerFunction` field.
         val declared = declaredIdentities(ServerResponse.ok().build())
 
         assertEquals(emptySet(), declared)
@@ -297,19 +258,10 @@ class SpringFunctionalRouteWalkTest {
         assertSame(builder, returned, "an unmatched type must be handed back unchanged, not visited")
     }
 
-    /** A type no [SpringWebMvcModule.typeMatcher] name matches, for the unmatched-transform case. */
     private class UnrelatedType
 
-    /**
-     * Every `"<verb> <template>"` a fresh [SpringWebMvcModule] declares for [frameworkObject],
-     * through a registry of its own so one test's routes are never another's.
-     */
     private fun declaredIdentities(frameworkObject: Any): Set<String> = declaredIdentities { frameworkObject }
 
-    /**
-     * As above, with [frameworkObject] built once the module is installed, for a router function
-     * whose own classes the module weaves as they load.
-     */
     private fun declaredIdentities(frameworkObject: () -> Any): Set<String> {
         val instrumentation = ByteBuddyAgent.install()
         val registry = EndpointRegistry()

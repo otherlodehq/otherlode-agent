@@ -12,7 +12,6 @@ import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/** A provider whose constructor throws, so `ServiceLoader` fails to instantiate it. */
 class ThrowingModule : EndpointModule {
     init {
         throw IllegalStateException("cannot construct")

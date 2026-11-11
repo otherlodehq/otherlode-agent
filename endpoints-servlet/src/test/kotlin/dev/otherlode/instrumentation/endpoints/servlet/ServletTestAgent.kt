@@ -5,13 +5,7 @@ import dev.otherlode.registry.EndpointRegistry
 import net.bytebuddy.agent.builder.ResettableClassFileTransformer
 import java.lang.instrument.Instrumentation
 
-/**
- * A real `-javaagent` entry point for the servlet tests, installed at JVM startup. The container
- * loads `HttpServlet` before any test method runs, so a self-attach inside a test would be too late.
- *
- * [endpointRegistry] is the one registry of the test JVM. [flush] does what the agent does before it
- * builds a manifest, on a thread of its own.
- */
+// The container loads HttpServlet before any test method runs, so a self-attach inside a test is too late.
 object ServletTestAgent {
     lateinit var endpointRegistry: EndpointRegistry
         private set
@@ -29,7 +23,6 @@ object ServletTestAgent {
         endpointTransformer = endpointInstrumentation.install(inst)
     }
 
-    /** Runs the agent's pre-manifest step on a new thread and returns that thread's name. */
     fun flush(): String {
         var threadName = ""
         val thread =

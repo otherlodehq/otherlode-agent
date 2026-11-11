@@ -13,7 +13,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/** How the scheduler stamps `classListingBlind` on a run's manifests (ADR 0085). */
 class ExportSchedulerClassListingBlindTest {
     private val config = AgentConfig.parse("serviceName=checkout,serviceInstanceId=instance-1")
     private val resource = TestResources.forConfig(config)

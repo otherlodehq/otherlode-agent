@@ -132,7 +132,7 @@ class BranchInstrumentationTest {
         repeat(1) { method.invoke(target, 0) }
         repeat(2) { method.invoke(target, 1) }
         repeat(3) { method.invoke(target, 2) }
-        repeat(4) { method.invoke(target, 99) } // falls to default
+        repeat(4) { method.invoke(target, 99) }
 
         val manifest = registry.manifest(ResourceAttributes("test", null, "instance-1", null, "run-1"))
         val branchIndices =
@@ -268,9 +268,6 @@ class BranchInstrumentationTest {
 
     @Test
     fun `the layout hash of an existing fixture is unchanged by adding branch keys`() {
-        // Recomputes ProbeLayoutHash.of() with the same inputs OtherlodeInstrumentation feeds it for
-        // BranchTarget, from a fresh read of its bytecode, and pins the result: adding branch_key
-        // must not perturb branch_index, probe_index or slot allocation.
         val bytes = File("build/classes/java/test/com/example/target/BranchTarget.class").readBytes()
         val pool =
             TypePool.Default.of(

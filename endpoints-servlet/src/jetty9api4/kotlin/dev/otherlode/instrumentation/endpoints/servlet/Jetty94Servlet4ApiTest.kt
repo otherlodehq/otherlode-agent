@@ -6,11 +6,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Spring Boot 2.7 on Jetty 9.4 ships the Servlet 4.0 API jar under a container that implements
- * Servlet 3.1. `getHttpServletMapping` links, and answers with the API's default: empty names and
- * no match type. The module is off, and says so, before it declares anything.
- */
 class Jetty94Servlet4ApiTest : ServletTestSupport() {
     @Test
     fun `the API default mapping disables the module with LINKAGE_ERROR and declares nothing`() {

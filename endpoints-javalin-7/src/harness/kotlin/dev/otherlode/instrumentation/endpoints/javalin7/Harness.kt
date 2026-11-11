@@ -11,15 +11,11 @@ import java.net.http.HttpResponse
 import java.time.Duration
 import kotlin.test.assertTrue
 
-/**
- * Runs [block] with both Javalin modules installed on a registry of its own, as an application of
- * either major finds them in the agent, then asserts neither module switched itself off unless
- * [expectNoneDisabled] is false.
- */
 fun <T> withModules(
     expectNoneDisabled: Boolean = true,
     block: (EndpointRegistry) -> T,
 ): T {
+    // A fresh client per test, so no request reuses a pooled connection that an earlier server on the same port closed.
     client = newClient()
     val instrumentation = ByteBuddyAgent.install()
     val registry = EndpointRegistry()
@@ -39,11 +35,6 @@ private var client = newClient()
 
 private fun newClient(): HttpClient = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()
 
-/**
- * Sends one request to a server on [port] and returns the status code. [withModules] replaces the client,
- * so a server on a port an earlier test used is never sent a request on a connection that server
- * closed.
- */
 fun send(
     port: Int,
     method: String,
@@ -59,7 +50,6 @@ fun send(
     return client.send(request.build(), HttpResponse.BodyHandlers.discarding()).statusCode()
 }
 
-/** The hit count of every endpoint that has one, keyed `"<verb> <template>"`. */
 fun hits(registry: EndpointRegistry): Map<String, Long> {
     val endpoints = registry.endpoints().associateBy { it.endpointId }
     return registry
@@ -68,5 +58,4 @@ fun hits(registry: EndpointRegistry): Map<String, Long> {
         .associate { delta -> endpoints.getValue(delta.endpointId).let { "${it.verb} ${it.routeTemplate}" } to delta.hitsTotal }
 }
 
-/** Every declared or discovered endpoint, as `"<verb> <template>"`. */
 fun identities(registry: EndpointRegistry): Set<String> = registry.endpoints().map { "${it.verb} ${it.routeTemplate}" }.toSet()

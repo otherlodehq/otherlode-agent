@@ -14,7 +14,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/** Pins how [ReferencedClassLocator] reads where a referenced class lives, without loading it. */
 class ReferencedClassLocatorTest {
     private val tempDir: Path = createTempDirectory("otherlode-locator")
 
@@ -70,7 +69,6 @@ class ReferencedClassLocatorTest {
     fun `a java name no loader can find is dropped, as one an agent defined in the JDK's packages`() {
         val loader = URLClassLoader(emptyArray(), ClassLoader.getPlatformClassLoader())
 
-        // JaCoCo defines its runtime as java.lang.$JaCoCo, with no class file anywhere.
         assertNull(ReferencedClassLocator().locate("java.lang.\$JaCoCo", loader))
     }
 
@@ -110,15 +108,11 @@ class ReferencedClassLocatorTest {
 
     @Test
     fun `a jrt resource is dropped even when the platform loader does not provide it`() {
-        // A JDK module defined to the application loader, such as jdk.compiler, answers with a
-        // jrt: URL the platform loader cannot see.
         assertNull(ReferencedClassLocator.classify("jrt:/jdk.compiler/com/sun/tools/javac/Main.class", providedByPlatform = false))
     }
 
     @Test
     fun `a jar resource for a name the platform loader also provides is dropped`() {
-        // A loader that answers for java.lang.String out of a jar of its own, as a loader that
-        // does not delegate first could.
         val loader =
             object : ClassLoader(getPlatformClassLoader()) {
                 override fun getResource(name: String): URL? =

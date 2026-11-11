@@ -13,12 +13,8 @@ import java.time.Duration
 import java.util.concurrent.TimeUnit
 import kotlin.test.assertTrue
 
-/**
- * Runs [block] with [module] installed on a registry of its own, then asserts the module did not
- * switch itself off unless [expectNotDisabled] is false. The endpoint seam keeps a module it
- * switched off off for the rest of the JVM, so a test that wants a walk to fail calls the module's
- * `declare` itself.
- */
+// The seam keeps a module it switched off disabled for the rest of the JVM, so a test that wants a walk to fail
+// calls the module's declare itself.
 fun <T> withModule(
     module: VertxWebModule = VertxWebModule(),
     expectNotDisabled: Boolean = true,
@@ -34,18 +30,17 @@ fun <T> withModule(
         return result
     } finally {
         endpointInstrumentation.uninstall(instrumentation, transformer)
+        // A later test's server can take a port an earlier one used, so drop the connections this client kept.
         client = newClient()
     }
 }
 
-/** A running server on a free port. */
 class Server(
     val vertx: Vertx,
     val router: Router,
     val port: Int,
 )
 
-/** Starts a server on a free port for the router [build] fills in, runs [block] and stops the server. */
 fun <T> serve(
     build: (Vertx, Router) -> Unit = { _, _ -> },
     block: Server.() -> T,
@@ -77,11 +72,6 @@ private var client = newClient()
 
 private fun newClient(): HttpClient = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()
 
-/**
- * Sends one request to a server on [port] and returns the status code. The client keeps its
- * connections between requests, and [withModule] replaces it so a later test's server on a port an
- * earlier one used is never sent a request on a connection that server closed.
- */
 fun send(
     port: Int,
     method: String,
@@ -97,7 +87,6 @@ fun send(
             HttpResponse.BodyHandlers.discarding(),
         ).statusCode()
 
-/** The hit count of every endpoint that has one, keyed `"<verb> <template>"`. */
 fun hits(registry: EndpointRegistry): Map<String, Long> {
     val endpoints = registry.endpoints().associateBy { it.endpointId }
     return registry
@@ -106,5 +95,4 @@ fun hits(registry: EndpointRegistry): Map<String, Long> {
         .associate { delta -> endpoints.getValue(delta.endpointId).let { "${it.verb} ${it.routeTemplate}" } to delta.hitsTotal }
 }
 
-/** Every declared or discovered endpoint, as `"<verb> <template>"`. */
 fun identities(registry: EndpointRegistry): Set<String> = registry.endpoints().map { "${it.verb} ${it.routeTemplate}" }.toSet()

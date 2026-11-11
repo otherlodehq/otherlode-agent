@@ -9,11 +9,6 @@ import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-/**
- * Reads the sub-interface `$DefaultImpls` forwarders kotlinc writes under `-jvm-default=disable` at
- * the build's own release, which writes them on every release. The compiler matrix covers each
- * release's default mode and the stubs.
- */
 class ValueClassDefaultImplsTest {
     private companion object {
         const val PACKAGE = "Lcom/example/target/jvmdefaultdisable"

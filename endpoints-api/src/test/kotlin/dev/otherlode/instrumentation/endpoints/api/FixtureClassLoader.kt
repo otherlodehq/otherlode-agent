@@ -3,17 +3,8 @@ package dev.otherlode.instrumentation.endpoints.api
 import java.net.URL
 import java.net.URLClassLoader
 
-/**
- * Loads [TARGET_CLASS_NAME] itself, instead of delegating to the parent. This way,
- * [dev.otherlode.instrumentation.endpoints.api.fixture.PingTarget] is defined for
- * the first time only after the transformer under test is installed.
- *
- * Everything else, including [dev.otherlode.instrumentation.endpoints.api.fixture.PingAdvice],
- * still resolves through the parent as normal, which matters here specifically: the advice class
- * shares a package with the target class, and its own static field is what the test reads back
- * after invoking the target, so it must resolve to the exact same class object the test itself
- * sees, not a second copy this loader defined on its own.
- */
+// PingTarget is defined here so that it is first defined after the transformer under test is installed.
+// PingAdvice resolves through the parent, so the test reads the same class object the target writes to.
 class FixtureClassLoader(
     urls: Array<URL>,
     parent: ClassLoader,

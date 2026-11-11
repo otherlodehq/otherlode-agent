@@ -15,12 +15,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
-/**
- * Drives [BranchProbeAsmVisitorWrapper] with a swapped ordinal and with per-method slot bases, on
- * `BranchTarget`, whose `classify` is one `IFLE` (javac's spelling of `value > 0`). A swapped
- * ordinal stands for a received jump that tests the opposite of the class file's, so its taken edge
- * must count the class file's fall-through slot and its fall-through the taken slot.
- */
 class BranchProbePolarityRewriterTest {
     private val loads = AtomicInteger()
 
@@ -75,7 +69,6 @@ class BranchProbePolarityRewriterTest {
     fun `an unswapped jump counts its taken edge at offset zero`() {
         val (loaded, counts) = load(capacity = 2)
 
-        // IFLE is taken for -5 and falls through for 5 and 6.
         classify(loaded, -5, 5, 6)
 
         assertEquals(listOf(1L, 2L), counts.toList())
@@ -92,9 +85,6 @@ class BranchProbePolarityRewriterTest {
 
     @Test
     fun `a swapped jump with an unprobed outcome leaves the class file's unprobed outcome without a probe`() {
-        // Offset 0 unprobed in the class file's numbering: its taken edge gets no probe and its
-        // fall-through the one slot. Swapped, the received fall-through is the class file's taken
-        // edge, so it is the received taken edge that counts.
         val (loaded, counts) =
             load(
                 capacity = 1,
@@ -109,9 +99,6 @@ class BranchProbePolarityRewriterTest {
 
     @Test
     fun `a swapped jump with the class file's fall-through unprobed counts only the received fall-through`() {
-        // Offset 1 unprobed in the class file's numbering: its fall-through gets no probe and its
-        // taken edge the one slot. Swapped, the class file's taken edge is the received
-        // fall-through, so the received taken edge goes uncounted.
         val (loaded, counts) =
             load(
                 capacity = 1,
@@ -126,8 +113,6 @@ class BranchProbePolarityRewriterTest {
 
     @Test
     fun `per-method slot bases place each method's slots where the analysis put them, whatever order the methods arrive in`() {
-        // classify's two slots go after classifyDense's four and classifySparse's three, although
-        // classify is the first method the rewriter meets.
         val slots =
             mapOf(
                 "classifyDense" to BranchProbeAsmVisitorWrapper.MethodSlots(0, 4),
@@ -148,9 +133,6 @@ class BranchProbePolarityRewriterTest {
 
     @Test
     fun `a method asking for a slot count other than its own fails the rewrite even when the class total matches`() {
-        // classify wants 2 and classifyDense 4. Sized as 3 and 3, the total of 6 matches, but
-        // classify would leave a slot of its own unused and classifyDense would ask for more than
-        // its run.
         val slots =
             mapOf(
                 "classify" to BranchProbeAsmVisitorWrapper.MethodSlots(0, 3),

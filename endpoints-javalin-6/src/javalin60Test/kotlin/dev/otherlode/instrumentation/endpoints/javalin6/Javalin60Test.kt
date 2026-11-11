@@ -6,10 +6,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Javalin 6.0.0 and 6.0.1 match [Javalin6Module]'s shape but keep `Endpoint.getHandler()` internal,
- * so the module switches itself off at the first registration and says so.
- */
 class Javalin60Test {
     @Test
     fun `Javalin 6_0 disables the module with a LINKAGE_ERROR and keeps serving`() {

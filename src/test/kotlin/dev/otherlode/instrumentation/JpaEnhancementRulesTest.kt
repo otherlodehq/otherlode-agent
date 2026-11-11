@@ -11,11 +11,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
-/**
- * Pins the edges of ADR 0079's rules on forged class files: every rule needs its enhancer's
- * marker interface, the line-table guards keep a hand-written look-alike, and a check that cannot
- * read what it needs leaves the method the adopter's.
- */
 class JpaEnhancementRulesTest {
     private companion object {
         const val OWNER = "forged/Entity"
@@ -26,7 +21,6 @@ class JpaEnhancementRulesTest {
         const val STATE_MANAGER = "Lorg/apache/openjpa/enhance/StateManager;"
     }
 
-    /** One forged method: its [name] and [descriptor], whether it has a line-number table, and its body. */
     private class Method(
         val name: String,
         val descriptor: String,
@@ -383,7 +377,6 @@ class JpaEnhancementRulesTest {
         assertEquals(false, JpaEnhancement.readsWeavedState(other, field("_persistence_listener")))
     }
 
-    /** A method whose first jump comes before its line-number table, then a jump after it, in a class with [interfaces]. */
     private fun weavedBytes(
         interfaces: List<String>,
         lined: Boolean,
@@ -467,10 +460,6 @@ class JpaEnhancementRulesTest {
         assertEquals(listOf(true, false), droppedOrdinals(weavedBytes(listOf(PERSISTENCE_WEAVED), lined = true, call)))
     }
 
-    /**
-     * An OpenJPA-style `writeObject`: a prologue that stores `pcSerializing()` in [prologueSlot], an
-     * adopter check on argument 1 at line 20, and [check] before the return.
-     */
     private fun writeObjectBytes(
         interfaces: List<String>,
         prologueSlot: Int = 3,

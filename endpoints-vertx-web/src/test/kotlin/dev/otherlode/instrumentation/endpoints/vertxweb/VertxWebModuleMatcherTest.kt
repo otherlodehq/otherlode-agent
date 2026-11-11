@@ -6,7 +6,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/** Pins which classes [VertxWebModule] accepts and what it asks of the agent. */
 class VertxWebModuleMatcherTest {
     private fun type(name: String): TypeDescription = TypeDescription.Latent(name, 0, null)
 

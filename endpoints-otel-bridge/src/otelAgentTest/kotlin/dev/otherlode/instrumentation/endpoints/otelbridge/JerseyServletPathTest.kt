@@ -8,11 +8,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Jersey served by a servlet mapped under `/api` with a wildcard, in the context path `/shop`,
- * under the OpenTelemetry Java agent. OpenTelemetry reports the route as `/shop/api/users`, with the context
- * path and the servlet mapping both in front of the resource's `/users`.
- */
 class JerseyServletPathTest {
     @Test
     fun `a JAX-RS request under a context path and a servlet mapping is counted once and the bridge adds no endpoint`() {

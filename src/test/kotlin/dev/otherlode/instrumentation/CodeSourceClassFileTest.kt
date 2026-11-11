@@ -31,12 +31,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/**
- * A woven class's own class file is read from the code source of its protection domain, and from its
- * loader only when that names nothing readable.
- */
 class CodeSourceClassFileTest {
-    /** Warms on the calling thread, so a jar shape is read on its first call; the warm-up tests use [ManualWarmer]. */
     private val reader = CodeSourceClassFile(Executor { it.run() })
 
     private class CountingLoader : ClassLoader(getPlatformClassLoader()) {
@@ -112,7 +107,6 @@ class CodeSourceClassFileTest {
         return jar
     }
 
-    /** A URL for [spec] whose protocol the JDK has no handler for; Spring Boot's loader registers one in a real launch. */
     private fun withoutOpening(spec: String): URL =
         URL(
             null,
@@ -264,12 +258,6 @@ class CodeSourceClassFileTest {
         assertEquals(false, opened)
     }
 
-    /**
-     * Records the threads that parse and open URLs through it. With a [gate], an open waits for the
-     * gate before answering, which holds a warm-up on its own thread until the read that started it
-     * has answered: a warm-up that finishes first marks the key warm, and that read then opens the
-     * location itself.
-     */
     private class RecordingHandler(
         private val bytes: ByteArray?,
         private val gate: CountDownLatch? = null,

@@ -6,10 +6,6 @@ import java.util.IdentityHashMap
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-/**
- * Runs the same definition-confirmation scenarios against [ProbeRegistry] and [EndpointRegistry],
- * so the two state machines cannot drift apart. Each registry is driven through its own seams.
- */
 class DefinitionConfirmationContractTest {
     private val name = "com.example.Foo"
 

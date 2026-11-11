@@ -5,23 +5,12 @@ import dev.otherlode.instrumentation.endpoints.EndpointModules
 import java.io.File
 import java.util.zip.ZipFile
 
-/**
- * A named body of class files that [BranchSiteAnalyzerBenchmark] analyses. The build passes each
- * corpus in as system properties, and [load] reads it once.
- *
- * A corpus holds one or more class sets. A class set is one module's compiled output or one jar.
- * A class resolves other classes only inside its own class set, as it would through its own class
- * loader at transform time. The `scala` corpus needs this: its two modules declare classes with
- * the same names.
- */
 class BenchmarkCorpus(
     val name: String,
     val classSets: List<ClassSet>,
 ) {
-    /** The number of classes across every class set. */
     val classCount: Int get() = classSets.sumOf { it.classes.size }
 
-    /** The fewest package prefixes that cover every class in the corpus. */
     val includePackages: List<String> =
         classSets
             .flatMap { it.classes.keys }
@@ -34,12 +23,6 @@ class BenchmarkCorpus(
                 kept
             }
 
-    /**
-     * Runs [BranchSiteAnalyzer.analyze] once over every class and hands each result to [consume].
-     * The arguments follow `OtherlodeInstrumentation.analyzeBytecode`, except that the method filter
-     * accepts every method. Each class set gets a fresh table cache on every call, as each class
-     * loader has its own cache at transform time.
-     */
     fun analyzeAll(consume: (BranchSiteAnalyzer.Analysis) -> Unit) {
         for (classSet in classSets) {
             val tableCache = BranchSiteAnalyzer.CrossClassTableCache(TABLE_CACHE_ENTRIES)
@@ -60,22 +43,14 @@ class BenchmarkCorpus(
     }
 
     companion object {
-        /**
-         * Each system property under this prefix names one class set, as
-         * `otherlode.benchmark.corpus.<corpus>.<class set>`. Its value is a path list of class
-         * directories and jars.
-         */
         const val PROPERTY_PREFIX = "otherlode.benchmark.corpus."
 
-        /** The size `OtherlodeInstrumentation` gives each class loader's table cache. */
         private const val TABLE_CACHE_ENTRIES = 2048
 
-        /** The handler interfaces the agent passes to the analyser, from the same endpoint modules. */
         private val handlerInterfaces: Set<String> by lazy {
             EndpointModules.discover().flatMapTo(sortedSetOf()) { it.handlerInterfaces }
         }
 
-        /** Reads every class set of the corpus called [name]. Fails when the build passed none. */
         fun load(name: String): BenchmarkCorpus {
             val prefix = "$PROPERTY_PREFIX$name."
             val classSets =
@@ -122,13 +97,11 @@ class BenchmarkCorpus(
             return classes
         }
 
-        /** A class the JVM would define: not a module descriptor, and not a versioned copy under `META-INF`. */
         private fun isClassEntry(path: String): Boolean =
             path.endsWith(".class") && !path.startsWith("META-INF/") && !path.endsWith("module-info.class")
     }
 }
 
-/** One class set of a [BenchmarkCorpus]: class bytes by internal name, in name order. */
 class ClassSet(
     val name: String,
     val classes: Map<String, ByteArray>,

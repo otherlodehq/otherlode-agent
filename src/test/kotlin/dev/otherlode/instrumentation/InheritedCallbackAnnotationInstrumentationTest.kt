@@ -15,11 +15,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
-/**
- * Proves that a METHOD probe's outside caller follows its own callback annotation, then one
- * inherited from a method it overrides, then an out-of-scope override, through the real transform
- * pipeline on the `inherit` fixtures.
- */
 class InheritedCallbackAnnotationInstrumentationTest {
     private companion object {
         const val PACKAGE = "com.example.target.inherit"

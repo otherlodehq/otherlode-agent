@@ -18,21 +18,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Pins the blind spot `docs/site/classes.md` describes: a class that loads while the same thread is already
- * inside another class's transform is reported nowhere, and cannot be.
- *
- * `java.lang.instrument` refuses to call a transformer while that thread is already inside
- * another transform on the same `Instrumentation`, so no transformer the agent registers is
- * handed such a class: not ByteBuddy's, and not one registered ahead of ByteBuddy's either. The
- * spy below stands in for any of them and never sees the nested class, while the class itself is
- * defined and usable. That is why the agent cannot record this case the way it records a class
- * ByteBuddy declined to transform.
- *
- * This test fails if a JDK ever starts offering these classes to the transformers of the
- * `Instrumentation` already in a transform, which is the signal that the case can be recorded
- * after all.
- */
 class DeflectedClassLoadTest {
     private companion object {
         const val OUTER = "com.example.target.BranchTarget"
@@ -46,18 +31,12 @@ class DeflectedClassLoadTest {
     private var watcher: ClassFileTransformer? = null
     private var nestedLoadTrigger: ClassFileTransformer? = null
 
-    /**
-     * Loads [NESTED] when [loadNestedFromTransform] is called, which a transformer registered ahead
-     * of this agent does from inside the transform of [OUTER]. Fixture classes are defined here
-     * rather than by the parent, so this test gets its own copies.
-     */
     private class ReentrantLoader(
         urls: Array<URL>,
         parent: ClassLoader,
     ) : URLClassLoader(urls, parent) {
         private val triggered = AtomicBoolean(false)
 
-        /** The nested class once it has loaded, so a test cannot pass on a case it never reached. */
         @Volatile
         var nested: Class<*>? = null
             private set
@@ -82,7 +61,6 @@ class DeflectedClassLoadTest {
         }
     }
 
-    /** Registers a transformer that loads [NESTED] while the thread is inside the transform of [OUTER]. */
     private fun installNestedLoadTrigger() {
         val trigger =
             object : ClassFileTransformer {
@@ -163,9 +141,6 @@ class DeflectedClassLoadTest {
 
         val loader = ReentrantLoader(arrayOf(File("build/classes/java/test").toURI().toURL()), javaClass.classLoader)
         Class.forName(OUTER, true, loader)
-        // An interface with only abstract methods: the transform sees it and finds nothing to
-        // probe, so it never registers either. It is loaded and unregistered like the deflected
-        // class, and it is not a blind spot.
         Class.forName(NOTHING_TO_PROBE, true, loader)
         assertTrue(loader.nested != null, "the nested class never loaded, so this test proved nothing")
 
@@ -186,11 +161,8 @@ class DeflectedClassLoadTest {
 
     @Test
     fun `a sweep whose include prefixes cover the JDK does not name the JDK`() {
-        // Include prefixes reaching into the JDK's own packages, ByteBuddy's, and the test
-        // runner's, whose lambdas are hidden classes on the application loader. ByteBuddy ignores
-        // the bootstrap and platform loaders and its own classes before any type matcher runs, so
-        // those classes reach no transformer by design and are not a blind spot. A sweep that
-        // only replicated the type matcher would report every one of them.
+        // ByteBuddy ignores the bootstrap and platform loaders and its own classes before any type matcher runs,
+        // so those classes reach no transformer by design and are not a blind spot.
         val registry = ProbeRegistry()
         val config = AgentConfig.parse("includePackages=java;jdk;sun;com.sun;net.bytebuddy;org.junit;org.gradle")
 
@@ -203,14 +175,9 @@ class DeflectedClassLoadTest {
                 ).unreportedClasses
                 .map { it.className }
 
-        // Only what ByteBuddy's ignore matcher turns away, which is what the sweep has to
-        // replicate. Anything on the application's own loader is fair game here: this JVM is
-        // shared with every other test and installs the agent part-way through, so Gradle's and
-        // JUnit's classes really did load unreported, and a -javaagent premain has no such window.
-        // That includes some JDK-looking names: jdk.attach and jdk.internal.jvmstat, which the
-        // attach API pulls in, sit on the app loader, so ByteBuddy offers them to transformers
-        // like anything else. java.base is the honest test of the gate, since it is always
-        // bootstrap.
+        // This JVM is shared with every other test and installs the agent part-way through, so classes on the
+        // application loader may have loaded unreported, jdk.attach and jdk.internal.jvmstat among them.
+        // java.base is always bootstrap, so it tests the gate.
         assertTrue(
             unreported.none { it.startsWith("java.lang.") || it.startsWith("java.util.") || it.startsWith("java.io.") },
             "the bootstrap loader reaches no transformer by design: $unreported",

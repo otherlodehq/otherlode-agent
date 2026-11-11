@@ -12,13 +12,6 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-/**
- * Proves generated-method marking through the real transform pipeline, on the
- * `GeneratedTarget.kt` and `RecordTarget.java` fixtures and the `-jvm-default=disable` fixture
- * module, rather than only through
- * [dev.otherlode.instrumentation.branch.BranchSiteAnalyzerTest]'s direct bytecode
- * checks.
- */
 class GeneratedMethodMarkingTest {
     private companion object {
         const val DISABLED_DEFAULT_IMPLS = "com.example.target.jvmdefaultdisable.DisabledDefaultInterface\$DefaultImpls"

@@ -12,16 +12,9 @@ import kotlin.test.assertEquals
 private const val HTTP_HANDLER = "com.sun.net.httpserver.HttpHandler"
 private const val HANDLE = "(Lcom/sun/net/httpserver/HttpExchange;)V"
 
-/**
- * Proves the forwarder table's entries on real scalac and kotlinc output: a pass-through
- * a handler can be reported as gets one entry, pointing at the one probed method it forwards to.
- */
 class HandlerForwarderAnalyzerTest {
-    /**
-     * An `HttpHandler` lambda returns void and takes an object, so scalac names no `$adapted`
-     * forwarder for one. The fixture's `Int => String` lambda does get one, so these tests name
-     * `scala.Function1` as the handler interface instead.
-     */
+    // scalac names no `$adapted` forwarder for an `HttpHandler` lambda, so these tests use
+    // `scala.Function1` as the handler interface.
     private fun analyzeScala(
         module: String,
         handlerInterfaces: Set<String>,
@@ -78,7 +71,6 @@ class HandlerForwarderAnalyzerTest {
                 ?: error("system property otherlode.fixtures.classsam.dir is not set; run tests through the root Gradle build"),
         )
 
-    /** `HandlersKt`, compiled with `-Xsam-conversions=class -Xlambdas=class`, analysed the way the method tier would. */
     private fun analyzeClassSam(handlerInterfaces: Set<String>): BranchSiteAnalyzer.Analysis =
         BranchSiteAnalyzer.analyze(
             File(classSamDir, "com/example/classsam/HandlersKt.class").readBytes(),
@@ -105,11 +97,6 @@ class HandlerForwarderAnalyzerTest {
         HANDLE,
     )
 
-    /**
-     * kotlinc marks each reference class synthetic, so the method tier never analyses one. The entry
-     * is written when the class that creates it is analysed. A reference to a private function goes
-     * through the `access$` accessor, and the entry names the function behind it.
-     */
     @Test
     fun `a Kotlin reference class for a handler interface gets an entry, written at its creator's analysis`() {
         assertEquals(
@@ -122,11 +109,6 @@ class HandlerForwarderAnalyzerTest {
         )
     }
 
-    /**
-     * The `$sam$` wrapper's `handle` only calls `Function1.invoke` on the value it holds, which is
-     * out of scope, so it reaches no probed method and keeps its own name. The lambda compiled to a
-     * class is not synthetic, so its `handle` is probed and needs no entry.
-     */
     @Test
     fun `a SAM wrapper around a function value, and a lambda compiled to a class, get no entry`() {
         val passThroughs = analyzeClassSam(setOf(HTTP_HANDLER)).handlerForwarders.map { it.className }
@@ -144,11 +126,6 @@ class HandlerForwarderAnalyzerTest {
     private val bodyClass = "com/example/target/ForwarderCreator\$1"
     private val handlerInterface = "com/example/target/Handler"
 
-    /**
-     * A creator with three same-class forwarders named by lambdas for `Handler`: one that calls `a`,
-     * one that calls `a` and `b`, and one that calls the abstract `abs`. It also creates a synthetic
-     * body class for `Handler` whose `handle` calls `a` and `b`.
-     */
     private fun creatorBytes(): ByteArray {
         val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
         writer.visit(Opcodes.V21, Opcodes.ACC_PUBLIC or Opcodes.ACC_ABSTRACT, creator, null, "java/lang/Object", null)

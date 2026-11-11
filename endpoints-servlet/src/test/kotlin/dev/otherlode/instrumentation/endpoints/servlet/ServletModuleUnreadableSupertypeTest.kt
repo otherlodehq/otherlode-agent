@@ -10,12 +10,6 @@ import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/**
- * The agent's pool resolves a supertype lazily, so a class declaring `service` whose superclass has
- * no class file fails the matcher when it reads the hierarchy. A superclass that cannot be loaded
- * means the class can never be defined; one that loads without a reachable class file is read from
- * the loaded class.
- */
 class ServletModuleUnreadableSupertypeTest {
     private class DefiningLoader(
         parent: ClassLoader,

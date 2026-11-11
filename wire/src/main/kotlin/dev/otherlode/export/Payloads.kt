@@ -19,7 +19,7 @@ enum class ProbeKind { METHOD, BRANCH, OPTIONAL_ARGUMENT, INITIALIZER_RETURNED, 
  * [ProbeKind.BRANCH] probe as the mark of the method it sits in, and on a
  * [ProbeKind.OPTIONAL_ARGUMENT] probe as its target's mark.
  *
- * - [ENUM]: an enum's `values`, `valueOf` and `getEntries`.
+ * - [ENUM]: an enum's `values`, `valueOf` and `getEntries`, and a Scala 3 enum's plumbing.
  * - [DATA_CLASS]: a data class's `componentN` and `copy`, and the `equals`, `hashCode` and
  *   `toString` the adopter did not override.
  * - [DEFAULT_IMPLS]: a `$DefaultImpls` method that only forwards to the interface's default method,
@@ -34,7 +34,7 @@ enum class ProbeKind { METHOD, BRANCH, OPTIONAL_ARGUMENT, INITIALIZER_RETURNED, 
  * - [VALUE_CLASS]: a Kotlin or Scala value class's boxed forwarders and generated `-impl` or
  *   `$extension` methods.
  * - [CASE_CLASS], [SCALA_OBJECT], [TRAIT_FORWARDER]: a Scala case class's plumbing, an object's
- *   `writeReplace`, and a trait's mixed-in forwarders.
+ *   `writeReplace` or, from Scala 2, its `readResolve`, and a trait's mixed-in forwarders.
  */
 enum class GeneratedBy {
     NONE,
@@ -130,10 +130,10 @@ enum class UnreadShape {
 }
 
 /**
- * Who sent a payload. [DeltaBatch], [ProbeManifest] and [StaticBaseline] each carry one, and one
- * process stamps the same value on all three.
+ * Who sent a payload. Every payload kind carries one, and one process stamps the same value on all of
+ * them apart from [manifestConfirmed].
  *
- * [runId] is a random id the agent makes once per process in [forNewRun]. A new process always gets
+ * [runId] is a random id the agent's `forNewRun` makes once per process. A new process always gets
  * a new one, even when [serviceInstanceId] is pinned to a name that survives a restart.
  * [serviceNamespace] is OpenTelemetry's `service.namespace`, null when unspecified. [testRun] marks
  * a JVM that runs the adopter's tests. [agentVersion] is the jar manifest's `Implementation-Version`,
@@ -215,9 +215,9 @@ data class DeltaBatch(
  *   directory are never listed. A name's [ExternalClass] entry may arrive on a later manifest, and a
  *   name that belongs to no dependency, such as one from an agent jar, never gets one.
  * - [lambdaBody]: an `invokedynamic` in the method's own class names it as the `LambdaMetafactory`
- *   implementation, directly or through scalac's boxing forwarder, under a name a compiler gives a
+ *   implementation, directly or through a pass-through in that class, under a name a compiler gives a
  *   body the source never named. A body Scala 3 lifted out of a nested class is marked by its
- *   expanded name alone. See [dev.otherlode.instrumentation.TypeMatchPolicy.isLambdaBodyName].
+ *   expanded name alone. See the agent's `TypeMatchPolicy.isLambdaBodyName`.
  * - [branchSites]: the kept branch sites, in [BranchSite.siteIndex] order.
  * - [static]: the method has `ACC_STATIC`.
  * - [parameterNames]: one name per descriptor parameter, empty when the class file names none or
@@ -290,7 +290,8 @@ enum class OutsideCallerKind {
 
     /**
      * The method, or one of its parameters, carries an annotation from the agent's list of callback
-     * annotations, directly or through meta-annotations. The type name is the annotation as written, so a
+     * annotations, directly or through meta-annotations, or the method takes one from a method it
+     * overrides. The type name is the annotation as written on the method that carries it, so a
      * composed annotation is named, not the one it carries.
      */
     CALLBACK_ANNOTATION,
@@ -477,7 +478,10 @@ data class ClassFailedToInitialize(
     val observedAt: Long,
 )
 
-/** A class the agent matched but could not instrument. It never gets a classId or any probes. */
+/**
+ * A class the agent matched but could not instrument, or whose manifest entries alone exceed the
+ * ingest limits. No payload gives it a classId or any probes.
+ */
 data class SkippedClass(
     val className: String,
     val reason: String,
@@ -507,8 +511,10 @@ enum class CallEdgeKind {
  *
  * [className], [methodName] and [methodDescriptor] name the callee as the caller's bytecode names
  * it; the agent never resolves a virtual call. [virtual] is true for `invokevirtual` and
- * `invokeinterface`, false for `invokestatic` and `invokespecial`, except that a same-class call to
- * a private, static or final target is non-virtual even when the instruction is `invokevirtual`.
+ * `invokeinterface`, false for `invokestatic` and `invokespecial`, except that a call to an in-scope
+ * target its class declares private, static or final is non-virtual even when the instruction is
+ * `invokevirtual`. A [CallEdgeKind.CREATES] edge takes it from the implementation handle's kind, or
+ * from a body class method's access.
  *
  * [kind] says whether the caller runs the callee or hands it off. An edge that takes the place of a
  * pass-through is [CallEdgeKind.CREATES] when either the edge to the pass-through or the
@@ -618,8 +624,8 @@ enum class BodyKind {
  *
  * [classListingBlind] is true on every manifest the run sends once a class the include rules admit
  * loaded from a code source the run's class listing did not read, or with no code source and a name
- * the listing lacks. It then never goes back to false. A run whose classpath the listing could not
- * read whole never sets it.
+ * the listing lacks. A class whose name or code source the agent could not read also sets it, as do
+ * more loads before the listing finished than the agent keeps. It then never goes back to false.
  *
  * [starting], [verifierRejectionsWatched], [frameworkMarkers] and [classListingBlind] are false or
  * empty from an agent that predates them.

@@ -13,12 +13,6 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/**
- * Proves which callback annotation [BranchSiteAnalyzer] says a method inherits from a method it
- * overrides, on javac output of the `inherit` fixtures. The annotation types carry the binary names
- * of the framework ones, since the list matches names. The `com.example.outside.inherit` package is
- * out of scope.
- */
 class InheritedCallbackAnnotationAnalyzerTest {
     private companion object {
         const val PACKAGE = "com/example/target/inherit"
@@ -214,7 +208,6 @@ class InheritedCallbackAnnotationAnalyzerTest {
         assertNull(finder.inheritable(listOf("mixed/OnlyBean"), emptyList(), Relation.INTERFACE_ABSTRACT, blockJaxRs = false))
     }
 
-    /** `mixed/Both` carries Bean and a JAX-RS GET, and `mixed/OnlyBean` carries Bean alone. */
     private fun mixedAnnotationBytes(internalName: String): ByteArray? {
         val carried =
             when (internalName) {
@@ -423,13 +416,6 @@ class InheritedCallbackAnnotationAnalyzerTest {
         assertEquals(ACTIVITY_INTERFACE, analysis.inheritedCallbackAnnotationOf("own", "(L$PACKAGE/Synthetic;)V"))
     }
 
-    /**
-     * `Synthetic : NearA` redeclares `m()V`, and `Synthetic$DefaultImpls.m(LSynthetic;)V` holds its
-     * default body, the shape kotlinc writes with `-jvm-default=disable`. With [activityInterface],
-     * `Synthetic` carries `@ActivityInterface` and declares `own()V`, whose default body is in
-     * `$DefaultImpls` too. With [signalOnOwn], `Synthetic` is not an activity interface, declares
-     * `own()V`, and its default body carries `@SignalMethod`, as kotlinc copies it there.
-     */
     private fun defaultImplsClasses(
         activityInterface: Boolean = false,
         signalOnOwn: Boolean = false,

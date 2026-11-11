@@ -18,12 +18,6 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
-/**
- * Pins [SizeGuard]'s constants to what the weave emits, and its arithmetic. The corpus sweep in
- * [CodeSizeLimitsTest] holds the bound above the woven length for real code; these cover the shapes
- * the corpora may not reach: switches, a probe index that needs three bytes, and a jump the weave
- * pushes past 32 KB.
- */
 class SizeGuardTest {
     private fun site(
         methodName: String = "m",
@@ -84,7 +78,6 @@ class SizeGuardTest {
         val bytes = shapesClass("com/example/huge/Shapes")
         val lengths = SizeGuard.codeLengths(bytes)
         assertEquals(setOf("<init>" to "()V", "two" to "(I)I", "table" to "(I)I", "lookup" to "(I)I", "dense" to "(I)I"), lengths.keys)
-        // iload_0, ifeq, iinc, iload_0, ireturn.
         assertEquals(1 + 3 + 3 + 1 + 1, lengths.getValue("two" to "(I)I"))
     }
 
@@ -105,10 +98,8 @@ class SizeGuardTest {
             val actual = checkNotNull(after[key])
             assertTrue(bound >= actual, "$key: bound $bound is below the woven length $actual ($length before)")
             val outcomes = analysis.sites.filter { it.methodName == key.first }.sumOf { it.outcomeCount }
-            // A one-byte index, a short entry probe and a switch's padding are what the bound rounds up.
             assertTrue(bound - actual <= SLACK_BASE + 2 * outcomes, "$key: bound $bound is far above the woven length $actual")
         }
-        // Probe indexes past 127 take a sipush, past 32767 an ldc; the dense method crosses the first.
         assertTrue(analysis.sites.count { it.methodName == "dense" } > 64)
     }
 
@@ -124,8 +115,8 @@ class SizeGuardTest {
         val wovenLength = checkNotNull(SizeGuard.codeLengths(woven)[key])
         assertTrue(originalLength <= SizeGuard.WIDENING_THRESHOLD, "the method starts at $originalLength bytes")
         // Exact growth, read from javap: the entry probe is 8 bytes (a 2-byte `ldc` of the constant, `iconst`
-        // and five for the increment), each of the two sites adds 22 (two probes of
-        // 8 and two `goto`s), and the outer site's `goto` to the far target is a `goto_w`, 2 bytes more.
+        // and five for the increment), each of the two sites adds 22 (two probes of 8 and two `goto`s),
+        // and the outer site's `goto` to the far target is a `goto_w`, 2 bytes more.
         val unwidened = originalLength + SizeGuard.ENTRY_PROBE + 2 * SizeGuard.TWO_WAY_SITE
         assertEquals(originalLength + 8 + 2 * 22 + 2, wovenLength)
         assertTrue("goto_w" in javap(woven, name), "the woven method holds no goto_w")
@@ -213,11 +204,9 @@ class SizeGuardTest {
         val (sites, _, result) = apply(List(2) { site() }, nopClass(65500))
         assertTrue(sites.all { it.dropReason == BranchDropReason.SIZE_GUARD })
         assertEquals(SizeGuardReason.CLASS_FILE_LIMIT, result.guarded.getValue(key).reason)
-        // 65525 + 11 is past the limit: the entry probe alone overflows, so nothing is dropped.
         val (overflowing, _, skipped) = apply(List(2) { site() }, nopClass(65525))
         assertTrue(overflowing.none { it.dropReason != null })
         assertTrue(skipped.guarded.isEmpty())
-        // The switch's padding is part of what the entry probe alone weighs.
         val (padded, _, paddedResult) = apply(listOf(site(isSwitch = true, outcomes = 2, dropped = true), site()), nopClass(65522))
         assertTrue(padded[1].dropReason == null && paddedResult.guarded.isEmpty())
     }
@@ -229,8 +218,6 @@ class SizeGuardTest {
         val (sites, _, result) = apply(List(30) { site() }, classFile, received)
         assertTrue(sites.all { it.dropReason == BranchDropReason.SIZE_GUARD })
         assertEquals(SizeGuardReason.CLASS_FILE_LIMIT, result.guarded.getValue(key).reason)
-        // A received method of 7900 bytes, whose own bound with 10 sites crosses 8000 while its entry probe alone
-        // does not, changes nothing about the compile limit, which the class file decides.
         val (kept, _, keptResult) = apply(List(10) { site() }, classFile, nopClass(7900))
         assertTrue(kept.none { it.dropReason != null })
         assertTrue(keptResult.guarded.isEmpty() && keptResult.entryPastLimit.isEmpty())
@@ -286,7 +273,6 @@ class SizeGuardTest {
         const val SLACK_BASE = 7
         const val WIDE_ADDS = 10912
 
-        /** A class whose `static void m()` is [length] bytes of code: `nop`s and a `return`. */
         fun nopClass(length: Int): ByteArray {
             val cw = ClassWriter(0)
             cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "com/example/huge/Nops", null, "java/lang/Object", null)
@@ -310,7 +296,6 @@ class SizeGuardTest {
             ctor.visitEnd()
         }
 
-        /** Four static `(I)I` methods: one `if`, a tableswitch, a lookupswitch, and 100 `if (x == k) y++` blocks. */
         fun shapesClass(internalName: String): ByteArray {
             val cw = ClassWriter(ClassWriter.COMPUTE_FRAMES)
             cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, internalName, null, "java/lang/Object", null)
@@ -388,10 +373,6 @@ class SizeGuardTest {
             return cw.toByteArray()
         }
 
-        /**
-         * `static int big(int x)` that jumps over [WIDE_ADDS] `iinc` instructions and one conditional when `x != 0`.
-         * The jump's offset fits in the class file as written, and the inner conditional's probes push it past 32767.
-         */
         fun wideJumpClass(internalName: String): ByteArray {
             val cw = ClassWriter(ClassWriter.COMPUTE_FRAMES)
             cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, internalName, null, "java/lang/Object", null)

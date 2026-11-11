@@ -8,12 +8,6 @@ import net.bytebuddy.dynamic.DynamicType
 import net.bytebuddy.matcher.ElementMatcher
 import net.bytebuddy.matcher.ElementMatchers.named
 
-/**
- * Proves [EndpointInstrumentation] end to end against a fixture "framework",
- * [com.example.framework.FakeRouter], instead of a real one. Registered under
- * `META-INF/services/dev.otherlode.instrumentation.endpoints.api.EndpointModule`
- * so [EndpointModules.discover] finds it for real.
- */
 class FakeRouterModule : EndpointModule {
     override val name: String = "fake-router"
 
@@ -32,7 +26,6 @@ class FakeRouterModule : EndpointModule {
             .visit(advice.hook("dev.otherlode.endpoints.fake.FakeRouterInvokeAdvice", named("invoke")))
             .visit(advice.hook("dev.otherlode.endpoints.fake.FakeRouterPublishAdvice", named("publishRoutes")))
 
-    /** Records each call, so a test can see the agent's export path reach this module before a manifest. */
     override fun beforeManifest(
         graceMillis: Long,
         finalFlush: Boolean,
@@ -40,12 +33,6 @@ class FakeRouterModule : EndpointModule {
         beforeManifestCalls += graceMillis to finalFlush
     }
 
-    /**
-     * Walks [frameworkObject] (a [com.example.framework.FakeRouter]) reflectively, since its own
-     * type is not visible from this module's classloader, and registers every route it holds
-     * through [OtherlodeEndpoints.register]. Mirrors how a real module such as `SpringWebMvcModule`
-     * walks a `RouterFunction` it cannot reference by type either.
-     */
     override fun declare(frameworkObject: Any) {
         val router = frameworkObject.javaClass
 
@@ -61,7 +48,6 @@ class FakeRouterModule : EndpointModule {
     }
 
     companion object {
-        /** The grace period and final flag of every [beforeManifest] call any instance received. */
         val beforeManifestCalls: MutableList<Pair<Long, Boolean>> = java.util.concurrent.CopyOnWriteArrayList()
     }
 }

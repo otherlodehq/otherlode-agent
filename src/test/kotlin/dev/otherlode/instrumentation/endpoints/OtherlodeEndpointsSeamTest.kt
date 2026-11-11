@@ -20,20 +20,9 @@ import kotlin.test.assertNull
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
-// OtherlodeEndpoints is a bootstrap-resident singleton: install() has no matching uninstall, so once
-// any test calls it the resolver stays set for the rest of this JVM. The pre-install behaviour
-// (buffering, no-op with nothing installed) is only observable before the first ever install()
-// call. Other test classes install a resolver too (EndpointInstrumentationTest directly,
-// AgentTest through Agent.start()'s default endpointsEnabled=true), so the class-level @Order
-// below, together with src/test/resources/junit-platform.properties enabling
-// ClassOrderer.OrderAnnotation, is what actually guarantees this class runs before any of them;
-// @TestMethodOrder only orders methods within this one class.
-//
-// Every Resolver used here is a java.lang.reflect.Proxy built at runtime inside a test method,
-// never a compiled class declaring "implements OtherlodeEndpoints.Resolver": a compiled implementer
-// is verified against the interface the moment its own class file loads, and Gradle loads every
-// class on the test classpath up front to look for tests, long before any test's BeforeEach has
-// installed the bootstrap holder. A proxy defers that resolution to the moment it is built.
+// install() has no uninstall, so this class must run before any other that installs a resolver; the class-level
+// @Order and junit-platform.properties guarantee it. Resolvers here are Proxy instances, never compiled
+// implementers: Gradle loads every test-classpath class before BeforeEach installs the bootstrap holder.
 @Order(Int.MIN_VALUE)
 @TestMethodOrder(MethodOrderer.OrderAnnotation::class)
 class OtherlodeEndpointsSeamTest {
@@ -58,7 +47,6 @@ class OtherlodeEndpointsSeamTest {
         val module = uniqueModule("no-resolver")
 
         assertNull(OtherlodeEndpoints.lookup(module, "some-key"))
-        // Must not throw either with a null entry or with one that was never really resolved.
         OtherlodeEndpoints.hit(null)
         OtherlodeEndpoints.hit("an-entry-that-was-never-really-resolved")
         OtherlodeEndpoints.attachHandler(module, null, "com.example.Handler", "handle", "()V")
@@ -133,19 +121,17 @@ class OtherlodeEndpointsSeamTest {
             )
         assertNull(firstDispatchIfUnownedReturn, "recordDispatchIfUnowned must return null before a resolver is installed")
 
-        // 1 declare + 4088 register + 5 dispatch + 1 dispatchIfUnowned + 1 failure records exactly fill the 4096-record cap.
         OtherlodeEndpoints.moduleFailed(failureModule, OtherlodeEndpoints.KIND_TRANSFORM_FAILED, RuntimeException("linkage boom"))
 
-        // Every one of these arrives after the buffer is already full, so all must be dropped.
+        // 1 declare + 4088 register + 5 dispatch + 1 dispatchIfUnowned + 1 failure records exactly fill
+        // the 4096-record cap.
         for (i in 4088 until 4108) {
             assertNull(
                 OtherlodeEndpoints.register(registerModule, "overflow-key-$i", "GET", "/cap-test/register/$i", null, null, null, null),
             )
         }
-        // Must not throw, and must not be replayed once installed below.
         val declareOverflowModule = uniqueModule("cap-declare-overflow")
         OtherlodeEndpoints.declare(declareOverflowModule, Any())
-        // A disable is the one record that is never dropped, so it survives a full buffer.
         val lateFailureModule = uniqueModule("cap-failure-late")
         OtherlodeEndpoints.moduleDisabled(lateFailureModule, OtherlodeEndpoints.KIND_HOOK_UNMATCHED, "late reason")
 
@@ -287,11 +273,9 @@ class OtherlodeEndpointsSeamTest {
         OtherlodeEndpoints.hit("some-entry")
         OtherlodeEndpoints.hit("some-entry")
 
-        // Must not throw, either the first time (which also logs) or the second (which must not log again).
         OtherlodeEndpoints.declare(module, Any())
         OtherlodeEndpoints.declare(module, Any())
 
-        // A resolver bug never disables the module on its own; only moduleFailed does that.
         assertFalse(OtherlodeEndpoints.isDisabled(module))
     }
 
@@ -649,15 +633,6 @@ class OtherlodeEndpointsSeamTest {
     }
 }
 
-/**
- * Builds an [OtherlodeEndpoints.Resolver] as a [Proxy] instead of a compiled implementer class.
- *
- * The interface [Class] is fetched with the bootstrap loader (`null`) explicitly, so this only
- * works once [BootstrapHolder.install] has already appended it there. A compiled `class Foo :
- * OtherlodeEndpoints.Resolver` would need that interface resolved the moment `Foo.class` itself
- * loads, which happens far earlier, during Gradle's up-front scan for test classes; building the
- * implementation as a proxy at runtime, inside a test method, avoids that entirely.
- */
 private fun resolverProxy(dispatch: (methodName: String, args: Array<out Any?>) -> Any?): Any {
     val resolverInterface = Class.forName("dev.otherlode.bootstrap.OtherlodeEndpoints\$Resolver", false, null)
     val loader = Thread.currentThread().contextClassLoader
@@ -668,7 +643,6 @@ private fun resolverProxy(dispatch: (methodName: String, args: Array<out Any?>) 
     return proxy
 }
 
-/** Records every call a [Resolver][OtherlodeEndpoints.Resolver] proxy receives, for a test to assert on shape and order. */
 private class RecordingResolver {
     data class RegisterCall(
         val key: Any,
@@ -712,7 +686,6 @@ private class RecordingResolver {
 
     private var nextEntryId = 0
 
-    /** A [Resolver][OtherlodeEndpoints.Resolver] proxy that records every call it receives onto this instance. */
     fun asResolver(): Any =
         resolverProxy { name, args ->
             when (name) {
@@ -774,7 +747,6 @@ private class RecordingResolver {
         }
 }
 
-/** A [Resolver][OtherlodeEndpoints.Resolver] proxy whose every method throws, to prove a broken resolver can never escape into a caller. */
 private fun alwaysThrowingResolver(): Any =
     resolverProxy { name, _ ->
         when (name) {
@@ -785,7 +757,6 @@ private fun alwaysThrowingResolver(): Any =
         }
     }
 
-/** A [Resolver][OtherlodeEndpoints.Resolver] proxy wired to a real [EndpointRegistry], proving the seam's shapes line up. */
 private fun endpointRegistryResolver(registry: EndpointRegistry): Any =
     resolverProxy { name, args ->
         when (name) {

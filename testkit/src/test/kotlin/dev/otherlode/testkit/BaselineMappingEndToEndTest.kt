@@ -19,10 +19,6 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-/**
- * Drives the agent's own filter and chunker into a collector that has seen no manifest mapping, to
- * pin that a complete baseline alone is enough to judge a dependency.
- */
 class BaselineMappingEndToEndTest {
     private val collector = OtherlodeTestCollector.start()
     private val exporter = HttpExporter(collector.exportUrl)

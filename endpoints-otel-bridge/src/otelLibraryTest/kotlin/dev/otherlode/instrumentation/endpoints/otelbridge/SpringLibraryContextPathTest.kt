@@ -8,13 +8,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Spring MVC served from a context path with OpenTelemetry's Spring MVC library instrumentation
- * and no Java agent. The library puts the request's context path in front of the route, so it
- * reports `/shop/orders` where the Spring MVC module counts `/orders`. The library asks the handler
- * mappings for the match a second time to learn the route, after the dispatch, and that lookup is
- * no call.
- */
 class SpringLibraryContextPathTest {
     @Test
     fun `a Spring MVC request under a context path adds no bridge endpoint`() {

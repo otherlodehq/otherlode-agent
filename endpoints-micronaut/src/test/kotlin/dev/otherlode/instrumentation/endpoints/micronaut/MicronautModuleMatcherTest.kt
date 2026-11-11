@@ -17,11 +17,6 @@ import kotlin.test.assertTrue
 private const val DEFAULT_ROUTER = "io.micronaut.web.router.DefaultRouter"
 private const val ROUTE_EXECUTOR = "io.micronaut.http.server.RouteExecutor"
 
-/**
- * Pins which classes [MicronautModule] accepts: the 4.0 to 5.x shapes, and nothing of a Micronaut 3
- * application, whose router lists `UriRoute` rather than `UriRouteInfo` and whose `RouteExecutor` has
- * no `findRouteMatch`. Each type is described without loading it.
- */
 class MicronautModuleMatcherTest {
     private val module = MicronautModule()
 

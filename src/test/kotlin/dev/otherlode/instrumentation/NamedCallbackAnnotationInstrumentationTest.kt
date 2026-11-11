@@ -16,10 +16,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
-/**
- * Proves that an annotation the adopter names with `callbackAnnotations` gives a method a
- * callback-annotation [OutsideCaller] through the real transform pipeline, at either retention.
- */
 class NamedCallbackAnnotationInstrumentationTest {
     private companion object {
         const val PACKAGE = "com.example.target.named"
@@ -40,11 +36,6 @@ class NamedCallbackAnnotationInstrumentationTest {
         installed = null
     }
 
-    /**
-     * Weaves the fixtures with [names] as the `callbackAnnotations` option, or no option when null, and
-     * returns the manifest. [holder] replaces the one built from the option when given. A transformer
-     * an earlier call in the same test installed is removed first.
-     */
     private fun manifest(
         names: String?,
         holder: ConfiguredCallbackAnnotations? = null,

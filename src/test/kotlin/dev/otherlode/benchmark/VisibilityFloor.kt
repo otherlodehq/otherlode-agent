@@ -14,34 +14,22 @@ import dev.otherlode.registry.ProbeRegistry
 import java.io.File
 import java.net.URLClassLoader
 
-/** Which way a visibility metric may move without the gate failing. */
 internal enum class Direction {
-    /** More is more visibility, so a fall below the baseline fails. */
     FLOOR,
 
-    /** More is less visibility, so a rise above the baseline fails. */
     CEILING,
 }
 
-/** The outcome of comparing a measurement with a baseline. */
 internal class Comparison(
     val failures: List<String>,
     val notes: List<String>,
 )
 
-/**
- * Counts what the agent identifies when it weaves the benchmark corpora, and compares the counts
- * with a committed baseline. A metric is named `<corpus>.<metric>`. Each metric is a floor or a
- * ceiling, as [directionOf] says.
- */
 internal object VisibilityFloor {
-    /** The Gradle-set system property that holds the path of the baseline source file in update mode. */
     const val UPDATE_PROPERTY = "otherlode.visibility.baselineSource"
 
-    /** The classpath resource that holds the committed baseline. */
     const val BASELINE_RESOURCE = "/visibility-baseline.txt"
 
-    /** The command that rewrites the baseline, named in the file header and in a failure. */
     const val REGENERATE_COMMAND = "./gradlew :test --tests dev.otherlode.benchmark.VisibilityFloorTest -PupdateVisibilityBaseline"
 
     private val HEADER =
@@ -53,17 +41,11 @@ internal object VisibilityFloor {
 
     private val CEILING_METRICS = setOf("classes.skipped", "classes.thrown", "classes.failed_to_load")
 
-    /**
-     * The direction of [metric], named without its corpus. A ceiling counts a loss: a class the
-     * agent refused, a class that failed to load or an unread shape. Every other metric is a floor. This is the only place that
-     * decides.
-     */
     fun directionOf(metric: String): Direction =
         if (metric in CEILING_METRICS || ".unread_shape." in metric) Direction.CEILING else Direction.FLOOR
 
     private fun directionOfKey(key: String): Direction = directionOf(key.substringAfter('.'))
 
-    /** Weaves every class of [corpusName] and counts what the registries built, keyed `<corpus>.<metric>`. */
     fun measure(corpusName: String): Map<String, Long> {
         val corpus = BenchmarkCorpus.load(corpusName)
         val manifests = mutableListOf<ProbeManifest>()
@@ -88,7 +70,6 @@ internal object VisibilityFloor {
         return count(corpusName, manifests, woven, thrown)
     }
 
-    /** Counts [manifests], one per class set of [corpus], with [woven] classes woven and [thrown] refused by an exception. */
     fun count(
         corpus: String,
         manifests: List<ProbeManifest>,
@@ -153,12 +134,6 @@ internal object VisibilityFloor {
         return metrics
     }
 
-    /**
-     * Compares [measured] with [baseline]. A floor that fell or a ceiling that rose fails. A metric
-     * in the baseline but absent from the measurement counts as zero, and so does a ceiling the
-     * baseline lacks, so a ceiling above zero fails until the baseline names it. Any other metric
-     * the baseline lacks, and a floor that rose or a ceiling that fell, add a note and pass.
-     */
     fun compare(
         baseline: Map<String, Long>,
         measured: Map<String, Long>,
@@ -184,7 +159,6 @@ internal object VisibilityFloor {
         return Comparison(failures, notes)
     }
 
-    /** Reads `corpus.metric=value` lines, skipping blank lines and `#` comments. */
     fun parse(text: String): Map<String, Long> =
         text
             .lineSequence()
@@ -195,11 +169,9 @@ internal object VisibilityFloor {
                 key to value.trim().toLong()
             }
 
-    /** The baseline file text for [measured]: the header, then the metrics sorted by name. */
     fun render(measured: Map<String, Long>): String =
         (HEADER + measured.toSortedMap().map { (key, value) -> "$key=$value" }).joinToString("\n", postfix = "\n")
 
-    /** Writes [measured] to [file] in baseline format. */
     fun write(
         file: File,
         measured: Map<String, Long>,
@@ -208,7 +180,6 @@ internal object VisibilityFloor {
         file.writeText(render(measured))
     }
 
-    /** Reads the committed baseline from the test classpath. */
     fun readBaseline(): Map<String, Long> {
         val stream =
             checkNotNull(VisibilityFloor::class.java.getResourceAsStream(BASELINE_RESOURCE)) {

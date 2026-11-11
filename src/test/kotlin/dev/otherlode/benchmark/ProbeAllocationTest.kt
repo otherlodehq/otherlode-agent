@@ -8,28 +8,12 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Gates the woven probes' allocation: a method with probes allocates exactly as many bytes as the
- * same method without them, which for the hot-path fixtures is none. The `probeAllocationTest` task
- * runs this with escape analysis off, so an object that only stays inside the call, a boxed value
- * or a varargs array passed to an inlined helper, still counts, and a control that boxes per call
- * must read above zero. C2 still removes an allocation whose every use folds away, which no probe
- * makes. The JVM itself can allocate a few hundred bytes on
- * the calling thread once, as it moves the calling loop between compiler tiers, so the check takes
- * the smallest of several windows and requires it to be zero: an allocation per call shows in every
- * window, a one-off event in at most one.
- *
- * The endpoint seam is left out. `EndpointRegistry.lookupKeyOf` compares a `List` key with a
- * for-each loop, and `ImmutableCollections.AbstractImmutableList.equals` calls `iterator()` on the
- * other list, so a request key equal to the registered key but not identical to it allocates unless
- * C2's escape analysis removes the iterator. That is not deterministic, so the JMH suite's GC
- * profiler reports the seam's allocation instead.
- */
+// The probeAllocationTest task runs this with escape analysis off, so an object that only stays
+// inside the call still counts.
 class ProbeAllocationTest {
     private val weaver = HotPathWeaver()
     private val threads = ManagementFactory.getThreadMXBean() as com.sun.management.ThreadMXBean
 
-    /** Bytes the current thread allocates across [calls] calls of [shape]. */
     private fun window(
         shape: HotPathShape,
         calls: Int,
@@ -43,7 +27,8 @@ class ProbeAllocationTest {
         return after - before
     }
 
-    /** The fewest bytes allocated across any of [WINDOWS] windows of [CALLS] calls, after one unmeasured warm-up window. */
+    // The JVM can allocate a few hundred bytes once as it moves the loop between compiler tiers. An allocation
+    // per call shows in every window and a one-off in at most one, so this takes the smallest.
     private fun allocatedBy(shape: HotPathShape): Long {
         window(shape, CALLS)
         return (1..WINDOWS).minOf { window(shape, CALLS) }
@@ -69,7 +54,6 @@ class ProbeAllocationTest {
         }
     }
 
-    /** Boxes a value outside the `Long` cache on every call, and keeps it only inside the call. */
     private class AllocatingShape : HotPathShape {
         override fun call(x: Int): Int {
             val boxed: Any = x.toLong() + BOXED_OFFSET

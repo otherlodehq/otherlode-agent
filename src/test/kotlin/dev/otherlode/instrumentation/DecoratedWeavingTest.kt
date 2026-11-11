@@ -23,12 +23,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/**
- * The method tier decorates the received bytes and writes the members of a class below version 55
- * itself. These tests pin two shapes that describing the type for a rebase got wrong (a generic
- * value class, a method whose generic signature disagrees with its descriptor) and the members and
- * instructions of every form across the class-file versions where one differs.
- */
 class DecoratedWeavingTest {
     private val resource = ResourceAttributes("test", null, "instance-1", null, "run-1")
     private var transformer: ResettableClassFileTransformer? = null
@@ -101,7 +95,6 @@ class DecoratedWeavingTest {
         assertEquals(listOf(3L), hitsOf(registry, grouping, "keyOf"), "keyOf ran once per word")
     }
 
-    /** Serves the fixture classes as resources, and defines the woven bytes put in [definitions]. */
     private class MatrixLoader(
         parent: ClassLoader,
         private val resources: Map<String, ByteArray>,
@@ -279,12 +272,6 @@ class DecoratedWeavingTest {
         }
     }
 
-    /**
-     * A class at version 52 whose type initializer loops back to its first instruction and catches
-     * an exception, written with stack map frames as a compiler writes them: the prelude goes in
-     * ahead of the loop's target and outside the handler's range, and every original frame still
-     * holds.
-     */
     private fun loopingInitializer(): VersionedFixtures.Fixture {
         val internalName = VersionedFixtures.internalName(52, "LoopingInit")
         val writer = ClassWriter(ClassWriter.COMPUTE_FRAMES)

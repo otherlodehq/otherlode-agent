@@ -32,15 +32,8 @@ import kotlin.test.assertTrue
 private const val HANDLE_DESCRIPTOR = "(Lcom/sun/net/httpserver/HttpExchange;)V"
 private const val HANDLERS = "com.example.classsam.HandlersKt"
 
-/**
- * Proves the handler forwarder table against the real JDK `HttpServer`, with the method tier
- * installed: a handler that is a kotlinc reference class, compiled with class-based SAM conversion,
- * joins to the function it calls, not to the reference class's own `handle`.
- *
- * The reference class is synthetic, so the method tier never analyses it. Its entry is written when
- * `HandlersKt`, which creates it, is transformed. So `HandlersKt` must load after the method tier is
- * installed, which the module's `forkEvery = 1` and this class's [BeforeAll] give it.
- */
+// HandlersKt must load after the method tier is installed: the reference class's entry is written
+// when HandlersKt is transformed.
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class PassThroughHandlerNamingTest {
     private lateinit var instrumentation: Instrumentation
@@ -94,9 +87,7 @@ class PassThroughHandlerNamingTest {
             assertEquals("handleOrder", byRoute.getValue("/reference").handlerMethod)
             assertEquals("handleSecret", byRoute.getValue("/secret").handlerMethod, "the entry names the function behind access$")
 
-            // A lambda compiled to a class is probed in its own right, so its handle keeps the join.
             assertJoinsDeclaredMethod(byRoute.getValue("/lambda"), Class.forName("$HANDLERS\$lambda\$1"), "handle", HANDLE_DESCRIPTOR)
-            // A $sam$ wrapper only calls the function value it holds, which reaches no probed method.
             val wrapper = Class.forName("$HANDLERS\$sam\$com_sun_net_httpserver_HttpHandler\$0")
             assertJoinsDeclaredMethod(byRoute.getValue("/wrapped"), wrapper, "handle", HANDLE_DESCRIPTOR)
 

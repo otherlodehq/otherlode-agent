@@ -15,17 +15,11 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Proves the Scala generated-method marks through the real transform pipeline, on the `:fixtures-scala3` and
- * `:fixtures-scala2` fixtures: static forwarders, case-class and companion plumbing, and an
- * object's `writeReplace`, with the adopter's own members left unmarked.
- */
 class ScalaGeneratedMethodMarkingTest {
     private companion object {
         const val PACKAGE = "com.example.scalatarget"
         const val TYPES = "com/example/scalatarget"
 
-        /** The case-class plumbing the agent marks, apart from Scala 3's `_1`, `_2` and on. */
         val CASE_CLASS_METHODS =
             setOf(
                 "canEqual",
@@ -52,7 +46,6 @@ class ScalaGeneratedMethodMarkingTest {
         installedOtherlode = null
     }
 
-    /** Loads and initialises each named fixture class under the agent, and returns every manifest probe. */
     private fun probesAfterLoading(
         module: String,
         vararg simpleNames: String,
@@ -217,7 +210,6 @@ class ScalaGeneratedMethodMarkingTest {
     @Test
     fun `scala 2 - omission probes follow their target's mark`() = `omission probes follow their target's mark`("scala2")
 
-    /** Asserts that every instance method of [simpleName] named in the plumbing set is [GeneratedBy.CASE_CLASS], apart from [except]. */
     private fun List<ProbeLocation>.assertPlumbingMarked(
         simpleName: String,
         except: Set<String> = emptySet(),
@@ -382,7 +374,6 @@ class ScalaGeneratedMethodMarkingTest {
                     setOf("canEqual", "equals", "copy", "productArity", "productElement", "productPrefix") -
                         ScalaCaseClassFixtures.HAND_WRITTEN[simpleName].orEmpty()
                 } else {
-                    // Written's explicit companion gets no toString from scalac.
                     setOf("apply", "unapply")
                 }
             assertTrue(markedNames.containsAll(required), "$module $simpleName marks $markedNames")
@@ -423,11 +414,6 @@ class ScalaGeneratedMethodMarkingTest {
     private fun `a hand-written copy whose body is scalac's is marked`(module: String) {
         val probes = probesAfterLoading(module, "HandCopy")
 
-        // HandCopy's copy is the adopter's, `def copy(a: Int = 2): HandCopy = new HandCopy(a)`, but
-        // its body is instruction for instruction the copy scalac would have written, so no rule
-        // reading bytecode can tell them apart, and it is marked like the generated one. Its
-        // default, 2 in place of the current value, lives in the default getter, whose omission
-        // probe follows copy's mark.
         assertEquals(GeneratedBy.CASE_CLASS, probes.method("HandCopy", "copy", "(I)Lcom/example/scalatarget/HandCopy;").generatedBy)
         val omission = probes.single { it.kind == ProbeKind.OPTIONAL_ARGUMENT && it.className == "$PACKAGE.HandCopy" }
         assertEquals(GeneratedBy.CASE_CLASS, omission.generatedBy)
@@ -516,9 +502,8 @@ class ScalaGeneratedMethodMarkingTest {
                 "equals" to "(Ljava/lang/Object;)Z",
             )
 
-        // Scala 2.13.15 passes `a` to Base and stores only `b`, so no field holds element 0 and
-        // nothing that depends on the elements is marked. Scala 3.3.4 stores `a` first and keeps
-        // the ordinary shape.
+        // Scala 2.13.15 stores only `b`, so no field holds element 0 and no element-based member
+        // is marked. Scala 3.3.4 stores `a` first.
         val expected = if (module == "scala2") GeneratedBy.NONE else GeneratedBy.CASE_CLASS
         for ((name, descriptor) in elementBased) {
             assertEquals(expected, probes.method("Q", name, descriptor).generatedBy, "$module Q.$name")
@@ -558,8 +543,6 @@ class ScalaGeneratedMethodMarkingTest {
     fun `scala 3 - a hand-written _1 whose body is scalac's is marked`() {
         val probes = probesAfterLoading("scala3", "Al")
 
-        // Scala 3.3.4 writes no `_1` of its own beside the adopter's, and the adopter's body is
-        // instruction for instruction the one it would have written.
         assertEquals(GeneratedBy.CASE_CLASS, probes.method("Al", "_1", "()I").generatedBy)
         assertEquals(GeneratedBy.CASE_CLASS, probes.method("Al", "_2", "()Ljava/lang/String;").generatedBy)
     }
@@ -599,8 +582,7 @@ class ScalaGeneratedMethodMarkingTest {
                 "$module $simpleName",
             )
         }
-        // In Scala 3.3.4 this hand-written equals is instruction for instruction what scalac writes
-        // for a final class; the class is not final, so scalac's own would call canEqual.
+        // NoCanEqual is not final, so the equals scalac writes for it would call canEqual.
         assertEquals(GeneratedBy.NONE, probes.method("NoCanEqual", "equals", "(Ljava/lang/Object;)Z").generatedBy)
     }
 
@@ -685,16 +667,11 @@ class ScalaGeneratedMethodMarkingTest {
         val probes = probesAfterLoading(module, "UC", "UC2", "FZC", "FinalOuter\$FInEmpty")
         val equals = "(Ljava/lang/Object;)Z"
 
-        // scalac leaves canEqual out of a final class's equals only when canEqual is its own. UC's
-        // canEqual is the adopter's but compiles to scalac's body, so it is marked, and scalac's
-        // equals, which still calls it, is marked too.
         assertEquals(GeneratedBy.CASE_CLASS, probes.method("UC", "equals", equals).generatedBy)
         assertEquals(GeneratedBy.CASE_CLASS, probes.method("UC", "canEqual", equals).generatedBy)
-        // UC2's equals is the adopter's, instruction for instruction scalac's equals for a final
-        // class whose canEqual is scalac's, which UC2's is not.
         assertEquals(GeneratedBy.NONE, probes.method("UC2", "equals", equals).generatedBy)
-        // With no elements, Scala 2.13.15 drops the call for any final class and Scala 3.3.4 keeps it
-        // when canEqual is the adopter's; each is scalac's own equals.
+        // With no elements, Scala 2.13.15 drops the canEqual call for any final class. Scala 3.3.4
+        // keeps it when canEqual is the adopter's.
         assertEquals(GeneratedBy.CASE_CLASS, probes.method("FZC", "equals", equals).generatedBy)
         assertEquals(GeneratedBy.CASE_CLASS, probes.method("FinalOuter\$FInEmpty", "equals", equals).generatedBy)
     }

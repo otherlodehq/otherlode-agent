@@ -54,11 +54,12 @@ import dev.otherlode.export.UnreadShape as WireUnreadShape
  * [wasHit], [failedToLoad] and [failedToInitialize] still answer.
  *
  * Probes, endpoints and dependencies are keyed on the instance id alone, not on the run id each
- * payload carries. This collector answers 400 to a payload that has an empty run id, a second run
- * id under a known instance id, an agent version that differs from the testkit's when both are
- * known, or fields a collector stripped. It does the same for a payload that does not decode or
- * fails when applied. It keeps nothing from such a payload and records the reason in
- * [rejectedPayloads]. After that, every other query and wait throws [IllegalStateException].
+ * payload carries. This collector answers 400 to a delta batch, manifest or static baseline that
+ * has an empty run id, a second run id under a known instance id, an agent version that differs
+ * from the testkit's when both are known, or fields a collector stripped. It does the same for a
+ * payload that does not decode or fails when applied. It keeps nothing from such a payload and
+ * records the reason in [rejectedPayloads]. After that, every other query and wait throws
+ * [IllegalStateException].
  *
  * Close this with [close], typically from a `.use { }` block.
  */
@@ -601,9 +602,9 @@ public class OtherlodeTestCollector internal constructor(
      * probes, such as the module getter and the static forwarder of a Scala constructor default;
      * see [omissionCount]. One row per target class, method, descriptor and parameter index.
      *
-     * Claimed only when no probe naming the parameter is overridable. A target with no method
-     * probe, or one marked inline, generated or unread, is skipped. The row's line is the highest
-     * line among its omission probes, ignoring `-1`, or `-1` when every one is.
+     * Claimed only when no probe naming the parameter is overridable. A target with no hits, no
+     * method probe, or one marked inline, generated or unread, is skipped. The row's line is the
+     * highest line among its omission probes, ignoring `-1`, or `-1` when every one is.
      */
     public fun neverSupplied(): List<OptionalParameterRef> =
         checked {
@@ -738,7 +739,8 @@ public class OtherlodeTestCollector internal constructor(
      *   listed here, and a BRANCH probe in a method left out this way
      * - routine outcomes, which [neverHitRoutineOutcomes] lists
      * - unread shapes, which [neverHitUnreadShapes] lists
-     * - a class that failed to initialise ([failedToInitialize]) and its subtypes
+     * - a class that failed to initialise ([failedToInitialize]) and its subtypes, and a class whose
+     *   static initialiser has started in every instance that loaded it but not yet returned or thrown
      *
      * A branch site inside code that never ran folds into the row for that code, and every BRANCH
      * probe of the site is left out. A site folds when its method was never hit, even a method that
@@ -1342,10 +1344,11 @@ public class OtherlodeTestCollector internal constructor(
      * one test JVM. Sorted by [UnreachedCluster.membersTotal] descending, then by root.
      *
      * The graph holds three kinds of node. A method node is a METHOD probe merged across instances,
-     * or a non-inline declared method of a class a complete static baseline declared but no
-     * manifest mentioned; the latter carries [ProbeRef.neverLoaded] `true` and line `-1`. An
-     * outcome node is a never-hit BRANCH probe, merged across instances, in a method node with
-     * hits; an inline or generated BRANCH probe is never one. A class node is a class that holds a
+     * or a declared method of a class a complete static baseline declared but no manifest
+     * mentioned; the latter carries [ProbeRef.neverLoaded] `true` and line `-1`. An inline,
+     * generated or unread method is never a method node. An outcome node is a never-hit BRANCH
+     * probe, merged across instances, in a method node with hits; an inline, generated, routine or
+     * unread BRANCH probe is never one. A class node is a class that holds a
      * class finding: never loaded, [neverInitialized] or [neverInstantiated]. It stands for the
      * never-hit methods that finding covers, which are not method nodes of their own.
      *
@@ -1360,8 +1363,8 @@ public class OtherlodeTestCollector internal constructor(
      * [RootKind] names the shape. A `<clinit>` is never a root, and neither is a never-hit `<init>`
      * of a loaded class that no instance constructed and no class finding covers. The cluster is
      * the root plus every never-hit node reachable from it whose every caller is already in the
-     * cluster. An outcome or class root whose cluster holds no other method or class node gives no
-     * cluster.
+     * cluster. An outcome or class root whose cluster holds no other class node, and no other
+     * method node but a `<clinit>` or such an `<init>`, gives no cluster.
      *
      * A class that failed to initialise ([failedToInitialize]) is never a root or a member, though
      * a method of it still counts as a caller. Throws [IllegalStateException] as [neverInitialized]
@@ -2040,7 +2043,7 @@ public class OtherlodeTestCollector internal constructor(
 
     /**
      * Blocks until some manifest has listed the dependency carrying `groupId:artifactId`, matched
-     * the way [dependency] matches. [dependency] then answers without throwing. Throws
+     * the way [dependency] matches. [dependency] then throws no [UnknownDependencyException]. Throws
      * [TimeoutException] if [timeout] elapses first.
      */
     @Throws(TimeoutException::class)
@@ -2081,7 +2084,8 @@ public class OtherlodeTestCollector internal constructor(
 
     /**
      * Every dependency some instance listed from its startup classpath with no class from it
-     * loaded on any instance, sorted by [DependencyStatus.identityKey]. Needs neither references
+     * loaded on any instance, sorted by [DependencyStatus.identityKey], except one every listing
+     * counted no class in, which reads [DependencyUsage.RESOURCES_ONLY]. Needs neither references
      * nor a static baseline.
      *
      * Throws [IllegalStateException] until every instance heard from has sent
@@ -2121,9 +2125,10 @@ public class OtherlodeTestCollector internal constructor(
     /**
      * Every loaded dependency with no live reference that is referenced from a class that failed to
      * load ([failedToLoad]), sorted by [DependencyStatus.identityKey], each with its sites in
-     * [DependencyStatus.sites]. A failed site reads `Class#method (failed to load)`. This asks for
-     * review and claims no removal. Throws [IllegalStateException] under the same conditions as
-     * [unreachedDependencies], the refusal for zero counts included.
+     * [DependencyStatus.sites]. A failed site reads `Class#method (failed to load)`, or
+     * `Class (class level) (failed to load)`. This asks for review and claims no removal. Throws
+     * [IllegalStateException] under the same conditions as [unreachedDependencies], the refusal for
+     * zero counts included.
      */
     public fun failedToLoadDependencies(): List<DependencyStatus> =
         checked {
@@ -2134,10 +2139,11 @@ public class OtherlodeTestCollector internal constructor(
      * Every loaded dependency with no live reference that is referenced from a class that failed to
      * initialise ([failedToInitialize]) and from none that failed to load, sorted by
      * [DependencyStatus.identityKey], each with its sites in [DependencyStatus.sites]. A failed site
-     * reads `Class#method (failed to initialise)`. A class that failed to initialise is loaded, so
-     * its references count as live only through a hit on a method. This asks for review and claims
-     * no removal. A dependency referenced from both kinds of failed class reads as failed to load.
-     * Throws [IllegalStateException] under the same conditions as [unreachedDependencies].
+     * reads `Class#method (failed to initialise)`, or `Class (class level) (failed to initialise)`.
+     * A class that failed to initialise is loaded, so its references count as live only through a
+     * hit on a method. This asks for review and claims no removal. A dependency referenced from both
+     * kinds of failed class reads as failed to load. Throws [IllegalStateException] under the same
+     * conditions as [unreachedDependencies].
      */
     public fun failedToInitializeDependencies(): List<DependencyStatus> =
         checked {
@@ -2299,8 +2305,8 @@ public class OtherlodeTestCollector internal constructor(
      * serves one test JVM, a payload whose agent version differs from the testkit's, a payload a
      * collector forwarded after stripping fields it did not know, or a body that did not decode or
      * could not be applied. Empty when nothing was rejected. Once it is not empty, every other query
-     * and wait throws [IllegalStateException]; this is the one method a test that expects a rejection
-     * can still call.
+     * and wait throws [IllegalStateException]; this and [close] are the methods a test that expects a
+     * rejection can still call.
      */
     public fun rejectedPayloads(): List<String> = rejections.toList()
 
@@ -2784,16 +2790,15 @@ public class OtherlodeTestCollector internal constructor(
  *   scan records no line, and for the class root of a never-loaded class.
  * - [inlinedFromClassName] is set only for a [ProbeKind.BRANCH] probe that is a kept inlined copy:
  *   the dotted name of the class whose inline function the compiler copied it from.
- * - [generatedBy] is set when [kind] is [ProbeKind.METHOD]. For a [ProbeKind.BRANCH] probe it is
- *   the mark of the method it sits in, and for an [ProbeKind.OPTIONAL_ARGUMENT] probe the mark of
- *   its target.
+ * - [generatedBy] is null in every ref the collector returns, a generated caller in
+ *   [UnreachedCluster.reachedFrom] included.
  * - [branchKey] is set only for a [ProbeKind.BRANCH] probe: an opaque lowercase hex token naming
  *   this outcome across builds and instances. It is null when the agent could not name it safely.
  * - [routine] is set only for a [ProbeKind.BRANCH] probe whose outcome the agent marked routine.
  * - [unreadShape] is set for a probe whose method has the outline of compiler output but a body the
  *   agent has not read, for a [ProbeKind.BRANCH] probe in such a method, for an
  *   [ProbeKind.OPTIONAL_ARGUMENT] probe whose target is one, and for a [ProbeKind.BRANCH] probe
- *   whose own outcome the agent marked unread. It is exclusive with [routine].
+ *   whose own outcome the agent marked unread.
  * - [outsideCaller] is set only for a [ProbeKind.METHOD] ref whose method has an outside caller.
  *   When instances disagree, it comes from the newest instance's copy.
  */
@@ -2822,7 +2827,8 @@ public data class ProbeRef internal constructor(
 /**
  * Why code outside scope may call a method: [kind], and [typeName], dotted. For
  * [OutsideCallerKind.OVERRIDES_METHOD] it is the out-of-scope type that declares the overridden
- * method. For [OutsideCallerKind.CALLBACK_ANNOTATION] it is the annotation as written on the method.
+ * method. For [OutsideCallerKind.CALLBACK_ANNOTATION] it is the annotation as written on the method,
+ * on one of its parameters, or on the method it overrides.
  */
 @ConsistentCopyVisibility
 public data class OutsideCaller internal constructor(
@@ -2838,8 +2844,8 @@ public data class OutsideCaller internal constructor(
 public enum class RootKind {
     /**
      * The root is a method, and at least one of its in-scope callers is a method with hits. The
-     * caller ran and its call was not behind an untaken outcome. [UnreachedCluster.reachedFrom]
-     * names the callers.
+     * caller ran, and its call was behind no outcome node, as [OtherlodeTestCollector.unreachedClusters]
+     * defines one. [UnreachedCluster.reachedFrom] names the callers.
      */
     REACHED_FROM_HIT,
 

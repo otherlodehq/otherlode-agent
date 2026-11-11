@@ -7,12 +7,6 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-/**
- * Runs [CallbackAnnotationFinder] from the shaded agent jar. `shadowJar` rewrites a string constant
- * that starts with `kotlin`, so a skip rule that names `kotlin/annotation/` passes against the
- * unshaded classes and never matches in the jar an adopter runs. The jar is loaded apart from the
- * test classpath, under the platform class loader.
- */
 class ShadedCallbackAnnotationFinderTest {
     private val loader =
         URLClassLoader(
@@ -27,7 +21,6 @@ class ShadedCallbackAnnotationFinderTest {
     @AfterTest
     fun close() = loader.close()
 
-    /** The class files the shaded finder asks for while it walks the annotations in [annotations]. */
     private fun classFilesRead(annotations: List<String>): List<String> {
         val read = mutableListOf<String>()
         val function1 = loader.loadClass("dev.otherlode.shaded.kotlin.jvm.functions.Function1")

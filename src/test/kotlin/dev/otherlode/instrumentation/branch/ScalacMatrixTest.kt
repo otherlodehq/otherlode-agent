@@ -10,13 +10,6 @@ import org.junit.jupiter.params.provider.MethodSource
 import java.io.File
 import kotlin.test.assertEquals
 
-/**
- * Runs the Scala generated-method rules over the fixture sources compiled by each scalac release in
- * the matrix (`fixtures-compilers/scalac`) and compares every method's mark with the one the same
- * method gets in that line's baseline build, 2.13.15 for a 2.x release and 3.3.4 for a 3.x one.
- * One comparison pins both directions: scalac's plumbing marked in the baseline must be marked in
- * every release, and a hand-written lookalike left unmarked in the baseline must stay unmarked.
- */
 class ScalacMatrixTest {
     companion object {
         @JvmStatic
@@ -28,11 +21,6 @@ class ScalacMatrixTest {
         @JvmStatic
         fun scala3Versions(): List<String> = CompilerFixtures.scalacVersions.filter { it.startsWith("3.") }
 
-        /**
-         * Whether the 3.x release [version] gives an enum singleton case a `hashCode`. scalac writes
-         * one from 3.3.7 on the 3.3 line and from 3.7.3, so 3.3.3, 3.3.6, 3.4.x to 3.6.x, 3.7.0 and
-         * 3.7.2 have none.
-         */
         private fun hasEnumHashCode(version: String): Boolean {
             val (minor, patch) = version.split(".").drop(1).map { it.substringBefore('-').toInt() }
             return when (minor) {
@@ -42,20 +30,12 @@ class ScalacMatrixTest {
             }
         }
 
-        /** scalac's infix for an anonymous class, `$$anon`. */
         private const val ANONYMOUS = "${'$'}${'$'}anon"
 
-        /** An anonymous class's infix and the number scalac gives it. */
         private val ANONYMOUS_NUMBER = Regex(Regex.escape(ANONYMOUS) + "\\${'$'}\\d+")
 
         private const val MODULE_READ_RESOLVE = "readResolve()Ljava/lang/Object;"
 
-        /**
-         * An anonymous class's name, the shape of an enum singleton case's class (`Color$$anon$1`,
-         * `EnumHost$Mode$$anon$6`). Scala 3.3.7 and later on the 3.3 line, and 3.7.3 and later, give
-         * such a class a `hashCode` the baseline does not have. The fixtures declare no other
-         * anonymous class with a `hashCode`, so every one this matches is an enum case's.
-         */
         private val ENUM_SINGLETON_CLASS = Regex(".+\\\$\\\$anon\\\$\\d+")
     }
 
@@ -73,7 +53,6 @@ class ScalacMatrixTest {
             .flatMap { owner -> build.markEntries(owner).map { (name, descriptor, mark) -> Method(owner, name, descriptor) to mark } }
             .toMap()
 
-    /** Whether [method] is one the baseline of this line has and release [version] does not write. */
     private fun absentIn(
         version: String,
         method: Method,
@@ -86,7 +65,6 @@ class ScalacMatrixTest {
                     method.name == "writeReplace"
             )
 
-    /** Whether [method] is one release [version] writes and the baseline of its line does not. */
     private fun addedIn(
         version: String,
         method: Method,
@@ -97,11 +75,6 @@ class ScalacMatrixTest {
     private fun isEnumSingletonHashCode(method: Method) =
         method.name == "hashCode" && method.descriptor == "()I" && ENUM_SINGLETON_CLASS.matches(method.owner)
 
-    /**
-     * The baseline's key for a method as release [version] spells it. Scala 2.12's `Int*` parameter
-     * is a `scala.collection.Seq`, where 2.13 made it `scala.collection.immutable.Seq`, so the
-     * hand-written `VarargHost.withVararg` has a different descriptor and is still the same method.
-     */
     private fun inReleaseTerms(
         version: String,
         method: Method,
@@ -112,7 +85,6 @@ class ScalacMatrixTest {
             method
         }
 
-    /** Scala 2.12 numbers the `$extension` method of an overloaded value-class method (`plus$extension0`); the baseline does not. */
     private fun overloadedExtension(
         version: String,
         method: Method,
@@ -123,9 +95,6 @@ class ScalacMatrixTest {
         val baseline = marksOf(CompilerFixtures.scalaBaseline(version)).mapKeys { inReleaseTerms(version, it.key) }
         val actual = marksOf(CompilerFixtures.scalac(version)).mapKeys { overloadedExtension(version, it.key) }
         val findings = mutableListOf<String>()
-        // A method only one build has is a finding only when it is marked: releases name lambdas and
-        // anonymous classes' constructors differently (3.3.3 and 3.4.0 against 3.3.4), and an
-        // unmarked method has no mark to lose.
         for ((method, expected) in baseline) {
             val mark = actual[method]
             when {
@@ -201,7 +170,6 @@ class ScalacMatrixTest {
         assertTrue(marks.all { it.second == GeneratedBy.SCALA_OBJECT }, marks.toString())
     }
 
-    /** An owner's name with an anonymous class's number dropped, since scalac numbers them in source order. */
     private fun stable(owner: String): String = owner.replace(ANONYMOUS_NUMBER, Regex.escapeReplacement(ANONYMOUS))
 
     private fun unreadOf(build: CompilerFixtures.Build): List<String> =
@@ -209,25 +177,12 @@ class ScalacMatrixTest {
             build.unreadEntries(owner).map { (name, descriptor, family) -> "${stable(owner)}.$name$descriptor $family" }
         }
 
-    /**
-     * The unread shapes in a Scala 3 build, every release in the matrix being read: none. The
-     * plumbing of every fixture enum is marked, including those declared inside a class
-     * (`EnumHolder.Inner` and the enums of `ClassNestedEnums.scala`), whose companion has no `MODULE$`.
-     */
     @ParameterizedTest(name = "scalac {0}")
     @MethodSource("scala3Versions")
     fun `a Scala 3 build has no unread shapes on a read release`(version: String) {
         assertEquals(emptyList(), unreadOf(CompilerFixtures.scalac(version).withScalaLibrary(version)).sorted(), "scalac $version")
     }
 
-    /**
-     * The methods every Scala 3 build reports as unread shapes when no `.tasty` file can be read,
-     * as `Owner.name`: the fixtures' hand-written methods inside an outline (`toString` of
-     * `Written`, `Multi`, `Svc`, `BodyVal` and `HandCopy`, `HandCopy.hashCode`, the lookalikes
-     * of `CaseLookalikes.scala`, the hand-written `ordinal` in the companion of the local enum
-     * `Door` in `LocalEnums.scala`, and `toString$extension` of the case value class `Label`, whose
-     * `toString` is its own, `Almost`'s methods, `WrappingGreeter.greet` and `WrappingHandler.reversed`), which with no compiler named cannot be told from scalac's.
-     */
     private val scala3VersionBlindUnread =
         setOf(
             "BodyVal.toString",
@@ -261,19 +216,6 @@ class ScalacMatrixTest {
             "UC2.equals",
             "Written.toString",
         )
-
-    /**
-     * The methods a Scala 2 build reports as unread shapes, as `Owner.name`. A Scala 2 class names
-     * no compiler, so the rules are version-blind. Three groups:
-     *
-     * - The adopter's own overrides of plumbing, which scalac 2 cannot be told apart from: `toString`
-     *   of `Written`, `Multi`, `Svc`, `BodyVal` and `HandCopy`, `HandCopy.hashCode`, `toString$extension`
-     *   of the case value class `Label`, and the
-     *   lookalikes of `CaseLookalikes.scala` (`Lie`, `Lie2`, `E3`, `NoCanEqual`, `UC2`, `FZC`, and
-     *   `U0$.unapply`), each hand-written in or near scalac's shape.
-     * - `Q`, whose element overrides a supertype's `val`: scalac's own plumbing for it, which the
-     *   rules do not read because the constructor stores no element.
-     */
 
     private val scala2Unread =
         setOf(
@@ -314,7 +256,6 @@ class ScalacMatrixTest {
             "Written.toString",
         )
 
-    /** Asserts that each method [readable] marks as a trait forwarder is marked or an unread trait forwarder in [unreadable], which serves no scala-library. */
     private fun assertForwardersSurviveWithoutLibrary(
         version: String,
         readable: CompilerFixtures.Build,
@@ -341,7 +282,6 @@ class ScalacMatrixTest {
         val unread =
             build.classNames().flatMap { owner -> build.unreadEntries(owner).map { (name, _, _) -> "$owner.$name" } }.toSet()
         assertForwardersSurviveWithoutLibrary(version, build, CompilerFixtures.scalac(version))
-        // 2.12 writes no productElementName.
         val expected =
             if (version.startsWith(
                     "2.12.",
@@ -384,7 +324,6 @@ class ScalacMatrixTest {
         )
     }
 
-    /** The tooling string of a `.tasty` file: the header's magic, three version numbers, then the string. */
     private fun tastyTooling(bytes: ByteArray): String {
         var at = 4
 

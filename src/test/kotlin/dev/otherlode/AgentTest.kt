@@ -216,16 +216,10 @@ class AgentTest {
         }
     }
 
-    /**
-     * Compares the threads present before and after a call, rather than asserting an absolute
-     * count. The test JVM can already be carrying `otherlode-*` threads left by other test classes
-     * in the same Gradle test worker, so an absolute "no such thread exists" assertion would be
-     * flaky for reasons unrelated to this test. A thread still ending from an earlier test can
-     * share a new thread's name.
-     */
+    // Other test classes in the same Gradle worker can leave otherlode-* threads running, so the tests
+    // compare the threads alive before and after a call.
     private fun currentThreads(): Set<Thread> = Thread.getAllStackTraces().keys.toSet()
 
-    /** The names of the threads alive now that were not alive at [before]. */
     private fun threadsStartedSince(before: Set<Thread>): List<String> = (currentThreads() - before).map { it.name }
 
     @Test
@@ -240,11 +234,6 @@ class AgentTest {
         assertTrue(newThreadNames.none { it.startsWith("otherlode-") }, "unexpected new otherlode- threads: $newThreadNames")
     }
 
-    /**
-     * An [Instrumentation] that records the name of every method called on it and otherwise does
-     * nothing. Installing a transformer, a bootstrap search path entry or a module read edge all go
-     * through it, so an empty record after a call means the call installed nothing.
-     */
     private fun recordingInstrumentation(calls: MutableList<String>): Instrumentation =
         Proxy.newProxyInstance(
             Instrumentation::class.java.classLoader,
@@ -409,10 +398,9 @@ class AgentTest {
         val instrumentation = ByteBuddyAgent.install()
         val before = currentThreads()
 
-        // Scoped to a package nothing in this JVM ever loads, so the transformer never matches a
-        // real class while it is installed. The interval keeps the scheduler from attempting a
-        // flush before stop() removes it along with the shutdown hook, so the test JVM never
-        // sends anything to a collector, at exit included.
+        // A package nothing in this JVM loads keeps the transformer off real classes. The first flush falls at a
+        // random point in the one-hour interval, so it rarely comes before stop() stops the scheduler and removes
+        // the shutdown hook.
         val running =
             Agent.start(
                 "includePackages=dev.otherlode.neverloaded.fixture,flushIntervalSeconds=3600",
@@ -466,8 +454,6 @@ class AgentTest {
 
     @Test
     fun `premain never propagates a failure from start, since that would abort the target JVM`() {
-        // Every Instrumentation call throws, so start() fails at its first use of it, before any
-        // thread or transformer exists to clean up.
         val brokenInstrumentation =
             Proxy.newProxyInstance(
                 Instrumentation::class.java.classLoader,
@@ -490,8 +476,6 @@ class AgentTest {
         val instrumentation = ByteBuddyAgent.install()
         val before = currentThreads()
 
-        // The test classpath is this JVM's java.class.path, and it carries the compiled fixtures
-        // under com.example.target, so a scan of the default roots must declare one of them.
         val running =
             Agent.start(
                 "includePackages=com.example.target,excludePackages=com.example.target.excluded," +
@@ -524,7 +508,6 @@ class AgentTest {
         collector.start()
         val instrumentation = ByteBuddyAgent.install()
 
-        // The test classpath carries the compiled fixtures under com.example.target.
         val running =
             Agent.start(
                 "includePackages=com.example.target,flushIntervalSeconds=3600,endpointsEnabled=false," +
@@ -816,7 +799,6 @@ class AgentTest {
             running.scheduler.flush()
 
             assertTrue(running.dependencyRegistry.isListingComplete, "the first flush must have run the listing")
-            // The test classpath carries the Kotlin stdlib as a jar, and nothing in it is under the include rules.
             assertTrue(running.dependencyRegistry.entries().any { entry -> entry.identities.any { it.artifactId == "kotlin-stdlib" } })
             assertEquals(0, running.dependencyRegistry.classIndexSize, "no class index without the static baseline")
         } finally {
@@ -837,8 +819,6 @@ class AgentTest {
         collector.start()
         val instrumentation = ByteBuddyAgent.install()
 
-        // The Kotlin fixtures under com.example.target reference kotlin-stdlib, a jar on the test
-        // classpath the listing registers as a dependency, and java.lang, which the platform provides.
         val running =
             Agent.start(
                 "includePackages=com.example.target,flushIntervalSeconds=3600,endpointsEnabled=false," +
@@ -852,7 +832,6 @@ class AgentTest {
                     declared.referencedClasses + declared.methods.flatMap { it.referencedClasses }
                 }
             assertTrue(references.any { it.startsWith("kotlin.") }, "no reference into kotlin-stdlib was kept: $references")
-            // A name the running JDK lacks (java.lang.MatchException below JDK 21) is an absent reference, not a JDK name.
             val platform = ClassLoader.getPlatformClassLoader()
             val jdkNames = references.filter { it.startsWith("java.") && platform.getResource(it.replace('.', '/') + ".class") != null }
             assertTrue(jdkNames.isEmpty(), "a JDK name was sent: $jdkNames")
@@ -1195,7 +1174,6 @@ class AgentTest {
     }
 }
 
-/** A minimal [EndpointModule] whose only meaningful behaviour is its [EndpointModule.name]. */
 private fun fakeEndpointModule(
     moduleName: String,
     handlerInterfaces: Set<String> = emptySet(),

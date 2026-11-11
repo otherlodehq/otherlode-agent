@@ -13,7 +13,6 @@ import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
 class ClassFileByteCacheTest {
-    /** A loader serving [files] as class files, counting every request by class-file path. */
     private class ServingLoader(
         val files: Map<String, ByteArray>,
     ) : ClassLoader(null) {

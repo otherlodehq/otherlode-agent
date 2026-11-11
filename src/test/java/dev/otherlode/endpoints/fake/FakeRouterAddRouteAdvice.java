@@ -3,7 +3,6 @@ package dev.otherlode.endpoints.fake;
 import dev.otherlode.bootstrap.OtherlodeEndpoints;
 import net.bytebuddy.asm.Advice;
 
-/** Woven onto {@code FakeRouter.addRoute}, reporting a registered route to the endpoint seam. */
 public class FakeRouterAddRouteAdvice {
 
     @Advice.OnMethodEnter(suppress = Throwable.class)

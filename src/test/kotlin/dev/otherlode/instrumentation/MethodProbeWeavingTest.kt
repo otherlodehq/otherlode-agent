@@ -17,19 +17,12 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * The entry and omission probes are ASM instructions at a method's first instruction. These tests
- * count real calls through woven `$default` shapes at the versions where the array is reached
- * differently, and read the woven instructions of an entry probe.
- */
 class MethodProbeWeavingTest {
     private val resource = ResourceAttributes("test", null, "instance-1", null, "run-1")
 
     private companion object {
-        /** Parameters 0 to 31, every bit of the first mask `int`, bit 31 included. */
         const val COUNTED = 32
 
-        /** The load, the slot, `dup2`, `laload`, `lconst_1`, `ladd` and `lastore`. */
         const val PROBE_INSTRUCTIONS = 7
     }
 
@@ -85,11 +78,6 @@ class MethodProbeWeavingTest {
         if (value in -1..5) visitor.visitInsn(Opcodes.ICONST_0 + value) else visitor.visitLdcInsn(value)
     }
 
-    /**
-     * A class with `f`, taking [optional] int parameters, and the `f$default` kotlinc writes for it:
-     * a mask test and a store of the default for each parameter, then a call to `f`. A [Shape.SUSPEND]
-     * target takes a trailing `Continuation` that the mask follows.
-     */
     private fun defaultsFixture(
         version: Int,
         shape: Shape,
@@ -214,7 +202,6 @@ class MethodProbeWeavingTest {
                     val (name, bytes) = defaultsFixture(version, shape, optional)
                     val woven = weave(name, bytes)
                     val top = minOf(optional, COUNTED) - 1
-                    // The first call omits only parameter 0, the second every parameter, the third none.
                     call(woven, shape, optional, listOf(1, -1, 0))
                     val counts = omissionCounts(woven)
                     assertEquals((0..top).toSet(), counts.keys, "$label: one probe per optional parameter the analysis counts")
@@ -225,7 +212,6 @@ class MethodProbeWeavingTest {
         }
     }
 
-    /** What the visitor saw of one method's code, in order. */
     private class Trace(
         val instructions: MutableList<String> = mutableListOf(),
         var frames: Int = 0,
@@ -337,7 +323,6 @@ class MethodProbeWeavingTest {
         }
     }
 
-    /** `static int countdown(int n)`: its first instruction is the target of the loop's backward jump. */
     private fun countdown(version: Int): Pair<String, ByteArray> {
         val name = "${VersionedFixtures.PACKAGE.replace('.', '/')}/omission/Countdown$version"
         val cw = ClassWriter(ClassWriter.COMPUTE_FRAMES)

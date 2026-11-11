@@ -8,13 +8,6 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-/**
- * Runs the kotlinx.serialization marks from the shaded agent jar. `shadowJar` rewrites every string
- * in the agent's own classes that starts with `kotlin`, `kotlinx` included, so a rule that spells
- * out a kotlinx name passes against the unshaded classes and marks nothing in the jar an adopter
- * runs. The jar is loaded apart from the test classpath, so every class here comes from the shaded
- * copy. The fixture bytes are real kotlinc output under the K1 frontend.
- */
 class ShadedKotlinxSerializationTest {
     private val loader =
         URLClassLoader(

@@ -14,13 +14,6 @@ import net.bytebuddy.pool.TypePool
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-/**
- * A class with enough branch sites that its probe slot indices run past what `BIPUSH` (127) and
- * `SIPUSH` (32767) can push, so [BranchProbeMethodVisitor]'s `pushInt` has to fall through to
- * each wider encoding. Generated with ASM rather than compiled: no fixture a compiler accepts has
- * sixteen thousand conditionals. Each site is `if (x != i) {}`, taken for every `i` but the
- * argument, so one call marks exactly one not-taken slot and the rest taken.
- */
 class BranchProbeSlotEncodingTest {
     private val internalName = "com/example/gen/ManySites"
     private val sitesPerMethod = 800
@@ -78,13 +71,11 @@ class BranchProbeSlotEncodingTest {
                 .load(javaClass.classLoader, ClassLoadingStrategy.Default.WRAPPER)
                 .loaded
 
-        // run0's site 70 not taken: slot 141, past BIPUSH's reach.
         loaded.getMethod("run0", Int::class.java).invoke(null, 70)
         assertEquals(1L, counts[2 * 70 + 1], "not-taken slot of run0's site 70")
         assertEquals(0L, counts[2 * 70], "taken slot of run0's site 70")
         assertEquals(sitesPerMethod.toLong(), counts.sum(), "one slot per site in run0, nothing outside it")
 
-        // run20's last site not taken: slot 33599, past SIPUSH's reach.
         val lastSite = (methods - 1) * sitesPerMethod + (sitesPerMethod - 1)
         loaded.getMethod("run${methods - 1}", Int::class.java).invoke(null, sitesPerMethod - 1)
         assertEquals(1L, counts[2 * lastSite + 1], "not-taken slot of the last site in the class")

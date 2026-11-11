@@ -25,12 +25,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
-/**
- * Drives [SpringWebFluxModule.declare] against real reactive `RouterFunction` objects, one
- * predicate shape per test, to pin what each arm of the shared walk resolves a route's identity
- * to under the reactive names. `declare` is called directly, not through the woven
- * `afterPropertiesSet`, so no handler-mapping class loads here.
- */
 class SpringWebFluxFunctionalRouteWalkTest {
     private val handler = HandlerFunction<ServerResponse> { ServerResponse.ok().build() }
 

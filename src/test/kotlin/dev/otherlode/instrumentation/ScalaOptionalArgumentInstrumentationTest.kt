@@ -13,12 +13,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/**
- * Proves Scala default-getter re-kinding through the real transform pipeline, on the
- * `:fixtures-scala3` and `:fixtures-scala2` fixtures, the same way
- * [OptionalArgumentInstrumentationTest] proves the Kotlin `$default` tier. [ProbeRegistry.manifest]
- * is enough for every assertion here; nothing goes over the wire.
- */
 class ScalaOptionalArgumentInstrumentationTest {
     private var installedTransformer: ResettableClassFileTransformer? = null
     private var installedOtherlode: OtherlodeInstrumentation? = null
@@ -133,11 +127,6 @@ class ScalaOptionalArgumentInstrumentationTest {
     fun `scala 2 - omission counts match real omitting calls`() =
         `omission counts match real omitting calls, and the target's own method hit count is unaffected`("scala2")
 
-    /**
-     * `Plain.f`'s default is resolved statically, so a call through a `Plain`-typed reference
-     * whose runtime class only overrides `f` (not its default) still counts against `Plain`'s own
-     * getter probe, exactly the way Scala itself resolves the omitted argument.
-     */
     private fun `a receiver whose class overrides only f is counted on the base class's getter probe`(module: String) {
         val registry = ProbeRegistry()
         install(registry, newConfig())
@@ -178,12 +167,6 @@ class ScalaOptionalArgumentInstrumentationTest {
     fun `scala 2 - a receiver whose class overrides only f is counted on the base class's getter probe`() =
         `a receiver whose class overrides only f is counted on the base class's getter probe`("scala2")
 
-    /**
-     * Scala 2.13's case-class companion gets its own `apply$default$N`, resolved by the same
-     * general same-class rule as any other getter, onto `Cc$.apply` in the same class. Scala 3
-     * has no such method (see [dev.otherlode.instrumentation.branch.ScalaGetterResolutionTest]),
-     * so this is Scala-2-specific.
-     */
     @Test
     fun `scala 2 - apply defaults re-kind onto Cc dollar's own apply in the same class`() {
         val registry = ProbeRegistry()
@@ -192,9 +175,6 @@ class ScalaOptionalArgumentInstrumentationTest {
 
         callDriver(loader, "callCaseClassApply", times = 2)
 
-        // Cc$ also carries the constructor default getters $lessinit$greater$default$1/2,
-        // which resolve separately, cross-class, against Cc's own <init>; isolating by
-        // methodName keeps this test to apply's own same-class getters.
         val probes =
             registry
                 .manifest(ResourceAttributes("test", null, "instance-1", null, "run-1"))
@@ -215,16 +195,10 @@ class ScalaOptionalArgumentInstrumentationTest {
             return deltas.singleOrNull { it.classId == probe.classId && it.probeIndex == probe.probeIndex }?.hitsTotal ?: 0L
         }
 
-        // Driver.callCaseClassApply calls Cc.apply(1), supplying a explicitly and omitting b.
         assertEquals(0L, hitsFor(0), "a is always supplied explicitly")
         assertEquals(2L, hitsFor(1), "b is omitted by both calls")
     }
 
-    /**
-     * `Cc$`'s constructor default getters resolve across the class boundary to `Cc`'s own
-     * `<init>`. `Cc`'s own `<init>` method probe counts every constructor call
-     * regardless of which arguments were omitted, since it is a separate probe on a separate class.
-     */
     private fun `constructor default getters resolve across the class boundary, and Cc's own init hit count is unaffected`(
         module: String,
     ) {
@@ -232,12 +206,9 @@ class ScalaOptionalArgumentInstrumentationTest {
         install(registry, newConfig())
         val loader = ScalaFixtures.classLoader(module, javaClass.classLoader)
 
-        callDriver(loader, "callCaseClassConstructor") // new Cc(9): supplies a, omits b
-        callDriver(loader, "callCaseClassConstructorBothOmitted") // new Cc(): omits both
+        callDriver(loader, "callCaseClassConstructor")
+        callDriver(loader, "callCaseClassConstructorBothOmitted")
 
-        // Scala 2's Cc$ also carries apply$default$1/2, its own same-class getters for apply; this
-        // isolates the constructor getters by target name so both fixture modules assert the same
-        // count regardless of that difference.
         val probes = registry.manifest(ResourceAttributes("test", null, "instance-1", null, "run-1")).probes
         val optionalProbes =
             probes.filter {
@@ -277,20 +248,12 @@ class ScalaOptionalArgumentInstrumentationTest {
     fun `scala 2 - constructor default getters resolve across the class boundary`() =
         `constructor default getters resolve across the class boundary, and Cc's own init hit count is unaffected`("scala2")
 
-    /**
-     * `Cc`'s own static forwarder for the constructor default getter resolves in class to
-     * `Cc.<init>`, alongside the module getter on `Cc$` that resolves to the same target across
-     * the class boundary: one parameter, two omission probes, an intended and known shape. A
-     * consumer that judges each probe on its own instead of summing them can find the
-     * forwarder's own zero reading as "always supplied" beside the module getter's "never
-     * supplied" for the same parameter.
-     */
     private fun `Cc's constructor default getter for parameter 0 has both a module probe and its own forwarder probe`(module: String) {
         val registry = ProbeRegistry()
         install(registry, newConfig())
         val loader = ScalaFixtures.classLoader(module, javaClass.classLoader)
 
-        callDriver(loader, "callCaseClassConstructor") // new Cc(9): supplies a, omits b
+        callDriver(loader, "callCaseClassConstructor")
 
         val probes = registry.manifest(ResourceAttributes("test", null, "instance-1", null, "run-1")).probes
         val parameterZeroProbes =
@@ -313,8 +276,7 @@ class ScalaOptionalArgumentInstrumentationTest {
         val forwarder = parameterZeroProbes.single { it.className == "com.example.scalatarget.Cc" }
         assertEquals(null, forwarder.targetClassName, "Cc's own static forwarder resolves in class")
 
-        // Each probe carries its own method's first line. Targets.scala declares Cc on line 71,
-        // and the forwarder on Cc has no line-number table of its own.
+        // Targets.scala declares Cc on line 71, and the forwarder on Cc has no line-number table.
         assertEquals(71, moduleGetter.line)
         assertEquals(-1, forwarder.line, "the forwarder never borrows the module getter's line")
     }
@@ -327,10 +289,6 @@ class ScalaOptionalArgumentInstrumentationTest {
     fun `scala 2 - Cc's constructor default getter for parameter 0 has both a module probe and its own forwarder probe`() =
         `Cc's constructor default getter for parameter 0 has both a module probe and its own forwarder probe`("scala2")
 
-    /**
-     * `DefaultLines.f` in Targets.scala: `b = 1` on line 113, and `c`'s expression `"x"` on line 115,
-     * the line after `c`'s name. `f`'s own first line is 116, its body.
-     */
     private fun `each getter's probe carries the getter's own line, not the target's`(module: String) {
         val registry = ProbeRegistry()
         install(registry, newConfig())
@@ -344,6 +302,7 @@ class ScalaOptionalArgumentInstrumentationTest {
                 .probes
                 .filter { it.className == "com.example.scalatarget.DefaultLines" && it.kind == ProbeKind.OPTIONAL_ARGUMENT }
                 .associate { checkNotNull(it.parameterIndex) to it.line }
+        // Targets.scala declares b = 1 on line 113 and c's expression on line 115.
         assertEquals(mapOf(1 to 113, 2 to 115), lines)
     }
 
@@ -355,18 +314,13 @@ class ScalaOptionalArgumentInstrumentationTest {
     fun `scala 2 - each getter's probe carries the getter's own line, not the target's`() =
         `each getter's probe carries the getter's own line, not the target's`("scala2")
 
-    /**
-     * Scala 3 resolves `Cc.apply(...)` through the same constructor default getters as `new
-     * Cc(...)`: unlike Scala 2, `Cc$` has no `apply$default$N` of its
-     * own for Scala 3 to fall back to.
-     */
     @Test
     fun `scala 3 - Cc apply also routes through the constructor getters`() {
         val registry = ProbeRegistry()
         install(registry, newConfig())
         val loader = ScalaFixtures.classLoader("scala3", javaClass.classLoader)
 
-        callDriver(loader, "callCaseClassApply") // Cc.apply(1): supplies a, omits b
+        callDriver(loader, "callCaseClassApply")
 
         val bProbe =
             registry

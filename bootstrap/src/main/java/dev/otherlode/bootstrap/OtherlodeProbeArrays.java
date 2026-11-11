@@ -12,8 +12,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * #resolve} from its woven code without a {@code NoClassDefFoundError}. The agent plugs its
  * registry in through {@link #install(Resolver)} at premain.
  *
- * <p>A miss (no resolver installed, or no array for the class) returns a fresh array of the
- * requested size and logs once.
+ * <p>A miss (no resolver installed, or no array of the requested size for the class) returns a
+ * fresh array of that size and logs once per class name.
  */
 public final class OtherlodeProbeArrays {
     /** Implemented by the agent; looks the class's array up in its registry. May return null. */

@@ -147,7 +147,6 @@ class StaticBaselinePublisherTest {
 
         publisher.run(resource)
 
-        // run() consumed the one-time warning for the early class; a later dynamic check must not repeat it.
         assertFalse(detector.shouldWarnAbout("com.example.Early"))
     }
 

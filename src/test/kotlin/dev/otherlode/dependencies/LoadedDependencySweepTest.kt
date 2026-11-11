@@ -17,17 +17,12 @@ import java.nio.file.Path
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-/**
- * Drives the dependency count end to end: real jars, classes loaded through a real
- * [URLClassLoader], and a [LoadedClassSweep] reading the JVM's own loaded-class array.
- */
 class LoadedDependencySweepTest {
     @TempDir
     lateinit var dir: Path
 
     private val instrumentation = ByteBuddyAgent.install()
 
-    /** The adopter's own package, which neither fixture jar holds, so both are dependencies. */
     private val includes = listOf("com.acme")
 
     @Test
@@ -59,7 +54,6 @@ class LoadedDependencySweepTest {
         sweep.run(runForwardPass = false)
         Reference.reachabilityFence(loaded)
 
-        // The test JVM's own classpath jars are counted too, as discovered by load; only the two fixtures matter here.
         val byArtifact =
             registry
                 .entries()

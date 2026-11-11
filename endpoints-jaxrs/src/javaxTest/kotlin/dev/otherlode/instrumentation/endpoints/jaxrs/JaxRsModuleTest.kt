@@ -17,23 +17,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
-/**
- * Proves [JaxRsModule] end to end against a real Jersey server on the JDK's own `HttpServer`, not
- * a fixture-level unit test, and proves the method tier and the endpoint tier coexist on one
- * resource method: [OrdersResource] sits under [JaxRsTestAgent]'s fixture package, so both
- * `OtherlodeInstrumentation` and `EndpointInstrumentation` instrument it.
- *
- * [JaxRsTestAgent] installs both transformers during its own `premain`, run by this module's
- * Gradle configuration as a real `-javaagent` on the test JVM's own command line; see that
- * object's Javadoc for why a self-attach inside this test method would be too late.
- *
- * This is `:endpoints-jaxrs`'s `javax.ws.rs` copy of the default `test` suite's `jakarta.ws.rs`
- * test of the same name. Only the fixtures' own imports, [OrdersResource]'s `PURGE` annotation
- * included, differ by namespace; every line in this file, including the assertions, is identical.
- * Sharing this file across both suites was considered and set aside: the fixtures' own imports
- * differ by namespace, so a shared test source would still need two copies of every fixture and a
- * parameter to select between them, which is more indirection than duplicating one file plainly.
- */
 class JaxRsModuleTest {
     @Test
     fun `registration and dispatch through a real Jersey server are tracked end to end`() {
@@ -142,7 +125,6 @@ class JaxRsModuleTest {
         client.send(request, HttpResponse.BodyHandlers.discarding())
     }
 
-    /** The HTTP status Jersey answers a `GET` to [path] with, used to prove a declared-or-not endpoint matches what actually gets served. */
     private fun status(
         client: HttpClient,
         port: Int,

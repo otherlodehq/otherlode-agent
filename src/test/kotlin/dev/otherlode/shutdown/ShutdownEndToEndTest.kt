@@ -7,10 +7,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/**
- * The agent's shutdown hook against real JVMs (ADR 0084): what it opens, how long it takes, what
- * it waits for and where its late log lines go.
- */
 class ShutdownEndToEndTest {
     private companion object {
         const val PACKAGE = "shutdowntest"

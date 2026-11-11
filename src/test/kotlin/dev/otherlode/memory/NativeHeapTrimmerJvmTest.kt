@@ -10,10 +10,6 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 import kotlin.test.fail
 
-/**
- * Starts a JVM with the shaded agent jar and without the `java.management` module. The trim must
- * not stop the agent from starting there, whatever its interval.
- */
 class NativeHeapTrimmerJvmTest {
     private companion object {
         const val PACKAGE = "com.example.probewindow"

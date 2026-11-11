@@ -8,12 +8,6 @@ import org.junit.jupiter.params.provider.MethodSource
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Proves the outlines of ADR 0054 that no source produces, coroutine machinery, string switch
- * lowering and multi-file facade methods, stay read on real output: across every kotlinc release,
- * every javac version and every scalac release in the matrix, no branch outcome is an unread
- * shape, and no facade method is one.
- */
 class UnreadOutlineMatrixTest {
     companion object {
         @JvmStatic

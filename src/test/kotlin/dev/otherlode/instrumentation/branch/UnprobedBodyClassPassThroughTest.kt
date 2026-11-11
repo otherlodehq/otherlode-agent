@@ -12,12 +12,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Proves on real kotlinc output that a body class the agent never probes is a pass-through.
- * kotlinc marks every function and property reference class synthetic, so its creator's
- * `CREATES` edge goes to the function or accessor the reference names. A suspend function's own
- * continuation is turned away too. In neither case does any edge name the unprobed class.
- */
 class UnprobedBodyClassPassThroughTest {
     private val lookup: (String) -> ByteArray? = { internalName ->
         ClassFileLocator
@@ -73,11 +67,6 @@ class UnprobedBodyClassPassThroughTest {
         )
     }
 
-    /**
-     * The constructor reference's `invoke` wraps the function value in a `$sam$` class, which is
-     * synthetic too. The wrapper only calls the function value, which is out of scope, so nothing
-     * in scope is left to reach.
-     */
     @Test
     fun `a fun interface constructor reference and its SAM wrapper leave no edge behind`() {
         assertEquals(
@@ -138,7 +127,6 @@ class UnprobedBodyClassPassThroughTest {
         assertEquals(emptyList(), continuationEdges)
     }
 
-    /** kotlinc's continuation classes in the coroutine fixture: the ones extending `ContinuationImpl`. */
     private val continuationClasses =
         listOf(
             "CoroutineTargetKt\$twoPoints\$1",

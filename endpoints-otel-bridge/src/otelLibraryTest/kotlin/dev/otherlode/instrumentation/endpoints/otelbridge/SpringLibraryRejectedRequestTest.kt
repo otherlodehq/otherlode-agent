@@ -13,11 +13,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * A filter inside OpenTelemetry's Spring MVC library filter answers 401, as Spring Security does.
- * The library still asks the handler mappings for the route after the chain returns, and that is
- * the first lookup the request makes. The request never reached the dispatcher, so it is no call.
- */
 class SpringLibraryRejectedRequestTest {
     @Test
     fun `a request a filter answered with 401 is no call of the route`() {

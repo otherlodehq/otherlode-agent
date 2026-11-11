@@ -91,10 +91,7 @@ class MainClassSuggestionTest {
         assertEquals("com.acme.shop", MainClassSuggestion.fromCommand("shop.module/com.acme.shop.Main arg", noJars)?.prefix)
     }
 
-    /**
-     * `java -m com.acme.shop` names the module alone, and `sun.java.command` is then the module
-     * name (checked on JDK 22), so the main class is the one the module's descriptor declares.
-     */
+    // `java -m com.acme.shop` names the module alone, and `sun.java.command` is then the module name.
     @Test
     fun `a module launch with no class suggests the package of the module's declared main class`() {
         val shop = ModuleDescriptor.newModule("com.acme.shop").mainClass("com.acme.shop.web.ShopMain").build()

@@ -13,12 +13,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/**
- * Proves omission probes through the real transform pipeline, on the
- * `DefaultArgumentTarget` fixture, rather than only through
- * [dev.otherlode.instrumentation.branch.BranchSiteAnalyzerTest]'s direct bytecode
- * checks.
- */
 class OptionalArgumentInstrumentationTest {
     private var installedTransformer: ResettableClassFileTransformer? = null
     private var installedOtherlode: OtherlodeInstrumentation? = null
@@ -95,8 +89,6 @@ class OptionalArgumentInstrumentationTest {
             return deltas.singleOrNull { it.probeIndex == probe.probeIndex }?.hitsTotal ?: 0L
         }
 
-        // callF makes four calls: f(1), f(1,2), f(1,2,"y"), f(1,2,"y",3L) - omitting b, c, d
-        // three, two, and one times respectively.
         assertEquals(1L, hitsFor(1), "b is omitted by only the first call")
         assertEquals(2L, hitsFor(2), "c is omitted by the first two calls")
         assertEquals(3L, hitsFor(3), "d is omitted by the first three calls")
@@ -180,10 +172,6 @@ class OptionalArgumentInstrumentationTest {
         assertTrue(probes.any { it.kind == ProbeKind.OPTIONAL_ARGUMENT })
     }
 
-    /**
-     * Loads [className] through the transform and returns the lines of its omission probes on
-     * [methodName], keyed by parameter index.
-     */
     private fun omissionLines(
         className: String,
         methodName: String,
@@ -202,8 +190,7 @@ class OptionalArgumentInstrumentationTest {
 
     @Test
     fun `each default on its own line gives its omission probe that line, not the function's`() {
-        // DefaultArgumentTarget.kt: b = 1 on line 7, c = "x" on line 8, d = 2L on line 9. f's own
-        // first line is 10, its body.
+        // DefaultArgumentTarget.kt declares b on line 7, c on line 8 and d on line 9.
         assertEquals(
             mapOf(1 to 7, 2 to 8, 3 to 9),
             omissionLines("com.example.target.DefaultArgumentTarget", "f"),
@@ -212,8 +199,7 @@ class OptionalArgumentInstrumentationTest {
 
     @Test
     fun `two defaults on one line both read that line`() {
-        // DefaultLineTarget.kt line 8. kotlinc writes one line-number entry for the whole of
-        // sameLine$default, so neither fill block has an entry of its own.
+        // DefaultLineTarget.kt declares both defaults of sameLine on line 8.
         assertEquals(
             mapOf(0 to 8, 1 to 8),
             omissionLines("com.example.target.DefaultLineTargetKt", "sameLine"),
@@ -222,7 +208,7 @@ class OptionalArgumentInstrumentationTest {
 
     @Test
     fun `a constructor's default reads its own line, not the constructor's`() {
-        // DefaultArgumentTarget.kt: b = 7 on line 22; the class header is on line 20.
+        // DefaultArgumentTarget.kt declares b on line 22 and the class header on line 20.
         assertEquals(
             mapOf(1 to 22),
             omissionLines("com.example.target.ConstructedWithDefault", "<init>"),
@@ -231,7 +217,7 @@ class OptionalArgumentInstrumentationTest {
 
     @Test
     fun `a default whose expression is on the next line reads the expression's line`() {
-        // DefaultLineTarget.kt: label's name is on line 13 and its expression on line 14.
+        // DefaultLineTarget.kt declares label's name on line 13 and its expression on line 14.
         assertEquals(
             mapOf(1 to 14),
             omissionLines("com.example.target.DefaultLineTargetKt", "wrappedDefault"),

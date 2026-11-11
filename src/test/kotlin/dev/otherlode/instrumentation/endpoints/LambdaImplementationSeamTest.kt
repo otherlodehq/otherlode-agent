@@ -16,14 +16,8 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/**
- * Pins the seam half of hidden-handler naming: what `OtherlodeEndpoints.recordLambdaClass`
- * keeps and what `OtherlodeEndpoints.lambdaImplementation` gives back. The lambda factory hook that
- * feeds it is proven end to end against the real JDK in the `endpoints-jdk-httpserver` module.
- * Here every input is built by hand. Another test in this JVM may have installed the real hook,
- * so each test spins its lambda classes before it installs a handler interface set, which keeps the
- * hook from recording them first.
- */
+// Another test in this JVM may install the real lambda hook, so each test spins its lambda class before it
+// installs a handler interface set.
 class LambdaImplementationSeamTest {
     private val lookup = MethodHandles.lookup()
 
@@ -111,7 +105,6 @@ class LambdaImplementationSeamTest {
         assertNull(OtherlodeEndpoints.lambdaImplementation(String::class.java))
     }
 
-    /** `Integer.parseInt(String, int)`, a real named method standing in for a lambda's implementation. */
     private fun targetInfo(): MethodHandleInfo {
         val type = MethodType.methodType(Int::class.javaPrimitiveType, String::class.java, Int::class.javaPrimitiveType)
         return lookup.revealDirect(lookup.findStatic(Integer::class.java, "parseInt", type))

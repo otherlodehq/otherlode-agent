@@ -6,7 +6,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
-/** Proves [BranchSiteAnalyzer]'s `body_kind` and `source_name` on real kotlinc and javac output. */
 class BodyKindAnalyzerTest {
     private fun analyze(
         root: String,

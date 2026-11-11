@@ -22,21 +22,11 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/**
- * Proves the mismatch path end to end, without [ClassBytesCapture] in the way: with
- * `captureClassBytes = false`, the branch analysis falls back to reading the class as a
- * classloader resource (the on-disk `.class` file), while a fake earlier transformer, the same
- * one [BranchBytesCaptureTest] uses, swaps in a version of `BranchTarget` whose `classify` has an
- * extra conditional. The two byte streams disagree on how many branch slots `classify` needs, so
- * the transform must fail, and the class must still load and run from its original, unrewritten
- * bytes.
- */
 class BranchSiteCountMismatchTest {
     private val instrumentation: Instrumentation = ByteBuddyAgent.install()
     private var otherlode: OtherlodeInstrumentation? = null
     private var installedTransformer: ResettableClassFileTransformer? = null
 
-    /** Stands in for an earlier agent: replaces BranchTarget's bytes with BranchTargetWithExtraBranches, renamed. */
     private val earlierAgent =
         object : ClassFileTransformer {
             override fun transform(
@@ -61,7 +51,6 @@ class BranchSiteCountMismatchTest {
         instrumentation.removeTransformer(earlierAgent)
     }
 
-    /** Records every class [OtherlodeInstrumentation] commits, so a test can assert one was never committed at all. */
     private class RecordingProbeRegistry : ProbeRegistry() {
         val registered = mutableListOf<String>()
 
@@ -110,9 +99,6 @@ class BranchSiteCountMismatchTest {
         val classify = targetClass.getMethod("classify", Int::class.java)
         assertEquals("large", classify.invoke(target, 500), "the class still loads and runs, from the swapped, unrewritten bytes")
 
-        // Never registered at any point, not registered and then withdrawn. A flush racing this
-        // transform has no instant at which it could have picked the class up, so its probes can
-        // never reach a collector that would read them as permanently-zero dead code.
         assertTrue(
             "com.example.target.BranchTarget" !in registry.registered,
             "a class whose transform fails is never committed to the registry",
@@ -123,8 +109,8 @@ class BranchSiteCountMismatchTest {
         assertTrue(manifest.probes.none { it.className == "com.example.target.BranchTarget" }, "no probe exists for the skipped class")
         val skipped = manifest.skippedClasses.filter { it.className == "com.example.target.BranchTarget" }
         assertEquals(1, skipped.size, "the class appears once in skippedClasses")
-        // The check runs per method, so the reason names classify: two slots sized from the
-        // analysed bytes against four wanted by the rewrite.
+        // The check runs per method, so the reason names classify: two slots sized from the analysed bytes against
+        // four wanted by the rewrite.
         val reason = skipped.single().reason
         assertTrue("classify(I)Ljava/lang/String; wants 4 branch probe slots" in reason, reason)
         assertTrue("but 2 were sized" in reason, reason)

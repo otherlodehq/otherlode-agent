@@ -15,10 +15,6 @@ import dev.otherlode.export.SkippedClass
 import dev.otherlode.export.UnreportedClass
 import dev.otherlode.instrumentation.VerifierRejectionWatch
 
-/**
- * A [ProbeManifest] from an agent whose hook on `VerifyError` is installed, which is what an agent
- * of the testkit's version sends. A query that rests on zero counts refuses a manifest without it.
- */
 @Suppress("LongParameterList")
 fun watchedManifest(
     resource: ResourceAttributes,
@@ -60,5 +56,4 @@ fun watchedManifest(
     verifierRejectionsWatched,
 )
 
-/** The verifier watch of an agent whose hook is installed and which has read no `VerifyError`. */
 fun watchedVerifier() = VerifierRejectionWatch(watched = true, drainMessages = { emptyArray() }, takeOverflow = { 0L })

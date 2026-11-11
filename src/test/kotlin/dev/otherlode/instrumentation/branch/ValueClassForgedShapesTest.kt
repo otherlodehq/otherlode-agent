@@ -8,12 +8,6 @@ import net.bytebuddy.jar.asm.Opcodes
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-/**
- * Shapes no compiler in the matrix writes, built with ASM so each rule's edge is pinned: a value
- * class whose `box-impl` and `unbox-impl` are not synthetic, a stub name whose hash is one
- * character short or long, a stub that boxes into a class that is not a value class, and the
- * suspend tail through the interface's own accessor that `all-compatibility` writes.
- */
 class ValueClassForgedShapesTest {
     private val build =
         CompilerFixtures.kotlinc(CompilerFixtures.kotlincVersions.first { !CompilerFixtures.kotlincDefaultsToJvmDefaultEnable(it) })
@@ -42,7 +36,6 @@ class ValueClassForgedShapesTest {
             includePackages = listOf("com.example.target"),
         ) { _, _ -> true }
 
-    /** A value class shape with [boxAccess] on `box-impl` and [unboxAccess] on `unbox-impl`. */
     private fun valueClass(
         name: String,
         boxAccess: Int,
@@ -84,7 +77,6 @@ class ValueClassForgedShapesTest {
     private val syntheticInstance = Opcodes.ACC_PUBLIC or Opcodes.ACC_FINAL or Opcodes.ACC_SYNTHETIC
     private val greets = "$pkg/Greets"
 
-    /** A `greet()` that casts `this` to [castTo] and calls `Greets$DefaultImpls.greet`, as kotlinc 2.1's stub in a value class does. */
     private fun castingStub(castTo: String): (ClassWriter) -> Unit =
         { writer ->
             writer.visitMethod(Opcodes.ACC_PUBLIC, "greet", "()Ljava/lang/String;", null, null).apply {
@@ -179,10 +171,6 @@ class ValueClassForgedShapesTest {
         assertEquals(GeneratedBy.NONE, plainUnbox.generatedBy("toString-impl", "(I)Ljava/lang/String;"))
     }
 
-    /**
-     * A class implementing `ValueStore<`[boxedInto]`>` with one stub named [name] that boxes its
-     * argument into [boxedInto], calls `ValueStore$DefaultImpls.put` and unboxes the result.
-     */
     private fun stub(
         className: String,
         name: String,

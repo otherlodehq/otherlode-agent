@@ -26,7 +26,6 @@ import kotlin.test.assertNull
 
 private const val HTTP_SERVLET = "jakarta.servlet.http.HttpServlet"
 
-/** Reads of servlet class files that no embedded container can show. */
 class ServletShapesTest {
     private val shapes = ServletShapes()
     private val loader: ClassLoader = ServletShapesTest::class.java.classLoader

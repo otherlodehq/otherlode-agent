@@ -13,11 +13,7 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/**
- * The weave of the real `java.lang.ApplicationShutdownHooks`. It runs in a JVM of its own, with
- * `-XX:+BytecodeVerificationLocal`, because it weaves a boot class: the JVM then verifies the woven
- * class. The hook table is not run here, since that would run the test JVM's own hooks.
- */
+// Runs only in the `verifierHookTest` JVM, since it weaves a boot class.
 class VerifierHookShutdownHooksTest {
     private val instrumentation: Instrumentation = VerifierHookFixtures.instrumentation()
 

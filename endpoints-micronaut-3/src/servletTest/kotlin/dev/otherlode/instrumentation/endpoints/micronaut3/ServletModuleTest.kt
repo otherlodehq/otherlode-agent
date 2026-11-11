@@ -5,11 +5,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Proves [Micronaut3Module] against micronaut-servlet's embedded Jetty server, which dispatches
- * through `ServletHttpHandler` instead of Netty's `RoutingInBoundHandler`. The controllers are the
- * Netty suite's.
- */
 class ServletModuleTest {
     private val declared =
         setOf(

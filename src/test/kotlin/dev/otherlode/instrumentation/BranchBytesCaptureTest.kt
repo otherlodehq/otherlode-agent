@@ -31,25 +31,11 @@ import kotlin.test.assertTrue
 import java.util.logging.Level as JulLevel
 import java.util.logging.Logger as JulLogger
 
-/**
- * Proves what happens to a method whose branches an earlier transformer changed. A transformer
- * registered ahead of Otherlode's swaps `BranchTarget`'s received bytes for a version whose
- * `classify` has two conditionals where the class file has one. The analysis reads the class file
- * and the rewrite walks the received bytes, so `classify`'s sites cannot be paired: it keeps its
- * METHOD probe and gets no branch probes, while `classifyDense` and `classifySparse`, unchanged,
- * keep theirs with the branch indexes the class file gives them.
- *
- * A second transformer removes a method the class file declares and adds one of its own, so the
- * two method sets differ: which methods get probes comes from the class file, and a method with no
- * body in the received bytes has nothing to weave into. A third only reorders the methods, so each
- * method's slots must land where the class file numbered them, not where the rewriter meets them.
- */
 class BranchBytesCaptureTest {
     private val instrumentation: Instrumentation = ByteBuddyAgent.install()
     private var otherlode: OtherlodeInstrumentation? = null
     private var installedTransformer: ResettableClassFileTransformer? = null
 
-    /** Stands in for an earlier agent: replaces BranchTarget's bytes with BranchTargetWithExtraBranches, renamed. */
     private val earlierAgent =
         object : ClassFileTransformer {
             override fun transform(
@@ -68,10 +54,6 @@ class BranchBytesCaptureTest {
             }
         }
 
-    /**
-     * Stands in for an earlier agent that changes the method set: drops `classifyDense`, which
-     * nothing in the class calls, and adds `extra(I)I`, holding one conditional.
-     */
     private val methodSetAgent =
         object : ClassFileTransformer {
             override fun transform(
@@ -116,11 +98,6 @@ class BranchBytesCaptureTest {
             }
         }
 
-    /**
-     * Stands in for an earlier agent that only reorders methods: the received bytes declare
-     * `BranchTarget`'s methods in reverse, so the rewriter meets them in a different order from the
-     * class file's.
-     */
     private val reorderingAgent =
         object : ClassFileTransformer {
             override fun transform(
@@ -134,7 +111,6 @@ class BranchBytesCaptureTest {
                 val reader = ClassReader(classfileBuffer)
                 val writer = ClassWriter(0)
                 val order = mutableListOf<Pair<String, String>>()
-                // First pass: everything but the methods, noting their order.
                 reader.accept(
                     object : ClassVisitor(Opcodes.ASM9, writer) {
                         override fun visitMethod(
@@ -152,7 +128,6 @@ class BranchBytesCaptureTest {
                     },
                     0,
                 )
-                // Then each method on its own pass, last first.
                 for (method in order.reversed()) {
                     reader.accept(
                         object : ClassVisitor(Opcodes.ASM9) {
@@ -177,7 +152,6 @@ class BranchBytesCaptureTest {
             }
         }
 
-    /** Remembers each class's layout hash as it is registered. */
     private class LayoutRecordingRegistry : ProbeRegistry() {
         val layoutHashes = ConcurrentHashMap<String, Long>()
 
@@ -289,8 +263,6 @@ class BranchBytesCaptureTest {
         assertEquals(listOf(6, 7, 8), sparse.map { it.branchIndex })
         assertEquals(listOf(0L, 1L, 0L), sparse.map { hits[it.probeIndex] ?: 0L })
 
-        // The layout hash is built from exactly what the manifest lists, so the removed method's
-        // signature and sites are not in it.
         val expectedLayout =
             ProbeLayoutHash.of(
                 methodProbes.map { it.methodName + it.methodDescriptor } +
@@ -351,7 +323,6 @@ class BranchBytesCaptureTest {
         assertTrue(info.single().message.contains("classify(I)Ljava/lang/String;"), info.single().message)
     }
 
-    /** Runs [block], returning its result and every log record [loggerName] emitted meanwhile. */
     private fun <T> captureLogRecords(
         loggerName: String,
         block: () -> T,

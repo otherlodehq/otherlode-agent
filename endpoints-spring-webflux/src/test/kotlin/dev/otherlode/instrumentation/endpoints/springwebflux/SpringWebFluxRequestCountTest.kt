@@ -33,11 +33,6 @@ import kotlin.test.assertTrue
 
 private val RESOURCE_ENDPOINTS = { prefix: String -> setOf("GET $prefix/*", "HEAD $prefix/*", "OPTIONS $prefix/*") }
 
-/**
- * Proves that a request counts once, that a preflight is no call, and how a `resources(...)` route
- * is declared and counted, on every route kind, against a real `DispatcherHandler`. Each case
- * asserts the module is still on, since a hook that does not match the Spring in use switches it off.
- */
 class SpringWebFluxRequestCountTest {
     private fun clientFor(
         controllers: List<Class<*>> = emptyList(),

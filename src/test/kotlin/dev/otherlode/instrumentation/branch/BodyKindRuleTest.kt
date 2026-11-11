@@ -6,7 +6,6 @@ import dev.otherlode.instrumentation.branch.BodyKindRule.OwnInnerClassEntry
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-/** Proves each branch of [BodyKindRule.classify], in order, on facts alone. */
 class BodyKindRuleTest {
     private val anonymousEntry = OwnInnerClassEntry(innerName = null)
 

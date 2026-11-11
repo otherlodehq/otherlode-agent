@@ -11,12 +11,6 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/**
- * The agent's pool resolves a supertype lazily, so a supertype it has no class file for fails when
- * the walk reads it, not when the walk names it. A supertype that cannot be loaded at all means the
- * class being matched can never be defined; one that loads without a reachable class file is read
- * from the loaded class.
- */
 class JaxRsModuleUnreadableSupertypeTest {
     private class DefiningLoader(
         parent: ClassLoader,

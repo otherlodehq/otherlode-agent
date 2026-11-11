@@ -4,11 +4,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
-/**
- * Proves [KotlinSmapParser] against a real SMAP read with `javap -v` from
- * `demo/build/classes/kotlin/main/com/example/demo/server/DemoServerMainKt.class`, and
- * against the malformed shapes [KotlinSmap.originOf] must fall back to "not a copy" for.
- */
 class KotlinSmapParserTest {
     private val demoServerMainSmap =
         "SMAP\nDemoServerMain.kt\nKotlin\n*S Kotlin\n*F\n+ 1 DemoServerMain.kt\n" +
@@ -32,11 +27,6 @@ class KotlinSmapParserTest {
         assertNull(smap.originOf(50))
     }
 
-    /**
-     * Read with `javap -v` from `OtherlodeInstrumentation$recordBranchDrops$$inlined$groupingBy$1`, a
-     * class kotlinc regenerated from the standard library's `groupingBy` object while inlining it.
-     * File 1 is the library class, so even the identity range is a copy of library code.
-     */
     @Test
     fun `the identity range of a class kotlinc regenerated from an inlined object is a copy of file 1`() {
         val regenerated =
@@ -97,8 +87,6 @@ class KotlinSmapParserTest {
 
     @Test
     fun `a missing line file id inherits the previous entry's file id`() {
-        // 295#2,2:140 carries an explicit file id 2; the entry that follows it in a hand-built
-        // SMAP with the file id omitted must still resolve against file 2, not fall back to 1.
         val debug =
             "SMAP\nFoo.kt\nKotlin\n*S Kotlin\n*F\n+ 1 Foo.kt\ncom/example/FooKt\n" +
                 "+ 2 Bar.kt\ncom/example/BarKt\n*L\n1#1,10:1\n50#2:20\n60:21\n*E\n"
@@ -110,9 +98,7 @@ class KotlinSmapParserTest {
 
     @Test
     fun `an output line increment gives each input line a block of consecutive output lines`() {
-        // JSR-045: "10#2,2:100,3" maps input line 10 to output lines 100 to 102 and input line
-        // 11 to 103 to 105. Every line inside a block resolves to its input line, not only the
-        // first one.
+        // JSR-045: "10#2,2:100,3" maps input line 10 to output lines 100 to 102 and input line 11 to 103 to 105.
         val debug =
             "SMAP\nFoo.kt\nKotlin\n*S Kotlin\n*F\n+ 1 Foo.kt\ncom/example/FooKt\n" +
                 "+ 2 Bar.kt\ncom/example/BarKt\n*L\n1#1,10:1\n10#2,2:100,3\n*E\n"
@@ -175,9 +161,6 @@ class KotlinSmapParserTest {
 
     @Test
     fun `the KotlinDebug stratum is ignored, even for an output line only it covers`() {
-        // The Kotlin stratum's own *L section only covers output lines 1-5. Output line 50 is
-        // covered only by the KotlinDebug stratum that follows. If parsing failed to stop at
-        // "*S KotlinDebug", that entry would leak in and originOf(50) would resolve against it.
         val debug =
             "SMAP\nFoo.kt\nKotlin\n*S Kotlin\n*F\n+ 1 Foo.kt\ncom/example/FooKt\n*L\n1#1,5:1\n" +
                 "*S KotlinDebug\n*F\n+ 1 Foo.kt\ncom/example/FooKt\n*L\n99#1:50\n*E\n"

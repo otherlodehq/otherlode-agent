@@ -2,7 +2,6 @@ package dev.otherlode.testkit
 
 import dev.otherlode.export.DependencyDiscoverySource
 
-// Mirrors the demo's DependencyReport.kt rule for rule: a change to one needs the same change in the other.
 internal data class DependencyIdentityView(
     val groupId: String,
     val artifactId: String,

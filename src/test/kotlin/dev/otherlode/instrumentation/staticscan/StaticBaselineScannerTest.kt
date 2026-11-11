@@ -32,16 +32,10 @@ import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
 class StaticBaselineScannerTest {
-    /**
-     * Include prefixes that cover the names a multi-release jar's versioned entries and its module
-     * descriptor would read as if taken for classes (`META-INF.versions.9.com.example...`,
-     * `module-info`), alongside the fixture's own package.
-     */
     private val phantomCoveringPrefixes = listOf("META-INF", "module-info", "com.example.target")
 
     private fun classBytes(path: String): ByteArray = File("build/classes/$path").readBytes()
 
-    /** An annotation type named [internalName], with a static field and its initialiser when [withInitializer] is set. */
     private fun annotationTypeBytes(
         internalName: String,
         withInitializer: Boolean,
@@ -100,7 +94,6 @@ class StaticBaselineScannerTest {
     private val priceBytes = classBytes("kotlin/test/com/example/target/Price.class")
     private val referenceTargetBytes = classBytes("java/test/com/example/target/ReferenceTarget.class")
 
-    /** The fixture root [CallEdgeAnalyzerTest][dev.otherlode.instrumentation.branch.CallEdgeAnalyzerTest] exercises directly. */
     private fun callEdgeFixtureRoot(): File =
         directoryRoot(
             "com/example/target/CallEdgeTarget.class" to callEdgeTargetBytes,
@@ -130,7 +123,6 @@ class StaticBaselineScannerTest {
         return root
     }
 
-    /** A minimal `module-info.class`, the shape javac emits for `module <name> {}`. */
     private fun moduleInfoBytes(moduleName: String): ByteArray {
         val writer = ClassWriter(0)
         writer.visit(Opcodes.V9, Opcodes.ACC_MODULE, "module-info", null, null, null)
@@ -146,7 +138,6 @@ class StaticBaselineScannerTest {
         return jarFile
     }
 
-    /** Writes [entries] into [jarFile], with a manifest carrying [classPath] as `Class-Path` when given. */
     private fun writeJar(
         jarFile: File,
         entries: List<Pair<String, ByteArray>>,
@@ -210,8 +201,6 @@ class StaticBaselineScannerTest {
                 "META-INF/versions/9/com/example/target/SampleTarget.class" to sampleTargetBytes,
                 "module-info.class" to moduleInfoBytes("com.example"),
             )
-        // Include prefixes covering the phantom names, so the prefix pre-filter cannot save the
-        // scan from one here.
         val scanner = StaticBaselineScanner(phantomCoveringPrefixes)
 
         val result = scanner.scan(listOf(jar))
@@ -226,7 +215,6 @@ class StaticBaselineScannerTest {
                 "BOOT-INF/classes/com/example/target/SampleTarget.class" to sampleTargetBytes,
                 "BOOT-INF/classes/META-INF/versions/9/com/example/target/SampleTarget.class" to sampleTargetBytes,
             )
-        // Prefixes covering the phantom name, as above: only the entry check itself can keep it out.
         val scanner = StaticBaselineScanner(phantomCoveringPrefixes)
 
         val result = scanner.scan(listOf(jar))
@@ -249,9 +237,6 @@ class StaticBaselineScannerTest {
 
     @Test
     fun `jars named by a manifest Class-Path are scanned too, following the chain once each`() {
-        // java -jar app.jar puts only app.jar on java.class.path; the launcher loads lib/a.jar
-        // from the manifest, and a.jar's own manifest names b.jar. b.jar names app.jar back,
-        // which must not loop.
         val dir = directoryRoot()
         File(dir, "lib").mkdirs()
         val app = File(dir, "app.jar")
@@ -325,9 +310,6 @@ class StaticBaselineScannerTest {
 
     @Test
     fun `a class whose annotation types cannot be resolved is declared, not unreadable`() {
-        // Stands in for a Spring Boot fat jar, where the system loader cannot see the annotation
-        // types packed under BOOT-INF/lib: ByteBuddy's type pool drops an annotation it cannot
-        // resolve, so the class is described without it and declared.
         val root = directoryRoot("com/example/target/WeirdName.class" to weirdNameBytes)
         val scanner = StaticBaselineScanner(listOf("com.example.target"), supportingTypesLocator = ClassFileLocator.NoOp.INSTANCE)
 
@@ -352,7 +334,6 @@ class StaticBaselineScannerTest {
 
         val declared = result.declaredClasses.single { it.className == "com.example.target.Holder" }
         assertTrue(declared.methods.any { it.methodName == "applyAsInt" })
-        // A placeholder would give Orphan a superclass of Object and let it through as an ordinary class.
         assertEquals(
             result.declaredClasses.single { it.className == "com.example.target.Orphan" }.superClassName,
             "com.example.absent.Parent",
@@ -402,9 +383,6 @@ class StaticBaselineScannerTest {
 
     @Test
     fun `a continuation class is still left out when nothing can resolve the Kotlin stdlib`() {
-        // The fat-jar shape: the stdlib sits in a nested dependency jar the scan never opens, so
-        // ContinuationImpl cannot be found anywhere. The scan's lazily resolving pool still gives
-        // the superclass's name, which is all the type matcher's check needs.
         val root =
             directoryRoot(
                 "com/example/target/CoroutineTargetKt\$twoPoints\$1.class" to
@@ -423,7 +401,6 @@ class StaticBaselineScannerTest {
         assertTrue("com.example.target.CoroutineTargetKt\$twoPoints\$1" !in everyBucketName)
     }
 
-    /** A class named [internalName] whose only content is [methodName]: abstract in an interface, or a concrete public method in a class. */
     private fun duplicateBytes(
         internalName: String,
         methodName: String,
@@ -991,8 +968,6 @@ class StaticBaselineScannerTest {
 
     @Test
     fun `with no roots given, the scan walks this JVM's own java-class-path`() {
-        // The test classpath carries this module's compiled test fixtures, so a scan of the
-        // default roots must find one of them without being told where to look.
         val scanner = StaticBaselineScanner(listOf("com.example.target"))
 
         val result = scanner.scan()
@@ -1057,8 +1032,6 @@ class StaticBaselineScannerTest {
                     }
                 assertEquals(probe.calls, declaredMethod.calls, "mismatch for ${probe.methodName}${probe.methodDescriptor}")
             }
-            // Both out-of-scope callees (a JDK call, a Kotlin stdlib call) are absent from the
-            // methods that make them, on both sides.
             assertEquals(emptyList(), declared.methods.single { it.methodName == "callsJdkMethod" }.calls)
             assertEquals(emptyList(), declared.methods.single { it.methodName == "callsKotlinStdlib" }.calls)
 
@@ -1384,7 +1357,6 @@ class StaticBaselineScannerTest {
         assertTrue(narrowMethod.single { it.methodName == "callsOtherClass" }.calls.isEmpty())
     }
 
-    /** A class in `com.example.target` whose own `<clinit>` calls `Lib.StaticOwner.compute()`, and which has no other method. */
     private fun clinitReferenceBytes(): ByteArray {
         val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
         writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "com/example/target/ClinitReference", null, "java/lang/Object", null)

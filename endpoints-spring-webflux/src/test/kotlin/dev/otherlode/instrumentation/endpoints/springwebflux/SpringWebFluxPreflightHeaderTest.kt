@@ -22,11 +22,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Runs each WebFlux advice that tests for a CORS preflight against a request whose headers throw
- * from `getFirst`, the way Spring Security's firewall does for a header value with a control
- * character. The preflight test must ask only whether a header is present.
- */
 class SpringWebFluxPreflightHeaderTest {
     private class UnreadableValueHeaders : HttpHeaders() {
         override fun getFirst(headerName: String): String? = throw IllegalArgumentException("marker-9c1e")

@@ -19,7 +19,6 @@ import kotlin.test.assertTrue
 
 private const val HANDLE_DESCRIPTOR = "(Lcom/sun/net/httpserver/HttpExchange;)V"
 
-/** Declares `handle` itself; a subclass with no override of its own must join here, not to itself. */
 private abstract class AbstractRespondingHandler : HttpHandler {
     override fun handle(exchange: HttpExchange) {
         exchange.sendResponseHeaders(200, -1)
@@ -27,10 +26,8 @@ private abstract class AbstractRespondingHandler : HttpHandler {
     }
 }
 
-/** Inherits `handle` from [AbstractRespondingHandler] without overriding it. */
 private class InheritingHandler : AbstractRespondingHandler()
 
-/** Overrides `handle` on itself, so its own class is where the join must land. */
 private class OverridingHandler : HttpHandler {
     override fun handle(exchange: HttpExchange) {
         exchange.sendResponseHeaders(200, -1)
@@ -38,16 +35,8 @@ private class OverridingHandler : HttpHandler {
     }
 }
 
-/**
- * Proves [JdkHttpServerModule] end to end against the real `com.sun.net.httpserver.HttpServer`,
- * not a fixture. [EndpointInstrumentation.install] must run before the JDK's own `ServerImpl`,
- * `HttpContextImpl`, and `ContextList` classes load for the first time in this JVM: a
- * [net.bytebuddy.agent.builder.AgentBuilder] transformer only weaves advice into a class as it
- * loads, not into one already loaded. Every reference to `HttpServer` and its context type is
- * therefore kept inside this one test method rather than a field or a companion object, so
- * nothing else in this test class can trigger that load first. Another test class in this module
- * would load those classes too, so the module's `forkEvery = 1` runs each class in its own JVM.
- */
+// Needs a JVM of its own (forkEvery = 1): the endpoint advice weaves ServerImpl only as it first loads,
+// so no HttpServer may be created before the install at the top of the test body.
 class JdkHttpServerModuleTest {
     @Test
     fun `registration and dispatch through the real JDK HttpServer are tracked end to end`() {
@@ -96,9 +85,6 @@ class JdkHttpServerModuleTest {
                 assertEquals(EndpointDiscoverySource.REGISTRATION, endpoint.discoverySource)
             }
 
-            // A hidden class (a Kotlin SAM lambda here) joins to the lambda body the lambda factory named for it,
-            // whether attached at creation or later through setHandler. Each lambda calls the member `respond`,
-            // so kotlinc passes `this` as the body's first parameter. HiddenHandlerNamingTest covers the other shapes.
             val lambdaBodyDescriptor = "(L${javaClass.name.replace('.', '/')};Lcom/sun/net/httpserver/HttpExchange;)V"
             val checkout = byIdentity.getValue("* /checkout")
             assertJoinsDeclaredMethod(checkout, javaClass, "registration_and_dispatch", lambdaBodyDescriptor)
@@ -111,21 +97,16 @@ class JdkHttpServerModuleTest {
                 "three lambdas, three bodies",
             )
 
-            // A non-hidden handler class that overrides `handle` on itself reports its own class.
             val overriding = byIdentity.getValue("* /overriding")
             assertEquals(OverridingHandler::class.java.name, overriding.handlerClass)
             assertEquals("handle", overriding.handlerMethod)
             assertEquals(HANDLE_DESCRIPTOR, overriding.handlerDescriptor)
 
-            // A subclass that inherits `handle` from an abstract base reports the base class, not the subclass:
-            // that is where the probe on `handle` actually lives.
             val inherited = byIdentity.getValue("* /inherited")
             assertEquals(AbstractRespondingHandler::class.java.name, inherited.handlerClass)
             assertEquals("handle", inherited.handlerMethod)
             assertEquals(HANDLE_DESCRIPTOR, inherited.handlerDescriptor)
 
-            // A handler attached later through setHandler (the one-argument createContext overload) is joined
-            // the same way as one attached at creation.
             val late = byIdentity.getValue("* /late")
             assertEquals(AbstractRespondingHandler::class.java.name, late.handlerClass)
             assertEquals("handle", late.handlerMethod)

@@ -21,10 +21,6 @@ import reactor.core.publisher.Mono
 import java.util.function.Supplier
 import kotlin.test.assertTrue
 
-/**
- * Fixture controller covering four kinds of annotated mapping: a single-verb path variable, a
- * single-verb path, one mapping shared by two paths and two verbs, and a mapping with no verb.
- */
 @RestController
 class TestController {
     @GetMapping("/checkout/{id}")
@@ -42,54 +38,39 @@ class TestController {
     fun any(): String = "any"
 }
 
-/** A mapping with no path of its own, which Spring holds as the empty pattern. */
 @RestController
 class RootController {
     @GetMapping
     fun root(): String = "root"
 }
 
-/** Declares a mapping that [InheritingController] inherits without overriding. */
 open class BaseController {
     @GetMapping("/inherited")
     fun inherited(): String = "inherited"
 }
 
-/** Serves [BaseController]'s mapping, whose method and probe live on the base class. */
 @RestController
 class InheritingController : BaseController()
 
-/** One mapping with two patterns that both match `/items/7`; the best match is `/items/{id}`. */
 @RestController
 class ItemsController {
     @GetMapping("/items/{id}", "/items/**")
     fun items(): String = "items"
 }
 
-/** A route that answers `OPTIONS` itself. */
 @RestController
 class OptionsController {
     @RequestMapping(path = ["/opt"], method = [RequestMethod.OPTIONS])
     fun options(): String = "options"
 }
 
-/** A handler registered in code through `registerMapping`, the way Spring Boot Actuator registers each operation. */
 class ProgrammaticHandler {
     @ResponseBody
     fun registered(): String = "registered"
 }
 
-/** A URL-mapped handler that answers with an empty body. */
 fun urlMappedWebHandler(): WebHandler = WebHandler { Mono.empty() }
 
-/**
- * Builds and refreshes a WebFlux application context holding [controllers], the router function
- * beans in [routerFunctions] and, when [urlMap] is not empty, a `SimpleUrlHandlerMapping` over it.
- *
- * `SimpleUrlHandlerMapping` and `RouterFunctionMapping` are never named as a type here, since a
- * reference that resolves before the module installs would load them unwoven. The URL mapping is
- * built by name, through reflection.
- */
 fun buildWebFluxContext(
     controllers: List<Class<*>> = emptyList(),
     routerFunctions: List<RouterFunction<*>> = emptyList(),
@@ -106,6 +87,7 @@ fun buildWebFluxContext(
         context.registerBean("functionalRoutes$index", routerFunctionClass, Supplier { routes })
     }
     if (urlMap.isNotEmpty()) {
+        // SimpleUrlHandlerMapping is reached by name so no class file here loads it before install runs.
         @Suppress("UNCHECKED_CAST")
         val mappingClass = Class.forName("org.springframework.web.reactive.handler.SimpleUrlHandlerMapping") as Class<Any>
         val setUrlMap = mappingClass.getMethod("setUrlMap", Map::class.java)
@@ -125,15 +107,14 @@ fun buildWebFluxContext(
     return context
 }
 
-/** Builds a `RouterFunctionMapping` from [routerFunction] with its constructor and initialises it, reaching it by name. */
 fun initialisedRouterFunctionMapping(routerFunction: RouterFunction<*>): Any {
+    // Reached by name so no class file here loads RouterFunctionMapping before install runs.
     val mappingClass = Class.forName("org.springframework.web.reactive.function.server.support.RouterFunctionMapping")
     val mapping = mappingClass.getConstructor(RouterFunction::class.java).newInstance(routerFunction)
     mappingClass.getMethod("afterPropertiesSet").invoke(mapping)
     return mapping
 }
 
-/** Sends one request through a real `DispatcherHandler` and returns the status code. */
 fun WebTestClient.send(
     method: HttpMethod,
     uri: String,
@@ -149,13 +130,8 @@ fun WebTestClient.send(
     return result.status.value()
 }
 
-/** The headers of a CORS preflight request. */
 val PREFLIGHT_HEADERS = mapOf("Origin" to "http://example.com", "Access-Control-Request-Method" to "GET")
 
-/**
- * Runs [block] with the Spring WebFlux module installed on a registry of its own, then asserts
- * the module never switched itself off.
- */
 fun <T> withModule(block: (EndpointRegistry) -> T): T {
     val instrumentation = ByteBuddyAgent.install()
     val registry = EndpointRegistry()
@@ -170,7 +146,6 @@ fun <T> withModule(block: (EndpointRegistry) -> T): T {
     }
 }
 
-/** The hit count of every endpoint that has one, keyed `"<verb> <template>"`. */
 fun hits(registry: EndpointRegistry): Map<String, Long> {
     val endpoints = registry.endpoints().associateBy { it.endpointId }
     return registry
@@ -179,5 +154,4 @@ fun hits(registry: EndpointRegistry): Map<String, Long> {
         .associate { delta -> endpoints.getValue(delta.endpointId).let { "${it.verb} ${it.routeTemplate}" } to delta.hitsTotal }
 }
 
-/** Every declared or discovered endpoint, as `"<verb> <template>"`. */
 fun identities(registry: EndpointRegistry): Set<String> = registry.endpoints().map { "${it.verb} ${it.routeTemplate}" }.toSet()

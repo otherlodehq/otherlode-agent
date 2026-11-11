@@ -29,16 +29,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/**
- * Pins that a class in an explicit named module, defined after the agent is installed, loads, runs
- * and counts when woven. The holder sits in the boot loader's unnamed module, which a named module
- * does not read. HotSpot adds that edge for a class an agent changed, but a second class of the
- * same module can resolve a dynamic constant before the JVM's edge lands and fail for good, so the
- * agent adds the edge itself before it hands back the woven bytes (ADR 0004). Both probe-array
- * forms are covered, since they reach the holder at different instructions. Also pins that a class
- * whose edge cannot be added is skipped with no probes registered, and that the agent adds no edge
- * for a class it does not weave.
- */
 class NamedModuleWeavingTest {
     private val instrumentation: Instrumentation = ByteBuddyAgent.install()
     private var otherlode: OtherlodeInstrumentation? = null
@@ -69,7 +59,6 @@ class NamedModuleWeavingTest {
         transformer = agent.install(on)
     }
 
-    /** Defines [fixture] in an explicit named module of a new layer, and returns that module before any of its classes loads. */
     private fun defineNamedModule(fixture: VersionedFixtures.Fixture): Module {
         val packageName = fixture.name.substringBeforeLast('.')
         val moduleName = "otherlode.fixture." + packageName.substringAfterLast('.')
@@ -109,10 +98,6 @@ class NamedModuleWeavingTest {
             }
     }
 
-    /**
-     * Records whether the fixture's module reads the holder, from a transformer registered after the
-     * agent's, so before the JVM adds its own edge for a class that any agent, JaCoCo included, changed.
-     */
     private fun recordReadsAtLoadHook(fixture: VersionedFixtures.Fixture): List<Boolean> {
         val reads = mutableListOf<Boolean>()
         val later =

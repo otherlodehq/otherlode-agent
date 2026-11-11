@@ -20,12 +20,6 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertTrue
 
-/**
- * A class the JVM loaded with no transformer offered it is a blind spot the loaded-class sweep
- * exists to report (ADR 0027). The agent's first flush is the first chance to send the report, and
- * a collector with a complete static baseline calls the class never loaded until it arrives. The
- * right behaviour is that the first flush reports it.
- */
 class FirstFlushSweepTest {
     private companion object {
         const val OUTER = "com.example.target.BranchTarget"

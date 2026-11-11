@@ -32,12 +32,6 @@ private class ServletApiStubs : ClassFileLocator {
     override fun close() = Unit
 }
 
-/**
- * The advice is inlined into a servlet class at that class's own file version. This weaves it into
- * servlets of old versions and loads and initialises them against stub servlet types, so the
- * verifier reads the woven code. A constant the version cannot hold, or a class literal the old
- * verifier rejects, fails it.
- */
 class ServletAdviceClassVersionTest {
     private fun servlet(version: Int): ByteArray {
         val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)

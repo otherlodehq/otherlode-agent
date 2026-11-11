@@ -12,12 +12,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
-/**
- * Proves the three outlines of ADR 0054 that no source produces: a jump or switch fed by the
- * coroutine state machine, the collision side of a string switch lowering, and a method of a
- * multi-file facade. Each is exercised on real compiler output with one instruction changed so that
- * the shape the agent reads no longer reads.
- */
 class UnreadOutlineAnalysisTest {
     private fun kotlinBytes(simpleName: String): ByteArray =
         File("build/classes/kotlin/test/com/example/target/$simpleName.class").readBytes()
@@ -36,7 +30,6 @@ class UnreadOutlineAnalysisTest {
         methodName: String,
     ) = BranchSiteAnalyzer.analyze(bytes, fixtureLookup, includePackages = listOf("com.example")) { name, _ -> name == methodName }
 
-    /** Each kept site's outcome families of [method], in site order. */
     private fun families(
         analysis: BranchSiteAnalyzer.Analysis,
         method: String,
@@ -47,8 +40,6 @@ class UnreadOutlineAnalysisTest {
     private fun machinery(count: Int) = List(count) { UnreadShape.COROUTINE_MACHINERY }
 
     private val facade = kotlinBytes("CoroutineTargetKt")
-
-    // --- coroutine machinery ---
 
     @Test
     fun `real machinery is dropped and the adopter's conditional is plain`() {
@@ -87,8 +78,6 @@ class UnreadOutlineAnalysisTest {
 
         val analysis = analyze(bytes, "handOff")
 
-        // Without the dup beside it, the call is what `value === COROUTINE_SUSPENDED` compiles to,
-        // which the adopter can write, so the compare is not taken for machinery.
         assertEquals(listOf(none(2), none(2), none(2)), families(analysis, "handOff"), "the adopter's if, then both compares")
     }
 
@@ -189,8 +178,6 @@ class UnreadOutlineAnalysisTest {
         }
     }
 
-    // --- string switch lowering ---
-
     private val switchTarget = kotlinBytes("SwitchTarget")
 
     @Test
@@ -210,12 +197,12 @@ class UnreadOutlineAnalysisTest {
         val plain = UnreadShape.NONE
         assertEquals(
             listOf(
-                List(5) { plain }, // the hash switch: four buckets and the default, a plain numeric site
-                listOf(plain, plain), // Aa, whose not-equal side is the check for BB
-                listOf(plain, switch), // BB, last in its bucket, ifne: the fall-through
-                listOf(plain, switch), // closed
-                listOf(plain, switch), // done
-                listOf(switch, plain), // open, last in its bucket, ifeq: the jump
+                List(5) { plain },
+                listOf(plain, plain),
+                listOf(plain, switch),
+                listOf(plain, switch),
+                listOf(plain, switch),
+                listOf(switch, plain),
             ),
             families(analysis, "stringWhen"),
         )
@@ -239,13 +226,13 @@ class UnreadOutlineAnalysisTest {
         val plain = UnreadShape.NONE
         assertEquals(
             listOf(
-                List(5) { plain }, // the hash switch
-                listOf(switch, plain), // open
-                listOf(switch, plain), // closed
-                listOf(switch, plain), // done
-                listOf(plain, plain), // BB, which is followed by the check for Aa
-                listOf(switch, plain), // Aa, last in its bucket
-                List(6) { plain }, // the index switch, a plain numeric site
+                List(5) { plain },
+                listOf(switch, plain),
+                listOf(switch, plain),
+                listOf(switch, plain),
+                listOf(plain, plain),
+                listOf(switch, plain),
+                List(6) { plain },
             ),
             families(analysis, "stringStatement"),
         )
@@ -261,7 +248,6 @@ class UnreadOutlineAnalysisTest {
         assertTrue(kept(analysis, "stringWhen").flatMap { it.outcomes }.none { it.unreadShape != UnreadShape.NONE })
     }
 
-    /** [bytes] with `stringWhen`'s hash switch keys shifted by one, which no string's hash code satisfies. */
     private fun replaceHashKey(bytes: ByteArray): ByteArray {
         val reader =
             net.bytebuddy.jar.asm
@@ -301,8 +287,6 @@ class UnreadOutlineAnalysisTest {
         )
         return writer.toByteArray()
     }
-
-    // --- multi-file facade ---
 
     private fun facadeWith(
         kind: Int = 4,

@@ -8,15 +8,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Proves [BranchSiteAnalyzer]'s reference recording: which constructs name an
- * out-of-scope class, where each reference lands (a probed method or the class), and that
- * attribution follows the call-edge rules for pass-throughs, lambda bodies and body classes.
- *
- * `com.example.library` is out of scope throughout, as are the JDK and the Kotlin standard
- * library: the analyser records every out-of-scope name, and dropping the JDK's happens later, at
- * transform time, where a classloader can say where a class lives.
- */
 class ReferenceAnalyzerTest {
     private val includePackages = listOf("com.example.target", "com.example.other")
 
@@ -29,7 +20,6 @@ class ReferenceAnalyzerTest {
             ?.resolve()
     }
 
-    /** The method tier's own rule, by name: synthetic accessors and default-filling methods are never probed. */
     private val probedLikeTheMethodTier: (String, String) -> Boolean = { name, _ ->
         !name.startsWith("access$") && !name.endsWith("\$default") && name != "<clinit>"
     }
@@ -316,8 +306,6 @@ class ReferenceAnalyzerTest {
 
     @Test
     fun `a same-class pass-through's references land on the method that reaches it`() {
-        // helper stands in for a same-class accessor: excluding it from probing makes it a
-        // pass-through, and its reference to the library must follow it into its caller.
         val asPassThrough =
             analyze("com.example.target.ReferenceAttributionTarget", filter = { name, descriptor ->
                 name != "helper" && probedLikeTheMethodTier(name, descriptor)
@@ -331,8 +319,6 @@ class ReferenceAnalyzerTest {
 
     @Test
     fun `a nested class's call through kotlinc's accessor names the accessed method's return type`() {
-        // The accessor's descriptor already names Lib.Secret here, so this pins the real kotlinc
-        // shape, not the substitution: the hand-assembled accessor tests below do that.
         val analysis = analyze("com.example.target.ReferenceAttributionTarget\$Inner")
 
         assertEquals(setOf(lib("Secret")), analysis.libReferencesOf("callSecret", "()Ljava/lang/Object;"))
@@ -383,12 +369,6 @@ class ReferenceAnalyzerTest {
         assertEquals(emptySet(), analysis.libReferencesOf("f", "(Ljava/lang/Object;)Ljava/lang/Object;"))
     }
 
-    /**
-     * A class shaped like scalac's output for `def f(x: Any = ...)`: `f` and its public getter
-     * `f\$default\$1`, whose body constructs one library type itself and reaches another through a
-     * synthetic same-class method, the pass-through shape. No Scala attribute is needed, since
-     * getter resolution reads names and descriptors only.
-     */
     private fun assembledScalaGetterClass(): ByteArray {
         val owner = "com/example/target/AssembledScalaGetter"
         val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
@@ -431,14 +411,6 @@ class ReferenceAnalyzerTest {
         return writer.toByteArray()
     }
 
-    /**
-     * The shape javac emits for a nested class reaching a private member of its outer class when
-     * compiling for a release before nestmates (11): a static synthetic `access$000` on the outer
-     * class, called from the nested class. Here the accessor's body constructs a [lib] type its
-     * descriptor does not name, which no compiler's accessor does, so that the reference can only
-     * reach the caller through substitution. The outer class also calls the accessor itself from
-     * `direct`, the same-class shape.
-     */
     private fun assembledAccessorPair(): Pair<ByteArray, ByteArray> {
         val secret = "com/example/library/Lib\$Secret"
         val outerWriter = ClassWriter(ClassWriter.COMPUTE_MAXS)
@@ -519,7 +491,6 @@ class ReferenceAnalyzerTest {
         assertEquals(setOf(lib("BodyRef")), body.libReferencesOf("run", "()V"))
     }
 
-    /** Every annotation descriptor in [bytes] held by a RuntimeInvisible*Annotations attribute, in any position. */
     private fun readInvisibleAnnotationDescriptors(bytes: ByteArray): Set<String> {
         val found = mutableSetOf<String>()
         val api = net.bytebuddy.jar.asm.Opcodes.ASM9

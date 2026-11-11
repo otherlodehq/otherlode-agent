@@ -12,10 +12,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
-/**
- * A route written in Spring's Kotlin DSL has its handler inside a class of Spring's own, so no
- * method of the application's is the handler and the endpoint reports none.
- */
 class SpringWebFluxDslHandlerTest {
     @Test
     fun `a router DSL route is declared and counted with no handler`() {

@@ -10,11 +10,6 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/**
- * Proves the fingerprints [BranchSiteAnalyzer] takes from its own walk equal the ones a separate
- * [ConditionFingerprinter.analyze] pass produces, over every compiled test fixture, and that a
- * fingerprinting failure leaves the analysis itself intact.
- */
 class SharedFingerprintWalkTest {
     private val fixtureDirs: List<Pair<File, SourceLanguage>> =
         listOf(

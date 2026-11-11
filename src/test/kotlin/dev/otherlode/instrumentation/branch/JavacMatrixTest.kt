@@ -13,11 +13,6 @@ import org.junit.jupiter.params.provider.MethodSource
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Runs the analyser's record marks and switch lowerings over the same Java source set compiled by
- * javac 17, 21 and 25, each at its own default target, and the pattern-switch sources over the two
- * that can compile them.
- */
 class JavacMatrixTest {
     companion object {
         @JvmStatic
@@ -29,7 +24,6 @@ class JavacMatrixTest {
 
     private fun code(text: String) = ConditionPart(ConditionPartKind.CODE, text)
 
-    /** The exception types [method] of fixture class [simpleName] instantiates, by internal name. */
     private fun instantiatedTypes(
         version: String,
         simpleName: String,

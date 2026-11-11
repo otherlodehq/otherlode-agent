@@ -221,10 +221,6 @@ class AgentConfigTest {
 
     @Test
     fun `a zero flushIntervalSeconds falls back to the default instead of producing an invalid schedule`() {
-        // ExportScheduler.start() passes flushInterval straight into scheduleAtFixedRate. That
-        // call throws for a non-positive period. It runs inside Agent.premain, so an uncaught
-        // exception there aborts the whole target JVM. A bad flag value must never reach a
-        // non-positive Duration.
         val config = AgentConfig.parse("flushIntervalSeconds=0")
 
         assertEquals(Duration.ofSeconds(60), config.flushInterval)
@@ -973,17 +969,14 @@ class AgentConfigTest {
         assertTrue(messages.none { it.contains("secretvalue") }, "the value was logged: $messages")
     }
 
-    /** Parses [agentArgs] with no environment or system properties unless given, so the JVM running the tests cannot change the result. */
     private fun parseQuietly(
         agentArgs: String,
         env: (String) -> String? = { null },
     ): AgentConfig = AgentConfig.parse(agentArgs, env = env, systemProperties = { null }, detectServiceName = { null })
 
-    /** The messages of every WARNING [AgentConfig] logs while [block] runs. */
     private fun warningsFrom(block: () -> Unit): List<String> =
         recordsFrom(block).filter { it.level == JulLevel.WARNING }.mapNotNull { it.message }
 
-    /** The messages of every ERROR [AgentConfig] logs while [block] runs. */
     private fun errorsFrom(block: () -> Unit): List<String> =
         recordsFrom(block).filter { it.level == JulLevel.SEVERE }.mapNotNull { it.message }
 

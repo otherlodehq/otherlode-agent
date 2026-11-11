@@ -25,11 +25,6 @@ private fun sendHttp(
     return HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.discarding()).statusCode()
 }
 
-/**
- * A Spring Boot application on embedded Tomcat, with the Spring MVC module and the servlet module
- * both installed by a real `-javaagent` (see [BootTestAgent]): Spring's `dispatcherServlet` is left
- * out of the servlet module, a request counts once, and a servlet Boot registers is counted.
- */
 class SpringBootServletTest {
     private val registry get() = BootTestAgent.endpointRegistry
 

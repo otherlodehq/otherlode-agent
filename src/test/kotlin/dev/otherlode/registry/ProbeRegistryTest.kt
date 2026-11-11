@@ -138,8 +138,6 @@ class ProbeRegistryTest {
         val probes = registry.register("com.example.Foo", layoutHash = 1L, probes = methodProbes(1))
         probes[0] += 3
 
-        // Flush computes a snapshot, but the send fails. So advanceBaseline is never called.
-        // More hits land before the next flush attempt.
         registry.computeDeltaBatch(resource)
         probes[0] += 2
 
@@ -154,14 +152,12 @@ class ProbeRegistryTest {
         val probes = registry.register("com.example.Foo", layoutHash = 1L, probes = methodProbes(1))
         probes[0] += 3
 
-        val snapshot = registry.computeDeltaBatch(resource) // snapshot = 3
-        probes[0] += 2 // accrues after the snapshot, e.g. while the POST is in flight
-        registry.advanceBaseline(snapshot) // must advance to 3, not to the live value of 5
+        val snapshot = registry.computeDeltaBatch(resource)
+        probes[0] += 2
+        registry.advanceBaseline(snapshot)
 
         val nextBatch = registry.computeDeltaBatch(resource).batch
 
-        // The live count (5) is what gets reported once it is next seen as changed, since
-        // hitsTotal is the current cumulative count, not a delta computed against 3.
         assertEquals(5L, nextBatch.deltas.single().hitsTotal)
     }
 
@@ -172,9 +168,6 @@ class ProbeRegistryTest {
         probes[0] = 5
         registry.advanceBaseline(registry.computeDeltaBatch(resource))
 
-        // Only reachable in practice via a changed-layout array swap (see "a changed layout hash
-        // allocates a fresh array" above); simulated directly here since that path is not
-        // reachable through this v1 static-attach agent's own register() calls.
         probes[0] = 2
 
         val batch = registry.computeDeltaBatch(resource).batch
@@ -347,7 +340,6 @@ class ProbeRegistryTest {
         registry.register("com.example.Foo", layoutHash = 1L, probes = methodProbes(1))
 
         registry.computeManifestDelta(ResourceAttributes("checkout", null, "instance-1", null, "run-1"))
-        // advanceManifestBaseline is never called here, simulating a failed send.
         val retryDelta =
             registry
                 .computeManifestDelta(
@@ -423,7 +415,6 @@ class ProbeRegistryTest {
         registry.recordSkipped("com.example.Foo", reason = "annotation not supported on TYPE")
 
         registry.computeManifestDelta(ResourceAttributes("checkout", null, "instance-1", null, "run-1"))
-        // advanceManifestBaseline is never called here, simulating a failed send.
         val retryDelta =
             registry
                 .computeManifestDelta(
@@ -442,8 +433,6 @@ class ProbeRegistryTest {
         probes[0] = 5
         val newer = registry.computeDeltaBatch(resource)
 
-        // The newer send is confirmed first, then the older one lands (e.g. a scheduled flush and
-        // the shutdown flush racing each other).
         registry.advanceBaseline(newer)
         registry.advanceBaseline(older)
 
@@ -463,7 +452,7 @@ class ProbeRegistryTest {
         probes[0] = 3
         val older = registry.computeDeltaBatch(resource)
         probes[0] = 5
-        registry.computeDeltaBatch(resource) // the newer send fails, so it is never advanced
+        registry.computeDeltaBatch(resource)
 
         registry.advanceBaseline(older)
 
@@ -485,7 +474,6 @@ class ProbeRegistryTest {
         registry.register("com.example.Bar", layoutHash = 1L, probes = methodProbes(1))
         registry.computeManifestDelta(ResourceAttributes("checkout", null, "instance-1", null, "run-1"))
 
-        // Only the first (Foo-only) send is confirmed; the second one, which also carried Bar, failed.
         registry.advanceManifestBaseline(first)
 
         val retry =
@@ -506,8 +494,6 @@ class ProbeRegistryTest {
 
         val chunks = registry.computeDeltaBatches(resource, maxDeltasPerBatch = 4)
 
-        // 9 changed probes, 3 per class, cap 4: a class is never split across chunks, so each
-        // chunk carries exactly one class rather than filling to 4.
         assertEquals(listOf(3, 3, 3), chunks.map { it.batch.deltas.size })
         assertEquals(3, chunks.flatMap { chunk -> chunk.batch.deltas.map { it.classId } }.toSet().size)
         chunks.forEach { chunk ->
@@ -591,9 +577,6 @@ class ProbeRegistryTest {
                     maxEntriesPerChunk = 5,
                 ).toList()
 
-        // Each of Foo and Bar weighs 3 probes + 0 edges + 1 for its own class location record = 4.
-        // Foo (4) fills the first chunk on its own, since Bar (4) would push it past 5. Bar and
-        // the skipped class (1) then fit together in the second, exactly at the cap.
         assertEquals(2, chunks.size)
         assertEquals(
             setOf("com.example.Foo", "com.example.Bar"),
@@ -804,10 +787,6 @@ class ProbeRegistryTest {
             probes = listOf(ProbeMeta(ProbeKind.BRANCH, "run", "()V", line = 1, branchIndex = 0, calls = calls)),
         )
 
-        // ProbeMeta.calls is populated only for METHOD-kind probes by OtherlodeInstrumentation; the
-        // registry itself carries through whatever it is given, so this pins that a manifest
-        // location built from a BRANCH probe still reports whatever calls its ProbeMeta carried.
-        // Real BRANCH probes never carry any: see CallEdgeInstrumentationTest.
         assertEquals(
             calls,
             registry
@@ -829,10 +808,6 @@ class ProbeRegistryTest {
         )
         registry.register("com.example.Light", layoutHash = 1L, probes = methodProbes(1))
 
-        // Heavy weighs 1 probe + 5 edges + 1 class location record = 7, already past a cap of 6, so it
-        // seals its own chunk; Light (1 + 0 + 1 = 2) starts a second chunk. entriesByKey is a
-        // ConcurrentHashMap, so which chunk lands first is not guaranteed; only that the two
-        // classes never land in the same chunk.
         val chunks =
             registry
                 .computeManifestDeltas(
@@ -871,10 +846,6 @@ class ProbeRegistryTest {
 
         registry.register("com.example.Foo", layoutHash = 1L, probes = methodProbes(1), superClassName = "com.example.Second")
 
-        // Supertypes play no part in the registry key, the same as the probe list itself: a
-        // repeat call for an unchanged (className, layoutHash, classLoader) is a no-op, so the
-        // layout hash a caller computes from methods and branches alone stays meaningful whether
-        // or not calls or supertypes are attached.
         assertEquals(
             "com.example.First",
             registry
@@ -909,7 +880,6 @@ class ProbeRegistryTest {
         val registry = ProbeRegistry()
         registry.recordUnreported("com.example.Deflected")
 
-        // The snapshot is computed and its send fails, so advanceManifestBaseline is never called.
         registry.computeManifestDelta(ResourceAttributes("checkout", null, "instance-1", null, "run-1"))
 
         val retry = registry.computeManifestDelta(ResourceAttributes("checkout", null, "instance-1", null, "run-1"))
@@ -1055,8 +1025,6 @@ class ProbeRegistryTest {
                     maxEntriesPerChunk = 2,
                 ).toList()
 
-        // Each unreported class weighs one, the same weight a skipped class carries, so a cap of
-        // 2 packs exactly two per chunk.
         assertEquals(3, chunks.size)
         chunks.forEachIndexed { index, chunk ->
             assertTrue(
@@ -1071,11 +1039,6 @@ class ProbeRegistryTest {
         )
     }
 
-    /**
-     * A registry whose [weakClassLoaderRef] returns an already-cleared reference, so a test can
-     * drive the collected-loader confirmation rule without registering a throwaway classloader and
-     * waiting on the garbage collector, which cannot be relied on to run within a test's lifetime.
-     */
     private class ClearedLoaderProbeRegistry(
         confirmsDefinitions: Boolean,
     ) : ProbeRegistry(confirmsDefinitions) {
@@ -1403,8 +1366,6 @@ class ProbeRegistryTest {
         )
         registry.register("com.example.Light", layoutHash = 1L, probes = methodProbes(1))
 
-        // Heavy weighs 1 probe + 2 method references + 1 class location record + 2 class references = 6;
-        // Light weighs 2. Without the references they would share a chunk under a cap of 6.
         val chunks =
             registry
                 .computeManifestDeltas(
@@ -1451,9 +1412,6 @@ class ProbeRegistryTest {
         )
         registry.register("com.example.Light", layoutHash = 1L, probes = methodProbes(1))
 
-        // Heavy weighs 1 probe + 1 class location record + 1 site + 2 outcomes + 3 line ranges + 2
-        // condition parts = 10; Light weighs 2. Without the condition parts they would share a chunk
-        // under a cap of 11.
         val chunks =
             registry
                 .computeManifestDeltas(

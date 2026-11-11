@@ -10,11 +10,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Proves a static baseline scan declares the unread shapes the transform reports, keyed on the
- * `.tasty` file the scan reads from the class's own root: a broken copy of the Scala 3 fixtures
- * (see [BrokenScalaFixtures]).
- */
 class ScalaUnreadShapeBaselineTest {
     @TempDir
     lateinit var tempDir: Path
@@ -70,7 +65,6 @@ class ScalaUnreadShapeBaselineTest {
         assertEquals(GeneratedBy.NONE, methods.single { it.methodName == "hashCode" }.generatedBy)
     }
 
-    /** The scan's declared methods of `Cc` from a jar of the broken fixtures, its `.tasty` naming [tooling], entries under [prefix]. */
     private fun methodsOfCcInJar(
         tooling: String,
         prefix: String,
@@ -93,8 +87,6 @@ class ScalaUnreadShapeBaselineTest {
 
     @Test
     fun `a scan of a jar reads the tasty file from the jar`() {
-        // A release the agent has read: only a .tasty actually read from the jar turns the broken
-        // methods back into hand-written ones, where a scan that read none would call them unread.
         val methods = methodsOfCcInJar("Scala 3.3.4", prefix = "")
 
         assertEquals(UnreadShape.NONE, methods.single { it.methodName == "hashCode" }.unreadShape)

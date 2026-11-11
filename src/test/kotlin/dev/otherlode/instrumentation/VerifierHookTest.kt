@@ -35,10 +35,7 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import java.util.logging.Level as JulLevel
 
-/**
- * The hook on `java.lang.VerifyError` against the real JVM (ADR 0071). Runs in a JVM of its own,
- * `verifierHookTest`, because it weaves a boot class for the rest of the process.
- */
+// Runs only in the `verifierHookTest` JVM, since it weaves a boot class.
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class VerifierHookTest {
     private val instrumentation: Instrumentation = VerifierHookFixtures.instrumentation()
@@ -57,10 +54,8 @@ class VerifierHookTest {
         hook.uninstall(instrumentation)
     }
 
-    /**
-     * Rejected classes named afresh on each call: the ring keeps a message equal to one it kept
-     * before only once, and the tests of this class share one JVM.
-     */
+    // Each call names its classes afresh: the ring keeps a message equal to an earlier one only once,
+    // and the tests of this class share one JVM.
     private fun rejectedByVerifier(): List<Triple<String, Int, String>> {
         val n = fixtureNames.incrementAndGet()
         return listOf(

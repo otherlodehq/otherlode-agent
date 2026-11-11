@@ -10,11 +10,6 @@ import java.util.jar.Manifest
 import java.util.zip.CRC32
 import java.util.zip.ZipEntry
 
-/**
- * Builds jars for the dependency listing tests. Class entries need no real bytecode, since the
- * listing reads only entry names. A `.jar` entry is written `STORED`, the way Spring Boot's Gradle
- * plugin writes `BOOT-INF/lib`.
- */
 internal object TestJars {
     fun pom(
         group: String?,
@@ -33,7 +28,6 @@ internal object TestJars {
 
     fun classEntry(className: String): Pair<String, ByteArray> = className.replace('.', '/') + ".class" to ByteArray(4)
 
-    /** A class entry holding real bytecode for an empty class, for tests that load it. */
     fun loadableClassEntry(className: String): Pair<String, ByteArray> =
         className.replace('.', '/') + ".class" to
             ByteBuddy()

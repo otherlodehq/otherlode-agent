@@ -14,12 +14,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/**
- * Proves the branch tier's inlined-copy drop and keep rule through the real transform
- * pipeline, on the `InlinedCopyTarget`/`InlineLibraryTarget` fixtures, rather than only through
- * [dev.otherlode.instrumentation.branch.InlinedCopyAnalysisTest]'s direct bytecode
- * checks.
- */
 class InlinedCopyInstrumentationTest {
     private var installedTransformer: ResettableClassFileTransformer? = null
     private var installedOtherlode: OtherlodeInstrumentation? = null
@@ -40,7 +34,6 @@ class InlinedCopyInstrumentationTest {
         installedTransformer = otherlode.install(instrumentation)
     }
 
-    /** Removes whatever [install] last set up, so a test can install a second, differently scoped registry. */
     private fun uninstall() {
         installedTransformer?.let { installedOtherlode?.uninstall(ByteBuddyAgent.install(), it) }
         installedTransformer = null
@@ -61,7 +54,6 @@ class InlinedCopyInstrumentationTest {
                 it.className == "com.example.target.InlinedCopyTargetKt" && it.kind == ProbeKind.BRANCH && it.methodName == methodName
             }.sortedBy { it.probeIndex }
 
-    /** Installs, loads the fixture fresh under [includePackages], calls every function once, and returns its branch probes. */
     private fun runScope(includePackages: String): List<ProbeLocation> {
         val registry = ProbeRegistry()
         install(registry, AgentConfig.parse("includePackages=$includePackages"))
@@ -116,9 +108,7 @@ class InlinedCopyInstrumentationTest {
         install(registry, AgentConfig.parse("includePackages=com.example"))
 
         val target = Class.forName("com.example.target.InlinedCopyTargetKt", true, fixtureLoader())
-        // n > 0, so flag=true inside sameFileInline: takes the not-taken (fallthrough) edge.
         target.getMethod("callTakingTrueBranch", Int::class.java).invoke(null, 1)
-        // n <= 0, so flag=false inside sameFileInline: takes the taken edge.
         target.getMethod("callTakingFalseBranch", Int::class.java).invoke(null, 1)
 
         val deltas = registry.computeDeltaBatch(ResourceAttributes("test", null, "i-1", null, "run-1")).batch.deltas
@@ -134,9 +124,6 @@ class InlinedCopyInstrumentationTest {
         assertEquals(listOf(0L, 1L), trueBranchHits, "called once, so exactly one outcome fired")
         assertEquals(listOf(0L, 1L), falseBranchHits, "called once, so exactly one outcome fired")
 
-        // Whichever of the true branch copy's two slots fired must be at the opposite position
-        // (first vs second, by probeIndex order) from whichever of the false branch copy's two
-        // slots fired, proving the two copies took different outcomes after slot compaction.
         val trueBranchFiredFirst = (hitsByIndex[trueBranchCopy[0].probeIndex] ?: 0L) == 1L
         val falseBranchFiredFirst = (hitsByIndex[falseBranchCopy[0].probeIndex] ?: 0L) == 1L
         assertTrue(trueBranchFiredFirst != falseBranchFiredFirst)

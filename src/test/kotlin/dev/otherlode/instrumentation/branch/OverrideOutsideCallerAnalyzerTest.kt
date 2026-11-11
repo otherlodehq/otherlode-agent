@@ -13,12 +13,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/**
- * Proves which out-of-scope type [BranchSiteAnalyzer] names for a method that overrides one of its
- * methods, on javac and kotlinc output and on class files written here for the shapes a compiler
- * refuses. The fixtures put `com.example.target.outsidecaller` in scope and its `external` package
- * and the class `samepkg.Hidden` out of it.
- */
 class OverrideOutsideCallerAnalyzerTest {
     private val includePackages = listOf("com.example.target.outsidecaller", JvmDefaultDisableFixtures.PACKAGE_PREFIX.removeSuffix("."))
     private val excludePackages =
@@ -388,7 +382,6 @@ class OverrideOutsideCallerAnalyzerTest {
         assertEquals(emptyList(), reads.filter { it == "java/lang/Runnable" })
     }
 
-    /** The non-static methods [bytes] declares, as name and descriptor. */
     private fun instanceMethodNames(bytes: ByteArray): List<Pair<String, String>> {
         val methods = mutableListOf<Pair<String, String>>()
         ClassReader(bytes).accept(
@@ -409,7 +402,6 @@ class OverrideOutsideCallerAnalyzerTest {
         return methods
     }
 
-    /** `Shapes` implements `Runnable` and extends `ExternalBase`, with a private `run()V` and a static `ping()V`. */
     private fun classWithShapes(): ByteArray {
         val writer = ClassWriter(0)
         writer.visit(
@@ -445,7 +437,6 @@ class OverrideOutsideCallerAnalyzerTest {
         return writer.toByteArray()
     }
 
-    /** Two classes in scope that name each other as superclass and interface. */
     private fun cyclicPair(): Pair<ByteArray, ByteArray> {
         fun write(
             name: String,

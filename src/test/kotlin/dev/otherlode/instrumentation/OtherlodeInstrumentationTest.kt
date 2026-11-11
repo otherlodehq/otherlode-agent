@@ -37,13 +37,6 @@ class OtherlodeInstrumentationTest {
         return targetClass.getDeclaredConstructor().newInstance()
     }
 
-    /**
-     * Each test loads its own fresh definition of the fixture class. But the underlying
-     * [java.lang.instrument.Instrumentation] instance is process-wide. A transformer left
-     * registered from a previous test would also fire on the next test's fixture class load,
-     * and both would fight over the same synthetic field name. [tearDown] deregisters the
-     * transformer afterwards, to prevent that.
-     */
     private fun install(
         registry: ProbeRegistry,
         config: AgentConfig,
@@ -63,14 +56,6 @@ class OtherlodeInstrumentationTest {
         installedOtherlode = null
     }
 
-    /**
-     * A debugger's HotSwap writes the recompiled class file before it redefines the class. The
-     * agent cannot weave the class again from a class file that is not the one its slots were
-     * numbered from, so it hands back nothing, and the JVM refuses the redefinition because the
-     * new bytes lack the probe field of a class below version 55 (the fixture is version 52). What it must not do is report the class it has already
-     * delivered probes for as a skipped class too. A WARNING names the agent and the cause, since
-     * the JVM's own message does neither.
-     */
     @Test
     fun `redefining a woven version 52 class after its class file changed on disk is refused and records no skip for it`() {
         val registry = ProbeRegistry()
@@ -110,13 +95,6 @@ class OtherlodeInstrumentationTest {
         assertTrue(manifest.skippedClasses.none { it.className == "com.example.target.SampleTarget" }, "${manifest.skippedClasses}")
     }
 
-    /**
-     * New bytes passed to `redefineClasses` while the class file is the one the class was woven
-     * from are woven from the class's own plan: every method keeps its slots, and a method whose
-     * branches no longer line up with the class file keeps its entry probe while its branch counts
-     * stop. The new bytes are built from the bytes the class was woven from, which are JaCoCo's
-     * output when the test JVM runs JaCoCo's agent.
-     */
     @Test
     fun `redefining with new bytes and an unchanged class file keeps every slot, and freezes a method that no longer pairs`() {
         val registry = ProbeRegistry()
@@ -171,14 +149,6 @@ class OtherlodeInstrumentationTest {
         assertTrue(registry.manifest(resource).skippedClasses.isEmpty())
     }
 
-    /**
-     * A redefinition that hands over the bytes the class was woven from cannot be told from a
-     * retransformation, and needs no telling: weaving them again gives the class it already is.
-     *
-     * The bytes it was woven from are the class file unless a JaCoCo agent on the test JVM got there
-     * first, so they are taken from a transformer that is not retransformation-capable, which runs
-     * after any such agent and before this one.
-     */
     @Test
     fun `redefining a woven class with the bytes it was woven from succeeds and keeps it counting`() {
         val registry = ProbeRegistry()
@@ -196,6 +166,8 @@ class OtherlodeInstrumentationTest {
                     return null
                 }
             }
+        // Not retransformation-capable, so the spy runs after a JaCoCo agent and before the Otherlode
+        // transformer, and sees the bytes the class was woven from.
         ByteBuddyAgent.install().addTransformer(spy, false)
         val target =
             try {
@@ -316,7 +288,6 @@ class OtherlodeInstrumentationTest {
         assertEquals(setOf("defaultThing", "staticThing"), ifaceProbes.map { it.methodName }.toSet())
         assertTrue(manifest.skippedClasses.none { it.className == "com.example.target.DefaultMethodTarget" })
 
-        // Two classes are loaded here, so key on the interface's own class id, not probe index alone.
         val ifaceClassId = ifaceProbes.first().classId
         val byIndex =
             registry
@@ -407,8 +378,6 @@ class OtherlodeInstrumentationTest {
                 .single { it.methodName == "ping" }
                 .probeIndex
         assertEquals(1L, counts[pingIndex], "the field's array saw the hit")
-        // A miss in the bootstrap holder would hand the class a fresh array and leave the
-        // registry's own at zero; both views agreeing proves they are the same array.
         val reported =
             registry.computeDeltaBatch(ResourceAttributes("test", null, "i-1", null, "run-1")).batch.deltas.single {
                 it.probeIndex ==
@@ -462,7 +431,6 @@ class OtherlodeInstrumentationTest {
         assertEquals(2L, hits)
     }
 
-    /** Defines the fixtures itself and, like a loader with no boot delegation, resolves nothing under `dev.otherlode.`. */
     private class BootstrapBlindClassLoader(
         parent: ClassLoader,
     ) : FixtureClassLoader(arrayOf(File("build/classes/java/test").toURI().toURL()), parent) {
@@ -509,8 +477,6 @@ class OtherlodeInstrumentationTest {
         val loader = fixtureLoader()
 
         val target = Class.forName("com.example.target.StaticInitTarget", true, loader)
-        // The JVM initialises a class at most once per loader, so a second forName here cannot
-        // run <clinit> again. This pins that the woven prelude's own increment is not doubled.
         Class.forName("com.example.target.StaticInitTarget", true, loader)
 
         val manifest = registry.manifest(ResourceAttributes("test", null, "instance-1", null, "run-1"))
@@ -670,12 +636,9 @@ class OtherlodeInstrumentationTest {
 
         install(registry, config, detector)
 
-        // shouldWarnAbout only returns true the first time a given class name is found missing.
-        // If install() already consumed that for this class, this call must now return false.
         assertFalse(detector.shouldWarnAbout("com.example.target.SampleTarget"))
     }
 
-    /** Installs the transformer without loading any fixture class, for a test that loads its own. */
     private fun installOnly(
         registry: ProbeRegistry,
         config: AgentConfig,
@@ -688,11 +651,6 @@ class OtherlodeInstrumentationTest {
         return otherlode
     }
 
-    /**
-     * Defines one class straight from [bytes] and hides it from every resource lookup, the shape
-     * of a loader that builds a class in memory. With the class-bytes capture switched off, the
-     * transform's resource fallback then finds nothing and the analysis runs on no bytes at all.
-     */
     private class BytesOnlyClassLoader(
         parent: ClassLoader,
         private val className: String,
@@ -720,18 +678,12 @@ class OtherlodeInstrumentationTest {
         override fun getResource(name: String) = if (name == resourcePath) null else super.getResource(name)
     }
 
-    /** [original] with `LineNumberTable`, `LocalVariableTable`, and `SourceDebugExtension` dropped, annotations kept. */
     private fun stripDebugInfo(original: ByteArray): ByteArray {
         val writer = ClassWriter(0)
         ClassReader(original).accept(writer, ClassReader.SKIP_DEBUG)
         return writer.toByteArray()
     }
 
-    /**
-     * Serves [internalName] from [bytes] off a scratch directory, so a class can be loaded with
-     * its debug info stripped while every other fixture class still resolves normally through
-     * [FixtureClassLoader]'s own delegation.
-     */
     private fun strippedFixtureLoader(
         internalName: String,
         bytes: ByteArray,
@@ -743,11 +695,6 @@ class OtherlodeInstrumentationTest {
         return FixtureClassLoader(arrayOf(dir.toURI().toURL()), javaClass.classLoader)
     }
 
-    /**
-     * Records every [java.util.logging.LogRecord] [loggerName] emits while [block] runs. Otherlode
-     * logs through `System.Logger`, which maps to `java.util.logging` when no custom
-     * `System.LoggerFinder` is installed, which is the case in this project's own tests.
-     */
     private fun captureLogRecords(
         loggerName: String,
         block: () -> Unit,
@@ -830,8 +777,6 @@ class OtherlodeInstrumentationTest {
         assertEquals(1, warnings.size, "one warning, naming the class whose bytes could not be read")
         assertTrue(warnings.single().message.contains("com.example.target.InlineTarget"))
         assertTrue(warnings.single().message.contains("could not read"))
-        // The inline function's probe is in the manifest unmarked, which is what the warning is
-        // about: without it, nothing anywhere says the mark is missing rather than false.
         val inlineProbes =
             registry
                 .manifest(ResourceAttributes("test", null, "instance-1", null, "run-1"))

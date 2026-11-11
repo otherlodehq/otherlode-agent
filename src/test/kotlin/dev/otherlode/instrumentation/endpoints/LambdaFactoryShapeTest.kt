@@ -8,13 +8,6 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/**
- * Pins the check that decides whether the lambda factory hook installs.
- *
- * The first test is the one that fails when a JDK renames a member the hook reads, since CI runs
- * this suite on every JDK in its matrix. The rest prove that each kind of mismatch is caught and
- * named in the reason.
- */
 class LambdaFactoryShapeTest {
     @Test
     fun `the running JDK's lambda factory has the shape the hook reads`() {
@@ -32,7 +25,6 @@ class LambdaFactoryShapeTest {
         val missing = assertNotNull(LambdaFactoryShape.JDK.copy(spinMethod = "spinSomethingElse").problem())
         assertTrue("spinSomethingElse" in missing, missing)
 
-        // buildCallSite() exists with no parameters but returns a CallSite, not a Class.
         val reshaped = assertNotNull(LambdaFactoryShape.JDK.copy(spinMethod = "buildCallSite").problem())
         assertTrue("buildCallSite" in reshaped, reshaped)
     }
@@ -42,7 +34,6 @@ class LambdaFactoryShapeTest {
         val missing = assertNotNull(LambdaFactoryShape.JDK.copy(implInfoField = "implInfoGone").problem())
         assertTrue("implInfoGone" in missing, missing)
 
-        // implKind exists on the same class but is an int, not a MethodHandleInfo.
         val retyped = assertNotNull(LambdaFactoryShape.JDK.copy(implInfoField = "implKind").problem())
         assertTrue("implKind" in retyped, retyped)
 

@@ -2,7 +2,6 @@ package dev.otherlode.instrumentation
 
 import java.util.concurrent.CountDownLatch
 
-/** Two latches a fixture's static initialiser reaches, so a test can hold an initialiser mid-body. */
 object InitializerGate {
     @JvmField
     var entered: CountDownLatch = CountDownLatch(1)

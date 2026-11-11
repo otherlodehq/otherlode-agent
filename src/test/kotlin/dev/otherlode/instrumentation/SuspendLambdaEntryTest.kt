@@ -17,11 +17,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/**
- * Proves the suspend-lambda entry rule through the real pipeline and the static scanner:
- * kotlinc's `create` and `invoke` on a suspend lambda's class get no probe and are not declared,
- * while `invokeSuspend`, which holds the body, is probed, declared and reached from the creator.
- */
 class SuspendLambdaEntryTest {
     private companion object {
         const val PACKAGE = "com.example.target"
@@ -91,7 +86,6 @@ class SuspendLambdaEntryTest {
         assertFalse(TypeMatchPolicy.isSuspendLambdaEntry("create", true) { error("superclass read") })
     }
 
-    /** The names of [className]'s methods the method matcher takes, read through a pool that cannot see the Kotlin stdlib. */
     private fun matchedWithoutStdlib(className: String): Set<String> {
         val bytes = File(ROOT, className.replace('.', '/') + ".class").readBytes()
         val pool = TypePool.Default.WithLazyResolution.of(ClassFileLocator.Simple.of(className, bytes))
@@ -106,14 +100,11 @@ class SuspendLambdaEntryTest {
 
     @Test
     fun `the method matcher leaves out create and invoke when nothing can resolve the Kotlin stdlib`() {
-        // The fat-jar case: the stdlib sits in a nested jar the scan never opens. A lazily
-        // resolving pool still answers the superclass's name, which is all the rule reads.
         assertEquals(setOf("<init>", "invokeSuspend"), matchedWithoutStdlib(LAMBDA))
     }
 
     @Test
     fun `a restricted suspend lambda's create and invoke are left out the same way`() {
-        // sequence {}'s lambda: RestrictedSuspendLambda, a receiver, so create(Object, Continuation).
         assertEquals(setOf("<init>", "invokeSuspend"), matchedWithoutStdlib("$PACKAGE.BodyKindTarget\$restrictedSuspendLambda\$1"))
     }
 }

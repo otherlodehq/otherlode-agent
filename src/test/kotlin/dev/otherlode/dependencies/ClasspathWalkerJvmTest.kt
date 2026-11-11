@@ -17,17 +17,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.test.fail
 
-/**
- * Checks [ClasspathWalker] against the JDK itself. The walker's unit tests check it against a
- * reading of the JDK's rules. This test builds a tree of jars, directories and links, starts a
- * real JVM on it, and asks the system loader which file each class loads from. Each file holds one
- * class with a unique name, so a class's code source names the file the JVM read it from, at the
- * path the JVM used.
- * The first file the walker reports that holds the class must be that file at that path, and a
- * class the JVM cannot find must never be reported.
- *
- * It creates symbolic links, which Windows does not allow without a privilege.
- */
+// Creates symbolic links, which Windows does not allow without a privilege.
 @DisabledOnOs(OS.WINDOWS)
 @Timeout(5, unit = TimeUnit.MINUTES)
 class ClasspathWalkerJvmTest {
@@ -38,7 +28,6 @@ class ClasspathWalkerJvmTest {
         const val PROCESS_TIMEOUT_SECONDS = 120L
         const val ABSENT = ClassOriginProbe.ABSENT
 
-        /** The classes the tree holds where the JVM never looks, one for each rule that hides one. */
         val NEVER_LOADED =
             setOf(
                 "fixture.LinkedRootDecoy",
@@ -53,14 +42,12 @@ class ClasspathWalkerJvmTest {
             )
     }
 
-    /** What was built: the `java.class.path` entries and the class each file holds. */
     private class Tree(
         val base: Path,
     ) {
         val entries = mutableListOf<String>()
         val classes = mutableListOf<String>()
 
-        /** The jars the JDK drops, which the walker reports as unreadable. */
         val dropped = mutableListOf<Path>()
         private val classOfFile = mutableMapOf<Path, String>()
 
@@ -78,7 +65,6 @@ class ClasspathWalkerJvmTest {
             return holds(path, className)
         }
 
-        /** A jar whose manifest is [manifest] verbatim, holding the class [className]. */
         fun rawJar(
             relative: String,
             className: String,
@@ -96,7 +82,6 @@ class ClasspathWalkerJvmTest {
             return holds(path, className)
         }
 
-        /** A folder at [relative] holding the class file of [className]. */
         fun folder(
             relative: String,
             className: String,
@@ -121,7 +106,6 @@ class ClasspathWalkerJvmTest {
             entries += paths.map { it.toString() }
         }
 
-        /** The class held by the file at [path], reached by whatever path. */
         fun classAt(path: Path): String? = runCatching { classOfFile[path.toRealPath()] }.getOrNull()
 
         private fun holds(
@@ -134,7 +118,6 @@ class ClasspathWalkerJvmTest {
         }
     }
 
-    /** Records the jars and folders the walker reports, in order, and the files it calls unreadable. It fails on anything else. */
     private class Recorder : ClasspathVisitor {
         val reported = mutableListOf<File>()
         val unreadable = mutableListOf<Path>()
@@ -180,23 +163,17 @@ class ClasspathWalkerJvmTest {
     private fun buildTree(): Tree {
         val tree = Tree(tempDir.toRealPath())
 
-        // A linked root. The JVM reads main.jar at its real path, so its Class-Path reaches
-        // real/sibling.jar, not the sibling.jar beside the link.
         val realMain = tree.jar("real/main.jar", "fixture.LinkedRootMain", classPath = "sibling.jar")
         tree.jar("real/sibling.jar", "fixture.LinkedRootSibling")
         tree.jar("links/sibling.jar", "fixture.LinkedRootDecoy")
         tree.classpath(tree.link("links/main.jar", realMain))
 
-        // A link reached through a Class-Path hop. The JVM reads hop.jar at the link's path, so
-        // next.jar is the one beside the link.
         val storedHop = tree.jar("store/hop.jar", "fixture.HopTarget", classPath = "next.jar")
         tree.jar("store/next.jar", "fixture.HopNextStored")
         tree.jar("hops/next.jar", "fixture.HopNextBesideLink")
         tree.link("hops/hop.jar", storedHop)
         tree.classpath(tree.jar("hopper/hopper.jar", "fixture.HopEntry", classPath = "../hops/hop.jar"))
 
-        // One jar at two paths. The Class-Path reaches it at the link's path first, and the
-        // classpath lists it at its real path later. Each path has its own rel.jar.
         val shared = tree.jar("shared/shared.jar", "fixture.SharedClass", classPath = "rel.jar")
         tree.jar("shared/rel.jar", "fixture.SharedRelAtRealPath")
         tree.jar("sharedlinks/rel.jar", "fixture.SharedRelAtLinkPath")
@@ -206,8 +183,6 @@ class ClasspathWalkerJvmTest {
             shared,
         )
 
-        // A Class-Path token ends in a slash only for a directory. A directory without one is
-        // read as a jar and a jar file with one is read as a directory, so both are skipped.
         tree.classpath(
             tree.jar("slash/holder.jar", "fixture.SlashHolder", classPath = "classes lib.jar/ folder/ plain.jar"),
         )
@@ -216,65 +191,49 @@ class ClasspathWalkerJvmTest {
         tree.folder("slash/folder", "fixture.SlashFolder")
         tree.jar("slash/plain.jar", "fixture.SlashPlain")
 
-        // A missing classpath entry, a dangling link, and a Class-Path target that is missing.
         tree.classpath(tree.base.resolve("missing/entry.jar"))
         tree.classpath(tree.link("missing/dangling.jar", tree.base.resolve("missing/nowhere.jar")))
         tree.classpath(tree.jar("gone/holder.jar", "fixture.GoneHolder", classPath = "absent.jar after.jar"))
         tree.jar("gone/after.jar", "fixture.GoneAfter")
 
-        // A Class-Path cycle.
         tree.classpath(tree.jar("cycle/a.jar", "fixture.CycleA", classPath = "b.jar"))
         tree.jar("cycle/b.jar", "fixture.CycleB", classPath = "a.jar")
 
-        // A classpath folder, reached through a link.
         tree.classpath(tree.link("links/folder", tree.folder("folders/classes", "fixture.PlainFolder")))
 
-        // A classpath entry with `..` after a folder that does not exist: the JVM collapses it.
         tree.jar("dotdot/x.jar", "fixture.DotDot")
         tree.classpath(Path.of("${tree.base}/nonexistent/../dotdot/x.jar"))
 
-        // There the JVM follows no link in the collapsed rest, so a link stays a link: l.jar is read
-        // at the link's path, and its Class-Path reaches the sib.jar beside the link.
         val canonTarget = tree.jar("canonstore/t.jar", "fixture.CanonLinked", classPath = "sib.jar")
         tree.jar("canonstore/sib.jar", "fixture.CanonSiblingBesideTarget")
         tree.jar("canonlinks/sib.jar", "fixture.CanonSiblingBesideLink")
         tree.link("canonlinks/l.jar", canonTarget)
         tree.classpath(Path.of("${tree.base}/nonexistent/../canonlinks/l.jar"))
 
-        // A classpath folder's manifest Class-Path is never read.
         val manifestDir = tree.folder("manifestdir", "fixture.ManifestDir")
         Files.createDirectories(manifestDir.resolve("META-INF"))
         Files.write(manifestDir.resolve("META-INF/MANIFEST.MF"), "Manifest-Version: 1.0\nClass-Path: ../named/named.jar\n\n".toByteArray())
         tree.jar("named/named.jar", "fixture.ManifestNamed")
         tree.classpath(manifestDir)
 
-        // The JDK drops a whole jar for a Class-Path token that is not a valid URL: its own class and
-        // the jar it names before that token are never loaded.
         val droppedHolder = tree.jar("badtoken/holder.jar", "fixture.BadTokenHolder", classPath = "dep.jar unknown:thing")
         tree.jar("badtoken/dep.jar", "fixture.BadTokenAfterToken")
         tree.dropped.add(droppedHolder)
         tree.classpath(droppedHolder)
 
-        // A jar whose manifest cannot be read, and whose raw manifest names no Class-Path and no
-        // Multi-Release: true, stays: the JVM loads its classes of the unnamed package.
         tree.classpath(tree.rawJar("badmanifest/unnamed.jar", "NoManifestUnnamed", "Manifest-Version: 1.0\nnot a header\n\n"))
 
-        // A classpath file is a jar whatever its extension.
         tree.classpath(tree.jar("ext/library.zipx", "fixture.OddExtension"))
 
-        // A linked folder a Class-Path names with a slash is read at the link's path.
         tree.link("linkdirs/linkdir", tree.folder("linkdirs-store/classes", "fixture.LinkedFolder"))
         tree.classpath(tree.jar("linkdirs/holder.jar", "fixture.LinkedFolderHolder", classPath = "linkdir/"))
 
-        // A `..` in a Class-Path token resolves by text, not through a link: holder.jar is reached at
-        // the link's path, so `../up.jar` is the one beside the link, not the one beside the target.
         val deepHolder = tree.jar("deep/realfolder/holder.jar", "fixture.UpHolder", classPath = "../up.jar")
         tree.jar("deep/up.jar", "fixture.UpThroughLink")
         tree.jar("up.jar", "fixture.UpTextual")
         tree.link("linkedfolder", deepHolder.parent)
         tree.classpath(tree.jar("upstart/start.jar", "fixture.UpStart", classPath = "../linkedfolder/holder.jar"))
 
-        // A percent-encoded Class-Path token names the decoded file.
         tree.jar("pct/with space.jar", "fixture.Percent")
         tree.classpath(tree.jar("pct/holder.jar", "fixture.PercentHolder", classPath = "with%20space.jar"))
         return tree
@@ -291,7 +250,6 @@ class ClasspathWalkerJvmTest {
             table.joinToString("\n", prefix = "class / JVM / walker\n") { (name, fromJvm, fromWalker) ->
                 "$name\t$fromJvm\t$fromWalker"
             }
-        // Each scenario still tells the rules apart only while the JVM skips exactly these.
         assertEquals(NEVER_LOADED, jvm.filterValues { it == ABSENT }.keys, "The classes the JVM cannot find.\n$rendered")
         val reportedAbsent = table.filter { (_, fromJvm, fromWalker) -> fromJvm == ABSENT && fromWalker != ABSENT }
         assertEquals(emptyList(), reportedAbsent, "The walker reported a class the JVM cannot find.\n$rendered")
@@ -299,11 +257,9 @@ class ClasspathWalkerJvmTest {
         assertTrue(mismatches.isEmpty(), "The walker disagrees with the JVM on ${mismatches.map { it.first }}.\n$rendered")
     }
 
-    /** For each class, the first path the walker reports whose file holds it. */
     private fun firstWalkerPaths(tree: Tree): Map<String, String> {
         val recorder = Recorder()
         ClasspathWalker(JarClassifier(emptyList(), emptyList())).walk(tree.entries, recorder)
-        // A loader opens each URL once, and equal URLs give equal paths.
         val repeated =
             recorder.reported
                 .groupingBy { it }
@@ -320,7 +276,6 @@ class ClasspathWalkerJvmTest {
         return first
     }
 
-    /** The path the JVM reads each class of [tree] from, or [ABSENT]. */
     private fun runProbe(tree: Tree): Map<String, String> {
         val probeClasses =
             Path
@@ -328,12 +283,10 @@ class ClasspathWalkerJvmTest {
                     ClassOriginProbe::class.java.protectionDomain.codeSource.location
                         .toURI(),
                 ).toString()
-        // The probe's folder goes last so it changes nothing ahead of it.
         val classpath = (tree.entries + probeClasses).joinToString(File.pathSeparator)
         val command =
             listOf(
                 File(System.getProperty("java.home"), "bin/java").absolutePath,
-                // The output is read as UTF-8 whatever the locale, since a temp path can hold any character.
                 "-Dstdout.encoding=UTF-8",
                 "-Dsun.stdout.encoding=UTF-8",
                 "-cp",
@@ -343,7 +296,6 @@ class ClasspathWalkerJvmTest {
         val stdout = tempDir.resolve("probe.out").toFile()
         val stderr = tempDir.resolve("probe.err").toFile()
         val builder = ProcessBuilder(command).redirectOutput(stdout).redirectError(stderr)
-        // Options from the developer's shell could add to the classpath or load an agent.
         builder.environment().keys.removeAll(setOf("JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS", "CLASSPATH"))
         val process = builder.start()
         if (!process.waitFor(PROCESS_TIMEOUT_SECONDS, TimeUnit.SECONDS)) {

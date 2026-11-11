@@ -10,10 +10,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * The ring's behaviour. Each check lives in [RingChecks], which loads only after the bootstrap
- * holder is installed, since this class is loaded for discovery before any test runs.
- */
 class OtherlodeVerifierMessagesTest {
     @BeforeEach
     fun installBootstrapHolder() {
@@ -62,6 +58,8 @@ class OtherlodeVerifierMessagesTest {
     @Test
     fun `a slot is cleared once it is read, so a drained message is not held`() = RingChecks.readSlotIsCleared()
 
+    // The checks live in this object so they load only after the bootstrap holder is installed.
+    // JUnit loads the test class for discovery before any test runs.
     private object RingChecks {
         fun readSlotIsCleared() {
             val ring = OtherlodeVerifierMessages.Ring(4)

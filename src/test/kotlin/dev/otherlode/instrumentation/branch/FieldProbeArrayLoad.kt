@@ -5,7 +5,6 @@ import dev.otherlode.instrumentation.ProbeArrayLoad
 import net.bytebuddy.jar.asm.MethodVisitor
 import net.bytebuddy.jar.asm.Opcodes
 
-/** Loads the counts array from the static field a test defines on its own class, with no accessor. */
 internal class FieldProbeArrayLoad(
     private val ownerInternalName: String,
 ) : ProbeArrayLoad {

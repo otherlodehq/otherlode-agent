@@ -9,10 +9,6 @@ import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/**
- * Pins which classes [Javalin7Module] accepts, and that it leaves Javalin 6's alone. Each type is
- * described without loading it.
- */
 class Javalin7ModuleMatcherTest {
     @Test
     fun `ParsedEndpoint is accepted only with a public endpoint field`() {

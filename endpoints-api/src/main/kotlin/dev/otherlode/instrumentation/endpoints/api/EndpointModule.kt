@@ -31,9 +31,10 @@ interface EndpointModule {
     val handlerInterfaces: Set<String> get() = emptySet()
 
     /**
-     * Whether a failed weave of a class this module matched leaves the module on. The default is
-     * false: the pipeline switches off every module whose matcher accepted a class that failed to
-     * weave. A module overrides this to true only when a failed weave takes the module's own
+     * Whether a failed first weave of a class this module matched leaves the module on. The default
+     * is false: the pipeline switches off every module whose matcher accepted a class that failed to
+     * weave. A failed re-weave of a class whose first weave succeeded switches the module off either
+     * way. A module overrides this to true only when a failed weave takes the module's own
      * staged declarations with it, so nothing partial is left.
      */
     val weaveFailureLeavesNothingPartial: Boolean get() = false
@@ -86,7 +87,7 @@ interface EndpointModule {
     fun declare(frameworkObject: Any) {}
 
     /**
-     * Called on the export thread before the agent builds a manifest. A module that declares
+     * Called on the thread that flushes, before the agent builds a manifest. A module that declares
      * routes only once a condition holds settles here whether it ever did, once [graceMillis], the
      * flush interval, has passed, or at once on the [finalFlush] before the agent stops. A module
      * that never saw the condition holds switches itself off through

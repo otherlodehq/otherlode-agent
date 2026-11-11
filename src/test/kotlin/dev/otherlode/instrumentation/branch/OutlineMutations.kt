@@ -6,15 +6,9 @@ import net.bytebuddy.jar.asm.ClassWriter
 import net.bytebuddy.jar.asm.MethodVisitor
 import net.bytebuddy.jar.asm.Opcodes
 
-/**
- * Edits of real compiler output that change one instruction of a shape the agent reads, so that
- * the shape no longer reads while the operand still comes from where the compiler put it. Each
- * edit applies to one method and leaves every tracked jump and switch where it was.
- */
 internal object OutlineMutations {
     private const val SUSPENDED_MARKER = "getCOROUTINE_SUSPENDED"
 
-    /** [bytes] with [edit] applied to the body of method [methodName]. */
     fun rewrite(
         bytes: ByteArray,
         methodName: String,
@@ -40,7 +34,6 @@ internal object OutlineMutations {
         return writer.toByteArray()
     }
 
-    /** A `nop` before every `tableswitch` or `lookupswitch`, which separates a switch from the `getfield label` before it. */
     fun nopBeforeSwitch(next: MethodVisitor): MethodVisitor =
         object : MethodVisitor(Opcodes.ASM9, next) {
             override fun visitTableSwitchInsn(
@@ -54,7 +47,6 @@ internal object OutlineMutations {
             }
         }
 
-    /** A `nop` between `getfield label` and the `ldc Int.MIN_VALUE` of the re-entry test. */
     fun nopInReentryTest(next: MethodVisitor): MethodVisitor =
         object : MethodVisitor(Opcodes.ASM9, next) {
             private var afterLabelRead = false
@@ -89,7 +81,6 @@ internal object OutlineMutations {
             }
         }
 
-    /** A `nop` between the `dup` and the `getCOROUTINE_SUSPENDED` call of the stack-form compare. */
     fun nopBetweenDupAndMarker(next: MethodVisitor): MethodVisitor =
         object : MethodVisitor(Opcodes.ASM9, next) {
             private var afterDup = false
@@ -120,7 +111,6 @@ internal object OutlineMutations {
             }
         }
 
-    /** Two `nop`s before every reference compare, which push the load of the marker's local out of the two instructions the shape reads. */
     fun nopsBeforeReferenceCompare(next: MethodVisitor): MethodVisitor =
         object : MethodVisitor(Opcodes.ASM9, next) {
             override fun visitJumpInsn(
@@ -135,7 +125,6 @@ internal object OutlineMutations {
             }
         }
 
-    /** The continuation `instanceof` of the head check replaced by an `instanceof Object`. */
     fun instanceOfObject(next: MethodVisitor): MethodVisitor =
         object : MethodVisitor(Opcodes.ASM9, next) {
             override fun visitTypeInsn(
@@ -146,7 +135,6 @@ internal object OutlineMutations {
             }
         }
 
-    /** A `nop` right after the first `astore`, which breaks the prologue of a string switch lowering. */
     fun nopAfterFirstStore(next: MethodVisitor): MethodVisitor =
         object : MethodVisitor(Opcodes.ASM9, next) {
             private var done = false

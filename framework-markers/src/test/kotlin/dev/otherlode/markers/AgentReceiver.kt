@@ -7,7 +7,6 @@ import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.util.concurrent.CopyOnWriteArrayList
 
-/** Collects the manifests one forked JVM's agent posts, and answers every post with 200. */
 internal class AgentReceiver : AutoCloseable {
     val manifests = CopyOnWriteArrayList<ProbeManifest>()
     val failures = CopyOnWriteArrayList<String>()

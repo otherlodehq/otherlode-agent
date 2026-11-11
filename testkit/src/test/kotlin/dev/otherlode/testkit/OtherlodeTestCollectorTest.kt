@@ -127,10 +127,6 @@ class OtherlodeTestCollectorTest {
         siteIndex = siteIndex,
     )
 
-    /**
-     * An `if` site whose taken jump is outcome [takenIndex] and whose fall-through is
-     * [fallThroughIndex], as kotlinc compiles `if (c) A`: the fall-through runs `A`.
-     */
     private fun ifSite(
         siteIndex: Int,
         line: Int,
@@ -247,8 +243,6 @@ class OtherlodeTestCollectorTest {
         assertEquals(7L, target.hitCount("com.acme.Foo", "bar"))
         assertEquals(3L, target.hitCount("com.acme.Foo", "bar", "()V"))
 
-        // Re-delivering the identical batch must not double count: hits_total is cumulative and
-        // merged with max(), so applying the same value twice is a no-op.
         exporter.exportDeltaBatch(batch)
         assertEquals(7L, target.hitCount("com.acme.Foo", "bar"))
     }
@@ -1014,11 +1008,6 @@ class OtherlodeTestCollectorTest {
         assertTrue(target.alwaysSupplied().isEmpty())
     }
 
-    /**
-     * A Scala constructor default getter's own class is the companion module (`Cc$`), but its
-     * target `<init>` lives on `Cc`. `omissionCount` and the finding rules both name the parameter
-     * by the target's own class, not the class the omission probe's slot lives on.
-     */
     @Test
     fun `omissionCount and the finding rules join an omission probe to its target across a class boundary`() {
         val target = startCollector()
@@ -1063,14 +1052,6 @@ class OtherlodeTestCollectorTest {
         assertTrue(target.alwaysSupplied().isEmpty())
     }
 
-    /**
-     * A Scala constructor default gets two omission probes for the same parameter: the module
-     * getter on `Cc$`, resolved cross-class to `Cc`'s own `<init>`, and `Cc`'s own static
-     * forwarder for the same getter name, resolved in class to that same `<init>`. Scala callers
-     * only ever reach the module getter, so the forwarder's own probe stays at zero. Judging each
-     * probe on its own would report the forwarder as always supplied beside the module getter's
-     * never supplied for the same parameter; both must be summed and judged once.
-     */
     @Test
     fun `neverSupplied and alwaysSupplied sum every omission probe naming the same target parameter`() {
         val target = startCollector()
@@ -1999,7 +1980,6 @@ class OtherlodeTestCollectorTest {
             listOf("com.acme.B" to "step", "com.acme.C" to "leaf"),
             cluster.methods.map { it.className to it.methodName },
         )
-        // B and C have one method each, so the cluster holds both classes whole.
         assertEquals(listOf("com.acme.B" to null, "com.acme.C" to null), cluster.wholeClasses.map { it.className to it.finding })
         assertEquals(emptyList(), cluster.members)
         assertEquals(2, cluster.membersTotal)
@@ -2099,8 +2079,6 @@ class OtherlodeTestCollectorTest {
                             1,
                             calls = listOf(CallEdge("com.acme.Svc", "charge", "()V", virtual = virtual)),
                         ),
-                        // Svc is a pure interface: its abstract charge() has no probe and no node
-                        // anywhere, so widening has to start at the owner named in the edge.
                         methodProbe(3, 0, "com.acme.StripeSvc", "charge", "()V", 20),
                     ),
                 classLocations = listOf(ClassLocation(3, "java.lang.Object", listOf("com.acme.Svc"))),
@@ -2127,8 +2105,6 @@ class OtherlodeTestCollectorTest {
                 DeltaBatch(ResourceAttributes("svc", null, "i-1", null, "run-1"), listOf(ProbeDelta(1, 0, ProbeKind.METHOD, 1L, 4L))),
             )
 
-            // Without widening, StripeSvc.charge has no resolved caller at all: it can still surface
-            // as its own uncalled root, but never as reached from A.run.
             val stripeCluster = target.unreachedClusters().single { it.root.className == "com.acme.StripeSvc" }
             assertEquals(RootKind.UNCALLED, stripeCluster.rootKind)
         }
@@ -2152,8 +2128,6 @@ class OtherlodeTestCollectorTest {
                             1,
                             calls = listOf(CallEdge("com.acme.Greeter", "greet", "()V", virtual = true)),
                         ),
-                        // The implementing class's -jvm-default=disable stub: generated, so no node,
-                        // and the only edge to the default's code.
                         methodProbe(
                             2,
                             0,
@@ -2203,8 +2177,6 @@ class OtherlodeTestCollectorTest {
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
                 probes =
                     listOf(
-                        // A data class's hashCode, hit by a HashMap outside scope, hashing a property
-                        // typed as an open class.
                         methodProbe(
                             1,
                             0,
@@ -2281,7 +2253,6 @@ class OtherlodeTestCollectorTest {
                             generatedBy = GeneratedBy.DEFAULT_IMPLS,
                         ),
                         methodProbe(4, 0, "com.acme.I\$DefaultImpls", "p", "(Lcom/acme/I;)V", 5, static = true),
-                        // Hit, so the class loaded and p is judged on its own, not as a class finding.
                         methodProbe(4, 1, "com.acme.I\$DefaultImpls", "q", "(Lcom/acme/I;)V", 8, static = true),
                     ),
                 classLocations = listOf(ClassLocation(2, "java.lang.Object", listOf("com.acme.K"))),
@@ -2337,7 +2308,6 @@ class OtherlodeTestCollectorTest {
         )
 
         val byRoot = target.unreachedClusters().associateBy { it.root.className }
-        // A receiver typed Left can be a Left or a LeftChild, never a Right, and never a bare Base.
         assertEquals(RootKind.REACHED_FROM_HIT, byRoot.getValue("com.acme.Left").rootKind)
         assertEquals(RootKind.REACHED_FROM_HIT, byRoot.getValue("com.acme.LeftChild").rootKind)
         assertEquals(RootKind.UNCALLED, byRoot.getValue("com.acme.Right").rootKind)
@@ -2528,7 +2498,6 @@ class OtherlodeTestCollectorTest {
             ),
         )
 
-        // B never loaded, so the class, not its method, is the root, and A.run is the hit caller.
         val cluster = target.unreachedClusters().single { it.root.className == "com.acme.B" }
         assertEquals(RootKind.CLASS_FINDING, cluster.rootKind)
         assertEquals(ClassFinding.NEVER_LOADED, cluster.rootFinding)
@@ -2623,9 +2592,6 @@ class OtherlodeTestCollectorTest {
                     ),
             ),
         )
-        // Point is constructed, but never copied: the constructor is hit and copy is not, yet
-        // copy's own generatedBy excludes it from the graph, so it can neither root nor join a
-        // cluster despite calling <init> itself.
         exporter.exportDeltaBatch(
             DeltaBatch(ResourceAttributes("svc", null, "i-1", null, "run-1"), listOf(ProbeDelta(1, 0, ProbeKind.METHOD, 1L, 1L))),
         )
@@ -2688,8 +2654,6 @@ class OtherlodeTestCollectorTest {
                 scannedAt = 1000L,
             ),
         )
-        // The manifest's own row for A.m carries no edges, as a class whose bytes the agent could
-        // not read at transform time would; the baseline's declaration is the only source.
         exporter.exportManifest(
             watchedManifest(
                 ResourceAttributes("svc", null, "i-1", null, "run-1"),
@@ -2750,8 +2714,6 @@ class OtherlodeTestCollectorTest {
         assertEquals(listOf("record"), target.neverHit().map { it.methodName }, "the routine outcome is not a never-hit row")
         val routine = target.neverHitRoutineOutcomes().single()
         assertEquals(listOf<Any?>("handle", 1, RefRoutineKind.THROW_ONLY), listOf(routine.methodName, routine.branchIndex, routine.routine))
-        // The call the routine outcome guards starts at handle, which ran, so record roots a
-        // cluster reached from a hit method rather than one behind an untaken outcome.
         val cluster = target.unreachedClusters().single()
         assertEquals(RootKind.REACHED_FROM_HIT, cluster.rootKind)
         assertEquals("record", cluster.root.methodName)
@@ -3037,15 +2999,6 @@ class OtherlodeTestCollectorTest {
         assertEquals(listOf("com.acme.Dead", "com.acme.Item"), target.neverLoaded())
     }
 
-    /**
-     * The cluster rule leaves out a never-run constructor of a never-constructed class with no
-     * finding. Util and Dead hold only static methods and were never constructed, so neither holds
-     * a class finding and neither private constructor roots a cluster. Util.parse ran and
-     * Util.format did not, so format roots its own cluster. No Dead method ran, so Dead.only roots
-     * a cluster holding Dead whole, its constructor left out. A never-run factory still reaches
-     * through a never-constructed class's constructor to the helper only it calls, and lists
-     * neither constructor.
-     */
     @Test
     fun `an unjudged constructor is never a root, is never listed, and is still reached through`() {
         val target = startCollector()
@@ -3106,11 +3059,6 @@ class OtherlodeTestCollectorTest {
         assertTrue(clusters.flatMap { it.methods }.none { it.methodName == "<init>" }, "no constructor is listed")
     }
 
-    /**
-     * An untaken outcome whose cluster would hold only an unjudged constructor besides itself gives
-     * no cluster: MyEx has only its constructor and was never constructed, so the cluster would list
-     * nothing.
-     */
     @Test
     fun `an untaken outcome reaching only an unjudged constructor gives no cluster`() {
         val target = startCollector()
@@ -3189,8 +3137,6 @@ class OtherlodeTestCollectorTest {
         )
         assertTrue(cluster.root in target.neverHit(), "the root is the same ref neverHit lists for the outcome")
         assertEquals(site, cluster.rootSite)
-        // Legacy has a constructor and an instance method and none ran, so it is never instantiated
-        // and the cluster holds it whole.
         assertEquals(listOf("com.acme.Legacy" to ClassFinding.NEVER_INSTANTIATED), cluster.wholeClasses.map { it.className to it.finding })
         assertEquals(listOf("<init>", "apply"), cluster.methods.map { it.methodName })
         assertTrue(cluster.methods.all { it.kind == RefProbeKind.METHOD })
@@ -3417,7 +3363,6 @@ class OtherlodeTestCollectorTest {
         }
     }
 
-    /** Sends [probes] as one manifest from `i-1`, then one delta batch hitting each of [hits] (class id, probe index) once. */
     private fun collect(
         target: OtherlodeTestCollector,
         probes: List<ProbeLocation>,
@@ -3430,13 +3375,6 @@ class OtherlodeTestCollectorTest {
         exporter.exportDeltaBatch(DeltaBatch(resource, hits.map { (c, p) -> ProbeDelta(c, p, kinds.getValue(c to p), 1L, 1L) }))
     }
 
-    /**
-     * A class two loaders define in one instance is one class by name, as the server merges it.
-     * Copy 1 ran `<clinit>` and `run`, and took outcome 0 but never outcome 1; copy 2 loaded and ran
-     * nothing. Summed across the copies, only outcome 1 never ran: it is listed once, and neither
-     * copy 2's zero on outcome 0 or `run` nor its `<clinit>`, which on its own reads zero, makes or
-     * folds a row.
-     */
     @Test
     fun `a class two loaders define in one instance is judged once, with its copies' hits summed`() {
         val target = OtherlodeTestCollector.start()
@@ -3530,13 +3468,10 @@ class OtherlodeTestCollectorTest {
                 branchProbe(1, 2, "com.acme.Printer", "print", "()V", 4, branchIndex = 0, siteIndex = 0),
                 methodProbe(1, 3, "com.acme.Printer", "make", "()V", 6, static = true),
                 branchProbe(1, 4, "com.acme.Printer", "make", "()V", 7, branchIndex = 1, siteIndex = 1),
-                // A holder of statics: a private constructor nobody meant to run.
                 methodProbe(2, 0, "com.acme.Utils", "<init>", "()V", 1),
                 methodProbe(2, 1, "com.acme.Utils", "name", "()V", 2, static = true),
-                // An interface: a default method and no constructor.
                 methodProbe(3, 0, "com.acme.Greeter", "greet", "()V", 1),
             ),
-            // make ran, so its never-taken branch is not folded into a never-hit method row.
             1 to 3,
         )
 
@@ -3624,8 +3559,6 @@ class OtherlodeTestCollectorTest {
             3 to 0,
         )
 
-        // Audit's own methods say nothing its never-initialised finding does not, so it roots no
-        // listed cluster. Printer reaches Helper.format, which nothing else calls.
         val cluster = target.unreachedClusters().single()
         assertEquals(RootKind.CLASS_FINDING, cluster.rootKind)
         assertEquals(ClassFinding.NEVER_INSTANTIATED, cluster.rootFinding)
@@ -3730,13 +3663,11 @@ class OtherlodeTestCollectorTest {
         }
     }
 
-    /** A CREATES edge to the lambda body [methodName] of [className], as an `invokedynamic` records it. */
     private fun creates(
         className: String,
         methodName: String,
     ) = CallEdge(className, methodName, "()V", virtual = false, kind = CallEdgeKind.CREATES)
 
-    /** A never-hit static lambda body, the shape kotlinc compiles a lambda to. */
     private fun lambdaProbe(
         classId: Int,
         probeIndex: Int,

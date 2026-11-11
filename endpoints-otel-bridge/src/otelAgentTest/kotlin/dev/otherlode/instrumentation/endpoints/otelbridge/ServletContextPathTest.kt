@@ -17,11 +17,6 @@ class ApiServlet : HttpServlet() {
     }
 }
 
-/**
- * A plain servlet mapped under `/api` with a wildcard, in the context path `/shop`, under the
- * OpenTelemetry Java agent. OpenTelemetry reports the mapping with the context path in front of
- * it; the servlet module counts the mapping alone.
- */
 class ServletContextPathTest {
     @Test
     fun `a servlet request under a context path is counted once and the bridge adds no endpoint`() {

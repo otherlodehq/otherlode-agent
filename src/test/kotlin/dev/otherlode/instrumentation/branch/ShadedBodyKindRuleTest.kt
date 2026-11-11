@@ -7,13 +7,6 @@ import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-/**
- * Runs [BranchSiteAnalyzer]'s `body_kind` rule from the shaded agent jar. `shadowJar` relocates
- * every string in the agent's own classes that starts with `kotlin`, so a rule that names a
- * Kotlin runtime class passes against the unshaded classes and fails in the jar an adopter runs.
- * The jar is loaded apart from the test classpath, under the platform class loader, so every
- * class here comes from the shaded copy. The fixture bytes are real kotlinc and javac output.
- */
 class ShadedBodyKindRuleTest {
     private val loader =
         URLClassLoader(
@@ -28,7 +21,6 @@ class ShadedBodyKindRuleTest {
     @AfterTest
     fun close() = loader.close()
 
-    /** A shaded Kotlin function interface whose `invoke` always answers [result]. */
     private fun shadedFunction(
         arity: Int,
         result: Any?,
@@ -44,7 +36,6 @@ class ShadedBodyKindRuleTest {
         }
     }
 
-    /** The shaded analyser's body kind and source name for one fixture class. */
     private fun shadedBodyKind(path: String): Pair<String, String?> {
         val analyzerClass = loader.loadClass("dev.otherlode.instrumentation.branch.BranchSiteAnalyzer")
         val analyzer = analyzerClass.getField("INSTANCE").get(null)

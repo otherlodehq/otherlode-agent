@@ -15,10 +15,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
-/**
- * Proves that a METHOD probe's callback-annotation [OutsideCaller] reaches the manifest through the
- * real transform pipeline, on the `callbacks` fixtures, and that a class woven again keeps it.
- */
 class CallbackAnnotationInstrumentationTest {
     private companion object {
         const val PACKAGE = "com.example.target.callbacks"

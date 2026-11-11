@@ -14,12 +14,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.test.fail
 
-/**
- * Drives [BranchProbeAsmVisitorWrapper] directly, with a capacity that does not match the
- * class's real site count, to prove the last-resort guard: a site past capacity runs unchanged
- * rather than writing past the end of the array, and any mismatch fails the whole rewrite once,
- * at `visitEnd`, instead of leaving the class instrumented with shifted probes.
- */
 class BranchProbeCapacityGuardTest {
     private fun loadWithCapacity(capacity: Int): Pair<Class<*>, LongArray> {
         val classesDir = File("build/classes/java/test")

@@ -34,15 +34,6 @@ import kotlin.test.assertTrue
 import java.util.logging.Level as JulLevel
 import java.util.logging.Logger as JulLogger
 
-/**
- * Proves that another agent's retransformation of a class this agent wove succeeds: the class is
- * woven again to the same bytes, keeps counting into the same probes, and nothing reaches the
- * registry a second time. A class this agent did not weave is left alone.
- *
- * Each "later agent" here is a retransformation-capable transformer registered after this agent's,
- * which is where the JVM puts any capable transformer an agent attaching later registers, the shape
- * of Arthas or BTrace.
- */
 class RetransformationInstrumentationTest {
     private companion object {
         const val TARGET = "com.example.target"
@@ -63,7 +54,6 @@ class RetransformationInstrumentationTest {
         installed = null
     }
 
-    /** Counts how many times each class is registered. */
     private class CountingRegistry : ProbeRegistry() {
         val registrations = ConcurrentHashMap<String, AtomicInteger>()
 
@@ -97,11 +87,6 @@ class RetransformationInstrumentationTest {
         }
     }
 
-    /**
-     * A capable transformer registered after this agent's. It records the bytes it receives for
-     * the fixtures, which are this agent's output. With [rewrite] it also changes a method body on
-     * a retransformation, a change that leaves the class's fields and methods as they were.
-     */
     private class LaterAgent(
         val rewrite: Boolean,
     ) : ClassFileTransformer {
@@ -130,7 +115,6 @@ class RetransformationInstrumentationTest {
         installed = otherlode to otherlode.install(instrumentation)
     }
 
-    /** The fixture loader for a class woven in the field-and-accessor form, which is version 52 here, or the dynamic-constant form. */
     private fun fixtureLoader(legacy: Boolean): ClassLoader = if (legacy) LegacyFixtures.loader(javaClass.classLoader) else fixtureLoader()
 
     private fun fixtureLoader(): ClassLoader =
@@ -179,12 +163,6 @@ class RetransformationInstrumentationTest {
         retransformWovenClasses(LaterAgent(rewrite = true), legacy = true)
     }
 
-    /**
-     * Loads and drives [WOVEN_CLASSES], retransforms them all in one batch, drives again, and checks
-     * that the batch succeeded, the counts carried on, and the registry saw each class once. With
-     * [legacy] the classes are version 52, so they carry the probe field and accessor; otherwise they
-     * carry neither and load a dynamic constant.
-     */
     private fun retransformWovenClasses(
         laterAgent: LaterAgent?,
         legacy: Boolean,
@@ -262,7 +240,6 @@ class RetransformationInstrumentationTest {
         assertFalse(WovenBytes.isWoven(classBytesAfterRetransform(sample)))
     }
 
-    /** The bytes a capable transformer is handed for [cls] when it is retransformed. */
     private fun classBytesAfterRetransform(cls: Class<*>): ByteArray {
         var seen: ByteArray? = null
         val spy =
@@ -315,11 +292,6 @@ class RetransformationInstrumentationTest {
         return synchronized(records) { records.toList() }
     }
 
-    /**
-     * Loads [BRANCH_TARGET] from a copy of its class file in a temporary directory, which a test may
-     * then edit. The copy is version 52 unless [legacy] is false: a class woven in the field form is
-     * the one whose redefinition the JVM refuses when the weave is refused.
-     */
     private class EditableClassFile(
         legacy: Boolean = true,
         className: String = BRANCH_TARGET,
@@ -337,17 +309,13 @@ class RetransformationInstrumentationTest {
             if (legacy) LegacyFixtures.copyDowngraded(source, file) else source.copyTo(file)
         }
 
-        /**
-         * A loader that serves this class file and nothing else under its name: the parent's
-         * classpath has the original, which a fallback would hand back once this one is deleted.
-         */
         fun loader(parent: ClassLoader): ClassLoader =
             object : FixtureClassLoader(arrayOf(dir.toURI().toURL()), parent) {
+                // The parent's classpath has the original class file, so this name never falls back to the parent.
                 override fun getResource(name: String): java.net.URL? = if (name == path) findResource(name) else super.getResource(name)
             }
     }
 
-    /** One [BRANCH_TARGET] method's entry count and its branch counts in branch-index order. */
     private fun countsOf(
         registry: ProbeRegistry,
         methodName: String,
@@ -357,10 +325,6 @@ class RetransformationInstrumentationTest {
             probes.filter { it.kind == ProbeKind.BRANCH }.sortedBy { it.branchIndex }.map { hitsOf(registry, it) }
     }
 
-    /**
-     * Loads [BRANCH_TARGET], calls `classify` with 5 twice and -1 once and `classifyDense` with 1
-     * once, and returns the class and an instance.
-     */
     private fun loadAndDrive(loader: ClassLoader): Pair<Class<*>, Any> {
         val branchTarget = Class.forName(BRANCH_TARGET, true, loader)
         val target = branchTarget.getDeclaredConstructor().newInstance()
@@ -389,11 +353,6 @@ class RetransformationInstrumentationTest {
         )
     }
 
-    /**
-     * A class file edited on disk after the class loaded, keeping the layout hash: one conditional
-     * now tests the opposite. Weaving it again would read the edited class file's polarity against
-     * bytes that still have the old one, and count each outcome into the other's slot.
-     */
     @Test
     fun `a retransformation after the class file was edited to invert a jump is refused, and counts stay on their outcomes`() {
         val registry = CountingRegistry()
@@ -438,12 +397,6 @@ class RetransformationInstrumentationTest {
         assertEquals(2L to listOf(0L, 2L, 0L, 0L), countsOf(registry, "classifyDense"))
     }
 
-    /**
-     * A class woven from version 55 has no probe field whose absence would make the JVM reject
-     * unwoven bytes, so a refused re-weave hands back the received bytes plus one field, which the
-     * JVM rejects as a schema change. The class keeps running woven and counting, as one with a
-     * probe field does.
-     */
     @Test
     fun `a refused re-weave of a version 55 class is rejected by the JVM, and the class keeps counting`() {
         val registry = CountingRegistry()
@@ -461,10 +414,6 @@ class RetransformationInstrumentationTest {
         assertTrue(registry.manifest(RESOURCE).skippedClasses.isEmpty())
     }
 
-    /**
-     * The same for an interface: a field there must be public static final, so the marker is, or
-     * ByteBuddy would reject it and the JVM accept the interface's unwoven bytes.
-     */
     @Test
     fun `a refused re-weave of a version 55 interface is rejected by the JVM, and it keeps counting`() {
         val registry = CountingRegistry()
@@ -487,11 +436,6 @@ class RetransformationInstrumentationTest {
         assertEquals(2L, hitsOf(registry, probe), "the call after the refusal is counted")
     }
 
-    /**
-     * A redefinition shaped like an IDE's HotSwap, which writes the class file and then redefines
-     * the class with it, of a class woven from version 55: the JVM rejects it as it does for a
-     * retransformation.
-     */
     @Test
     fun `a HotSwap-shaped redefinition of a version 55 class is refused, and the class keeps counting`() {
         val registry = CountingRegistry()
@@ -507,12 +451,6 @@ class RetransformationInstrumentationTest {
         assertEquals(4L to listOf(1L, 3L), countsOf(registry, "classify"), "the call after the refusal is counted")
     }
 
-    /**
-     * The class file comparison of a re-weave reads the loader, not the byte cache: the cache holds
-     * the class file as it was before the edit, because something looked the class up while another
-     * was woven, and a comparison that read it would find the class unchanged and weave the edited
-     * code on the old plan.
-     */
     @Test
     fun `a HotSwap-shaped redefinition of a class whose old class file is cached is still refused`() {
         val registry = CountingRegistry()
@@ -531,12 +469,6 @@ class RetransformationInstrumentationTest {
         assertEquals(4L to listOf(1L, 3L), countsOf(registry, "classify"), "the call after the refusal is counted")
     }
 
-    /**
-     * Bytes that arrive at a version whose probe form differs from the one the class was woven in,
-     * with the class file unchanged: a class woven with a dynamic constant redefined at version 52,
-     * where a dynamic constant is a `ClassFormatError`. The re-weave is refused, so the JVM rejects
-     * the redefinition and the class keeps counting.
-     */
     @Test
     fun `a redefinition at a version the class's probe form cannot follow is refused, and the class keeps counting`() {
         val registry = CountingRegistry()
@@ -553,11 +485,6 @@ class RetransformationInstrumentationTest {
         assertEquals(4L to listOf(1L, 3L), countsOf(registry, "classify"), "the call after the refusal is counted")
     }
 
-    /**
-     * A class that failed to weave, here one whose method is so near the class file's 64 KB limit
-     * that its entry probe alone pushes it past, runs unwoven and is reported skipped; a later
-     * retransformation leaves it alone.
-     */
     @Test
     fun `a retransformation of a class that failed to weave succeeds and changes nothing`() {
         val registry = CountingRegistry()
@@ -583,11 +510,6 @@ class RetransformationInstrumentationTest {
         assertFalse(WovenBytes.isWoven(classBytesAfterRetransform(type)))
     }
 
-    /**
-     * A class whose `static int big(int)` is 6553 blocks of `if (x == k) y++`, 65534 bytes of code:
-     * small enough to load and too large to write with even the entry probe, which the size guard
-     * cannot drop.
-     */
     private fun tooLargeToWeave(internalName: String): ByteArray {
         val cw = ClassWriter(ClassWriter.COMPUTE_FRAMES)
         cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, internalName, null, "java/lang/Object", null)
@@ -620,12 +542,6 @@ class RetransformationInstrumentationTest {
         return cw.toByteArray()
     }
 
-    /**
-     * An earlier capable agent that changes nothing at load and adds a branch to `classify` on a
-     * retransformation, as a debugger adding a probe does. The bytes that arrive no longer pair in
-     * `classify`, so its branch counts stop where they were while its entry probe and every other
-     * method keep counting into their own slots.
-     */
     @Test
     fun `an earlier agent that adds a branch on retransformation freezes that method's branch counts and nothing else`() {
         val registry = CountingRegistry()
@@ -667,12 +583,6 @@ class RetransformationInstrumentationTest {
         assertEquals(1, registry.registrations[BRANCH_TARGET]?.get())
     }
 
-    /**
-     * An earlier capable agent that grows `classify` to 65510 bytes on retransformation. The first
-     * weave kept its two branch probes, which fit; against the bytes that arrive now they would not
-     * fit a class file, so the re-weave emits its sites unchanged. The entry probe still counts, the
-     * branch counts stay where they were, and the retransformation succeeds.
-     */
     @Test
     fun `an earlier agent that grows a method past the class file limit on retransformation freezes its branch counts`() {
         val registry = CountingRegistry()
@@ -710,11 +620,6 @@ class RetransformationInstrumentationTest {
         assertTrue("would not fit a class file" in warnings.single().message, warnings.single().message)
     }
 
-    /**
-     * An earlier capable agent that inverts `classify`'s conditional the way JaCoCo does, testing the
-     * opposite and jumping past a `goto` that carries the original edge, so the arriving jump's taken
-     * edge is the class file's fall-through. With [atLoad] it does so at the first load too.
-     */
     private class InvertingAgent(
         private val atLoad: Boolean,
     ) : ClassFileTransformer {
@@ -757,10 +662,6 @@ class RetransformationInstrumentationTest {
         retransformThroughInvertingAgent(atLoad = true)
     }
 
-    /**
-     * A class defined from bytes, with no class file behind it, retransformed through an earlier
-     * agent that changes a constant only then. Nothing about the code a re-weave relies on changed.
-     */
     @Test
     fun `a class with no class file is woven again when an earlier agent changes it on retransformation`() {
         val registry = CountingRegistry()
@@ -791,10 +692,6 @@ class RetransformationInstrumentationTest {
         assertEquals(4L to listOf(1L, 3L), countsOf(registry, "classify"))
     }
 
-    /**
-     * A class first woven from memory whose class file appears later. The plan holds no class-file
-     * hash to compare it with, so its appearance says nothing about the code.
-     */
     @Test
     fun `a class first woven from memory whose class file appears later is woven again`() {
         val registry = CountingRegistry()
@@ -810,13 +707,6 @@ class RetransformationInstrumentationTest {
         assertEquals(4L to listOf(1L, 3L), countsOf(registry, "classify"))
     }
 
-    /**
-     * A re-weave uses the ordinals its first weave stored, not a fresh analysis, which would read
-     * other classes' files. Here the `when` over an enum maps through `$WhenMappings`, whose class
-     * file is replaced on disk with one whose initialiser maps nothing, while the class's own
-     * class file is unchanged. Analysed now, four of the `when`s would get a different number of
-     * slots than they were woven with.
-     */
     @Test
     fun `a re-weave keeps the stored ordinals when a class file the analysis read has changed`() {
         val registry = CountingRegistry()
@@ -864,7 +754,6 @@ class RetransformationInstrumentationTest {
         )
     }
 
-    /** [className]'s branch counts, by method and branch index. */
     private fun branchHitsOf(
         registry: ProbeRegistry,
         className: String,
@@ -875,7 +764,6 @@ class RetransformationInstrumentationTest {
             .filter { it.className == className && it.kind == ProbeKind.BRANCH }
             .associate { (it.methodName to it.branchIndex) to hitsOf(registry, it) }
 
-    /** A class file that is gone by the time of a retransformation is no sign the code changed. */
     @Test
     fun `a retransformation after the class file was deleted is woven again`() {
         val registry = CountingRegistry()
@@ -890,12 +778,6 @@ class RetransformationInstrumentationTest {
         assertEquals(4L to listOf(1L, 3L), countsOf(registry, "classify"))
     }
 
-    /**
-     * An earlier agent that adds a class annotation whose `@Target` does not list a type, on a
-     * retransformation. The bytes are legal to the JVM, and the agent weaves them again, so the
-     * class keeps counting and is not recorded as skipped. The class is version 52, with the probe
-     * field the unwoven bytes lack.
-     */
     @Test
     fun `a woven class whose retransformed bytes carry a class annotation another agent added is woven again`() {
         val registry = CountingRegistry()
@@ -928,10 +810,6 @@ class RetransformationInstrumentationTest {
         assertEquals(4L to listOf(1L, 3L), countsOf(registry, "classify"))
     }
 
-    /**
-     * Defines one class from [bytes] and serves no class file for it, until [servedLater] is set:
-     * from then on it serves that file as the class file.
-     */
     private class BytesOnlyLoader(
         parent: ClassLoader,
         private val className: String,
@@ -961,11 +839,6 @@ class RetransformationInstrumentationTest {
             if (name == resourcePath) servedLater?.toURI()?.toURL() else super.getResource(name)
     }
 
-    /**
-     * An earlier capable agent that rewrites the class at load and skips a class being redefined:
-     * on a retransformation the bytes that arrive differ from the ones the class was first woven
-     * from, and it is woven again all the same.
-     */
     @Test
     fun `an earlier agent that rewrites at load and skips retransformations does not break the retransformation`() {
         val registry = CountingRegistry()
@@ -999,7 +872,6 @@ class RetransformationInstrumentationTest {
     }
 }
 
-/** [bytes] with every `ldc` of [from] loading [to] instead; nothing else about the class changes. */
 internal fun replaceConstant(
     bytes: ByteArray,
     from: String,
@@ -1027,7 +899,6 @@ internal fun replaceConstant(
     return writer.toByteArray()
 }
 
-/** [bytes] with the first `ifle` or `ifgt` in [methodName] replaced by the opcode [replace] gives for it. */
 internal fun replaceFirstJump(
     bytes: ByteArray,
     methodName: String,
@@ -1068,11 +939,6 @@ internal fun replaceFirstJump(
     return writer.toByteArray()
 }
 
-/**
- * [bytes] with a conditional jump to the very next instruction added at the start of
- * [methodName], whose first parameter must be an `int`: one branch more than the class file has,
- * and no change to what the method does.
- */
 internal fun addLeadingBranch(
     bytes: ByteArray,
     methodName: String,
@@ -1109,10 +975,6 @@ internal fun addLeadingBranch(
     return writer.toByteArray()
 }
 
-/**
- * [bytes] with the first `ifle` or `ifgt` in [methodName] inverted the way JaCoCo inverts a jump:
- * the opposite test jumps past a `goto` that carries the original edge. Frames are recomputed.
- */
 internal fun invertFirstJump(
     bytes: ByteArray,
     methodName: String,
@@ -1154,7 +1016,6 @@ internal fun invertFirstJump(
     return writer.toByteArray()
 }
 
-/** [bytes] with a runtime-visible class annotation of [annotationDescriptor] added. */
 internal fun annotateClass(
     bytes: ByteArray,
     annotationDescriptor: String,
@@ -1180,7 +1041,6 @@ internal fun annotateClass(
     return writer.toByteArray()
 }
 
-/** [bytes] with a `<clinit>` that does nothing but return, every other member unchanged. */
 internal fun withEmptyTypeInitializer(bytes: ByteArray): ByteArray {
     val reader = ClassReader(bytes)
     val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
@@ -1207,7 +1067,6 @@ internal fun withEmptyTypeInitializer(bytes: ByteArray): ByteArray {
     return writer.toByteArray()
 }
 
-/** [bytes] with `nop`s at the start of [methodName] until its code is [length] bytes. */
 internal fun padMethod(
     bytes: ByteArray,
     methodName: String,

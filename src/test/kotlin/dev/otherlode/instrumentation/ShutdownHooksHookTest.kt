@@ -14,7 +14,6 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/** The weave of `runHooks`, on a stand-in class with the shape of the JDK's. */
 class ShutdownHooksHookTest {
     private val instrumentation: Instrumentation = VerifierHookFixtures.instrumentation()
     private val standIn = StandInShutdownHooks::class.java.name

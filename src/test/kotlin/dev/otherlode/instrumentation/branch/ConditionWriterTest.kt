@@ -6,11 +6,6 @@ import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-/**
- * Proves each condition the writer produces against real compiled fixtures: `ConditionTarget.kt`,
- * `ConditionJavaTarget.java` and each Scala fixture module's `Conditions.scala`. Every shape read
- * back to source here was confirmed with `javap -c -l -p` on these fixtures first.
- */
 class ConditionWriterTest {
     private fun code(text: String) = ConditionPart(ConditionPartKind.CODE, text)
 
@@ -22,7 +17,6 @@ class ConditionWriterTest {
 
     private fun javaBytes(simpleName: String) = File("build/classes/java/test/com/example/target/$simpleName.class").readBytes()
 
-    /** Reads another test fixture's bytes by internal name, the way the agent reads a class through its loader. */
     private val fixtureLookup: (String) -> ByteArray? = { internalName ->
         listOf("kotlin", "java")
             .map { File("build/classes/$it/test/$internalName.class") }
@@ -30,7 +24,6 @@ class ConditionWriterTest {
             ?.readBytes()
     }
 
-    /** Every site's condition in [method] of the class in [bytes], in site index order. */
     private fun conditions(
         bytes: ByteArray,
         method: String,
@@ -52,8 +45,6 @@ class ConditionWriterTest {
         module: String,
         method: String,
     ): List<List<ConditionPart>> = conditions(ScalaFixtures.classBytes(module, "Conditions"), method)
-
-    // --- Kotlin idioms ---
 
     @Test
     fun `kotlin - Intrinsics areEqual reads as == and its ifne as !=`() {
@@ -145,8 +136,6 @@ class ConditionWriterTest {
         assertEquals(listOf(code("count < limit")), kotlinTopLevel("wideningCheck"))
     }
 
-    // --- Java idioms ---
-
     @Test
     fun `java - equals stays a call`() {
         assertEquals(listOf(code("a.equals(b)")), java("equalsCall"))
@@ -222,8 +211,6 @@ class ConditionWriterTest {
         assertEquals(listOf(code("a < b")), java("longToFloatCheck"))
     }
 
-    // --- Scala idioms, on Scala 2 and Scala 3 output alike ---
-
     private fun `BoxesRunTime equals reads as ==`(module: String) {
         assertEquals(listOf(listOf(code("a == b"))), scala(module, "anyEquals"))
     }
@@ -234,7 +221,6 @@ class ConditionWriterTest {
     @Test
     fun `scala 3 - BoxesRunTime equals reads as ==`() = `BoxesRunTime equals reads as ==`("scala3")
 
-    /** The inline null check scalac puts around `equals`: its `ifnonnull`, `ifnull` and `ifeq` sites, in that order. */
     private fun `== on references reads as ==, with its null checks`(module: String) {
         assertEquals(
             listOf(listOf(code("a == null")), listOf(code("b != null")), listOf(code("a == b"))),
@@ -279,8 +265,6 @@ class ConditionWriterTest {
 
     @Test
     fun `scala 3 - eq, ne, unboxing and isInstanceOf`() = `eq, ne, unboxing and isInstanceOf`("scala3")
-
-    // --- Each jump family's fall-through reading ---
 
     @Test
     fun `ifeq on a boolean reads as the boolean, and ifne as its negation`() {
@@ -328,8 +312,6 @@ class ConditionWriterTest {
     fun `a switch's condition is its subject`() {
         assertEquals(listOf(code("value + 1")), java("subjectSwitch"))
     }
-
-    // --- Literals and placeholders ---
 
     @Test
     fun `a string literal is one part holding its raw value, quote and newline included`() {

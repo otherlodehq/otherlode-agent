@@ -29,7 +29,6 @@ class LoadedDependencyCounterTest {
             classCount = 10,
         )
 
-    /** Maps every protection domain to the one dependency, so only the counter's own filters decide what counts. */
     private val counter = LoadedDependencyCounter(registry) { dependencyId }
 
     private fun total(): Long =

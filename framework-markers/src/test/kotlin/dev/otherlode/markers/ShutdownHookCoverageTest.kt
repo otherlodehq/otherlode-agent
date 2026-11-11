@@ -11,7 +11,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/** Every payload one forked JVM's agent posted, in arrival order. */
 private class OrderedReceiver : AutoCloseable {
     sealed interface Event {
         data class Delta(
@@ -49,12 +48,6 @@ private class OrderedReceiver : AutoCloseable {
     override fun close() = server.stop(0)
 }
 
-/**
- * Code that an application's own shutdown hook runs after the agent's hook has flushed. JVM
- * shutdown hooks start concurrently and in no defined order, so a framework's context close that
- * takes a moment runs its code after the agent's final flush. The right behaviour is that the
- * collector learns of that code; each test fails while it does not.
- */
 class ShutdownHookCoverageTest {
     private val agentJar = ForkedJvm.property("otherlode.agent.shadedJar")
 

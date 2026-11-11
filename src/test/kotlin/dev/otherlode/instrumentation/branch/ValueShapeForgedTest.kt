@@ -9,12 +9,6 @@ import net.bytebuddy.jar.asm.Opcodes
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-/**
- * Edges of the value-class static, argument cast and null-guarded box rules that no compiler in the
- * matrix writes, built with ASM over the matrix fixtures' interfaces: a static that is final or
- * names another member, a cast to a type the call does not take, a second conversion at one
- * position, a null guard missing a step, and a guard over a primitive.
- */
 class ValueShapeForgedTest {
     private val build =
         CompilerFixtures.kotlinc(CompilerFixtures.kotlincVersions.first { !CompilerFixtures.kotlincDefaultsToJvmDefaultEnable(it) })
@@ -77,7 +71,6 @@ class ValueShapeForgedTest {
     private val echoSignature = "Ljava/lang/Object;L$echo<Ljava/lang/String;>;"
     private val echoDescriptor = "(ILjava/lang/String;)Ljava/lang/String;"
 
-    /** A value class over `Int` implementing `Echoing<String>` with one static built by [code]. */
     private fun echoValue(
         name: String = "echo-impl",
         descriptor: String = echoDescriptor,
@@ -188,7 +181,6 @@ class ValueShapeForgedTest {
         assertEquals(GeneratedBy.NONE, midValue(emptyList()).generatedBy("f-impl", "(ILjava/lang/String;)I"))
     }
 
-    /** A class `Mid<String>` with a stub `f(String)` that casts its argument as [argumentCasts] says. */
     private fun midStub(
         argumentCasts: List<String>,
         receiverCast: Boolean = false,
@@ -374,7 +366,6 @@ class ValueShapeForgedTest {
 
     private val store = "$pkg/ValueStore"
 
-    /** A class `ValueStore<String>` with a stub `put(String)` that casts its argument to [castTo], or not at all. */
     private fun storeStub(castTo: String?): BranchSiteAnalyzer.Analysis {
         val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
         val signature = "Ljava/lang/Object;L$store<Ljava/lang/String;>;"
@@ -407,7 +398,6 @@ class ValueShapeForgedTest {
         assertEquals(GeneratedBy.NONE, storeStub("java/lang/Object").generatedBy("put", descriptor))
     }
 
-    /** A stub `Mid<CharSequence>.f(CharSequence)` that casts its argument to the type it already has. */
     @Test
     fun `a stub that casts an argument to its own type is unmarked`() {
         val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
@@ -433,7 +423,6 @@ class ValueShapeForgedTest {
         assertEquals(GeneratedBy.NONE, marksOf(writer.toByteArray()).generatedBy("f", "(Ljava/lang/CharSequence;)I"))
     }
 
-    /** A `DefaultImpls` method with no generic signature, so no type variable, and a stub whose own signature erases to the parameter. */
     @Test
     fun `a stub that casts an argument where the called method has no type variable is unmarked`() {
         val iface = "$pkg/ForgedPlain"

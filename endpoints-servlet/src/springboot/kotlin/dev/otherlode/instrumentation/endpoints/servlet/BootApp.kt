@@ -10,7 +10,6 @@ import org.springframework.context.annotation.Bean
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.RestController
 
-/** A servlet registered beside Spring MVC. */
 class BootPlainServlet : HttpServlet() {
     override fun doGet(
         req: HttpServletRequest,
@@ -21,14 +20,12 @@ class BootPlainServlet : HttpServlet() {
     }
 }
 
-/** A Spring MVC controller, counted by the Spring MVC module. */
 @RestController
 class BootController {
     @GetMapping("/boot/hello")
     fun hello(): String = "hello"
 }
 
-/** A Spring Boot application on embedded Tomcat, with the H2 console servlet switched on by properties. */
 @SpringBootConfiguration(proxyBeanMethods = false)
 @EnableAutoConfiguration
 class BootApp {

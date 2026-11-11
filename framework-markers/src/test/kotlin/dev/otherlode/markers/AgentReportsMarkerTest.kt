@@ -5,11 +5,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * The agent attached to a JVM that serves reports the marker on its manifest, with the class set that
- * matched; attached to a JVM that does not serve, it reports none. The marker reaches the manifest
- * through the loaded-class sweep, here the final flush's, when the JVM exits.
- */
 class AgentReportsMarkerTest {
     private val agentJar = ForkedJvm.property("otherlode.agent.shadedJar")
 

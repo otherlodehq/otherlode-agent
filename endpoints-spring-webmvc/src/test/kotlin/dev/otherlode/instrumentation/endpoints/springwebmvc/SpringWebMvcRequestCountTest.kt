@@ -37,14 +37,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Proves that a request counts once and that a preflight is no call, on every route kind, against
- * a real `DispatcherServlet` and a real `HandlerMappingIntrospector`. It also proves the
- * `resources(...)` and constructor-built `RouterFunctionMapping` declarations. A hook woven with
- * the servlet package the framework does not have would fail to weave and switch the module off,
- * so each case also asserts the module is still on: the javax variant runs under Spring 5.3 and
- * the jakarta one under 6 and 7.
- */
 class SpringWebMvcRequestCountTest {
     private fun <T> withModule(block: (EndpointRegistry) -> T): T {
         val instrumentation = ByteBuddyAgent.install()

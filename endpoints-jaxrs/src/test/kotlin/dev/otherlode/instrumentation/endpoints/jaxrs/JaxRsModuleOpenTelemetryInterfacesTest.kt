@@ -9,11 +9,6 @@ import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/**
- * OpenTelemetry's agent rewrites a framework class to implement interfaces it generates in
- * memory, and injects helper classes into an application loader from its own loader. No class file
- * for either can be read as a resource, so a pool cannot resolve their supertypes.
- */
 class JaxRsModuleOpenTelemetryInterfacesTest {
     private val generated = "io/opentelemetry/javaagent/bootstrap/field/VirtualFieldAccessor\$jakarta\$servlet\$Servlet\$Factory"
 

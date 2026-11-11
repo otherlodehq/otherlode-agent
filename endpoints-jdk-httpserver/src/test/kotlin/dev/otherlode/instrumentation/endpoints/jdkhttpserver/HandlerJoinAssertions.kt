@@ -7,15 +7,6 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/**
- * Asserts that [endpoint] joins to a method [owner] declares, named with [methodPrefix] and having
- * [descriptor].
- *
- * A compiler picks a lambda body's name, such as `lambda$lambda$0` from javac or `kotlinLambda$lambda$0`
- * from kotlinc. The index is the compiler's choice, so only the prefix is fixed here. The method must
- * still exist on [owner] with that exact name and descriptor, so a join to a method that is not there
- * fails.
- */
 internal fun assertJoinsDeclaredMethod(
     endpoint: EndpointLocation,
     owner: Class<*>,
@@ -34,7 +25,6 @@ internal fun assertJoinsDeclaredMethod(
     assertTrue(declared, "$route: ${owner.name} declares no method $method$descriptor")
 }
 
-/** Asserts that [endpoint] has no handler join at all. */
 internal fun assertNoJoin(
     endpoint: EndpointLocation,
     why: String,

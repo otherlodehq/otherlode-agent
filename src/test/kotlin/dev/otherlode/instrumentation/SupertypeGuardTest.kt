@@ -13,7 +13,6 @@ class SupertypeGuardTest {
     private val absent = AbsentTypeFixtures.ABSENT_PREFIX
     private val guard = SupertypeGuard(ClassFileByteCache())
 
-    /** Serves [classFiles], keyed by binary name, as resources and nothing else from its own parent. */
     private class ServingLoader(
         private val classFiles: Map<String, ByteArray>,
     ) : ClassLoader(null) {

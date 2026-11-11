@@ -4,7 +4,6 @@ import com.example.framework.BrokenRouter;
 import dev.otherlode.bootstrap.OtherlodeEndpoints;
 import net.bytebuddy.asm.Advice;
 
-/** Woven onto {@code BrokenRouter.invoke}, simulating a framework version its advice does not match. */
 public class BrokenRouterInvokeAdvice {
 
     @Advice.OnMethodEnter(suppress = Throwable.class)

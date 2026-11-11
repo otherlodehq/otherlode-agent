@@ -4,7 +4,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/** Keeps [FlushBenchmark] measuring what its documentation says, since `./gradlew build` never runs the benchmark. */
 class FlushBenchmarkSetupTest {
     private val fixture = FlushFixture.of("demo")
 

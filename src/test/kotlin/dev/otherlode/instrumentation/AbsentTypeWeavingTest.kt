@@ -27,12 +27,6 @@ import java.util.logging.Level as JulLevel
 import java.util.logging.LogRecord as JulLogRecord
 import java.util.logging.Logger as JulLogger
 
-/**
- * A class that names a type the classpath lacks in a signature weaves and runs as it does without
- * the agent, and keeps the header its class file has. A class whose own supertype is absent cannot
- * be defined by the JVM at all and is refused. Classes are written with ASM and woven by the agent's
- * real transformer; no loader provides the types they name.
- */
 class AbsentTypeWeavingTest {
     private val resource = ResourceAttributes("test", null, "instance-1", null, "run-1")
     private val registry = ProbeRegistry()
@@ -40,7 +34,6 @@ class AbsentTypeWeavingTest {
 
     private fun internal(simpleName: String) = AbsentTypeFixtures.PACKAGE.replace('.', '/') + "/" + simpleName
 
-    /** Serves [classFiles] as resources and defines the bytes put in [defined]. */
     private class InMemoryLoader(
         private val classFiles: Map<String, ByteArray>,
     ) : ClassLoader(AbsentTypeWeavingTest::class.java.classLoader) {
@@ -329,7 +322,6 @@ class AbsentTypeWeavingTest {
         assertTrue(registry.manifest(resource).probes.none { it.className == dotted }, "no probe of a class that never defines")
     }
 
-    /** Serves no class file and defines only what a test puts in [defined], as a loader does for bytes it holds in memory. */
     private fun memoryLoader() = loaderOf()
 
     private fun define(
@@ -341,11 +333,6 @@ class AbsentTypeWeavingTest {
         return loader.loadClass(name.replace('/', '.'))
     }
 
-    /**
-     * Transforms [bytes] as the agent does in a JVM: the class-bytes capture sees them first, as it
-     * does for every class, and the weave then reads them as the bytes received. A loader that serves
-     * no class file leaves them the only source of the class's header.
-     */
     private fun transformCaptured(
         loader: ClassLoader,
         name: String,

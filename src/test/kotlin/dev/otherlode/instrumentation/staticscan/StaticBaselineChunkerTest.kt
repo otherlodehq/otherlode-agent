@@ -56,9 +56,6 @@ class StaticBaselineChunkerTest {
 
         val chunks = StaticBaselineChunker.chunk(result, resource, scannedAt = 42L, maxEntriesPerChunk = 7)
 
-        // Each class weighs its method count plus one for its own class record: A and B
-        // weigh 4 each, C weighs 2. A (4) alone, since B (4) would push it past 7; then B and C
-        // together at exactly 6.
         assertEquals(listOf(listOf("A"), listOf("B", "C")), chunks.map { c -> c.declaredClasses.map { it.className } })
         assertEquals(listOf(0, 1), chunks.map { it.chunkIndex })
         assertTrue(chunks.all { it.chunkCount == 2 && it.scannedAt == 42L && it.resource == resource })
@@ -117,8 +114,6 @@ class StaticBaselineChunkerTest {
     fun `a class with many call edges seals a chunk earlier than one with none, and every chunk holds whole classes`() {
         val result =
             StaticScanResult(
-                // "Heavy" weighs 1 method + 3 edges + 1 class record = 5, "Light" weighs
-                // 1 method + 0 edges + 1 = 2. A cap of 4 must not let both land in one chunk.
                 declaredClasses = listOf(declaredWithEdges("Heavy", edgesPerMethod = 3), declaredWithEdges("Light", edgesPerMethod = 0)),
                 unreadableClasses = emptyList(),
             )
@@ -142,8 +137,6 @@ class StaticBaselineChunkerTest {
 
     @Test
     fun `method and class references add to a class's weight, so references alone can seal a chunk`() {
-        // Each class weighs 1 method + 1 class record = 2 without references. "First" adds
-        // 2 method references and 1 class reference for 5, so a cap of 6 cannot also hold "Second".
         val first =
             DeclaredClass(
                 "First",
@@ -168,10 +161,6 @@ class StaticBaselineChunkerTest {
 
     @Test
     fun `branch sites add one for the site, one per outcome, one per line range and one per condition part to a class's weight`() {
-        // "First" weighs 1 method + 1 class record = 2, plus one site with two outcomes = 3, plus
-        // two guarded ranges and one partly guarded range = 3, plus two condition parts = 2, so
-        // 10. A cap of 11 cannot also hold "Second", which weighs 2, and without the condition
-        // parts the two would share a chunk.
         val site =
             BranchSite(
                 siteIndex = 0,
@@ -326,8 +315,6 @@ class StaticBaselineChunkerTest {
 
     @Test
     fun `a mapping counts one entry toward its chunk's weight, so it can seal the chunk`() {
-        // "A" weighs 1 method + 1 record + 1 reference = 3, plus 1 for the mapping = 4. "B" weighs 2.
-        // A cap of 5 holds both only if the mapping is not counted.
         val result =
             StaticScanResult(
                 declaredClasses = listOf(referencing("A", "org.lib.One"), declared("B", 1)),

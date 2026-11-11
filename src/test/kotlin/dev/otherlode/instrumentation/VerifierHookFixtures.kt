@@ -22,11 +22,6 @@ import java.util.logging.LogRecord
 import java.util.logging.Level as JulLevel
 import java.util.logging.Logger as JulLogger
 
-/**
- * Helpers for the tests that weave `java.lang.VerifyError`. They run in a JVM of their own
- * (`verifierHookTest`), with `-XX:+BytecodeVerificationLocal` so the woven boot class is itself
- * verified.
- */
 internal object VerifierHookFixtures {
     const val V1_1 = Opcodes.V1_1
     const val V1_5 = Opcodes.V1_5
@@ -35,7 +30,6 @@ internal object VerifierHookFixtures {
 
     fun instrumentation(): Instrumentation = ByteBuddyAgent.install().also { BootstrapHolder.install(it) }
 
-    /** A class whose only method returns an int where an object is declared, which every verifier rejects. */
     fun rejectedClass(
         internalName: String,
         version: Int,
@@ -60,7 +54,6 @@ internal object VerifierHookFixtures {
             if (name == this.name) defineClass(name, bytes, 0, bytes.size) else throw ClassNotFoundException(name)
     }
 
-    /** Defines [internalName] in a fresh loader and links it; returns the `VerifyError` that refused it. */
     fun link(
         internalName: String,
         bytes: ByteArray,
@@ -88,7 +81,6 @@ internal object VerifierHookFixtures {
         override fun exportClassListing(listing: ClassListing) {}
     }
 
-    /** A scheduler over [registry] that treats the dependency listing as delivered. */
     fun scheduler(
         registry: ProbeRegistry,
         exporter: Exporter,

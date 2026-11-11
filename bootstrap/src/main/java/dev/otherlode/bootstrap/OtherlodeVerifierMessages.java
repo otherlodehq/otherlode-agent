@@ -6,8 +6,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Holds the messages of the {@code VerifyError}s the JVM constructs until the export thread
- * drains them.
+ * Holds the messages of the {@code VerifyError}s the JVM constructs until the agent drains them.
  *
  * <p>The agent weaves both constructors of {@code java.lang.VerifyError} to call {@link
  * #record(String)}. A link-time {@code VerifyError} is constructed while the failing class's
@@ -37,7 +36,7 @@ public final class OtherlodeVerifierMessages {
         RING.record(message);
     }
 
-    /** Returns the messages recorded since the last drain, and removes them. Called from one thread. */
+    /** Returns the messages recorded since the last drain, and removes them. */
     public static String[] drain() {
         return RING.drain();
     }
@@ -99,7 +98,7 @@ public final class OtherlodeVerifierMessages {
             }
         }
 
-        /** The array a write claims from. {@link #record} is this, then {@link #claim}, then {@link #store}. */
+        /** The slots a write claims from. {@link #record} is this, then {@link #claim}, then {@link #store}. */
         public Object writeTarget() {
             return current;
         }

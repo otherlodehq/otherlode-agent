@@ -24,26 +24,9 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Hand-written control-flow shapes, woven through the real transformer and run beside their
- * unwoven twins (ADR 0061). A rewrite keeps the frames of the bytes it receives and writes one at
- * each label it adds, so every shape here is one where a wrong frame would fail verification or
- * change what the method does: jumps of both polarities on ints, references and null, table,
- * lookup and string switches with shared cases, loops with labelled break and continue, a try with
- * a catch and a finally, a `synchronized` block, long and double locals, an uninitialised object on
- * the stack at a jump, branches before `this(...)` while `this` is still uninitialised, and a
- * method long enough that weaving pushes a jump past 32 KB.
- *
- * The sources are compiled in the test with `--release` 8, 11, 17 and 21 (a release the running JDK
- * lacks is skipped). Class-file version 50 has no javac of its own, so the release 8 output is
- * rewritten to version 50, once with its frames and once without, which the JVM verifies by type
- * inference. Each class is run woven and unwoven, the results must match, and the woven probes
- * must have counted what ran.
- */
 class FramesShapesTest {
     private val resource = ResourceAttributes("test", null, "instance-1", null, "run-1")
 
-    /** A loader that serves [resources] as class files and defines [definitions]; every other class comes from [parent]. */
     private class FixtureLoader(
         parent: ClassLoader,
         private val resources: Map<String, ByteArray>,
@@ -73,7 +56,6 @@ class FramesShapesTest {
         override fun openOutputStream() = bytes
     }
 
-    /** The class files javac makes from [source] at `--release` [release], by internal name. */
     private fun compile(
         name: String,
         source: String,
@@ -104,7 +86,6 @@ class FramesShapesTest {
         return outputs.mapValues { it.value.bytes.toByteArray() }
     }
 
-    /** [bytes] rewritten to class-file version 50, keeping the frames javac wrote or dropping them. */
     private fun atVersion50(
         bytes: Map<String, ByteArray>,
         keepFrames: Boolean,
@@ -139,7 +120,6 @@ class FramesShapesTest {
         return kept.replace("__CLASS__", simpleName)
     }
 
-    /** A method of 300 jumps in a loop followed by straight-line code, long enough that probes push the loop's back edge past 32 KB. */
     private fun bigSource(): String =
         buildString {
             appendLine("package $PACKAGE;")
@@ -155,7 +135,6 @@ class FramesShapesTest {
             appendLine("}")
         }
 
-    /** One compiled form of the shapes: the class files, and the name of the Shapes class in them. */
     private class Variant(
         val label: String,
         val classes: Map<String, ByteArray>,
@@ -203,7 +182,6 @@ class FramesShapesTest {
             "big" to listOf(arrayOf(0), arrayOf(7), arrayOf(40)),
         )
 
-    /** What every public static method gives for its calls, or the exception it throws. */
     private fun run(type: Class<*>): List<String> =
         type.declaredMethods
             .filter { Modifier.isStatic(it.modifiers) && Modifier.isPublic(it.modifiers) }
@@ -214,7 +192,6 @@ class FramesShapesTest {
                 }
             }
 
-    /** How many stack map frames [bytes] carries, and the most any one method has. */
     private fun frameCount(bytes: ByteArray): Int = frameCounts(bytes).first
 
     private fun frameCounts(bytes: ByteArray): Pair<Int, Int> {
@@ -249,7 +226,6 @@ class FramesShapesTest {
         return frames to mostInOneMethod
     }
 
-    /** The longest Code attribute of any method in [bytes], in bytes of bytecode, read from the class file itself. */
     private fun longestCode(bytes: ByteArray): Int {
         var longest = 0
         val reader = ClassReader(bytes)
@@ -316,8 +292,7 @@ class FramesShapesTest {
                 val originalFrames = frameCount(original)
                 val wovenFrames = frameCount(woven)
                 if (variant.label.endsWith("without frames")) {
-                    // The probe-array accessor has one frame for its null test; the entry probe and the
-                    // branch tier write none, so no method has a second.
+                    // The probe-array accessor carries one frame, for its null test. The probes add none.
                     assertTrue(
                         frameCounts(woven).second <= 1,
                         "${variant.label}: $internalName gets no branch-tier frame where it had none",
@@ -341,8 +316,6 @@ class FramesShapesTest {
             val wovenBig = Class.forName("$PACKAGE.Big", true, wovenLoader).getMethod("big", Int::class.java)
             for (n in listOf(0, 7, 40)) assertEquals(twinBig.invoke(null, n), wovenBig.invoke(null, n), "${variant.label}: big($n)")
             if (variant.label == "version 50 with frames") {
-                // HotSpot falls back to type inference at version 50, so a wrong frame would still run there. The
-                // same bytes relabelled 51, where there is no fallback, must verify against the frames the agent wrote.
                 val at51 = { bytes: ByteArray ->
                     bytes.copyOf().also {
                         it[6] = 0
@@ -367,7 +340,6 @@ class FramesShapesTest {
                     shapeCounts.of(method, ProbeKind.METHOD),
                     "${variant.label}: entries of $method",
                 )
-                // `ctor` only calls the constructors and `lambda` only the lambda body, where the jumps are.
                 if (method != "ctor" && method != "lambda") {
                     assertTrue(shapeCounts.of(method, ProbeKind.BRANCH) > 0, "${variant.label}: $method counted a branch")
                 }
@@ -375,7 +347,6 @@ class FramesShapesTest {
             assertEquals(9L, shapeCounts.of("nullChecks", ProbeKind.BRANCH), "${variant.label}: three jumps in each of three calls")
             assertEquals(6L, shapeCounts.of("mergeTypes", ProbeKind.BRANCH), "${variant.label}: two jumps in each of three calls")
             val bigCounts = countsOf(registry, "$PACKAGE.Big")
-            // The loop test runs n + 1 times and the body's jumps once per pass.
             val expectedBig = listOf(0, 7, 40).sumOf { (it + 1L) + BIG_JUMPS * it }
             assertEquals(expectedBig, bigCounts.of("big", ProbeKind.BRANCH), "${variant.label}: the long method's jumps")
         }

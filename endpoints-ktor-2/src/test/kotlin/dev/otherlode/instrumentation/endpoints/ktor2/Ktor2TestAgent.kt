@@ -5,26 +5,8 @@ import dev.otherlode.registry.EndpointRegistry
 import net.bytebuddy.agent.builder.ResettableClassFileTransformer
 import java.lang.instrument.Instrumentation
 
-/**
- * A real `-javaagent` entry point for [Ktor2ModuleTest], installed at JVM startup rather than
- * through [net.bytebuddy.agent.ByteBuddyAgent]'s self-attach.
- *
- * Ktor's routing DSL (`routing`, `get`, `post`, `route`, `handle`) is built from Kotlin `inline`
- * functions, so any code that calls it embeds `Route`/`Routing` references directly in whatever
- * class that code compiles into. Gradle's JUnit Platform integration loads every class in this
- * module's compiled test output while discovering `@Test` methods, before any test method's own
- * first statement runs, and it does this regardless of which class in that output a test method
- * actually calls or how the fixture routing is split across files. A self-attach inside the test
- * method, the approach `JdkHttpServerModuleTest` and `SpringWebMvcModuleTest` both use, is too
- * late here for that reason: `Route`/`Routing` are already loaded, unadvised, before either test's
- * own `install` call would run. A `-javaagent` on the test JVM's own command line installs the
- * transformer during [premain], which the JVM runs before any application class loads at all,
- * including Gradle's own test-worker bootstrap and JUnit Platform's discovery.
- *
- * [registry] is exposed for [Ktor2ModuleTest] to read after starting the fixture server. There is
- * exactly one instance for the life of the test JVM, matching the one real [premain] call this
- * object ever receives.
- */
+// Runs as a -javaagent: the inline routing DSL makes Gradle's test discovery load Route and Routing before any
+// test method runs.
 object Ktor2TestAgent {
     lateinit var registry: EndpointRegistry
         private set
@@ -43,7 +25,6 @@ object Ktor2TestAgent {
         instrumentation = inst
     }
 
-    /** Removes the transformer this object's [premain] installed, called by [Ktor2ModuleTest] during teardown. */
     fun uninstall() {
         EndpointInstrumentation(registry, listOf(Ktor2Module())).uninstall(instrumentation, transformer)
     }

@@ -8,11 +8,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/**
- * Proves the branch tier's drop-and-keep rule for an inlined copy against the
- * `InlinedCopyTarget`/`InlineLibraryTarget` fixtures. Every expected line and descriptor here was
- * checked against real `javap -v` output before this test was written, not guessed.
- */
 class InlinedCopyAnalysisTest {
     private fun readTargetBytes(): ByteArray = File("build/classes/kotlin/test/com/example/target/InlinedCopyTargetKt.class").readBytes()
 
@@ -22,7 +17,6 @@ class InlinedCopyAnalysisTest {
     private val ownClassName = "com.example.target.InlinedCopyTargetKt"
     private val libraryClassName = "com.example.library.InlineLibraryTargetKt"
 
-    /** The 1-based line of the first line in [file] carrying `// marker: [marker]`. */
     private fun lineOf(
         file: File,
         marker: String,
@@ -157,7 +151,6 @@ class InlinedCopyAnalysisTest {
         assertEquals(setOf(0), analysis.droppedOrdinalsOf("useLibraryInline", "(I)I"))
     }
 
-    /** Defines arbitrary bytes as a class, the way a JVM classloader would, without touching disk. */
     private class ByteArrayClassLoader(
         parent: ClassLoader,
     ) : ClassLoader(parent) {
@@ -173,8 +166,6 @@ class InlinedCopyAnalysisTest {
         ClassReader(readTargetBytes()).accept(writer, ClassReader.SKIP_DEBUG)
         val stripped = writer.toByteArray()
 
-        // Confirm the stripped bytes are still a loadable class, not structurally-similar
-        // garbage, the same reassurance BranchBytesCaptureTest gets from defining swapped bytes.
         ByteArrayClassLoader(javaClass.classLoader).define("com.example.target.InlinedCopyTargetKt", stripped)
 
         val analysis = BranchSiteAnalyzer.analyze(stripped, includePackages = listOf("com.example")) { _, _ -> true }

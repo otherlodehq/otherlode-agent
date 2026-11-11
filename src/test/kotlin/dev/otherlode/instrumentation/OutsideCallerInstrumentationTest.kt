@@ -18,11 +18,6 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/**
- * Proves that a METHOD probe's [OutsideCaller] reaches the manifest through the real transform
- * pipeline, on the `outsidecaller` fixtures and the `-jvm-default=disable` fixture module, and that
- * a class woven again keeps it.
- */
 class OutsideCallerInstrumentationTest {
     private companion object {
         const val PACKAGE = "com.example.target.outsidecaller"

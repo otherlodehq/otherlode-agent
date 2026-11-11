@@ -15,10 +15,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Pins [SitePairing]: how a method's tracked instructions in the class file line up with the
- * received bytes an earlier transformer left, and when they do not.
- */
 class SitePairingTest {
     private fun javaFixture(simpleName: String): ByteArray =
         File("build/classes/java/test/com/example/target/$simpleName.class").readBytes()
@@ -26,7 +22,6 @@ class SitePairingTest {
     private fun kotlinFixture(simpleName: String): ByteArray =
         File("build/classes/kotlin/test/com/example/target/$simpleName.class").readBytes()
 
-    /** Every method the class declares, by name and descriptor, in class-file order. */
     private fun methodsOf(bytes: ByteArray): List<Pair<String, String>> {
         val methods = mutableListOf<Pair<String, String>>()
         ClassReader(bytes).accept(
@@ -47,7 +42,6 @@ class SitePairingTest {
         return methods
     }
 
-    /** Each method's tracked opcodes, a switch as its own opcode, in encounter order. */
     private fun trackedOpcodes(bytes: ByteArray): Map<Pair<String, String>, List<Int>> {
         val result = mutableMapOf<Pair<String, String>, MutableList<Int>>()
         ClassReader(bytes).accept(
@@ -92,7 +86,6 @@ class SitePairingTest {
         return result
     }
 
-    /** [bytes] with [methodName]'s body passed through [rewrite], everything else unchanged. */
     private fun rewritingMethod(
         bytes: ByteArray,
         methodName: String,
@@ -184,7 +177,6 @@ class SitePairingTest {
                         opcode: Int,
                         label: Label,
                     ) {
-                        // javac writes `value > 0` as IFLE; IFLT is neither IFLE nor IFGT.
                         super.visitJumpInsn(if (opcode == Opcodes.IFLE) Opcodes.IFLT else opcode, label)
                     }
                 }
@@ -271,7 +263,6 @@ class SitePairingTest {
         assertEquals(emptySet(), pairing.unpairedMethods, "JaCoCo's \$jacocoInit is not one of the class file's methods")
     }
 
-    /** [classFile]'s `BranchTarget` method [methodName] with each switch passed through [rewrite]. */
     private fun rewritingSwitches(
         classFile: ByteArray,
         methodName: String,
@@ -310,10 +301,6 @@ class SitePairingTest {
             }
         }
 
-    /**
-     * Pairing against the class file's tracked instructions stored by [SitePairing.encodedSequences]
-     * gives what pairing against the class file itself gives, for [received].
-     */
     private fun assertStoredPairsLikeClassFile(
         classFile: ByteArray,
         received: ByteArray,

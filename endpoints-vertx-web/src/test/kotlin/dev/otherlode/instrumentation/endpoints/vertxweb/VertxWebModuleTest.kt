@@ -21,7 +21,6 @@ private const val HANDLE_DESCRIPTOR = "(Lio/vertx/ext/web/RoutingContext;)V"
 
 private fun end(text: String = "ok") = Handler<RoutingContext> { ctx -> ctx.response().end(text) }
 
-/** Proves [VertxWebModule] end to end against a real Vert.x Web server. The same sources run against every tested release. */
 class VertxWebModuleTest {
     @Test
     fun `routes are declared at the first request and counted from it`() {

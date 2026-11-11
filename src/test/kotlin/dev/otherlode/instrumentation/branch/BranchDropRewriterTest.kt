@@ -12,12 +12,6 @@ import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-/**
- * Drives [BranchProbeAsmVisitorWrapper] directly with a dropped ordinal, on
- * `BranchTargetWithExtraBranches`'s `classify`, which has two conditionals in one method. Proves
- * the rewriter emits a dropped site's original instruction unchanged, allocating no slot for it,
- * so [BranchSiteAnalyzer]'s kept-slot count and what the wrapper actually wrote agree.
- */
 class BranchDropRewriterTest {
     private fun loadWithDrop(
         capacity: Int,
@@ -65,19 +59,11 @@ class BranchDropRewriterTest {
         assertEquals("non-positive", classify.invoke(target, -5))
         assertEquals("positive", classify.invoke(target, 50))
 
-        // classify(-5) takes the kept second jump's taken edge (slot 0); classify(50) takes its
-        // not-taken edge (slot 1). The dropped first jump's own two outcomes wrote nothing, and
-        // capacity matches the kept slot count, so the rewrite does not throw.
         assertEquals(listOf(1L, 1L), counts.toList())
     }
 
     @Test
     fun `a dropped lookupswitch still advances the site ordinal, so the conditional after it keeps its own slots`() {
-        // classify has two sites: the lookupswitch at ordinal 0, then the conditional at ordinal
-        // 1. Dropping the switch must leave the conditional on slots 0 and 1. If the switch did
-        // not count its ordinal, the conditional would be ordinal 0, land in droppedOrdinals, and
-        // take no slot either; the wrapper's mismatch check would then throw here, since the
-        // rewrite would want 0 slots against a capacity of 2.
         val (loaded, counts) =
             loadWithDrop(
                 capacity = 2,
@@ -92,8 +78,6 @@ class BranchDropRewriterTest {
         assertEquals(40, classify.invoke(target, 7), "the default falls through to the conditional")
         assertEquals(30, classify.invoke(target, 10_000))
 
-        // The two switch-only calls wrote nothing. The two that fell through took one edge of the
-        // conditional each, so both of its slots hold exactly one hit.
         assertEquals(listOf(1L, 1L), counts.toList(), "the kept conditional owns slots 0 and 1")
     }
 }

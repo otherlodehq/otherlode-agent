@@ -14,12 +14,8 @@ import kotlin.test.Test
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
-/**
- * Drives [JaxRsModule.transform] directly with a binder that can resolve no advice class, against
- * a resource class generated in memory. A fixture on disk would not do: JUnit's discovery loads
- * every class in the test output, so the test agent would have transformed and declared it before
- * this test ran, and nothing here could tell that declaration from one this call made.
- */
+// The resource class is generated in memory: JUnit's discovery loads every class in the test output,
+// so the test agent would declare an on-disk one before this test runs.
 class JaxRsModuleBindFailureTest {
     private val generatedName = "com.example.jaxrs.generated.BindFailureResource"
 
@@ -45,7 +41,6 @@ class JaxRsModuleBindFailureTest {
                 .of(locator)
                 .describe(generatedName)
                 .resolve()
-        // Neither loader the binder reads from holds anything, so no advice class can be bound.
         val brokenBinder = AdviceBinder(URLClassLoader(arrayOf(), null), URLClassLoader(arrayOf(), null))
 
         assertFailsWith<IllegalStateException> {

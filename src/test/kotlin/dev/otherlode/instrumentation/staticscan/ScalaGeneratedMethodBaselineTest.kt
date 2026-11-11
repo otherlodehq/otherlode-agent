@@ -11,11 +11,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Proves that a static baseline scan of each Scala fixture module declares the same generated-method marks
- * the transform-time path gives, the companion rule's partner read through the scan's own locator
- * included, and a default getter the mark of the method it fills a default for.
- */
 class ScalaGeneratedMethodBaselineTest {
     companion object {
         @JvmStatic
@@ -33,7 +28,6 @@ class ScalaGeneratedMethodBaselineTest {
             val declared = declaredClasses.singleOrNull { it.className == "com.example.scalatarget.$simpleName" } ?: continue
             val transform = build.markEntries(simpleName).associate { (it.first to it.second) to it.third }
             for (method in declared.methods) {
-                // The scan gives a default getter the mark of the method it fills a default for.
                 if ("\$default" in method.methodName) continue
                 val expected = transform[method.methodName to method.methodDescriptor] ?: continue
                 compared++
@@ -78,8 +72,6 @@ class ScalaGeneratedMethodBaselineTest {
 
         assertEquals(GeneratedBy.NONE, method("NotCase", "toString", "()Ljava/lang/String;").generatedBy)
 
-        // A default getter the manifest reports as an omission probe carries its target's mark
-        // there, so the baseline gives the getter's own entry the same one.
         assertEquals(GeneratedBy.CASE_CLASS, method("Cc", "copy\$default\$1", "()I").generatedBy)
         assertEquals(GeneratedBy.NONE, method("Cc\$", "\$lessinit\$greater\$default\$1", "()I").generatedBy)
     }
@@ -100,7 +92,6 @@ class ScalaGeneratedMethodBaselineTest {
         ): DeclaredMethod = methodsOf(simpleName).single { it.methodName == name && it.methodDescriptor == descriptor }
 
         val plumbingNames = setOf("canEqual", "copy", "equals", "hashCode", "toString", "productArity", "productElement", "productPrefix")
-        // Multi's toString is the adopter's own, written in the body.
         val handWritten = mapOf("Multi" to setOf("toString"))
         for (simpleName in listOf("Multi", "Round", "Box", "Empty", "Solo\$")) {
             val except = handWritten[simpleName].orEmpty()

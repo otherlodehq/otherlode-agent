@@ -7,14 +7,6 @@ import net.bytebuddy.jar.asm.Opcodes
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-/**
- * Shapes no compiler writes, built with ASM so each condition of the kotlinx.serialization rules is
- * pinned on its own: a lambda whose outer class is missing, does not run the lazy call with
- * `PUBLICATION` or lacks `@Serializable`, or stores it in an array another field takes; a
- * `$serializer` lookalike without one of its markers or with a getter the plugin does not name; a
- * companion its outer class holds under another name, or an object that is not serializable; and a
- * `@Serializer` object's `serialize` overload.
- */
 class KotlinxSerializationForgedShapesTest {
     private val pkg = "com/example/target"
     private val outer = "$pkg/Outer"

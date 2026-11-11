@@ -21,7 +21,6 @@ class StartupClasspathListerTest {
     @TempDir
     lateinit var tempDir: Path
 
-    /** The real path of the temp folder, so expected paths match the canonical paths the walker hands out. */
     private val dir: Path get() = tempDir.toRealPath()
 
     private fun classPath(vararg paths: Path): String = paths.joinToString(File.pathSeparator) { it.toString() }
@@ -34,7 +33,6 @@ class StartupClasspathListerTest {
 
     private fun artifacts(listed: List<ListedDependency>): List<String> = listed.flatMap { d -> d.identities.map { it.artifactId } }
 
-    /** Mirrors `LoadedClassSweepTest`'s helper: records what a `System.Logger` emits through its JUL backend. */
     private fun captureLogRecords(block: () -> Unit): List<LogRecord> {
         val records = mutableListOf<LogRecord>()
         val handler =
@@ -258,9 +256,8 @@ class StartupClasspathListerTest {
 
     @Test
     fun `a nested jar that cannot be read is skipped with a WARNING naming it and its siblings are still listed`() {
-        // A complete local file header whose name length (100) runs past the end of the data.
-        // ZipInputStream reads a stream cut inside the header as empty, but one cut inside the
-        // name it throws on.
+        // The header's name length (100) runs past the end of the data. ZipInputStream reads a stream cut
+        // inside the header as empty, but throws on one cut inside the name.
         val truncated = byteArrayOf(0x50, 0x4b, 0x03, 0x04) + ByteArray(22) + byteArrayOf(100, 0, 0, 0)
         val fat =
             TestJars.write(
@@ -621,7 +618,6 @@ class StartupClasspathListerTest {
         assertTrue(warnings.single().message.contains(bad.toString()), warnings.single().message)
     }
 
-    /** Overwrites the first bytes of the compressed data of [entryName] in [jar], so reading the entry fails. */
     private fun corruptEntryData(
         jar: Path,
         entryName: String,

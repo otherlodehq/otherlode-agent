@@ -100,7 +100,6 @@ class SubroutineInlinerTest {
         assertContentEquals(instructionsOf(byBytes), instructionsOf(byWrapper))
     }
 
-    /** The wrapper never touches the implementation context, so a stand-in that answers nothing will do. */
     private val unusedContext =
         java.lang.reflect.Proxy.newProxyInstance(
             Implementation.Context::class.java.classLoader,
@@ -116,7 +115,6 @@ class SubroutineInlinerTest {
             BranchSiteAnalyzer.CrossClassTableCache(16),
         ) { _, _ -> true }
 
-    /** The class run through the wrapper's visitor into a writer, as ByteBuddy runs it. */
     private fun rewrittenThroughWrapper(bytes: ByteArray): ByteArray {
         val writer =
             net.bytebuddy.jar.asm
@@ -136,7 +134,6 @@ class SubroutineInlinerTest {
         return writer.toByteArray()
     }
 
-    /** [bytes] with another source file name, so its bytes differ and its code does not. */
     private fun withOtherSourceName(bytes: ByteArray): ByteArray {
         val writer =
             net.bytebuddy.jar.asm
@@ -185,7 +182,6 @@ class SubroutineInlinerTest {
         return count
     }
 
-    /** The opcodes of method `f`, in order. */
     private fun instructionsOf(bytes: ByteArray): IntArray {
         val opcodes = mutableListOf<Int>()
         ClassReader(bytes).accept(

@@ -17,28 +17,16 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/** An ordinary class with a supertype of its own and no JAX-RS annotation anywhere. */
 open class GatePlainBase
 
-/** A second plain class, so a loader defines several. */
 class GatePlainOne : GatePlainBase()
 
-/** A third plain class. */
 class GatePlainTwo : GatePlainBase()
 
-/**
- * Pins the per-loader gate and the per-loader supertype cache of [JaxRsModule].
- *
- * The gate tests ask the module's loader matcher directly. The cache tests describe synthetic
- * classes from a [TypePool] whose locator counts reads, which is the same thing the agent's
- * pipeline does per class. The pipeline tests run the matcher [EndpointInstrumentation.rawMatcher]
- * builds over classes described through a counting loader, as ByteBuddy's pool describes a class on
- * its first load, rather than under the installed `-javaagent`, which another test class uninstalls.
- */
+// The pipeline tests do not run under the installed -javaagent, because another test class uninstalls it.
 class JaxRsLoaderGateTest {
     private val pathResources = listOf("jakarta/ws/rs/Path.class", "javax/ws/rs/Path.class")
 
-    /** A loader that exposes exactly [visible] as resources and counts every `getResource`. */
     private class ResourceLoader(
         private val visible: Set<String>,
     ) : ClassLoader(null) {
@@ -88,7 +76,6 @@ class JaxRsLoaderGateTest {
         assertEquals(listOf(pathResources.first(), pathResources.last()), with.lookups.toList())
     }
 
-    /** Serves [classes] as class files and counts every `getResource` and `getResourceAsStream`. */
     private class ProbingLoader(
         private val classes: Map<String, ByteArray>,
         private val visible: Set<String>,
@@ -112,11 +99,6 @@ class JaxRsLoaderGateTest {
             type.name to type.classLoader.getResourceAsStream(type.name.replace('.', '/') + ".class")!!.readAllBytes()
         }
 
-    /**
-     * Runs the matcher the endpoint pipeline builds for [JaxRsModule] over every class in [classes]
-     * as ByteBuddy's pool would on a first load: the class's own bytes first, everything else
-     * through [loader].
-     */
     private fun matchThroughPipeline(
         classes: Map<String, ByteArray>,
         loader: ClassLoader,
@@ -154,7 +136,6 @@ class JaxRsLoaderGateTest {
         assertTrue(loader.streams.any { it == GatePlainBase::class.java.name.replace('.', '/') + ".class" })
     }
 
-    /** Counts how many times each class file is read through [delegate]. */
     private class CountingLocator(
         private val delegate: ClassFileLocator,
     ) : ClassFileLocator {

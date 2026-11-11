@@ -7,12 +7,6 @@ import kotlin.test.Test
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/**
- * Runs [TypeMatchPolicy.isIgnoredName] from the shaded agent jar. `shadowJar` relocates `net.bytebuddy`
- * and rewrites a literal that names it, so a rule written with the literal ignores the agent's own
- * ByteBuddy and weaves an application's. The jar is loaded apart from the test classpath, under the
- * platform class loader.
- */
 class ShadedIgnoredNameTest {
     private val loader =
         URLClassLoader(

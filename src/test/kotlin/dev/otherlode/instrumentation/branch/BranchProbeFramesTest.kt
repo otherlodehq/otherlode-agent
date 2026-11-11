@@ -15,13 +15,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
-/**
- * The frames [BranchProbeMethodVisitor] writes at the labels it inserts (ADR 0061): the one at the
- * continuation label defers to a frame the class file carries at the same offset, and a jump no
- * frame can be derived for fails the transform.
- */
 class BranchProbeFramesTest {
-    /** Records every frame and every instruction the visitor forwards, in order. */
     private class Recorder : MethodVisitor(Opcodes.ASM9) {
         val events = mutableListOf<String>()
 
@@ -40,11 +34,6 @@ class BranchProbeFramesTest {
         }
     }
 
-    /**
-     * Feeds `static void m(int a, int b) { if (a == 0) goto end; [frame]; nop; end: return }` through an
-     * analyser and the visitor, with the class file's own frame at the fall-through offset when
-     * [ownFrameAtFallThrough] is given, and returns what reached the writer.
-     */
     private fun drive(ownFrameAtFallThrough: Array<Any>?): List<String> {
         val recorder = Recorder()
         val visitor =
@@ -99,7 +88,6 @@ class BranchProbeFramesTest {
             resources[name.removeSuffix(".class")]?.let { ByteArrayInputStream(it) } ?: super.getResourceAsStream(name)
     }
 
-    /** `static int m(int a)` whose only jump sits after an unconditional return, in code no frame reaches. */
     private fun unreachableJump(name: String): ByteArray {
         val cw = ClassWriter(0)
         cw.visit(Opcodes.V11, Opcodes.ACC_PUBLIC or Opcodes.ACC_SUPER, name, null, "java/lang/Object", null)

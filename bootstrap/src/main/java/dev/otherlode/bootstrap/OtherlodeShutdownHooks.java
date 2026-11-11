@@ -23,8 +23,9 @@ public final class OtherlodeShutdownHooks {
     }
 
     /**
-     * Returns the hooks the JVM runs, or null when {@link #offer} has not been called. Call it from
-     * a thread that the JVM started after {@link #offer}, such as a shutdown hook.
+     * Returns the hooks the JVM runs, or null when {@link #offer} has not been called since start or
+     * the last {@link #forget}. Call it from a thread that the JVM started after {@link #offer}, such
+     * as a shutdown hook.
      */
     public static Thread[] hooks() {
         Map<Thread, Thread> kept = table;

@@ -10,11 +10,6 @@ import kotlin.test.assertContentEquals
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Pins what the analysis takes from the one [ClassReader] a transform shares between its passes: the
- * tracked-instruction sequences the weave plan stores, the code lengths [SizeGuard] judges, and the
- * results of an analysis that reads through a reader another pass already walked.
- */
 class SharedReaderPassesTest {
     private val classFiles: List<Pair<String, ByteArray>> by lazy {
         val directories = listOf("build/classes/java/test/com/example/target", "build/classes/kotlin/test/com/example/target")

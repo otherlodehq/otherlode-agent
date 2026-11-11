@@ -63,30 +63,14 @@ private object FakeTextMapGetter : TextMapGetter<FakeRequest> {
     ): String? = null
 }
 
-/**
- * Proves [OtelBridgeModule] end to end: real advice woven onto a real OpenTelemetry
- * [Instrumenter]'s own `HttpServerAttributesExtractor.onEnd`, driving real spans through a plain
- * [OpenTelemetrySdk] (no `OpenTelemetryExtension` convenience) with an [InMemorySpanExporter], and
- * checking the resulting counts land in a real [EndpointRegistry].
- *
- * [EndpointInstrumentation.install] must run before `HttpServerAttributesExtractor` loads for the
- * first time in this JVM: an `AgentBuilder` transformer only weaves advice into a class as it
- * loads, not into one already loaded. Every OpenTelemetry type this test touches is therefore
- * referenced only from inside the one test method below, never from a field, a companion object,
- * or a top-level `val`, so nothing in this file can trigger that load before `install` runs. The
- * getter and request/response types above are the one necessary exception: they implement
- * OpenTelemetry interfaces by name, which the JVM resolves the moment this test class itself
- * loads. That is safe here specifically because resolving an interface a class implements does
- * not force that interface's own implementation classes, such as `HttpServerAttributesExtractor`,
- * to load, the same distinction [dev.otherlode.instrumentation.endpoints.api.AdviceBinder]
- * itself relies on to describe a class without loading it.
- */
+// EndpointInstrumentation.install must run before HttpServerAttributesExtractor first loads in this JVM,
+// so only the test body uses OpenTelemetry classes. The fakes above implement its interfaces,
+// which does not load that class.
 class OtelBridgeModuleIntegrationTest {
     @Test
     fun `a route read through a real Instrumenter is counted per request, and never for an identity another framework owns`() {
         val instrumentation = ByteBuddyAgent.install()
         val registry = EndpointRegistry()
-        // A framework module already owns this identity; the bridge must never touch it.
         val ownedKey = Any()
         registry.register(key = ownedKey, framework = "fake", verb = "GET", verbatimTemplate = "/legacy/{id}")
         registry.register(key = Any(), framework = "vertx-web", verb = "GET", verbatimTemplate = "/owned/{id}")
@@ -162,8 +146,6 @@ class OtelBridgeModuleIntegrationTest {
             assertEquals(2L, deltasById.getValue(getEndpoint.endpointId).hitsTotal)
             assertEquals(1L, deltasById.getValue(postEndpoint.endpointId).hitsTotal)
 
-            // Dedup: the identity another framework already owns stays owned, and unhit, by that
-            // framework. The bridge's own read of it produced no second entry and no count.
             val ownedByVertx = endpointsByIdentity.getValue("GET /owned/{id}")
             assertEquals("vertx-web", ownedByVertx.framework)
             assertTrue(ownedByVertx.endpointId !in deltasById, "a request the vertx-web module counts is not counted again as /owned/:id")

@@ -4,7 +4,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/** Keeps the benchmark's corpora loadable, since `./gradlew build` never runs the benchmark itself. */
 class BenchmarkCorpusTest {
     @Test
     fun `every corpus the benchmark names holds classes`() {

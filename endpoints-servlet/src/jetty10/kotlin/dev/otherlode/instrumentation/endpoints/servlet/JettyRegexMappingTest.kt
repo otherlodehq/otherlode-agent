@@ -13,17 +13,11 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/** A [ServletHandler] that reads a mapping starting with `^` as a regular expression, as its `asPathSpec` allows. */
 private class RegexServletHandler : ServletHandler() {
     override fun asPathSpec(pathSpec: String): PathSpec =
         if (pathSpec.startsWith("^")) RegexPathSpec(pathSpec) else super.asPathSpec(pathSpec)
 }
 
-/**
- * Jetty's stock `ServletHandler` reads every servlet mapping as a servlet path spec, but its
- * `asPathSpec` is the hook for another reading, which can put a regular expression into a context's
- * servlet registrations: none of the specification's five forms.
- */
 class JettyRegexMappingTest : ServletTestSupport() {
     @Test
     fun `a regex path spec disables the module with ROUTE_WALK_FAILED and declares nothing`() {

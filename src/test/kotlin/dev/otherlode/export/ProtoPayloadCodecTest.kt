@@ -901,7 +901,6 @@ class ProtoPayloadCodecTest {
         assertEquals(null, decoded.probes[1].branchKey)
     }
 
-    /** A keyed conditional and a keyless switch, one of whose cases has no case key. */
     private val sampleBranchSites =
         listOf(
             BranchSite(
@@ -1006,10 +1005,6 @@ class ProtoPayloadCodecTest {
         assertEquals(baseline, decoded)
     }
 
-    /**
-     * A site with a guard of zero whose taken outcome guards lines in two files and partly guards a
-     * line of a class with no source file, beside a site with no guard.
-     */
     private val guardedBranchSites =
         listOf(
             BranchSite(
@@ -1031,7 +1026,6 @@ class ProtoPayloadCodecTest {
             sampleBranchSites[0],
         )
 
-    /** One callee under two guards, a guard of zero, and an edge with no guard. */
     private val guardedCalls =
         listOf(
             CallEdge("com.example.Bar", "baz", "()V", virtual = false, guard = 9),
@@ -1095,7 +1089,6 @@ class ProtoPayloadCodecTest {
         assertEquals("", taken.partlyGuardedLinesList.single().sourceFile)
     }
 
-    /** A condition with code, a literal holding a quote and a newline, a placeholder, and an empty literal. */
     private val conditionParts =
         listOf(
             ConditionPart(ConditionPartKind.CODE, "System.getenv("),

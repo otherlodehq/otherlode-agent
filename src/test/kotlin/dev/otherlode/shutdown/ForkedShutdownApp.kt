@@ -13,17 +13,14 @@ import java.util.concurrent.TimeUnit
 import javax.tools.ToolProvider
 import kotlin.test.fail
 
-/** What one forked JVM printed, when its `main` ended and when the process exited. */
 internal class ForkedRun(
     val output: String,
     val exitCode: Int,
     val mainDoneAtMillis: Long?,
     val exitedAtMillis: Long,
 ) {
-    /** Milliseconds from the end of `main`, which is when the JVM starts to shut down, to the process exit. */
     val shutdownMillis: Long get() = exitedAtMillis - checkNotNull(mainDoneAtMillis) { "main printed no end time. Output:\n$output" }
 
-    /** The epoch milliseconds in the output line that starts with [label], or null. */
     fun stamp(label: String): Long? =
         Regex("""(?m)^$label (\d+)$""")
             .find(output)
@@ -32,7 +29,6 @@ internal class ForkedRun(
             ?.toLong()
 }
 
-/** A collector that accepts every connection and never answers. */
 internal class BlackholeCollector : AutoCloseable {
     private val server = ServerSocket(0, 64, InetAddress.getLoopbackAddress())
     private val held = CopyOnWriteArrayList<java.net.Socket>()
@@ -53,7 +49,6 @@ internal class BlackholeCollector : AutoCloseable {
     }
 }
 
-/** A collector that answers [status] to everything, and records when each delta batch arrived. */
 internal class AnsweringCollector(
     private val status: Int = 202,
 ) : AutoCloseable {
@@ -81,7 +76,6 @@ internal class AnsweringCollector(
     override fun close() = server.stop(0)
 }
 
-/** Compiles small Java programs and runs them in a JVM with the shaded agent attached. */
 internal class ForkedShutdownApp : AutoCloseable {
     private val classes = Files.createTempDirectory("otherlode-shutdown").toFile()
 
@@ -100,10 +94,6 @@ internal class ForkedShutdownApp : AutoCloseable {
         check(compiler.run(null, null, null, *args.toTypedArray()) == 0) { "could not compile the fixture" }
     }
 
-    /**
-     * Runs [mainClass] with [agentOptions] and [programArgs]. Its `main` prints `main done <millis>`
-     * as its last act; the run records when the process exited.
-     */
     fun run(
         mainClass: String,
         agentOptions: String?,

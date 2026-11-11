@@ -247,7 +247,6 @@ class TypeMatchPolicyTest {
         assertFalse(TypeMatchPolicy.isScala3LiftedLambdaName("com\$acme\$Outer\$\$bump"), "an expanded private name with no lambda")
     }
 
-    /** Builds a type with one static synthetic method named [name], returning `int`, taking no arguments. */
     private fun typeWithSyntheticMethod(
         typeName: String,
         name: String,
@@ -330,7 +329,6 @@ class TypeMatchPolicyTest {
         )
     }
 
-    /** A minimal class file naming [superInternalName] as its superclass, with no other content. */
     private fun classWithSuperclass(
         internalName: String,
         superInternalName: String,
@@ -343,11 +341,6 @@ class TypeMatchPolicyTest {
 
     @Test
     fun `a continuation superclass name is rejected when only a minimal, member-less stub of it can be resolved`() {
-        // TypeDescription.getSuperClass() resolves the raw superclass reference's erasure, so some
-        // locator must be able to name it; it does not need the stub's own fields or methods,
-        // proving the check reads the name only. Confirmed directly: a locator with nothing at all
-        // for the superclass throws TypePool.Resolution.NoSuchTypeException out of getSuperClass()
-        // itself, which the fail-open test below covers instead.
         val name = "com.example.target.FakeContinuation"
         val superName = "kotlin.coroutines.jvm.internal.ContinuationImpl"
         val bytes = classWithSuperclass(name.replace('.', '/'), superName.replace('.', '/'))
@@ -385,10 +378,6 @@ class TypeMatchPolicyTest {
 
     @Test
     fun `a continuation superclass no locator can find is still rejected under a lazily resolving pool`() {
-        // The fat-jar case: the Kotlin stdlib sits under BOOT-INF/lib, which the static scan never
-        // opens, so nothing can resolve ContinuationImpl. A lazily resolving pool still answers
-        // the superclass's name, which is all the check reads; the scanner builds exactly this
-        // kind of pool, and ByteBuddy's AgentBuilder uses one by default.
         val name = "com.example.target.FakeOrphanContinuation"
         val bytes = classWithSuperclass(name.replace('.', '/'), "kotlin/coroutines/jvm/internal/ContinuationImpl")
         val pool = TypePool.Default.WithLazyResolution.of(ClassFileLocator.Simple.of(name, bytes))
@@ -409,11 +398,6 @@ class TypeMatchPolicyTest {
         assertTrue(TypeMatchPolicy.typeNameMatcher(listOf("com.example"), emptyList()).matches(type))
     }
 
-    /**
-     * Spring 6 and 7 name an enhanced configuration class and its fast-class helpers with this
-     * marker, confirmed by reading `SpringNamingPolicy.getClassName` out of spring-core 6.2.19 and
-     * 7.0.9, and by the classes Spring actually generated for `demo-spring`'s `PricingConfiguration`.
-     */
     @Test
     fun `a Spring CGLIB proxy name is rejected by the type matcher`() {
         for (
@@ -433,12 +417,6 @@ class TypeMatchPolicyTest {
         }
     }
 
-    /**
-     * Spring 5.3 spells the same thing differently: `SpringNamingPolicy.getTag()` returns
-     * `BySpringCGLIB` and `DefaultNamingPolicy.getClassName` puts the generating class's simple
-     * name in front of it, confirmed by reading both out of spring-core 5.3.39. The
-     * `endpoints-spring-webmvc` module supports 5.3, so both spellings have to be rejected.
-     */
     @Test
     fun `a Spring 5 CGLIB proxy name is rejected by the type matcher`() {
         for (
@@ -458,17 +436,6 @@ class TypeMatchPolicyTest {
         }
     }
 
-    /**
-     * Every class Hibernate generates next to an entity, in each spelling it has used. 6.6 and 7.4
-     * name a proxy, basic proxy and instantiator with a fixed suffix and nothing after it
-     * (`ByteBuddyProxyHelper.buildProxy`, `BasicProxyFactoryImpl`, `BytecodeProviderImpl`, all
-     * through `ByteBuddyState.FixedNamingStrategy`), and an access optimizer or its bridge with the
-     * suffix followed by `encodeName`'s hex digit and property names, or by ByteBuddy's
-     * `SuffixingRandom` `$<random>` when that name would pass 64K. 5.6 used `SuffixingRandom` for
-     * all four, and `hibernate.bytecode.enforce_legacy_proxy_classnames` adds a second `$` to the
-     * two proxy suffixes. Read out of hibernate-core 5.6.15, 6.6.58 and 7.4.10, and ByteBuddy
-     * 1.18.12's `NamingStrategy`.
-     */
     @Test
     fun `a Hibernate generated class name is rejected by the type matcher`() {
         for (
@@ -499,12 +466,6 @@ class TypeMatchPolicyTest {
         }
     }
 
-    /**
-     * Hibernate's markers are matched as whole `$`-separated parts of the name, never as
-     * substrings, since a class the adopter wrote can carry the same words. A top-level class
-     * named `HibernateProxy` is the adopter's too: Hibernate always appends its suffix to an
-     * existing class name.
-     */
     @Test
     fun `an adopter class named like a Hibernate suffix is not mistaken for a generated class`() {
         for (
@@ -523,15 +484,6 @@ class TypeMatchPolicyTest {
         }
     }
 
-    /**
-     * ByteBuddy's fixed and caller naming modes, chosen with the JVM's own `net.bytebuddy.naming`
-     * property, end the name at `$ByteBuddy` with no random tail: `<base>$ByteBuddy`, or
-     * `<base>$<caller class>$<method>$ByteBuddy`. That shape is also a nested class an adopter could
-     * name `ByteBuddy`, so it counts only while the property selects one of those modes. A numeric
-     * value picks a seeded random tail, which the default rule already covers. Read out of
-     * `ByteBuddy`'s static initialiser and `NamingStrategy.Suffixing.BaseNameResolver.WithCallerSuffix`
-     * in ByteBuddy 1.18.12.
-     */
     @Test
     fun `a name ending in a ByteBuddy part is generated only under the fixed or caller naming mode`() {
         val fixed = "com.example.target.Order\$ByteBuddy"
@@ -548,20 +500,12 @@ class TypeMatchPolicyTest {
         }
     }
 
-    /**
-     * The shaded agent jar relocates `net.bytebuddy`, which would rewrite a literal property name
-     * to the agent's own relocated one, so the name is put together at runtime. This pins the
-     * value; the shaded jar's constant pool is checked by hand at review.
-     */
     @Test
     fun `the ByteBuddy naming property is the one ByteBuddy itself reads`() {
+        // The constant is built at runtime, since the shaded jar relocates a `net.bytebuddy` literal.
         assertEquals(net.bytebuddy.ByteBuddy.DEFAULT_NAMING_PROPERTY, TypeMatchPolicy.BYTE_BUDDY_NAMING_PROPERTY)
     }
 
-    /**
-     * A Hibernate enhancement method is recognised by its name alone, and only by the prefix: a
-     * method whose name mentions Hibernate some other way is the adopter's.
-     */
     @Test
     fun `only a name starting with the Hibernate enhancement prefix is an enhancement method`() {
         for (name in listOf("\$\$_hibernate_read_name", "\$\$_hibernate_write_order", "\$\$_hibernate_getInterceptor")) {
@@ -572,12 +516,6 @@ class TypeMatchPolicyTest {
         }
     }
 
-    /**
-     * Names ByteBuddy, Mockito, javassist and the JDK give the classes they generate. The shapes
-     * are read out of ByteBuddy 1.18.12's `NamingStrategy` and `AuxiliaryType`, mockito-core
-     * 5.14.2's `SubclassBytecodeGenerator`, javassist 3.30.2-GA's `ProxyFactory` and
-     * `java.lang.reflect.Proxy`; `RuntimeGeneratedClassTest` has each generator make one.
-     */
     @Test
     fun `a ByteBuddy, Mockito, javassist or JDK proxy class name is rejected by the type matcher`() {
         for (
@@ -605,16 +543,6 @@ class TypeMatchPolicyTest {
         }
     }
 
-    /**
-     * ByteBuddy's and Mockito's markers count only as a whole part followed by a part shaped like
-     * ByteBuddy's random tail, and the JDK's only as the whole simple name, so a class an adopter
-     * names with the same words is kept. kotlinc names a body class after its enclosing function,
-     * so a function named like a marker gives names such as `Power$ByteBuddy$1`, and a local or
-     * nested class reads as a word (`Config$ByteBuddy$Settings`), which a random tail almost never
-     * does. ByteBuddy's `$auxiliary$` is not a marker: its default tail is eight random letters and
-     * digits, and `fun auxiliary()` holding a local class `UserInfo` gives `Power$auxiliary$UserInfo`,
-     * the same shape, so a generated auxiliary type (`Order$auxiliary$Ab3dEf9h`) is kept too.
-     */
     @Test
     fun `an adopter class named like a ByteBuddy, Mockito or JDK proxy class is kept`() {
         for (
@@ -650,11 +578,6 @@ class TypeMatchPolicyTest {
         }
     }
 
-    /**
-     * Why the rule names its markers rather than turning away any `$$` in a class name: kotlinc
-     * puts `$$` in the name of the class it generates for a lambda passed to an inlined stdlib
-     * function, and that class holds the adopter's own body.
-     */
     @Test
     fun `a Kotlin inlined-lambda class name is not mistaken for a generated proxy`() {
         val name = "com.example.target.OrdersKt\$special\$\$inlined\$sortedBy\$1"

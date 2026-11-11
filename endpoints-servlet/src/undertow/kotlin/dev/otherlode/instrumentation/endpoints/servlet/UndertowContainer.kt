@@ -17,10 +17,8 @@ import java.net.InetSocketAddress
 
 fun containerUnderTest(): ServletContainer = UndertowContainer()
 
-/** An adopter's subclass of the container's default servlet. */
 class MyDefaultServlet : DefaultServlet()
 
-/** Embedded Undertow with `undertow-servlet`, in the release the suite's dependencies select. */
 class UndertowContainer : ServletContainer {
     override val defaultServlets: Set<String> = setOf("io.undertow.servlet.handlers.DefaultServlet")
     override val ownServlets: Set<String> = setOf("io.undertow.servlet.handlers.DefaultServlet")

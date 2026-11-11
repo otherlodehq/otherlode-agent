@@ -10,18 +10,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.test.fail
 
-/**
- * Runs each fixture program of `:fixtures-probe-window` in a JVM launched with the shaded agent jar,
- * compiled at class-file version 52 and at 61, and checks it runs to completion
- * and that the hits taken while a supertype was still initialising were counted (ADR 0060).
- *
- * Each program lets a supertype's `<clinit>` run the class's own code before the class's `<clinit>`
- * has run: a superclass constant holding a subclass instance, an interface constant holding an
- * anonymous implementation, a superclass calling a static method of its subclass, a Kotlin sealed
- * class and sealed interface whose companion holds a subtype, and an enum constant body initialised
- * by name. Each runs fine without the agent. A probe that read a null array threw
- * `NullPointerException` inside the program and left the class erroneous.
- */
 class ProbeArrayWindowTest {
     private companion object {
         const val PACKAGE = "com.example.probewindow"
@@ -90,7 +78,6 @@ class ProbeArrayWindowTest {
         }
     }
 
-    /** Runs [check] for every form and fails once, naming each form that did not pass. */
     private fun eachForm(check: (form: String) -> Unit) {
         val failures =
             FORMS.mapNotNull { form -> runCatching { check(form) }.exceptionOrNull()?.let { "[$form] ${it.message}" } }
@@ -102,7 +89,6 @@ class ProbeArrayWindowTest {
         eachForm { form ->
             val run = run(form, "SubclassConstantMain")
             assertTrue("area 1" in run.output, "$form output: ${run.output}")
-            // One construction inside Shape's initializer, one from main.
             assertEquals(listOf(2L), run.countsOf("Circle", "<init>"), "Circle.<init> in $form. Output:\n${run.output}")
             assertEquals(listOf(1L), run.countsOf("Circle", "area"), "Circle.area in $form")
         }
@@ -112,7 +98,6 @@ class ProbeArrayWindowTest {
         eachForm { form ->
             val run = run(form, "InterfaceConstantMain")
             assertTrue("matches true" in run.output, "$form output: ${run.output}")
-            // One construction inside Filter's initializer, one from main.
             assertEquals(listOf(2L), run.countsOf("Filter\$1", "<init>"), "Filter\$1.<init> in $form. Output:\n${run.output}")
             assertEquals(listOf(1L), run.countsOf("Filter\$1", "matches"), "Filter\$1.matches in $form")
         }
@@ -123,7 +108,6 @@ class ProbeArrayWindowTest {
             val run = run(form, "StaticCallMain")
             assertTrue("pick 1" in run.output, "$form output: ${run.output}")
             assertEquals(listOf(2L), run.countsOf("Sub", "pick"), "Sub.pick in $form. Output:\n${run.output}")
-            // x > 5 was taken only inside Base's initializer, and not taken only by main.
             assertEquals(listOf(1L, 1L), run.countsOf("Sub", "pick", ProbeKind.BRANCH), "pick's branch outcomes in $form")
         }
 
@@ -132,7 +116,6 @@ class ProbeArrayWindowTest {
         eachForm { form ->
             val run = run(form, "EnumBodyMain")
             assertTrue("apply 5" in run.output, "$form output: ${run.output}")
-            // Run once, inside Op's initializer.
             assertEquals(listOf(1L), run.countsOf("Op\$1", "<init>"), "Op\$1.<init> in $form. Output:\n${run.output}")
             assertEquals(listOf(1L), run.countsOf("Op\$1", "apply"), "Op\$1.apply in $form")
         }

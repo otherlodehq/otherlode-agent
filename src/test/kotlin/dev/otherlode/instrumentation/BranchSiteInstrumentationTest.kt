@@ -19,10 +19,6 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/**
- * Proves through the real transform that each kept branch site reaches the manifest on its
- * METHOD probe, with its outcomes listed inside it, and that each BRANCH probe names its site.
- */
 class BranchSiteInstrumentationTest {
     private var installedTransformer: ResettableClassFileTransformer? = null
     private var installedOtherlode: OtherlodeInstrumentation? = null
@@ -65,11 +61,6 @@ class BranchSiteInstrumentationTest {
             .filter { it.className == className && it.kind == ProbeKind.BRANCH && it.methodName == methodName }
             .sortedBy { it.probeIndex }
 
-    /**
-     * Asserts that [sites] and [branches], one method's listed sites and BRANCH probes, describe
-     * the same outcomes: each outcome's branch index is a BRANCH probe's own, in the same order,
-     * and each BRANCH probe names the site that lists it, on the same line.
-     */
     private fun assertSitesMatchBranchProbes(
         sites: List<BranchSite>,
         branches: List<ProbeLocation>,
@@ -82,11 +73,6 @@ class BranchSiteInstrumentationTest {
         }
     }
 
-    /**
-     * The first branch index of each kept site of [methodName] in [classBytes], counted
-     * independently of the agent: the outcome total of every earlier site in the class, dropped
-     * sites included.
-     */
     private fun expectedFirstBranchIndexes(
         classBytes: ByteArray,
         methodName: String,

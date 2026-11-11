@@ -9,10 +9,6 @@ import java.io.File
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Proves that a call into a Scala value class's boxed forwarder or a trait forwarder passes through
- * to the method the forwarder calls (ADR 0041, ADR 0080), over the Scala fixture modules.
- */
 class ScalaForwarderCallGraphTest {
     private companion object {
         const val PACKAGE = "com/example/scalatarget"
@@ -38,7 +34,6 @@ class ScalaForwarderCallGraphTest {
             )
         }
 
-    /** A class with static methods that call a mixed-in trait method and a value class's boxed method. */
     private fun caller(): ByteArray {
         val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
         writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "$PACKAGE/ForwarderCaller", null, "java/lang/Object", null)

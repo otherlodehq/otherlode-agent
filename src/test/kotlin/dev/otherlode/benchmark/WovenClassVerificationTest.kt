@@ -21,25 +21,9 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Guards the bytes the agent writes, since ByteBuddy's type validation is off. A woven class must
- * run where its unwoven twin runs, and fail where the twin fails with the same root exception and,
- * for a missing class, the same class name. Anything else is the agent's fault: the JVM's verifier
- * and class-file parser say so where validation would have guessed. Every woven class must also keep
- * the structure of its class file: header, inner classes, and the flags, signatures and annotations
- * of every field and method.
- *
- * Two inputs. Every class of the five benchmark corpora is woven through the real transformer, then
- * defined and initialised woven and unwoven, each in a loader of its own over the corpus's
- * classpath. And a matrix of generated classes at class-file versions 45 to 69 covers the shapes
- * the corpora, all compiled for recent versions, never contain: interfaces and annotation types
- * with a static initialiser, subroutines, annotations below version 49. Each of those is woven,
- * defined, initialised and called, woven and unwoven, and the woven copy must also count.
- */
 class WovenClassVerificationTest {
     private val resource = ResourceAttributes("test", null, "instance-1", null, "run-1")
 
-    /** What running one class did: its [result], or the [error] it ended in. */
     private data class Outcome(
         val result: List<String>,
         val error: String?,
@@ -64,10 +48,6 @@ class WovenClassVerificationTest {
             )
         }
 
-    /**
-     * Whether [woven] fails as [twin] does: the same root exception and, for a missing class, the
-     * same class name, which `NoClassDefFoundError` spells with slashes and `ClassNotFoundException` with dots.
-     */
     private fun failsLike(
         woven: Outcome,
         twin: Outcome,
@@ -77,16 +57,6 @@ class WovenClassVerificationTest {
         return !missingClass || woven.rootMessage?.replace('/', '.') == twin.rootMessage?.replace('/', '.')
     }
 
-    /**
-     * Everything [bytes] says about the class apart from its code, keyed by what it describes: the
-     * header (version, flags, name, signature, super and interfaces), `EnclosingMethod`, the nest and
-     * permitted-subclass attributes, every `InnerClasses` entry in order, the source attributes, the
-     * class annotations, the record components, and each field and method with its flags,
-     * descriptor, signature, exceptions and annotations. The agent's own members are left out: the
-     * probe field, its accessor methods, the refusal marker, and a `<clinit>` the class did not have.
-     * Nest members and inner classes are compared in order, not as sets, because the decoration
-     * writes them in the order the class file has and a reordering would still be a rewrite.
-     */
     private fun structureOf(bytes: ByteArray): Map<String, String> {
         val node = ClassNode().also { ClassReader(bytes).accept(it, ClassReader.SKIP_CODE) }
         val structure = LinkedHashMap<String, String>()
@@ -122,10 +92,6 @@ class WovenClassVerificationTest {
         return structure
     }
 
-    /**
-     * An annotation default as text, by content: ASM holds an enum default as a `String[]` and a nested
-     * annotation as an [AnnotationNode], neither of which prints its content.
-     */
     private fun render(value: Any?): String =
         when (value) {
             null -> "null"
@@ -135,10 +101,6 @@ class WovenClassVerificationTest {
             else -> value.toString()
         }
 
-    /**
-     * What weaving and running one corpus found: how many classes wove, ran in both forms or failed in both,
-     * how many the agent refused for an absent supertype, and the violations.
-     */
     private class CorpusResult(
         val corpus: String,
         val classes: Int,
@@ -149,7 +111,6 @@ class WovenClassVerificationTest {
         val violations: List<String>,
     )
 
-    /** A loader that defines [name] from [bytes] and takes every other class from [parent]. */
     private class DefineOneLoader(
         parent: ClassLoader,
         private val name: String,
@@ -182,9 +143,6 @@ class WovenClassVerificationTest {
                         try {
                             transformer.transform(shared, internalName, null, null, original)
                         } catch (t: Throwable) {
-                            // One reason lets a class stay unwoven: its own supertype is absent from the classpath,
-                            // so the JVM could not define it unwoven either (ADR 0059). Anything else is a weave the
-                            // agent got wrong.
                             val reason = generateSequence(t) { it.cause }.map { it.message.orEmpty() }.joinToString(" <- ")
                             val name = internalName.replace('/', '.')
                             when {
@@ -219,7 +177,6 @@ class WovenClassVerificationTest {
                         }
 
                         else -> {
-                            // Fails where its twin runs, or runs where its twin fails: the weave changed what the JVM checks (ADR 0061).
                             violations += "${set.name}:$name woven: $wovenOutcome; unwoven: $unwovenOutcome"
                         }
                     }
@@ -229,11 +186,6 @@ class WovenClassVerificationTest {
         return CorpusResult(corpusName, corpus.classCount, woven, bothRan, bothFailed, refusedForSupertype, violations)
     }
 
-    /**
-     * What differs between [original] and [woven], code aside: see [structureOf]. A woven class below
-     * class-file version 55 that gains a `<clinit>` is the agent's own addition (the probe array's
-     * prelude, ADR 0060) and is not a difference; from 55 the agent adds none, so one is.
-     */
     private fun structureDifferences(
         original: ByteArray,
         woven: ByteArray,
@@ -274,8 +226,6 @@ class WovenClassVerificationTest {
                 r.violations.isEmpty(),
                 "${r.corpus}: woven classes that fail where the unwoven class does not:\n  ${r.violations.joinToString("\n  ")}",
             )
-            // Floors a little under what each corpus gives, so a weave or a run that quietly stops
-            // happening fails here rather than shrinking what the check covers.
             val (minWoven, minRan) = FLOORS.getValue(r.corpus)
             assertTrue(r.woven >= minWoven, "${r.corpus}: only ${r.woven} of ${r.classes} classes were woven, expected at least $minWoven")
             assertTrue(r.bothRan >= minRan, "${r.corpus}: only ${r.bothRan} of ${r.woven} woven classes ran, expected at least $minRan")
@@ -284,10 +234,9 @@ class WovenClassVerificationTest {
 
     @Test
     fun `spring-core's ReactorDelegate without Reactor fails woven exactly as it does unwoven`() {
-        // PropagationContextElement$ReactorDelegate types a local Reactor's ContextView, and Reactor is not on the
-        // classpath. Unwoven, the JVM's check of its frame fails with NoClassDefFoundError. Woven, it must weave and
-        // fail the same way, since the woven method keeps the class file's frame (ADR 0061); a woven class that
-        // defined would hand a framework probing for Reactor a false positive.
+        // PropagationContextElement$ReactorDelegate types a local as Reactor's ContextView, and Reactor is not on
+        // the classpath, so the JVM's frame check fails unwoven with NoClassDefFoundError. Woven, it must weave and
+        // fail the same way, since the woven method keeps the class file's frame.
         val classpath =
             checkNotNull(System.getProperty("${CorpusWeaving.CLASSPATH_PROPERTY}demo-spring.main")) { "no classpath for demo-spring" }
         val entries = classpath.split(File.pathSeparator).filter { it.isNotEmpty() }
@@ -313,7 +262,6 @@ class WovenClassVerificationTest {
         }
     }
 
-    /** `static Object m(boolean b)` with a frame that types local 1 as a class no loader has, at a branch target a String reaches. */
     private fun absentTypeInFrame(internalName: String): ByteArray {
         val cw = ClassWriter(0)
         cw.visit(Opcodes.V11, Opcodes.ACC_PUBLIC or Opcodes.ACC_SUPER, internalName, null, "java/lang/Object", null)
@@ -360,12 +308,6 @@ class WovenClassVerificationTest {
         assertEquals(twin.error, woven.error, "woven: $woven; unwoven: $twin")
     }
 
-    /**
-     * A loader that serves [resources] as class files and [definitions] as the bytes it defines
-     * classes from. The agent reads a class file as a resource, so weaving through a loader with
-     * only the originals in [resources] reads the compiler's bytes, and the woven ones can then be
-     * put in [definitions] for the same loader to define.
-     */
     private class MatrixLoader(
         parent: ClassLoader,
         private val resources: Map<String, ByteArray>,
@@ -380,7 +322,6 @@ class WovenClassVerificationTest {
             resources[name.removeSuffix(".class")]?.let { ByteArrayInputStream(it) } ?: super.getResourceAsStream(name)
     }
 
-    /** One generated shape: its classes, how to run it, and what its probes must have counted. */
     private class Case(
         val label: String,
         val classes: List<VersionedFixtures.Fixture>,
@@ -388,7 +329,6 @@ class WovenClassVerificationTest {
         val expect: (Counts) -> Unit,
     )
 
-    /** The hits of one run, read from the registry the woven classes counted into. */
     private class Counts(
         private val probes: List<ProbeLocation>,
         private val hits: Map<Pair<Int, Int>, Long>,
@@ -401,19 +341,16 @@ class WovenClassVerificationTest {
             kind: ProbeKind,
         ) = probes.filter { it.className == className && it.methodName == methodName && it.kind == kind }
 
-        /** How often [methodName] of [className] was entered. */
         fun entries(
             className: String,
             methodName: String,
         ): Long = of(className, methodName, ProbeKind.METHOD).sumOf { hitsOf(it) }
 
-        /** How many branch outcomes [methodName] of [className] has probes for. */
         fun branchProbes(
             className: String,
             methodName: String,
         ): Int = of(className, methodName, ProbeKind.BRANCH).size
 
-        /** How many branch outcomes of [methodName] of [className] were taken in all. */
         fun branchHits(
             className: String,
             methodName: String,
@@ -580,7 +517,6 @@ class WovenClassVerificationTest {
         assertTrue(covered > 0)
     }
 
-    /** What went wrong running [case] woven against its unwoven twin at [version], or nothing. */
     private fun runCase(
         version: Int,
         case: Case,
@@ -630,7 +566,6 @@ class WovenClassVerificationTest {
         const val DYNAMIC_CONSTANT_VERSION = 55
         val SUPERTYPE_REFUSAL = Regex("cannot be defined: its supertype \\S+ could not be read from its loader")
 
-        /** Per corpus, the fewest classes that must weave and the fewest that must run in both forms. */
         val FLOORS =
             mapOf(
                 "demo" to (78 to 77),

@@ -21,11 +21,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Proves through the real pipeline and the static scanner that a Hibernate enhancement method
- * gets no METHOD or BRANCH probe and is not declared, and a call to one, from its own class or
- * from another, passes through to what it calls.
- */
 class EnhancementMethodTest {
     private companion object {
         const val PACKAGE = "com.example.target"
@@ -74,12 +69,6 @@ class EnhancementMethodTest {
         assertTrue(callsOf(CALLER, "assign").none { PREFIX in it }, callsOf(CALLER, "assign").toString())
     }
 
-    /**
-     * Under runtime enhancement the class file a loader serves as a resource is the one on disk,
-     * without the enhancement methods, while the class the JVM defined has them. A call into another
-     * class's enhancement method then finds no declaration to pass through, and must not be kept
-     * as an edge to a method nothing probes.
-     */
     @Test
     fun `a call to an enhancement method the owner's class file does not declare records no edge`() {
         val registry = ProbeRegistry()
@@ -107,7 +96,6 @@ class EnhancementMethodTest {
         assertEquals(emptyList(), assign.calls.map { "${it.className}.${it.methodName}" }.filter { PREFIX in it })
     }
 
-    /** [bytes] with every method whose name starts with the enhancement prefix removed. */
     private fun withoutEnhancementMethods(bytes: ByteArray): ByteArray {
         val writer = ClassWriter(0)
         ClassReader(bytes).accept(

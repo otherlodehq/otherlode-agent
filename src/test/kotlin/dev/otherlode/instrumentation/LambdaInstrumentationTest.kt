@@ -15,13 +15,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Proves through the real pipeline that a lambda body gets probed like any other method, method
- * tier and branch tier alike: javac's `lambda$...` and scalac's `$anonfun$...` inside a class
- * scalac itself compiled. Scala 2's `$adapted` boxing forwarder gets no probe of its
- * own, matching Scala 3, whose adapter is a bridge. Each scalac body is also flagged as a lambda
- * body and reached by a creation edge through that forwarder.
- */
 class LambdaInstrumentationTest {
     private var installedTransformer: ResettableClassFileTransformer? = null
     private var installedOtherlode: OtherlodeInstrumentation? = null

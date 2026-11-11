@@ -282,7 +282,6 @@ class DependencyResolverTest {
         assertEquals(2, records.count { it.level == JulLevel.INFO }, "one INFO each for own.jar and the nested jar, from the listing only")
     }
 
-    /** Records what the adopter's-own rule logs, through the JUL backend of `System.Logger`. */
     private fun captureLogRecords(block: () -> Unit): List<LogRecord> {
         val records = mutableListOf<LogRecord>()
         val handler =

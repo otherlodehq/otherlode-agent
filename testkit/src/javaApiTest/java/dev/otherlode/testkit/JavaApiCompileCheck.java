@@ -5,10 +5,6 @@ import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.TimeoutException;
 
-/**
- * Calls every public query of {@link OtherlodeTestCollector} from Java, with and without the
- * optional arguments. It is compiled and never run.
- */
 final class JavaApiCompileCheck {
     private JavaApiCompileCheck() {}
 

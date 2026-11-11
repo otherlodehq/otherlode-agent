@@ -22,13 +22,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Proves through the real transform that the outlines of ADR 0054 no source produces reach the
- * manifest: a coroutine state machine jump and a string switch collision side as the unread shape of
- * a branch outcome, and a multi-file facade's method as the unread shape of its probes. Each class is
- * real compiler output with one instruction changed, or a facade built by hand, and is defined only
- * after the agent is installed.
- */
 class UnreadOutlineInstrumentationTest {
     private companion object {
         const val PACKAGE = "com.example.target"
@@ -53,7 +46,6 @@ class UnreadOutlineInstrumentationTest {
         val counts: UnreadShapeCounts,
     )
 
-    /** Loads [className] from a loader whose first root holds [bytes] in place of the compiled class. */
     private fun load(
         className: String,
         bytes: ByteArray,
@@ -100,7 +92,6 @@ class UnreadOutlineInstrumentationTest {
         )
         assertEquals(UnreadShape.NONE, method(run, "twoPoints").unreadShape, "the method itself is the adopter's")
         assertEquals(6, run.probes.count { it.kind == ProbeKind.BRANCH && it.methodName == "twoPoints" }, "the unread outcomes are probed")
-        // adopterMarkerCompare's own compare with the public marker stays the adopter's.
         assertEquals(4L, run.counts.outcomeCountOf(UnreadShape.COROUTINE_MACHINERY), "twoPoints' four")
         assertEquals(4L, run.counts.outcomeTotal())
         assertEquals(0L, run.counts.total(), "no method is unread")
@@ -135,7 +126,6 @@ class UnreadOutlineInstrumentationTest {
         assertEquals(emptyList(), run.counts.unreadReleases())
     }
 
-    /** A `kotlin.Metadata` `k = 4` class whose `f(I)I` holds a conditional of its own. */
     private fun facadeWithBranch(): ByteArray {
         val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
         writer.visit(Opcodes.V1_5, Opcodes.ACC_PUBLIC or Opcodes.ACC_FINAL, FACADE.replace('.', '/'), null, "java/lang/Object", null)

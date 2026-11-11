@@ -6,10 +6,6 @@ import org.junit.jupiter.params.ParameterizedTest
 import org.junit.jupiter.params.provider.MethodSource
 import kotlin.test.assertEquals
 
-/**
- * Runs the delegation-forwarder and `@JvmStatic` proxy marks over the same Kotlin source set compiled
- * by each kotlinc release in [CompilerFixtures.kotlincVersions], at that release's own defaults.
- */
 class KotlinDelegationMatrixTest {
     companion object {
         @JvmStatic

@@ -21,7 +21,6 @@ import kotlin.test.assertTrue
 import java.util.logging.Level as JulLevel
 import java.util.logging.Logger as JulLogger
 
-/** What the class listing watch makes of where an included class loads from (ADR 0085). */
 class ClassListingWatchTest {
     @TempDir
     lateinit var dir: Path
@@ -39,7 +38,6 @@ class ClassListingWatchTest {
         return path.toRealPath()
     }
 
-    /** Runs the lister over [classPath] and hands what it read to [watch], as the agent does. */
     private fun listed(
         watch: ClassListingWatch,
         classPath: String,
@@ -77,7 +75,6 @@ class ClassListingWatchTest {
         return ProtectionDomain(CodeSource(URL(null, spec, handler), null as Array<Certificate>?), null)
     }
 
-    /** The INFO records the watch logs while [block] runs. */
     private fun infoFrom(block: () -> Unit): List<LogRecord> {
         val records = mutableListOf<LogRecord>()
         val handler =

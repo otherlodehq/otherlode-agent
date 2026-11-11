@@ -21,21 +21,14 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/**
- * Proves the Scala generated-method rules at the analyser, over the Scala fixture modules' own class bytes and over
- * classes built here with ASM: a call into a static forwarder passes through to the object's
- * method, and the forwarder shape counts only in a class scalac compiled.
- */
 class ScalaGeneratedMethodsAnalyzerTest {
     companion object {
-        /** The 3.3.4 baseline, named `baseline`, and every Scala 3 release in the matrix. */
         @JvmStatic
         fun scala3Builds(): List<String> = listOf("baseline") + CompilerFixtures.scalacVersions.filter { it.startsWith("3.") }
 
         private const val PACKAGE = "com/example/scalatarget"
     }
 
-    /** Reads a class of the fixture module [module] by internal name, as the agent's own lookup would. */
     private fun fixtureLookup(module: String): (String) -> ByteArray? =
         { internalName ->
             File(System.getProperty("otherlode.fixtures.$module.dir"), "$internalName.class").takeIf { it.isFile }?.readBytes()
@@ -47,7 +40,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
     ): BranchSiteAnalyzer.Analysis =
         BranchSiteAnalyzer.analyze(classBytes, lookup, listOf("com.example.scalatarget")) { name, _ -> name != "<clinit>" }
 
-    /** A class attribute named [name] with an empty body, such as the `Scala` attribute scalac writes. */
     private class ScalaAttribute(
         name: String = "Scala",
     ) : Attribute(name) {
@@ -60,11 +52,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
         ): ByteVector = ByteVector()
     }
 
-    /**
-     * A class named [internalName] with one static `m(IJ)I` whose body reads `<moduleOwner>.MODULE$`,
-     * loads both parameters and calls `m(IJ)I` on it, the shape scalac gives a static forwarder.
-     * With [scala] the class carries a `Scala` attribute.
-     */
     private fun forwarderShaped(
         internalName: String,
         moduleOwner: String,
@@ -86,7 +73,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
         return writer.toByteArray()
     }
 
-    /** A class with one static method per entry of [calls], each calling that static method and returning its result. */
     private fun caller(vararg calls: Triple<String, String, String>): ByteArray {
         val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
         writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "$PACKAGE/ForwarderCaller", null, "java/lang/Object", null)
@@ -215,10 +201,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
     fun `scala 2 - a case class with an auxiliary constructor marks its plumbing and not its constructors`() =
         `a case class with an auxiliary constructor marks its plumbing and not its constructors`("scala2")
 
-    /**
-     * [classBytes] with a `nop` added to every method named in [names], at the start or, with
-     * [beforeLast], just before the method's last instruction.
-     */
     private fun withNop(
         classBytes: ByteArray,
         names: Set<String>,
@@ -267,7 +249,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
         return writer.toByteArray()
     }
 
-    /** Passes every call to [delegate], running [beforeInstruction] ahead of each instruction. */
     private class InstructionHook(
         delegate: MethodVisitor?,
         private val beforeInstruction: () -> Unit,
@@ -432,11 +413,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
     fun `scala 2 - an equals of scalac's shape comparing only some elements is not marked`() =
         `an equals of scalac's shape comparing only some elements is not marked`("scala2")
 
-    /**
-     * [classBytes] with its Scala attributes swapped for the ones the other Scala version writes
-     * on an inner class: `Scala` alone for Scala 3.3.4 ([asScala3]), `Scala` and
-     * `ScalaInlineInfo` for Scala 2.13.15.
-     */
     private fun relabelled(
         classBytes: ByteArray,
         asScala3: Boolean,
@@ -504,11 +480,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
     fun `scala 2 - a shape only the other Scala version writes is not marked`() =
         `a shape only the other Scala version writes is not marked`("scala2")
 
-    /**
-     * The variants later and earlier scalac releases write (the matcher's KDoc names each). For
-     * every one, the method is marked as the release wrote it, and is not once an instruction is
-     * added at its start or just before its last instruction, so the variant is read exactly.
-     */
     private fun assertVariantReadExactly(
         version: String,
         simpleName: String,
@@ -551,7 +522,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
         )
     }
 
-    /** [classBytes] with one more instance method, [name] [descriptor], whose body returns null. */
     private fun withMethod(
         classBytes: ByteArray,
         name: String,
@@ -575,7 +545,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
         return writer.toByteArray()
     }
 
-    /** [classBytes] with the private `writeReplace` scalac 2.13 writes for the module class [self]. */
     private fun withScalacWriteReplace(
         classBytes: ByteArray,
         self: String,
@@ -614,9 +583,7 @@ class ScalaGeneratedMethodsAnalyzerTest {
                 "productElement" to "(I)Ljava/lang/Object;",
             )
 
-        // Read as Scala 3, which never leaves the prefix mix out or writes these.
         val asScala3 = analyze(relabelled(build.classBytes("Mixed"), asScala3 = true), build.lookup)
-        // Read as Scala 2.13, which gives every case class a productElementName.
         val as213 = analyze(withMethod(build.classBytes("Mixed"), "productElementName", "(I)Ljava/lang/String;"), build.lookup)
         for ((name, descriptor) in shapes) {
             assertEquals(GeneratedBy.NONE, asScala3.generatedBy(name, descriptor), "Mixed.$name read as Scala 3")
@@ -647,8 +614,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
                     signature: String?,
                     exceptions: Array<out String>?,
                 ): MethodVisitor? {
-                    // productElement's body, renamed to productElementName with the String return:
-                    // only the 2.12 out-of-range wording, nothing else that a String return changes.
                     if (name != "productElement") return super.visitMethod(access, name, descriptor, signature, exceptions)
                     return super.visitMethod(access, "productElementName", "(I)Ljava/lang/String;", null, exceptions)
                 }
@@ -679,7 +644,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
         }
     }
 
-    /** [classBytes] with every `ldc` of the int [from] in method [method] changed to [to]. */
     private fun withConstant(
         classBytes: ByteArray,
         method: String,
@@ -797,11 +761,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
 
     private val scala3Versions: List<String> get() = CompilerFixtures.scalacVersions.filter { it.startsWith("3.") }
 
-    /**
-     * Every method of [simpleName] named in [methods] (name and descriptor) is [GeneratedBy.ENUM] as
-     * scalac [version] wrote it, and is [GeneratedBy.NONE] once one instruction is added at its start
-     * or just before its last instruction. A `hashCode` is expected only where the build has one.
-     */
     private fun assertEnumReadExactly(
         version: String,
         simpleName: String,
@@ -873,8 +832,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
     @Test
     fun `scala 3 - an enum companion's values, valueOf, fromOrdinal, new and ordinal are read exactly in each lowering`() {
         for (version in listOf("3.3.4") + scala3Versions) {
-            // Suit has three cases and a hash switch in valueOf, Planet and Level two and a chain; Planet and Suit
-            // index $values inside a handler in fromOrdinal.
             for (enumName in listOf("Suit", "Hue")) assertEnumReadExactly(version, "$enumName\$", companionMethods(enumName))
             val withoutNew = companionMethods("Planet").filter { it.first != "\$new" }
             assertEnumReadExactly(version, "Planet\$", withoutNew)
@@ -1171,7 +1128,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
         assertEquals(GeneratedBy.NONE, analyze(other, build.lookup).generatedBy("readResolve", "()Ljava/lang/Object;"))
     }
 
-    /** [classBytes] with the access flags and descriptor of the field [name] passed through [access] and [descriptor]. */
     private fun withField(
         classBytes: ByteArray,
         name: String,
@@ -1197,7 +1153,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
         return writer.toByteArray()
     }
 
-    /** [classBytes] with the body of the method [name] replaced by what [emit] writes. */
     private fun withBody(
         classBytes: ByteArray,
         name: String,
@@ -1307,11 +1262,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
         assertEquals(UnreadShape.SCALA_ENUM, analysis.unreadShape(word.first, word.second))
     }
 
-    /**
-     * The classes of a local enum of `LocalEnums.scala`: the enum class, its [companion], its singleton cases' classes and
-     * their names, an optional parameterised case's class, and the top-level class [host] that holds its method. A
-     * hand-written `ordinal(E)` in [companion] is not scalac's.
-     */
     private class LocalEnum(
         val enumClass: String,
         val companion: String,
@@ -1595,7 +1545,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
         }
     }
 
-    /** The companions of `EnumsWidenedValueOf.scala` with the trait's `valueOf`, and the top-level class that holds each. */
     private val widenedCompanions =
         listOf(
             "WideTop\$" to "WideTop",
@@ -1714,7 +1663,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
         assertEquals(GeneratedBy.ENUM, analysis.generatedBy("valueOf", "(Ljava/lang/String;)Ljava/lang/Object;"))
     }
 
-    /** Companions holding scalac's `valueOf` beside a method of the adopter's the JVM knows as `valueOf`, with each one's descriptor. */
     private val valueOfBesideAdopters =
         listOf(
             Triple("WidePoly", "(Ljava/lang/String;)L$PACKAGE/WidePoly;", "(Ljava/lang/String;)Lscala/Product;"),
@@ -1800,7 +1748,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
         }
     }
 
-    /** [classBytes] with the middle of every `enum <middle> has no case with ...` recipe passed through [middle]. */
     private fun withNoCaseMiddle(
         classBytes: ByteArray,
         middle: (String) -> String,
@@ -1900,7 +1847,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
         }
     }
 
-    /** [classBytes] with the `EnclosingMethod` passed through [enclosing]: owner, method name and descriptor. */
     private fun withEnclosingMethod(
         classBytes: ByteArray,
         enclosing: (Triple<String, String?, String?>) -> Triple<String, String?, String?>,
@@ -1921,7 +1867,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
         return writer.toByteArray()
     }
 
-    /** [classBytes] without the `InnerClasses` entry of the class [internalName]. */
     private fun withoutInnerClass(
         classBytes: ByteArray,
         internalName: String,
@@ -2071,7 +2016,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
         val descriptor: String,
     )
 
-    /** [classBytes] with the field and method references in the body of [method] passed through [field] and [call]. */
     private fun withRewrittenRefs(
         classBytes: ByteArray,
         method: String,
@@ -2292,7 +2236,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
         )
     }
 
-    /** [classBytes] with the access flags of the method [name][descriptor] passed through [access]. */
     private fun withMethodAccess(
         classBytes: ByteArray,
         name: String,
@@ -2320,7 +2263,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
         return writer.toByteArray()
     }
 
-    /** [classBytes] with the constant `ordinal()I` pushes changed from [from] to [to], both between 0 and 5. */
     private fun withOrdinalConstant(
         classBytes: ByteArray,
         from: Int,
@@ -2348,7 +2290,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
         return writer.toByteArray()
     }
 
-    /** [classBytes] without the fields named in [names]. */
     private fun withoutFields(
         classBytes: ByteArray,
         names: Set<String>,
@@ -2368,7 +2309,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
         return writer.toByteArray()
     }
 
-    /** [classBytes] with its access flags, superclass and interfaces passed through [access], [superName] and [interfaces]. */
     private fun withHeader(
         classBytes: ByteArray,
         access: (Int) -> Int = { it },
@@ -2492,7 +2432,8 @@ class ScalaGeneratedMethodsAnalyzerTest {
         val build = CompilerFixtures.scalaBaseline("3.3.4")
         val op = "L$PACKAGE/Op;"
         val brokenLit = withNop(build.classBytes("Op\$Lit"), setOf("ordinal"))
-        // Op's parameterised case must stay last: skipping it then leaves the singletons' ordinals right, so only an unread list fails fromOrdinal.
+        // Lit must stay the last case of the Op fixture: skipping it then leaves the singletons' ordinals right,
+        // so only the unread case fails fromOrdinal.
         val lookups =
             mapOf(
                 "unreadable" to { name: String -> if (name == "$PACKAGE/Op\$Lit") null else build.lookup(name) },
@@ -2539,7 +2480,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
         }
     }
 
-    /** [classBytes] with `productPrefix()Ljava/lang/String;` rewritten to the instructions [emit] writes. */
     private fun withProductPrefix(
         classBytes: ByteArray,
         emit: (MethodVisitor) -> Unit,
@@ -2681,7 +2621,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
     @Test
     fun `scala 3 - a singleton case's class is read exactly in both forms`() {
         for (version in listOf("3.3.4") + scala3Versions) {
-            // $$anon$1 keeps the name and ordinal in fields; Planet's cases return constants.
             assertEnumReadExactly(version, "Suit\$\$anon\$1", singletonCaseMethods)
             assertEnumReadExactly(version, "Planet\$\$anon\$2", singletonCaseMethods)
             assertEnumReadExactly(version, "Planet\$\$anon\$3", singletonCaseMethods)
@@ -2740,11 +2679,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
         }
     }
 
-    /**
-     * The enum shapes a companion's other members, a parameterised case, an all-parameterised
-     * enum and dense case names give, and Scala 3.3.3's own wording, over the 3.3.4 baseline and
-     * every Scala 3 build in the matrix.
-     */
     @ParameterizedTest(name = "scalac {0}")
     @MethodSource("scala3Builds")
     fun `scala 3 - enum plumbing beside other companion members, switching and throwing fromOrdinal and a dense valueOf are ENUM`(
@@ -2798,7 +2732,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
                             dflt: Label,
                             vararg labels: Label,
                         ) {
-                            // Every gap, which goes to the throw, goes to the first case instead.
                             super.visitTableSwitchInsn(
                                 min,
                                 max,
@@ -2827,7 +2760,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
 
     private fun tastyHeader(tooling: String): ByteArray = BrokenScalaFixtures.tastyHeader(tooling)
 
-    /** Serves the `.tasty` of [className] naming [tooling], and nothing else. */
     private fun tastyOf(
         className: String,
         tooling: String?,
@@ -2872,7 +2804,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
             val label = "${case.simpleName}.${case.method}${case.descriptor}"
 
             val analysis = analyzeWith(broken, build.lookup, tastyOf(case.tastyOwner, "Scala 3.3.4"))
-            // An enum's companion can hold no hand-written plumbing, so it stays unread there.
             val expected = if (case.simpleName == "Level\$") case.family else UnreadShape.NONE
 
             assertEquals(expected, analysis.unreadShape(case.method, case.descriptor), label)
@@ -3119,7 +3050,6 @@ class ScalaGeneratedMethodsAnalyzerTest {
         }
     }
 
-    /** The name and descriptor of each method [classBytes] declares. */
     private fun declaredMethods(classBytes: ByteArray): List<Pair<String, String>> {
         val methods = mutableListOf<Pair<String, String>>()
         ClassReader(classBytes).accept(

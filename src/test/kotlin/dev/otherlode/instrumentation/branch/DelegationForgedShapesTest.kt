@@ -9,12 +9,6 @@ import net.bytebuddy.jar.asm.Opcodes
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-/**
- * Shapes built with ASM so each condition of the delegation-forwarder and `@JvmStatic` proxy rules is
- * pinned alone: one instruction off in a body, a field that is not the delegate, a call to another
- * method, descriptor or owner, a method that is not public or carries a line number, and a class
- * without Kotlin metadata.
- */
 class DelegationForgedShapesTest {
     private companion object {
         const val CLASS = "com/example/target/ForgedDelegating"

@@ -10,22 +10,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertNull
 
-/**
- * Pins what an [EndpointModule] that implements only the two required members inherits.
- *
- * Each default exists so that the common module needs no boilerplate, and each is load-bearing:
- * `bootModulesNeedingSeamRead` returning an empty set is what stops
- * `EndpointInstrumentation` adding a read edge for a module that instruments no JDK module,
- * `handlerInterfaces` returning an empty set is what keeps the lambda factory hook out of a JVM
- * whose modules never take a handler lambda, and
- * `declare` doing nothing is what lets every framework whose routes are readable from a
- * registration hook's own arguments ignore the seam's declare path entirely, and
- * `beforeManifest` doing nothing is what leaves every module that needs no deadline untouched by it. A default that
- * silently changed to something else would be a behaviour change in every module that leans on it,
- * so they are asserted here rather than left to the modules that happen to inherit them.
- */
 class EndpointModuleDefaultsTest {
-    /** A module that overrides nothing beyond the two members [EndpointModule] has no default for. */
     private class MinimalModule : EndpointModule {
         override val name: String = "minimal"
 
@@ -61,10 +46,6 @@ class EndpointModuleDefaultsTest {
 
     @Test
     fun `an advice binder resolves against the bootstrap loader when the target loader is null`() {
-        // A module instrumenting a JDK class (the `jdk.httpserver` module's own types) is handed a
-        // null classloader, which means the bootstrap loader rather than "no loader at all". The
-        // advice class itself still comes from the agent loader, so binding one it carries has to
-        // succeed, and binding a name nothing carries has to fail rather than yield empty advice.
         val binder = AdviceBinder(javaClass.classLoader, null)
 
         binder.bind("dev.otherlode.instrumentation.endpoints.api.fixture.PingAdvice")

@@ -12,11 +12,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Proves [Micronaut3Module] against micronaut-aws 3.x's Lambda handler, which builds its own
- * `RouteExecutor` and so reaches neither Netty's nor micronaut-servlet's dispatch point. The
- * controllers are the Netty suite's.
- */
 class LambdaModuleTest {
     private val quiet = mapOf<String, Any>("endpoints.all.enabled" to false)
 

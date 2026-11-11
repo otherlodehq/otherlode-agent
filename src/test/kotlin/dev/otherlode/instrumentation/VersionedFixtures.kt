@@ -5,19 +5,11 @@ import net.bytebuddy.jar.asm.Label
 import net.bytebuddy.jar.asm.MethodVisitor
 import net.bytebuddy.jar.asm.Opcodes
 
-/**
- * Small classes written with ASM at a chosen class-file version, so a test can weave the same
- * shape at versions the compilers in the build do not target. Each carries a `SourceFile` and
- * line numbers, which the analyser reads.
- */
 internal object VersionedFixtures {
-    /** The package every fixture lives in. */
     const val PACKAGE = "com.example.matrix"
 
-    /** The class-file versions the matrix covers. */
     val VERSIONS = listOf(45, 46, 47, 48, 49, 50, 51, 52, 55, 61, 65, 69)
 
-    /** One generated class. */
     class Fixture(
         val internalName: String,
         val bytes: ByteArray,
@@ -25,13 +17,11 @@ internal object VersionedFixtures {
         val name: String get() = internalName.replace('/', '.')
     }
 
-    /** The internal name of the fixture called [simpleName] at [version]. */
     fun internalName(
         version: Int,
         simpleName: String,
     ): String = "${PACKAGE.replace('.', '/')}/v$version/$simpleName"
 
-    /** The version number ASM writes for [major]: 45 is 45.3, as the first javac wrote it. */
     private fun asmVersion(major: Int): Int = if (major == 45) Opcodes.V1_1 else major
 
     private fun writer(version: Int): ClassWriter = ClassWriter(if (version >= 50) ClassWriter.COMPUTE_FRAMES else ClassWriter.COMPUTE_MAXS)
@@ -55,7 +45,6 @@ internal object VersionedFixtures {
         mv.visitEnd()
     }
 
-    /** `public int pick(int x)`: 1 for a positive argument, -1 otherwise. */
     private fun ClassWriter.pick() {
         val mv = visitMethod(Opcodes.ACC_PUBLIC, "pick", "(I)I", null, null)
         mv.visitCode()
@@ -72,7 +61,6 @@ internal object VersionedFixtures {
         mv.visitEnd()
     }
 
-    /** A static `<clinit>` that stores [value] in the static int field [field] of [owner]. */
     private fun ClassWriter.initializer(
         owner: String,
         field: String,
@@ -88,7 +76,6 @@ internal object VersionedFixtures {
         mv.visitEnd()
     }
 
-    /** A class with a static initialiser and an instance method with one branch. */
     fun plain(version: Int): Fixture {
         val name = internalName(version, "Plain")
         val cw = writer(version)
@@ -102,7 +89,6 @@ internal object VersionedFixtures {
         return Fixture(name, cw.toByteArray())
     }
 
-    /** An interface with a static field its static initialiser sets, and one abstract method. */
     fun constants(version: Int): Fixture {
         val name = internalName(version, "Constants")
         val cw = writer(version)
@@ -122,7 +108,6 @@ internal object VersionedFixtures {
         return Fixture(name, cw.toByteArray())
     }
 
-    /** From version 52: an interface with a default method holding a branch and a static method, and a class implementing it. */
     fun defaults(version: Int): List<Fixture> {
         val name = internalName(version, "Defaults")
         val cw = writer(version)
@@ -168,7 +153,6 @@ internal object VersionedFixtures {
         return listOf(Fixture(name, cw.toByteArray()), Fixture(implName, impl.toByteArray()))
     }
 
-    /** From version 49: an annotation type with a static field and its initialiser. */
     fun annotationType(version: Int): Fixture {
         val name = internalName(version, "Marker")
         val cw = writer(version)
@@ -192,7 +176,6 @@ internal object VersionedFixtures {
         return Fixture(name, cw.toByteArray())
     }
 
-    /** A class annotated `@Marker(level = 5)` with [marker], so reading the annotation runs the woven annotation type. */
     fun annotated(
         version: Int,
         marker: Fixture,
@@ -210,7 +193,6 @@ internal object VersionedFixtures {
         return Fixture(name, cw.toByteArray())
     }
 
-    /** A class whose one static method has no branch and that has no static initialiser: only an entry probe. */
     fun straight(version: Int): Fixture {
         val name = internalName(version, "Straight")
         val cw = writer(version)
@@ -229,11 +211,6 @@ internal object VersionedFixtures {
         return Fixture(name, cw.toByteArray())
     }
 
-    /**
-     * Below version 51: a static method `f(int)` that calls one subroutine from two places, the
-     * way a `finally` was compiled. The subroutine holds a branch, so inlining copies it. `hits`
-     * counts the calls that reach the subroutine with a zero argument.
-     */
     fun subroutine(version: Int): Fixture {
         val name = internalName(version, "Finally")
         // ASM cannot compute frames over jsr; a version 50 class without a StackMapTable is verified by type inference.
@@ -273,7 +250,6 @@ internal object VersionedFixtures {
         return Fixture(name, cw.toByteArray())
     }
 
-    /** At version 48 and below: a class carrying a `RuntimeVisibleAnnotations` attribute, which the JVM ignores there. */
     fun annotated(version: Int): Fixture {
         val name = internalName(version, "Annotated")
         val cw = writer(version)

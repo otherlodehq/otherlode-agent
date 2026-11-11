@@ -14,10 +14,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/**
- * A route written in Spring's Kotlin DSL has its handler inside a class of Spring's own, so no
- * method of the application's is the handler and the endpoint reports none.
- */
 class SpringWebMvcDslHandlerTest {
     private fun <T> withModule(block: (EndpointRegistry) -> T): T {
         val instrumentation = ByteBuddyAgent.install()

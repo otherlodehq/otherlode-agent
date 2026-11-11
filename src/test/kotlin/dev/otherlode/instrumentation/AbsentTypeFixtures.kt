@@ -4,15 +4,9 @@ import net.bytebuddy.jar.asm.ClassWriter
 import net.bytebuddy.jar.asm.Label
 import net.bytebuddy.jar.asm.Opcodes
 
-/**
- * Classes written with ASM that name a type no loader provides, so a test can weave and run a class
- * whose optional dependency is absent. Nothing here ever defines [ABSENT_PREFIX]`...`.
- */
 internal object AbsentTypeFixtures {
-    /** The package of every fixture. */
     const val PACKAGE = "com.example.withabsent"
 
-    /** The internal-name prefix of the types that exist nowhere. */
     const val ABSENT_PREFIX = "com/example/absent/"
 
     private fun ClassWriter.constructor(superName: String) {
@@ -28,12 +22,6 @@ internal object AbsentTypeFixtures {
         mv.visitEnd()
     }
 
-    /**
-     * A class implementing `IntUnaryOperator` with a field `Missing<String, Integer>`, a method
-     * returning `Missing<?, ?>` and one returning `Wrapped<?>`. `Missing` and `Wrapped` are absent,
-     * and each is given one count of type arguments. `applyAsInt` returns 1 for a positive argument
-     * and 2 otherwise; a test calls it through the interface, so the JVM never resolves the absent types.
-     */
     fun holder(internalName: String): ByteArray {
         val missing = "L${ABSENT_PREFIX}Missing;"
         val cw = ClassWriter(ClassWriter.COMPUTE_FRAMES)
@@ -85,7 +73,6 @@ internal object AbsentTypeFixtures {
         return cw.toByteArray()
     }
 
-    /** A class named [internalName] extending [superName] and implementing [interfaces], with a constructor and nothing else. */
     fun subtype(
         internalName: String,
         superName: String,
@@ -99,7 +86,6 @@ internal object AbsentTypeFixtures {
         return cw.toByteArray()
     }
 
-    /** A class named [internalName] extending `Object` whose class-level `Signature` attribute is [signature]. */
     fun signed(
         internalName: String,
         signature: String,
@@ -112,7 +98,6 @@ internal object AbsentTypeFixtures {
         return cw.toByteArray()
     }
 
-    /** The classes of [classMerge]: a base, two subclasses and a class whose method returns either. */
     class MergeClasses(
         val base: Pair<String, ByteArray>,
         val first: Pair<String, ByteArray>,
@@ -120,12 +105,6 @@ internal object AbsentTypeFixtures {
         val chooser: Pair<String, ByteArray>,
     )
 
-    /**
-     * `Base`, `A` and `B` (both extending `Base`) and `C`, whose `static Base pick(int)` returns a new
-     * `A` for a positive argument and a new `B` otherwise. The frame at the return merges `A` and `B`,
-     * which is `Base` and not `Object`; the verifier rejects `Object` there. With [returnType]
-     * `java/lang/Object` the method returns that instead, so no frame of the class file names `Base`.
-     */
     fun classMerge(
         packageInternal: String,
         returnType: String = "$packageInternal/Base",
@@ -184,7 +163,6 @@ internal object AbsentTypeFixtures {
         return MergeClasses(base to baseWriter.toByteArray(), a to sub(a, base), b to sub(b, base), c to cw.toByteArray())
     }
 
-    /** One `InnerClasses` entry of [innerClassFixture]: [name], its outer class (null for a local or anonymous one), its simple name and flags. */
     class InnerEntry(
         val name: String,
         val outerName: String?,
@@ -192,11 +170,6 @@ internal object AbsentTypeFixtures {
         val access: Int,
     )
 
-    /**
-     * A class named [internalName] extending `Object` with the class [access] flags, the `InnerClasses`
-     * [entries] and, for a local class, an `EnclosingMethod` of [enclosing] (class, method name,
-     * descriptor), and a constructor.
-     */
     fun innerClassFixture(
         internalName: String,
         access: Int,
@@ -213,11 +186,6 @@ internal object AbsentTypeFixtures {
         return cw.toByteArray()
     }
 
-    /**
-     * A package-private class named [internalName] with a public `foo()` and a public
-     * `take(Missing)Ret`, which names two absent types, and a constructor. A public subclass that does
-     * not override them is the shape for which ByteBuddy adds visibility bridges.
-     */
     fun packagePrivateParent(internalName: String): ByteArray {
         val cw = ClassWriter(ClassWriter.COMPUTE_FRAMES)
         cw.visit(Opcodes.V1_8, Opcodes.ACC_SUPER, internalName, null, "java/lang/Object", null)
@@ -238,10 +206,6 @@ internal object AbsentTypeFixtures {
         return cw.toByteArray()
     }
 
-    /**
-     * A public interface named [internalName] with only abstract methods, so there is nothing to
-     * probe, whose class `Signature` is [signature].
-     */
     fun abstractInterface(
         internalName: String,
         signature: String?,
@@ -261,7 +225,6 @@ internal object AbsentTypeFixtures {
         return cw.toByteArray()
     }
 
-    /** A public interface named [internalName] extending [superInterface], with a static method so that there is something to probe. */
     fun interfaceExtending(
         internalName: String,
         superInterface: String,

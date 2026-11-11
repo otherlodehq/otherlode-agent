@@ -9,18 +9,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Proves each marker in [FrameworkMarkers] before it is listed (ADR 0072), on every release the build
- * pins. Per release, one JVM per scenario, each with `-Xlog:class+load`:
- *
- * - the baseline: the framework's client side, or for a framework with none the framework used
- *   without its routing set up (Javalin: a constant, Undertow: a server answering through a `PathHandler`);
- * - `configured`: routing set up and nothing started;
- * - `serving`: the server up and one request answered.
- *
- * Every class of the marker's set must be absent from the baseline and present when serving.
- * Whether the whole set is present when only configured is the marker's claim: configured, or started.
- */
 class FrameworkMarkerFixtureTest {
     private enum class Claim { CONFIGURED, STARTED }
 

@@ -5,11 +5,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * The agent asks for a `System.Logger` only through the boot loader's `OtherlodeLoggers`. A direct
- * `System.getLogger` from a class the application loader defines makes the JDK create the default
- * `java.util.logging.LogManager` before the application's `main` can choose its own.
- */
 class BootLoggerRuleTest {
     private val allowed = emptySet<String>()
 

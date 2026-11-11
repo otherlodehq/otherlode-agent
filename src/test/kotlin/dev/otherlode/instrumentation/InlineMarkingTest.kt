@@ -13,16 +13,10 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/**
- * Proves inline marking through the real transform pipeline, on the Kotlin
- * `InlineTarget` fixture, rather than only through [dev.otherlode.instrumentation.branch.BranchSiteAnalyzerTest]'s
- * direct bytecode checks.
- */
 class InlineMarkingTest {
     private var installedTransformer: ResettableClassFileTransformer? = null
     private var installedOtherlode: OtherlodeInstrumentation? = null
 
-    /** `InlineTarget.kt` is a Kotlin fixture, so it compiles under the Kotlin test output directory, not the Java one. */
     private fun fixtureLoader() = FixtureClassLoader(arrayOf(File("build/classes/kotlin/test").toURI().toURL()), javaClass.classLoader)
 
     private fun install(
@@ -51,9 +45,7 @@ class InlineMarkingTest {
         val target = Class.forName("com.example.target.InlineTarget", true, fixtureLoader())
         target.getDeclaredConstructor().newInstance()
 
-        // member has an optional parameter, so it also owns an OPTIONAL_ARGUMENT probe with the
-        // same methodName; every lookup below is scoped to the METHOD-kind probe to stay
-        // unambiguous.
+        // member has an optional parameter, so it also owns an OPTIONAL_ARGUMENT probe with the same methodName.
         val probes =
             registry
                 .manifest(ResourceAttributes("test", null, "instance-1", null, "run-1"))
@@ -94,9 +86,6 @@ class InlineMarkingTest {
 
         val target = Class.forName("com.example.target.InlineTarget", true, fixtureLoader())
         val instance = target.getDeclaredConstructor().newInstance()
-        // Reflection always invokes the compiled method directly, the same path a Java caller
-        // takes. A Kotlin caller would instead have copied the body into its own call site and
-        // never reached this method at all.
         target.getMethod("member", Int::class.java, Int::class.java).invoke(instance, 1, 2)
 
         val memberProbe =

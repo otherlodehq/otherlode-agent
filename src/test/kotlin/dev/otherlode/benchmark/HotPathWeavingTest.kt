@@ -11,7 +11,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
-/** Keeps the hot-path suite's setup honest: the woven copy is woven, the unwoven one is not, and both compute the same. */
 class HotPathWeavingTest {
     private val weaver = HotPathWeaver()
 

@@ -11,10 +11,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.test.fail
 
-/**
- * Starts a JVM whose `main` sets `java.util.logging.manager`. The agent must not have fixed the
- * LogManager to the default class before `main` runs, whatever the agent was told to do.
- */
 class JulManagerTest {
     private companion object {
         const val PACKAGE = "jultest"

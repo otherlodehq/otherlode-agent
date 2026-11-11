@@ -3,12 +3,7 @@ package dev.otherlode.instrumentation.endpoints.otelbridge
 import java.text.MessageFormat
 import java.util.ResourceBundle
 
-/**
- * Routes every `System.Logger` in the test JVM to standard error, and keeps each warning or worse
- * the agent logs in [PrefixTestAgent.warnings]. The suites read it to prove the agent warned of
- * nothing, which a `java.util.logging` handler could not: something removes it after the agent
- * starts.
- */
+// Captures through System.Logger because something removes a java.util.logging handler after the agent starts.
 class CapturingLoggerFinder : System.LoggerFinder() {
     override fun getLogger(
         name: String,

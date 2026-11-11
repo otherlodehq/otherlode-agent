@@ -23,12 +23,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Drives references end to end through the real pipeline: an in-scope class compiled
- * against library types, served at run time from a jar this test builds and lists as a dependency,
- * transformed by [OtherlodeInstrumentation], and resolved on the export side through the same
- * [DependencyResolver] the loaded-class count uses.
- */
 class ReferenceInstrumentationTest {
     @TempDir
     lateinit var dir: Path
@@ -42,7 +36,6 @@ class ReferenceInstrumentationTest {
         installedTransformer?.let { installedOtherlode?.uninstall(ByteBuddyAgent.install(), it) }
     }
 
-    /** Copies the compiled library types into a jar, leaving out [excluded], with a pom so the listing names it. */
     private fun libraryJar(excluded: Set<String>): Path {
         val libraryDir = File("build/classes/java/test/com/example/library")
         val entries =
@@ -53,7 +46,6 @@ class ReferenceInstrumentationTest {
         return TestJars.write(dir.resolve("widget-1.0.jar"), listOf(TestJars.pom("org.acme", "widget", "1.0")) + entries)
     }
 
-    /** A directory holding only the fixture's own class file, so nothing else resolves from a directory. */
     private fun fixtureDirectory(): Path {
         val classes = dir.resolve("classes")
         val target = classes.resolve("com/example/target/WidgetUser.class")

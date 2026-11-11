@@ -43,7 +43,7 @@ public final class OtherlodeEndpoints {
      */
     public static final int TEMPLATE_SERVLET_PATTERN = 2;
 
-    /** Implemented by the agent; backs every entry point below with the real endpoint registry. */
+    /** Implemented by the agent; backs the entry points that look up, record, count and disable endpoints. */
     public interface Resolver {
         Object lookup(Object key);
 
@@ -266,8 +266,8 @@ public final class OtherlodeEndpoints {
     }
 
     /**
-     * Installs the resolver every entry point delegates to, then replays the calls buffered before
-     * it in arrival order. A second call replaces the resolver and has nothing to replay.
+     * Installs the resolver, then replays the calls buffered before it in arrival order. A second call replaces
+     * the resolver and has nothing to replay.
      */
     public static void install(Resolver newResolver) {
         synchronized (BUFFER_LOCK) {
@@ -455,9 +455,9 @@ public final class OtherlodeEndpoints {
      * Maps each route an OpenTelemetry route prefixer returned to the route it was given, so the
      * route a route bridge reads at span end resolves back to the one a framework module declared.
      *
-     * <p>The table holds at most {@code capacity} entries; once full it adds nothing and keeps
-     * what it has. A prefixed route given by two different routes is ambiguous and resolves to
-     * itself. Calls never throw.
+     * <p>Once the table holds {@code capacity} entries it adds no new route and keeps what it has,
+     * though concurrent calls can each add one past it. A prefixed route given by two different routes is
+     * ambiguous and resolves to itself. Calls never throw.
      */
     public static final class RoutePrefixTable {
         private static final int MAX_STEPS = 8;
@@ -577,8 +577,8 @@ public final class OtherlodeEndpoints {
     }
 
     /**
-     * Whether {@link #resourceServed} marked {@code request} on this thread. The mark is cleared
-     * either way, so it never outlives the request it was set for.
+     * Whether {@link #resourceServed} marked {@code request} on this thread. Any mark on this thread
+     * is cleared either way.
      */
     public static boolean takeResourceServed(Object request) {
         WeakReference<Object> mark = RESOURCE_SERVED.get();
@@ -716,7 +716,10 @@ public final class OtherlodeEndpoints {
     /** Any other throw from the module's advice. */
     public static final int KIND_ADVICE_FAILED = 2;
 
-    /** The module's own {@code transform} threw, or a framework class it hooks failed to weave. */
+    /**
+     * The module's matcher or its own {@code transform} threw, a framework class it hooks failed to
+     * weave, or the loader of that class cannot see this package.
+     */
     public static final int KIND_TRANSFORM_FAILED = 3;
 
     /** Walking a framework's route objects threw. */
@@ -828,7 +831,7 @@ public final class OtherlodeEndpoints {
         }
     }
 
-    /** Whether {@link #moduleFailed} or {@link #moduleDisabled} has disabled this module. */
+    /** Whether this module is disabled, by {@link #moduleFailed}, {@link #moduleDisabled} or a full replay buffer. */
     public static boolean isDisabled(String module) {
         return isDisabledFast(module);
     }

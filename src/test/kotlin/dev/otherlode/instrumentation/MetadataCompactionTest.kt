@@ -14,7 +14,6 @@ import kotlin.test.assertNotSame
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
-/** Pins the two rules metadata is built with: repeated names share one instance, and held lists carry no slack. */
 class MetadataCompactionTest {
     private var installedTransformer: ResettableClassFileTransformer? = null
     private var installedOtherlode: OtherlodeInstrumentation? = null

@@ -6,19 +6,12 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/**
- * Proves [BranchSiteAnalyzer]'s Scala default-getter resolution directly against real
- * `scalac` output, for both Scala 3 and Scala 2.13 fixtures compiled by the sibling
- * `:fixtures-scala3` and `:fixtures-scala2` modules. A getter is found regardless of the method
- * filter, the same way a Kotlin `$default` method is: see [analyzeFixture].
- */
 class ScalaGetterResolutionTest {
     private fun analyzeFixture(
         module: String,
         simpleName: String,
     ) = BranchSiteAnalyzer.analyze(ScalaFixtures.classBytes(module, simpleName)) { _, _ -> false }
 
-    /** A lookup over the fixture module's own compiled output, resolving an internal name to its class's bytes. */
     private fun lookupFor(module: String): (String) -> ByteArray? =
         { internalName ->
             try {
@@ -33,8 +26,6 @@ class ScalaGetterResolutionTest {
         simpleName: String,
         lookup: (String) -> ByteArray? = lookupFor(module),
     ) = BranchSiteAnalyzer.analyze(ScalaFixtures.classBytes(module, simpleName), lookup) { _, _ -> false }
-
-    // --- Shared resolution rules, proven once on the Scala 3 fixture and once on Scala 2.13's. ---
 
     private fun `plain overload disambiguation by return type`(module: String) {
         val analysis = analyzeFixture(module, "Simple")
@@ -247,15 +238,6 @@ class ScalaGetterResolutionTest {
     fun `scala 2 - the trait's static self-parameter forwarder is not treated as a getter`() =
         `the trait's static self-parameter forwarder is not treated as a getter`("scala2")
 
-    // --- Cases that genuinely differ across the two compilers; see the report for the "did not
-    // survive contact" note this pins down. ---
-
-    /**
-     * Confirmed via `javap -v`: Scala 2.13.15 does not mark a trait's mixin forwarder methods
-     * synthetic or bridge, unlike Scala 3. `TrImpl`'s own `t$default$1` is therefore a genuine,
-     * independently resolvable getter under Scala 2, targeting `TrImpl`'s own forwarder `t`, not
-     * only Tr's.
-     */
     @Test
     fun `scala 2 - a bare trait implementer's own mixin forwarder is itself a resolvable getter`() {
         val analysis = analyzeFixture("scala2", "TrImpl")
@@ -267,10 +249,6 @@ class ScalaGetterResolutionTest {
         assertTrue(site.overridable, "TrImpl's own forwarder t is not final, private, static, or on a final class")
     }
 
-    /**
-     * Scala 3's mixin forwarders are woven as synthetic bridges (`ACC_SYNTHETIC | ACC_BRIDGE`),
-     * so `TrImpl` carries no candidate getter of its own; only `Tr`'s own default method does.
-     */
     @Test
     fun `scala 3 - a bare trait implementer's mixin forwarder is synthetic and yields no getter`() {
         val analysis = analyzeFixture("scala3", "TrImpl")
@@ -279,12 +257,6 @@ class ScalaGetterResolutionTest {
         assertEquals(emptyList(), analysis.unresolvedScalaGetterSites)
     }
 
-    /**
-     * An `inline def`'s getter is still emitted and called by every omitting caller, but the
-     * function itself has no bytecode in Scala 3, so no same-class target ever resolves. Chunk
-     * two's scope does not cover this either, since it is not a cross-class case: there is no
-     * target at all.
-     */
     @Test
     fun `scala 3 - an inline def with a default has no bytecode target, so its getter is unresolved`() {
         val analysis = analyzeFixture("scala3", "InlineHost\$")
@@ -293,11 +265,6 @@ class ScalaGetterResolutionTest {
         assertEquals(listOf("inlineF\$default\$2" to "()I"), analysis.unresolvedScalaGetterSites)
     }
 
-    /**
-     * The extension receiver `n` is an ordinary leading JVM parameter, carried into the getter's
-     * own parameter list the same way a curried list's parameters are. `width`, not the receiver,
-     * is the optional parameter being resolved.
-     */
     @Test
     fun `scala 3 - an extension method's default counts the receiver as an ordinary parameter`() {
         val analysis = analyzeFixture("scala3", "Extensions\$")
@@ -311,7 +278,6 @@ class ScalaGetterResolutionTest {
         assertFalse(site.overridable, "Extensions is a module; its class is final")
     }
 
-    /** `copy$default$N` re-kinds onto `copy` the same way any other same-class getter does. */
     private fun `a case class's copy defaults resolve onto copy, like any other same-class getter`(module: String) {
         val analysis = analyzeFixture(module, "Cc")
 
@@ -335,11 +301,6 @@ class ScalaGetterResolutionTest {
     fun `scala 2 - a case class's copy defaults resolve onto copy`() =
         `a case class's copy defaults resolve onto copy, like any other same-class getter`("scala2")
 
-    /**
-     * Scala 2.13 gives a case class companion module an `apply$default$N` accessor beside its own
-     * `apply`, in the same class; the general same-class rule resolves it without any special
-     * casing for case classes.
-     */
     @Test
     fun `scala 2 - apply defaults re-kind onto Cc dollar's own apply`() {
         val analysis = analyzeFixture("scala2", "Cc\$")
@@ -354,20 +315,12 @@ class ScalaGetterResolutionTest {
         assertEquals(1, second.parameterIndex)
     }
 
-    /**
-     * Scala 3 resolves both `Cc(...)` and `Cc.apply(...)` through the constructor's own default
-     * getters instead of generating a separate `apply$default$N`, so `Cc$` carries no
-     * `apply$default$N` at all; only `$lessinit$greater$default$N` and `copy$default$N` appear.
-     */
     @Test
     fun `scala 3 - Cc dollar has no apply defaults of its own`() {
         val analysis = analyzeFixture("scala3", "Cc\$")
 
         assertTrue(analysis.scalaGetterSites.none { it.getterName.startsWith("apply\$default\$") })
     }
-
-    // --- Constructor default getters cross the class boundary from the companion module to the
-    // class the module compiles for.
 
     private fun `constructor getters on the companion resolve across the class boundary to Cc's own init`(module: String) {
         val analysis = analyzeFixtureWithLookup(module, "Cc\$")
@@ -423,8 +376,6 @@ class ScalaGetterResolutionTest {
             })
 
         assertTrue(analysis.unresolvedScalaGetterSites.size > 1, "Cc has more than one constructor default, so more than one getter asks")
-        // Other passes may ask the same lookup about other owners; only the companion's own count
-        // is under test.
         assertEquals(1, asked["com/example/scalatarget/Cc"], "asked $asked")
     }
 

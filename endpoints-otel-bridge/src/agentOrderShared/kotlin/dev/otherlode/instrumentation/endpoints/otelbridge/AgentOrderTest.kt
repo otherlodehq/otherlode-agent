@@ -4,10 +4,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Run with OpenTelemetry's agent listed before this one and after it. Whichever loads first,
- * Spring MVC counts a request and no endpoint module is switched off and no class goes unwoven.
- */
 class AgentOrderTest {
     @Test
     fun `a Spring MVC request is counted and no module is disabled`() {

@@ -23,10 +23,6 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
-/**
- * The `<clinit>` the class file declares gets a returned slot and a threw slot beside its entry
- * probe (ADR 0071). Each test weaves a small ASM class and loads it woven and unwoven.
- */
 class InitializerSlotsTest {
     private val resource = ResourceAttributes("test", null, "instance-1", null, "run-1")
 
@@ -531,7 +527,7 @@ class InitializerSlotsTest {
     private companion object {
         const val CLINIT = "<clinit>()V"
 
-        /** An increment in these fixtures: `ldc` of the array (2), `iconst_n` of the slot (1), DUP2 LALOAD LCONST_1 LADD LASTORE (5). */
+        // ldc of the array (2), iconst_n of the slot (1), then DUP2 LALOAD LCONST_1 LADD LASTORE (5).
         const val PROBE_BYTES = 8
 
         const val ATHROW_BYTES = 1

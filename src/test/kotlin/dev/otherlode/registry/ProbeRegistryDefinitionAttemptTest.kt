@@ -12,11 +12,6 @@ class ProbeRegistryDefinitionAttemptTest {
     private val resource = ResourceAttributes("checkout", null, "instance-1", null, "run-1")
     private val name = "com.example.Foo"
 
-    /**
-     * A registry whose attempt capture and attempt check are scripted, so a test sets the rules
-     * without a thread. Each [register] takes the next attempt from [next], or none when it is
-     * null, and an attempt reads as ended once it is in [ended].
-     */
     private class ScriptedRegistry : ProbeRegistry(confirmsDefinitions = true) {
         var next: DefinitionAttempt? = null
         val ended: MutableSet<DefinitionAttempt> = Collections.newSetFromMap(IdentityHashMap())

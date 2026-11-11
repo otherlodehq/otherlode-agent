@@ -14,18 +14,7 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 
-/**
- * Proves the branch key end to end: loads `EarlierMethodEditV1` and `EarlierMethodEditV2` through
- * the real transform, both under one common class name, and shows that `second`'s branch key
- * survives the edit while its `branchIndex` does not.
- *
- * The two builds cannot share a name in one classloader, since the JVM's class identity is
- * (classloader, name); each is instead defined under the common name in its own classloader.
- * `ProbeRegistry` keys its arrays by (class name, layout hash, classloader), so this yields two
- * separate manifest entries for what reads as the same class name.
- */
 class BranchKeyEndToEndTest {
-    /** Defines arbitrary bytes as a class, the way a JVM classloader would, without touching disk. */
     private class ByteArrayClassLoader(
         parent: ClassLoader,
     ) : ClassLoader(parent) {
@@ -79,8 +68,7 @@ class BranchKeyEndToEndTest {
 
         val v1SecondBranches = commonProbes.filter { it.classId == classIds[0] && it.methodName == "second" && it.kind == ProbeKind.BRANCH }
         val v2SecondBranches = commonProbes.filter { it.classId == classIds[1] && it.methodName == "second" && it.kind == ProbeKind.BRANCH }
-        // classIds are assigned by registration order, which may not match v1/v2; work it out
-        // from which class has a branch probe on `first` at all.
+        // Only v2's `first` has a conditional, so whichever class id has a branch probe on `first` is v2.
         val firstHasFirstBranch = commonProbes.any { it.classId == classIds[0] && it.methodName == "first" && it.kind == ProbeKind.BRANCH }
         val (v1Branches, v2Branches) =
             if (firstHasFirstBranch) v2SecondBranches to v1SecondBranches else v1SecondBranches to v2SecondBranches
@@ -125,7 +113,6 @@ class BranchKeyEndToEndTest {
         val manifest = registry.manifest(ResourceAttributes("test", null, "instance-1", null, "run-1"))
         val methodProbes = manifest.probes.filter { it.className == commonName && it.kind == ProbeKind.METHOD }
         assertEquals(2, methodProbes.map { it.classId }.distinct().size)
-        // Only v2's first has a conditional, which tells the two builds apart.
         val v2ClassId = methodProbes.single { it.methodName == "first" && it.branchSites.isNotEmpty() }.classId
         val v1Site = methodProbes.single { it.classId != v2ClassId && it.methodName == "second" }.branchSites.single()
         val v2Site = methodProbes.single { it.classId == v2ClassId && it.methodName == "second" }.branchSites.single()

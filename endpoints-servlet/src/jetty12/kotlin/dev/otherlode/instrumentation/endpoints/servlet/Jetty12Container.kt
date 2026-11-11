@@ -17,10 +17,8 @@ import java.util.EnumSet
 
 fun containerUnderTest(): ServletContainer = Jetty12Container()
 
-/** An adopter's subclass of the container's default servlet. */
 class MyDefaultServlet : DefaultServlet()
 
-/** Embedded Jetty 12 with the `ee10` servlet module, in the release the suite's dependencies select. */
 class Jetty12Container : ServletContainer {
     override val defaultServlets: Set<String> =
         setOf(

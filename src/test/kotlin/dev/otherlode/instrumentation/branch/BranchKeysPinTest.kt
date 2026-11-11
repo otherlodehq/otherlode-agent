@@ -5,7 +5,6 @@ import dev.otherlode.export.ConditionPartKind
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-/** Pins the exact key text, since consumers join branch and site keys across builds (ADR 0031). */
 class BranchKeysPinTest {
     private val conditional =
         BranchSite("check", "(I)Z", line = 3, siteIndex = 0, conditionFingerprint = "if:x>0")

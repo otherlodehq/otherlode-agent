@@ -8,19 +8,11 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Proves each switch lowering the analyser reads back to source cases, against real compiled fixtures:
- * `SwitchJavaTarget.java`, `SwitchTarget.kt` and each Scala fixture module's `Switches.scala`.
- * Every shape was confirmed with `javap -c -l -p` on these fixtures first. The same lowerings over
- * each compiler in the matrix, javac 17's throwing default included, are in `JavacMatrixTest` and
- * `KotlincMatrixTest`.
- */
 class SwitchLoweringTest {
     private fun code(text: String) = ConditionPart(ConditionPartKind.CODE, text)
 
     private fun literal(text: String) = ConditionPart(ConditionPartKind.STRING_LITERAL, text)
 
-    /** Reads another test fixture's bytes by internal name, the way the agent reads a class through its loader. */
     private val fixtureLookup: (String) -> ByteArray? = { internalName ->
         listOf("kotlin", "java")
             .map { File("build/classes/$it/test/$internalName.class") }
@@ -37,8 +29,6 @@ class SwitchLoweringTest {
 
     private val java by lazy { analysis(javaBytes()) }
     private val kotlin by lazy { analysis(kotlinBytes()) }
-
-    // --- javac ---
 
     @Test
     fun `javac enum switch - one rebuilt site with each constant as a label, the default last and the subject as condition`() {
@@ -139,8 +129,6 @@ class SwitchLoweringTest {
         assertEquals(listOf(code("null"), code("String")), site.outcomes.take(2).map { it.caseLabel.single() })
     }
 
-    // --- kotlinc ---
-
     @Test
     fun `kotlinc enum when - one rebuilt site with each constant as a label, else last and the subject as condition`() {
         val site = kept(kotlin, "enumWithElse").single()
@@ -210,8 +198,6 @@ class SwitchLoweringTest {
     fun `kotlinc string when - the last check in each hash bucket lists no outcome only a hash collision can take`() {
         val sites = kept(kotlin, "stringWhen")
 
-        // Aa and BB share a hash: Aa's not-equal side reaches BB's check, which a real "BB" takes.
-        // Every other not-equal side is reached only by a different string with the same hash.
         assertEquals(
             listOf(
                 listOf(BranchRole.TAKEN, BranchRole.FALL_THROUGH),
@@ -254,8 +240,6 @@ class SwitchLoweringTest {
         )
     }
 
-    // --- scalac ---
-
     @Test
     fun `scalac 2 string match - the null check and hash switch are dropped, and each equals check reads subject against its literal`() {
         val analysis = analysis(ScalaFixtures.classBytes("scala2", "Switches"))
@@ -265,7 +249,6 @@ class SwitchLoweringTest {
             listOf("closed", "Aa", "BB", "done", "open").map { listOf(code("status == "), literal(it)) },
             kept(analysis, "stringMatch").map { it.site.condition },
         )
-        // scalac 2's hash-switch default is a goto of its own; "Aa" and "BB" share a bucket.
         assertEquals(listOf(1, 2, 1, 1, 1), kept(analysis, "stringMatch").map { it.outcomes.size })
     }
 
@@ -303,9 +286,6 @@ class SwitchLoweringTest {
         }
     }
 
-    // --- a switch on String.hashCode() ---
-
-    /** Whether each kept site of [method] in [analysis] is marked, as its payload sends it. */
     private fun hashCodeMarks(
         analysis: BranchSiteAnalyzer.Analysis,
         method: String,
@@ -369,8 +349,6 @@ class SwitchLoweringTest {
         val others = java.keptSites.filter { it.site.methodName != "handWrittenHashSwitch" }
         assertTrue(others.isNotEmpty() && others.none { it.toPayload().stringHashCodeSwitch })
     }
-
-    // --- fallback ---
 
     @Test
     fun `an enum map class the lookup cannot read leaves the switch as a plain site with numeric case keys`() {

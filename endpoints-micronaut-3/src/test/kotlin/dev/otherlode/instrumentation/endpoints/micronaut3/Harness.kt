@@ -12,10 +12,6 @@ import java.net.http.HttpResponse
 import java.time.Duration
 import kotlin.test.assertTrue
 
-/**
- * Runs [block] with [Micronaut3Module] installed on a registry of its own, then asserts the module
- * did not switch itself off unless [expectNoneDisabled] is false.
- */
 fun <T> withModule(
     expectNoneDisabled: Boolean = true,
     block: (EndpointRegistry) -> T,
@@ -38,16 +34,12 @@ fun <T> withModule(
 @Volatile
 private var installed: EndpointInstrumentation? = null
 
-/** Runs what the agent runs before it builds a manifest, on the instrumentation [withModule] installed. */
 fun beforeManifest(
     graceMillis: Long = 0,
     finalFlush: Boolean = false,
 ) = checkNotNull(installed) { "no module is installed" }.beforeManifest(graceMillis, finalFlush)
 
-/**
- * Forgets that the seam switched [module] off. The seam keeps that for the life of the JVM, and
- * the tests of one module share a JVM.
- */
+// The seam keeps the disabled state for the life of the JVM, and the tests of one module share a JVM.
 fun forgetDisabled(module: String) {
     val seam = Class.forName("dev.otherlode.bootstrap.OtherlodeEndpoints")
     listOf("DISABLED_MODULES", "FAILURE_LOGGED").forEach { field ->
@@ -57,11 +49,11 @@ fun forgetDisabled(module: String) {
     }
 }
 
-/** Starts an embedded server on a free port with [properties], runs [block] with its port and stops it. */
 fun <T> serve(
     properties: Map<String, Any> = emptyMap(),
     block: (Int) -> T,
 ): T {
+    // A fresh client per server, so no request reuses a pooled connection an earlier server on the same port closed.
     client = newClient()
     val defaults =
         mapOf<String, Any>(
@@ -77,10 +69,6 @@ fun <T> serve(
     }
 }
 
-/**
- * Starts the server, again when it lost the port Micronaut picked for it to another process before
- * it could bind, up to three attempts.
- */
 private fun startOnFreePort(properties: Map<String, Any>): EmbeddedServer {
     repeat(2) {
         try {
@@ -97,11 +85,6 @@ private var client = newClient()
 
 private fun newClient(): HttpClient = HttpClient.newBuilder().version(HttpClient.Version.HTTP_1_1).build()
 
-/**
- * Sends one request to a server on [port] and returns the status code. [serve] replaces the client,
- * so a server on a port an earlier test used is never sent a request on a connection that server
- * closed.
- */
 fun send(
     port: Int,
     method: String,
@@ -119,7 +102,6 @@ fun send(
     return client.send(request.build(), HttpResponse.BodyHandlers.discarding()).statusCode()
 }
 
-/** The hit count of every endpoint that has one, keyed `"<verb> <template>"`. */
 fun hits(registry: EndpointRegistry): Map<String, Long> {
     val endpoints = registry.endpoints().associateBy { it.endpointId }
     return registry
@@ -128,5 +110,4 @@ fun hits(registry: EndpointRegistry): Map<String, Long> {
         .associate { delta -> endpoints.getValue(delta.endpointId).let { "${it.verb} ${it.routeTemplate}" } to delta.hitsTotal }
 }
 
-/** Every declared or discovered endpoint, as `"<verb> <template>"`. */
 fun identities(registry: EndpointRegistry): Set<String> = registry.endpoints().map { "${it.verb} ${it.routeTemplate}" }.toSet()

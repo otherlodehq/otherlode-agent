@@ -28,34 +28,9 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Keeps weaving from pushing a method past HotSpot's limits. HotSpot never compiles a method whose
- * code is over [HUGE_METHOD_LIMIT] bytes (`DontCompileHugeMethods` is on by default), so a method
- * that crosses it because of probes runs interpreted for the life of the process. The class file
- * format caps a method at 65535 bytes, and weaving a method past it fails the class with
- * `MethodTooLargeException`.
- *
- * [SizeGuard] keeps weaving under both limits by bounding each method's woven length and leaving a
- * method that would cross one with its entry probe only. The sweep still checks, as a net, that no
- * corpus method crosses 8000, and that the bound is never below the woven length.
- *
- * The sweep weaves every class of every benchmark corpus through the real transformer. It also
- * reports, without asserting, how many methods weaving pushes past `FreqInlineSize` (325 bytes),
- * above which a hot method is no longer inlined, and the largest woven method per corpus. The
- * report goes to the file named by the `otherlode.codesize.report` system property.
- *
- * So the sweep cannot pass by weaving nothing, at least [MIN_WOVEN_OF_CORPUS] of each corpus's
- * classes must weave, and at least [MIN_WOVEN_SHARE] of the classes the transformer woven or failed
- * on. A class the agent refuses because its own superclass or interface is not on its class set's
- * classpath, such as spring-webmvc's JSP tags, is left out of that share when it also fails to load
- * in a fresh loader for want of a class, since no JVM with that classpath could define it. A type
- * absent from a field or method signature does not excuse a class: a decoration describes nothing
- * the class names, so the class weaves. At most [MAX_EXCUSED_SHARE] of a corpus may be left out, so a wrong classpath cannot excuse everything.
- */
 class CodeSizeLimitsTest {
     private val resource = ResourceAttributes("test", null, "instance-1", null, "run-1")
 
-    /** One method's code length in the class file as written and as woven. */
     private data class MethodSize(
         val className: String,
         val method: String,
@@ -68,7 +43,6 @@ class CodeSizeLimitsTest {
         val crossesInlineLimit get() = original <= FREQ_INLINE_SIZE && woven > FREQ_INLINE_SIZE
     }
 
-    /** What weaving one corpus produced. */
     private class SweepResult(
         val corpus: String,
         val classes: Int,
@@ -117,7 +91,6 @@ class CodeSizeLimitsTest {
                         accepted++
                         val before = codeLengths(bytes)
                         val after = codeLengths(result)
-                        // A method with probes always grows, so the methods that grew are the ones the agent probes.
                         val grown = before.filter { (method, length) -> (after[method] ?: length) > length }.keys
                         val analysis =
                             BranchSiteAnalyzer.analyze(
@@ -125,7 +98,6 @@ class CodeSizeLimitsTest {
                                 { name -> loader.getResourceAsStream("$name.class")?.use { it.readBytes() } },
                                 corpus.includePackages,
                             ) { name, descriptor -> (name + descriptor) in grown }
-                        // A `$default` method and a type initializer grow by probes of their own, which the branch guard does not bound.
                         val probed =
                             grown.filterTo(mutableSetOf()) { method ->
                                 method != "<clinit>()V" &&
@@ -150,7 +122,6 @@ class CodeSizeLimitsTest {
                         }
                     }
                 }
-                // The transformer both records a skip and throws for a class it cannot weave, so a class is keyed once by its dotted name.
                 val failed = sortedMapOf<String, String>()
                 failed.putAll(thrown)
                 for (s in registry.manifest(resource).skippedClasses) failed[s.className] = s.reason.replace('\n', ' ')
@@ -219,12 +190,6 @@ class CodeSizeLimitsTest {
         }
     }
 
-    /**
-     * Whether [reason] is the agent refusing a class for a supertype that [loader] cannot see either:
-     * an optional dependency the class set does not carry, so the class could not be defined in any
-     * JVM with this classpath. A supertype the loader does provide is not excused, since refusing
-     * the class for it would be the agent's own fault.
-     */
     private fun namesAbsentType(
         reason: String,
         loader: ClassLoader,
@@ -233,10 +198,6 @@ class CodeSizeLimitsTest {
         return loader.getResource(typeName.replace('.', '/') + ".class") == null
     }
 
-    /**
-     * Whether [className] fails to load and initialise in a fresh loader over [urls]. A class the JVM
-     * defines and runs without the agent is the agent's loss, not an excused one.
-     */
     private fun failsToLoad(
         className: String,
         urls: List<java.net.URL>,
@@ -252,14 +213,12 @@ class CodeSizeLimitsTest {
             }
         }
 
-    /** One synthetic class woven through the real transformer, with what the weave logged. */
     private class Woven(
         val name: String,
         val original: ByteArray,
         val woven: ByteArray,
         val registry: ProbeRegistry,
         val warnings: List<String>,
-        /** The loader the transformer was given, which the registry keys the class's array by. */
         val loader: ClassLoader,
     ) {
         val originalLength get() = checkNotNull(codeLengths(original)["big(I)I"])
@@ -278,11 +237,6 @@ class CodeSizeLimitsTest {
         blocks: Int,
     ): Woven = weave(name, hugeClass(name, blocks))
 
-    /**
-     * Weaves [original] through the real transformer. [receivedOf] gives the bytes the transformer
-     * is handed when an earlier transformer has changed them: the agent's byte capture sees those,
-     * and the class file stays what the loader serves.
-     */
     private fun weave(
         name: String,
         original: ByteArray,
@@ -335,13 +289,11 @@ class CodeSizeLimitsTest {
         }
     }
 
-    /** Runs `big` of the woven class in the loader the transformer saw, for each argument. */
     private fun runWoven(
         w: Woven,
         arguments: IntRange,
     ): List<Int> = call(w.loader.loadClass(w.name.replace('/', '.')), arguments)
 
-    /** Runs `big` of the unwoven class in a loader of its own, for each argument. */
     private fun runOriginal(
         w: Woven,
         arguments: IntRange,
@@ -511,7 +463,6 @@ class CodeSizeLimitsTest {
         const val TOO_LARGE_BLOCKS = 2000
         val UNRESOLVED_TYPE = Regex("cannot be defined: its supertype (\\S+) could not be read from its loader")
 
-        /** Whether [reason] is ASM's message for a method or class the class file format cannot hold, as the skip records it. */
         fun isTooLarge(reason: String): Boolean = "Method too large: " in reason || "Class too large: " in reason
 
         const val REPORT_PROPERTY = "otherlode.codesize.report"
@@ -525,11 +476,9 @@ class CodeSizeLimitsTest {
         const val QUIET_LENGTH = 7990
         const val GROWN_PADDING = 62000
 
-        /** Grows the received method to 7504 bytes: under 8000 itself, while its bound with probes crosses 8000. */
         const val COMPILE_PADDING = 6500
         const val MAX_CODE_LENGTH = 65535
 
-        /** A class with `static int big(int x)` holding [blocks] blocks of `if (x == k) y++`, ten bytes each. */
         fun hugeClass(
             internalName: String,
             blocks: Int,
@@ -567,7 +516,6 @@ class CodeSizeLimitsTest {
             return cw.toByteArray()
         }
 
-        /** A class whose `static int big(int)` is [length] bytes of code: `nop`s, `iload_0` and `ireturn`. */
         fun nopBigClass(
             internalName: String,
             length: Int,
@@ -586,13 +534,11 @@ class CodeSizeLimitsTest {
             return cw.toByteArray()
         }
 
-        /** [bytes] with [nops] `nop`s at the start of `big`, as a transformer ahead of this agent might leave. */
         fun padded(
             bytes: ByteArray,
             nops: Int,
         ): ByteArray = rewriteBig(bytes) { repeat(nops) { visitInsn(Opcodes.NOP) } }
 
-        /** [bytes] with a conditional jump at the start of `big` that goes nowhere, so its branches no longer pair. */
         fun withLeadingBranch(bytes: ByteArray): ByteArray =
             rewriteBig(bytes) {
                 val next = Label()
@@ -632,7 +578,6 @@ class CodeSizeLimitsTest {
             return writer.toByteArray()
         }
 
-        /** The `Code` attribute length of each method, keyed `name + descriptor`, read straight from the class file. */
         fun codeLengths(bytes: ByteArray): Map<String, Int> {
             val d = DataInputStream(ByteArrayInputStream(bytes))
             d.readInt()

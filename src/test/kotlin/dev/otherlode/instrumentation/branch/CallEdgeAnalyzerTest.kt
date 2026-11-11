@@ -11,19 +11,12 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/**
- * Proves [BranchSiteAnalyzer]'s call-edge and supertype recording: raw candidates from
- * `invokestatic`/`invokevirtual`/`invokespecial`/`invokeinterface` and `invokedynamic`, the
- * same-class virtual override, the in-scope filter, self-edge dropping, deduplication, and both
- * same-class and cross-class `$default` pass-through resolution.
- */
 class CallEdgeAnalyzerTest {
     private fun readTargetBytes(simpleName: String): ByteArray =
         File("build/classes/kotlin/test/com/example/target/$simpleName.class").readBytes()
 
     private val includePackages = listOf("com.example.target", "com.example.other")
 
-    /** Resolves another class's bytes by internal name, the way [dev.otherlode.instrumentation.OtherlodeInstrumentation] does. */
     private val lookup: (String) -> ByteArray? = { internalName ->
         val dottedName = internalName.replace('/', '.')
         listOf("build/classes/kotlin/test", "build/classes/java/test")
@@ -41,10 +34,6 @@ class CallEdgeAnalyzerTest {
             emptyList(),
         ) { _, _ -> true }
 
-    /**
-     * Analyses another Kotlin fixture class the same way, with the real cross-class [lookup] by
-     * default so pass-through resolution runs; [useLookup] false simulates an unreadable owner.
-     */
     private fun analyzeTarget(
         simpleName: String,
         useLookup: Boolean = true,
@@ -222,15 +211,8 @@ class CallEdgeAnalyzerTest {
         val wideScope = BranchSiteAnalyzer.analyze(bytes, includePackages = includePackages) { _, _ -> true }
         val narrowScope = BranchSiteAnalyzer.analyze(bytes, includePackages = listOf("com.example.target.CallEdgeTarget")) { _, _ -> true }
 
-        // com.example.other is out of scope under the narrower list, so callsOtherClass's edges
-        // differ between the two analyses...
         assertTrue(wideScope.callsOf("callsOtherClass", "()I").isNotEmpty())
         assertTrue(narrowScope.callsOf("callsOtherClass", "()I").isEmpty())
-        // ...while every input OtherlodeInstrumentation actually feeds into ProbeLayoutHash.of --
-        // branch sites and default sites, read straight off the bytecode -- stays identical, since
-        // neither depends on includePackages/excludePackages. Method signatures are unaffected the
-        // same way, since they come from ByteBuddy's own declaredMethods filter, not from this
-        // analysis at all.
         assertEquals(wideScope.sites, narrowScope.sites)
         assertEquals(wideScope.defaultSites, narrowScope.defaultSites)
     }
@@ -246,7 +228,6 @@ class CallEdgeAnalyzerTest {
 
     @Test
     fun `a same-class call to an abstract method stays a virtual edge instead of vanishing as a pass-through`() {
-        // The real method matcher never probes an abstract method, so it is not eligible here either.
         val analysis =
             BranchSiteAnalyzer.analyze(readTargetBytes("TemplateTarget"), includePackages = includePackages) { name, _ -> name != "step" }
 
@@ -445,8 +426,6 @@ class CallEdgeAnalyzerTest {
 
     @Test
     fun `a direct call to a suspend lambda's invoke passes through to invokeSuspend, never naming create or invoke`() {
-        // Kotlin cannot name a lambda class, so the caller is built by hand: a method that calls
-        // invoke(Continuation) on CoroutineTargetKt$runLambda$1 directly.
         val lambda = "com/example/target/CoroutineTargetKt\$runLambda\$1"
         val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
         writer.visit(
@@ -476,9 +455,6 @@ class CallEdgeAnalyzerTest {
 
         val analysis = BranchSiteAnalyzer.analyze(writer.toByteArray(), lookup, includePackages, emptyList()) { _, _ -> true }
 
-        // invoke passes through to create, whose `new` of the lambda class reaches its constructor
-        // and, as a body class, invokeSuspend; using a pass-through on the lambda class is a use of
-        // it, hence <clinit>; and invoke itself calls invokeSuspend.
         val owner = lambda.replace('/', '.')
         assertEquals(
             listOf(
@@ -495,8 +471,6 @@ class CallEdgeAnalyzerTest {
 
     @Test
     fun `a Scala 3 lifted lambda name marks a lambda body only in a class scalac compiled`() {
-        // A class with a method named like a lambda body scalac 3 lifted out of a nested class, and
-        // no invokedynamic naming it. Without a Scala attribute nothing may flag it.
         val name = "com\$example\$Outer\$Inner\$\$_\$bump\$\$anonfun\$1"
         val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
         writer.visit(

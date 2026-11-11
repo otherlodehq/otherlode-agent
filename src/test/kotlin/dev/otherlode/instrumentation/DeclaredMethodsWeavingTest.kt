@@ -16,11 +16,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
-/**
- * Pins that the method tier weaves the methods a class declares, whatever its supertypes declare. The
- * tier builds ByteBuddy with the declared-methods graph, so two methods that differ only in return type
- * stay two methods, and a class whose signatures the default graph cannot erase still weaves.
- */
 class DeclaredMethodsWeavingTest {
     private companion object {
         const val PACKAGE = "com.example.generated"

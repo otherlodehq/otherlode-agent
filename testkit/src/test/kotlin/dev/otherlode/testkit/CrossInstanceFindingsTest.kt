@@ -25,10 +25,6 @@ import kotlin.test.assertTrue
 import dev.otherlode.testkit.ProbeKind as RefProbeKind
 import dev.otherlode.testkit.RoutineKind as RefRoutineKind
 
-/**
- * Findings judge the merged hits of every instance by name, as the server does. Every test sends
- * the same code from two instances and checks that a finding names no instance.
- */
 class CrossInstanceFindingsTest {
     private var collector: OtherlodeTestCollector? = null
 
@@ -39,7 +35,6 @@ class CrossInstanceFindingsTest {
 
     private fun startCollector(): OtherlodeTestCollector = OtherlodeTestCollector.start().also { collector = it }
 
-    /** Sends [probes] as [instance]'s manifest, then one delta batch with one hit for each of [hits] (class id, probe index). */
     private fun send(
         target: OtherlodeTestCollector,
         instance: String,
@@ -81,7 +76,6 @@ class CrossInstanceFindingsTest {
         generatedBy = generatedBy,
     )
 
-    /** One two-outcome site whose outcomes are [taken] and [fallThrough], the first carrying [routine]. */
     private fun site(
         taken: Int,
         fallThrough: Int,
@@ -95,7 +89,6 @@ class CrossInstanceFindingsTest {
         listOf(BranchOutcome(taken, BranchRole.TAKEN, routine = routine), BranchOutcome(fallThrough, BranchRole.FALL_THROUGH)),
     )
 
-    /** Sends a complete one-chunk static baseline declaring [classes] as [instance]'s scan. */
     private fun sendBaseline(
         target: OtherlodeTestCollector,
         instance: String,
@@ -442,9 +435,6 @@ class CrossInstanceFindingsTest {
                 ),
             )
         val legacy = DeclaredClass("com.acme.Legacy", listOf(DeclaredMethod("run", "()V")))
-        // Another build: a keyless site comes first, so the declared site's outcomes are indexes 2 and 3 and
-        // index 0 is k-x, which never ran. Matching by index, or a keyless site to a keyless site, would root a
-        // cluster at k-x.
         val shifted =
             listOf(
                 method(
@@ -549,8 +539,6 @@ class CrossInstanceFindingsTest {
                 labels.mapIndexed { i, label -> BranchOutcome(i, BranchRole.CASE, caseLabel = listOf(label)) } +
                     BranchOutcome(labels.size, BranchRole.DEFAULT),
             )
-        // A later build can change a site without changing its key. A wrong match lands on the outcome at index 0,
-        // which never ran, and roots a false cluster.
         val cases =
             listOf(
                 Triple("the instance's case has a twin", stringType, listOf(stringType, stringType) to listOf("k-0", "k-1")),

@@ -7,12 +7,6 @@ import net.bytebuddy.dynamic.DynamicType
 import net.bytebuddy.matcher.ElementMatcher
 import net.bytebuddy.matcher.ElementMatchers.named
 
-/**
- * Simulates a module whose advice does not match the framework version present, proving
- * [EndpointInstrumentation] disables the module through [dev.otherlode.bootstrap.OtherlodeEndpoints.moduleFailed]
- * instead of letting the failure reach the application. Not registered as a service: this module
- * is built directly by [EndpointInstrumentationTest] rather than discovered.
- */
 class BrokenRouterModule : EndpointModule {
     override val name: String = "broken-router"
 

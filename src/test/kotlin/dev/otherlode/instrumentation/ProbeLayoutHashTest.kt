@@ -14,11 +14,6 @@ class ProbeLayoutHashTest {
 
     @Test
     fun `reordering the same signatures changes the hash`() {
-        // Probe slots are assigned positionally, in this same list's order (see
-        // OtherlodeInstrumentation), so a reorder must count as a layout change. Otherwise a
-        // retransformed class with methods declared in a different order would reuse the old
-        // array and metadata, even though its bytecode wires different slots to different
-        // probes - silently swapping whose hits land where.
         val a = listOf("bar()V", "foo(I)Z", "baz()I")
         val b = listOf("foo(I)Z", "baz()I", "bar()V")
 
@@ -41,9 +36,6 @@ class ProbeLayoutHashTest {
 
     @Test
     fun `a type initializer slot changes the hash`() {
-        // OtherlodeInstrumentation folds one "<clinit>()V#typeinit" entry into the layout hash when
-        // the class has a type initializer of its own. Its presence or absence must count as a
-        // layout change, the same as any other slot being added or removed.
         val without = listOf("bar()V", "foo(I)Z")
         val with = without + "<clinit>()V#typeinit"
 
@@ -52,9 +44,6 @@ class ProbeLayoutHashTest {
 
     @Test
     fun `a changed optional parameter set changes the hash`() {
-        // OtherlodeInstrumentation folds one entry per default site into the layout hash, of the
-        // shape "<defaultName><defaultDescriptor>#optional<bits>". A bit added or removed must
-        // count as a layout change, the same as a method or branch site being added or removed.
         val before = listOf("f\$default(IILjava/lang/Object;)I#optional2")
         val after = listOf("f\$default(IILjava/lang/Object;)I#optional6")
 
@@ -63,8 +52,6 @@ class ProbeLayoutHashTest {
 
     @Test
     fun `the type initializer entry names its outcome slots`() {
-        // A layout that carries the returned and threw slots must never share a hash with one that
-        // carries only the entry probe.
         val base = listOf("bar()V")
 
         assertEquals("<clinit>()V#typeinit+outcomes", ProbeLayoutHash.TYPE_INITIALIZER_ENTRY)

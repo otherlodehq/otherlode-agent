@@ -8,23 +8,9 @@ import net.bytebuddy.jar.asm.Opcodes
 import java.io.ByteArrayOutputStream
 import java.io.File
 
-/**
- * A copy of the `:fixtures-scala3` output in which the plumbing of `Cc` has been changed so its
- * bodies match no shape the agent has read, with `Cc.tasty` rewritten to name any compiler or
- * removed. Real fixtures are never edited.
- *
- * `Cc.hashCode`, `Cc.equals` (which has branch sites) and `Cc.copy` (whose default getters become
- * omission probes) each gain a `nop` as their first instruction.
- */
 object BrokenScalaFixtures {
-    /** The methods of `Cc` that [copyWith] breaks. */
     val BROKEN = setOf("hashCode", "equals", "copy")
 
-    /**
-     * Copies the Scala 3 fixture classes into [target], breaks `Cc`, and writes `Cc.tasty` naming
-     * [tooling] (such as `Scala 3.10.0`), or deletes it when [tooling] is null. With
-     * [keepRealTasty] the real file stays, which names the release that compiled the fixtures.
-     */
     fun copyWith(
         target: File,
         tooling: String?,
@@ -42,7 +28,6 @@ object BrokenScalaFixtures {
         return target
     }
 
-    /** A `.tasty` header naming [tooling]: the magic, three version naturals, the string, then a zero UUID. */
     fun tastyHeader(tooling: String): ByteArray {
         val out = ByteArrayOutputStream()
 

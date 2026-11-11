@@ -139,7 +139,6 @@ class BootstrapHolderSweepTest {
     }
 }
 
-/** Takes the lock on a file and holds it until killed. */
 object LockOnlyInChildJvm {
     @JvmStatic
     fun main(args: Array<String>) {
@@ -151,7 +150,6 @@ object LockOnlyInChildJvm {
     }
 }
 
-/** Runs the steps `install` runs on a jar: lock, write the bytes, open the jar. */
 object InstallSequenceInChildJvm {
     @JvmStatic
     fun main(args: Array<String>) {

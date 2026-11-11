@@ -25,12 +25,6 @@ class DefaultMappedServlet : HttpServlet() {
     }
 }
 
-/**
- * An extension mapping and the default mapping under the context path `/shop`, with the
- * OpenTelemetry Java agent. OpenTelemetry reports the extension mapping with a leading slash
- * before its star, and the default mapping as a slash and a star, or a bare slash at the context
- * root; the servlet module holds them as the servlet patterns `*.do` and `/`.
- */
 class ServletPatternOwnershipTest {
     @Test
     fun `an extension servlet and a default servlet count once and the bridge adds no endpoint`() {

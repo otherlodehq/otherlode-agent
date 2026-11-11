@@ -28,14 +28,8 @@ import kotlin.test.assertTrue
 private const val HANDLE_DESCRIPTOR = "(Lcom/sun/net/httpserver/HttpExchange;)V"
 private const val KOTLIN_HANDLERS = "dev.otherlode.instrumentation.endpoints.jdkhttpserver.fixture.KotlinHandlersKt"
 
-/**
- * Proves hidden-handler naming against the real JDK `HttpServer` and the real lambda factory: an
- * endpoint whose handler is a hidden class joins to the method the lambda calls.
- *
- * The hook retransforms `java.lang.invoke.InnerClassLambdaMetafactory` for the whole JVM, and
- * the endpoint advice only weaves `ServerImpl` as it first loads. So this class needs a JVM of its
- * own, which the module's `forkEvery = 1` gives it, and installs once for every test here.
- */
+// Needs a JVM of its own (forkEvery = 1): the hook retransforms InnerClassLambdaMetafactory for the whole JVM,
+// and the endpoint advice weaves ServerImpl only as it first loads.
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class HiddenHandlerNamingTest {
     private lateinit var instrumentation: Instrumentation
@@ -120,7 +114,6 @@ class HiddenHandlerNamingTest {
         val handler = kotlinLambda()
         assertNotNull(OtherlodeEndpoints.lambdaImplementation(handler.javaClass), "the control: an HttpHandler lambda is recorded")
 
-        // A lambda for a subinterface of HttpHandler is spun for that subinterface, which is not in the set.
         val server = HttpServer.create(InetSocketAddress("localhost", 0), 0)
         try {
             server.createContext("/named-handler-lambda", JavaHandlers.namedHandlerLambda())

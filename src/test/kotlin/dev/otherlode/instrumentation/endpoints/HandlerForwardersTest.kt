@@ -28,7 +28,6 @@ class HandlerForwardersTest {
         forwarders.record(toOrder)
         assertEquals(HandlerRef("a.HandlersKt", "handleOrder", handle), forwarders.collapse(HandlerRef("a.Ref", "handle", handle)))
 
-        // Two loaders can define one class name from different bytes. Neither target is then a fact.
         forwarders.record(HandlerForwarder("a.Ref", "handle", handle, "a.HandlersKt", "handleRefund", handle))
         assertEquals(HandlerRef("a.Ref", "handle", handle), forwarders.collapse(HandlerRef("a.Ref", "handle", handle)))
         forwarders.record(toOrder)

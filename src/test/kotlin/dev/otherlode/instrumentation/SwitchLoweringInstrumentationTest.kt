@@ -19,11 +19,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Proves through the real transform that a switch read back to its source cases reaches the
- * manifest as one site with its labels, that the lowering's own jumps and a throwing default get
- * no probe, and that the woven code still runs every case.
- */
 class SwitchLoweringInstrumentationTest {
     private var installedTransformer: ResettableClassFileTransformer? = null
     private var installedOtherlode: OtherlodeInstrumentation? = null
@@ -67,7 +62,6 @@ class SwitchLoweringInstrumentationTest {
                 it.methodName == methodName
         }
 
-    /** Hits per BRANCH probe's branch index, over [branches]. */
     private fun hitsByBranchIndex(
         registry: ProbeRegistry,
         branches: List<ProbeLocation>,

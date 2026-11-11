@@ -8,11 +8,6 @@ import net.bytebuddy.jar.asm.Opcodes
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-/**
- * Shapes kotlinc does not write for a `data object`, built with ASM so each condition of the rule
- * is pinned alone: one instruction off in a body, a member that is not public, carries a line
- * number or is missing, and a class without the object's own `INSTANCE` or without Kotlin metadata.
- */
 class DataObjectForgedShapesTest {
     private val name = "com/example/target/ForgedDataObject"
 

@@ -3,13 +3,8 @@ package dev.otherlode.dependencies;
 import java.nio.file.Path;
 import java.security.CodeSource;
 
-/**
- * Run in a forked JVM by {@code ClasspathWalkerJvmTest}. For each class name given, prints the name,
- * a tab, and the path the system loader reads the class from, or {@code absent}. It is Java so the
- * forked JVM needs no Kotlin standard library.
- */
+// Java, not Kotlin, so the forked JVM that runs it needs no Kotlin standard library.
 public final class ClassOriginProbe {
-    /** What the probe prints for a class the system loader cannot find. */
     public static final String ABSENT = "absent";
 
     private ClassOriginProbe() {}

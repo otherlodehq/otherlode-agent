@@ -49,7 +49,6 @@ class RegistryResolverTest {
         resolver.register("k1", "fake", "GET", "/registered", null, "com.example.Ref", "handle", HANDLE, OtherlodeEndpoints.TEMPLATE_PATH)
         val attached = resolver.register("k2", "fake", "GET", "/attached", null, null, null, null, OtherlodeEndpoints.TEMPLATE_PATH)!!
         resolver.attachHandler(attached, "com.example.Ref", "handle", HANDLE)
-        // The dispatch path hands over the class first and the method after, as FindContextAdvice does.
         val dispatched =
             resolver.recordDispatch(
                 "k3",
@@ -148,8 +147,6 @@ class RegistryResolverTest {
             OtherlodeEndpoints.register(moduleName, key, "GET", "/health", null, "com.example.HealthHandler", "handle", "()V")
         assertNotNull(entry, "register must resolve an entry once a resolver is installed")
 
-        // A dispatch through a hidden class (a Java or Kotlin SAM lambda) has nothing to join with, but
-        // must never overwrite a real join a registration hook already recorded.
         OtherlodeEndpoints.attachHandler(moduleName, entry, null, null, null)
 
         val endpoint = registry.endpoints().single { it.verbatimTemplate == "/health" }
@@ -168,8 +165,6 @@ class RegistryResolverTest {
         val firstKey = "register-null-key-1-${System.nanoTime()}"
         OtherlodeEndpoints.register(moduleName, firstKey, "GET", "/health", null, "com.example.HealthHandler", "handle", "()V")
 
-        // A second registration hook for the same (verb, template) identity that only has a hidden class
-        // to offer must not blank out the join the first registration already recorded.
         val secondKey = "register-null-key-2-${System.nanoTime()}"
         OtherlodeEndpoints.register(moduleName, secondKey, "GET", "/health", null, null, null, null)
 
@@ -255,8 +250,6 @@ class RegistryResolverTest {
 
         pending.begin("com.example.Declaring")
         resolver.register("key-1", "fake", "GET", "/dropped", null, null, null, null, OtherlodeEndpoints.TEMPLATE_PATH)
-        // What onComplete does for a transform that failed: the class runs without advice, so an
-        // endpoint declared for it would sit at zero dispatches and read as never called.
         pending.discard()
 
         assertEquals(0, registry.computeManifestEntries(100).sumOf { it.endpoints.size })
@@ -268,7 +261,6 @@ class RegistryResolverTest {
         val registry = EndpointRegistry()
         val resolver = RegistryResolver(registry, emptyList(), PendingDeclarations())
 
-        // The runtime path: a module walking a framework object once the application built it.
         assertNotNull(resolver.register("key-1", "fake", "GET", "/live", null, null, null, null, OtherlodeEndpoints.TEMPLATE_PATH))
         assertEquals(1, registry.computeManifestEntries(100).sumOf { it.endpoints.size })
     }

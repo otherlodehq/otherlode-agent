@@ -26,7 +26,6 @@ class DependencyRegistryTest {
             origin = DependencyOrigin.FlatJar(Path.of(location)),
         )
 
-    /** Counts every registered dependency and delivers those counts, so each is sendable. */
     private fun DependencyRegistry.release() {
         markCounted()
         markCountsDelivered(countGeneration)

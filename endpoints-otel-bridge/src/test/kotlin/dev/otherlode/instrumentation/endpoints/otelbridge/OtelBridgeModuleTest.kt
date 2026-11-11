@@ -7,13 +7,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/**
- * Proves [OtelBridgeModule]'s type matcher and remap rule without needing the real OpenTelemetry
- * javaagent jar on the test classpath: [TypeDescription.Latent] stands in for a class the JVM has
- * never loaded, purely to give the matcher and [remapPrefixesFor] a name to match against. The
- * advice remap itself (bytecode in, bytecode out) is [dev.otherlode.instrumentation.endpoints.api.AdviceBinderTest]'s
- * job; this class only covers which prefixes this module asks for, and for which name.
- */
 class OtelBridgeModuleTest {
     @Test
     fun `type matcher matches both the unshaded and shaded HttpServerAttributesExtractor names`() {

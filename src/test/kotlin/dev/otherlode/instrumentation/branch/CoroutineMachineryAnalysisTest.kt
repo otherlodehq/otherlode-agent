@@ -8,13 +8,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/**
- * Proves the branch tier's coroutine-machinery drop rule against the `CoroutineTarget`
- * fixture. Every tracked site and instruction shape here was checked against real `javap -c -p`
- * output on Kotlin 2.2.21 before this test was written, not assumed from the design doc alone: the
- * suspended-marker compare (shape ii) turned out to compare a `DUP` of the suspension call's own
- * result against `ALOAD` of the tracked slot, not two `ALOAD`s of two different locals.
- */
 class CoroutineMachineryAnalysisTest {
     private fun classBytes(simpleName: String): ByteArray =
         File("build/classes/kotlin/test/com/example/target/$simpleName.class").readBytes()
@@ -25,7 +18,6 @@ class CoroutineMachineryAnalysisTest {
 
     private val fixtureFile = File("src/test/kotlin/com/example/target/CoroutineTarget.kt")
 
-    /** The 1-based line of the first line in [fixtureFile] carrying `// marker: [marker]`. */
     private fun lineOf(marker: String): Int {
         val index = fixtureFile.readLines().indexOfFirst { it.contains("marker: $marker") }
         check(index >= 0) { "no line in $fixtureFile carries the marker $marker" }

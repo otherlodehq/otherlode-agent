@@ -7,19 +7,16 @@ import io.javalin.config.RoutesConfig
 import io.javalin.http.Context
 import io.javalin.http.Handler
 
-/** A handler that is a class of its own. */
 class NamedHandler : Handler {
     override fun handle(ctx: Context) {
         ctx.result("named")
     }
 }
 
-/** A handler passed by reference. */
 fun referencedHandler(ctx: Context) {
     ctx.result("referenced")
 }
 
-/** A `CrudHandler` whose five methods answer with their own name. */
 class UserCrud : CrudHandler {
     override fun getAll(ctx: Context) {
         ctx.result("getAll")
@@ -51,7 +48,6 @@ class UserCrud : CrudHandler {
     }
 }
 
-/** Starts a server on a free port with [configure] and then [routes] applied, runs [block] with its port and stops it. */
 fun <T> serve(
     configure: (JavalinConfig) -> Unit = {},
     routes: (RoutesConfig) -> Unit = {},

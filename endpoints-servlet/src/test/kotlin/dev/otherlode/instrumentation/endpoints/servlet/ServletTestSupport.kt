@@ -4,7 +4,6 @@ import dev.otherlode.export.EndpointLocation
 import dev.otherlode.export.EndpointTemplateKind
 import dev.otherlode.registry.EndpointRegistry
 
-/** The registry reads the servlet tests share. */
 abstract class ServletTestSupport {
     protected val container: ServletContainer = containerUnderTest()
 
@@ -12,7 +11,6 @@ abstract class ServletTestSupport {
 
     protected fun servletEndpoints(): List<EndpointLocation> = registry.endpoints().filter { it.framework == "servlet" }
 
-    /** The `VERB template` of every servlet endpoint whose template starts with [prefix]. */
     protected fun declared(prefix: String): Set<String> =
         servletEndpoints().filter { it.routeTemplate.startsWith(prefix) }.map { "${it.verb} ${it.routeTemplate}" }.toSet()
 
@@ -22,7 +20,6 @@ abstract class ServletTestSupport {
         kind: EndpointTemplateKind = EndpointTemplateKind.PATH,
     ): EndpointLocation? = servletEndpoints().singleOrNull { it.verb == verb && it.routeTemplate == template && it.templateKind == kind }
 
-    /** The hits counted for the endpoint, zero for one that is declared and never called. */
     protected fun hits(
         verb: String,
         template: String,

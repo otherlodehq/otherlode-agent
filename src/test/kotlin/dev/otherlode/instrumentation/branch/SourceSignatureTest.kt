@@ -198,11 +198,6 @@ class SourceSignatureTest {
 
     private fun analyzeAsm(bytes: ByteArray) = BranchSiteAnalyzer.analyze(bytes) { _, _ -> true }
 
-    /**
-     * One class with one method `m`, whose body is two `nop`s and a `return`. [locals] writes the
-     * method's LocalVariableTable entries. It gets the label at the first instruction, the label at
-     * the second, and the label at the end.
-     */
     private fun asmMethod(
         access: Int,
         descriptor: String,

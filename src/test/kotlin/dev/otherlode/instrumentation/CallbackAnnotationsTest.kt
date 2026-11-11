@@ -4,7 +4,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/** Pins the rule every built-in callback annotation follows (ADR 0069). */
 class CallbackAnnotationsTest {
     private fun names(vararg dotted: String): Set<String> = dotted.mapTo(HashSet()) { it.replace('.', '/') }
 

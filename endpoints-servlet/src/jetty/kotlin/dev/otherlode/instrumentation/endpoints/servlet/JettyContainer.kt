@@ -17,10 +17,8 @@ import javax.servlet.ServletContext
 
 fun containerUnderTest(): ServletContainer = JettyContainer()
 
-/** An adopter's subclass of the container's default servlet. */
 class MyDefaultServlet : DefaultServlet()
 
-/** Embedded Jetty with `org.eclipse.jetty.servlet`, in the release the suite's dependencies select. */
 class JettyContainer : ServletContainer {
     override val defaultServlets: Set<String> =
         setOf("org.eclipse.jetty.servlet.DefaultServlet", "org.eclipse.jetty.servlet.NoJspServlet", "org.eclipse.jetty.jsp.JettyJspServlet")

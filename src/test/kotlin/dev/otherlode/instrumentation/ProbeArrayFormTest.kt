@@ -20,13 +20,6 @@ import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
-/**
- * Pins which members each [ProbeArrayForm] adds to a woven class, and that each counts: a class of
- * version 55 or later keeps exactly its own members and loads a dynamic constant, a class below it
- * has the probe field, the `<clinit>` prelude and two private static synthetic accessors, and an
- * interface below version 52 has the field and prelude only. Classes are woven by the agent's real
- * transformer and defined from its output.
- */
 class ProbeArrayFormTest {
     private companion object {
         const val TARGET = "com.example.target"
@@ -39,7 +32,6 @@ class ProbeArrayFormTest {
     private val registry = ProbeRegistry()
     private val transformer = HotPathWeaver.offlineTransformer(listOf(TARGET, GENERATED), registry)
 
-    /** Serves and defines classes under [GENERATED] and [TARGET] from maps, so a class file and a woven class can differ. */
     private class InMemoryLoader(
         parent: ClassLoader,
         private val classFiles: Map<String, ByteArray>,
@@ -65,7 +57,6 @@ class ProbeArrayFormTest {
         }
     }
 
-    /** Weaves [classFile] of [className], and returns a loader that defines the woven class and the woven bytes. */
     private fun weave(
         className: String,
         classFile: ByteArray,
@@ -86,7 +77,6 @@ class ProbeArrayFormTest {
     private fun modernFixture(simpleName: String): ByteArray =
         File("build/classes/java/test/com/example/target/$simpleName.class").readBytes()
 
-    /** The methods [bytes] declare, by name, with their access flags. */
     private fun methodFlags(bytes: ByteArray): Map<String, Int> {
         val flags = HashMap<String, Int>()
         ClassReader(bytes).accept(
@@ -107,7 +97,6 @@ class ProbeArrayFormTest {
         return flags
     }
 
-    /** Whether the accessor's slow path in [bytes] reaches its own class through `Class.forName`. */
     private fun slowPathNamesClassByForName(bytes: ByteArray): Boolean {
         var found = false
         ClassReader(bytes).accept(
@@ -295,7 +284,6 @@ class ProbeArrayFormTest {
         assertEquals(listOf(1L), hits(name, "f"))
     }
 
-    /** `interface Constants { Object X = new Object(); }`, the one shape of interface below version 52 with code to probe. */
     private fun interfaceWithConstant(
         name: String,
         version: Int,
@@ -317,7 +305,6 @@ class ProbeArrayFormTest {
         return writer.toByteArray()
     }
 
-    /** `public class Old { public int f(int x) { return x > 5 ? 1 : 2; } }` with no stack map frames, as a class of that version has. */
     private fun oldClassWithBranch(
         name: String,
         version: Int,

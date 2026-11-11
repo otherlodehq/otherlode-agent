@@ -22,24 +22,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 
-/**
- * Drives [JaxRsModule.transform] directly, bypassing [JaxRsModule.typeMatcher] and the real
- * `-javaagent` weave, to pin the class-level `@Path` gate and the method-level inheritance walk
- * against known fixtures without going through a real Jersey server.
- *
- * [JaxRsTestAgent] already installed a resolver into the bootstrap-resident endpoint seam, and
- * already appended the bootstrap holder to the bootstrap loader, during this test JVM's own
- * `premain`, well before any test class loads. Each test here swaps that resolver for a recording
- * one for the duration of one [withRecordingResolver] call and restores an equivalent resolver,
- * wired to the same [EndpointRegistry], before returning, so a later test in this JVM (including
- * [JaxRsModuleTest] itself) never loses a registration to this test's own resolver.
- *
- * The resolver is built as a [Proxy] over `OtherlodeEndpoints.Resolver`, never a compiled implementer:
- * see [OtherlodeEndpointsSeamTest][dev.otherlode.instrumentation.endpoints.OtherlodeEndpointsSeamTest]
- * in the root project for why. This module has no compile-time dependency on `:bootstrap` at all
- * (only `endpoints-jaxrs`'s main source set does), so both the resolver and the call into
- * `OtherlodeEndpoints.install` are reflective here.
- */
 class JaxRsModuleAnnotationInheritanceTest {
     private val advice = AdviceBinder(JaxRsModule::class.java.classLoader, ApiOrdersResource::class.java.classLoader)
 
@@ -116,12 +98,9 @@ class JaxRsModuleAnnotationInheritanceTest {
 
             assertEquals(emptyList(), calls, "without Jersey the class has no @Path of its own, so it is no resource")
         }
-        // The INFO line resolveClassPath logs when a supertype @Path is ignored is not asserted
-        // here: java.lang.System.Logger's default backend only bridges to java.util.logging when
-        // something in the process has already initialised the JUL LogManager, which this test
-        // does not control and cannot assume, so a java.util.logging.Handler is not a reliable way
-        // to observe it. The behaviour the log line describes, nothing declared, is asserted
-        // directly instead.
+        // The INFO line is not asserted: System.Logger reaches java.util.logging only once the JUL LogManager is
+        // initialised, which this test does not control. The behaviour the line describes, nothing declared, is
+        // asserted instead.
     }
 
     @Test
@@ -192,9 +171,6 @@ class JaxRsModuleAnnotationInheritanceTest {
 
     @Test
     fun `a supertype the type pool cannot resolve but the loader can load is read from the loaded class`() {
-        // The description ByteBuddy hands a real transform is TypePool-backed and resolves a
-        // supertype lazily, so a supertype with no reachable class file raises on first touch. The
-        // loader still defines it, so its class-level Path is read from the loaded class.
         val hidden = LegacyBase::class.java.name
         val loader = LegacyResource::class.java.classLoader
         val locator =
@@ -228,9 +204,6 @@ class JaxRsModuleAnnotationInheritanceTest {
 
     @Test
     fun `the default module reads Jersey's presence from the loader it is given`() {
-        // Jersey is on this test's own classpath, so the real isJerseyPresent finds its marker
-        // through the fixture's loader and applies the inherited class prefix; a loader with no
-        // parent and no classpath sees nothing, and the class is no resource.
         val withJersey = declaredByDefaultModule(LegacyResource::class.java.classLoader)
         val withoutJersey = declaredByDefaultModule(URLClassLoader(arrayOf(), null))
 
@@ -238,7 +211,6 @@ class JaxRsModuleAnnotationInheritanceTest {
         assertEquals(emptySet(), withoutJersey)
     }
 
-    /** What a [JaxRsModule] built with no injected Jersey check declares for [LegacyResource] on [classLoader]. */
     private fun declaredByDefaultModule(classLoader: ClassLoader?): Set<Pair<String, String>> {
         lateinit var declared: Set<Pair<String, String>>
         withRecordingResolver { calls ->
@@ -369,7 +341,6 @@ class JaxRsModuleAnnotationInheritanceTest {
 
     private fun restEasyReactiveLoader(): ClassLoader = URLClassLoader(arrayOf(requiredJar(RESTEASY_REACTIVE_SERVER_JAR)), null)
 
-    /** Every `(verb, template)` [JaxRsModule.transform] declares for [type]. */
     private fun declaredBy(
         type: Class<*>,
         jerseyPresent: Boolean,
@@ -388,11 +359,6 @@ class JaxRsModuleAnnotationInheritanceTest {
         return declared
     }
 
-    /**
-     * Installs a resolver that records every `register` call into [block], then restores a
-     * resolver equivalent to the one [JaxRsTestAgent] installed during `premain`, wired to the
-     * same [JaxRsTestAgent.endpointRegistry].
-     */
     private fun withRecordingResolver(block: (List<RegisterCall>) -> Unit) {
         val calls = mutableListOf<RegisterCall>()
         installResolver(recordingResolver(calls))
@@ -412,27 +378,20 @@ private data class RegisterCall(
     val template: String,
 )
 
-/** Calls the bootstrap-resident `OtherlodeEndpoints.install(Resolver)` reflectively, with no compile-time dependency on `:bootstrap`. */
 private fun installResolver(resolver: Any) {
     val endpointsClass = Class.forName("dev.otherlode.bootstrap.OtherlodeEndpoints", false, null)
     val resolverInterface = Class.forName("dev.otherlode.bootstrap.OtherlodeEndpoints\$Resolver", false, null)
     endpointsClass.getMethod("install", resolverInterface).invoke(null, resolver)
 }
 
-/**
- * Builds an `OtherlodeEndpoints.Resolver` as a [Proxy] instead of a compiled implementer class, the
- * same reasoning [OtherlodeEndpointsSeamTest][dev.otherlode.instrumentation.endpoints.OtherlodeEndpointsSeamTest]
- * gives in the root project: a compiled `implements OtherlodeEndpoints.Resolver` class is verified
- * against that interface the moment its own class file loads, during Gradle's up-front scan for
- * test classes, which can run before the bootstrap loader carries the interface at all.
- */
+// A compiled implementer of OtherlodeEndpoints.Resolver is verified against the interface when its class file loads,
+// during Gradle's scan for test classes, which can run before the bootstrap loader carries the interface.
 private fun resolverProxy(dispatch: (methodName: String, args: Array<out Any?>) -> Any?): Any {
     val resolverInterface = Class.forName("dev.otherlode.bootstrap.OtherlodeEndpoints\$Resolver", false, null)
     val loader = Thread.currentThread().contextClassLoader
     return Proxy.newProxyInstance(loader, arrayOf(resolverInterface)) { _, method, args -> dispatch(method.name, args ?: emptyArray()) }
 }
 
-/** Records every `register` call's verb and verbatim template; every other call is a no-op. */
 private fun recordingResolver(calls: MutableList<RegisterCall>): Any =
     resolverProxy { name, args ->
         when (name) {
@@ -459,14 +418,8 @@ private fun recordingResolver(calls: MutableList<RegisterCall>): Any =
         }
     }
 
-/**
- * A resolver wired to a real [EndpointRegistry], for restoring the seam between tests.
- *
- * It registers straight through, with none of `RegistryResolver`'s per-transform staging. That is
- * fine for leaving the seam in a usable state, and wrong for anything that asserts on when a
- * declaration lands, so no test should assert against this stand-in. `JaxRsModuleTest` runs in the
- * same JVM and would otherwise inherit it.
- */
+// Registers straight through, without RegistryResolver's per-transform staging. Test classes that run later in this
+// JVM keep it, so no test in this suite may assert on when a declaration lands.
 private fun endpointRegistryResolver(registry: EndpointRegistry): Any =
     resolverProxy { name, args ->
         when (name) {
@@ -547,7 +500,6 @@ private interface PingB {
     fun ping(): String
 }
 
-/** Implements both [PingA] and [PingB], in that declaration order, so both interfaces supply an annotated `ping` with a different path. */
 @Path("/")
 private class PingResource :
     PingA,
@@ -558,7 +510,6 @@ private class PingResource :
 @Path("/legacy")
 private abstract class LegacyBase
 
-/** Inherits its class-level `@Path` from [LegacyBase], which only Jersey's resolution order honours. */
 private class LegacyResource : LegacyBase() {
     @GET
     @Path("/{id}")
@@ -570,7 +521,6 @@ private abstract class DeepRoot
 
 private abstract class DeepMiddle : DeepRoot()
 
-/** Two classes below the one carrying `@Path`, so the superclass walk has to keep going. */
 private class DeepLeafResource : DeepMiddle() {
     @GET
     @Path("/leaf")
@@ -583,7 +533,6 @@ private interface PathBearingInterface
 @Path("/from-class")
 private abstract class PathBearingBase
 
-/** Carries a class-level `@Path` on both a superclass and an interface; Jersey's order takes the superclass. */
 private class BothSourcesResource :
     PathBearingBase(),
     PathBearingInterface {
@@ -594,7 +543,6 @@ private class BothSourcesResource :
 
 private abstract class MidWithInterface : PathBearingInterface
 
-/** Its own interfaces carry no `@Path`; the one on its superclass's interface is the only source. */
 private class MidInterfaceResource : MidWithInterface() {
     @GET
     @Path("/mid")
@@ -604,7 +552,6 @@ private class MidInterfaceResource : MidWithInterface() {
 @Path("/concrete-base")
 private open class ConcretePathBase
 
-/** Extends a concrete class carrying `@Path` and implements an interface carrying one: Jersey takes the class's, Quarkus the interface's. */
 private class ConcreteBaseChildResource :
     ConcretePathBase(),
     PathBearingInterface {
@@ -616,28 +563,24 @@ private class ConcreteBaseChildResource :
 @Path("/between")
 private abstract class BetweenTop
 
-/** The direct concrete subclass of an abstract `@Path` class. */
 private open class BetweenMidResource : BetweenTop() {
     @GET
     @Path("/mid")
     open fun mid(): String = "mid"
 }
 
-/** A subclass of [BetweenMidResource], whose `@Path` comes from a concrete superclass. */
 private class BetweenLeafResource : BetweenMidResource() {
     @GET
     @Path("/leaf")
     fun leaf(): String = "leaf"
 }
 
-/** Carries its own class-level `@Path`, the shape Quarkus ArC subclasses for an intercepted bean. */
 @Path("/own")
 open class OwnPathResource {
     @GET
     open fun get(): String = "own"
 }
 
-/** No JAX-RS annotation on the class, its supertypes, or the method: not an endpoint at all. */
 private class UnannotatedResource {
     fun plain(): String = "plain"
 }
@@ -648,7 +591,6 @@ private abstract class AnnotatedMethodBase {
     open fun read(): String = "base"
 }
 
-/** Overrides an annotated method without annotating the override, which the specification inherits. */
 @Path("/")
 private class OverridingResource : AnnotatedMethodBase() {
     override fun read(): String = "child"
@@ -662,7 +604,6 @@ private interface GrandparentInterface {
 
 private interface ParentInterface : GrandparentInterface
 
-/** Reaches its annotations only through [ParentInterface]'s own superinterface. */
 @Path("/")
 private class GrandInterfaceResource : ParentInterface {
     override fun read(): String = "grandchild"
@@ -673,7 +614,6 @@ private class GrandInterfaceResource : ParentInterface {
 @HttpMethod("purge")
 private annotation class Purge
 
-/** Declares a verb JAX-RS has no annotation of its own for, the way `@PATCH` was defined before the spec had one. */
 @Path("/")
 private class CustomVerbResource {
     @Purge
@@ -681,7 +621,6 @@ private class CustomVerbResource {
     fun purge(): String = "purged"
 }
 
-/** What a sub-resource locator returns: resource methods, and no class-level `@Path` of its own or inherited. */
 private class LocatedSubResource {
     @GET
     @Path("/leaf")

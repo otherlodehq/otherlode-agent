@@ -12,13 +12,6 @@ import java.io.File
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Runs the stub rule of ADR 0026 over a build that mixes a library compiled with
- * `-jvm-default=disable` and a consumer compiled with `all` or `all-compatibility`, at each kotlinc
- * release in the matrix. There kotlinc writes `MixedIdStoreImpl.keyed-QoVL8wA` with a call to a
- * `$DefaultImpls` method whose hash the library never wrote. From kotlinc 2.2 every such stub is a
- * bridge, which the method tier leaves out.
- */
 class MixedJvmDefaultTest {
     companion object {
         @JvmStatic

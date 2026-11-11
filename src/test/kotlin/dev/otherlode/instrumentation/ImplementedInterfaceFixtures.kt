@@ -3,15 +3,10 @@ package dev.otherlode.instrumentation
 import dev.otherlode.export.CallEdge
 import dev.otherlode.export.CallEdgeKind
 
-/**
- * The creation edges the `ImplementedInterfaceTarget` fixtures give each creating method, keyed by class and then by
- * method name. The manifest and the baseline tests both check against these.
- */
 object ImplementedInterfaceFixtures {
     const val KOTLIN_CLASS = "com.example.target.ImplementedInterfaceTarget"
     const val JAVA_CLASS = "com.example.target.ImplementedInterfaceJavaTarget"
 
-    /** Each fixture class with its creating methods and their `CREATES` edges. */
     val creationEdges: Map<String, Map<String, List<CallEdge>>> =
         mapOf(
             KOTLIN_CLASS to

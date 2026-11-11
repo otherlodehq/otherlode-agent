@@ -23,12 +23,6 @@ import kotlin.test.assertTrue
 import java.util.logging.Level as JulLevel
 import java.util.logging.Logger as JulLogger
 
-/**
- * Proves the unread shapes of a Scala 3 class through the real transform. `Cc` of the
- * `:fixtures-scala3` output is copied with `hashCode`, `equals` and `copy` changed so they match
- * no shape the agent has read, and its `.tasty` made to name a read release, one the agent has not
- * read, or removed.
- */
 class ScalaUnreadShapeMarkingTest {
     private companion object {
         const val PACKAGE = "com.example.scalatarget"
@@ -53,7 +47,6 @@ class ScalaUnreadShapeMarkingTest {
         val counts: UnreadShapeCounts,
     )
 
-    /** Loads `Cc` from a broken copy of the fixtures made with [tooling], once per name in [loaders], and returns what the agent reported. */
     private fun load(
         tooling: String?,
         keepRealTasty: Boolean = false,

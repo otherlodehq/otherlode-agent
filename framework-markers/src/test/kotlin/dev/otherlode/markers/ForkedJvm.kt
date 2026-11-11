@@ -7,7 +7,6 @@ import java.util.concurrent.TimeUnit
 import kotlin.test.assertEquals
 import kotlin.test.fail
 
-/** What one forked JVM printed and which classes it loaded, from `-Xlog:class+load`. */
 internal class ForkedRun(
     val output: String,
     val loadedClasses: Set<String>,
@@ -21,10 +20,8 @@ internal object ForkedJvm {
         Properties().also { properties -> File(checkNotNull(System.getProperty("markers.paths"))).inputStream().use(properties::load) }
     }
 
-    /** A system property, or for the long classpaths the build writes to a file, the entry of that name there. */
     fun property(name: String): String = checkNotNull(System.getProperty(name) ?: paths.getProperty(name)) { "property $name is not set" }
 
-    /** The classpath of one pinned release: the small programs in `src/main/java` and the release's own jars. */
     fun classpath(
         framework: String,
         version: String,
@@ -33,10 +30,6 @@ internal object ForkedJvm {
     private const val BIND_ATTEMPTS = 3
     private val portTaken = Regex("""(Address|Port) already in use""")
 
-    /**
-     * Runs [mainClass] in [mode] in a fresh JVM. The mains pick a free port and then bind it, so a
-     * run that fails only because another process took that port in between is run again.
-     */
     fun run(
         classpath: String,
         mainClass: String,

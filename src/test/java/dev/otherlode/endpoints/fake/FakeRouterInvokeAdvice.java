@@ -4,11 +4,6 @@ import com.example.framework.FakeRouter;
 import dev.otherlode.bootstrap.OtherlodeEndpoints;
 import net.bytebuddy.asm.Advice;
 
-/**
- * Woven onto {@code FakeRouter.invoke}, counting a dispatch. Looks the route up by the same key
- * {@link FakeRouterAddRouteAdvice} registers it under; a route {@code addQuietly} added directly,
- * skipping {@link FakeRouterAddRouteAdvice}, is discovered here instead.
- */
 public class FakeRouterInvokeAdvice {
 
     @Advice.OnMethodEnter(suppress = Throwable.class)

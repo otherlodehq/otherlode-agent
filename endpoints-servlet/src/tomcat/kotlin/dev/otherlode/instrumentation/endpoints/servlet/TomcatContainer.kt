@@ -13,10 +13,8 @@ import java.nio.file.Files
 
 fun containerUnderTest(): ServletContainer = TomcatContainer()
 
-/** An adopter's subclass of the container's default servlet. */
 class MyDefaultServlet : DefaultServlet()
 
-/** Embedded Tomcat, in the namespace and release the suite's dependencies select. */
 class TomcatContainer : ServletContainer {
     override val defaultServlets: Set<String> = setOf("org.apache.catalina.servlets.DefaultServlet", "org.apache.jasper.servlet.JspServlet")
 

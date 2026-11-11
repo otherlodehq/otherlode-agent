@@ -7,36 +7,6 @@ import org.springframework.web.context.support.GenericWebApplicationContext
 import org.springframework.web.servlet.config.annotation.DelegatingWebMvcConfiguration
 import java.util.function.Supplier
 
-/**
- * Builds and refreshes a [WebApplicationContext] wiring [TestController]'s annotation-mapped
- * endpoints alongside a `SimpleUrlHandlerMapping` bean that maps a `/static` wildcard prefix to
- * [staticHandler], the exact path `/legacy/old` to [legacyHandler], and the catch-all path (a
- * slash and one star) to [fallbackHandler], which Spring keeps aside as the handler for any path
- * nothing else matched.
- *
- * `SimpleUrlHandlerMapping` and its supertype `AbstractUrlHandlerMapping` must not load before
- * [dev.otherlode.instrumentation.endpoints.EndpointInstrumentation.install] has run:
- * an `AgentBuilder` transformer only weaves advice into a class as it loads. Gradle's JUnit
- * Platform test discovery, though, loads every compiled class under this module's test source
- * set (not only the ones carrying `@Test` methods) to check whether each one is a potential test
- * container, and that happens before any test method runs. If `SimpleUrlHandlerMapping` appeared
- * as an ordinary compile-time type anywhere in this test source set, such as a class literal or a
- * local variable's declared type, the JVM would resolve it, and its supertype, while verifying
- * whichever class carried that reference during that same discovery pass, well before
- * `install`. This function therefore reaches `SimpleUrlHandlerMapping` only by name, through
- * plain reflection, so no class file in this test source set carries a symbolic reference to it
- * at all: nothing resolves the type until this function's own body actually runs, from inside a
- * test method, after `install` already has.
- *
- * [mappedRootHandler] is registered under `/` through the URL map, and [directRootHandler] is
- * set with `setRootHandler`, the way Spring Boot's welcome page mapping sets its handler.
- *
- * `DelegatingWebMvcConfiguration` is registered directly rather than via `@EnableWebMvc` on a
- * fixture `@Configuration` class, so the `SimpleUrlHandlerMapping` bean can be built from a
- * [registerBean][org.springframework.context.support.GenericApplicationContext.registerBean]
- * supplier that closes over [staticHandler] and [legacyHandler] directly, rather than from a
- * fixture class whose own instances a caller could not otherwise observe.
- */
 fun buildUrlMappedWebApplicationContext(
     staticHandler: Any,
     legacyHandler: Any,
@@ -49,11 +19,10 @@ fun buildUrlMappedWebApplicationContext(
     val context = GenericWebApplicationContext()
     context.servletContext = MockServletContext()
     AnnotatedBeanDefinitionReader(context).register(DelegatingWebMvcConfiguration::class.java)
-    // A Supplier built explicitly, not as a trailing lambda: registerBean's last parameter is a
-    // BeanDefinitionCustomizer vararg, so a trailing lambda binds there instead of to the
-    // Supplier before it.
+    // registerBean ends in a vararg customizer, so a trailing lambda would bind there instead of to the Supplier.
     context.registerBean("testController", TestController::class.java, Supplier { TestController() })
 
+    // SimpleUrlHandlerMapping is reached by name so no class file here loads it before install runs.
     @Suppress("UNCHECKED_CAST")
     val mappingClass = Class.forName("org.springframework.web.servlet.handler.SimpleUrlHandlerMapping") as Class<Any>
     val constructor = mappingClass.getDeclaredConstructor()

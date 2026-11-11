@@ -507,7 +507,7 @@ class EndpointRegistryTest {
         entry.hit()
         entry.hit()
 
-        registry.computeDeltas(maxPerBatch = 10) // send fails, never advanced
+        registry.computeDeltas(maxPerBatch = 10)
         entry.hit()
         entry.hit()
 
@@ -527,8 +527,6 @@ class EndpointRegistryTest {
         repeat(5) { entry.hit() }
         registry.advanceDeltas(registry.computeDeltas(maxPerBatch = 10).single())
 
-        // Not reachable via this registry's own hit()/register() calls (counts only ever grow);
-        // simulated directly to pin the reporting behaviour, mirroring ProbeRegistry's own test.
         entry.count = 2
 
         val batch =
@@ -657,7 +655,7 @@ class EndpointRegistryTest {
         val registry = EndpointRegistry()
         registry.register(key = Any(), framework = "http-server", verb = "GET", verbatimTemplate = "/health")
 
-        registry.computeManifestEntries(maxPerChunk = 10) // send fails, never advanced
+        registry.computeManifestEntries(maxPerChunk = 10)
 
         val retry = registry.computeManifestEntries(maxPerChunk = 10)
         assertEquals(
@@ -845,7 +843,6 @@ class EndpointRegistryTest {
         assertEquals(1, registry.endpoints().size)
     }
 
-    /** A framework's route object: equal only to itself, like a Ktor node or a JDK `HttpContext`. */
     private class RouteObject
 
     @Test
@@ -875,14 +872,12 @@ class EndpointRegistryTest {
         assertEquals(2, registry.boundKeyCount(), "the live list key and the later string key")
     }
 
-    /** Binds a key list anchored on an object nothing else references and returns a weak reference to it. */
     private fun bindListAndForget(registry: EndpointRegistry): java.lang.ref.WeakReference<Any> {
         val handler = RouteObject()
         registry.register(key = listOf(handler, "/other", "GET"), framework = "test", verb = "GET", verbatimTemplate = "/other")
         return java.lang.ref.WeakReference(handler)
     }
 
-    /** Binds a route object nothing else references and returns a weak reference to it. */
     private fun bindAndForget(registry: EndpointRegistry): java.lang.ref.WeakReference<Any> {
         val route = RouteObject()
         registry.register(key = route, framework = "test", verb = "GET", verbatimTemplate = "/gone")

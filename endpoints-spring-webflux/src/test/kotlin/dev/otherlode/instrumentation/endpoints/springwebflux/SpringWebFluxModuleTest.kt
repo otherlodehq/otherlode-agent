@@ -29,18 +29,10 @@ import kotlin.test.assertTrue
 private const val HANDLE_DESCRIPTOR =
     "(Lorg/springframework/web/reactive/function/server/ServerRequest;)Lreactor/core/publisher/Mono;"
 
-/** A functional route's handler, passed by reference. */
 fun referencedHandler(request: ServerRequest): Mono<ServerResponse> = ServerResponse.ok().build()
 
-/** A handler lambda spun before the lambda factory hook installs, in its own function so the class is spun before any test installs. */
 private fun spunBeforeHook(): HandlerFunction<ServerResponse> = HandlerFunction { ServerResponse.ok().build() }
 
-/**
- * Proves [SpringWebFluxModule] end to end against a real `DispatcherHandler`, driven through
- * `WebTestClient.bindToApplicationContext`, which uses the application's own handler mappings.
- * Spring's handler-mapping types are never named as a compile-time type in these sources, so none
- * loads before the module installs. The same sources run against Spring 5.3, 6 and 7.
- */
 class SpringWebFluxModuleTest {
     @Test
     fun `annotated registration and dispatch are tracked end to end`() {
@@ -201,10 +193,6 @@ class SpringWebFluxModuleTest {
         }
     }
 
-    /**
-     * Handlers A and C are object expressions, which always compile to a named class. The lambdas
-     * and the reference are hidden classes, named through the lambda factory hook.
-     */
     @Test
     fun `functional routes are declared through RouterFunction and counted at dispatch`() {
         val early = spunBeforeHook()

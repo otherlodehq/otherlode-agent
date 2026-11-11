@@ -37,35 +37,11 @@ import kotlin.test.assertTrue
 private const val HANDLE_DESCRIPTOR =
     "(Lorg/springframework/web/servlet/function/ServerRequest;)Lorg/springframework/web/servlet/function/ServerResponse;"
 
-/** A functional route's handler, passed by reference. */
 fun referencedHandler(request: ServerRequest): ServerResponse = ServerResponse.ok().build()
 
-/**
- * A handler lambda spun before the lambda factory hook installs. It is its own function so the
- * lambda class is spun on the call before the test installs anything.
- */
 private fun spunBeforeHook(): HandlerFunction<ServerResponse> = HandlerFunction { ServerResponse.ok().build() }
 
-/**
- * Proves [SpringWebMvcModule] end to end against a real `DispatcherServlet`, driven through
- * Spring's `MockMvc`, not a fixture. [EndpointInstrumentation.install] must run before Spring's
- * own handler-mapping machinery loads for the first time in this JVM: an `AgentBuilder`
- * transformer only weaves advice into a class as it loads, not into one already loaded. Every
- * reference to Spring MVC's own machinery and `MockMvc` is therefore kept inside the one test
- * method that needs it, rather than a field or a companion object, so nothing else in this test
- * class can trigger that load first.
- *
- * That is enough for the annotation-mapped side below, whose handler-mapping types are never
- * named as a compile-time type anywhere in this module's test sources; Spring only resolves them
- * lazily, from inside its own code, once `MockMvc` actually dispatches a request. The URL-mapped
- * test needs a second precaution beyond this one; see [buildUrlMappedWebApplicationContext]'s
- * KDoc.
- *
- * Runs unmodified against Spring Framework 5.3, 6.x and 7.x: this module's own advice binds no
- * servlet type, so the same test source compiles and passes against all three, each its own
- * Gradle test suite (`test` against 6.x, `spring7Test` against 7.x) with its own classpath and its
- * own forked test JVM.
- */
+// install must run before Spring's handler-mapping classes load, so no field or companion may reference them.
 class SpringWebMvcModuleTest {
     @Test
     fun `registration and dispatch through a real DispatcherServlet are tracked end to end`() {
@@ -103,10 +79,8 @@ class SpringWebMvcModuleTest {
                 byIdentity.keys,
             )
 
-            // An inherited mapping joins to the class that declares the method, where its probe lives.
             assertEquals(BaseController::class.java.name, byIdentity.getValue("GET /inherited").handlerClass)
 
-            // A request both patterns match counts Spring's best match, not whichever a hash set lists first.
             val deltasByIdentity =
                 registry.computeDeltas(maxPerBatch = 20).flatMap { it.deltas }.associate { delta ->
                     endpoints.single { it.endpointId == delta.endpointId }.let { "${it.verb} ${it.routeTemplate}" } to delta.hitsTotal
@@ -141,18 +115,6 @@ class SpringWebMvcModuleTest {
         }
     }
 
-    /**
-     * A `SimpleUrlHandlerMapping` bean is Spring MVC's other handler-mapping style: a URL matched
-     * directly to a handler object rather than to an annotated method. This proves that style is
-     * declared and counted the same way, through [SpringWebMvcModule]'s
-     * `AbstractUrlHandlerMapping` advice, alongside [TestController]'s annotation-mapped endpoints
-     * in the same context, so the two mapping styles are proven to coexist rather than only in
-     * isolation from each other.
-     *
-     * The context itself is built by [buildUrlMappedWebApplicationContext] rather than inline
-     * here; see that function's KDoc for why `SimpleUrlHandlerMapping` must never be referenced
-     * directly from this class's own bytecode.
-     */
     @Test
     fun `URL-mapped handlers are declared and counted alongside annotation-mapped ones`() {
         val instrumentation = ByteBuddyAgent.install()
@@ -167,8 +129,6 @@ class SpringWebMvcModuleTest {
             val fallbackHandler = urlMappedTestHandler("fallback content")
 
             val context = buildUrlMappedWebApplicationContext(staticHandler, legacyHandler, fallbackHandler)
-            // Registered in code, as Spring Boot Actuator registers each operation. Reached by name so
-            // this class never names the handler mapping's type.
             val annotationMapping = context.getBean("requestMappingHandlerMapping")
             annotationMapping.javaClass
                 .getMethod("registerMapping", RequestMappingInfo::class.java, Any::class.java, java.lang.reflect.Method::class.java)
@@ -185,8 +145,6 @@ class SpringWebMvcModuleTest {
             mockMvc.perform(get("/static/app.js"))
             mockMvc.perform(get("/legacy/old"))
             mockMvc.perform(get("/registered"))
-            // Neither path is mapped, so Spring hands both to the "/*" handler with the raw path in
-            // place of a pattern. They count against "/*" and add no endpoint per path.
             mockMvc.perform(get("/unmapped/a"))
             mockMvc.perform(get("/unmapped/b"))
 
@@ -241,26 +199,6 @@ class SpringWebMvcModuleTest {
         }
     }
 
-    /**
-     * Proves [SpringWebMvcModule.declare] against a real `RouterFunction`, Spring MVC's
-     * functional routing style, alongside the annotation- and URL-mapped styles the two tests
-     * above already cover. `RouterFunctionMapping` must not load before
-     * [EndpointInstrumentation.install] has run, for the same reason `SimpleUrlHandlerMapping`
-     * must not; see [buildFunctionalWebApplicationContext]'s KDoc for why nothing here needs the
-     * same reflective precaution [buildUrlMappedWebApplicationContext] does.
-     *
-     * Every handler here is written in Kotlin, not Java: adding a Java source set to this
-     * module's `spring7Test`/`spring53Test` suites, which only add
-     * `kotlin.srcDir("src/test/kotlin")` and would need their own `java.srcDir` wiring too, was
-     * judged more churn than the coverage is worth here. Kotlin's default `indy`-based SAM
-     * conversion for a Java functional interface such as `HandlerFunction`, though, makes a
-     * trailing-lambda literal (`HandlerFunction { ... }`) compile to a hidden class, the same as
-     * a genuine Java lambda, not the named class this project's `CLAUDE.md` describes for a
-     * Kotlin function-type lambda; confirmed empirically while writing this test. handlerA and
-     * handlerC are therefore written as Kotlin object expressions, which always compile to a real
-     * named class. The hidden ones join to the method their lambda calls, through the lambda
-     * factory hook, and one spun before the hook installs gets no join.
-     */
     @Test
     fun `functional routes are declared through RouterFunction and counted at dispatch`() {
         val early = spunBeforeHook()
@@ -270,10 +208,6 @@ class SpringWebMvcModuleTest {
         val transformer = endpointInstrumentation.install(instrumentation)
 
         try {
-            // handlerA and handlerC are Kotlin object expressions, which always compile to a real
-            // named class, so these two exercise the non-hidden join path. handlerB, handlerD,
-            // handlerE and handlerF are SAM-converted lambdas and byReference a SAM-converted
-            // reference, each a hidden class named through the lambda factory hook.
             val handlerA =
                 object : HandlerFunction<ServerResponse> {
                     override fun handle(request: ServerRequest): ServerResponse = ServerResponse.ok().build()
@@ -299,15 +233,12 @@ class SpringWebMvcModuleTest {
                         path("/api"),
                         route(GET("/items"), handlerC)
                             .andRoute(GET("/items/{id}").or(GET("/things/{id}")), handlerD)
-                            // No path of its own: the nest's path is its whole template.
                             .andRoute(method(HttpMethod.DELETE), handlerG),
                     ).andRoute(method(HttpMethod.GET).and(param("custom", "1")), handlerE)
                     .andRoute(GET("/by-reference"), byReference)
                     .andRoute(GET("/early"), early)
                     .andRoute(path("/any-verb"), handlerG)
-                    // Spring wraps a filtered route's handler in a new function on every request.
                     .and(route(GET("/filtered"), handlerG).filter(HandlerFilterFunction { request, next -> next.handle(request) }))
-                    // A predicate the walk cannot read keeps this route undeclared, so it is found at dispatch.
                     .andRoute(path("/discovered").and(RequestPredicate { true }), handlerF)
 
             val context = buildFunctionalWebApplicationContext(routerFunction)
@@ -356,9 +287,7 @@ class SpringWebMvcModuleTest {
             mockMvc.perform(get("/anything").param("custom", "1"))
             mockMvc.perform(get("/discovered"))
             mockMvc.perform(get("/early"))
-            // Spring 5.3 resolves a verb outside HttpMethod's enum to a null method().
             mockMvc.perform(request("PROPFIND", URI.create("/any-verb")))
-            // A path the nest matches whose inner route refuses the verb: no handler at all.
             mockMvc.perform(post("/api/items"))
             mockMvc.perform(delete("/api"))
             mockMvc.perform(get("/filtered"))
@@ -366,7 +295,6 @@ class SpringWebMvcModuleTest {
             mockMvc.perform(get("/filtered"))
             mockMvc.perform(get("/filtered"))
             assertEquals(keysAfterFirstFilteredCall, registry.boundKeyCount(), "a filtered route binds no key per request")
-            // A CORS preflight matches GET /fn/{id} but Spring answers it without the handler.
             mockMvc.perform(options("/fn/1").header("Origin", "http://example.com").header("Access-Control-Request-Method", "GET"))
 
             val afterDispatch = registry.endpoints().associateBy { "${it.verb} ${it.routeTemplate}" }
@@ -381,8 +309,6 @@ class SpringWebMvcModuleTest {
             assertEquals(1L, deltasById.getValue(afterDispatch.getValue("DELETE /api").endpointId).hitsTotal)
             assertEquals(3L, deltasById.getValue(afterDispatch.getValue("GET /filtered").endpointId).hitsTotal)
 
-            // handlerA and handlerC are object expressions (never hidden) that declare handle on
-            // themselves, so the join the declare walk registered names their own class and handle.
             val fnById = afterDispatch.getValue("GET /fn/{id}")
             assertEquals(handlerA.javaClass.name, fnById.handlerClass)
             assertEquals("handle", fnById.handlerMethod)
@@ -392,24 +318,15 @@ class SpringWebMvcModuleTest {
             assertEquals("handle", itemsById.handlerMethod)
             assertEquals(HANDLE_DESCRIPTOR, itemsById.handlerDescriptor)
 
-            // handlerB and handlerD keep the join their registration recorded after a dispatch.
             assertJoinsLambdaBody(afterDispatch.getValue("POST /fn"))
             assertJoinsLambdaBody(afterDispatch.getValue("GET /api/things/{id}"))
-            // The dispatch advice names a hidden handler the same way for a route it discovers.
             val discovered = afterDispatch.getValue("GET /discovered")
             assertEquals(EndpointDiscoverySource.DISPATCH, discovered.discoverySource)
             assertJoinsLambdaBody(discovered)
             assertNull(afterDispatch.getValue("GET /early").handlerClass, "a dispatch adds no join a registration did not have")
 
-            // Observed: the param-only route has no path predicate anywhere in its tree, so
-            // nothing ever sets RouterFunctions.MATCHING_PATTERN_ATTRIBUTE on the request, even
-            // though the route matches and its handler runs (status 200). SetAttributesAdvice
-            // reads that attribute as null and returns without recording anything, per its own
-            // "no pattern means no route to attribute" rule. This route is therefore invisible to
-            // this module on both sides: never declared (registerRoute already skips a predicate
-            // with no path), and never discovered at dispatch either, unlike the annotation-mapped
-            // side's unconstrained mapping (HandleMatchAdvice's "* /any" case), which always has a
-            // pattern to key off of. The one endpoint dispatch adds is /discovered.
+            // The param-only route has no path predicate, so Spring sets no matching pattern and dispatch
+            // discovers nothing for it.
             assertEquals(
                 declaredByIdentity.keys + "GET /discovered",
                 registry.endpoints().associateBy { "${it.verb} ${it.routeTemplate}" }.keys,
@@ -421,10 +338,6 @@ class SpringWebMvcModuleTest {
         }
     }
 
-    /**
-     * Asserts that [endpoint] joins to a lambda body kotlinc wrote in this test class, with
-     * `HandlerFunction.handle`'s descriptor, since none of these lambdas captures anything.
-     */
     private fun assertJoinsLambdaBody(endpoint: EndpointLocation) {
         val route = "${endpoint.verb} ${endpoint.routeTemplate}"
         assertEquals(javaClass.name, endpoint.handlerClass, "$route: handler class")

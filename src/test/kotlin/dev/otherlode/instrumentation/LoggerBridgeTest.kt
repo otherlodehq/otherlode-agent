@@ -11,16 +11,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.test.fail
 
-/**
- * Starts JVMs with a `System.LoggerFinder` bridge on the class path. The application's `main`
- * names its logging configuration and only then logs, so the agent must not have started the
- * bridge's backend before `main` ran.
- *
- * One case uses `log4j-jpl` and checks the application's Log4j configuration is the one in force.
- * The other uses a bridge that only records each request for a logger, and checks none is made
- * before `main` has run. The jars are the `loggerBridgeTestJars` configuration; Gradle passes their
- * paths in `otherlode.test.log4jJars`.
- */
 class LoggerBridgeTest {
     private companion object {
         const val PROCESS_TIMEOUT_SECONDS = 120L

@@ -29,10 +29,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Pins how the static baseline's references are filtered and mapped without a defining loader,
- * and how the publisher waits for the dependency listing first.
- */
 class BaselineReferenceFilterTest {
     @TempDir
     lateinit var dir: Path
@@ -236,8 +232,6 @@ class BaselineReferenceFilterTest {
         val exporter = RecordingExporter()
         val second = DeclaredClass("com.acme.Second", listOf(DeclaredMethod("m", "()V")))
         val scan = scanReferencingEverything().let { it.copy(declaredClasses = it.declaredClasses + second) }
-        // "App" weighs 1 method + 1 class record + 3 kept references on the method + 3 on the
-        // class + 1 mapping = 9, and "Second" weighs 2. Unfiltered, "App" alone would weigh 16.
         val publisher =
             StaticBaselinePublisher(
                 { scan },

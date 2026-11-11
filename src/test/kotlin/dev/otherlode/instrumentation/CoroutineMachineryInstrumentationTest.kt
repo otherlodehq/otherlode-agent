@@ -15,12 +15,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Proves the branch tier's coroutine-machinery drop rule through the real transform
- * pipeline, on the `CoroutineTarget` fixture, rather than only through
- * [dev.otherlode.instrumentation.branch.CoroutineMachineryAnalysisTest]'s direct
- * bytecode checks.
- */
 class CoroutineMachineryInstrumentationTest {
     private var installedTransformer: ResettableClassFileTransformer? = null
     private var installedOtherlode: OtherlodeInstrumentation? = null
@@ -93,8 +87,6 @@ class CoroutineMachineryInstrumentationTest {
         val probes = branchProbesOf(registry, "com.example.target.CoroutineTargetKt", "twoPointsSuspending")
         assertEquals(2, probes.size)
 
-        // The adopter's conditional sits between the two pauseLater() suspension points, so it has
-        // not run yet: the first pauseLater() call suspended before reaching it.
         val beforeResume = registry.computeDeltaBatch(ResourceAttributes("test", null, "i-1", null, "run-1")).batch.deltas
         val beforeHitsByIndex = beforeResume.associate { it.probeIndex to it.hitsTotal }
         assertEquals(
@@ -175,15 +167,12 @@ class CoroutineMachineryInstrumentationTest {
 
         target.getMethod("runTwoPoints", Int::class.java).invoke(null, 5)
 
-        // Loading CoroutineTargetKt transforms every suspend-shaped method the file declares, not
-        // only twoPoints, and calling runTwoPoints also loads its own suspend-lambda wrapper class:
-        // twoPoints (5) + twoPointsSuspending (5) + compareRefs (4) + compareAfterMarker (5) +
-        // handOff (2) + earlyHandOff (2) + pauseNow (1) + pauseLater (1) + the wrapper's own two
-        // machinery sites, with a zero-machinery adopter body, from CoroutineTargetKt$runTwoPoints$1.
+        // The count sums every suspend-shaped method CoroutineTargetKt declares: twoPoints (5) +
+        // twoPointsSuspending (5) + compareRefs (4) + compareAfterMarker (5) + handOff (2) +
+        // earlyHandOff (2) + pauseNow (1) + pauseLater (1), plus the two machinery sites of the
+        // wrapper class CoroutineTargetKt$runTwoPoints$1.
         assertEquals(27, branchDropCounts.countOf(BranchDropReason.COROUTINE_MACHINERY))
-        // CoroutineTargetKt (every dropping method above, one record() call for
-        // the whole class) and CoroutineTargetKt$runTwoPoints$1 (its own wrapper class): two
-        // classes recorded a drop, not one per dropping method.
+        // CoroutineTargetKt makes one record() call for the whole class and its wrapper class makes another.
         assertEquals(2, branchDropCounts.classesWithDrops())
     }
 }

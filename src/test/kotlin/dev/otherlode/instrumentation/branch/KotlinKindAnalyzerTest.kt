@@ -10,11 +10,6 @@ import java.io.File
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-/**
- * Proves [BranchSiteAnalyzer] reads each class's Kotlin kind from the `k` element of its
- * `kotlin.Metadata`, and marks a multi-file facade's forwarders [GeneratedBy.MULTIFILE_FACADE] by
- * their bytecode shape.
- */
 class KotlinKindAnalyzerTest {
     private companion object {
         const val METADATA_DESCRIPTOR = "Lkotlin/Metadata;"
@@ -213,7 +208,6 @@ class KotlinKindAnalyzerTest {
         assertEquals(GeneratedBy.NONE, BranchSiteAnalyzer.analyze(bytes) { _, _ -> true }.generatedBy("f", ASM_DESCRIPTOR))
     }
 
-    /** Loads `f`'s two parameters, calls [name] on [owner] with `f`'s own descriptor, and returns when [returns]. */
     private fun forwardToPart(
         mv: MethodVisitor,
         owner: String = ASM_PART,
@@ -226,11 +220,6 @@ class KotlinKindAnalyzerTest {
         if (returns) mv.visitInsn(Opcodes.ARETURN)
     }
 
-    /**
-     * A class [ASM_FACADE] whose `kotlin.Metadata` has `k` = [kind], declaring one
-     * `public static final String f(String, long)` whose body [body] writes, with a label and a
-     * line number around it, as kotlinc emits.
-     */
     private fun asmFacade(
         kind: Int = 4,
         body: (MethodVisitor) -> Unit,
@@ -253,7 +242,6 @@ class KotlinKindAnalyzerTest {
         return writer.toByteArray()
     }
 
-    /** A class with one no-op method and a `kotlin.Metadata` whose `k` is [k], or that has no `k` element when [k] is null. */
     private fun classWithMetadata(k: Int?): ByteArray {
         val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
         writer.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC or Opcodes.ACC_FINAL, "com/example/target/AsmKind", null, "java/lang/Object", null)

@@ -28,8 +28,6 @@ class ConditionFingerprintTest {
         methodName: String,
     ): List<BranchSite> = BranchSiteAnalyzer.analyze(bytes) { name, _ -> name == methodName }.sites
 
-    // -- Stack-effect table --------------------------------------------------------------------
-
     @Test
     fun `LDC of a long is plus two`() {
         assertEquals(2, ConditionFingerprinter.stackEffect(ConditionFingerprinter.Insn.Ldc(5L)))
@@ -112,8 +110,6 @@ class ConditionFingerprintTest {
         val insn = ConditionFingerprinter.Insn.MultiANewArray("[[I", 2)
         assertEquals(-1, ConditionFingerprinter.stackEffect(insn))
     }
-
-    // -- Condition fingerprints over real fixtures ----------------------------------------------
 
     @Test
     fun `a simple condition on a parameter fingerprints to its exact text with no slot number`() {
@@ -207,8 +203,6 @@ class ConditionFingerprintTest {
         assertNotEquals(sites[0].conditionFingerprint, sites[1].conditionFingerprint)
     }
 
-    // -- Switches: case keys and fingerprints excluding case data -------------------------------
-
     @Test
     fun `a dense tableswitch's case keys match min plus index`() {
         val site = sitesOf(readJavaTargetBytes("BranchTarget"), "classifyDense").single()
@@ -248,9 +242,6 @@ class ConditionFingerprintTest {
         assertEquals(dense.conditionFingerprint, gappy.conditionFingerprint)
     }
 
-    // -- No LocalVariableTable -------------------------------------------------------------------
-
-    /** Strips every `LocalVariableTable` entry from a class's bytes by dropping `visitLocalVariable` calls. */
     private fun stripLocalVariableTable(bytes: ByteArray): ByteArray {
         val writer = ClassWriter(0)
         val stripper =
@@ -272,7 +263,6 @@ class ConditionFingerprintTest {
                             end: Label,
                             index: Int,
                         ) {
-                            // Dropped: this is exactly what strips the table.
                         }
                     }
                 }
@@ -293,13 +283,6 @@ class ConditionFingerprintTest {
         assertEquals("ILOAD;IFLE", x.conditionFingerprint)
     }
 
-    // -- Unknown depth --------------------------------------------------------------------------
-
-    /**
-     * Builds a method by hand whose only conditional jump sits right after dead code following a
-     * `RETURN`, with no label recording a depth for it: the site's window would start at unknown
-     * depth, so it must fingerprint null.
-     */
     private fun classWithUnreachableConditionBytes(): ByteArray {
         val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
         writer.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, "com/example/target/UnreachableConditionTarget", null, "java/lang/Object", null)
@@ -330,8 +313,6 @@ class ConditionFingerprintTest {
         assertNull(site.conditionFingerprint)
     }
 
-    // -- JaCoCo-instrumented bytes ----------------------------------------------------------------
-
     private fun jacocoInstrument(bytes: ByteArray): ByteArray =
         Instrumenter(OfflineInstrumentationAccessGenerator()).instrument(bytes, "FingerprintTargetKt")
 
@@ -349,8 +330,6 @@ class ConditionFingerprintTest {
         }
     }
 
-    // -- Existing analyser behaviour is unchanged -------------------------------------------------
-
     @Test
     fun `site counts and indices are unaffected by fingerprinting`() {
         val analysis = BranchSiteAnalyzer.analyze(readJavaTargetBytes("BranchTarget")) { _, _ -> true }
@@ -360,9 +339,6 @@ class ConditionFingerprintTest {
 
     @Test
     fun `a coroutine-machinery or inlined-out-of-scope site still carries no fingerprint requirement change`() {
-        // A dropped site (coroutine machinery, or an inlined copy out of scope) is still eligible
-        // for a fingerprint: dropping and fingerprinting are independent. This class has neither
-        // shape, so this simply confirms an ordinary dropped-free class keeps working end to end.
         val sites = sitesOf(readJavaTargetBytes("BranchTarget"), "classify")
         assertTrue(sites.none { it.dropReason != null })
     }

@@ -11,14 +11,6 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
-/**
- * Pins what [OtherlodeExtension] puts in JUnit's root store. From JUnit 5.13 the store closes every
- * `AutoCloseable` value it holds when the store itself closes, at the end of the test run and
- * before the JVM exits. [dev.otherlode.testkit.OtherlodeTestCollector] is `AutoCloseable`,
- * so storing it directly would stop the collector before the agent's shutdown-hook flush could
- * reach it, which is the outcome the extension exists to avoid. The store here is a fake that only
- * records what is put in it; JUnit's own lifecycle is not involved.
- */
 class OtherlodeExtensionStoreTest {
     private val stored = mutableMapOf<Any, Any?>()
     private var previousPort: String? = null
@@ -48,21 +40,14 @@ class OtherlodeExtensionStoreTest {
     fun `the value kept in the root store is not AutoCloseable, so a store that closes such values cannot stop the collector`() {
         val context = fakeContext()
 
-        // No agent is attached to this JVM, so the heartbeat wait times out; the store entry is
-        // made before that wait, which is all this test needs.
         assertFailsWith<IllegalStateException> { OtherlodeExtension().beforeAll(context) }
 
         assertTrue(stored.isNotEmpty(), "beforeAll must have put the collector in the store")
         assertTrue(stored.values.none { it is AutoCloseable }, "stored ${stored.values.map { it?.javaClass?.name }}")
     }
 
-    /**
-     * An agent attached without `includePackages` refuses to start and sends no heartbeat, so the
-     * timeout names that option beside the flag and the flush interval.
-     */
     @Test
     fun `a startup timeout names includePackages, the javaagent flag and the flush interval`() {
-        // No agent is attached to this JVM, so the heartbeat wait times out after one second.
         val failure = assertFailsWith<IllegalStateException> { OtherlodeExtension().beforeAll(fakeContext()) }
         val message = failure.message.orEmpty()
 
@@ -73,10 +58,6 @@ class OtherlodeExtensionStoreTest {
         assertTrue("default flush interval is 60 seconds" in message, message)
     }
 
-    /**
-     * Under `@TestInstance(PER_CLASS)` JUnit builds the test instance, and so resolves a
-     * constructor parameter, before it calls `beforeAll`.
-     */
     @Test
     fun `a parameter resolved before beforeAll starts the collector in the root store`() {
         val parameterContext =

@@ -9,10 +9,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.test.fail
 
-/**
- * Starts a JVM with the shaded agent jar given twice as `-javaagent`. The second start must change
- * nothing: a class compiled for Java 8 loads once woven, and each probe counts a hit once.
- */
 class DuplicateAgentTest {
     private companion object {
         const val PACKAGE = "com.example.probewindow"

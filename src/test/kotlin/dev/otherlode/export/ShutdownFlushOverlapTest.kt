@@ -15,10 +15,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
-/**
- * The early shutdown flush's sends can still run when the final flush starts. These pin that they
- * neither clear a pending state the final flush set nor hold the final flush's sends back.
- */
 class ShutdownFlushOverlapTest {
     private val config = AgentConfig.parse("serviceName=checkout,serviceVersion=1.0.0,serviceInstanceId=instance-1,environment=test")
     private val resource = TestResources.forConfig(config)

@@ -8,11 +8,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Proves that a static baseline scan marks a `-jvm-default=disable` stub and a record's methods
- * the way the transform-time analysis does: the stub as `DEFAULT_IMPLS`, a hand-written record
- * `equals` unmarked and the generated ones `RECORD`.
- */
 class GeneratedStubBaselineTest {
     private fun method(
         build: CompilerFixtures.Build,

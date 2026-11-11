@@ -12,11 +12,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
 
-/**
- * Proves which callback annotation [BranchSiteAnalyzer] names for a method, on javac output of the
- * `callbacks` fixtures. The annotation types carry the binary names of the framework ones, since
- * the list matches names.
- */
 class CallbackAnnotationAnalyzerTest {
     private val includePackages = listOf("com.example.target.callbacks")
 

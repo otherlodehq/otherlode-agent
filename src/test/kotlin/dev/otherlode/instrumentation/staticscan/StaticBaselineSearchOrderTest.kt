@@ -21,7 +21,6 @@ import kotlin.test.assertTrue
 import java.util.logging.Level as JulLevel
 import java.util.logging.Logger as JulLogger
 
-/** Which copy of a class name the static baseline keeps, in the order the JVM's class loaders search. */
 class StaticBaselineSearchOrderTest {
     private val dupName = "com/example/target/Dup"
     private val dupClassName = "com.example.target.Dup"
@@ -54,7 +53,6 @@ class StaticBaselineSearchOrderTest {
         return root
     }
 
-    /** Writes [entries] into [jar] after a `META-INF/MANIFEST.MF` holding [manifest] verbatim, or none when it is null. */
     private fun writeJar(
         jar: File,
         manifest: String?,
@@ -652,7 +650,6 @@ class StaticBaselineSearchOrderTest {
         assertEquals(listOf("fromBare"), methodsOfDup(scan(jar)))
     }
 
-    /** Scans a jar whose `Class-Path` is [classPath], beside [jars]: each a path under its directory and the one method its class holds. */
     private fun classPathChain(
         classPath: String,
         vararg jars: Pair<String, String>,
@@ -666,7 +663,6 @@ class StaticBaselineSearchOrderTest {
         return scan(app)
     }
 
-    /** A class named after [method] with that one concrete method, so the class name says which jar it came from. */
     private fun classNamedAfter(method: String): ByteArray {
         val simple = method.replaceFirstChar { it.uppercase() }
         val cw = ClassWriter(ClassWriter.COMPUTE_FRAMES or ClassWriter.COMPUTE_MAXS)
@@ -857,7 +853,6 @@ class StaticBaselineSearchOrderTest {
                 it.methodName == "callsWithDefaultArgument" && it.methodDescriptor == "(Lcom/example/target/DefaultArgumentTarget;)I"
             }.calls
 
-    /** A public class [internalName] with no members, so a `$default` pass-through into it cannot resolve. */
     private fun hollowClass(internalName: String): ByteArray {
         val cw = ClassWriter(0)
         cw.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, internalName, null, "java/lang/Object", null)

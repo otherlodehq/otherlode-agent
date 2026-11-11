@@ -4,11 +4,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.fail
 
-/**
- * The resolution order for the service name, the namespace and the environment: Otherlode's
- * own three sources, then OpenTelemetry's own settings as its Java agent resolves them, then, for
- * the name only, detection and the default.
- */
 class ServiceIdentityResolutionTest {
     private class Sources {
         val options = mutableListOf<String>()
@@ -25,10 +20,6 @@ class ServiceIdentityResolutionTest {
             )
     }
 
-    /**
-     * One source in a chain. [setBlank] makes the source blank so that it falls through. For a
-     * resource attribute that means a blank list, since a list that is set hides the one below it.
-     */
     private class Level(
         val name: String,
         val set: (Sources, String) -> Unit,
@@ -67,11 +58,6 @@ class ServiceIdentityResolutionTest {
 
     private fun valueFor(level: Level) = "from-" + level.name.replace(' ', '-')
 
-    /**
-     * For each level, sets it and every level below it and expects its value. Then sets every
-     * level above it to a blank value and expects the blank ones to fall through to it. With every
-     * level blank, expects [fallback].
-     */
     private fun assertChain(
         levels: List<Level>,
         read: (AgentConfig) -> String?,

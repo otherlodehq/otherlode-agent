@@ -136,8 +136,6 @@ class BranchSiteAnalyzerTest {
     fun `a non-inline overload that inlines a same-named sibling is not itself marked inline`() {
         val analysis = BranchSiteAnalyzer.analyze(readInlineTargetBytes("InlineTarget")) { _, _ -> true }
 
-        // same(int) is not inline; it merely calls the inline same(int, int), whose inlined copy
-        // plants the same "$i$f$same" local name, but only over a sub-range of same(int)'s code.
         assertFalse(analysis.isInline("same", "(I)I"))
         assertTrue(analysis.isInline("same", "(II)I"))
     }
@@ -154,7 +152,6 @@ class BranchSiteAnalyzerTest {
         assertFalse(analysis.isInline("member", "(II)I"))
     }
 
-    /** A default site is found regardless of the filter, since `$default` methods are synthetic and so never eligible. */
     private fun analyzeDefaultSites(simpleName: String) = BranchSiteAnalyzer.analyze(readInlineTargetBytes(simpleName)) { _, _ -> false }
 
     @Test
@@ -172,10 +169,7 @@ class BranchSiteAnalyzerTest {
 
     @Test
     fun `a default method already instrumented by JaCoCo still resolves its mask bits`() {
-        // A coverage agent registered ahead of this one hands the transformer chain its own
-        // output, in which every conditional jump is inverted around an inserted probe, so the
-        // mask test ends in IFNE rather than the IFEQ kotlinc wrote. This is what an adopter's
-        // test suite looks like with coverage switched on.
+        // JaCoCo inverts the mask test to put its probe on the jump, so the test ends in IFNE where kotlinc wrote IFEQ.
         val plain = analyzeDefaultSites("DefaultArgumentTarget").defaultSites.single { it.defaultName == "f\$default" }
         val instrumented =
             Instrumenter(OfflineInstrumentationAccessGenerator())
@@ -228,9 +222,8 @@ class BranchSiteAnalyzerTest {
 
     @Test
     fun `a member extension function's receiver is excluded from the parameter name, the same as a top-level one`() {
-        // Confirmed with javap on Kotlin 2.2.21 output: decorate$default tests `iload_3; iconst_1;
-        // iand`, so mask bit 0 is `suffix`, while the target's LocalVariableTable has the receiver
-        // `$this$decorate` at slot 1 and `suffix` at slot 2.
+        // decorate$default tests `iload_3; iconst_1; iand`, so mask bit 0 is `suffix`, while the LocalVariableTable
+        // has the receiver `$this$decorate` at slot 1 and `suffix` at slot 2.
         val analysis = analyzeDefaultSites("MemberExtensionTarget")
 
         val site = analysis.defaultSites.single { it.defaultName == "decorate\$default" }
@@ -280,7 +273,7 @@ class BranchSiteAnalyzerTest {
         val site = analysis.defaultSites.single()
         assertEquals("greet", site.targetName)
         assertTrue(site.overridable, "an interface target is overridable")
-        // greet itself is abstract, so it has no Code attribute and so no LocalVariableTable.
+        // greet itself is abstract, so it has no Code attribute and no LocalVariableTable.
         assertEquals(mapOf(0 to ""), site.parameterNames)
     }
 
@@ -548,10 +541,6 @@ class BranchSiteAnalyzerTest {
         assertEquals(GeneratedBy.NONE, BranchSiteAnalyzer.analyze(bytes) { _, _ -> true }.generatedBy("f", ASM_METHOD_DESCRIPTOR))
     }
 
-    /**
-     * A `$DefaultImpls` class for [ASM_INTERFACE] declaring one `public static long f(AsmShape, long)`
-     * whose body [body] writes, with a label and a line number around it, as kotlinc emits.
-     */
     private fun asmDefaultImplsClass(body: (MethodVisitor) -> Unit): ByteArray {
         val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
         writer.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC or Opcodes.ACC_FINAL, "$ASM_INTERFACE\$DefaultImpls", null, "java/lang/Object", null)
@@ -713,10 +702,6 @@ class BranchSiteAnalyzerTest {
         assertEquals(GeneratedBy.NONE, BranchSiteAnalyzer.analyze(bytes) { _, _ -> true }.generatedBy("f", "(I)Ljava/lang/String;"))
     }
 
-    /**
-     * A class [ASM_OVERLOADS] declaring `public String f(int)`, whose body [body] writes, beside
-     * the `$default` twin of a `f(int, String)` whose second value has a default.
-     */
     private fun asmOverloadsClass(body: (MethodVisitor) -> Unit): ByteArray {
         val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
         writer.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC or Opcodes.ACC_FINAL, ASM_OVERLOADS, null, "java/lang/Object", null)

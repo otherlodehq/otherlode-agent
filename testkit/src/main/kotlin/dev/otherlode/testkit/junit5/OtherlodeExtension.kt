@@ -37,8 +37,8 @@ import java.util.concurrent.TimeoutException
  *
  * The collector binds to the port named by the `otherlode.testkit.port` system property, defaulting
  * to 4319, the port of the agent's default `exportUrl`. The agent always needs `includePackages`:
- * without it the agent refuses to start and no heartbeat arrives. [beforeAll] waits once per test
- * JVM for the agent's first liveness heartbeat, for the number of seconds in the
+ * without it the agent refuses to start and sends nothing. [beforeAll] waits once per test JVM for
+ * a delta batch that arrives after it begins, for the number of seconds in the
  * `otherlode.testkit.startup.timeout.seconds` system property, defaulting to 15.
  */
 public class OtherlodeExtension :

@@ -24,10 +24,6 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/**
- * Proves through the real transform that each kept outcome lists the lines it guards, and that
- * each site and call edge names its guard.
- */
 class GuardedCodeInstrumentationTest {
     private var installedTransformer: ResettableClassFileTransformer? = null
     private var installedOtherlode: OtherlodeInstrumentation? = null
@@ -77,7 +73,6 @@ class GuardedCodeInstrumentationTest {
 
     private fun BranchSite.outcome(role: BranchRole): BranchOutcome = outcomes.single { it.role == role }
 
-    /** The 1-based line of [source] that ends with `// marker: <marker>`. */
     private fun line(
         marker: String,
         source: File = kotlinSource,
@@ -87,7 +82,6 @@ class GuardedCodeInstrumentationTest {
         return index + 1
     }
 
-    /** Every line [ranges] cover in [sourceFile]. */
     private fun linesIn(
         ranges: List<LineRange>,
         sourceFile: String = "GuardTarget.kt",
@@ -231,7 +225,6 @@ class GuardedCodeInstrumentationTest {
         )
     }
 
-    /** The lines of [javaSource] that hold only `break;`, which each case also guards. */
     private fun linesOfBreaks(): Set<Int> =
         javaSource
             .readLines()

@@ -24,14 +24,7 @@ import kotlin.test.assertTrue
 import java.util.logging.Level as JulLevel
 import java.util.logging.Logger as JulLogger
 
-/**
- * Proves that the lambda factory hook switches itself off on a JDK whose lambda factory does not
- * have the shape it reads. The test simulates that JDK with a shape that names a field the factory
- * lacks. The hook then logs one line and installs nothing. Every endpoint is registered and counted
- * as usual, and a hidden handler gets no join, which is the behaviour without the hook.
- *
- * It needs a JVM of its own for the same reasons as [HiddenHandlerNamingTest].
- */
+// Needs a JVM of its own (forkEvery = 1): the endpoint advice weaves ServerImpl only as it first loads.
 class HiddenHandlerNamingSwitchedOffTest {
     @Test
     fun `a lambda factory without the expected shape leaves hidden handlers unnamed and breaks nothing`() {

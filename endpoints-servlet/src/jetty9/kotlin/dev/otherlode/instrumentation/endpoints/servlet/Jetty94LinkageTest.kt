@@ -6,7 +6,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/** Jetty 9.4 implements Servlet 3.1, which has no `getHttpServletMapping`: the module is off, and says so. */
 class Jetty94LinkageTest : ServletTestSupport() {
     @Test
     fun `the module disables itself with LINKAGE_ERROR at the first request and counts nothing`() {

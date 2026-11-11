@@ -7,7 +7,6 @@ import java.net.URLClassLoader
 import kotlin.test.Test
 import kotlin.test.assertNull
 
-/** A retired class loader must stay collectible after the walk has read a router defined in it. */
 class RouterWalkLoaderLeakTest {
     private fun walkRouterInFreshLoader(walk: RouterWalk): WeakReference<ClassLoader> {
         val urls = System.getProperty("java.class.path").split(File.pathSeparator).map { File(it).toURI().toURL() }

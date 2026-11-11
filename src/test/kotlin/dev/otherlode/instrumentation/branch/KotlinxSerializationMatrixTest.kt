@@ -8,12 +8,6 @@ import org.junit.jupiter.params.provider.MethodSource
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Runs the kotlinx.serialization marks (ADR 0078) over the same sources compiled by each kotlinc
- * release with its own compiler plugin, and by each release that still has the K1 frontend under
- * `-language-version 1.9`. Under K2 the `$serializer` class is synthetic, so only the K1 builds
- * leave it to probe, but its members read the same.
- */
 class KotlinxSerializationMatrixTest {
     companion object {
         @JvmStatic
@@ -210,7 +204,6 @@ class KotlinxSerializationMatrixTest {
     @MethodSource("keys")
     fun `a class-form lazy lambda the plugin builds is KOTLINX_SERIALIZATION, and K2 writes none`(key: String) {
         val build = CompilerFixtures.kotlincSerialization(key)
-        // The plugin's annotation implementation for a meta-serializable class is synthetic, so the agent probes none of it.
         val lambdas = build.classNames().filter { LAMBDA_NAME.matches(it) && "\$annotationImpl\$" !in it }
 
         if (isK1(key)) {

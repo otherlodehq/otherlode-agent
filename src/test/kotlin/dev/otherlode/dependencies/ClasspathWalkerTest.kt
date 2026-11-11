@@ -20,7 +20,6 @@ class ClasspathWalkerTest {
     @TempDir
     lateinit var tempDir: Path
 
-    /** The real path of the temp folder, so expected paths match the canonical paths the walker hands out. */
     private val dir: Path get() = tempDir.toRealPath()
 
     private class Recorder(
@@ -335,7 +334,6 @@ class ClasspathWalkerTest {
         Files.createSymbolicLink(app.resolve("BOOT-INF/lib/core.jar"), target)
 
         assertEquals(
-            // Boot's loader has opened sibling.jar's URL through the Class-Path, so the library entry adds nothing.
             listOf("app:app", "lib:app/BOOT-INF/lib/core.jar", "lib:app/BOOT-INF/lib/sibling.jar"),
             walk(app),
         )
@@ -502,7 +500,6 @@ class ClasspathWalkerTest {
         )
     }
 
-    /** A jar holding one class and [manifest] verbatim as its manifest entry. */
     private fun rawManifestJar(
         relative: String,
         manifest: String,

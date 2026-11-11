@@ -26,23 +26,6 @@ import kotlin.test.assertTrue
 import java.util.logging.Level as JulLevel
 import java.util.logging.Logger as JulLogger
 
-/**
- * Proves [Ktor3Module] end to end against a real embedded CIO server, not a fixture.
- *
- * [Ktor3TestAgent] installs the endpoint transformer during its own `premain`, run by this
- * module's Gradle configuration as a real `-javaagent` on the test JVM's own command line, rather
- * than through the self-attach `JdkHttpServerModuleTest` and `SpringWebMvcModuleTest` both use.
- * See [Ktor3TestAgent]'s Javadoc for why: Ktor's routing DSL is built from Kotlin `inline`
- * functions, so any code that calls it, anywhere in this module's compiled test output, loads
- * `RoutingNode`/`RoutingRoot` while Gradle's JUnit Platform integration discovers `@Test` methods,
- * before this test method's own first statement runs. A `-javaagent` gets ahead of that: the JVM
- * runs it before any application class loads at all, discovery included.
- *
- * Runs unmodified against both ends of the Ktor 3.x line: this module's own advice names no type
- * outside `io.ktor.server.routing`/`io.ktor.http`, so the same test source compiles and passes
- * against 3.5.2 (`test`) and 3.0.3 (`ktor3_0Test`), each its own Gradle test suite with its own
- * classpath, its own forked test JVM, and its own build of [Ktor3TestAgent] as that JVM's agent.
- */
 class Ktor3ModuleTest {
     @Test
     fun `registration and dispatch through a real CIO server are tracked end to end`() {
@@ -66,7 +49,6 @@ class Ktor3ModuleTest {
             embeddedServer(CIO, host = "127.0.0.1", port = port) {
                 routing {
                     get("/checkout/{id}") { call.respondText("ok") }
-                    // Suspends, so the dispatch method resumes, re-entering with null arguments.
                     get("/slow") {
                         delay(10)
                         call.respondText("slow")
@@ -108,8 +90,6 @@ class Ktor3ModuleTest {
                     endpoint.handlerClass!!.contains("Ktor3ModuleTest"),
                     "handler class ${endpoint.handlerClass} is not from this test",
                 )
-                // A suspend lambda declares invokeSuspend on itself, so every handler here (a real, named
-                // class, never hidden) joins to that method rather than reporting the class alone.
                 assertEquals("invokeSuspend", endpoint.handlerMethod, "handler method missing for ${endpoint.verbatimTemplate}")
                 assertEquals("(Ljava/lang/Object;)Ljava/lang/Object;", endpoint.handlerDescriptor)
             }

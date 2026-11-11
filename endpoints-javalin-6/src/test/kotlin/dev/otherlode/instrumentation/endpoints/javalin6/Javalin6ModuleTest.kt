@@ -12,10 +12,6 @@ import kotlin.test.assertTrue
 private const val HANDLE_DESCRIPTOR = "(Lio/javalin/http/Context;)V"
 private const val ITEM_DESCRIPTOR = "(Lio/javalin/http/Context;Ljava/lang/String;)V"
 
-/**
- * Proves [Javalin6Module] end to end against a real Javalin server, with [Javalin6Module] and the
- * Javalin 7 module both installed. The same sources run against every tested 6.x release.
- */
 class Javalin6ModuleTest {
     @Test
     fun `routes are declared at registration and counted once at dispatch`() {

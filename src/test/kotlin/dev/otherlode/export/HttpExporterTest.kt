@@ -32,7 +32,6 @@ class HttpExporterTest {
         rawSocket?.close()
     }
 
-    /** [handler] receives the 1-based number of this request and returns the status to send back. */
     private fun startServer(handler: (requestNumber: Int) -> Int): String {
         val httpServer = HttpServer.create(InetSocketAddress("localhost", 0), 0)
         httpServer.createContext("/") { exchange ->
@@ -145,18 +144,12 @@ class HttpExporterTest {
 
     @Test
     fun `a per-request timeout bounds how long a hung collector can block a flush`() {
-        // A raw socket that accepts the connection but never writes a response. This stands in
-        // for a collector that is up but wedged, or a network path that silently black-holes
-        // traffic. A plain "server returned an error status" test cannot exercise this case.
-        // Without a request timeout wired into the HttpRequest, this call would hang
-        // indefinitely instead of failing into the existing retry/backoff path.
         val socket = ServerSocket(0)
         rawSocket = socket
         thread(isDaemon = true) {
             try {
                 while (!socket.isClosed) socket.accept()
             } catch (_: IOException) {
-                // Expected once tearDown closes the socket.
             }
         }
         val endpoint = "http://localhost:${socket.localPort}"

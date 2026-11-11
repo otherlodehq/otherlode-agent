@@ -9,11 +9,6 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/**
- * Drives [DefinitionAttempt] over real threads. [TransformerEntry] stands in for the JVM's
- * transformer entry frame and [Definer] for the frame that starts a definition, so the capture
- * and the stack read run the code that production runs.
- */
 class DefinitionAttemptTest {
     private object TransformerEntry {
         fun transform(body: () -> Unit) {
@@ -35,7 +30,6 @@ class DefinitionAttemptTest {
 
     private fun capture(): DefinitionAttempt? = DefinitionAttempt.capture(entryClass, "transform")
 
-    /** A thread parked inside [Definer.defineClass1], with the attempt captured there. */
     private inner class ParkedDefiner {
         val captured = CountDownLatch(1)
         val release = CountDownLatch(1)
@@ -186,7 +180,6 @@ class DefinitionAttemptTest {
         }
     }
 
-    /** Calls [Runnable.run] on [body] through `Method.invoke`, as a launcher calls `main`. */
     class ReflectiveLauncher {
         fun launch(body: Runnable) {
             Runnable::class.java.getMethod("run").invoke(body)
@@ -279,7 +272,6 @@ class DefinitionAttemptTest {
         assertTrue(held.heldBy(emptyArray()))
     }
 
-    /** A thread whose bottom method recurses, so a cut-short read ends in a frame named like its bottom. */
     private inner class RecursingThread(
         private val onDeepest: () -> Unit,
     ) : Thread("test-recursing-definer") {

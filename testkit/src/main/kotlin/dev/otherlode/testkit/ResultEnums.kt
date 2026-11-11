@@ -26,7 +26,10 @@ public enum class ProbeKind { METHOD, BRANCH, OPTIONAL_ARGUMENT, INITIALIZER_RET
  * whose method is not generated holds null instead of a value of this enum. Values may be added in a minor release, so a `when` over this enum needs an `else` branch.
  */
 public enum class GeneratedBy {
-    /** An enum's `values`, `valueOf` or `getEntries`. */
+    /**
+     * An enum's `values`, `valueOf` or `getEntries`, or a Scala 3 enum's plumbing such as `fromOrdinal`
+     * and `$new`.
+     */
     ENUM,
 
     /** A data class's `componentN` and `copy`, and whichever of `equals`, `hashCode` and `toString` the adopter did not write. */
@@ -50,7 +53,7 @@ public enum class GeneratedBy {
     /** A static forwarder scalac adds for an object's method, or the static proxy kotlinc adds for a `@JvmStatic` companion function. */
     STATIC_FORWARDER,
 
-    /** A Scala object's `writeReplace`. */
+    /** A Scala object's `writeReplace`, or a Scala 2 object's `readResolve`. */
     SCALA_OBJECT,
 
     /**
@@ -133,7 +136,10 @@ public enum class OutsideCallerKind {
     /** The method overrides or implements a method that an out-of-scope type declares. */
     OVERRIDES_METHOD,
 
-    /** The method, or one of its parameters, carries an annotation a framework calls through. */
+    /**
+     * The method, one of its parameters, or a method it overrides carries an annotation a framework
+     * calls through.
+     */
     CALLBACK_ANNOTATION,
 }
 
@@ -149,7 +155,10 @@ public enum class EndpointDiscoverySource { REGISTRATION, DISPATCH }
  * this enum needs an `else` branch.
  */
 public enum class DependencyDiscoverySource {
-    /** Listed from the startup classpath, including every jar under a fat jar's `BOOT-INF/lib`, `WEB-INF/lib` or `lib-provided`. */
+    /**
+     * Listed from the startup classpath, including every jar under a Spring Boot jar's `BOOT-INF/lib` or a
+     * war's `WEB-INF/lib` or `WEB-INF/lib-provided`.
+     */
     STARTUP_CLASSPATH,
 
     /** Seen only when a class from it loaded. Such a dependency can never read as unloaded. */
@@ -176,10 +185,13 @@ public data class DisabledEndpointModule internal constructor(
  * this enum needs an `else` branch.
  */
 public enum class DisabledEndpointModuleKind {
-    /** A `LinkageError`, wherever it was caught: the framework release differs from the one the module was built for. */
+    /**
+     * A `LinkageError`, wherever it was caught, or another sign that the framework release differs from
+     * the one the module was built for.
+     */
     LINKAGE_ERROR,
 
-    /** Any other throw from the module's advice. */
+    /** Any other throw from the module's advice, or a request the advice could not read. */
     ADVICE_FAILED,
 
     /** The module's own `transform` threw, or a framework class it hooks failed to weave. */

@@ -9,11 +9,6 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/**
- * Pins the rules that keep an endpoint a class declared from its transform out of the manifest
- * until the JVM is known to have defined that class. The attempts are scripted: an attempt reads
- * as over once it is in [ended], so no test needs a second thread.
- */
 class EndpointRegistryConfirmationTest {
     private val declaring = "com.example.Resource"
     private val ended: MutableSet<DefinitionAttempt> = Collections.newSetFromMap(IdentityHashMap())

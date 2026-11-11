@@ -15,19 +15,11 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/**
- * Proves the Scala value-class and trait-forwarder marks (ADR 0080) over the fixtures in
- * `ValueClasses.scala` and `TraitForwarders.scala`, built by the baseline compiler of each Scala
- * line and by every release of the compiler matrix. Each method of a fixture class carries the
- * mark its entry gives it, `NONE` for a method the entry does not name.
- */
 class ScalaForwarderMarksTest {
     companion object {
-        /** The 3.3.4 baseline, named `baseline`, and every Scala 3 release in the matrix. */
         @JvmStatic
         fun scala3Builds(): List<String> = listOf("baseline") + CompilerFixtures.scalacVersions.filter { it.startsWith("3.") }
 
-        /** The 2.13.15 baseline, named `baseline`, and every Scala 2 release in the matrix. */
         @JvmStatic
         fun scala2Builds(): List<String> = listOf("baseline") + CompilerFixtures.scalacVersions.filter { !it.startsWith("3.") }
 
@@ -36,10 +28,8 @@ class ScalaForwarderMarksTest {
         private val CASE = GeneratedBy.CASE_CLASS
         private val TRAIT = GeneratedBy.TRAIT_FORWARDER
 
-        /** Marks other rules own: scalac's static forwarders and an object's serialization hook. */
         private val OTHER_RULES = setOf(GeneratedBy.STATIC_FORWARDER, GeneratedBy.SCALA_OBJECT)
 
-        /** The members of a case value class's boxed side that scalac writes in both Scala versions. */
         private val CASE_BOXED =
             listOf(
                 "canEqual",
@@ -54,7 +44,6 @@ class ScalaForwarderMarksTest {
                 "copy\$default\$1",
             )
 
-        /** The members Scala 2.12 does not write. */
         private val SINCE_2_13 = setOf("productElementName", "productElementNames")
     }
 
@@ -68,11 +57,6 @@ class ScalaForwarderMarksTest {
             CompilerFixtures.scalac(key).withScalaLibrary(key)
         }
 
-    /**
-     * Asserts the marks of fixture class [simpleName]. [expected] maps a method name, or a name
-     * followed by a descriptor, to its mark; every other method must be `NONE`. A method another
-     * rule marks ([OTHER_RULES]) is left out. Each key must name a method, except those in [optional].
-     */
     private fun assertMarks(
         key: String,
         scala3: Boolean,
@@ -228,7 +212,6 @@ class ScalaForwarderMarksTest {
     private val comparatorDefaults =
         listOf("reversed", "thenComparing", "thenComparingInt", "thenComparingLong", "thenComparingDouble")
 
-    /** Asserts that every method of [simpleName] called one of [names] is a trait forwarder. */
     private fun forwardedDefaults(
         key: String,
         scala3: Boolean,
@@ -452,7 +435,6 @@ class ScalaForwarderMarksTest {
         }
     }
 
-    /** [classBytes] with a `nop` first in the method [method], and with the `final` flag of the class cleared when [open]. */
     private fun altered(
         classBytes: ByteArray,
         method: String,
@@ -508,7 +490,6 @@ class ScalaForwarderMarksTest {
         val family: UnreadShape,
     )
 
-    /** One forwarder of each outline, which the tests below alter. */
     private val shapes =
         listOf(
             Shape("Weight", "scaled", "(DJ)D", "Weight", UnreadShape.VALUE_CLASS),

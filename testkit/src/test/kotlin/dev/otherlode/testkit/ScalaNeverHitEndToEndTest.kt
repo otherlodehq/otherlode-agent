@@ -15,17 +15,10 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Proves that [OtherlodeTestCollector.neverHit] leaves Scala's generated methods out, over the wire
- * from a real agent: the static forwarders on `Driver` and `Cc` and the case-class and companion
- * plumbing are no rows, a field accessor nobody called is one, and each uncalled method of the
- * object `Driver$` is a row once.
- */
 class ScalaNeverHitEndToEndTest {
     private companion object {
         const val PACKAGE = "com.example.scalatarget"
 
-        /** The methods a case class or its companion gets from scalac, by name. */
         val PLUMBING =
             setOf(
                 "canEqual",
@@ -62,7 +55,6 @@ class ScalaNeverHitEndToEndTest {
         collector?.close()
     }
 
-    /** A child-first loader over fixture module [module]'s output and its Scala library jars. */
     private fun fixtureLoader(module: String): FixtureClassLoader {
         fun property(name: String) = System.getProperty(name) ?: error("$name is not set; run tests through the Gradle build")
         val files =
@@ -71,7 +63,6 @@ class ScalaNeverHitEndToEndTest {
         return FixtureClassLoader(files.map { it.toURI().toURL() }.toTypedArray(), javaClass.classLoader, "$PACKAGE.")
     }
 
-    /** Starts a collector and an agent over fixture module [module], and returns the loader and the collector. */
     private fun startAgent(module: String): Pair<FixtureClassLoader, OtherlodeTestCollector> {
         val target = OtherlodeTestCollector.start()
         collector = target
@@ -100,7 +91,6 @@ class ScalaNeverHitEndToEndTest {
         return fixtureLoader(module) to target
     }
 
-    /** Flushes what the agent recorded and waits until [target] holds it. */
     private fun settle(
         target: OtherlodeTestCollector,
         className: String,

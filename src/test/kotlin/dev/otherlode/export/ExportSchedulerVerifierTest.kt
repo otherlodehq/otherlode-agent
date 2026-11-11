@@ -14,11 +14,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * What the scheduler does with the verifier's rejections (ADR 0071): drains them before the sends,
- * stamps the watched flag and the unplaced total on every manifest, and sends a manifest for a rise
- * in the unplaced total alone.
- */
 class ExportSchedulerVerifierTest {
     private val config = AgentConfig.parse("serviceName=checkout,serviceInstanceId=instance-1")
     private val resource = TestResources.forConfig(config)

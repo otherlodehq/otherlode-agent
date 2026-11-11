@@ -6,12 +6,6 @@ import java.nio.ByteOrder
 import java.util.zip.CRC32
 import java.util.zip.Deflater
 
-/**
- * One entry for [RawZip.build]: [payload] is the bytes as stored in the archive, so it may be corrupt.
- * A non-null [zip64ExtraLength] saturates the central record's sizes and offset and writes a ZIP64
- * extra field holding them, cut to that many bytes; 24 holds all three. [centralComment] is the
- * entry's comment in its central record.
- */
 internal class RawEntry(
     val name: String,
     val payload: ByteArray,
@@ -26,12 +20,10 @@ internal class RawEntry(
     val centralComment: ByteArray = ByteArray(0),
 )
 
-/** Writes zip archives byte by byte, for shapes `java.util.zip` will not write. */
 internal object RawZip {
     const val STORED = 0
     const val DEFLATED = 8
 
-    /** A stored entry holding [content]. */
     fun stored(
         name: String,
         content: ByteArray,
@@ -55,14 +47,12 @@ internal object RawZip {
         centralComment,
     )
 
-    /** A deflated entry whose content inflates to [content]. */
     fun deflated(
         name: String,
         content: ByteArray,
         dataDescriptor: Boolean = false,
     ) = RawEntry(name, deflate(content), DEFLATED, content.size, crc(content), 0, dataDescriptor)
 
-    /** A deflated entry whose compressed bytes are not valid deflate data. */
     fun corruptDeflated(name: String) = RawEntry(name, ByteArray(16) { 0xFF.toByte() }, DEFLATED, 64, 0)
 
     private fun crc(content: ByteArray) = CRC32().apply { update(content) }.value
@@ -80,14 +70,6 @@ internal object RawZip {
 
     private fun le(capacity: Int) = ByteBuffer.allocate(capacity).order(ByteOrder.LITTLE_ENDIAN)
 
-    /**
-     * The archive of [entries]. [prefix] precedes the first entry without shifting any recorded offset, as
-     * a launch script does. [zip64] writes ZIP64 end records and the saturated end record fields.
-     * [centralBytesKept] cuts the central directory to that many bytes, leaving the end record claiming all.
-     * [saturateEnd] false keeps the end record's own values beside the ZIP64 records, as some writers do.
-     * [centralTrailing] follows the central directory's records and counts in its size. [comment] is the
-     * archive comment.
-     */
     fun build(
         entries: List<RawEntry>,
         prefix: ByteArray = ByteArray(0),

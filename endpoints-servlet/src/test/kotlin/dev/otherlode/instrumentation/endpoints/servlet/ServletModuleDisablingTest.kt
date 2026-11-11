@@ -20,10 +20,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * The ways the module switches itself off once it is running. Each switch-off is process-wide, so
- * each test class runs in its own JVM.
- */
+// A switch-off is process-wide, so each test that switches the module off sits in a class of its own,
+// and the build forks a JVM per test class.
 class ServletModuleDisablingTest : ServletTestSupport() {
     @Test
     fun `a mapping outside the five forms disables the module and declares nothing`() {
@@ -38,10 +36,6 @@ class ServletModuleDisablingTest : ServletTestSupport() {
     }
 }
 
-/**
- * A context whose registrations are [mappings], each a servlet name and its mappings, of [GetPostServlet].
- * Once [failure] holds a throwable, the method named [failingMethod] throws it.
- */
 private fun contextWithMappings(
     vararg mappings: Pair<String, List<String>>,
     failingMethod: String = "",
@@ -66,7 +60,6 @@ private fun contextWithMappings(
     } as ServletContext
 }
 
-/** A declared servlet that the container matched with no match type disables the module. */
 class ServletModuleNullMatchTest : ServletTestSupport() {
     @Test
     fun `a dispatch to a declared servlet with no mapping match type disables the module`() {
@@ -95,7 +88,6 @@ class ServletModuleNullMatchTest : ServletTestSupport() {
     }
 }
 
-/** A request object that does not extend the wrapper reaches the servlet with the servlet API's default mapping. */
 class ServletModuleDefaultMappingTest : ServletTestSupport() {
     @Test
     fun `a request that answers with the API default mapping disables the module with LINKAGE_ERROR before declaring anything`() {
@@ -162,7 +154,6 @@ private class NoMatchRequest(
     }
 }
 
-/** A context whose registrations cannot be read disables the module, however it fails. */
 class ServletModuleUnreadableContextTest : ServletTestSupport() {
     @Test
     fun `a context that throws IllegalStateException from getServletRegistrations disables the module`() {
@@ -182,7 +173,6 @@ class ServletModuleUnreadableContextTest : ServletTestSupport() {
     }
 }
 
-/** A context its container destroyed after the module declared it is dropped, and the module stays on. */
 class ServletModuleDestroyedContextTest : ServletTestSupport() {
     @Test
     fun `a context that throws IllegalStateException from getClassLoader on a refresh is dropped and the module stays on`() {
@@ -243,7 +233,6 @@ class ServletModuleDestroyedContextTest : ServletTestSupport() {
     }
 }
 
-/** Only an IllegalStateException on a refresh means a destroyed context. */
 class ServletModuleRefreshFailureTest : ServletTestSupport() {
     @Test
     fun `a context that throws another exception on a refresh disables the module`() {
@@ -266,7 +255,6 @@ class ServletModuleRefreshFailureTest : ServletTestSupport() {
     }
 }
 
-/** A container that stops an application leaves the module on, whether or not it throws when the context is read afterwards. */
 class ServletModuleStoppedApplicationTest : ServletTestSupport() {
     @Test
     fun `a flush after the container stopped the application keeps its endpoints and leaves the module on`() {

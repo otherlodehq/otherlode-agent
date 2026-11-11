@@ -31,7 +31,6 @@ class OrdersController {
 @EnableWebMvc
 class WebConfig
 
-/** An embedded Tomcat with one web application under [contextPath]. */
 class TomcatApp(
     val contextPath: String,
     configure: (Context) -> Unit,
@@ -48,11 +47,8 @@ class TomcatApp(
         tomcat.start()
     }
 
-    /**
-     * Sends a GET for [path] and returns the status once the server has closed the connection. The
-     * server closes it after the request has finished, which is after OpenTelemetry has ended the
-     * request's span, so what the span end recorded is in place by the time this returns.
-     */
+    // The server closes the connection after OpenTelemetry has ended the request's span, so what
+    // the span end recorded is in place when this returns.
     fun get(path: String): Int =
         Socket("127.0.0.1", tomcat.connector.localPort).use { socket ->
             socket.soTimeout = RESPONSE_TIMEOUT_MILLIS
@@ -97,11 +93,6 @@ fun Context.filter(
     addFilterMap(map)
 }
 
-/**
- * A Spring MVC application under [contextPath], wired as Spring Boot wires one: the dispatcher
- * servlet is a bean of a root context that a listener refreshes before the filters start.
- * [filter] is registered for every path, ahead of the dispatcher.
- */
 fun springApp(
     contextPath: String,
     filter: Filter? = null,

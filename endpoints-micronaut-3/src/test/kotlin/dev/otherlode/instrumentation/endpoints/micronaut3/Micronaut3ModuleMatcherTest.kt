@@ -19,11 +19,6 @@ private const val NETTY_HANDLER = "io.micronaut.http.server.netty.RoutingInBound
 private const val SERVLET_HANDLER = "io.micronaut.servlet.http.ServletHttpHandler"
 private const val LAMBDA_HANDLER = "io.micronaut.function.aws.proxy.MicronautLambdaContainerHandler"
 
-/**
- * Pins which classes [Micronaut3Module] accepts: the Micronaut 3 shapes, and nothing of a Micronaut 4
- * application, whose router lists `UriRouteInfo` rather than `UriRoute` and whose Netty and servlet
- * handlers share their names with Micronaut 3's. Each type is described without loading it.
- */
 class Micronaut3ModuleMatcherTest {
     private val module = Micronaut3Module()
 

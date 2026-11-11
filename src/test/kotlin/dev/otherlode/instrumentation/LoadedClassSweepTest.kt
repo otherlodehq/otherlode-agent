@@ -24,21 +24,12 @@ import kotlin.test.assertTrue
 import java.util.logging.Level as JulLevel
 import java.util.logging.Logger as JulLogger
 
-/**
- * Pins the sweep's reverse direction: reconciling a registered class's name against the JVM's own
- * loaded set, as opposed to the forward, unreported-class direction [DeflectedClassLoadTest]
- * already covers.
- */
 class LoadedClassSweepTest {
     private val instrumentation: Instrumentation = ByteBuddyAgent.install()
     private val scopedConfig = AgentConfig.parse("includePackages=com.example")
 
     private fun oneMethodProbe(): List<ProbeMeta> = listOf(ProbeMeta(ProbeKind.METHOD, "m", "()V", line = 1))
 
-    /**
-     * Captures the records a [java.lang.System.Logger] obtained for [loggerName] emits, through
-     * its default `java.util.logging` backend, mirroring `ExportSchedulerTest`'s own helper.
-     */
     private fun captureLogRecords(
         loggerName: String,
         block: () -> Unit,
@@ -69,11 +60,6 @@ class LoadedClassSweepTest {
 
     @Test
     fun `confirmFrom sees every loaded class's name, not the forward direction's filtered candidates`() {
-        // java.lang.String's classloader is null, so isCandidate rejects it outright even with
-        // java.lang under the include rules: it is on the bootstrap loader, the same gate that
-        // turns away the entire JDK for the forward direction. Registering it here proves the
-        // confirmation pass reconciles against the raw loaded set rather than that same filtered
-        // list.
         val registry = ProbeRegistry(confirmsDefinitions = true)
         registry.register("java.lang.String", layoutHash = 1L, probes = oneMethodProbe())
         val sweep =
@@ -108,9 +94,9 @@ class LoadedClassSweepTest {
 
         val records =
             captureLogRecords(LoadedClassSweep::class.java.name) {
-                sweep.run(runForwardPass = false) // first miss, not yet withheld
-                sweep.run(runForwardPass = false) // second miss, withheld for good
-                sweep.run(runForwardPass = false) // already withheld, must not warn again
+                sweep.run(runForwardPass = false)
+                sweep.run(runForwardPass = false)
+                sweep.run(runForwardPass = false)
             }
 
         val warnings = records.filter { it.level == JulLevel.WARNING && it.message.contains("com.example.never.Loaded") }
@@ -126,8 +112,8 @@ class LoadedClassSweepTest {
 
         val beforeFinal =
             captureLogRecords(LoadedClassSweep::class.java.name) {
-                sweep.run(runForwardPass = false) // first miss
-                sweep.run(runForwardPass = false, final = false) // second miss, withheld, but not final
+                sweep.run(runForwardPass = false)
+                sweep.run(runForwardPass = false, final = false)
             }
         assertTrue(
             beforeFinal.none { it.message.contains("withheld") && it.message.contains("were") },
@@ -153,11 +139,6 @@ class LoadedClassSweepTest {
         assertTrue(records.none { it.message.contains("never confirmed") })
     }
 
-    /**
-     * The forward direction has to turn away a runtime-generated class for the same reason the
-     * type matcher does, or every Spring CGLIB proxy would be reported as a class no transformer
-     * saw.
-     */
     @Test
     fun `a runtime-generated proxy class the JVM has loaded is not reported as a blind spot`() {
         val name = "com.example.target.Config\$\$SpringCGLIB\$\$0"

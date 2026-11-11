@@ -24,16 +24,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 import kotlin.test.fail
 
-/**
- * Runs one fixture program in three JVMs launched from the command line: with this agent alone,
- * with JaCoCo's agent listed ahead of it, and with JaCoCo's listed after it. The last is Gradle's
- * order when an adopter puts this agent in a test task's `jvmArgs` and applies the `jacoco` plugin.
- *
- * In both orders with JaCoCo, this agent must report the same manifest and the same counts for the
- * fixture classes as it does alone, and JaCoCo must have identified each fixture class by the
- * CRC64 of its class file, which is what JaCoCo's report matches execution data against. Each JVM
- * reports to an HTTP receiver running in this test, and exits, which sends the final flush.
- */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class CoverageAgentOrderTest {
     private companion object {
@@ -45,10 +35,7 @@ class CoverageAgentOrderTest {
         const val PROCESS_TIMEOUT_SECONDS = 120L
     }
 
-    /**
-     * Shared by every test, since each run is launched once and read by several: JUnit gives a
-     * `@TempDir` field a fresh directory per test and deletes the last one, execution data included.
-     */
+    // Outlives each test: every run is launched once and its files are read by several tests.
     private val tempDir: Path = Files.createTempDirectory("otherlode-coverage-agent-order")
 
     @AfterAll
@@ -56,8 +43,6 @@ class CoverageAgentOrderTest {
         tempDir.toFile().deleteRecursively()
     }
 
-    // A launch that fails is remembered as a failure, so a fixture JVM that hangs costs one
-    // timeout rather than one per test that reads its run.
     private val aloneRun by lazy { runCatching { launch("alone", jacoco = null) } }
     private val jacocoFirstRun by lazy { runCatching { launch("jacoco-first", jacoco = JacocoPosition.FIRST) } }
     private val otherlodeFirstRun by lazy { runCatching { launch("otherlode-first", jacoco = JacocoPosition.LAST) } }
@@ -67,7 +52,6 @@ class CoverageAgentOrderTest {
 
     private enum class JacocoPosition { FIRST, LAST }
 
-    /** What one fixture JVM's agent reported, and where JaCoCo wrote its execution data. */
     private class ForkedRun(
         val name: String,
         val manifests: List<ProbeManifest>,
@@ -77,14 +61,12 @@ class CoverageAgentOrderTest {
     ) {
         val probes: List<ProbeLocation> = manifests.flatMap { it.probes }
 
-        /** The fixture classes' probes, by class, in probe order, with the per-instance class id cleared. */
         fun fixtureProbes(): Map<String, List<ProbeLocation>> =
             probes
                 .filter { it.className in FIXTURE_CLASSES }
                 .groupBy { it.className }
                 .mapValues { (_, list) -> list.sortedBy { it.probeIndex }.map { it.copy(classId = 0) } }
 
-        /** The fixture classes' class records, with the per-instance class id cleared. */
         fun fixtureClassLocations(): Map<String, ClassLocation> {
             val namesById = probes.associate { it.classId to it.className }
             return manifests
@@ -93,7 +75,6 @@ class CoverageAgentOrderTest {
                 .associate { checkNotNull(namesById[it.classId]) to it.copy(classId = 0) }
         }
 
-        /** Every fixture probe's count by class name and probe index, zero for a probe no batch carried. */
         fun fixtureCounts(): Map<Pair<String, Int>, Long> {
             val hits = HashMap<Pair<Int, Int>, Long>()
             for (delta in batches.flatMap { it.deltas }) hits.merge(delta.classId to delta.probeIndex, delta.hitsTotal, ::maxOf)
@@ -102,7 +83,6 @@ class CoverageAgentOrderTest {
                 .associate { (it.className to it.probeIndex) to (hits[it.classId to it.probeIndex] ?: 0L) }
         }
 
-        /** JaCoCo's execution data for the fixture package, by internal class name. */
         fun jacocoData(): Map<String, ExecutionData> {
             val file = checkNotNull(execFile) { "$name ran without JaCoCo" }
             assertTrue(file.isFile, "JaCoCo wrote no execution data for $name. Output:\n$output")
@@ -138,8 +118,6 @@ class CoverageAgentOrderTest {
                 }
             val command = listOf(javaExecutable()) + agentArgs + listOf("-cp", forkedClasspath(), MAIN_CLASS)
             val builder = ProcessBuilder(command)
-            // Settings in the developer's shell would reach every fixture JVM's agent alike and
-            // could hide a difference, so the forks start without them.
             builder.environment().keys.removeIf { it.startsWith("OTHERLODE_") || it.startsWith("OTEL_") }
             val process =
                 builder
@@ -157,13 +135,8 @@ class CoverageAgentOrderTest {
         }
     }
 
-    /** The `java` of the JVM running this test, so each fixture JVM runs on the JDK under test. */
     private fun javaExecutable(): String = File(System.getProperty("java.home"), "bin/java").absolutePath
 
-    /**
-     * The fixture classes and the Kotlin standard library they link against, and nothing of this
-     * agent's own: the agent comes only from its shaded jar, as it does for an adopter.
-     */
     private fun forkedClasspath(): String {
         val kotlinStdlib =
             File(
@@ -200,11 +173,6 @@ class CoverageAgentOrderTest {
         assertEquals(6, stringWhen.branchSites.sumOf { it.outcomes.size }, "kotlinc's string when recognised")
     }
 
-    /**
-     * JaCoCo inverts the jump of `if (flag)` in the Java `tryFinally`, and the fixture program
-     * drives it one way, so one of its outcomes has hits and the other none. Under the inversion
-     * the received bytes' taken edge is the class file's fall-through.
-     */
     @Test
     fun `the Java conditional the fixture drives one way is one JaCoCo inverts`() {
         val method = "tryFinally" to "(Z)I"

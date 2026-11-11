@@ -8,39 +8,19 @@ import net.bytebuddy.jar.asm.ClassVisitor
 import net.bytebuddy.jar.asm.Opcodes
 import java.io.File
 
-/**
- * The compiler matrix: one fixture build per kotlinc release and per javac version, each the same
- * source set compiled by that compiler (`fixtures-compilers`). The root build passes each build's
- * class directory in as a system property and never as a test dependency, so JUnit discovery
- * never loads the fixtures.
- */
 object CompilerFixtures {
-    /** The kotlinc releases in the matrix, oldest first, as `gradle.properties` lists them. */
     val kotlincVersions: List<String> get() = listProperty("otherlode.fixtures.kotlinc.versions")
 
-    /**
-     * The builds of the kotlinx.serialization fixtures, oldest first: one per kotlinc release, and
-     * after each release that still has the K1 frontend one more, `<release>-k1`, compiled under
-     * `-language-version 1.9`.
-     */
     val kotlincSerializationKeys: List<String> get() = listProperty("otherlode.fixtures.kotlincSerialization.keys")
 
-    /** The javac versions in the matrix, oldest first, as `gradle.properties` lists them. */
     val javacVersions: List<String> get() = listProperty("otherlode.fixtures.javac.versions")
 
-    /** The shared Kotlin fixture source holding the `// marker:` comments the coroutine tests read lines from. */
     val kotlincSuspendsSource: File get() = File(requiredProperty("otherlode.fixtures.kotlinc.suspendsSource"))
 
-    /** The javac versions that also compile the pattern-switch sources. */
     val javacPatternVersions: List<String> get() = javacVersions.filter { it.toInt() >= 21 }
 
-    /** The scalac releases in the matrix, oldest first, as `gradle.properties` lists them. */
     val scalacVersions: List<String> get() = listProperty("otherlode.fixtures.scalac.versions")
 
-    /**
-     * Whether kotlinc release [version] defaults `-jvm-default` to `enable`, which it does from 2.2;
-     * the earlier releases default to `disable`. Versions compare as numbers, so 2.10 is after 2.2.
-     */
     fun kotlincDefaultsToJvmDefaultEnable(version: String): Boolean {
         val (major, minor) = version.split(".").map { it.takeWhile(Char::isDigit).toInt() }
         return major > 2 || (major == 2 && minor >= 2)
@@ -50,26 +30,15 @@ object CompilerFixtures {
     private const val JAVA_PACKAGE = "com/example/target/javac"
     private const val SCALA_PACKAGE = "com/example/scalatarget"
 
-    /** The build of kotlinc release [version]. */
     fun kotlinc(version: String): Build = Build(File(requiredProperty("otherlode.fixtures.kotlinc.$version.dir")), KOTLIN_PACKAGE)
 
-    /**
-     * The mixed `-jvm-default` build of kotlinc release [version]: `lib` compiled with `disable`, and
-     * `all` and `all-compatibility`, a consumer of it compiled with each of those modes.
-     */
     fun kotlincMixed(version: String): File = File(requiredProperty("otherlode.fixtures.kotlincMixed.$version.dir"))
 
-    /** The kotlinx.serialization fixture build [key], one of [kotlincSerializationKeys]. */
     fun kotlincSerialization(key: String): Build =
         Build(File(requiredProperty("otherlode.fixtures.kotlincSerialization.$key.dir")), KOTLIN_PACKAGE)
 
-    /** The build of javac [version]. */
     fun javac(version: String): Build = Build(File(requiredProperty("otherlode.fixtures.javac.$version.dir")), JAVA_PACKAGE)
 
-    /**
-     * The build of scalac release [version], which compiles `fixtures-scala3`'s sources for a 3.x
-     * release and `fixtures-scala2`'s for a 2.x one.
-     */
     fun scalac(version: String): Build =
         Build(
             File(requiredProperty("otherlode.fixtures.scalac.$version.dir")),
@@ -77,14 +46,12 @@ object CompilerFixtures {
             listOf("com.example.scalatarget"),
         )
 
-    /** The runtime jars of the Scala line [version] belongs to, which the agent's loader would serve to the fixtures. */
     internal fun scalaLibrary(version: String): List<File> =
         requiredProperty("otherlode.fixtures.${if (version.startsWith("3.")) "scala3" else "scala2"}.classpath")
             .split(File.pathSeparator)
             .filter { it.endsWith(".jar") }
             .map(::File)
 
-    /** The baseline build of the Scala line [version] belongs to: 2.13.15 for a 2.x release, 3.3.4 for a 3.x one. */
     fun scalaBaseline(version: String): Build =
         Build(
             File(requiredProperty("otherlode.fixtures.${if (version.startsWith("3.")) "scala3" else "scala2"}.dir")),
@@ -92,7 +59,6 @@ object CompilerFixtures {
             listOf("com.example.scalatarget"),
         )
 
-    /** What scalac release [version] prints for `-version`, as the build recorded it. */
     fun scalacVersionOutput(version: String): String = File(requiredProperty("otherlode.fixtures.scalac.$version.versionFile")).readText()
 
     private fun requiredProperty(name: String): String =
@@ -100,7 +66,6 @@ object CompilerFixtures {
 
     private fun listProperty(name: String): List<String> = requiredProperty(name).split(",").map { it.trim() }.filter { it.isNotEmpty() }
 
-    /** One compiler's class directory. */
     class Build(
         private val dir: File,
         private val packagePath: String,
@@ -108,16 +73,12 @@ object CompilerFixtures {
         private val servesResources: Boolean = true,
         private val library: List<File> = emptyList(),
     ) {
-        /** This build as a loader that serves its classes but no other resource, so no `.tasty` is found. */
         fun withoutResources(): Build = Build(dir, packagePath, includePackages, servesResources = false, library = library)
 
-        /** This build as a loader that also serves the classes of the Scala runtime jars of [version]'s line. */
         fun withScalaLibrary(version: String): Build = Build(dir, packagePath, includePackages, servesResources, scalaLibrary(version))
 
-        /** The root of this build's class files, which a static scan can walk. */
         val directory: File get() = dir
 
-        /** Every class in this build's fixture package, nested ones included, by name as [classBytes] takes it. */
         fun classNames(): List<String> {
             val root = File(dir, packagePath)
             return root
@@ -128,10 +89,8 @@ object CompilerFixtures {
                 .toList()
         }
 
-        /** The raw bytes of fixture class [simpleName], which may be a nested name such as `Outer$Inner`. */
         fun classBytes(simpleName: String): ByteArray = File(dir, "$packagePath/$simpleName.class").readBytes()
 
-        /** Reads a class by internal name from this build alone, the way the agent reads one through its loader. */
         val lookup: (String) -> ByteArray? =
             { internalName ->
                 File(dir, "$internalName.class").takeIf { it.isFile }?.readBytes()
@@ -142,14 +101,9 @@ object CompilerFixtures {
             if (library.isEmpty()) null else java.net.URLClassLoader(library.map { it.toURI().toURL() }.toTypedArray(), null)
         }
 
-        /** Reads the leading bytes of a non-class resource of this build, such as a Scala 3 class's `.tasty`, as the agent's loader would. */
         val resources: (String) -> ByteArray? =
             { path -> File(dir, path).takeIf { servesResources && it.isFile }?.inputStream()?.use { it.readNBytes(512) } }
 
-        /**
-         * The real analysis of fixture class [simpleName] with every method eligible, so marks
-         * and default sites are read for all of them.
-         */
         fun analyze(simpleName: String): BranchSiteAnalyzer.Analysis =
             BranchSiteAnalyzer.analyze(
                 classBytes(simpleName),
@@ -158,7 +112,6 @@ object CompilerFixtures {
                 resourceLookup = resources,
             ) { _, _ -> true }
 
-        /** Every method of fixture class [simpleName] the analysis reports as an unread shape, as (name, descriptor, family). */
         fun unreadEntries(simpleName: String): List<Triple<String, String, UnreadShape>> {
             val analysis = analyze(simpleName)
             val entries = mutableListOf<Triple<String, String, UnreadShape>>()
@@ -182,11 +135,6 @@ object CompilerFixtures {
             return entries
         }
 
-        /**
-         * The analysis of fixture class [simpleName] with the methods the method tier probes: no
-         * bridge, synthetic, abstract or native method and no `<clinit>`, so a call to a bridge in
-         * the class is passed through as it is in the agent.
-         */
         fun analyzeAsMethodTier(simpleName: String): BranchSiteAnalyzer.Analysis {
             val bytes = classBytes(simpleName)
             val unprobed = mutableSetOf<Pair<String, String>>()
@@ -208,7 +156,6 @@ object CompilerFixtures {
             }
         }
 
-        /** The analysis as the method tier sees it, constructors left out. */
         fun analyzeBranches(simpleName: String): BranchSiteAnalyzer.Analysis =
             BranchSiteAnalyzer.analyze(
                 classBytes(simpleName),
@@ -216,13 +163,8 @@ object CompilerFixtures {
                 includePackages = includePackages,
             ) { name, _ -> name != "<init>" }
 
-        /**
-         * Every method of fixture class [simpleName] with the mark the analysis gives it, keyed by
-         * name then descriptor, so an overloaded name keeps one entry per overload.
-         */
         fun marks(simpleName: String): Marks = Marks(markEntries(simpleName))
 
-        /** Every method of fixture class [simpleName] as (name, descriptor, mark), in class-file order. */
         fun markEntries(simpleName: String): List<Triple<String, String, GeneratedBy>> {
             val analysis = analyze(simpleName)
             val entries = mutableListOf<Triple<String, String, GeneratedBy>>()
@@ -242,20 +184,16 @@ object CompilerFixtures {
         }
     }
 
-    /** A class's methods with their marks. */
     class Marks(
         private val entries: List<Triple<String, String, GeneratedBy>>,
     ) {
-        /** The mark of the one method called [name]; fails when the class has none or several. */
         fun only(name: String): GeneratedBy = entries.filter { it.first == name }.map { it.third }.single()
 
-        /** The mark of [name] with exactly [descriptor]. */
         fun of(
             name: String,
             descriptor: String,
         ): GeneratedBy = entries.single { it.first == name && it.second == descriptor }.third
 
-        /** The marks of every method called [name], in class-file order. */
         fun all(name: String): List<GeneratedBy> = entries.filter { it.first == name }.map { it.third }
 
         override fun toString() = entries.joinToString { "${it.first}${it.second}=${it.third}" }

@@ -18,15 +18,7 @@ import kotlin.test.assertNotEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 
-/**
- * Proves the branch key's "keeps or changes" rules against real v1/v2 fixture pairs under
- * `com.example.target.keypairs`, one edit per pair. Each pair's two classes are renamed to one
- * common name before analysis, since the key includes the class name and a service's own class
- * never renames itself between releases.
- */
 class BranchKeyPairsTest {
-    // -- A conditional added to an earlier method leaves a later method's keys alone -------------
-
     @Test
     fun `a conditional added to an earlier method keeps a later method's site keys, though its branch index shifts`() {
         val (v1, v2) = keyedBuildsOf("EarlierMethodEditV1", "EarlierMethodEditV2")
@@ -41,8 +33,6 @@ class BranchKeyPairsTest {
             "first gained a conditional of its own, so second's slots shift down by its outcome count",
         )
     }
-
-    // -- invokedynamic arguments ----------------------------------------------------------------
 
     @Test
     fun `a different constant in a string concatenation changes the key`() {
@@ -68,8 +58,6 @@ class BranchKeyPairsTest {
         assertEquals(v1.keyOf("check", outcome = 0), v2.keyOf("check", outcome = 0))
     }
 
-    // -- Statements with no conditionals added before the condition ------------------------------
-
     @Test
     fun `a log call, a new local, and a reassignment added before the condition keep its key`() {
         val (v1, v2) = keyedBuildsOf("NoConditionalStatementsAddedV1", "NoConditionalStatementsAddedV2")
@@ -78,8 +66,6 @@ class BranchKeyPairsTest {
         assertEquals(v1.keyOf("check", outcome = 1), v2.keyOf("check", outcome = 1))
         assertNotNull(v1.keyOf("check", outcome = 0))
     }
-
-    // -- A different conditional added earlier in the same method --------------------------------
 
     @Test
     fun `a different conditional added earlier in the same method keeps the existing site's key`() {
@@ -94,8 +80,6 @@ class BranchKeyPairsTest {
         assertNotNull(v1.keyOf("check", 0, 0))
     }
 
-    // -- The condition itself edited --------------------------------------------------------------
-
     @Test
     fun `editing x greater than 0 to x greater than or equal 0 changes the key`() {
         val (v1, v2) = keyedBuildsOf("ConditionEditedV1", "ConditionEditedV2")
@@ -105,8 +89,6 @@ class BranchKeyPairsTest {
         assertNotEquals(v1.keyOf("check", outcome = 0), v2.keyOf("check", outcome = 0))
     }
 
-    // -- The variable in the condition renamed ----------------------------------------------------
-
     @Test
     fun `renaming the condition's own variable changes the key`() {
         val (v1, v2) = keyedBuildsOf("VariableRenamedV1", "VariableRenamedV2")
@@ -115,8 +97,6 @@ class BranchKeyPairsTest {
         assertNotNull(v2.keyOf("check", outcome = 0))
         assertNotEquals(v1.keyOf("check", outcome = 0), v2.keyOf("check", outcome = 0))
     }
-
-    // -- The method renamed, or its descriptor changed --------------------------------------------
 
     @Test
     fun `renaming the method changes the key`() {
@@ -140,8 +120,6 @@ class BranchKeyPairsTest {
         assertNotEquals(v1Key, v2Key)
     }
 
-    // -- An identical condition added to the same method ------------------------------------------
-
     @Test
     fun `an identical condition added to the same method loses both copies' keys, the existing one included`() {
         val (v1, v2) = keyedBuildsOf("IdenticalConditionAddedV1", "IdenticalConditionAddedV2")
@@ -156,8 +134,6 @@ class BranchKeyPairsTest {
         }
     }
 
-    // -- A switch case added -----------------------------------------------------------------------
-
     @Test
     fun `a case added to a Kotlin when over Int keeps every existing case and default, and the new case gets its own key`() {
         val (v1, v2) = keyedBuildsOf("SwitchCaseAddedKotlinV1", "SwitchCaseAddedKotlinV2")
@@ -167,7 +143,6 @@ class BranchKeyPairsTest {
         assertEquals(listOf(1, 2), v1Site.caseKeys)
         assertEquals(listOf(1, 2, 3), v2Site.caseKeys)
 
-        // Outcome offsets: 0 = case 1, 1 = case 2, 2 = default (v1); 0 = case 1, 1 = case 2, 2 = case 3, 3 = default (v2).
         assertEquals(v1.keyOf("classify", outcome = 0), v2.keyOf("classify", outcome = 0), "case 1 unchanged")
         assertEquals(v1.keyOf("classify", outcome = 1), v2.keyOf("classify", outcome = 1), "case 2 unchanged")
         assertEquals(v1.keyOf("classify", outcome = 2), v2.keyOf("classify", outcome = 3), "default unchanged, moved to the last offset")
@@ -176,9 +151,8 @@ class BranchKeyPairsTest {
 
     @Test
     fun `a Java switch over int compiles to a real TABLESWITCH, and adding a case keeps every existing key`() {
-        // javap -c confirms SwitchCaseAddedJavaV1#classify compiles to a TABLESWITCH: three dense,
-        // consecutive case values. javac packs a two-case dense switch into a LOOKUPSWITCH
-        // instead, which is why this fixture starts from three cases.
+        // javac packs a two-case dense switch into a LOOKUPSWITCH, so this fixture starts from three cases
+        // to get a TABLESWITCH.
         val (v1, v2) =
             keyedBuildsOf(
                 "SwitchCaseAddedJavaV1",
@@ -191,15 +165,12 @@ class BranchKeyPairsTest {
         assertEquals(listOf(1, 2, 3), v1Site.caseKeys)
         assertEquals(listOf(1, 2, 3, 4), v2Site.caseKeys)
 
-        // Outcome offsets: 0/1/2 = cases 1/2/3, 3 = default (v1); 0/1/2/3 = cases 1/2/3/4, 4 = default (v2).
         assertEquals(v1.keyOf("classify", outcome = 0), v2.keyOf("classify", outcome = 0))
         assertEquals(v1.keyOf("classify", outcome = 1), v2.keyOf("classify", outcome = 1))
         assertEquals(v1.keyOf("classify", outcome = 2), v2.keyOf("classify", outcome = 2))
         assertEquals(v1.keyOf("classify", outcome = 3), v2.keyOf("classify", outcome = 4), "default unchanged, moved to the last offset")
         assertNotNull(v2.keyOf("classify", outcome = 3), "the new case 4 gets a key of its own")
     }
-
-    // -- A case added to a string or enum switch read back to its source cases ---------------------
 
     @Test
     fun `a case added to a javac enum switch keeps every other case's key, though the map class moved from $1 to $2`() {
@@ -249,8 +220,6 @@ class BranchKeyPairsTest {
         assertEquals(assertNotNull(v1.siteKeyOf("enumWhen")), v2.siteKeyOf("enumWhen"))
     }
 
-    // -- A Kotlin inline function called twice in one method ---------------------------------------
-
     @Test
     fun `an inline function called twice in one method loses both copies' keys, but once in each of two methods keeps and differs`() {
         val bytes = kotlinFixtureBytes("InlineKeyCollision")
@@ -271,8 +240,6 @@ class BranchKeyPairsTest {
         assertNotEquals(keyA, keyB, "different methods, so no collision")
     }
 
-    // -- An && condition where the second operand is edited ------------------------------------------
-
     @Test
     fun `editing the second operand of an && condition keeps the first site's key and changes the second's`() {
         val (v1, v2) = keyedBuildsOf("AndConditionSecondOperandEditedV1", "AndConditionSecondOperandEditedV2")
@@ -287,8 +254,6 @@ class BranchKeyPairsTest {
         assertNotEquals(v1.keyOf("check", 1, 0), v2.keyOf("check", 1, 0), "the second operand's own condition changed")
     }
 
-    // -- A ternary inside a condition, edited before the stack empties -------------------------------
-
     @Test
     fun `an edit inside a condition before its stack last empties keeps the key, and one after changes it`() {
         val (v1, v2) = keyedBuildsOf("TernaryEditBeforeMergeV1", "TernaryEditBeforeMergeV2")
@@ -297,8 +262,6 @@ class BranchKeyPairsTest {
         val v1Sites = v1.sites.filter { it.methodName == "check" }
         assertEquals(2, v1Sites.size, "the inner if, plus the outer comparison with zero")
 
-        // Site 1 is the outer comparison. Its window starts at the inner if's false arm, so an
-        // edit to the true arm stays outside it and an edit to the false arm lands inside it.
         assertNotNull(v1.keyOf("check", 1, 0))
         assertEquals(v1.keyOf("check", 1, 0), v2.keyOf("check", 1, 0))
         assertEquals(v1.keyOf("check", 1, 1), v2.keyOf("check", 1, 1))
@@ -306,9 +269,6 @@ class BranchKeyPairsTest {
         assertNotEquals(v1.keyOf("check", 1, 0), v3.keyOf("check", 1, 0))
     }
 
-    // -- Debug info stripped -------------------------------------------------------------------------
-
-    /** Strips every `LocalVariableTable` entry from a class's bytes, as `ConditionFingerprintTest` does. */
     private fun stripLocalVariableTable(bytes: ByteArray): ByteArray {
         val writer = ClassWriter(0)
         val stripper =
@@ -330,7 +290,6 @@ class BranchKeyPairsTest {
                             end: Label,
                             index: Int,
                         ) {
-                            // Dropped: this is exactly what strips the table.
                         }
                     }
                 }
@@ -358,8 +317,6 @@ class BranchKeyPairsTest {
         assertNull(withoutTableKeys[yStripped.siteIndex to 0])
     }
 
-    // -- JaCoCo-instrumented input --------------------------------------------------------------------
-
     private fun jacocoInstrument(
         bytes: ByteArray,
         className: String,
@@ -378,10 +335,6 @@ class BranchKeyPairsTest {
         val instrumentedValues = instrumentedKeys.values.toList()
         assertEquals(instrumentedValues.size, instrumentedValues.toSet().size, "keys stay unique within the class")
 
-        // The Q1 guarantee: an instrumented key never equals the plain build's key for a
-        // different site, even though the plain and instrumented site sets need not correspond
-        // one-to-one by siteIndex. Two keys sharing a (siteIndex, offset) is unremarkable and not
-        // checked here; only cross-site equality would be a broken guarantee.
         for ((site, key) in instrumentedKeys) {
             for ((otherSite, otherPlainKey) in plainKeys) {
                 if (otherSite == site) continue
@@ -389,8 +342,6 @@ class BranchKeyPairsTest {
             }
         }
     }
-
-    // -- Determinism -----------------------------------------------------------------------------------
 
     @Test
     fun `analysing the same bytes twice gives identical key maps`() {

@@ -17,10 +17,6 @@ class JarClassifierTest {
         contents: JarContents,
     ): ListedDependency? = classifier.classifyFlat(contents, "lib-1.0.jar", jarPath.toString(), DependencyOrigin.FlatJar(jarPath))
 
-    /**
-     * An empty include list admits no class, so no jar is the adopter's own and every
-     * ordinary jar, whatever packages it holds, is a dependency.
-     */
     @Test
     fun `with an empty include list every ordinary jar is a dependency, flat or nested`() {
         val classifier = JarClassifier(emptyList(), emptyList())

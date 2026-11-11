@@ -11,7 +11,6 @@ import java.net.InetSocketAddress
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-/** An application undeployed from a running Undertow keeps its endpoints and leaves the module on, and a redeploy is counted. */
 class UndertowDestroyedContextTest : ServletTestSupport() {
     @Test
     fun `an undeployed application keeps its endpoints, leaves the module on, and a redeploy is counted`() {

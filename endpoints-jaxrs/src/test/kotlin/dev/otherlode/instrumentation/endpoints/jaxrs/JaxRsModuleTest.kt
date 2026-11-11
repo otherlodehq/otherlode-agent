@@ -17,24 +17,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
-/**
- * Proves [JaxRsModule] end to end against a real Jersey server on the JDK's own `HttpServer`, not
- * a fixture-level unit test, and proves the method tier and the endpoint tier coexist on one
- * resource method: [OrdersResource] sits under [JaxRsTestAgent]'s fixture package, so both
- * `OtherlodeInstrumentation` and `EndpointInstrumentation` instrument it.
- *
- * [JaxRsTestAgent] installs both transformers during its own `premain`, run by this module's
- * Gradle configuration as a real `-javaagent` on the test JVM's own command line; see that
- * object's Javadoc for why a self-attach inside this test method would be too late.
- *
- * This test's imports name `jakarta.ws.rs` types only through [OrdersResource] and its own
- * `PURGE` annotation, both declared in this suite's own fixture package. The `javaxTest` suite
- * exercises the same behaviour against `javax.ws.rs` with its own copy of this file and its own
- * copy of the fixture, since the fixture's imports differ by namespace in a way a shared source
- * file cannot express; see `endpoints-jaxrs/build.gradle.kts` for why that suite owns its own
- * source directory instead of reusing this one, the way this project's other multi-version test
- * suites do.
- */
 class JaxRsModuleTest {
     @Test
     fun `registration and dispatch through a real Jersey server are tracked end to end`() {
@@ -111,8 +93,6 @@ class JaxRsModuleTest {
                 methodDeltas.single { it.classId == getOrderProbe.classId && it.probeIndex == getOrderProbe.probeIndex }.hitsTotal,
             )
 
-            // Another agent retransforming the resource class: both tiers weave it again, so both
-            // keep counting, and nothing is declared or registered a second time.
             JaxRsTestAgent.instrumentation.retransformClasses(OrdersResource::class.java)
             get(client, port, "/orders/42")
 
@@ -163,7 +143,6 @@ class JaxRsModuleTest {
         client.send(request, HttpResponse.BodyHandlers.discarding())
     }
 
-    /** The HTTP status Jersey answers a `GET` to [path] with, used to prove a declared-or-not endpoint matches what actually gets served. */
     private fun status(
         client: HttpClient,
         port: Int,

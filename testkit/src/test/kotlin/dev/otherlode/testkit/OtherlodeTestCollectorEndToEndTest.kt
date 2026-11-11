@@ -22,11 +22,6 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 import dev.otherlode.testkit.ProbeKind as RefProbeKind
 
-/**
- * Proves [OtherlodeTestCollector] against a real agent, not just hand-built payloads: a fixture class
- * is instrumented in process by [OtherlodeInstrumentation], exercised through one method, and flushed
- * over the wire by a real [ExportScheduler]/[HttpExporter] pair.
- */
 class OtherlodeTestCollectorEndToEndTest {
     private var installedTransformer: ResettableClassFileTransformer? = null
     private var installedOtherlode: OtherlodeInstrumentation? = null
@@ -167,8 +162,6 @@ class OtherlodeTestCollectorEndToEndTest {
         val checkoutClass = Class.forName("com.example.testkittarget.LegacyCheckout", true, loader)
         val checkout = checkoutClass.getDeclaredConstructor().newInstance()
         checkoutClass.getMethod("total", Double::class.java, Boolean::class.java).invoke(checkout, 10.0, false)
-        // Loaded without being initialised, so both classes have probes and none of them ran. In
-        // the demo a complete static baseline gives the same nodes for classes that never load.
         Class.forName("com.example.testkittarget.LegacyCalculator", false, loader)
         Class.forName("com.example.testkittarget.LegacyFees", false, loader)
 
@@ -213,10 +206,6 @@ class OtherlodeTestCollectorEndToEndTest {
         )
     }
 
-    /**
-     * Runs the shapes in `ClassFindingShapes.kt` under a real agent that reports to a fresh
-     * collector, and returns that collector once the probes the tests read have arrived.
-     */
     private fun collectClassFindingShapes(instanceId: String): OtherlodeTestCollector {
         val target = OtherlodeTestCollector.start()
         collector = target
@@ -292,16 +281,11 @@ class OtherlodeTestCollectorEndToEndTest {
     fun `class findings name a class loaded and never initialised and one never instantiated, observed only through the wire protocol`() {
         val target = collectClassFindingShapes("e2e-4")
 
-        // A class literal loads AuditTrail without running its static initialiser. It is a Kotlin
-        // object, so it is never initialised, and a stronger finding rules out never instantiated.
         val neverInitialized = target.neverInitialized()
         assertEquals(listOf("$FIXTURES.AuditTrail"), neverInitialized.map { it.className })
         assertEquals(listOf("<init>", "record"), neverInitialized.single().methods)
         assertEquals(1, neverInitialized.single().instancesLoading)
 
-        // LinePrinter has no static initialiser, and ReportWriter's and IdleBoard's ran. None was
-        // created. Utils holds only statics, Greeter has no constructor, and Counters is a used
-        // object, so none of those three is judged.
         assertEquals(
             listOf("$FIXTURES.IdleBoard", "$FIXTURES.LinePrinter", "$FIXTURES.ReportWriter"),
             target.neverInstantiated().map { it.className },
@@ -351,8 +335,6 @@ class OtherlodeTestCollectorEndToEndTest {
         val cluster = classRoots.single()
         assertEquals(ClassFinding.NEVER_INSTANTIATED, cluster.rootFinding)
         assertEquals(emptyList(), cluster.reachedFrom)
-        // The class's folded methods are members too. It is not held whole, since its static footer
-        // and its initialiser, which ran, stay outside the class finding.
         assertEquals(
             listOf("$FIXTURES.ReportWriter#<init>", "$FIXTURES.ReportWriter#write", "$FIXTURES.TextUtil#pad"),
             cluster.members.map { "${it.className}#${it.methodName}" },
@@ -425,11 +407,6 @@ class OtherlodeTestCollectorEndToEndTest {
         )
     }
 
-    /**
-     * Runs `SiteFolds` under a real agent that reports to a fresh collector: one instance, every
-     * method called but `neverCalled`, with the arguments each method's KDoc names. Returns the
-     * collector once every method's probes have arrived and settled.
-     */
     private fun collectSiteFolds(instanceId: String): OtherlodeTestCollector {
         val target = OtherlodeTestCollector.start()
         collector = target
@@ -478,7 +455,6 @@ class OtherlodeTestCollectorEndToEndTest {
         return target
     }
 
-    /** `method:line` for each of [SITE_FOLDS]'s rows in [rows], BRANCH rows only unless [methods] is set. */
     private fun siteFoldRows(
         rows: List<ProbeRef>,
         methods: Boolean = false,
@@ -517,11 +493,6 @@ class OtherlodeTestCollectorEndToEndTest {
         assertEquals(listOf("nested:28"), nestedRows, "the `inner` site folds into the never-hit `middle` outcome")
     }
 
-    /**
-     * A site folds into any never-hit method, not only into one that is a row: a constructor that
-     * is not an unused overload, in a class with no finding, is not listed, and neither is the code
-     * inside it.
-     */
     @Test
     fun `a site in a never-run constructor that is not a row folds with it, observed only through the wire protocol`() {
         val target = collectSiteFolds("e2e-fold-7")

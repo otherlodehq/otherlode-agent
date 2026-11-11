@@ -58,8 +58,9 @@ public data class DependencyIdentityRef internal constructor(
 /**
  * One place in the adopter's code that references a dependency: `Class#method`, or the class
  * itself for a class-level reference ([methodName] null). [neverLoaded] is true for a site the
- * static baseline declared in a class no manifest from that instance ever named. [failedToLoad] is
- * true for a baseline site in a class that some instance failed to load and none loaded.
+ * static baseline declared in a class no manifest from that instance named as loaded, unless the
+ * site is [failedToLoad]. [failedToLoad] is true for a site from a complete baseline in a class
+ * that some instance failed to load and none loaded.
  * [failedToInitialize] is true for a site that is not live, in a class that failed to initialise.
  */
 @ConsistentCopyVisibility

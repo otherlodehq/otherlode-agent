@@ -16,10 +16,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
-/**
- * The release of transform-time caches through the real transformer. A release check drops what a
- * loader holds only when the loader did no transform-time work since the previous check.
- */
 class QuietCacheReleaseTest {
     private class CountingLoader(
         private val files: Map<String, ByteArray>,

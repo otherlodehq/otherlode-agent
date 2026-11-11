@@ -24,24 +24,9 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Proves endpoint tracking end to end through [OtherlodeTestCollector], over the real wire protocol,
- * against a real `com.sun.net.httpserver.HttpServer` instrumented by [JdkHttpServerModule].
- *
- * [EndpointInstrumentation.install] must run before `sun.net.httpserver`'s `ServerImpl`,
- * `HttpContextImpl`, and `ContextList` load for the first time in this JVM: a ByteBuddy
- * transformer only weaves advice into a class as it loads, never into one already loaded (see
- * `JdkHttpServerModuleTest` in `:endpoints-jdk-httpserver` for the same constraint proven against
- * the module directly). [OtherlodeTestCollector] is itself backed by a JDK `HttpServer`, so
- * [OtherlodeTestCollector.start] loads exactly those classes; so does every other test class in this
- * module that starts one. This class is pinned to run first in this module's test suite with a
- * class-level [Order] and this module's own `junit-platform.properties`
- * (`junit.jupiter.testclass.order.default`), mirroring the root project's
- * `OtherlodeEndpointsSeamTest`. One consequence of running first: this test's own
- * [OtherlodeTestCollector] is also instrumented, so its `/v1/otherlode/...` contexts appear in
- * [EndpointRegistry.endpoints] alongside `/checkout` and `/promo`. That is expected and harmless;
- * this test only asserts on the two contexts it creates itself.
- */
+// EndpointInstrumentation.install must run before sun.net.httpserver loads in this JVM, since advice is only woven as
+// a class loads. OtherlodeTestCollector is itself a JDK HttpServer, so install must run before any collector starts.
+// The class-level Order and junit-platform.properties run this class first.
 @Order(Int.MIN_VALUE)
 class EndpointEndToEndTest {
     private var installedTransformer: ResettableClassFileTransformer? = null

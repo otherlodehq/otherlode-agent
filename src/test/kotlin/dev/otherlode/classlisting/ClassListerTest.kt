@@ -43,7 +43,6 @@ class ClassListerTest {
         manifest: Map<String, String> = mapOf("Spring-Boot-Lib" to "BOOT-INF/lib/"),
     ): Path = TestJars.write(dir.resolve(name), entries, manifest)
 
-    /** The WARNING records [ClassLister] logs while [block] runs. */
     private fun warningsFrom(block: () -> Unit): List<LogRecord> {
         val records = mutableListOf<LogRecord>()
         val handler =

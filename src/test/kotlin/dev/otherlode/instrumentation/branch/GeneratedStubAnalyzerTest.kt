@@ -12,11 +12,6 @@ import net.bytebuddy.jar.asm.Type
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
-/**
- * Hand-built classes pinning the edges of two generated-method rules: the `-jvm-default=disable`
- * stub in an implementing class and a record's `equals`, `hashCode` and `toString`. The compilers'
- * own output is covered by `KotlincMatrixTest` and `JavacMatrixTest`.
- */
 class GeneratedStubAnalyzerTest {
     private companion object {
         const val IFACE = "com/example/Iface"
@@ -30,11 +25,6 @@ class GeneratedStubAnalyzerTest {
                 "Ljava/lang/Class;Ljava/lang/String;[Ljava/lang/invoke/MethodHandle;)Ljava/lang/Object;"
     }
 
-    /**
-     * A class `Impl` implementing [interfaces], with the generic [signature] when given, a Kotlin
-     * `Metadata` annotation when [kotlin] is set and one `public String m(String)` whose body
-     * [body] writes.
-     */
     private fun implClass(
         interfaces: Array<String> = arrayOf(IFACE),
         kotlin: Boolean = true,
@@ -53,10 +43,6 @@ class GeneratedStubAnalyzerTest {
         return writer.toByteArray()
     }
 
-    /**
-     * The interface's `DefaultImpls` as kotlinc writes it, one static per method the stubs here
-     * call, each with the generic signature that maps its type variable to the interface's.
-     */
     private val defaultImpls: ByteArray by lazy {
         val owner = "$IFACE\$DefaultImpls"
         val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
@@ -99,11 +85,6 @@ class GeneratedStubAnalyzerTest {
             mv.visitInsn(Opcodes.ARETURN)
         }
 
-    /**
-     * A Kotlin class implementing the interface with one `public String n(int, String)` whose body
-     * loads `this`, the `int` boxed by [box] (null for none), the `String` boxed by [boxReference]
-     * (null for none), then calls the interface's `DefaultImpls.n` with [forwarded] and returns.
-     */
     private fun boxingStub(
         forwarded: String,
         box: Pair<String, String>? = "java/lang/Integer" to "(I)Ljava/lang/Integer;",
@@ -170,7 +151,6 @@ class GeneratedStubAnalyzerTest {
     private fun markOfStub(bytes: ByteArray): GeneratedBy =
         BranchSiteAnalyzer.analyze(bytes, lookup) { _, _ -> true }.generatedBy("m", STUB_DESCRIPTOR)
 
-    /** AspectJ's empty method attribute that marks a member the weaver added. */
     private class AjSynthetic : Attribute("org.aspectj.weaver.AjSynthetic") {
         override fun write(
             classWriter: ClassWriter,
@@ -181,10 +161,6 @@ class GeneratedStubAnalyzerTest {
         ): ByteVector = ByteVector()
     }
 
-    /**
-     * A Kotlin class with the forwarding `m` and an ordinary `other()`, each with a line-number
-     * entry at [stubLine] and [otherLine] when not null.
-     */
     private fun linedClass(
         stubLine: Int?,
         otherLine: Int?,
@@ -309,7 +285,6 @@ class GeneratedStubAnalyzerTest {
         assertEquals(GeneratedBy.NONE, markOfStub(implClass(body = otherName)))
     }
 
-    /** A body calling the interface's `DefaultImpls.m` with [forwarded], then [afterCall], then `areturn`. */
     private fun forwardWith(
         forwarded: String,
         afterCall: (MethodVisitor) -> Unit = {},
@@ -369,7 +344,6 @@ class GeneratedStubAnalyzerTest {
         )
     }
 
-    /** `$IFACE$DefaultImpls` as a class file declaring only [methods], each a static taking the interface first. */
     private fun defaultImplsDeclaring(vararg methods: Pair<String, String>): ByteArray {
         val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
         writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC or Opcodes.ACC_FINAL, "$IFACE\$DefaultImpls", null, "java/lang/Object", null)
@@ -385,7 +359,6 @@ class GeneratedStubAnalyzerTest {
         return writer.toByteArray()
     }
 
-    /** The lookup of a build whose `$DefaultImpls` holds `n` and an `m` the stub's call does not name. */
     private val missingTargetLookup: (String) -> ByteArray? = { name ->
         defaultImplsDeclaring("n" to FORWARDED_DESCRIPTOR, "m" to "(L$IFACE;J)Ljava/lang/String;").takeIf { name == "$IFACE\$DefaultImpls" }
     }
@@ -476,7 +449,6 @@ class GeneratedStubAnalyzerTest {
         assertEquals(GeneratedBy.NONE, markOfNamedStub("m", "m-BBBBBBB") { hashOnly })
     }
 
-    /** A class with the stub `m` and a method `caller` that calls `this.m("")`. */
     private fun implWithCaller(): ByteArray {
         val writer = ClassWriter(ClassWriter.COMPUTE_MAXS)
         writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC or Opcodes.ACC_FINAL, IMPL, null, "java/lang/Object", arrayOf(IFACE))

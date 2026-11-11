@@ -8,11 +8,6 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Proves [Micronaut3Module] declares a router's routes only once a dispatch point it counts at has
- * been constructed, in either order, and reports the module off at the first manifest when none was.
- * A context that starts no server builds a router and no dispatch point.
- */
 class DispatchPointGateTest {
     private val quiet = mapOf<String, Any>("endpoints.all.enabled" to false)
 

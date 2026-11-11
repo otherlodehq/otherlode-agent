@@ -15,13 +15,6 @@ import org.junit.jupiter.params.provider.MethodSource
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Runs the analyser's generated-method marks, `$default` omission sites, coroutine-machinery drops
- * and switch lowerings over the same Kotlin source set compiled by each kotlinc release in
- * [CompilerFixtures.kotlincVersions], at that release's own default language version and
- * `-jvm-default` mode. The expectations are the ones the rules were written against kotlinc 2.2.21
- * for; a release that changes a shape fails here by name.
- */
 class KotlincMatrixTest {
     companion object {
         @JvmStatic
@@ -35,10 +28,6 @@ class KotlincMatrixTest {
         private const val PLAIN_DESCRIBER = "com/example/target/kotlinc/PlainDescriber"
         private val OBJECT_METHOD_NAMES = setOf("equals", "hashCode", "toString")
 
-        /**
-         * Where a call to a `Describer.plain` stub leads once passed through: the `$DefaultImpls`
-         * method before kotlinc 2.2, and the interface's own method from 2.2, whose stub is a bridge.
-         */
         private fun stubBody(version: String): CallEdge =
             if (CompilerFixtures.kotlincDefaultsToJvmDefaultEnable(version)) {
                 CallEdge("com.example.target.kotlinc.Describer", "plain", "()$STRING", virtual = false)
@@ -48,7 +37,6 @@ class KotlincMatrixTest {
 
         private val suspendsSource = CompilerFixtures.kotlincSuspendsSource
 
-        /** The 1-based line of the first line in [suspendsSource] carrying `// marker: [marker]`. */
         private fun lineOf(marker: String): Int {
             val index = suspendsSource.readLines().indexOfFirst { it.contains("marker: $marker") }
             check(index >= 0) { "no line in $suspendsSource carries the marker $marker" }
@@ -59,8 +47,6 @@ class KotlincMatrixTest {
     private fun code(text: String) = ConditionPart(ConditionPartKind.CODE, text)
 
     private fun literal(text: String) = ConditionPart(ConditionPartKind.STRING_LITERAL, text)
-
-    // --- generated methods ---
 
     @ParameterizedTest(name = "kotlinc {0}")
     @MethodSource("versions")
@@ -541,8 +527,6 @@ class KotlincMatrixTest {
     private fun stubExpected(version: String) =
         if (CompilerFixtures.kotlincDefaultsToJvmDefaultEnable(version)) GeneratedBy.NONE else GeneratedBy.DEFAULT_IMPLS
 
-    // --- default-filling methods ---
-
     @ParameterizedTest(name = "kotlinc {0}")
     @MethodSource("versions")
     fun `a function's optional parameters each get an omission bit, named from the local variable table`(version: String) {
@@ -574,8 +558,6 @@ class KotlincMatrixTest {
         assertEquals(0b10, overloaded.defaultSites.single { it.defaultName == "mem\$default" }.optionalBits)
         assertEquals(0b110, topLevel.defaultSites.single { it.defaultName == "overloads\$default" }.optionalBits)
     }
-
-    // --- coroutine machinery ---
 
     private fun suspendKept(
         version: String,
@@ -629,8 +611,6 @@ class KotlincMatrixTest {
         assertEquals(listOf(BranchDropReason.COROUTINE_MACHINERY), dropped.map { it.dropReason })
     }
 
-    // --- switch lowerings ---
-
     @ParameterizedTest(name = "kotlinc {0}")
     @MethodSource("versions")
     fun `a when over an enum is rebuilt with constant labels, else last and the subject as condition`(version: String) {
@@ -666,8 +646,6 @@ class KotlincMatrixTest {
             sites.map { it.site.condition },
         )
         assertEquals(listOf(BranchDropReason.SWITCH_LOWERING), dropped(analysis, "stringWhen").map { it.dropReason })
-        // Aa and BB share a hash: Aa's not-equal side reaches BB's check, which a real "BB" takes.
-        // Every other not-equal side is reached only by a different string with the same hash.
         assertEquals(
             listOf(
                 listOf(BranchRole.TAKEN, BranchRole.FALL_THROUGH),
@@ -679,8 +657,6 @@ class KotlincMatrixTest {
             sites.map { site -> site.outcomes.map { it.role } },
         )
     }
-
-    // --- value classes ---
 
     private fun CompilerFixtures.Build.entries(simpleName: String) = markEntries(simpleName)
 
@@ -983,8 +959,6 @@ class KotlincMatrixTest {
             "under disable an override that calls super compiles to the same tail without the cast",
         )
     }
-
-    // --- value-class statics, casts and null-guarded boxes (ADR 0078) ---
 
     private fun CompilerFixtures.Build.markOf(
         simpleName: String,

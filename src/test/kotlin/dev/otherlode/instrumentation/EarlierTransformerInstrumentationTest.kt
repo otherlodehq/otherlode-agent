@@ -47,17 +47,6 @@ import kotlin.test.assertTrue
 import java.util.logging.Level as JulLevel
 import java.util.logging.Logger as JulLogger
 
-/**
- * Proves that an instance with JaCoCo's instrumenter running ahead of this agent reports the same
- * manifest as one without: the shape is read from the class file, the probes are woven into the
- * received bytes JaCoCo left, and each inverted jump counts its outcomes on the class file's side.
- *
- * JaCoCo runs in process, as a transformer registered before Otherlode's, with its own runtime
- * started, so the instrumented fixtures run and JaCoCo's probes fire beside this agent's. When the
- * suite itself runs under JaCoCo's agent, the fixtures reach that transformer already instrumented,
- * which JaCoCo's instrumenter refuses; the agent's own instrumentation is then the earlier
- * transformer, in this run and in the run it is compared with.
- */
 class EarlierTransformerInstrumentationTest {
     private companion object {
         const val TARGET = "com.example.target"
@@ -83,16 +72,13 @@ class EarlierTransformerInstrumentationTest {
         installed = null
     }
 
-    /** JaCoCo's instrumenter, standing in for its agent, for the classes one loader defines. */
     private class JacocoAhead : ClassFileTransformer {
         private val runtime = LoggerRuntime()
         private val data = RuntimeData()
         private val instrumenter = Instrumenter(runtime)
 
-        /** The bytes this transformer handed on, by internal name: JaCoCo's output, or what it was given. */
         val handedOn = ConcurrentHashMap<String, ByteArray>()
 
-        /** The bytes this transformer was given, by internal name. */
         val received = ConcurrentHashMap<String, ByteArray>()
 
         @Volatile
@@ -115,18 +101,14 @@ class EarlierTransformerInstrumentationTest {
                 try {
                     instrumenter.instrument(classfileBuffer, className)
                 } catch (_: Exception) {
-                    // Already instrumented by a JaCoCo agent on this JVM; that output is the
-                    // earlier transformer's then.
                     null
                 }
             handedOn[className] = instrumented ?: classfileBuffer
             return instrumented
         }
 
-        /** Whether any probe JaCoCo planted has fired. */
         fun anyProbeHit(): Boolean = collect().contents.any { it.hasHits() }
 
-        /** The ids of the classes whose probes have fired. */
         fun hitClassIds(): Set<Long> =
             collect()
                 .contents
@@ -142,7 +124,6 @@ class EarlierTransformerInstrumentationTest {
         fun shutdown() = runtime.shutdown()
     }
 
-    /** Remembers each class's layout hash as it is registered. */
     private class LayoutRecordingRegistry : ProbeRegistry() {
         val layoutHashes = ConcurrentHashMap<String, Long>()
 
@@ -183,10 +164,8 @@ class EarlierTransformerInstrumentationTest {
     ) {
         val probes: List<ProbeLocation> by lazy { registry.manifest(RESOURCE).probes }
 
-        /** [className]'s probes with the per-registry class id cleared, so two runs compare. */
         fun probesOf(className: String): List<ProbeLocation> = probes.filter { it.className == className }.map { it.copy(classId = 0) }
 
-        /** [probe]'s count so far, read from a delta batch that is never acknowledged. */
         fun hitsOf(probe: ProbeLocation): Long =
             registry
                 .computeDeltaBatch(RESOURCE)
@@ -195,13 +174,6 @@ class EarlierTransformerInstrumentationTest {
                 ?.hitsTotal ?: 0L
     }
 
-    /**
-     * Installs Otherlode, with JaCoCo ahead of it when [withJacoco] is true, loads and initialises
-     * [classNames] through a fresh loader from [newLoader], runs [drive], and uninstalls again.
-     *
-     * JaCoCo's transformer is registered before Otherlode's, unless [jacocoRegisteredLater] is true.
-     * Either way it is registered as not retransformation-capable, as JaCoCo's agent registers it.
-     */
     private fun run(
         withJacoco: Boolean,
         includePackage: String,
@@ -273,7 +245,6 @@ class EarlierTransformerInstrumentationTest {
         val with = run(true, TARGET, classNames, ::targetLoader)
 
         assertSameManifest(without, with, classNames)
-        // Each family whose marks an earlier transformer's probes would hide is present, so the comparison is not vacuous.
         val probes = without.probes
         assertTrue(probes.any { it.className == "$TARGET.GeneratedPoint" && it.generatedBy == GeneratedBy.DATA_CLASS })
         val routines =
@@ -284,8 +255,6 @@ class EarlierTransformerInstrumentationTest {
                 .toSet()
         assertTrue(RoutineKind.FINALLY_COPY in routines, "a finally copy: $routines")
         assertTrue(RoutineKind.NULL_DEFAULT in routines, "a null-default path: $routines")
-        // kotlinc's string when lists one outcome per literal and the default, leaving the hash
-        // collision paths unprobed; javac's string switch is rebuilt with its literals.
         val stringWhen =
             probes.single {
                 it.className == "$TARGET.SwitchTarget" && it.methodName == "stringWhen" &&
@@ -339,7 +308,6 @@ class EarlierTransformerInstrumentationTest {
         val drive = { loader: ClassLoader ->
             val target = Class.forName(className, true, loader)
             val instance = target.getDeclaredConstructor().newInstance()
-            // No null in the array: the null test only ever goes one way.
             target.getMethod("countMissing", Array<String>::class.java).invoke(instance, arrayOf("a", "b", "c"))
             Unit
         }
@@ -361,13 +329,6 @@ class EarlierTransformerInstrumentationTest {
         if (!isUnderJacocoAgent()) assertTrue(jacoco.anyProbeHit(), "JaCoCo's own probes fired beside this agent's")
     }
 
-    /**
-     * The JVM calls every transformer that is not retransformation-capable before every one that
-     * is, so JaCoCo's runs first even when it is registered after this agent's. That is Gradle's
-     * order for an adopter's test task, where `-javaagent` from `jvmArgs` comes ahead of the
-     * `jacoco` plugin's. JaCoCo then receives the class file and identifies the class by its CRC64,
-     * which is what its report matches the class file against.
-     */
     @Test
     fun `JaCoCo registered after this agent still receives the class file, and the manifest is the same`() {
         val classNames = listOf("BranchTarget", "RoutineTarget", "GeneratedPoint").map { "$TARGET.$it" }
@@ -389,8 +350,8 @@ class EarlierTransformerInstrumentationTest {
                 WovenBytes.isWoven(received),
                 "JaCoCo received $className before this agent wove it",
             )
-            // A JaCoCo agent on the test JVM instruments the fixture first; its output is then what
-            // both transformers here receive, and only the order can be checked.
+            // A JaCoCo agent on the test JVM instruments the fixture first, so only the order of the two
+            // transformers can be checked.
             if (isUnderJacocoAgent()) continue
             val classFile = classFileOf(internalName)
             assertTrue(received.contentEquals(classFile), "JaCoCo received $className's class file")
@@ -407,7 +368,6 @@ class EarlierTransformerInstrumentationTest {
             .first { it.exists() }
             .readBytes()
 
-    /** Whether a JaCoCo agent was on this JVM's command line, which instruments the fixtures before [JacocoAhead] can. */
     private fun isUnderJacocoAgent(): Boolean =
         java.lang.management.ManagementFactory
             .getRuntimeMXBean()
@@ -441,11 +401,6 @@ class EarlierTransformerInstrumentationTest {
         assertFalse(probes.any { it.methodName == "<clinit>" }, "no <clinit> probe for a type initializer only JaCoCo wrote")
     }
 
-    /**
-     * Writes a Java 8 interface `Greeter` with one default method holding a null test, and a class
-     * `GreeterImpl` implementing it, as class files under [dir]. ASM writes them rather than javac,
-     * so the test does not depend on the running JDK's javac still accepting `--release 8`.
-     */
     private fun writeJava8Interface(dir: File) {
         val greeter = ClassWriter(ClassWriter.COMPUTE_FRAMES or ClassWriter.COMPUTE_MAXS)
         greeter.visit(
@@ -546,7 +501,6 @@ class EarlierTransformerInstrumentationTest {
         assertEquals(1, counts.receivedBytesClasses(), "and the class is counted for the first flush's INFO line")
     }
 
-    /** Defines one class from [bytes] and serves no class file for it. */
     private class BytesOnlyClassLoader(
         parent: ClassLoader,
         private val className: String,

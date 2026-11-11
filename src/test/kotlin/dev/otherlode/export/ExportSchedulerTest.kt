@@ -56,27 +56,21 @@ private class RecordingExporter : Exporter {
     var staticBaselines = mutableListOf<StaticBaseline>()
     var classListings = mutableListOf<ClassListing>()
 
-    /** Every confirmed delta batch and manifest, in the order the sends were confirmed. */
     val sent: MutableList<Any> = Collections.synchronizedList(mutableListOf())
 
-    /** When set, every delta send fails and nothing is recorded for it. */
     @Volatile
     var failDeltaBatches = false
 
-    /** When set, the delta send with this number fails, counting every delta send attempt from 1. */
     @Volatile
     var failDeltaSendNumber: Int? = null
     private val deltaSendAttempts = AtomicInteger(0)
 
-    /** Runs at the start of every delta send. It may block, or throw to fail the send. */
     @Volatile
     var beforeDeltaSend: (DeltaBatch) -> Unit = {}
 
-    /** Runs at the start of every manifest send. It may throw to fail the send. */
     @Volatile
     var beforeManifestSend: (ProbeManifest) -> Unit = {}
 
-    /** Runs after every confirmed manifest send. */
     @Volatile
     var afterManifestSend: (ProbeManifest) -> Unit = {}
 
@@ -114,16 +108,10 @@ private class FailingExporter : Exporter {
     override fun exportClassListing(listing: ClassListing) = throw RuntimeException("collector unreachable")
 }
 
-/**
- * Records every call [ExportScheduler.maybeSweep] makes into the sweep, instead of doing any real
- * work, so a test can pin the cadence of the sweep's two directions without
- * driving ten real flush intervals or a real classpath walk.
- */
 private class RecordingSweep(
     instrumentation: Instrumentation,
     registry: ProbeRegistry,
     config: AgentConfig,
-    /** Runs on every call, standing in for work the real sweep does, such as counting dependencies. */
     private val onRun: () -> Unit = {},
 ) : LoadedClassSweep(instrumentation, registry, EndpointRegistry(), config) {
     data class Call(
@@ -328,10 +316,6 @@ class ExportSchedulerTest {
         val exporter = RecordingExporter()
         val scheduler = ExportScheduler(config, resource, registry, EndpointRegistry(), exporter)
 
-        // A ScheduledExecutorService running scheduleAtFixedRate stops calling a task forever,
-        // the first time it lets an exception escape, with nothing logged. So flush() must never
-        // let one out. This registry throws from computeDeltaBatch itself, to prove the guard
-        // covers that call too, not only the exporter call.
         registry.register("com.example.First", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "a", "()V", 1)))
         scheduler.flush()
         registry.register("com.example.Second", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "b", "()V", 1)))
@@ -470,9 +454,7 @@ class ExportSchedulerTest {
             probes[0] = 1
         }
         val exporter = RecordingExporter()
-        // Each class weighs 2 in the manifest cap (1 probe + 0 edges + 1 for its own
-        // ClassLocation record), so the cap is 4, not 2, to keep two classes per
-        // chunk: 2 + 2 = 4 fits, and a third class's own 2 would push it past the cap.
+        // Each class weighs 2 in the manifest cap, so a cap of 4 keeps two classes per chunk.
         val scheduler =
             ExportScheduler(config, resource, registry, EndpointRegistry(), exporter, maxDeltasPerBatch = 2, maxManifestEntriesPerChunk = 4)
 
@@ -598,10 +580,6 @@ class ExportSchedulerTest {
         )
     }
 
-    /**
-     * Fails the delta sends [outcome] picks by attempt number, counting every send attempt from 1; records the confirmed ones.
-     * Runs [onManifest] after recording each manifest.
-     */
     private class ScriptedDeltaExporter(
         val outcome: (attempt: Int) -> Exception?,
         val onManifest: () -> Unit = {},
@@ -657,7 +635,6 @@ class ExportSchedulerTest {
                 dependencyRegistry = dependencyRegistry,
             )
 
-        /** The hit totals of every probe delta in [batches], in send order. */
         fun totals(batches: List<DeltaBatch> = exporter.confirmed): List<Long> = batches.flatMap { b -> b.deltas.map { it.hitsTotal } }
     }
 
@@ -786,11 +763,6 @@ class ExportSchedulerTest {
         assertEquals(listOf(4L), exporter.confirmed.flatMap { b -> b.deltas.map { it.hitsTotal } }, "nothing lost once accepted")
     }
 
-    /**
-     * Records every delta batch and manifest as the scheduler stamped it, in the order the sends were
-     * attempted, confirmed or not. [deltaOutcome] and [manifestOutcome] pick a failure by the payload
-     * being sent; [beforeManifest] runs after a manifest is stamped and before it is confirmed.
-     */
     private class StampedExporter : Exporter {
         val deltas: MutableList<DeltaBatch> = Collections.synchronizedList(mutableListOf())
         val manifests: MutableList<ProbeManifest> = Collections.synchronizedList(mutableListOf())
@@ -822,7 +794,6 @@ class ExportSchedulerTest {
     private fun hasHits(batch: DeltaBatch) =
         batch.deltas.isNotEmpty() || batch.endpointDeltas.isNotEmpty() || batch.dependencyDeltas.isNotEmpty()
 
-    /** A scheduler over [probeCount] classes with one hit each, a controllable clock, and a [StampedExporter]. */
     private inner class PendingScenario(
         probeCount: Int = 1,
         maxDeltasPerBatch: Int = ExportScheduler.DEFAULT_MAX_DELTAS_PER_BATCH,
@@ -848,13 +819,11 @@ class ExportSchedulerTest {
                 clock = now::get,
             )
 
-        /** Each class's counts, three hits on its one probe, so the first flush has a hit batch to send. */
         val counters =
             List(probeCount) { i ->
                 registry.register("com.example.C$i", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "m", "()V", 1))).also { it[0] = 3 }
             }
 
-        /** Runs a flush at time [at] and returns the delta batches it attempted. */
         fun flush(
             at: Long,
             final: Boolean = false,
@@ -872,8 +841,8 @@ class ExportSchedulerTest {
         scenario.probeRegistry.register("com.example.A", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "a", "()V", 1)))[0] = 2
         val baselines = StaticBaselineSender(scenario.exporter)
         baselines.offer(listOf(StaticBaseline(resource, emptyList(), scannedAt = 1L)))
-        // The delta send waits for the class chunk, so the dependency it releases cannot ride on
-        // that chunk and goes out on the flush's second manifest call, which this test numbers too.
+        // The delta send waits for the class chunk, so the dependency cannot ride on that chunk
+        // and goes out on the flush's second manifest call.
         val mainManifestSent = CountDownLatch(1)
         scenario.exporter.afterManifestSend = { mainManifestSent.countDown() }
         scenario.exporter.beforeDeltaSend = { assertTrue(mainManifestSent.await(5, TimeUnit.SECONDS)) }
@@ -913,7 +882,6 @@ class ExportSchedulerTest {
         assertEquals(listOf(1L, 2L), exporter.deltas.map { it.payloadSequence }.sorted(), "its send used no number")
     }
 
-    /** Every payload the scenario's exporter attempted, in stamped order. */
     private fun PendingScenario.payloadsBySequence(): List<Pair<Long, Long>> =
         (exporter.deltas.map { it.payloadSequence to it.countsPendingSince } + exporter.manifests.map { it.payloadSequence to it.countsPendingSince })
             .sortedBy { it.first }
@@ -1530,13 +1498,11 @@ class ExportSchedulerTest {
         assertEquals(3, exporter.manifests.size, "confirmed once, not sent again")
     }
 
-    /** Returns 0 from every `nextLong(bound)`, so the first scheduled flush runs immediately on start(). */
     private val noJitter =
         object : Random() {
             override fun nextBits(bitCount: Int): Int = 0
         }
 
-    /** Blocks every delta send on [gate] until released, and counts how many sends were attempted. */
     private class GatedExporter : Exporter {
         val gate = CountDownLatch(1)
         val deltaSends = AtomicInteger(0)
@@ -1608,9 +1574,7 @@ class ExportSchedulerTest {
         val exporter = GatedExporter()
         val scheduler = ExportScheduler(config, resource, registry, EndpointRegistry(), exporter)
 
-        // A zero budget is what the hook is left with when an in-flight flush finishes with less
-        // than a millisecond to spare: the remaining time truncates to 0, and Thread.join(0)
-        // means "wait forever", not "do not wait".
+        // A remaining time under a millisecond truncates to 0, and Thread.join(0) waits forever.
         val hook = thread { scheduler.flushOnShutdown(Duration.ZERO) }
         hook.join(3_000)
         val returned = !hook.isAlive
@@ -2047,7 +2011,6 @@ class ExportSchedulerTest {
         assertEquals(listOf(false, false), exporter.deltaBatches.map { it.finalFlush })
     }
 
-    /** Counts down [delivered] on the first delta batch, so a test can wait on a scheduled tick from another thread. */
     private class LatchExporter : Exporter {
         val delivered = CountDownLatch(1)
 
@@ -2071,8 +2034,6 @@ class ExportSchedulerTest {
                     resource: ResourceAttributes,
                     maxDeltasPerBatch: Int,
                 ): List<ProbeRegistry.DeltaSnapshot> {
-                    // A LinkageError is the realistic shape: a class the shaded jar failed to
-                    // carry, first touched on the export path rather than at startup.
                     if (calls++ == 0) throw NoClassDefFoundError("com/example/Missing")
                     return super.computeDeltaBatches(resource, maxDeltasPerBatch)
                 }
@@ -2240,7 +2201,6 @@ class ExportSchedulerTest {
         }
     }
 
-    /** A registry holding [artifacts], each counted with its counts delivered, so each is sendable at once. */
     private fun dependencyRegistryWith(vararg artifacts: String): DependencyRegistry =
         DependencyRegistry().apply {
             registerStartup(*artifacts)
@@ -2314,8 +2274,7 @@ class ExportSchedulerTest {
         registry.register("com.example.Foo", 1L, probes)
         val exporter = RecordingExporter()
         // The class weighs 5 (4 probes + its ClassLocation record), one short of the cap of 6.
-        // The three dependencies form one chunk of weight 3, which does not fit beside the class
-        // and so goes out on its own manifest.
+        // The three dependencies weigh 3 together, so they do not fit beside it and go out on their own manifest.
         val scheduler =
             ExportScheduler(
                 config,
@@ -2339,10 +2298,6 @@ class ExportSchedulerTest {
         }
     }
 
-    /**
-     * Sends two class chunks, one standalone rider manifest and, on a second flush, a manifest
-     * holding only a late class, all under [agentConfig], and returns every manifest sent.
-     */
     private fun manifestsSentUnder(agentConfig: AgentConfig): List<ProbeManifest> {
         val registry = ProbeRegistry()
         registry.register("com.example.A", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "a", "()V", 1)))
@@ -2458,8 +2413,8 @@ class ExportSchedulerTest {
             classReferences = listOf("org.lib.C"),
         )
         val exporter = RecordingExporter()
-        // The class weighs 5 (1 probe, 2 method references, its class location record, 1 class
-        // reference). Two external classes do not fit beside it under a cap of 6.
+        // The class weighs 5 (1 probe, 2 method references, its class location record, 1 class reference).
+        // Two external classes do not fit beside it under a cap of 6.
         val scheduler =
             ExportScheduler(
                 config,
@@ -2483,11 +2438,6 @@ class ExportSchedulerTest {
         }
     }
 
-    /**
-     * Captures the records a [java.lang.System.Logger] obtained for [loggerName] emits, through
-     * its default `java.util.logging` backend. `System.Logger` delegates to `j.u.l.Logger` when no
-     * custom `System.LoggerFinder` is installed, which is the case in this project's own tests.
-     */
     private fun captureLogRecords(
         loggerName: String,
         block: () -> Unit,
@@ -2598,7 +2548,6 @@ class ExportSchedulerTest {
 
     private fun unseenLines(records: List<LogRecord>) = records.filter { it.message.contains("callbackAnnotations") }
 
-    /** A scheduler for [named] whose clock reads [now], started at time zero. */
     private fun schedulerAt(
         named: ConfiguredCallbackAnnotations,
         now: () -> Long,
@@ -3336,8 +3285,7 @@ class ExportSchedulerTest {
         val endpointRegistry = EndpointRegistry()
         endpointRegistry.register(key = "k", framework = "fake", verb = "GET", verbatimTemplate = "/x")
         val exporter = RecordingExporter()
-        // The class alone weighs 5 (1 probe + 3 edges + 1 for its own ClassLocation record),
-        // exactly the cap, so the endpoint cannot share its chunk without overshooting.
+        // The class alone weighs 5 (1 probe + 3 edges + its ClassLocation record), exactly the cap.
         val scheduler = ExportScheduler(config, resource, registry, endpointRegistry, exporter, maxManifestEntriesPerChunk = 5)
 
         scheduler.flush()
@@ -3370,8 +3318,8 @@ class ExportSchedulerTest {
         val endpointRegistry = EndpointRegistry()
         endpointRegistry.register(key = "k", framework = "fake", verb = "GET", verbatimTemplate = "/x")
         val exporter = RecordingExporter()
-        // The class alone weighs 7 (1 probe + 1 site + 2 outcomes + 2 line ranges + 1 for its own
-        // ClassLocation record), exactly the cap, so the endpoint cannot share its chunk.
+        // The class alone weighs 7 (1 probe + 1 site + 2 outcomes + 2 line ranges + its ClassLocation record), exactly
+        // the cap.
         val scheduler = ExportScheduler(config, resource, registry, endpointRegistry, exporter, maxManifestEntriesPerChunk = 7)
 
         scheduler.flush()
@@ -3398,11 +3346,6 @@ class ExportSchedulerTest {
         assertEquals(2, exporter.deltaBatches.size, "the closing batch goes out on both flushes")
     }
 
-    /**
-     * A scheduler over a startup listing of [artifacts], with a sweep that counts dependencies on
-     * each run the way [dev.otherlode.dependencies.LoadedDependencyCounter] does, and
-     * an external-class registry wired as the agent wires it. Every mapping resolves to [mappedTo].
-     */
     private inner class ListingScenario(
         vararg artifacts: String,
         listingComplete: Boolean = true,
@@ -3435,7 +3378,6 @@ class ExportSchedulerTest {
             if (listingComplete) dependencyRegistry.markListingComplete()
         }
 
-        /** Runs one flush and returns the manifests it sent. */
         fun flush(final: Boolean = false): List<ProbeManifest> {
             val before = exporter.manifests.size
             if (final) scheduler.flushOnShutdown(Duration.ofSeconds(5)) else scheduler.flush()
@@ -3572,10 +3514,6 @@ class ExportSchedulerTest {
         assertEquals(1, scenario.flush().sumOf { it.dependencies.size })
     }
 
-    /**
-     * Sends six classes of 1, 3, 2, 4, 1 and 2 probes, one skipped class and [endpoints] endpoints
-     * under [cap], and describes each manifest sent as its probes, endpoint count and skipped count.
-     */
     private fun packedManifests(
         cap: Int,
         endpoints: Int,
@@ -4194,14 +4132,11 @@ class ExportSchedulerTest {
             else -> null
         }
 
-    /** The first rule the flush's recorded sends break, or null. */
     private fun flushCompleteViolation(
         sent: List<Attempt>,
         final: Boolean,
     ): String? {
         if (sent.isEmpty()) return "the flush sent no delta batch"
-        // A late heartbeat after a refusal carries no flush_complete, so it can follow the batch
-        // that does (ADR 0082, ADR 0087).
         val lateHeartbeat =
             sent.size > 1 && sent.last().let { !hasHits(it.batch) && !it.batch.finalFlush && !it.batch.flushComplete } &&
                 sent.dropLast(1).any { it.failure != null }

@@ -16,11 +16,6 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
-/**
- * Class-file reads that go through the loader when classes are woven through the real transformer.
- * The classes are generated, so the loader's read counts are the whole story: a supertype shared by
- * two woven classes is read once, and each class's own file is still read for its own analysis.
- */
 class CachedClassFileReadsTest {
     private class CountingLoader(
         private val files: Map<String, ByteArray>,

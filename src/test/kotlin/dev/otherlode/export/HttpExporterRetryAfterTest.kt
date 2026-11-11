@@ -25,7 +25,6 @@ class HttpExporterRetryAfterTest {
         server?.stop(0)
     }
 
-    /** [handler] receives the 1-based request number and returns the status and an optional Retry-After value. */
     private fun startServer(handler: (Int) -> Pair<Int, String?>): String {
         val httpServer = HttpServer.create(InetSocketAddress("localhost", 0), 0)
         httpServer.createContext("/") { exchange ->

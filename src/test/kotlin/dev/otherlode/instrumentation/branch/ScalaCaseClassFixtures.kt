@@ -2,13 +2,7 @@ package dev.otherlode.instrumentation.branch
 
 import dev.otherlode.export.GeneratedBy
 
-/**
- * The case classes and companions of the `:fixtures-scala2` and `:fixtures-scala3` modules, and
- * the members of each that the adopter wrote, for the generated-method tests of the transform and of the
- * static baseline. Every plumbing member not listed here as hand-written is scalac's.
- */
 object ScalaCaseClassFixtures {
-    /** Every fixture case class, by simple name, with its element accessors. */
     val CASE_CLASSES: Map<String, List<String>> =
         mapOf(
             "Cc" to listOf("a", "b"),
@@ -43,11 +37,8 @@ object ScalaCaseClassFixtures {
             "TryBody" to listOf("a"),
         )
 
-    /**
-     * The members of a fixture case class the adopter wrote, by name. `HandCopy.copy` and
-     * `UC.canEqual` are written by hand too, but each body is instruction for instruction the one
-     * scalac writes, so it is scalac's code and is not listed.
-     */
+    // HandCopy.copy and UC.canEqual are written by hand, but each body matches the one scalac writes
+    // instruction for instruction, so they are not listed.
     val HAND_WRITTEN: Map<String, Set<String>> =
         mapOf(
             "Multi" to setOf("toString"),
@@ -60,7 +51,6 @@ object ScalaCaseClassFixtures {
             "FZC" to setOf("canEqual"),
         )
 
-    /** The companion members the adopter wrote, by class, name and descriptor. */
     val HAND_WRITTEN_COMPANION: Set<Triple<String, String, String>> =
         setOf(Triple("Written\$", "apply", "(Ljava/lang/String;)Lcom/example/scalatarget/Written;"))
 
@@ -79,17 +69,12 @@ object ScalaCaseClassFixtures {
             "productPrefix",
         )
 
-    /** The names of the companion members scalac writes. */
     val COMPANION_PLUMBING = setOf("apply", "unapply", "toString", "fromProduct")
 
-    /** Whether an instance method of a case class named [name] is plumbing: one scalac writes by that name. */
     fun isPlumbing(name: String): Boolean = name in PLUMBING || Regex("_\\d+").matches(name) || Regex(".+\\\$access\\\$\\d+").matches(name)
 
-    /**
-     * The companion of the case class [simpleName] in fixture module [module]. A local case class's
-     * companion is numbered after it: `Outer$Local$2$` from Scala 2.13.15 and `Outer$Local$3$`
-     * from Scala 3.3.4.
-     */
+    // A local case class's companion is numbered after it: `Outer$Local$2$` from Scala 2.13.15 and
+    // `Outer$Local$3$` from Scala 3.3.4.
     fun companionOf(
         module: String,
         simpleName: String,
@@ -100,14 +85,8 @@ object ScalaCaseClassFixtures {
             else -> "Outer\$Local\$3\$"
         }
 
-    /** Every fixture case class and its companion, by simple name, in [module]. */
     fun allClasses(module: String): List<String> = CASE_CLASSES.keys.flatMap { listOf(it, companionOf(module, it)) }
 
-    /**
-     * The mark an instance method of the fixture class [simpleName] must carry in [module], or
-     * null when the method is none of this table's business, such as a constructor or an
-     * `$outer` accessor.
-     */
     fun expectedMark(
         module: String,
         simpleName: String,

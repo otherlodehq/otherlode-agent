@@ -16,16 +16,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Proves each routine kind, and each shape that stays a finding, against real
- * compiled fixtures: `RoutineTarget.kt` and `RoutineJavaTarget.java`. Every shape was confirmed
- * with `javap -c -p` on these fixtures first.
- *
- * Each site reads as its outcomes' kinds in outcome order: a conditional's taken side, then its
- * fall-through.
- */
 class RoutineOutcomeTest {
-    /** Reads another test fixture's bytes by internal name, the way the agent reads a class through its loader. */
     private val fixtureLookup: (String) -> ByteArray? = { internalName ->
         listOf("kotlin", "java")
             .map { File("build/classes/$it/test/$internalName.class") }
@@ -44,7 +35,6 @@ class RoutineOutcomeTest {
         analysis(File("build/classes/java/test/com/example/target/RoutineJavaTarget.class").readBytes())
     }
 
-    /** Each kept site of [method], in site order, as its outcomes' routine kinds. */
     private fun kinds(
         analysis: BranchSiteAnalyzer.Analysis,
         method: String,
@@ -84,7 +74,6 @@ class RoutineOutcomeTest {
 
     @Test
     fun `a lateinit check's throwing side is throw only`() {
-        // The intrinsic throws inside, and kotlinc follows it with `aconst_null` into the return.
         assertEquals(listOf(listOf(NONE, THROW_ONLY)), kinds(kotlin, "lateinitName"))
     }
 
@@ -204,14 +193,11 @@ class RoutineOutcomeTest {
 
     @Test
     fun `a condition inside a use block is not routine`() {
-        // use's own finally calls closeFinally and holds no site, so only the adopter's check is left.
         assertEquals(listOf(listOf(NONE, NONE)), kinds(kotlin, "useBlock"))
     }
 
     @Test
     fun `try-with-resources keeps its null checks as null defaults and nothing else as routine`() {
-        // javac 21 catches Throwable, not any, so the handler is a typed catch and no site is a
-        // finally copy. The resource's null check on each path skips close() on its null side.
         assertEquals(
             listOf(listOf(NONE, NONE), listOf(NULL_DEFAULT, NONE), listOf(NULL_DEFAULT, NONE)),
             kinds(java, "tryWithResources"),
@@ -250,17 +236,12 @@ class RoutineOutcomeTest {
         assertEquals(listOf(listOf(NONE, NONE)), kinds(analysis, "sameLocal"))
     }
 
-    /** One static `(Object)I` method: [operands] pushes two references, and [compare] tests them. */
     private class CompareMethod(
         val name: String,
         val compare: Int,
         val operands: (MethodVisitor) -> Unit,
     )
 
-    /**
-     * A class of [methods], none of which any compiler here emits. Each returns 1 when its compare
-     * jumps and 0 when it falls through, so neither side calls anything.
-     */
     private fun referenceCompareClass(vararg methods: CompareMethod): ByteArray {
         val writer = ClassWriter(ClassWriter.COMPUTE_FRAMES or ClassWriter.COMPUTE_MAXS)
         writer.visit(Opcodes.V17, Opcodes.ACC_PUBLIC, "com/example/target/RoutineCompareTarget", null, "java/lang/Object", null)

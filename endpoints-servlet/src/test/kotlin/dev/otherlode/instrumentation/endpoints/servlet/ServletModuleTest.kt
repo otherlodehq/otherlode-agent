@@ -43,10 +43,7 @@ import kotlin.test.assertTrue
 private const val HTTP = "(Ljakarta/servlet/http/HttpServletRequest;Ljakarta/servlet/http/HttpServletResponse;)V"
 private const val FIXTURE = "com.example.servlet.fixture"
 
-/**
- * Proves the servlet module end to end against a real embedded container and a real `-javaagent`
- * (see [ServletTestAgent]). Every test uses templates of its own, since the registry is one per JVM.
- */
+// The registry is one per JVM and these tests share it, so every test uses templates of its own.
 class ServletModuleTest : ServletTestSupport() {
     @AfterEach
     fun moduleStillOn() {
