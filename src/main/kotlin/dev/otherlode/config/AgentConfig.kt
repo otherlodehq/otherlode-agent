@@ -126,7 +126,8 @@ data class AgentConfig(
     val disabledEndpointModules: List<String>,
     /**
      * Why the agent refuses this configuration, one message for each problem, or empty when it
-     * accepts it. A set [exportUrl] the agent cannot use, and an [authToken] with a character outside
+     * accepts it. A set [exportUrl] the agent cannot use, a plain http [exportUrl] on an
+     * `otherlode.dev` host while [authToken] is set, and an [authToken] with a character outside
      * `!` to `~`, each add one. [dev.otherlode.Agent] logs each as an ERROR, unless [enabled] is false,
      * and turns itself off for this JVM. No message quotes the token, or any of the URL but an underscore host.
      */
@@ -220,12 +221,26 @@ data class AgentConfig(
 
             val prefixes = parsePackagePrefixes(resolve("includePackages"))
             val excludedPrefixes = parsePackagePrefixes(resolve("excludePackages"))
-            val (exportUrl, exportUrlRefusal) = parseExportUrl(resolveSourced("exportUrl", options, systemProperties, env))
+            val sourcedExportUrl = resolveSourced("exportUrl", options, systemProperties, env)
+            val (exportUrl, exportUrlRefusal) = parseExportUrl(sourcedExportUrl)
             val authToken = resolve("authToken")
             val tokenRefusal = authToken?.let { tokenRefusal("authToken", it, options, systemProperties, env) }
-            val refusals = listOfNotNull(exportUrlRefusal, tokenRefusal)
-            if (refusals.isEmpty() && authToken != null && exportUrl.startsWith("http://") && !isLoopbackHost(URI(exportUrl).host)) {
-                log.log(Level.WARNING, "otherlode: exportUrl uses plain http, so the auth token is sent unencrypted")
+            val plainHttpRefusal =
+                if (authToken != null && sourcedExportUrl != null && exportUrlRefusal == null) {
+                    plainHttpOtherlodeRefusal(exportUrl, sourcedExportUrl.source)
+                } else {
+                    null
+                }
+            val refusals = listOfNotNull(exportUrlRefusal, tokenRefusal, plainHttpRefusal)
+            if (refusals.isEmpty() && authToken != null) {
+                if (sourcedExportUrl == null) {
+                    log.log(
+                        Level.WARNING,
+                        "otherlode: authToken is set but exportUrl is not, so the token goes to the default $DEFAULT_EXPORT_URL",
+                    )
+                } else if (exportUrl.startsWith("http://") && !isLoopbackHost(URI(exportUrl).host)) {
+                    log.log(Level.WARNING, "otherlode: exportUrl uses plain http, so the auth token is sent unencrypted")
+                }
             }
             val testRun = parseBoolean("testRun", resolve("testRun"), default = false)
             return AgentConfig(
@@ -514,6 +529,21 @@ data class AgentConfig(
             }
             val scheme = checkNotNull(uri).scheme
             return (scheme.lowercase() + trimmed.substring(scheme.length)) to null
+        }
+
+        /**
+         * The refusal for a plain http [exportUrl] whose host is `otherlode.dev` or a subdomain of it, or
+         * null. It names the [source] of the URL and never quotes the URL.
+         */
+        private fun plainHttpOtherlodeRefusal(
+            exportUrl: String,
+            source: String,
+        ): String? {
+            if (!exportUrl.startsWith("http://")) return null
+            val host = URI(exportUrl).host.lowercase().removeSuffix(".")
+            if (host != "otherlode.dev" && !host.endsWith(".otherlode.dev")) return null
+            return "otherlode: exportUrl must use https for an otherlode.dev host while authToken is set, " +
+                "since the token is an ingest key; exportUrl from $source is refused, so the agent is off for this JVM"
         }
 
         private val IPV4_LOOPBACK = Regex("""127(\.\d{1,3}){3}""")

@@ -57,6 +57,20 @@ deferrals, gzip, a collector config file, and agent-level redaction
 
 ## TODO
 
+- **Two JDK facts the direct path depends on: to check.** From the
+  2026-11-11 security review (ADR 0092). Both matter only with a hostile
+  or broken receiver, such as a man in the middle on plain `http`.
+  1. Whether the customer's JDK puts the raw status line in the
+     `ProtocolException` the HTTP client throws for a malformed one. The
+     scheduler logs the exception unescaped, so control bytes other than
+     CR and LF could reach the host's log. If it does, log the exception's
+     class and a message cut to printable ASCII.
+  2. Whether early JDK 17 updates cap response header size in
+     `java.net.http.HttpClient` (`jdk.http.maxHeaderSize`), and whether
+     `future.cancel(true)` aborts the exchange there. Without a cap, a
+     receiver can grow the heap for up to the 10 s exchange. If so, name
+     the minimum JDK update in `compatibility.md`.
+
 - **`AgentConfigTest`'s log capture depends on test order.** Its
   `recordsFrom` adds a handler to the `java.util.logging` logger of
   `AgentConfig`, but the agent logs there only once some earlier test in

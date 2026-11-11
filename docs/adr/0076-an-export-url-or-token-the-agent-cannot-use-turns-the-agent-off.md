@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted, amended by ADR 0092
 ---
 
 # An export URL or token the agent cannot use turns the agent off

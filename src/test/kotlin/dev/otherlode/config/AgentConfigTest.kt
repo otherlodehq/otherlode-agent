@@ -440,7 +440,7 @@ class AgentConfigTest {
     }
 
     @Test
-    fun `a token sent to the default endpoint is not warned about, since it is a loopback address`() {
+    fun `a token sent to the default endpoint gets no plain http warning, since it is a loopback address`() {
         val warnings = warningsFrom { parseQuietly("unknownOption=1,authToken=abc") }
 
         assertEquals(1, warnings.count { it.contains("unknown agent option") }, "log capture saw nothing")
@@ -484,6 +484,100 @@ class AgentConfigTest {
 
         assertEquals(1, warnings.count { it.contains("unknown agent option") }, "log capture saw nothing")
         assertEquals(0, warnings.count { it.contains("plain http") })
+    }
+
+    @Test
+    fun `a token with a plain http otherlode dev endpoint refuses the configuration from each source without quoting either`() {
+        val url = "http://ingest.otherlode.dev"
+        val fromOption = parseQuietly("exportUrl=$url,authToken=tokenmarker").refusals
+        val props = mapOf("otherlode.export.url" to url, "otherlode.auth.token" to "tokenmarker")
+        val fromProperty = AgentConfig.parse(null, env = { null }, systemProperties = props::get).refusals
+        val env = mapOf("OTHERLODE_EXPORT_URL" to url, "OTHERLODE_AUTH_TOKEN" to "tokenmarker")
+        val fromEnv = AgentConfig.parse(null, env = env::get, systemProperties = { null }).refusals
+
+        val expected =
+            listOf(
+                "the agent option exportUrl",
+                "the system property otherlode.export.url",
+                "the environment variable OTHERLODE_EXPORT_URL",
+            )
+        for ((refusals, source) in listOf(fromOption, fromProperty, fromEnv).zip(expected)) {
+            assertEquals(1, refusals.size, "$refusals")
+            assertTrue("must use https for an otherlode.dev host" in refusals.single() && source in refusals.single(), "$refusals")
+            assertTrue(
+                "ingest.otherlode" !in refusals.single() && "http://" !in refusals.single() && "tokenmarker" !in refusals.single(),
+                "$refusals",
+            )
+        }
+    }
+
+    @Test
+    fun `an upper-case or bare otherlode dev host is refused with a token over plain http`() {
+        for (host in listOf("INGEST.OTHERLODE.DEV", "otherlode.dev", "Otherlode.Dev:80", "ingest.otherlode.dev.", "otherlode.dev.")) {
+            lateinit var config: AgentConfig
+            val warnings = warningsFrom { config = parseQuietly("exportUrl=HTTP://$host,authToken=abc") }
+
+            assertEquals(1, config.refusals.size, "host $host: ${config.refusals}")
+            assertTrue(config.refusals.single().contains("must use https for an otherlode.dev host"), "host $host")
+            assertEquals(0, warnings.count { it.contains("plain http") }, "host $host")
+        }
+    }
+
+    @Test
+    fun `a host that only resembles otherlode dev keeps the plain http warning and is not refused`() {
+        for (host in listOf("ingest.otherlode.dev.evil.example", "nototherlode.dev")) {
+            lateinit var config: AgentConfig
+            val warnings = warningsFrom { config = parseQuietly("exportUrl=http://$host,authToken=abc") }
+
+            assertEquals(emptyList(), config.refusals, "host $host")
+            assertEquals(1, warnings.count { it.contains("plain http") }, "host $host")
+        }
+    }
+
+    @Test
+    fun `a token with an https otherlode dev endpoint is accepted without a warning`() {
+        val warnings =
+            warningsFrom {
+                assertEquals(
+                    emptyList(),
+                    parseQuietly("exportUrl=https://ingest.otherlode.dev,unknownOption=1,authToken=abc").refusals,
+                )
+            }
+
+        assertEquals(1, warnings.count { it.contains("unknown agent option") }, "log capture saw nothing")
+        assertEquals(0, warnings.count { it.contains("otherlode: exportUrl") || it.contains("authToken is set") })
+    }
+
+    @Test
+    fun `a plain http otherlode dev endpoint without a token is accepted`() {
+        assertEquals(emptyList(), parseQuietly("exportUrl=http://ingest.otherlode.dev").refusals)
+    }
+
+    @Test
+    fun `a bad token and a plain http otherlode dev endpoint give one refusal each`() {
+        val refusals = parseQuietly("exportUrl=http://ingest.otherlode.dev,authToken=bad token").refusals
+
+        assertEquals(2, refusals.size, "$refusals")
+        assertTrue(refusals.any { it.contains("must use https for an otherlode.dev host") }, "$refusals")
+    }
+
+    @Test
+    fun `a token with no exportUrl warns once that the token goes to the default`() {
+        val line = "otherlode: authToken is set but exportUrl is not, so the token goes to the default http://localhost:4319"
+        val warnings = warningsFrom { parseQuietly("authToken=abc") }
+
+        assertEquals(listOf(line), warnings.filter { it.contains("authToken is set") })
+    }
+
+    @Test
+    fun `a token with exportUrl set to the default value warns of nothing, and so does no token`() {
+        val explicit = warningsFrom { parseQuietly("exportUrl=http://localhost:4319,unknownOption=1,authToken=abc") }
+        val noToken = warningsFrom { parseQuietly("unknownOption=1") }
+
+        assertEquals(1, explicit.count { it.contains("unknown agent option") }, "log capture saw nothing")
+        assertEquals(0, explicit.count { it.contains("authToken is set") })
+        assertEquals(1, noToken.count { it.contains("unknown agent option") }, "log capture saw nothing")
+        assertEquals(0, noToken.count { it.contains("authToken is set") })
     }
 
     @Test
@@ -828,7 +922,10 @@ class AgentConfigTest {
 
     @Test
     fun `a token with a comma and an equals sign logs neither side of the fragment after it`() {
-        val config = AgentConfig.parse("authToken=abc,qux=ghi,includePackages=x", env = { null }, systemProperties = { null }, detectServiceName = { null })
+        val config =
+            AgentConfig.parse("authToken=abc,qux=ghi,includePackages=x", env = {
+                null
+            }, systemProperties = { null }, detectServiceName = { null })
         val messages = messagesFrom { parseQuietly("authToken=abc,qux=ghi,includePackages=x") }
 
         assertTrue(messages.any { it.contains("authToken") && it.contains("comma") }, "no warning about the comma: $messages")

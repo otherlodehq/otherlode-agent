@@ -206,6 +206,7 @@ The agent refuses these values. It logs one ERROR and turns itself off for the l
 - A value with a query string.
 - A value with a fragment.
 - A value with a user name or password, such as `http://user:secret@collector:4319`, or any other `@` after the scheme. The agent never sends a user name or password, so set the token with [authToken](#authtoken).
+- A value that starts with `http://` when `authToken` is set and the host is `otherlode.dev` or ends with `.otherlode.dev`, in any letter case. The token is an ingest key, so it must travel over `https://`. Without a token, the agent accepts the value.
 
 A host name that contains an underscore, such as `http://my_collector:4319`, is refused too, and the ERROR names the underscore. Java's HTTP client cannot send to such a host. Use a host name or network alias without an underscore, or an IP address.
 
@@ -221,10 +222,22 @@ When `authToken` is set, the agent sends `Authorization: Bearer <token>` with ev
 
 The agent's own advice is to set the token through `OTHERLODE_AUTH_TOKEN`. Both the argument string and a `-D` flag appear on the process command line, which every user on the host can read through `ps` and `/proc/<pid>/cmdline`. An environment variable does not.
 
-When a token is set and the final `exportUrl` starts with `http://`, the agent logs this warning once at startup. It does not log it when the host is `localhost`, an IPv4 address from `127.0.0.0` to `127.255.255.255`, or `[::1]`. The agent reads the host as written and never looks a name up, so `localhost.example.com` and a name that resolves to `127.0.0.1` still log it. The default URL is `http://localhost:4319`, so a token with no `exportUrl` does not log it.
+When a token is set and the final `exportUrl` starts with `http://`, the agent logs this warning once at startup. It does not log it when the host is `localhost`, an IPv4 address from `127.0.0.0` to `127.255.255.255`, or `[::1]`. The agent reads the host as written and never looks a name up, so `localhost.example.com` and a name that resolves to `127.0.0.1` still log it.
 
 ```text
 otherlode: exportUrl uses plain http, so the auth token is sent unencrypted
+```
+
+When the host is `otherlode.dev` or ends with `.otherlode.dev`, with or without a final dot, the agent does not warn. It refuses the URL, as [exportUrl](#exporturl) describes. The ERROR reads as below, with the source that gave the URL.
+
+```text
+otherlode: exportUrl must use https for an otherlode.dev host while authToken is set, since the token is an ingest key; exportUrl from the environment variable OTHERLODE_EXPORT_URL is refused, so the agent is off for this JVM
+```
+
+When a token is set and no source sets `exportUrl`, the token goes to the default `http://localhost:4319`. The agent logs this warning once at startup. It does not log it when you set `exportUrl` to that same value.
+
+```text
+otherlode: authToken is set but exportUrl is not, so the token goes to the default http://localhost:4319
 ```
 
 ## flushIntervalSeconds

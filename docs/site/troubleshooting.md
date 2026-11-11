@@ -73,6 +73,7 @@ The line names the source that gave the value: the agent option, the system prop
 - The value has a query string.
 - The value has a fragment.
 - The value holds an `@` after the scheme, as a user name or password does. The agent never sends one. Set the token with `authToken`, and write an `@` in a path as `%40`.
+- The value starts with `http://`, `authToken` is set and the host is `otherlode.dev` or ends with `.otherlode.dev`: `otherlode: exportUrl must use https for an otherlode.dev host while authToken is set, since the token is an ingest key; ...`. Use `https://ingest.otherlode.dev`.
 - The host has an underscore, as a Docker Compose service name can: `otherlode: exportUrl's host 'otherlode_collector' has an underscore, which a URL host name cannot contain; ...`. Java's HTTP client cannot reach such a host. Use a network alias or host name without an underscore, or an IP address.
 
 Fix the value at the source the line names and restart the JVM. The agent does not fall back to `http://localhost:4319`, since that would send your data to an address you never chose.
@@ -125,7 +126,7 @@ The method and branch tiers work. The endpoint tier did not install, and the ins
 
 ## An option is ignored
 
-Each of these warnings means the agent kept running without your value, apart from `exportUrl uses plain http`, where it uses the value as given.
+Each of these warnings means the agent kept running without your value, apart from the two `exportUrl` and `authToken` warnings: the plain http warning uses the value as given, and the warning about an unset `exportUrl` uses the default.
 
 | Message | Cause and fix |
 |---|---|
@@ -134,6 +135,7 @@ Each of these warnings means the agent kept running without your value, apart fr
 | `otherlode: flushIntervalSeconds must be a whole number from 1 to 86400, ignoring '30s' and using the default of 60s` | Write plain seconds with no unit. |
 | `otherlode: enabled must be 'true' or 'false', ignoring 'yes' and using the default of true` | The same message appears for `staticBaselineEnabled`, `classListingEnabled`, `endpointsEnabled`, `otelBridgeEnabled` and `testRun`, each naming its own option and default. |
 | `otherlode: exportUrl uses plain http, so the auth token is sent unencrypted` | `authToken` is set and `exportUrl` starts with `http://`, and its host is not `localhost`, an address from `127.0.0.0` to `127.255.255.255` or `[::1]`. Use an `https://` URL unless the collector is on the same host, and then use a loopback address. |
+| `otherlode: authToken is set but exportUrl is not, so the token goes to the default http://localhost:4319` | `authToken` is set and no agent option, system property or environment variable sets `exportUrl`. Set `exportUrl` to `https://ingest.otherlode.dev` or to your collector. The warning is absent when you set `exportUrl` to `http://localhost:4319` yourself. |
 | `otherlode: ignoring all of OTEL_RESOURCE_ATTRIBUTES, since its entry 'x' is not key=value; no service name, namespace, version or environment is read from it` | One malformed entry discards the whole list, as the OpenTelemetry specification says. Fix the entry. |
 | `otherlode: ignoring '..' from <source>, since no URL path can name a service or namespace '..'` | A service name or namespace of `.` or `..` is refused. |
 | `otherlode: ignoring the value from <source>, since it is longer than 1024 bytes in UTF-8` | A service name, namespace, version, environment or instance ID is longer than the collector accepts. The agent skips it and the next source gives the value. Shorten the value at the source the line names. |

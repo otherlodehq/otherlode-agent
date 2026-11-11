@@ -1,5 +1,5 @@
 ---
-status: accepted, amends ADR 0008, ADR 0010, ADR 0018 and ADR 0091
+status: accepted, amended 2026-11-11, amends ADR 0008, ADR 0010, ADR 0018, ADR 0076 and ADR 0091
 ---
 
 # The agent can send straight to Otherlode, and only a 202 is stored
@@ -29,3 +29,14 @@ Decided on 2026-11-11 with Luke, before the first release. Server ADR 0096 holds
 - ADR 0008, ADR 0010 and ADR 0018 say "a 2xx" for a delivered payload. Read it as a 202.
 - ADR 0091 says the collector confirms a manifest. Read it as the receiver.
 - `release.sh` still checks the collector's latest release. Collector users still need its bindings at least as new as the agent's schema.
+
+## Amended on 2026-11-11: plain http to Otherlode is refused
+
+The security review of the direct path found that `exportUrl=http://ingest.otherlode.dev` with a token sends the tenant's ingest key in clear. The agent writes the whole request before any answer, and it follows no redirect, so it sent the key again at every flush with only a startup warning.
+
+- **The agent refuses `http` with a token for an `otherlode.dev` host,** the bare name or any name under it, compared in lower case. It turns itself off with one ERROR, as ADR 0076 does for any unusable `exportUrl`. Any other non-loopback `http` host with a token keeps the warning, since an in-cluster collector without TLS is a real setup and its token is not an ingest key.
+- **A token with no `exportUrl` logs a warning** that names the default `http://localhost:4319`, where another local process could read it.
+- **Server ADR 0052, amended,** gives `ingest.otherlode.dev` an address with no port 80 listener, so a client other than the agent never sends either.
+
+Rejected: refusing `http` with a token for every non-loopback host, which breaks an in-cluster collector without TLS.
+
