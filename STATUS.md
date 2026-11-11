@@ -47,12 +47,7 @@ multi-tenant backend.
    the database tier). No collector can be given
    an ingest URL until the front door exists. None of it blocks publishing
    the agent.
-6. **Soak clean-up is Luke's.** Delete VM `soak-1`, the project-level
-   SSH key gcloud added on 2026-11-01 (Compute Engine, Metadata, SSH
-   keys), and project `project-1d40b09b-5fc7-4240-bed`. `soak/DESIGN.md`
-   holds the week's and the smoke run's results, and ADR 0089 the trim
-   measurements.
-7. **The collector learns `manifest_confirmed` before any agent sends
+6. **The collector learns `manifest_confirmed` before any agent sends
    it** (ADR 0091). A collector with redaction on drops a field its
    bindings do not know and marks the payload stripped, so every run of
    an agent that sends the field would read as stripped after its first
