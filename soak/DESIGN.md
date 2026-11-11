@@ -206,7 +206,7 @@ predates the hourly trim (ADR 0089). Check 8 failed on one read at 2026-11-02 21
 A smoke run from T0 at 2026-11-10 22:37:10Z checked the release candidates: agent `02dd9002`, server
 `6720ed4` and collector `3d5ddc8`. Its final report failed 1 of 8 checks. Checks 1 to 4 and 6 to 8
 passed: 91 planted answers held and 16 were not due, all 68 finding rows were named in `truth.json`,
-and 6 of 1,077 window reads failed. Check 5 failed on `events-prod` 1.0.0 alone. It ran from age
+and 6 of 1,071 window reads failed. Check 5 failed on `events-prod` 1.0.0 alone. It ran from age
 0.5 to 1.2 hours before its upgrade, so it was judged before its first trim, and its heap grew
 faster than its resident set. `events-staging` ran the same jar for 2.8 hours and passed.
 
