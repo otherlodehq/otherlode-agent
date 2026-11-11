@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted, amended by ADR 0092
 ---
 
 # The testkit's JUnit extension runs one collector per test JVM, on a fixed port, against a real `-javaagent`

@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted, amended by ADR 0092
 ---
 
 # Push hit data to a collector instead of exposing it for scraping

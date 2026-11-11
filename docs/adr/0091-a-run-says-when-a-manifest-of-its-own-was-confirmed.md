@@ -1,5 +1,5 @@
 ---
-status: accepted
+status: accepted, amended by ADR 0092
 ---
 
 # A run says when a manifest of its own was confirmed

@@ -13,15 +13,17 @@ the collector as open source. `otherlode-server` stays closed source and
 hosted (server ADR 0001), so every adopter's collector forwards to one
 multi-tenant backend.
 
-1. **The startup figure.** `docs/site/overhead.md` and
-   `benchmark-overhead/README.md` quote the startup-only job's run
-   42622687684 on `9b1f44bb` (2026-11-09): narrow startup +24.6%, 21
-   repeats per variant. If code that runs at class load or in `premain`
-   changes before the tag, re-run that job on the tagged commit and
-   update both pages. Such code changed after that run, on 2026-11-09
-   and 2026-11-10 (ADR 0026's amendment, ADR 0090, the stack read in a
-   definition attempt and the guard after the registry commit), so the
-   re-run is owed.
+1. **The overhead figures.** `docs/site/overhead.md` and
+   `benchmark-overhead/README.md` quote two runs: startup from run
+   42622687684 on `9b1f44bb` (2026-11-09), and every other row from run
+   38944648115 on `1332f3f` (2026-10-16). Once item 6's code lands, run
+   the whole `benchmark-overhead` workflow by hand on the commit to tag
+   and take every figure on both pages from that one run. The scheduled
+   run on `98d076e6` (2026-11-11) gave startup +23.7% and +28.1% with the
+   static baseline. Its ceiling job failed because the `none` variant
+   used 0.88 of its core, under the 90% floor, which is runner noise. The
+   run of 2026-11-10 (42806055835) put the ceiling's throughput at -1.9%
+   (noise), where the pages say -7.1%.
 2. **Cut the releases** (ADRs 0062 and 0063, collector ADR 0006). Cutting
    is Luke's call. Collector `v0.1.0` goes first, since the agent's
    `release.sh` refuses a release until it exists. Both `## [0.1.0]`
@@ -47,13 +49,14 @@ multi-tenant backend.
    the database tier). No collector can be given
    an ingest URL until the front door exists. None of it blocks publishing
    the agent.
-6. **The collector learns `manifest_confirmed` before any agent sends
-   it** (ADR 0091). A collector with redaction on drops a field its
-   bindings do not know and marks the payload stripped, so every run of
-   an agent that sends the field would read as stripped after its first
-   confirmed manifest and make no claim. Bump the collector's bindings
-   and release it before the agent. The server reads the field under its
-   ADR 0095.
+6. **Agents sending straight to ingest** (ADR 0092, server ADR 0096).
+   Before the tag: only a 202 counts as stored, the agent logs
+   `Otherlode-Notice`, `OVERSIZE_REASON` names the ingest limits, and the
+   demo stub and the testkit answer 202. The `docs/site` pages say how to
+   send direct: `attach.md`, `configuration.md`, `data-sent.md`,
+   `how-it-works.md`, `troubleshooting.md` and `test-runs.md`. The server
+   STATUS's "Agents sending straight to ingest" has the landing order
+   across the repos.
 
 After release: what "Parked" lists, the server's performance-only
 deferrals, gzip, a collector config file, and agent-level redaction

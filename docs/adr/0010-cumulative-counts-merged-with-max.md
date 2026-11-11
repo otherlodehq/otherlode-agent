@@ -1,5 +1,5 @@
 ---
-status: accepted, amended by ADR 0032
+status: accepted, amended by ADR 0032 and ADR 0092
 ---
 
 # Send cumulative totals merged with max(), with no separate send buffer

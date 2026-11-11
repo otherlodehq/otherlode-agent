@@ -1,6 +1,6 @@
 # Otherlode
 
-A Java agent that instruments a running JVM application to find code paths that are reachable but never exercised: unused endpoints, methods never invoked, conditionals that only ever go one way. The agent records and exports; a collector aggregates and judges.
+A Java agent that instruments a running JVM application to find code paths that are reachable but never exercised: unused endpoints, methods never invoked, conditionals that only ever go one way. The agent records and exports. Otherlode aggregates and judges, reached directly or through a collector.
 
 ## Language
 
@@ -173,9 +173,13 @@ _Avoid_: test environment (an environment is a deployment, and a test run is tol
 A run some of whose payloads a collector forwarded with fields removed that its own version did not know. It is shown but judged by nothing, since a removed field may be one a finding depends on.
 _Avoid_: partial run, degraded run
 
+**Receiver**:
+Whatever `exportUrl` names: a collector, or Otherlode's ingest. It answers 202 once a payload is stored.
+_Avoid_: backend, server, endpoint (an endpoint is an HTTP route the agent counts)
+
 **Collector**:
-Whatever receives the payloads and merges them across instances. `otherlode-collector` is the production one; the demo's stub and the testkit's `OtherlodeTestCollector` play the role in this repo.
-_Avoid_: backend, server, ingest
+A receiver that forwards to Otherlode. `otherlode-collector` is the production one; the demo's stub and the testkit's `OtherlodeTestCollector` play the role in this repo.
+_Avoid_: ingest, backend
 
 ### Endpoints
 
