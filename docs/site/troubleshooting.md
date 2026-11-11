@@ -137,13 +137,13 @@ Each of these warnings means the agent kept running without your value, apart fr
 | `otherlode: ignoring all of OTEL_RESOURCE_ATTRIBUTES, since its entry 'x' is not key=value; no service name, namespace, version or environment is read from it` | One malformed entry discards the whole list, as the OpenTelemetry specification says. Fix the entry. |
 | `otherlode: ignoring '..' from <source>, since no URL path can name a service or namespace '..'` | A service name or namespace of `.` or `..` is refused. |
 | `otherlode: ignoring the value from <source>, since it is longer than 1024 bytes in UTF-8` | A service name, namespace, version, environment or instance ID is longer than the collector accepts. The agent skips it and the next source gives the value. Shorten the value at the source the line names. |
-| `otherlode: ignoring the value from <source>, since it holds a NUL character` | A service name, namespace, version, environment or instance ID holds a NUL character, which the collector refuses. The agent skips it and the next source gives the value. Remove the character at the source the line names. |
+| `otherlode: ignoring the value from <source>, since it holds a NUL character` | A service name, namespace, version, environment or instance ID holds a NUL character, which Otherlode's ingest and the collector refuse. The agent skips it and the next source gives the value. Remove the character at the source the line names. |
 | `otherlode: callbackAnnotations entry '@com.acme.Handles' is not a fully qualified annotation type name and is ignored: write the dotted name with its package and no wildcard, such as 'com.acme.Handles'` | An entry in [`callbackAnnotations`](configuration#callbackannotations) has a leading `@`, a `/`, a `*`, a trailing `.class`, no package, or a part that is not a Java identifier. The agent drops that entry and keeps the others. Write the annotation's name as you would import it. |
 | `otherlode: disabledEndpointModules entry 'ktor-9' names no endpoint module and is ignored: the modules are ...` | An entry in [`disabledEndpointModules`](configuration#disabledendpointmodules) is not a module name. The agent skips it, so the module you meant stays on, and keeps the other entries. The line lists the module names. |
 
 [Configuration options](configuration) lists every option and where its value comes from.
 
-## Nothing reaches the collector
+## Nothing reaches Otherlode or the collector
 
 The agent sends a delta batch on every flush, even when no count changed. The first flush comes at a random point within the first `flushIntervalSeconds`, 60 seconds by default. Before you look further, start the JVM with `flushIntervalSeconds=1` and wait a few seconds. A new instance reads as counts behind for at least one interval, and until its classes stop loading, so a short `flushIntervalSeconds` shortens that wait too. [Pending counts](data-sent#pending-counts) says when it ends.
 
@@ -154,31 +154,32 @@ otherlode: delta export failed, will retry next flush
 otherlode: manifest export failed, will retry next flush
 ```
 
-The exception under the line names the cause. If neither line appears, the sends succeed and the problem is on the collector's side, or the agent is [disabled](#the-agent-is-disabled). The agent never stops retrying, and a failing flush does not stop the schedule.
+The exception under the line names the cause. If neither line appears, the sends succeed and the problem is on the receiving side, or the agent is [disabled](#the-agent-is-disabled). The agent never stops retrying, and a failing flush does not stop the schedule.
 
 ### The connection fails
 
 The exception is a `java.net.ConnectException` or a timeout.
 
 - The agent cannot reach the address. Check `exportUrl` from the same host or pod with `curl`, using the same URL.
+- The host reaches the internet only through a proxy. Set the JVM's `-Dhttps.proxyHost` and `-Dhttps.proxyPort`, or send through a collector (see [Add a collector](/docs/collector/add)).
 - You set no `exportUrl`, so the agent uses its default, `http://localhost:4319`. That address reaches nothing in a container that runs no collector. An `exportUrl` the agent cannot use does not cause this: it turns the agent off (see [the export URL is refused](#the-export-url-is-refused)).
-- The collector accepts the connection and never answers. The agent gives up on a request after 10 seconds.
+- The receiver accepts the connection and never answers. The agent gives up on a request after 10 seconds.
 
-One send makes up to 5 attempts, so a single failure can take several seconds to log. An answer with a `Retry-After` longer than 2 seconds ends the send at once. [What the agent sends](data-sent#when-the-collector-is-down-or-refuses-a-payload) describes the retry rules.
+One send makes up to 5 attempts, so a single failure can take several seconds to log. An answer with a `Retry-After` longer than 2 seconds ends the send at once. [What the agent sends](data-sent#when-the-receiver-is-down-or-refuses-a-payload) describes the retry rules.
 
-### The collector answers with a status
+### Otherlode or the collector answers with a status
 
 The exception message is `otherlode: unexpected status <code> from <exportUrl>/v1/otherlode/<deltas|manifest|static-baseline|class-listing>`. A `2xx` other than `202` has its own message, in the first row.
 
 | Status | Cause and fix |
 |---|---|
 | `200`, `201`, `204` or any `2xx` but `202` | Only a `202` means a receiver stored the payload. The message is `otherlode: <url> answered <code>, not 202, so the payload counts as not stored`. A proxy or a wrong URL that answers `2xx` to every request causes this. Point `exportUrl` at a collector or at Otherlode's ingest. The agent does not retry within the send. It sends again on the next flush. |
-| `401`, `403` | The token is missing or wrong, or the collector wants a token and none is set. Set `OTHERLODE_AUTH_TOKEN`. The agent does not retry within a send. It sends again on the next flush, so it recovers after you rotate the token. |
-| `404` | The URL does not reach a collector. The agent appends `/v1/otherlode/deltas`, `/v1/otherlode/manifest`, `/v1/otherlode/static-baseline` and `/v1/otherlode/class-listing` to `exportUrl`, so a proxy must forward those paths. Drop any path from `exportUrl` that the collector does not expect. |
+| `401`, `403` | The token is missing or wrong, or the receiver wants a token and none is set. Set `OTHERLODE_AUTH_TOKEN` to an ingest key when the agent sends straight to Otherlode, or to the collector's token. [Read what ingest answers](/docs/server/connect#read-what-ingest-answers) gives each `403` reason. The agent does not retry within a send. It sends again on the next flush, so it recovers after you rotate the token. |
+| `404` | The URL does not reach Otherlode's ingest or a collector. The agent appends `/v1/otherlode/deltas`, `/v1/otherlode/manifest`, `/v1/otherlode/static-baseline` and `/v1/otherlode/class-listing` to `exportUrl`, so a proxy must forward those paths. For Otherlode, set `exportUrl` to `https://ingest.otherlode.dev` with no path. For a collector, drop any path it does not expect. |
 | `301`, `302`, `307`, `308` | The agent does not follow redirects. A proxy that redirects `http` to `https` causes this. Put the final `https://` URL in `exportUrl`. |
 | `400`, `422` | The receiver rejected the content. With the testkit's collector, see [A test fails with a version mismatch](#a-test-fails-with-a-version-mismatch). With another receiver, see its log for the reason. |
-| `413` | The receiver refused the request body as too large. A reverse proxy or gateway in front of the collector has the limit. Raise it. The agent keeps the static baseline and the class listing after a `413` and sends them once the limit is raised, with no restart. The agent keeps each payload under 8 MiB and under 90% of the collector's element limit, so the limit that refused it is in front of the collector, and the fix is on the receiving side. [What the agent sends](data-sent#chunk-caps) lists the caps. Once a count has been refused, the run says on each later payload that its counts are pending (`counts_pending_since`), so a collector does not read its zero hits as never hit. Payloads stamped before the first refusal in that flush say nothing of it. |
-| `408`, `429`, `5xx` | The agent retries these within the send, waiting for a `Retry-After` of up to 2 seconds. A longer `Retry-After` ends the send at once, and the next flush sends again. If they persist across flushes, the collector is overloaded or down, or the collector reports that Otherlode is. |
+| `413` | The receiver refused the request body as too large. A reverse proxy or gateway in front of the receiver has the limit. Raise it. The agent keeps the static baseline and the class listing after a `413` and sends them once the limit is raised, with no restart. The agent keeps each payload under 8 MiB and under 90% of the ingest element limit, so the limit that refused it is in front of the receiver, and the fix is on the receiving side. [What the agent sends](data-sent#chunk-caps) lists the caps. Once a count has been refused, the run says on each later payload that its counts are pending (`counts_pending_since`), so Otherlode does not read its zero hits as never hit. Payloads stamped before the first refusal in that flush say nothing of it. |
+| `408`, `429`, `5xx` | The agent retries these within the send, waiting for a `Retry-After` of up to 2 seconds. A longer `Retry-After` ends the send at once, and the next flush sends again. If they persist across flushes, Otherlode or the collector is overloaded or down, or the collector reports that Otherlode is. |
 
 The agent resends the same payload on the next flush for every status above, so a repeated warning means the answer has not changed. The static baseline and the class listing are the exception. For `400` and `422` each logs a warning and stops sending, since the same bytes meet the same answer:
 
@@ -194,7 +195,7 @@ The class listing logs the same line with `class listing chunk` and `the listing
 otherlode: failed to send static baseline chunk 1 of 4; it and the chunks after it are sent again after a flush whose payloads are stored
 ```
 
-This logs once. The chunks stay pending and go out one per flush after a flush whose own sends the collector confirmed. If the main sends fail, fix those first.
+This logs once. The chunks stay pending and go out one per flush after a flush whose own sends the receiver stored. If the main sends fail, fix those first.
 
 ### A class is too large to send
 
@@ -216,7 +217,7 @@ When the class's manifest entries are too large, the agent logs this line. The a
 otherlode: failed to send class listing chunk 1 of 2; it and the chunks after it are sent again after a flush whose payloads are stored
 ```
 
-The class listing is sent as the static baseline is. This logs once, and the chunks stay pending and go out one per flush after a flush whose own sends the collector confirmed. A `404` here with working deltas means the collector does not serve `/v1/otherlode/class-listing` yet: update the collector. The listing goes out once the route exists.
+The class listing is sent as the static baseline is. This logs once, and the chunks stay pending and go out one per flush after a flush whose own sends the receiver stored. A `404` here with working deltas means the collector does not serve `/v1/otherlode/class-listing` yet: update the collector. The listing goes out once the route exists.
 
 ### No class listing is sent
 
@@ -257,6 +258,17 @@ otherlode: the static baseline scan did not end within 15s of shutdown, so this 
 
 This appears only with `testRun` and `staticBaselineEnabled` both on. The shutdown hook waits 15 seconds for the scan, and the scan was still running. Otherlode makes no never-loaded claim from an incomplete scan. Run the scan on a smaller classpath, or accept that this test run reports no complete scan.
 
+## Otherlode stores a payload but does not track it
+
+An agent that sends straight to Otherlode logs one of these warnings, at most once an hour for each:
+
+```text
+otherlode: Otherlode stores this service's payloads but does not track the service, because the tenant's plan tracks no more services
+otherlode: Otherlode stores this environment's payloads but does not track the environment, because the service already watches as many environments as its cap allows
+```
+
+Otherlode stored the payload, but no finding counts it. The first line means your plan tracks no more services. The second means the service already watches as many environments as its cap allows. [Scope and environments](/docs/server/scope) says what Otherlode does with such runs and how to free a slot. A line that ends `this agent does not know: <name>` is a notice from a newer Otherlode. Through a collector, the collector logs the same notices instead.
+
 ## The flush at shutdown is late, missing or not waiting
 
 On a graceful exit the agent's shutdown hook has 28 seconds in all. It flushes at once for up to 5 seconds, waits until 18 seconds in for your application's own shutdown hooks, then runs the final flush with the time left, at least 10 seconds. [What the agent sends](data-sent#when-payloads-are-sent) describes each step. These lines say a step did not go as planned.
@@ -265,7 +277,7 @@ On a graceful exit the agent's shutdown hook has 28 seconds in all. It flushes a
 otherlode: an in-flight flush used up the early shutdown flush's budget; skipping it
 ```
 
-A scheduled flush was still sending to a slow or unreachable collector when shutdown began, and it did not end within 5 seconds. The agent skips the early flush and goes on to the wait.
+A scheduled flush was still sending to a slow or unreachable receiver when shutdown began, and it did not end within 5 seconds. The agent skips the early flush and goes on to the wait.
 
 ```text
 otherlode: a send of the early shutdown flush ran out of time

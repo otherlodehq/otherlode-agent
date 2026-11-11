@@ -111,15 +111,15 @@ otherlode: includePackages is not set, so the agent is disabled for this JVM and
 
 The agent finds the main class from the launch command. It reads `Start-Class`, else `Main-Class`, from a jar's manifest, and takes the class from a module launch. It prints no suggestion when the main class is in a launcher or framework package that says nothing about your code. Those are Spring Boot's launchers, Ktor's `EngineMain`, and Tomcat's `Bootstrap`. It also prints none when the main class is in the default package, or when it cannot find a main class at all. The agent never applies the suggestion. Copy it into the option yourself.
 
-## Point the agent at a collector
+## Point the agent at Otherlode or a collector
 
-`exportUrl` is the base URL of the collector. It defaults to `http://localhost:4319`. The agent appends its own paths to it, so a path in the URL is kept. A value the agent cannot use, such as one with a query string or a fragment, turns the agent off for the life of the JVM with one ERROR. The agent does not fall back to the default.
+`exportUrl` is where the agent sends. Set it to `https://ingest.otherlode.dev` to send straight to Otherlode, or to the base URL of your collector. It defaults to `http://localhost:4319`, where a collector on the same host listens. [Add a collector](/docs/collector/add) says when you need one. The agent appends its own paths to it, so a path in the URL is kept. A value the agent cannot use, such as one with a query string or a fragment, turns the agent off for the life of the JVM with one ERROR. The agent does not fall back to the default.
 
-`authToken` is sent to the collector as `Authorization: Bearer <token>`. It may hold only visible ASCII characters. A token with any other character, such as an invisible one copied from a web page, turns the agent off with one ERROR. Set the token through the `OTHERLODE_AUTH_TOKEN` environment variable, not through the option string. Every user on the host can read a process's arguments with `ps`, and cannot read its environment.
+`authToken` is sent as `Authorization: Bearer <token>`. Sending straight to Otherlode, it is your ingest key. Sending through a collector, it is the token the collector checks. It may hold only visible ASCII characters. A token with any other character, such as an invisible one copied from a web page, turns the agent off with one ERROR. Set the token through the `OTHERLODE_AUTH_TOKEN` environment variable, not through the option string. Every user on the host can read a process's arguments with `ps`, and cannot read its environment.
 
-If `authToken` is set and `exportUrl` starts with `http://`, the agent logs a warning that the token travels unencrypted. It does not log it when the host is `localhost`, an address from `127.0.0.0` to `127.255.255.255` or `[::1]`. Use an `https://` URL for any other collector.
+If `authToken` is set and `exportUrl` starts with `http://`, the agent logs a warning that the token travels unencrypted. It does not log it when the host is `localhost`, an address from `127.0.0.0` to `127.255.255.255` or `[::1]`. Use an `https://` URL for any other host.
 
-The agent sends one batch every 60 seconds by default, at a random offset within the first interval so that a fleet does not report in step. `flushIntervalSeconds` changes the interval. [What the agent sends](data-sent) lists what leaves the process and what happens while the collector is down.
+The agent sends one batch every 60 seconds by default, at a random offset within the first interval so that a fleet does not report in step. `flushIntervalSeconds` changes the interval. [What the agent sends](data-sent) lists what leaves the process and what happens while Otherlode or the collector is down.
 
 ## Turn the agent off
 
@@ -155,15 +155,15 @@ Beyond that line, the agent prints mostly problems, so the absence of an error i
 | `otherlode: could not install the bootstrap holder; the agent is disabled for this JVM` | The agent could not write its small helper jar to `java.io.tmpdir`, for example on a read-only or full filesystem. |
 | `otherlode: ignoring unknown agent option '...'` | A misspelled option. The line lists the options that exist. |
 
-The second check is in Otherlode. The agent sends a batch on every flush, even when no count has changed, so an instance that is alive and idle still reports. Within one flush interval of startup, Otherlode shows the service under the `serviceName` you set. See [send data from your collector](/docs/server/connect#confirm-the-service-appears). To see it sooner, add `flushIntervalSeconds=1` while you test.
+The second check is in Otherlode. The agent sends a batch on every flush, even when no count has changed, so an instance that is alive and idle still reports. Within one flush interval of startup, Otherlode shows the service under the `serviceName` you set. See [send data to Otherlode](/docs/server/connect#confirm-the-service-appears). To see it sooner, add `flushIntervalSeconds=1` while you test.
 
-If a flush cannot reach the collector, the agent logs a warning at the failed send, with the cause, and retries on the next flush:
+If a flush cannot reach Otherlode or the collector, the agent logs a warning at the failed send, with the cause, and retries on the next flush:
 
 ```text
 otherlode: delta export failed, will retry next flush
 ```
 
-A 401 or 403 response from the collector is not retried within a send. The warning's cause names the status and the URL, such as `unexpected status 401 from http://localhost:4319/...`, and means the token is missing or wrong.
+A 401 or 403 response is not retried within a send. The warning's cause names the status and the URL, such as `unexpected status 401 from https://ingest.otherlode.dev/v1/otherlode/deltas`, and means the ingest key or the collector's token is missing or wrong. [Read what ingest answers](/docs/server/connect#read-what-ingest-answers) says what each status means.
 
 If the instance never appears and no line says why, [troubleshooting](troubleshooting) walks through the causes.
 

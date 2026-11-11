@@ -4,7 +4,7 @@ description: Run the agent in your test JVM with testRun so Otherlode can name t
 order: 100
 ---
 
-Production holds no test classes. A method that only your tests call therefore reads as uncalled in production, the same as a method that nothing calls. To have Otherlode name those tests, run the agent in your test JVM as well, against the same collector, and mark that run as a test run.
+Production holds no test classes. A method that only your tests call therefore reads as uncalled in production, the same as a method that nothing calls. To have Otherlode name those tests, run the agent in your test JVM as well, sending to the same tenant, and mark that run as a test run.
 
 This page covers the agent's side. How Otherlode shows a test run in its findings is under [test callers](/docs/server/unreached-clusters#test-callers).
 
@@ -18,7 +18,7 @@ A test run is a run whose agent has `testRun=true`. The agent probes, records ca
 
 ## Set up the test JVM
 
-1. Point the test JVM at the same collector as production, with the same `serviceName` and `serviceNamespace`. A different name makes the test run a different service.
+1. Point the test JVM at the same tenant as production, with the same `exportUrl` and an ingest key of that tenant, or through the same collector, and with the same `serviceName` and `serviceNamespace`. A different name makes the test run a different service.
 2. Set `testRun=true`.
 3. Set `includePackages` so it covers your test classes as well as your production code. The two usually share packages, so production's value works.
 4. Set `staticBaselineEnabled=true`. The scan then reads call edges from every test class on the classpath, not only from the tests that ran.
@@ -77,7 +77,7 @@ A collector with an environment of its own and `insert` keeps the agent's `test`
 
 ## Expect a longer shutdown
 
-The wait for the scan can add up to 15 seconds to a test task's exit, and more when the collector is slow or unreachable. A test JVM often exits before the scan ends, and the scan is the only source of edges from test classes that never loaded. The agent flushes first, so a runner that halts a slow JVM still delivers the final manifest.
+The wait for the scan can add up to 15 seconds to a test task's exit, and more when Otherlode or the collector is slow or unreachable. A test JVM often exits before the scan ends, and the scan is the only source of edges from test classes that never loaded. The agent flushes first, so a runner that halts a slow JVM still delivers the final manifest.
 
 If the scan does not end in time, the agent logs a warning that the run may send no complete scan. Otherlode then reads the run's manifest edges, and the newest complete scan of the same pinned instance if an earlier run sent one. That older scan can name test classes you have since deleted.
 

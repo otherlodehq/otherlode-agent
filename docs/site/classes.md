@@ -12,7 +12,7 @@ This page covers the whole class. For what the agent records inside a class that
 
 | State | What puts a class there | Where you see it |
 |---|---|---|
-| Instrumented | The class loaded, matched the rules, and has at least one method, optional parameter or static initialiser to probe. | Its probes reach the collector in the manifest. |
+| Instrumented | The class loaded, matched the rules, and has at least one method, optional parameter or static initialiser to probe. | Its probes reach Otherlode in the manifest. |
 | Never initialised | The class loaded, has a static initialiser, and no instance ran it. | `neverInitialized()` in [the testkit](testkit-api), and Otherlode's class findings. |
 | Never instantiated | The class loaded, and none of its constructors or instance methods ran in any instance. | `neverInstantiated()`, and Otherlode's class findings. |
 | Skipped | The class matched the rules and the agent could not instrument it, or its manifest entries are too large to send. | A `WARNING` log line, `skippedClasses()`, and the manifest's skipped list. |
@@ -248,7 +248,7 @@ The agent sees a root only when a class loads from it. A plugin folder whose cla
 
 The agent sends a listing only when it read the whole classpath. If a directory, a jar or a nested jar that exists cannot be opened or read, the agent sends no listing for that process and logs one warning that names the file and the cause. A jar on the classpath whose `Class-Path` holds a token that is not a valid URL is listed by its own classes only. The JVM loads nothing from such a jar, yet the build holds its classes, and the jars it names are not read. On Java 17 a jar that also holds `META-INF/INDEX.LIST` is the exception: the JVM keeps it and loads classes from the jars its index names, so the agent sends no listing for that process. A library jar of an unpacked Spring Boot application with such a token also gives no listing. A listing with a hole would read as proof that the missing classes are gone. A classpath entry that does not exist is skipped, as the JVM skips it. The agent also sends no listing when `java.class.path` is empty or has an empty element, which the JVM reads as the working directory, or when the JVM runs from a module path, launches a linked image's main module, or upgrades or patches modules, which the listing does not read. An unpacked Spring Boot application whose classpath index is malformed also gives no listing. Spring Boot does not launch from one either.
 
-The agent sends the listing in chunks of at most 20,000 names, in order, and each chunk says its position out of the total. It sends chunks again like the baseline's: after a flush the collector confirmed, one per flush, and a `400` or `422` answer drops the rest. Set `classListingEnabled=false` to switch it off. See [configuration options](configuration) and [what the agent sends](data-sent#class-listing-chunk).
+The agent sends the listing in chunks of at most 20,000 names, in order, and each chunk says its position out of the total. It sends chunks again like the baseline's: after a flush whose payloads are stored, one per flush, and a `400` or `422` answer drops the rest. Set `classListingEnabled=false` to switch it off. See [configuration options](configuration) and [what the agent sends](data-sent#class-listing-chunk).
 
 ## Classes the agent leaves out
 

@@ -59,7 +59,7 @@ The agent probes the methods the class file declares. A method an enhancer adds 
 
 ### What the agent records about a method
 
-Each probed method carries these facts to the collector.
+Each probed method carries these facts to Otherlode.
 
 | Fact | Meaning |
 |---|---|

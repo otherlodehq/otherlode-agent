@@ -32,10 +32,12 @@ multi-tenant backend.
    make the collector's GHCR package public. Still unknown: whether a
    dropped Portal deployment frees its version. A `rehearsal/1-again` tag
    answers it.
-3. **Run the quickstart's release-only steps.** Every other step ran on
-   the dev stack on 2026-10-26. These need the releases or the front door:
-   the Maven Central download, the `ghcr.io/otherlodehq/otherlode-collector`
-   image, `https://app.otherlode.dev` and `https://ingest.otherlode.dev`.
+3. **Run the quickstart's release-only steps.** The quickstart sends
+   straight to ingest (server ADR 0096). Every other step ran on the dev
+   stack on 2026-11-11. These need the releases or the front door: the
+   Maven Central download, `https://app.otherlode.dev` and
+   `https://ingest.otherlode.dev`. The collector's page **Add a
+   collector** needs the `ghcr.io/otherlodehq/otherlode-collector` image.
    Its links to the agent's and collector's pages resolve once their first
    releases sync.
 4. **Neither release workflow has run in full.** The collector's
@@ -49,15 +51,6 @@ multi-tenant backend.
    the database tier). No collector can be given
    an ingest URL until the front door exists. None of it blocks publishing
    the agent.
-6. **Agents sending straight to ingest** (ADR 0092, server ADR 0096).
-   The code is in. Left before the tag: the `docs/site` pages say how to
-   send direct (`attach.md`, `configuration.md`, `data-sent.md`,
-   `how-it-works.md`, `troubleshooting.md` and `test-runs.md`), and the
-   wording that still says "the collector confirms" in `data-sent.md`,
-   `troubleshooting.md`, `how-it-works.md` and `otherlode.proto:202`
-   becomes the receiver. The server STATUS's "Agents sending straight to
-   ingest" has the landing order across the repos.
-
 After release: what "Parked" lists, the server's performance-only
 deferrals, gzip, a collector config file, and agent-level redaction
 (the server STATUS's parked "Redaction in the agent", with its trigger).

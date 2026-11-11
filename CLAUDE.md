@@ -1,7 +1,7 @@
 # Otherlode agent
 
 A Java agent that finds code a running JVM app never exercises. It reports
-observations to a collector, which forwards them to the server. The server
+observations to the server, straight or through a collector. The server
 decides what is dead.
 
 Read the code for how something works. This file holds rules, not a

@@ -1,12 +1,12 @@
 ---
 title: What the agent sends
-description: The requests the agent makes, what each payload contains, when it is sent, what it never contains, and what happens when the collector is down.
+description: The requests the agent makes, what each payload contains, when it is sent, what it never contains, and what happens when Otherlode or the collector is down.
 order: 130
 ---
 
 ## Summary
 
-The agent pushes four kinds of payload to the collector you set with `exportUrl`. Every payload is a protobuf message, and a payload names code (classes, methods, source files, lines, conditions, routes, jars) and counts. It carries no request data and no argument or return value, with one exception you turn on yourself: the [route bridge for OpenTelemetry](#endpoint-routes) can send a request's path.
+The agent pushes four kinds of payload to the address you set with `exportUrl`: Otherlode's ingest at `https://ingest.otherlode.dev`, or your collector. This page calls either one the receiver. Every payload is a protobuf message, and a payload names code (classes, methods, source files, lines, conditions, routes, jars) and counts. It carries no request data and no argument or return value, with one exception you turn on yourself: the [route bridge for OpenTelemetry](#endpoint-routes) can send a request's path.
 
 The agent has no redaction setting. It sends what this page lists. A collector with redaction switched on replaces the text of [string literal parts](#condition-text-and-string-literals) with `…` before it forwards a payload, either every such part or those that match a pattern you set. It replaces each branch key and site key with a key made under a secret you set, and clears the case keys that can give a literal away. It keeps every other field it knows. It drops any field it does not know, which happens when the agent is newer than the collector, and marks that payload with `fields_stripped`. A deployment that needs redaction sends through a collector with redaction switched on. An agent that posts straight to a backend sends everything in clear.
 
@@ -50,11 +50,11 @@ On a graceful JVM exit the agent's shutdown hook works to one deadline, 28 secon
 2. It waits for your application's own shutdown hooks to end, until 18 seconds in, so that code they run, such as a framework closing its context, is counted. A hook that has not started within 1 second is not waited for.
 3. It runs one last flush with the time left, at least 10 seconds. The last flush ends with an empty delta batch that carries `final_flush`. Its sends do not wait for a send of the early flush that is still going.
 
-Neither the early flush nor the last flush sends a static baseline or class listing retry. A flush that was already running when shutdown began, and is stuck on an unreachable collector, holds both flushes back: the early flush gives up after 5 seconds, and the last flush gives up when the 28 seconds end. If the agent cannot read the list of your application's shutdown hooks, it logs why at startup, then flushes at once and runs the last flush straight after, without the wait. A test run (`testRun`) neither flushes early nor waits for your hooks. `kill -9`, an out-of-memory kill and a crash send no final flush.
+Neither the early flush nor the last flush sends a static baseline or class listing retry. A flush that was already running when shutdown began, and is stuck on an unreachable receiver, holds both flushes back: the early flush gives up after 5 seconds, and the last flush gives up when the 28 seconds end. If the agent cannot read the list of your application's shutdown hooks, it logs why at startup, then flushes at once and runs the last flush straight after, without the wait. A test run (`testRun`) neither flushes early nor waits for your hooks. `kill -9`, an out-of-memory kill and a crash send no final flush.
 
 ### Chunk caps
 
-A payload that would be larger than its cap is split into several requests, sent in order. A request closes when the next entry would take it past any of three bounds: its entry cap, 8 MiB of encoded bytes, or 90% of the collector's element limit for its kind. An element is every embedded message and every element of a repeated field, at every depth, in the protobuf encoding. The resource counts as one. The agent measures bytes and elements on the encoding it sends.
+A payload that would be larger than its cap is split into several requests, sent in order. A request closes when the next entry would take it past any of three bounds: its entry cap, 8 MiB of encoded bytes, or 90% of the ingest element limit for its kind. An element is every embedded message and every element of a repeated field, at every depth, in the protobuf encoding. The resource counts as one. The agent measures bytes and elements on the encoding it sends.
 
 | Payload | Entry cap | Element bound |
 |---|---|---|
@@ -87,7 +87,7 @@ Every payload carries the same resource attributes, except `manifest_confirmed`,
 | `agent_version` | The agent jar's version, empty when unknown |
 | `flush_interval_seconds` | The value of `flushIntervalSeconds`, in whole seconds. Otherlode reads it to tell a run that stopped without its final flush from one that is quiet between flushes |
 | `fields_stripped` | Never set by the agent. A collector sets it only while its redaction is switched on, when it dropped a field it does not know before forwarding |
-| `manifest_confirmed` | False until the collector confirms a probe manifest of this run that held at least one class, then true on every payload after. The agent sets it from the deliveries it saw confirmed, so a manifest whose answer was lost does not count, and it never goes back to false |
+| `manifest_confirmed` | False until the receiver stores a probe manifest of this run that held at least one class, then true on every payload after. The agent sets it from the deliveries it saw confirmed, so a manifest whose answer was lost does not count, and it never goes back to false |
 
 The agent adds no host name, address, user name, environment variable or system property. Resource attributes come from your configuration, from OpenTelemetry's `service.*` and `deployment.environment*` settings (see [configuration options](configuration)), and from service name detection when you set none.
 
@@ -103,14 +103,14 @@ A delta batch carries the resource attributes plus these lists. Each entry is a 
 | `endpoint_deltas` | For each endpoint whose count changed: `endpoint_id`, `first_seen_at`, `hits_total` |
 | `dependency_deltas` | For each dependency: `dependency_id`, `first_loaded_at`, `loaded_classes_total` |
 | `final_flush` | True only on the last, empty delta batch of the shutdown flush |
-| `flush_complete` | True only on the last delta batch of a flush, when the collector accepted every delta batch the flush sent before it |
+| `flush_complete` | True only on the last delta batch of a flush, when the receiver stored every delta batch the flush sent before it |
 | `payload_sequence`, `counts_pending_since`, `starting` | Where the run stands in delivering its counts, and whether it is still starting; see [Pending counts](#pending-counts) |
 
 `hits_total` is the cumulative count since the process started, not the amount since the last flush. Otherlode merges it with `max()`, so a batch that arrives twice or out of order changes nothing. `first_seen_at` is the time of the flush that first saw a non-zero count, so it is accurate to one interval.
 
 The agent sends the batch even when no count changed. An empty batch is a heartbeat: it tells Otherlode the instance is alive and idle, not crashed or cut off.
 
-One flush can send several delta batches. The chunk caps split a large batch, and a flush that starts with pending counts sends a heartbeat first and, once the collector has accepted the rest, another at the end. The flush's last delta batch carries `flush_complete` when the collector accepted every delta batch the flush sent before it. When the collector refuses an earlier batch, or an earlier send gets no answer, no batch of that flush carries it, and neither does a shutdown flush that could not read its counts.
+One flush can send several delta batches. The chunk caps split a large batch, and a flush that starts with pending counts sends a heartbeat first and, once the receiver has stored the rest, another at the end. The flush's last delta batch carries `flush_complete` when the receiver stored every delta batch the flush sent before it. When the receiver refuses an earlier batch, or an earlier send gets no answer, no batch of that flush carries it, and neither does a shutdown flush that could not read its counts.
 
 The ids refer to the manifest of the same run. They mean nothing without it.
 
@@ -124,7 +124,7 @@ Every delta batch and manifest carries three fields that tell Otherlode whether 
 
 A run is starting from the agent's start. Every payload carries `starting = true` until a flush finds that the run is at least one `flushIntervalSeconds` old, that classes in scope have loaded, that none has been registered, skipped, found unreported or found with nothing to probe for at least one `flushIntervalSeconds`, and that none awaits confirmation that the JVM defined it. That flush and the ones after it carry `starting = false`. A run that keeps loading classes in scope stops starting after 10 intervals. The final flush ends it too when no class in scope loaded after shutdown began and none awaits confirmation, as when a batch job's work is done. A JVM stopped while its application was still starting keeps loading during shutdown, so its closing batch still says `starting`. Once it has stopped, it does not start again, so a class that first loads later is reported on the next flush. A flush sends one extra empty delta batch when the run stops starting, or its pending state changes, after that flush's payloads were stamped.
 
-While the latest payload of a run says `starting`, its zero hit totals are not evidence that code never ran, since the application may not have loaded its classes yet. Once the run has ended, with a crash or a kill, a starting run has delivered everything it counted up to its last flush. While the latest payload carries a `counts_pending_since` other than 0, some of the run's counts have not reached the collector, so its zero hit totals are not evidence that code never ran, even after the run has ended. Nor are they before any delta batch from the run has arrived. The manifest and the delta batches go out side by side, so a collector can accept one and refuse the other; the manifest then arrives at zero hits for code that did run. One gap remains: payloads stamped in the flush where refusals begin, before the first refusal, carry 0. If the collector accepts nothing after that, up to one flush interval of hits is missing while the run's newest payload says 0, and the run reads like one that stopped without a final flush.
+While the latest payload of a run says `starting`, its zero hit totals are not evidence that code never ran, since the application may not have loaded its classes yet. Once the run has ended, with a crash or a kill, a starting run has delivered everything it counted up to its last flush. While the latest payload carries a `counts_pending_since` other than 0, some of the run's counts have not reached the receiver, so its zero hit totals are not evidence that code never ran, even after the run has ended. Nor are they before any delta batch from the run has arrived. The manifest and the delta batches go out side by side, so the receiver can store one and refuse the other; the manifest then arrives at zero hits for code that did run. One gap remains: payloads stamped in the flush where refusals begin, before the first refusal, carry 0. If the receiver stores nothing after that, up to one flush interval of hits is missing while the run's newest payload says 0, and the run reads like one that stopped without a final flush.
 
 ### Probe manifest
 
@@ -214,9 +214,9 @@ A probe only increments a counter in an array. It reads no value.
 
 The free text in `skipped_classes`, `unreadable_classes`, `unprobed_classes` and `disabled_endpoint_modules` is a reason from the JVM or the agent, such as a linkage error message. For `disabled_endpoint_modules`, when the module failed on an exception other than a linkage error, it is the exception's class name, never its message. It names classes and does not hold application data.
 
-## When the collector is down or refuses a payload
+## When the receiver is down or refuses a payload
 
-The agent keeps no queue of payloads. After a failed send, the state that the send would have advanced stays where it was, and the next flush computes the payload again from live counts. The memory the agent uses for this is bounded by the size of your code, not by traffic or by how long the collector is away.
+The agent keeps no queue of payloads. After a failed send, the state that the send would have advanced stays where it was, and the next flush computes the payload again from live counts. The memory the agent uses for this is bounded by the size of your code, not by traffic or by how long the receiver is away.
 
 ### Retries inside one send
 
@@ -228,21 +228,21 @@ One send makes up to 5 attempts, waiting 200 ms after the first failure and doub
 
 Every other status, including a `401`, `403`, `404` and a redirect, fails the send at once, because the same bytes would meet the same answer. Only a `202` confirms.
 
-When a retried answer carries a `Retry-After` header, in seconds or as an HTTP date, the agent waits that long before the next attempt instead, if it is 2 seconds or less. A longer `Retry-After` ends the send at once, and the next flush sends the payload again. The collector sends one when Otherlode is down or busy, so an outage costs one request per payload a flush, not five.
+When a retried answer carries a `Retry-After` header, in seconds or as an HTTP date, the agent waits that long before the next attempt instead, if it is 2 seconds or less. A longer `Retry-After` ends the send at once, and the next flush sends the payload again. A collector sends `Retry-After: 5` when Otherlode is down or busy, so through a collector an outage costs one request per payload a flush, not five. Otherlode's ingest sends `Retry-After: 5` when it cannot check the key or store the payload, and `Retry-After: 1` when it is busy, so the agent tries a busy ingest again within the send.
 
 ### After a failed send
 
-- **Delta batch.** The counts are not marked as delivered. The next flush reports the live cumulative count again, which is how a lost acknowledgement or a late batch heals. A refused request, meaning a `4xx` status the agent does not retry, does not stop the flush: the later delta requests still go, and the refused one is built again on the next flush. Any other failure stops the flush's delta requests at that one; the manifest, sent alongside, is not affected. The requests it did confirm stay confirmed either way. Counts a collector has not confirmed are pending: the next flush leads with an empty delta batch that says so, sent on its own so the news arrives even when the batch with the counts is refused for its size. A flush that then confirms every batch with counts ends with another empty batch saying nothing is pending.
-- **Manifest.** A chunk the collector did not confirm stays pending and is built again on the next flush. The agent builds, sends and confirms one chunk at a time and stops at the first failure. A disabled endpoint module goes first, on a manifest of its own, before any class chunk, since its record is what tells Otherlode the endpoints sent earlier are no longer counted.
-- **Static baseline.** Chunks go out in order and the first failure stops the send. The chunks left are sent again, one per flush, after a flush whose own sends the collector confirmed. A `400` or `422` answer means the collector refused the content, and the agent drops every chunk left and logs a warning. Any other failure keeps the chunks, such as a `401` while a token rotates or a `413`, since a proxy's size limit can be raised while the process runs. The scan is never repeated in a process.
+- **Delta batch.** The counts are not marked as delivered. The next flush reports the live cumulative count again, which is how a lost acknowledgement or a late batch heals. A refused request, meaning a `4xx` status the agent does not retry, does not stop the flush: the later delta requests still go, and the refused one is built again on the next flush. Any other failure stops the flush's delta requests at that one; the manifest, sent alongside, is not affected. The requests it did confirm stay confirmed either way. Counts the receiver has not stored are pending: the next flush leads with an empty delta batch that says so, sent on its own so the news arrives even when the batch with the counts is refused for its size. A flush that then confirms every batch with counts ends with another empty batch saying nothing is pending.
+- **Manifest.** A chunk the receiver did not store stays pending and is built again on the next flush. The agent builds, sends and confirms one chunk at a time and stops at the first failure. A disabled endpoint module goes first, on a manifest of its own, before any class chunk, since its record is what tells Otherlode the endpoints sent earlier are no longer counted.
+- **Static baseline.** Chunks go out in order and the first failure stops the send. The chunks left are sent again, one per flush, after a flush whose own sends the receiver stored. A `400` or `422` answer means the receiver refused the content, and the agent drops every chunk left and logs a warning. Any other failure keeps the chunks, such as a `401` while a token rotates or a `413`, since a proxy's size limit can be raised while the process runs. The scan is never repeated in a process.
 - **Class listing.** Sent and resent as the static baseline is, with the same rules for each status. A `400` or `422` answer drops the listing for the process. Any other failure keeps the chunks, including a `404` from a collector that does not serve the route yet.
-- **Resending a delivered payload.** If the collector processed a request but the agent never saw the answer, the agent sends the same payload again. Cumulative counts and chunk indexes make the repeat harmless.
+- **Resending a delivered payload.** If the receiver stored a payload but the agent never saw the answer, the agent sends the same payload again. Cumulative counts and chunk indexes make the repeat harmless.
 
 Each failure logs a warning that names the payload and says the agent will retry on the next flush. A flush that fails never stops the schedule.
 
 ### What a crash loses
 
-Counts and manifest state live only in the process. A crash during an outage loses what the collector had not confirmed, which is at most the hits since the last confirmed flush. A graceful exit tries to send that remainder, as described above. History the collector already confirmed is not affected.
+Counts and manifest state live only in the process. A crash during an outage loses what the receiver had not stored, which is at most the hits since the last confirmed flush. A graceful exit tries to send that remainder, as described above. History the receiver already stored is not affected.
 
 ## Where the schema lives
 

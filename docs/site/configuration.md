@@ -189,7 +189,7 @@ The agent logs one INFO line listing the modules the option keeps off. A name th
 
 ## exportUrl
 
-`exportUrl` is the base URL of the collector. The agent posts to four paths under it.
+`exportUrl` is the base URL the agent sends to: `https://ingest.otherlode.dev` to send straight to Otherlode, or your collector's URL. The agent posts to four paths under it.
 
 | Path | Carries |
 |---|---|
@@ -211,11 +211,13 @@ A host name that contains an underscore, such as `http://my_collector:4319`, is 
 
 The ERROR names `exportUrl` and the source that gave the value: the agent option, the system property or the environment variable. It does not repeat the value, apart from the host in the underscore case. It keeps the reason, as in `otherlode: exportUrl must be an absolute http or https URL; exportUrl from the environment variable OTHERLODE_EXPORT_URL is refused, so the agent is off for this JVM`. The instance sends no data until you fix the value and restart the JVM. When the agent is disabled with `enabled=false`, it logs no ERROR for these values.
 
-For what the agent sends to this URL, and what it does when the collector is down, see [what the agent sends](data-sent).
+The agent connects through the JVM's proxy settings, such as `-Dhttps.proxyHost` and `-Dhttps.proxyPort`, and trusts the certificates in the JVM's truststore. A host whose JVMs have no route to the internet sends through a collector instead. See [Add a collector](/docs/collector/add).
+
+For what the agent sends to this URL, and what it does when Otherlode or the collector is down, see [what the agent sends](data-sent).
 
 ## authToken
 
-When `authToken` is set, the agent sends `Authorization: Bearer <token>` with every request. It trims the token. The token may hold only the visible ASCII characters `!` to `~`. A token with a space inside it, a control character, an invisible character such as U+FEFF or U+200B, or any other non-ASCII character turns the agent off for the life of the JVM. The agent logs one ERROR that names the source of the token, such as the environment variable `OTHERLODE_AUTH_TOKEN`. It never logs the token or its length. A token copied from a web page or a document can carry an invisible character.
+When `authToken` is set, the agent sends `Authorization: Bearer <token>` with every request. To send straight to Otherlode, set it to an ingest key. To send through a collector, set it to the token the collector checks. It trims the token. The token may hold only the visible ASCII characters `!` to `~`. A token with a space inside it, a control character, an invisible character such as U+FEFF or U+200B, or any other non-ASCII character turns the agent off for the life of the JVM. The agent logs one ERROR that names the source of the token, such as the environment variable `OTHERLODE_AUTH_TOKEN`. It never logs the token or its length. A token copied from a web page or a document can carry an invisible character.
 
 The agent's own advice is to set the token through `OTHERLODE_AUTH_TOKEN`. Both the argument string and a `-D` flag appear on the process command line, which every user on the host can read through `ps` and `/proc/<pid>/cmdline`. An environment variable does not.
 
@@ -259,7 +261,7 @@ At each step, the first value that is not blank wins. A service is known by its 
 
 A service name or namespace of `.` or `..` is skipped with a warning, as if it were blank, and the next source gives the value. Otherlode shows a service at a URL path that holds both values, and browsers drop `.` and `..` path segments, so neither value can name a service. The check covers every source of a name or a namespace, including OpenTelemetry's and detection.
 
-The name, namespace, version, environment and instance ID each hold at most 1024 bytes in UTF-8, which is the collector's limit. The collector refuses every payload that carries a longer value. The agent skips a longer value with a warning that names its source and the limit, never the value, and the next source gives the value. The collector also refuses a NUL character in any of these values, and the agent skips such a value the same way, with a warning that names its source. An instance ID that every source skips falls back to the random UUID. Multi-byte characters count by their bytes, so 512 characters of two bytes each fit and 513 do not.
+The name, namespace, version, environment and instance ID each hold at most 1024 bytes in UTF-8, which is the limit of Otherlode's ingest and of the collector. Both refuse every payload that carries a longer value. The agent skips a longer value with a warning that names its source and the limit, never the value, and the next source gives the value. They also refuse a NUL character in any of these values, and the agent skips such a value the same way, with a warning that names its source. An instance ID that every source skips falls back to the random UUID. Multi-byte characters count by their bytes, so 512 characters of two bytes each fit and 513 do not.
 
 The agent never reads the instance ID from OpenTelemetry's `service.instance.id`. Many deployment templates give every replica the same value there, and Otherlode counts instances by that ID, so the replicas would read as one instance. Set `serviceInstanceId` yourself to pin the ID, for example to a pod name or to a name for a test task.
 

@@ -100,7 +100,7 @@ On each flush (every 60 seconds by default, with a random offset for the first o
 
 - copies each changed class's count array,
 - encodes a delta batch, and sends it (a flush with unconfirmed counts sends an empty batch first, and one that catches up ends with another),
-- sends any manifest chunks the collector has not confirmed yet,
+- sends any manifest chunks that are not stored yet,
 - walks the loaded classes to count each dependency's loaded classes, and checks for classes no transformer saw. Once the dependency listing has completed, this runs on every flush. When the listing did not complete, the check for classes that never reached a transformer runs on the first flush and then every tenth, about every ten minutes at the default interval.
 
 A timed run of the flush code on a laptop, over 1,488 classes and 26,380 probes, encoding without sending, gave:
