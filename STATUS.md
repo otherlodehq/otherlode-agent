@@ -16,9 +16,10 @@ multi-tenant backend.
 1. **The overhead figures.** `docs/site/overhead.md` and
    `benchmark-overhead/README.md` quote two runs: startup from run
    42622687684 on `9b1f44bb` (2026-11-09), and every other row from run
-   38944648115 on `1332f3f` (2026-10-16). Once item 6's code lands, run
-   the whole `benchmark-overhead` workflow by hand on the commit to tag
-   and take every figure on both pages from that one run. The scheduled
+   38944648115 on `1332f3f` (2026-10-16). Run the whole
+   `benchmark-overhead` workflow by hand on the commit to tag, `f74924b4`
+   or later, since the direct-path code changed the export path, and take
+   every figure on both pages from that one run. The scheduled
    run on `98d076e6` (2026-11-11) gave startup +23.7% and +28.1% with the
    static baseline. Its ceiling job failed because the `none` variant
    used 0.88 of its core, under the 90% floor, which is runner noise. The
