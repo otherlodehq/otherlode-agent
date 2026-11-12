@@ -5,7 +5,7 @@ import java.lang.invoke.MethodHandleInfo;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the exit of {@code java.lang.invoke.InnerClassLambdaMetafactory.spinInnerClass()},
+ * Runs on exit from {@code java.lang.invoke.InnerClassLambdaMetafactory.spinInnerClass()},
  * which returns the hidden class the JDK spins for one lambda or method reference. It hands that
  * class, the functional interface it implements, and the method it calls to {@link
  * OtherlodeEndpoints#recordLambdaClass}.

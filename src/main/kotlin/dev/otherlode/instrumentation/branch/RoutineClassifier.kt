@@ -305,7 +305,7 @@ internal class RoutineClassifier(
             opcode == Opcodes.CHECKCAST
 
     private companion object {
-        // shadowJar rewrites any string in the agent's classes that starts with "kotlin", so only a suffix is held.
+        // shadowJar rewrites any string in the agent's classes that starts with "kotlin", so this holds only a suffix.
         const val INTRINSICS_SUFFIX = "/jvm/internal/Intrinsics"
         const val STRING_BUILDER = "java/lang/StringBuilder"
         const val STRING = "java/lang/String"

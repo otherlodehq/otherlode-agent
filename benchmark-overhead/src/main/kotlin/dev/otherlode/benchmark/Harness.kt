@@ -309,7 +309,7 @@ class Harness(
             metrics["vmHwmMiB"] = proc.hwmBytes / MIB
             petclinic.copyFileFromContainer(JFR_PATH, dir.resolve("measure.jfr").toString())
 
-            // A graceful exit, so the agent's shutdown flush delivers its last manifest before the collector's log is read.
+            // A graceful exit lets the agent's shutdown flush deliver its last manifest before the harness reads the collector's log.
             exec(petclinic, "sh", "-c", "kill 1")
             awaitExit(petclinic)
             log = petclinic.logs
@@ -497,7 +497,7 @@ class Harness(
             .withEnv("POSTGRES_PASS", DB_PASS)
             .withCopyFileToContainer(MountableFile.forClasspathResource("overhead.jfc"), "/app/overhead.jfc")
             .also {
-                // Every variant gets each jar, so copying it into the container costs the startup time of none as much as the others.
+                // Every variant gets each jar, so the copy adds as much to the `none` variant's startup time as to the others'.
                 it.withCopyFileToContainer(MountableFile.forHostPath(settings.agentJar), "/app/otherlode-agent.jar")
                 settings.otelAgentJar?.let { jar -> it.withCopyFileToContainer(MountableFile.forHostPath(jar), OTEL_AGENT_PATH) }
             }.withCreateContainerCmdModifier { cmd: CreateContainerCmd ->

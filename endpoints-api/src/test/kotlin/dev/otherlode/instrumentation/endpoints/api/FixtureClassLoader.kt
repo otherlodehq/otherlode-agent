@@ -3,7 +3,7 @@ package dev.otherlode.instrumentation.endpoints.api
 import java.net.URL
 import java.net.URLClassLoader
 
-// PingTarget is defined here so that it is first defined after the transformer under test is installed.
+// This loader defines PingTarget itself, so it defines the class only after the test installs the transformer.
 class FixtureClassLoader(
     urls: Array<URL>,
     parent: ClassLoader,

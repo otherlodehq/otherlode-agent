@@ -94,7 +94,8 @@ class BranchSiteAnalyzerTest {
 
         val sites = BranchSiteAnalyzer.analyze(bytes) { name, _ -> name == "classifyGappy" }.sites
 
-        // Cases 1, 2, 3, 5 over a 1..5 table: four real cases plus the default, not five plus one.
+        // The cases are 1, 2, 3 and 5 over a table from 1 to 5, so the site has four real cases plus the default,
+        // not five plus one.
         assertEquals(5, sites.single().outcomeCount)
     }
 

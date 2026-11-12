@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # usage: build-bundle.sh [output-dir]
-# The server and the collector are read from sibling checkouts unless OTHERLODE_SERVER_DIR and
-# OTHERLODE_COLLECTOR_DIR name them.
+# The script takes the server and the collector from sibling checkouts unless OTHERLODE_SERVER_DIR
+# and OTHERLODE_COLLECTOR_DIR name them.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)

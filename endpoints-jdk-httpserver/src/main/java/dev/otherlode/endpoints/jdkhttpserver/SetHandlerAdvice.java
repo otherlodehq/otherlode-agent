@@ -8,11 +8,11 @@ import java.lang.reflect.Method;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto {@code HttpContextImpl.setHandler}, attaching a handler class to a context that
- * {@link CreateContextAdvice} registered without one. The handler joins as it does there.
+ * Runs on exit from {@code HttpContextImpl.setHandler} and attaches a handler class to a context
+ * that {@link CreateContextAdvice} registered without one. The handler joins as it does there.
  *
- * <p>The advice runs on exit and only on a normal return, since the JDK refuses a second handler
- * with an {@code IllegalArgumentException} and a refused handler must never become the join.
+ * <p>The advice runs only on a normal return, so a second handler, which {@code setHandler}
+ * refuses with an {@code IllegalArgumentException}, never becomes the join.
  */
 public class SetHandlerAdvice {
     private static final String MODULE = "jdk-httpserver";

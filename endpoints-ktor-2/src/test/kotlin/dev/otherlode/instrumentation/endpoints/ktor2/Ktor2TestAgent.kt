@@ -5,8 +5,8 @@ import dev.otherlode.registry.EndpointRegistry
 import net.bytebuddy.agent.builder.ResettableClassFileTransformer
 import java.lang.instrument.Instrumentation
 
-// Runs as a -javaagent: the inline routing DSL makes Gradle's test discovery load Route and Routing before any
-// test method runs.
+// Runs as a -javaagent, because the inline routing DSL makes Gradle's test discovery load Route and Routing
+// before any test method runs.
 object Ktor2TestAgent {
     lateinit var registry: EndpointRegistry
         private set

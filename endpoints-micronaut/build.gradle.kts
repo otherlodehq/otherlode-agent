@@ -34,7 +34,7 @@ dependencies {
     compileOnly(project(":bootstrap"))
     compileOnly("net.bytebuddy:byte-buddy:$byteBuddyVersion")
 
-    // The oldest supported release. Never `implementation`: Micronaut must not be shaded into the agent jar.
+    // The oldest supported release. Never `implementation`, since Micronaut must not be shaded into the agent jar.
     compileOnly("io.micronaut:micronaut-router:4.0.0")
     compileOnly("io.micronaut:micronaut-http-server:4.0.0")
 

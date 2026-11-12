@@ -32,8 +32,8 @@ import java.util.concurrent.atomic.AtomicLong
  * `arr[index]++`, so counts are approximate under concurrency: increments can be lost and a read can
  * see a count fall. A probe that ran at least once stays at one or more on 64-bit HotSpot.
  *
- * A class whose manifest entries alone break a bound of [PayloadKind.MANIFEST] is reported as a
- * skipped class, and its probe deltas are left out of every delta batch.
+ * The registry reports a class whose manifest entries alone break a bound of [PayloadKind.MANIFEST]
+ * as a skipped class, and leaves its probe deltas out of every delta batch.
  *
  * @property confirmsDefinitions When true, [computeManifestDeltas] and [manifest] withhold a class's
  * probe locations and its [ClassLocation] and [ClassReferences] records until the class is confirmed
@@ -73,7 +73,7 @@ open class ProbeRegistry(
         unwatchable: Boolean,
         sequence: Long,
     ) {
-        // Cleared by the manifest send and read by the delta send on another thread, so a reader takes it
+        // The manifest send clears it and the delta send on another thread reads it, so a reader takes it
         // once into a local.
         @Volatile
         var manifestData: ManifestData? = manifestData
@@ -346,8 +346,8 @@ open class ProbeRegistry(
 
     /**
      * Drops each class from the unreported set that is registered or recorded as skipped or as
-     * having nothing to probe, and returns how many were dropped. A row already delivered is not
-     * retracted.
+     * having nothing to probe, and returns how many were dropped. It does not retract a row
+     * already delivered.
      */
     fun purgeAccountedFor(): Int {
         val names = unreportedByClassName.keys.toList()
@@ -373,15 +373,15 @@ open class ProbeRegistry(
 
     /**
      * Reconciles the classes not yet confirmed defined against [loadedClassNames], the JVM's loaded-class
-     * names, and returns the names withheld for good by this call. A class is confirmed when its name is
+     * names, and returns the names withheld for good by this call. It confirms a class when its name is
      * in the set or its classloader was collected. A class found in neither takes a miss only when every
      * definition attempt recorded for it has ended, and an unwatchable class never takes one. Two misses
      * withhold a class for good and record it as failed ([recordFailed]). A name is returned once. A failure
      * that no manifest chunk has staged or carried leaves the failed set when an entry of that name is not
      * withheld.
      *
-     * [registeredUpTo] is the registration sequence read before [loadedClassNames] was taken. A class
-     * registered after it is left alone. A registry that does not confirm definitions returns an empty
+     * [registeredUpTo] is the registration sequence read before [loadedClassNames] was taken. It leaves
+     * alone a class registered after it. A registry that does not confirm definitions returns an empty
      * list and records nothing.
      */
     open fun confirmFrom(
@@ -438,8 +438,8 @@ open class ProbeRegistry(
 
     /**
      * Returns the probes whose count differs from the last delivered count, as one batch. Each
-     * [ProbeDelta] carries the cumulative count (`hits_total`), not the change. Nothing is marked
-     * delivered: pass the result to [advanceBaseline] once the batch is confirmed delivered.
+     * [ProbeDelta] carries the cumulative count (`hits_total`), not the change. This marks nothing
+     * delivered, so pass the result to [advanceBaseline] once the batch is confirmed delivered.
      *
      * Throws [IllegalArgumentException] when the changed probes need more than one batch.
      */
@@ -448,7 +448,7 @@ open class ProbeRegistry(
     /**
      * Like [computeDeltaBatch], but splits the changed probes into batches of at most
      * [maxDeltasPerBatch] deltas. A batch also closes when the next class would take it past a bound of
-     * [PayloadKind.DELTA_BATCH]. A class is never split across batches, so a class with more changed
+     * [PayloadKind.DELTA_BATCH]. It never splits a class across batches, so a class with more changed
      * probes than the cap gets a batch of its own. A class reported as skipped for size has no deltas.
      *
      * Always returns at least one batch.
@@ -529,7 +529,7 @@ open class ProbeRegistry(
 
     /**
      * Records [snapshot]'s per-class counts as delivered. Call it only after the snapshot's batch is
-     * confirmed delivered. A snapshot older than one already applied to a class is ignored for that
+     * confirmed delivered. It ignores a snapshot older than one already applied to a class, for that
      * class.
      */
     fun advanceBaseline(snapshot: DeltaSnapshot) {
@@ -544,8 +544,8 @@ open class ProbeRegistry(
     }
 
     /**
-     * A manifest of every registered class, for tests; the agent sends [computeManifestDeltas]. A
-     * registry that confirms definitions leaves out unconfirmed classes. [resource] names the instance
+     * A manifest of every registered class, unchunked. The agent exports [computeManifestDeltas]
+     * instead. A registry that confirms definitions leaves out unconfirmed classes. [resource] names the instance
      * and run the manifest's `class_id` values belong to.
      *
      * Throws [IllegalStateException] naming the class when it meets one whose manifest was delivered.
@@ -684,7 +684,7 @@ open class ProbeRegistry(
 
     /**
      * Returns the classes not yet delivered in a manifest, as one chunk. It always returns a snapshot,
-     * possibly with nothing in it. Nothing is marked delivered: pass the result to
+     * possibly with nothing in it. This marks nothing delivered, so pass the result to
      * [advanceManifestBaseline] once the manifest is confirmed delivered.
      *
      * Throws [IllegalArgumentException] when the manifest needs more than one chunk.
@@ -700,12 +700,12 @@ open class ProbeRegistry(
 
     /**
      * Like [computeManifestDelta], but yields chunks of at most [maxEntriesPerChunk] entries. A chunk
-     * also closes when the next class would take it past a bound of [PayloadKind.MANIFEST]. A class is
-     * never split across chunks, so a class with more entries than the cap gets a chunk of its own. A
-     * class whose entries alone break a bound is recorded as skipped with a fixed reason and staged
+     * also closes when the next class would take it past a bound of [PayloadKind.MANIFEST]. It never
+     * splits a class across chunks, so a class with more entries than the cap gets a chunk of its own.
+     * It records a class whose entries alone break a bound as skipped with a fixed reason and stages it
      * without its probes.
      *
-     * Chunks are built lazily. A consumer that advances each chunk before asking for the next holds at
+     * It builds chunks lazily. A consumer that advances each chunk before asking for the next holds at
      * most one chunk's locations. Yields nothing when there is nothing to send.
      */
     open fun computeManifestDeltas(

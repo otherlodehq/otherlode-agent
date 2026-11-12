@@ -1,5 +1,5 @@
-// Helidon 4 is compiled for Java 21, so the programs are compiled for 21 and the forked JVMs run
-// on this project's 21 toolchain.
+// Helidon 4 targets Java 21, so this project compiles the programs for 21 and runs the forked JVMs
+// on its 21 toolchain.
 import org.gradle.api.artifacts.Configuration
 import org.gradle.api.tasks.bundling.AbstractArchiveTask
 import java.util.Properties
@@ -114,10 +114,10 @@ val scenarioArtifacts: Map<String, Map<String, List<String>>> =
             },
     )
 
-// Javalin releases a module covers: the marker class must not exist in any of them.
+// Javalin releases a module covers. The marker class must not exist in any of them.
 val javalinCovered = listOf("6.1.0", "6.7.0", "7.0.0", "7.2.3")
 
-// Javalin releases older than 5, which carry the same Jetty class: serving must not complete the marker.
+// Javalin releases older than 5, which carry the same Jetty class. Serving must not complete the marker.
 val javalinOlder = listOf("4.6.8")
 
 fun resolvable(name: String): Configuration =

@@ -174,7 +174,7 @@ class DeflectedClassLoadTest {
                 .map { it.className }
 
         // The agent installs part-way through this shared JVM, so application-loader classes may load unreported.
-        // java.base is always bootstrap, so it tests the gate.
+        // The bootstrap loader always defines java.base, so the java.base check tests the gate.
         assertTrue(
             unreported.none { it.startsWith("java.lang.") || it.startsWith("java.util.") || it.startsWith("java.io.") },
             "the bootstrap loader reaches no transformer by design: $unreported",

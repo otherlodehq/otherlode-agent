@@ -87,7 +87,7 @@ fun buildWebFluxContext(
         context.registerBean("functionalRoutes$index", routerFunctionClass, Supplier { routes })
     }
     if (urlMap.isNotEmpty()) {
-        // SimpleUrlHandlerMapping is reached by name so no class file here loads it before install runs.
+        // This code reaches SimpleUrlHandlerMapping by name, so no class file here loads it before install runs.
         @Suppress("UNCHECKED_CAST")
         val mappingClass = Class.forName("org.springframework.web.reactive.handler.SimpleUrlHandlerMapping") as Class<Any>
         val setUrlMap = mappingClass.getMethod("setUrlMap", Map::class.java)
@@ -108,7 +108,7 @@ fun buildWebFluxContext(
 }
 
 fun initialisedRouterFunctionMapping(routerFunction: RouterFunction<*>): Any {
-    // Reached by name so no class file here loads RouterFunctionMapping before install runs.
+    // This code reaches RouterFunctionMapping by name, so no class file here loads it before install runs.
     val mappingClass = Class.forName("org.springframework.web.reactive.function.server.support.RouterFunctionMapping")
     val mapping = mappingClass.getConstructor(RouterFunction::class.java).newInstance(routerFunction)
     mappingClass.getMethod("afterPropertiesSet").invoke(mapping)

@@ -13,19 +13,19 @@ import org.springframework.web.util.pattern.PathPattern;
 import reactor.core.publisher.Mono;
 
 /**
- * Woven onto the exit of {@code PathResourceLookupFunction.apply(ServerRequest)}, the lookup
+ * Runs on exit from {@code PathResourceLookupFunction.apply(ServerRequest)}, the lookup
  * function behind {@code RouterFunctions.resources(pattern, location)}. A resource is found only
  * when the returned {@code Mono<Resource>} emits, so the advice replaces the Mono with {@code
  * mono.doOnNext(consumer)}, where {@link OtherlodeEndpoints#resourceEmitted} builds the consumer.
  * The woven method behaves as the unwoven one apart from counting, and the consumer never throws.
  *
- * <p>On each emitted resource the consumer marks the request's exchange, so {@link
- * SetAttributesAdvice} does not count it under the nest's path, and then counts the endpoint. A
- * preflight and a verb the resource handler refuses count nothing.
+ * <p>On each emitted resource the consumer marks the request's exchange and then counts the
+ * endpoint. The mark stops {@link SetAttributesAdvice} from counting the request under the nest's
+ * path. A preflight and a verb the resource handler refuses count nothing.
  *
  * <p>The key, {@code List.of("fnres", lookupFunction, nestPattern, verb)}, matches the walk's, and
- * the registry holds the lookup function weakly. An endpoint the walk did not declare is recorded
- * as discovered when the Mono emits, so a lookup that finds nothing creates none.
+ * the registry holds the lookup function weakly. The consumer records an endpoint the walk did not
+ * declare as discovered when the Mono emits, so a lookup that finds nothing creates none.
  */
 public class ResourceLookupAdvice {
     private static final String MODULE = "spring-webflux";

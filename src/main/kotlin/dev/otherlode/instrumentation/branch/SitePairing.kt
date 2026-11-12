@@ -56,8 +56,8 @@ class SitePairing private constructor(
         val IDENTICAL = SitePairing(emptySet(), emptyMap())
 
         /**
-         * Pairs [methods] (name and descriptor) between [classFile] and [receivedBytes]. A method
-         * neither declares is not checked.
+         * Pairs [methods] (name and descriptor) between [classFile] and [receivedBytes]. It does not
+         * check a method neither declares.
          */
         fun of(
             classFile: ByteArray,
@@ -81,8 +81,8 @@ class SitePairing private constructor(
         }
 
         /**
-         * Each of [methods]' tracked instructions in [classFile], encoded for [ofStored]. A method
-         * the class file does not declare is left out.
+         * Each of [methods]' tracked instructions in [classFile], encoded for [ofStored]. It leaves
+         * out a method the class file does not declare.
          */
         fun encodedSequences(
             classFile: ByteArray,

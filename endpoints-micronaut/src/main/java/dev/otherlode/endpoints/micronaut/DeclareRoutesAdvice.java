@@ -4,9 +4,8 @@ import dev.otherlode.bootstrap.OtherlodeEndpoints;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the exit of the {@code DefaultRouter(Collection)} constructor, which every other
- * constructor reaches. It passes the router unopened to {@link OtherlodeEndpoints#declare}, which
- * hands it to {@code MicronautModule.declare}.
+ * Runs on exit from the {@code DefaultRouter(Collection)} constructor and passes the router
+ * unopened to {@link OtherlodeEndpoints#declare}.
  */
 public class DeclareRoutesAdvice {
     private static final String MODULE = "micronaut";

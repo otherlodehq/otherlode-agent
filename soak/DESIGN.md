@@ -1,35 +1,36 @@
 # Soak test
 
-A week-long run of the agent, the collector and the server against two test services whose every
-finding is planted and written down. The harness drives scheduled traffic and disruptions and checks
-Otherlode's read API against the written answers every six hours, and reads every finding every 5
-seconds for 150 seconds after any start, restart, kill, upgrade, collector start or server restart. It runs on one VM. It needs
+The soak test is a week-long run of the agent, the collector and the server against two test
+services whose every finding is planted and written down. The harness drives scheduled traffic and
+disruptions and checks Otherlode's read API against the written answers every six hours. After any
+start, restart, kill, upgrade, collector start or server restart, it also reads every finding every
+5 seconds for 150 seconds. It runs on one VM. It needs
 Otherlode's server, which is not public.
 
 ## Layout
 
-- `soak/apps/`: a Gradle build of its own, not part of the agent's build. Two applications and the
-  truth file.
-- `soak/harness/`: Python 3 scripts, standard library only. The stack, the supervisor, the traffic,
-  the sampler and the checker.
-- `soak/truth.json`: the planted answers. The apps' authors write it; the checker reads it.
+- `soak/apps/`: a Gradle build of its own, not part of the agent's build. It holds the two
+  applications.
+- `soak/harness/`: Python 3 scripts that use only the standard library, and Bash scripts. They run
+  the stack, the supervisor, the traffic, the sampler and the checker.
+- `soak/truth.json`: the planted answers. The apps' authors write it, and the checker reads it.
 
 ## The services
 
 Every instance but the three controls runs with the agent as `-javaagent`, `staticBaselineEnabled=true`
 (`shop-3` runs with `false`), `classListingEnabled=true` (the default), and `flushIntervalSeconds` 60
-(10 in a smoke run; `events-crash` flushes every 600 at every scale). Each sends to the collector on the
+(10 in a smoke run, and 600 for `events-crash`, or 60 in a smoke run). Each sends to the collector on the
 same VM.
 
 | Instance | App | `serviceName` | `environment` | `serviceVersion` | Port | Agent |
 |---|---|---|---|---|---|---|
 | `shop-1` | soak-shop | `soak-shop` | `prod` | `1.0.0` | 8081 | yes |
 | `shop-2` | soak-shop | `soak-shop` | `prod` | `1.0.0` | 8082 | yes |
-| `shop-3` | soak-shop | `soak-shop` | `nobaseline` | `1.0.0` | 8083 | yes, with `staticBaselineEnabled=false`. Gets shop's traffic routes at a lower rate. Compared with `shop-control`. It has an environment of its own: a run that records references with no complete scan makes every dependency of its scope `no-live-reference` (server `dependencies.go`, `split`), which would change `soak-shop/prod`'s planted answers all week. `truth.json` names no answers for it, so checks 1 and 2 do not judge it |
+| `shop-3` | soak-shop | `soak-shop` | `nobaseline` | `1.0.0` | 8083 | yes, with `staticBaselineEnabled=false`. Gets shop's traffic routes at a lower rate. Compared with `shop-control`. It has an environment of its own, since a run that records references with no complete scan makes every dependency of its scope `no-live-reference` (server `dependencies.go`, `split`), which would change `soak-shop/prod`'s planted answers all week. `truth.json` names no answers for it, so checks 1 and 2 do not judge it |
 | `shop-control` | soak-shop | none | none | none | 8089 | no, the memory baseline |
 | `events-prod` | soak-events | `soak-events` | `prod` | `1.0.0`, then `2.0.0` | 8091 | yes |
 | `events-staging` | soak-events | `soak-events` | `staging` | `1.0.0` | 8092 | yes |
-| `events-crash` | soak-events | `soak-events` | `prod` | `1.0.0` | 8093 | yes, with `flushIntervalSeconds=600` at every scale, so its first flush, at a random point in that interval, rarely comes before the kill. Started and killed by the schedule, never kept up. No traffic. Compared with `events-control` |
+| `events-crash` | soak-events | `soak-events` | `prod` | `1.0.0` | 8093 | yes, with `flushIntervalSeconds=600` (60 in a smoke run), so its first flush, at a random point in that interval, rarely comes before the kill. Started and killed by the schedule, never kept up. No traffic. Compared with `events-control` |
 | `events-control` | soak-events | none | none | none | 8099 | no, the memory baseline for `events-prod`. It gets `events-prod`'s traffic and its upgrade |
 | `events-staging-control` | soak-events | none | none | none | 8098 | no, the memory baseline for `events-staging`. It gets `events-staging`'s traffic and runs 1.0.0 all week |
 | `shop-test` | soak-shop's `SoakTestDriver` main | `soak-shop` | unset, so `test` | `1.0.0` | none | yes, with `testRun=true` and `serviceInstanceId=soak-shop-tests`, once a day |
@@ -69,13 +70,13 @@ Classes and methods:
   constructor and instance methods never run, so it is never instantiated.
 - `BrokenConfig`: failed to initialise.
 - `OrderSearch.search(q: String, limit: Int = 10, sort: String = "asc")`, in a final class that no
-  Spring plugin opens: `limit` is always supplied and `sort` never supplied.
-- `OrderView`, a Kotlin data class whose `copy` and `componentN` never run: they are generated and
+  Spring plugin opens. Its caller always supplies `limit` and never supplies `sort`.
+- `OrderView`, a Kotlin data class whose `copy` and `componentN` never run. They are generated and
   must appear in no finding.
 - An unreached cluster rooted at `AdminController.rebuild`, holding `LegacyCsvExporter`'s methods.
 - `ShutdownHook`, a bean with a `@PreDestroy` method `close` that sleeps 2 seconds and then calls
   `ShutdownAudit.record()`. `ShutdownAudit` is a Kotlin `object` in `dev.soaktest.shop` whose `record`
-  nothing else calls; `Startup` calls its `armed()`, so the class loads and runs. Both methods run at
+  nothing else calls. `Startup` calls its `armed()`, so the class loads and runs. Both methods run at
   every graceful stop, so they are never hit until `shop-1`'s first graceful restart at T+12h, and live
   from then on. Before it, `ShutdownHook.close` roots a cluster that holds `ShutdownAudit.record`. The
   2 second sleep puts the hit after the moment a shutdown flush could have been taken.
@@ -83,7 +84,7 @@ Classes and methods:
 Dependencies:
 
 - commons-csv: unreached, referenced only from `LegacyCsvExporter`.
-- commons-text: on the classpath, never referenced and never loaded: unloaded.
+- commons-text: unloaded, since it is on the classpath but never referenced and never loaded.
 - guava: used live, from the `GET /orders/{id}` path.
 
 ### soak-events
@@ -112,7 +113,7 @@ the same sources with a build flag.
 ## Schedule
 
 Times are from the start, T0. A smoke run divides every time by 60, so an hour takes a minute. The gaps given in real seconds or
-minutes (the crash cycles, the refusal window, the window reads) are the same at every scale.
+minutes (the crash cycles and the window reads) are the same at every scale.
 
 | When | What |
 |---|---|
@@ -142,24 +143,24 @@ fails with the evidence.
    the include rules appears in a finding unless `truth.json` lists it there. A method in
    `live_methods` is on no never-hit finding from its time.
 3. **Counts.** For each live endpoint, Otherlode's `calls_total` equals the 2xx responses the
-   traffic generator recorded, give or take one flush interval of requests. The collector outage
+   traffic generator recorded, within one flush interval of requests either way. The collector outage
    loses nothing. `shop-1` and `shop-2` count together, and the collector restarts of the
    refusal window add one flush interval of requests to the tolerance. A planned collector stop,
    collector start, collector limit change or server restart whose command fails
    or times out fails this check, and so does a collector stop skipped because it fell due more
    than 30 minutes late.
-4. **Runs.** Every graceful stop reads as ended cleanly, and the `kill -9` does not. The runs of
-   `events-crash` are not asserted, since each is killed. A graceful stop inside the
-   refusal window is not asserted, as for the collector outage.
+4. **Runs.** Every graceful stop reads as ended cleanly, and the `kill -9` does not. The checker does not
+   assert the runs of `events-crash`, since each is killed, or a graceful stop inside the refusal
+   window, as for the collector outage.
 5. **Memory.** After a 30-minute warm-up, the resident memory of each agent process grows no faster
    than that of its control at the same process age, plus 10%. `shop-1`, `shop-2` and `shop-3` are
-   compared with `shop-control` (which gets `shop-3` a higher traffic rate than it has), `events-prod` and `events-crash`
-   with `events-control`, and `events-staging` with `events-staging-control`. A span of two or more samples at ages the control does not cover is
-   listed as not compared.
+   compared with `shop-control` (which gets a higher traffic rate than `shop-3`), `events-prod` and `events-crash`
+   with `events-control`, and `events-staging` with `events-staging-control`. The check lists a span of two or more samples at ages the control does
+   not cover as not compared.
 6. **Logs.** No ERROR line from any agent, the collector or the server, and no WARNING outside an
    allowlist that names the disruption that caused it. One ERROR is allowed: the collector answers
    the agents 503 while the server restarts and logs `sink rejected` with reason `transport` or
-   `timeout`. It passes only from the server's stop to 30 seconds after it is back, so a fault on
+   `timeout`. The check allows it only from the server's stop to 30 seconds after the server is back, so a fault on
    the restarted server still fails the check.
 7. **Test run.** `shop-test` leaves every finding as it was, and the never-hit
    `Pricing.applyLegacyDiscount` reads as called only by tests, naming `SoakTestDriver`. Like check 1,
@@ -175,17 +176,17 @@ fails with the evidence.
    check 2's rule (every finding row is named in `truth.json`, within its time window, with a dependency
    held to its listed status). Check 1's planted answers are left to the six-hourly checks, since a run
    that has not delivered its counts holds those claims back on purpose. Until T0 plus the lag, a read
-   judges only never-loaded rows and dependency statuses: before their planned first requests, the
+   judges only never-loaded rows and dependency statuses. Before their planned first requests, the
    later routes' never-called and never-hit rows are true findings that `truth.json` does not name. A
-   live read applies no removal, so it excuses a row about code a `removed` entry names. A violation is recorded with its time and the event that opened the
-   window, in `state/windows.json`, and fails the check, and so do failed reads above a tenth of all
-   reads. The check passes with the counts of reads made. While the collector refuses manifests,
+   live read applies no removal, so it excuses a row about code a `removed` entry names. The window reader records each violation in `state/windows.json`, with its time
+   and the event that opened the window. A violation fails the check, and so do failed reads above a
+   tenth of all reads. The check passes with the counts of reads made. While the collector refuses manifests,
    `shop-1`'s row on `/instances` is read every 5 seconds, and one read must show its run as counts
-   behind (no delta batch yet, or `counts_behind_since` set). It covers what the six-hourly
+   behind (no delta batch yet, or `counts_behind_since` set). Check 8 covers what the six-hourly
    checks miss: evidence that arrives later than the data that defines what is judged, such as a static
    baseline that reaches the server before the first manifest of the same run.
 
-A failed check is triaged: a wrong `truth.json` entry is fixed there, and a product defect is a bug.
+When a check fails, fix a wrong `truth.json` entry there, and file a product defect as a bug.
 
 ## Not covered
 

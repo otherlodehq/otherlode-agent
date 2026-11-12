@@ -13,15 +13,15 @@ import net.bytebuddy.matcher.ElementMatchers.not
 
 /** Decides which types and methods the agent instruments. */
 object TypeMatchPolicy {
-    /** The agent's own classes are never instrumented, whatever `includePackages` says. */
+    /** The agent never instruments its own classes, whatever `includePackages` says. */
     const val AGENT_PACKAGE_PREFIX = "dev.otherlode."
     private const val AGENT_PACKAGE_INTERNAL_PREFIX = "dev/otherlode/"
 
     /**
      * Whether the dotted [className] is matched by [includePackages] and not by [excludePackages].
      *
-     * An empty include list matches nothing. Exclusion wins over inclusion, and the agent's own
-     * package is never included.
+     * An empty include list matches nothing. Exclusion wins over inclusion, and this never includes
+     * the agent's own package.
      */
     fun isIncluded(
         className: String,
@@ -94,7 +94,7 @@ object TypeMatchPolicy {
      * continuation ([isContinuationSuperclass]).
      *
      * A synthetic class of kind [KotlinKind.MULTIFILE_CLASS_PART] is not turned away.
-     * [superClassName] and [kotlinKind] are read only when needed.
+     * It reads [superClassName] and [kotlinKind] only when it needs them.
      */
     fun isTurnedAwayByShape(
         className: String,
@@ -106,7 +106,7 @@ object TypeMatchPolicy {
             isRuntimeGenerated(className) ||
             isContinuationSuperclass(superClassName())
 
-    // A literal starting with `kotlin.` would be rewritten by shadowJar.
+    // shadowJar would rewrite a literal that starts with `kotlin.`.
     private val KOTLIN_METADATA_NAME_SHAPE = Regex("^[^.]+\\.Metadata$")
 
     /**
@@ -169,7 +169,7 @@ object TypeMatchPolicy {
             (isUntailedByteBuddyNaming(byteBuddyNaming) && endsInByteBuddyPart(className)) ||
             JDK_PROXY_SIMPLE_NAME.matches(className.substringAfterLast('.'))
 
-    // Built at runtime: the shaded jar relocates `net.bytebuddy` and would rewrite a literal.
+    // Built at runtime, since the shaded jar relocates `net.bytebuddy` and would rewrite a literal.
     internal val BYTE_BUDDY_NAMING_PROPERTY = listOf("net", "bytebuddy", "naming").joinToString(".")
 
     // Built at runtime for the same reason as BYTE_BUDDY_NAMING_PROPERTY.
@@ -204,7 +204,7 @@ object TypeMatchPolicy {
             .zipWithNext()
             .any { (part, next) -> part in RANDOM_TAILED_PARTS && RANDOM_TAIL.matches(next) && !WORD_SHAPED.matches(next) }
 
-    // A literal starting with `kotlin.` would be rewritten by shadowJar.
+    // shadowJar would rewrite a literal that starts with `kotlin.`.
     internal val CONTINUATION_SUPERCLASS_SUFFIXES =
         listOf(
             ".coroutines.jvm.internal.ContinuationImpl",
@@ -228,8 +228,8 @@ object TypeMatchPolicy {
     /**
      * Matches the methods that get a probe: not abstract, native, bridge or a type initializer, and
      * not synthetic unless a javac lambda body, or a scalac one when [isScalaClass] is true.
-     * Hibernate enhancement methods ([isEnhancementMethod]) and the entry points of a suspend
-     * lambda's class ([isSuspendLambdaEntry]) are left out.
+     * It leaves out Hibernate enhancement methods ([isEnhancementMethod]) and the entry points of a
+     * suspend lambda's class ([isSuspendLambdaEntry]).
      */
     fun methodMatcher(isScalaClass: Boolean): ElementMatcher.Junction<MethodDescription> =
         not(isAbstract<MethodDescription>())
@@ -242,7 +242,7 @@ object TypeMatchPolicy {
                     !isSuspendLambdaEntry(method.name, method.isStatic) { superClassNameOf(method.declaringType.asErasure()) }
             }
 
-    // A literal starting with `kotlin.` would be rewritten by shadowJar.
+    // shadowJar would rewrite a literal that starts with `kotlin.`.
     internal val SUSPEND_LAMBDA_SUPERCLASS_SUFFIXES =
         listOf(
             ".coroutines.jvm.internal.SuspendLambda",
@@ -251,7 +251,7 @@ object TypeMatchPolicy {
 
     /**
      * Whether a method named [name] is the instance `create` or `invoke` of a suspend lambda's
-     * class, whose direct superclass, dotted, [superClassName] gives. [superClassName] is read only
+     * class, whose direct superclass, dotted, [superClassName] gives. It reads [superClassName] only
      * for those two names.
      */
     fun isSuspendLambdaEntry(

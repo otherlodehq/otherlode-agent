@@ -4,7 +4,7 @@ import net.bytebuddy.jar.asm.Opcodes
 
 /**
  * Identifies the bytecode jump instructions this tier tracks: every comparison with exactly two
- * outcomes, taken or fell through. `GOTO` and `JSR` are unconditional and are not tracked.
+ * outcomes, taken or fell through. `GOTO` and `JSR` are unconditional, and this tier does not track them.
  */
 object ConditionalJump {
     fun isTracked(opcode: Int): Boolean =

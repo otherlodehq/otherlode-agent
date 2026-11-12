@@ -28,7 +28,7 @@ import kotlin.test.assertTrue
 private const val HANDLE_DESCRIPTOR = "(Lcom/sun/net/httpserver/HttpExchange;)V"
 private const val KOTLIN_HANDLERS = "dev.otherlode.instrumentation.endpoints.jdkhttpserver.fixture.KotlinHandlersKt"
 
-// Needs a JVM of its own (forkEvery = 1): the hook retransforms InnerClassLambdaMetafactory for the whole JVM,
+// Needs a JVM of its own (forkEvery = 1), because the hook retransforms InnerClassLambdaMetafactory for the whole JVM,
 // and the endpoint advice weaves ServerImpl only as it first loads.
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class HiddenHandlerNamingTest {

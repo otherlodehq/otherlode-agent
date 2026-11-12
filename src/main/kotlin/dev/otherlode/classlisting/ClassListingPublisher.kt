@@ -7,8 +7,8 @@ import java.lang.System.Logger.Level
 
 /**
  * Runs one class listing and publishes it: chunks what [list] returns and sends the chunks in order
- * through [sender]. The first failure stops the send. A null result from [list] means the
- * classpath could not be read whole, and nothing is sent.
+ * through [sender]. The first failure stops the send. A null result from [list] means [list] could
+ * not read the whole classpath, and the publisher then sends nothing.
  */
 class ClassListingPublisher(
     private val list: () -> List<String>?,
@@ -20,8 +20,8 @@ class ClassListingPublisher(
     private val log by agentLogger(ClassListingPublisher::class.java.name)
 
     /**
-     * Lists, chunks and sends one listing stamped with [resource]. A failure is logged and not
-     * thrown, except a [VirtualMachineError], which is rethrown after it is logged.
+     * Lists, chunks and sends one listing stamped with [resource]. It logs a failure and does not
+     * throw it, except a [VirtualMachineError], which it logs and then rethrows.
      */
     fun run(resource: ResourceAttributes) {
         try {

@@ -4,7 +4,7 @@ import dev.otherlode.bootstrap.OtherlodeEndpoints;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the exit of each OpenTelemetry route prefixer: {@code ServletContextPath.prepend} and
+ * Runs on exit from each OpenTelemetry route prefixer: {@code ServletContextPath.prepend} and
  * {@code JaxrsContextPath.prepend} in the Java agent's bootstrap, and {@code
  * HttpRouteSupport.prependContextPath} in the Spring MVC library instrumentation. Each takes the
  * route as its second argument and returns it with a prefix in front. The advice records the pair

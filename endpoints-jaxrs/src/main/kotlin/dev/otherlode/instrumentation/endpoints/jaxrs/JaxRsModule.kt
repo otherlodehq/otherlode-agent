@@ -41,7 +41,7 @@ private val PATH_NAMES = NAMESPACES.map { "$it.Path" }.toSet()
 private val VERB_NAMES = NAMESPACES.flatMap { namespace -> VERBS.map { verb -> "$namespace.$verb" } }.toSet()
 private val HTTP_METHOD_NAMES = NAMESPACES.map { "$it.HttpMethod" }.toSet()
 
-// Built at run time: shadowJar rewrites a constant that starts with `kotlin`.
+// shadowJar rewrites a constant that starts with `kotlin`, so this builds the prefix at run time.
 private val KOTLIN_PREFIX = listOf("kot", "lin", ".").joinToString("")
 
 private val SKIPPED_SUPERTYPE_PREFIXES = listOf("java.", "jdk.", "sun.", "com.sun.", KOTLIN_PREFIX, "jakarta.", "javax.")
@@ -80,8 +80,8 @@ class JaxRsModule
         /**
          * A concrete class is in scope if it, or any supertype in its superclass chain or interface
          * graph, carries `@Path`, or declares a method carrying `@Path` or one of the seven
-         * standard verb annotations. A supertype that can be neither described nor loaded means
-         * the class can never be defined, so it does not match.
+         * standard verb annotations. A class with a supertype that can be neither described nor
+         * loaded does not match.
          *
          * A method carrying only a custom `@HttpMethod` annotation does not bring a class into
          * scope.
@@ -102,9 +102,9 @@ class JaxRsModule
         }
 
         /**
-         * Accepts only a loader that can see a JAX-RS API's `Path` class as a resource, found
-         * without loading a class and cached per loader. The bootstrap and platform loaders are
-         * rejected without a lookup.
+         * Accepts only a loader that can see a JAX-RS API's `Path` class as a resource. It looks
+         * the resource up without loading a class, caches the answer per loader and rejects the
+         * bootstrap and platform loaders without a lookup.
          */
         override fun classLoaderMatcher(): ElementMatcher<in ClassLoader> = loaderGate
 
@@ -114,7 +114,7 @@ class JaxRsModule
          * through the endpoint seam, then weaves the advice onto exactly those methods.
          *
          * A method with neither a verb annotation nor `@Path`, own or inherited, is not an
-         * endpoint and is left alone. A method with `@Path` but no verb is a sub-resource locator
+         * endpoint, and this function leaves it alone. A method with `@Path` but no verb is a sub-resource locator
          * and registers with verb `*`.
          */
         override fun transform(
@@ -143,7 +143,7 @@ class JaxRsModule
             val matchedMethods = matched.mapTo(mutableSetOf()) { (method, _, _) -> method.internalName to method.descriptor }
             val matchesRead =
                 ElementMatcher<MethodDescription> { method -> (method.internalName to method.descriptor) in matchedMethods }
-            // Bound before anything is declared, so advice that cannot be bound leaves no route behind.
+            // Binds the advice before declaring any route, so advice that cannot bind leaves no route behind.
             val wrapper = advice.hook("$ADVICE_PACKAGE.ResourceMethodAdvice", matchesRead)
             for ((method, verb, template) in matched) {
                 val key = "${typeDescription.name}#${method.internalName}${method.descriptor}"

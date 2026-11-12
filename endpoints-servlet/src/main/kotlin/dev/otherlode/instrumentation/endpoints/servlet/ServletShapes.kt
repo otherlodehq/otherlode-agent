@@ -11,7 +11,7 @@ private const val JAVALIN_COVERED = "io/javalin/router/ParsedEndpoint.class"
 private const val KTOR_COVERED = "io/ktor/server/routing/Route.class"
 
 // A value is a class file found only in the releases the owning module covers; a loader without it does not own
-// the servlet. Null means every release that has the class is covered or visibly switched off by its module.
+// the servlet. Null means its module covers, or visibly switches off, every release that has the class.
 internal val OWNED_SERVLETS: Map<String, String?> =
     mapOf(
         "org.springframework.web.servlet.DispatcherServlet" to null,

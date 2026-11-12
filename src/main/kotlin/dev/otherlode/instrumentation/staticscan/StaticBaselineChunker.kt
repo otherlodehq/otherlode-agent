@@ -18,7 +18,7 @@ import dev.otherlode.export.UnreadableClass
  * its methods, their calls, its branch sites by [dev.otherlode.export.BranchSite.chunkWeight], its referenced
  * classes and the mappings it carries. An unreadable or unprobed class weighs one.
  *
- * Classes are never split across chunks. A declared class heavier than [maxEntriesPerChunk] gets a chunk
+ * It never splits a class across chunks. A declared class heavier than [maxEntriesPerChunk] gets a chunk
  * of its own. A class that breaks the byte or element bound alone makes [chunk] throw
  * [ClassTooLargeException] and produce no chunk. A mapping in [StaticScanResult.externalClasses] travels
  * in the chunk of the first declared class that references its name. Every chunk carries the same

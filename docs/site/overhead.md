@@ -32,7 +32,7 @@ The narrow startup figure comes from the benchmark's startup-only job, which mea
 
 Read the table as a bound, not a prediction. PetClinic is one application on one core. The narrow column matches how you should configure the agent, with rules that cover your own code. The broad column shows what you pay for a package like `org.springframework`, which instruments a framework's classes, not only yours.
 
-Three limits on these numbers:
+These numbers have three limits:
 
 - Each run lasts minutes, so the resident set size is the figure after warmup, not after days. See [memory over days](#memory-over-days).
 - The benchmark measures steady state. The first flush, which sends the whole manifest, falls in the warmup, so its cost shows in startup and warmup, not in the table.
@@ -72,7 +72,7 @@ Two things can still make a probe cost more than its instructions suggest:
 
 ## What a class costs at load
 
-When the JVM loads a class that matches `includePackages`, the agent reads its bytes, finds its methods, branches, and call edges, and writes the probes into it. That runs on the thread loading the class, so it adds to the time that class takes to load. It is a one-time cost per class, and a class that never loads never pays it.
+When the JVM loads a class that matches `includePackages`, the agent reads its bytes, finds its methods, branches, and call edges, and writes the probes into it. The agent does that work on the thread that loads the class, so it adds to the time that class takes to load. It is a one-time cost per class, and a class that never loads never pays it.
 
 Three things drive that cost up:
 
@@ -80,7 +80,7 @@ Three things drive that cost up:
 - **Locating class files.** The agent reads each class's own file from the jar or folder it came from, or from its loader when it cannot. It reads the supertypes it needs through the loader, which inside a Spring Boot fat jar is the nested-jar loader. The agent caches the supertype reads (up to 16 MB, evicting the least recently used) and releases per-loader caches when a loader goes quiet.
 - **One core.** On one core, class loading, the JIT, and the weave share a CPU. The broad rules took startup from 18.2 s to 48.6 s on the one-core runner, a larger relative cost than any throughput, CPU or latency row of the table.
 
-Heap follows the same shape. The broad run's minimum heap used was +90 MiB, and its resident set size +300 MiB. Once a class's manifest is delivered, the agent releases that class's locations and keeps only what the next flush needs.
+Heap follows the same shape. The broad run's minimum heap used was +90 MiB, and its resident set size +300 MiB. Once the agent delivers a class's manifest, it releases that class's locations and keeps only what the next flush needs.
 
 ## Startup
 
@@ -90,7 +90,7 @@ Three pieces of work that would otherwise be startup cost run later:
 
 - The dependency listing, which reads every jar on the classpath to find its identity, starts at the top of the first flush on the export thread, not in `premain`. It reads each nested jar in a fat jar from its central directory, and decompresses only the `pom.properties` files and manifest it needs.
 - The first full manifest goes out on the first flush, at a random point inside the first interval.
-- The class listing (on by default) runs on its own background thread, named `otherlode-class-listing`, started once at startup and not in `premain`. It reads the file names in each class folder and the central directory of each jar on the classpath. It reads a jar nested in a Spring Boot fat jar the same way, from that jar's central directory, so it decompresses nothing to read entry names. On the benchmark's PetClinic jar, a first call to the listing, measured in a JVM of its own on one core of the benchmark runner, took about 180 ms of CPU both with the narrow rules, which list 122 classes, and with `org.springframework`, which lists 11,791. Those are the medians of six nightly runs. Its cost follows the number of jars it reads, not the number of classes your rules admit. On a classpath of 773 jars holding about 186,000 classes, with rules that matched none of them, it took about 160 ms of CPU on one laptop core. It parses no class file, and it runs once per process. A JVM started with no class path reads the working directory as its class path, and the listing then walks every folder under it, so start the application from its own folder or give it a class path. With `classListingEnabled=false` the thread does not start. See [classes](classes#the-class-listing).
+- The class listing (on by default) runs on its own background thread, named `otherlode-class-listing`, started once at startup and not in `premain`. It reads the file names in each class folder and the central directory of each jar on the classpath. It reads a jar nested in a Spring Boot fat jar the same way, from that jar's central directory, so it decompresses nothing to read entry names. On the benchmark's PetClinic jar, a first call to the listing took about 180 ms of CPU, measured in a JVM of its own on one core of the benchmark runner. It took the same with the narrow rules, which list 122 classes, and with `org.springframework`, which lists 11,791. Those are the medians of six nightly runs. Its cost follows the number of jars it reads, not the number of classes your rules admit. On a classpath of 773 jars holding about 186,000 classes, with rules that matched none of them, it took about 160 ms of CPU on one laptop core. It parses no class file, and it runs once per process. A JVM started with no class path reads the working directory as its class path, and the listing then walks every folder under it, so start the application from its own folder or give it a class path. With `classListingEnabled=false` the thread does not start. See [classes](classes#the-class-listing).
 
 ## The flush thread and the network
 
@@ -133,7 +133,7 @@ The route bridge for OpenTelemetry (`otelBridgeEnabled=true`) runs on every HTTP
 
 ## What to do about it
 
-The cost follows matched classes, so the first lever is narrower `includePackages`.
+The cost follows matched classes, so start by narrowing `includePackages`.
 
 - **Cover your own code and nothing else.** A prefix like `com.acme.orders` instruments your classes. A prefix like `org.springframework` instruments a framework you cannot edit, produces findings you cannot act on, and costs the broad column above. The agent also refuses to start with no include rules at all. See [configuration options](configuration).
 - **Use `excludePackages`** to remove generated or hot utility packages from a broad include.
@@ -141,4 +141,4 @@ The cost follows matched classes, so the first lever is narrower `includePackage
 - **Leave the static baseline off** unless you need to know about classes that never load. Turn it on for a deliberate run, not on every instance.
 - **Lengthen `flushIntervalSeconds`** if you want fewer wakeups. The cost of a steady flush is small, so this changes little, and a longer interval delays what Otherlode sees.
 
-To measure your own service, compare time to first request, throughput, CPU per request, and live heap with and without `-javaagent`. Compare per-request figures, not totals, when the service is saturated: a variant that serves more requests also allocates and collects more in total.
+To measure your own service, compare time to first request, throughput, CPU per request, and live heap with and without `-javaagent`. When the service is saturated, compare per-request figures, not totals, because a variant that serves more requests also allocates and collects more in total.

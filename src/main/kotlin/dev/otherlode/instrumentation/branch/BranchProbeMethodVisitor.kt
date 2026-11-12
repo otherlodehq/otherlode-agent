@@ -17,11 +17,11 @@ import net.bytebuddy.jar.asm.commons.AnalyzerAdapter
  * [IllegalStateException] naming [location].
  *
  * @property allocateSlots Given the number of outcomes a site needs, returns its first slot,
- * relative to [probeIndexBase]. It returns [NO_SLOT] when the array has no room, and the site is
- * then emitted unchanged with no probe.
+ * relative to [probeIndexBase]. It returns [NO_SLOT] when the array has no room, and the visitor
+ * then emits the site unchanged with no probe.
  * @property droppedOrdinals Dropped sites, by their encounter index among every tracked conditional
- * and switch in this method, counted from zero. A dropped site is emitted unchanged and never
- * calls [allocateSlots].
+ * and switch in this method, counted from zero. The visitor emits a dropped site unchanged and
+ * never calls [allocateSlots] for it.
  * @property throwingDefaultOrdinals In the same numbering, the switches whose default only throws.
  * Such a switch asks for one slot per case and none for its default.
  * @property unprobedOutcomes In the same numbering, the conditionals with one outcome that gets no
@@ -43,7 +43,7 @@ class BranchProbeMethodVisitor(
 ) : MethodVisitor(Opcodes.ASM9, methodVisitor) {
     private var nextOrdinal = 0
 
-    /** The ASM analyser upstream of this visitor. Null for a class without frames, where no frame is written. */
+    /** The ASM analyser upstream of this visitor. Null for a class without frames, where the visitor writes no frame. */
     var frameTracker: AnalyzerAdapter? = null
 
     private var pendingLocals: Array<Any>? = null

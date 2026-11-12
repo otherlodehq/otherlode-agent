@@ -7,7 +7,7 @@ import javax.servlet.http.HttpServletRequest;
 import net.bytebuddy.asm.Advice;
 import org.springframework.util.ClassUtils;
 
-// The advice body is inlined into the woven method, so onEnter stays one flat body with no helper methods.
+// Advice inlines only this method's bytecode into the woven method, so onEnter stays one flat body with no helpers.
 // The key matches RegisterUrlHandlerAdvice's. A miss whose pattern equals the path within the mapping is
 // Spring's fallback to the root handler or the "/*" handler.
 public class PathExposingPreHandleAdvice {

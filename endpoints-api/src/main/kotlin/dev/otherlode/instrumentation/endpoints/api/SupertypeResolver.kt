@@ -31,8 +31,8 @@ open class SupertypeCache {
     open fun isKnown(name: String): Boolean = isDefinable(name)
 
     /**
-     * The class named [name] as [loader] loads it, without initializing it, or null when [loader]
-     * cannot load it. Answers are kept by [name] alone, so pass the same loader on each call to one cache.
+     * The class named [name] as [loader] loads it, without initialising it, or null when [loader]
+     * cannot load it. The cache keeps answers by [name] alone, so pass the same loader on each call to one cache.
      */
     fun loadedClass(
         name: String,
@@ -79,10 +79,10 @@ class SupertypeCaches<C : SupertypeCache>(
 
 /**
  * Reads a type's erased supertypes for `loader`'s classes, leaving out names that `skipped` accepts.
- * It holds `loader` weakly. A supertype the type pool cannot describe is loaded through `loader`
- * without initializing it and described from the loaded class. When it does not load, or `loader`
- * has been collected, [UndefinableTypeException] is thrown. A supertype that loads but cannot be
- * reflected raises its own error.
+ * It holds `loader` weakly. It loads a supertype the type pool cannot describe through `loader`,
+ * without initialising it, and describes it from the loaded class. When the supertype does not load,
+ * or `loader` has been collected, it throws [UndefinableTypeException]. A supertype that loads but
+ * cannot be reflected raises its own error.
  */
 class SupertypeResolver(
     loader: ClassLoader?,
@@ -101,7 +101,7 @@ class SupertypeResolver(
     /**
      * Returns true when each supertype above [type] that it reaches without passing a skipped one can be
      * described or loaded, and throws [UndefinableTypeException] when one cannot. It never returns false.
-     * Types it finds definable are marked so in the cache.
+     * It marks the types it finds definable in the cache.
      */
     fun canBeDefined(type: TypeDescription): Boolean {
         val seen = mutableSetOf<String>()

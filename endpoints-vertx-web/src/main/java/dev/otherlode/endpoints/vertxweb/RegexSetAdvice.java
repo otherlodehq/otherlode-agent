@@ -4,7 +4,7 @@ import dev.otherlode.bootstrap.OtherlodeEndpoints;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the exit of {@code RouteImpl.setRegex(String)}, which every regex route reaches
+ * Runs on exit from {@code RouteImpl.setRegex(String)}, which every regex route reaches
  * through its constructor or {@code pathRegex}. The event is {@code {"regex", router, route,
  * source}}.
  */

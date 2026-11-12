@@ -7,9 +7,9 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Logs the `Otherlode-Notice` values a receiver sends with a 202, at most once an hour per shown
- * value. Exporters that share one instance share the limit. A known value is shown as itself. Any
- * other value is shown as `unknown` when it is malformed, or when it is new and 32 values have been
- * logged. [nanoTime] is the clock.
+ * value. Exporters that share one instance share the limit. It shows a known value as itself, and
+ * any other value as `unknown` when that value is malformed, or when it is new and this has logged
+ * 32 values already. [nanoTime] is the clock.
  */
 class IngestNotices(
     private val nanoTime: () -> Long = System::nanoTime,

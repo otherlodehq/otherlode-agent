@@ -9,7 +9,7 @@ https://github.com/otherlodehq/otherlode-agent/security/advisories/new
 
 Do not open a public issue, pull request or discussion about it.
 
-Please include:
+Include:
 
 - the affected version, or the commit if you built from source;
 - steps to reproduce, with a minimal setup where you can;
@@ -21,9 +21,9 @@ The agent runs inside your JVM, attached with `-javaagent`. It rewrites
 classes as they load and pushes probe data to a collector. A problem in the
 agent jar, its instrumentation or its export is in scope.
 
-The `testkit` module is an embedded collector for your own tests. It is
-meant as a test-scope dependency and should never ship in production. It
-is in scope. A problem in it is rated lower, since it runs only in tests.
+The `testkit` module is an embedded collector for your own tests. Add it
+as a test-scope dependency only, and never ship it in production. It
+is in scope. We rate a problem in it lower, since it runs only in tests.
 
 Problems in the collector belong in the
 [otherlode-collector](https://github.com/otherlodehq/otherlode-collector) repository.

@@ -4,7 +4,7 @@ import dev.otherlode.bootstrap.OtherlodeEndpoints;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the entry of {@code RouteImpl.blockingHandler(Handler, boolean)}, which wraps the
+ * Runs on entry to {@code RouteImpl.blockingHandler(Handler, boolean)}, which wraps the
  * handler in a decorator and passes that to {@code handler}. The event is {@code {"blocking",
  * route, handler}} with the handler as written, which the module swaps in for the decorator the
  * next {@link HandlerAddedAdvice} event on the route carries.

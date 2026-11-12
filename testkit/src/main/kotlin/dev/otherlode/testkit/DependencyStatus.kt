@@ -2,8 +2,8 @@ package dev.otherlode.testkit
 
 /**
  * The status [OtherlodeTestCollector.dependency] gives one dependency. A dependency reads [RESOURCES_ONLY] or
- * [UNLOADED] before any status that rests on references. Values may be added in a minor release, so a `when`
- * over this enum needs an `else` branch.
+ * [UNLOADED] before any status that rests on references. A minor release can add values, so a `when` over
+ * this enum needs an `else` branch.
  */
 public enum class DependencyUsage {
     /** Listed from a startup classpath, and no class from it loaded, unless it reads [RESOURCES_ONLY]. */

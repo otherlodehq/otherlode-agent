@@ -47,7 +47,7 @@ kotlin {
     coreLibrariesVersion = "2.0.21"
 }
 
-// Only the main source set is pinned: the test fixtures keep the default language version, whose
+// This pins only the main source set. The test fixtures keep the default language version, whose
 // compiler shapes the end-to-end tests read.
 tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileKotlin") {
     compilerOptions {

@@ -48,7 +48,7 @@ import dev.otherlode.export.UnreadShape as WireUnreadShape
  * rests on zero counts, such as [neverHit], throws [IllegalStateException] while an instance's zero
  * counts are not evidence; see [neverInitialized].
  *
- * Probes, endpoints and dependencies are keyed on the instance id, not the run id. This collector
+ * This collector keys probes, endpoints and dependencies on the instance id, not the run id. It
  * answers 400 to a payload it cannot accept, such as one with an empty run id or a second run id
  * under a known instance id, and records the reason in [rejectedPayloads]. After that, the other
  * queries and waits throw [IllegalStateException].
@@ -391,8 +391,8 @@ public class OtherlodeTestCollector internal constructor(
     /**
      * Blocks until each instance heard from, including one first heard from after this call began,
      * has sent two complete flushes since the call began or has ended with a complete final flush.
-     * Once an instance has sent a final flush, it settles only if that final flush is complete. At
-     * least one instance must have been heard from. A complete flush is a delta batch that carries
+     * Once an instance has sent a final flush, it settles only if that final flush is complete. The
+     * collector must have heard from at least one instance. A complete flush is a delta batch that carries
      * `flush_complete`. A batch retried under the same nonzero payload sequence counts once.
      *
      * Throws [TimeoutException] if [timeout] elapses first, naming each instance that has not
@@ -580,7 +580,7 @@ public class OtherlodeTestCollector internal constructor(
 
     /**
      * Each optional parameter whose omission total, summed over its omission probes and instances,
-     * equals its target method's hit total: each call took the default. Sorted by class name,
+     * equals its target method's hit total, which means each call took the default. Sorted by class name,
      * method name, then parameter index.
      *
      * Leaves out an overridable parameter, a target with no hits or no method probe, and a
@@ -594,7 +594,7 @@ public class OtherlodeTestCollector internal constructor(
 
     /**
      * Each optional parameter whose omission total, summed over its omission probes and instances,
-     * is zero while its target method has hits: no call took the default. Sorted as [neverSupplied]
+     * is zero while its target method has hits, which means no call took the default. Sorted as [neverSupplied]
      * sorts. Includes an overridable parameter. Leaves out a target with no hits or no method
      * probe, and a parameter with an inline, generated or unread omission probe. Throws
      * [IllegalStateException] while an instance's zero counts are not evidence; see
@@ -710,8 +710,9 @@ public class OtherlodeTestCollector internal constructor(
      * into the never-hit methods that create it, routine outcomes ([neverHitRoutineOutcomes]),
      * unread shapes ([neverHitUnreadShapes]) and classes in [failedToInitialize]. A constructor is
      * a row only when another constructor of its class ran. Leaves out a BRANCH probe whose site lies
-     * in a never-hit method that is not an unread shape, even one that is not a row itself, or whose
-     * guard is an outcome this list would hold but for this rule.
+     * in a never-hit method that is not an unread shape, even a method that is not a row itself. It
+     * also leaves out a BRANCH probe whose guard is an outcome this list would hold if not for these
+     * two rules.
      *
      * Throws [IllegalStateException] while an instance's zero counts are not evidence; see
      * [neverInitialized].
@@ -730,7 +731,7 @@ public class OtherlodeTestCollector internal constructor(
      * Each never-hit METHOD or BRANCH probe that [neverHit] leaves out because it is an unread
      * shape, with its [ProbeRef.unreadShape] family, sorted as [neverHit] sorts. A probe is unread
      * when its method is or its own outcome is. Leaves out an outcome whose site [neverHit] leaves
-     * out, which no site in an unread method is. Throws as [neverHit] does.
+     * out. [neverHit] leaves out no site in an unread method. Throws as [neverHit] does.
      */
     public fun neverHitUnreadShapes(): List<ProbeRef> = checkedZeroCounts { neverHitRows().filter { it.unreadShape != null } }
 
@@ -936,9 +937,9 @@ public class OtherlodeTestCollector internal constructor(
      * finding. Leaves out a class in [failedToInitialize], and a class whose static initialiser has
      * started but not finished in each instance that loaded it.
      *
-     * Throws [IllegalStateException] while an instance's zero counts are not evidence: a manifest
-     * from it reports that verifier rejections were not watched, or it counts `VerifyError`
-     * messages in no read format. The message names each such instance and why.
+     * Throws [IllegalStateException] while an instance's zero counts are not evidence. They are not
+     * evidence when a manifest from it reports that verifier rejections were not watched, or when it
+     * counts `VerifyError` messages in no read format. The message names each such instance and why.
      */
     public fun neverInitialized(): List<ClassFindingRef> = checkedZeroCounts { classFindingRefs(ClassFinding.NEVER_INITIALIZED) }
 
@@ -1295,7 +1296,7 @@ public class OtherlodeTestCollector internal constructor(
      *
      * The nodes are methods merged across instances, never-hit branch outcomes in methods with
      * hits, and classes that hold a [ClassFinding]. Some outcomes, such as routine and unread ones,
-     * are not nodes. A method only a complete static baseline declared is marked
+     * are not nodes. A method that only a complete static baseline declared carries
      * [ProbeRef.neverLoaded]. A class node stands for the never-hit methods its finding covers. The
      * edges are the call edges of manifests and complete baselines. A call goes to its owner or the
      * nearest supertype that has the method, and a virtual call other than to a constructor also goes
@@ -1823,7 +1824,7 @@ public class OtherlodeTestCollector internal constructor(
 
     /**
      * True if the path endpoint [verb] [routeTemplate] has a call count above zero, summed over
-     * instances. Both arguments are normalised first, so `wasCalled("get", "/checkout/")` finds
+     * instances. It normalises both arguments first, so `wasCalled("get", "/checkout/")` finds
      * `GET /checkout`. A regex or servlet pattern endpoint with the same text does not match.
      * Throws [UnknownEndpointException] if no manifest mentioned this path endpoint.
      */
@@ -1834,7 +1835,7 @@ public class OtherlodeTestCollector internal constructor(
 
     /**
      * The path endpoint's call count: the sum, over instances, of the highest total each reported.
-     * [verb] and [routeTemplate] are normalised as [wasCalled] normalises them. Throws
+     * It normalises [verb] and [routeTemplate] as [wasCalled] normalises them. Throws
      * [UnknownEndpointException] if no manifest mentioned this path endpoint.
      */
     public fun callCount(
@@ -1936,11 +1937,11 @@ public class OtherlodeTestCollector internal constructor(
      * listed it. A shaded jar carries several identities and matches any of them. A null or empty
      * [groupId] matches an identity with no group, as in `dependency(null, "commons-lang3")`.
      *
-     * The answer rests on what has arrived: [awaitDependency] waits for the entry,
+     * The answer depends on what has arrived. [awaitDependency] waits for the entry,
      * [awaitDependenciesListed] for each instance's listing, and [awaitSettled] for hits.
      *
-     * When several dependencies carry the identity, the one whose sole identity it is answers. When
-     * no single one is, this throws [IllegalStateException] naming each candidate's
+     * When several dependencies carry the identity, this returns the status of the one whose sole
+     * identity it is. When no single one is, it throws [IllegalStateException] naming each candidate's
      * [DependencyStatus.identityKey]. Throws [UnknownDependencyException] if no manifest listed the
      * dependency. Throws [IllegalStateException] when the status rests on a zero count and an
      * instance's zero counts are not evidence; see [neverInitialized].
@@ -2736,8 +2737,8 @@ public data class OutsideCaller internal constructor(
 )
 
 /**
- * The shape of an [UnreachedCluster]'s root. Values may be added in a minor release, so a `when`
- * over this enum needs an `else` branch.
+ * The shape of an [UnreachedCluster]'s root. A minor release can add values, so a `when` over this
+ * enum needs an `else` branch.
  */
 public enum class RootKind {
     /**
@@ -2767,8 +2768,7 @@ public enum class RootKind {
 
 /**
  * A finding about a whole class. A class holds at most one, the first that applies in the order
- * listed. Values may be added in a minor release, so a `when` over this enum needs an `else`
- * branch.
+ * listed. A minor release can add values, so a `when` over this enum needs an `else` branch.
  */
 public enum class ClassFinding {
     /**
@@ -2794,8 +2794,8 @@ public enum class ClassFinding {
 /**
  * One class that holds a [finding], as [OtherlodeTestCollector.neverInitialized] or
  * [OtherlodeTestCollector.neverInstantiated] lists it. [methods] names the class's METHOD probes
- * other than `<clinit>`, one entry per method name, sorted; constructors appear as `<init>`, and
- * inline and generated methods are included. [instancesLoading] counts the instances that loaded
+ * other than `<clinit>`, one entry per method name, sorted. Constructors appear as `<init>`, and
+ * it includes inline and generated methods. [instancesLoading] counts the instances that loaded
  * the class.
  */
 @ConsistentCopyVisibility

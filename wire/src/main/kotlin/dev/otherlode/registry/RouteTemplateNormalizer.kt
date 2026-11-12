@@ -5,15 +5,15 @@ object RouteTemplateNormalizer {
     /**
      * Returns the identity route template for [verbatim], with [contextPath], when given, put in front
      * first. The result starts with a slash and does not end with one, except for `/` itself and after an
-     * unclosed brace. Runs of slashes outside braces collapse to one. A blank [verbatim] gives the normalized
+     * unclosed brace. Runs of slashes outside braces collapse to one. A blank [verbatim] gives the normalised
      * [contextPath], or `/` without one.
      *
      * A path parameter keeps its name and drops any text after a `:` in its braces, so `{id:\d+}.{ext}`
      * becomes `{id}.{ext}`. A whole-segment wildcard or tail, such as `**`, `{name...}` or `<name>`,
      * becomes one `*` segment. `{name:?}` becomes `{name?}`, and `{/name}` becomes a segment of its own,
-     * `{name?}`, so `/books{/id}` becomes `/books/{id?}`. A brace form it does not read, such as `{.name}`,
-     * is kept, trimmed and without any text after a `:`. An unclosed brace is kept as written, and the
-     * slashes after it are kept as they are.
+     * `{name?}`, so `/books{/id}` becomes `/books/{id?}`. It keeps a brace form it does not read, such as
+     * `{.name}`, trimmed and without any text after a `:`. It keeps an unclosed brace as written, and
+     * the slashes after it as they are.
      */
     fun normalize(
         verbatim: String,

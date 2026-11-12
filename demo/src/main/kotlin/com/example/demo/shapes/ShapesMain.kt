@@ -35,7 +35,7 @@ class Tariff private constructor(
     }
 }
 
-/** A data class: `copy` and `toString` run, the rest of what kotlinc generates does not, and [isLarge] is never called. */
+/** A data class whose `copy` and `toString` run, while the rest of what kotlinc generates and [isLarge] never run. */
 data class Invoice(
     val id: Int,
     val total: Double,

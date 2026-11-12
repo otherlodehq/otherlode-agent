@@ -70,8 +70,8 @@ val compileTasks =
         }
     }
 
-// Each release needs a kotlinx-serialization-core it can read: the newest core metadata a compiler
-// reads is its own plus one. 2.3 and later reject -language-version 1.9.
+// Each release needs a kotlinx-serialization-core it can read, and a compiler reads core metadata at
+// most one version newer than its own. 2.3 and later reject -language-version 1.9.
 val serializationRuntimes =
     mapOf("1.9.25" to "1.6.3", "2.1.21" to "1.8.1", "2.2.21" to "1.9.0", "2.4.21" to "1.9.0")
 

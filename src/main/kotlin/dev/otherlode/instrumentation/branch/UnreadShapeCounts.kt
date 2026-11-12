@@ -12,7 +12,10 @@ enum class UnreadCause {
     /** The class names no compiler the agent can read: a Scala 2 class, or a Scala 3 class with no readable `.tasty`. */
     VERSION_BLIND,
 
-    /** The class can hold no hand-written plumbing, such as an enum's companion, so its unmatched plumbing is unread whatever the release. */
+    /**
+     * The class can hold no hand-written plumbing, such as an enum's companion, so its unmatched plumbing is
+     * unread whatever the release.
+     */
     UNREAD_STRUCTURE,
 
     /** The class holds compiler-plugin members beside hand-written ones that the bytecode does not tell apart. */

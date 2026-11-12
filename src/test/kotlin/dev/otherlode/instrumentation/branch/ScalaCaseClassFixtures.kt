@@ -38,7 +38,7 @@ object ScalaCaseClassFixtures {
         )
 
     // HandCopy.copy and UC.canEqual are written by hand, but each body matches the one scalac writes
-    // instruction for instruction, so they are not listed.
+    // instruction for instruction, so HAND_WRITTEN leaves them out.
     val HAND_WRITTEN: Map<String, Set<String>> =
         mapOf(
             "Multi" to setOf("toString"),

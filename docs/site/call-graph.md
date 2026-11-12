@@ -10,10 +10,10 @@ An unreached cluster is a root plus every never-hit method that the root reaches
 
 ## What a call edge is
 
-A call edge is one method's reference to another method, or to a class's static initialiser. The agent reads it from the caller's bytecode when the class loads and sends it once with the class. Nothing is counted per call, so edges add no cost to a request. An edge says that the caller's code can reach the callee, not that it did. The hit counts say what ran.
+A call edge is one method's reference to another method, or to a class's static initialiser. The agent reads it from the caller's bytecode when the class loads and sends it once with the class. The agent counts nothing per call, so edges add no cost to a request. An edge says that the caller's code can reach the callee, not that it did. The hit counts say what ran.
 
 - **Only your code is in the graph.** The agent records an edge only when the callee is inside your [`includePackages`](configuration) scope. A call into the JDK, a framework or a library leaves no edge. The agent records those classes as [references](dependencies#what-counts-as-a-reference) to your dependencies, which never feed into clusters.
-- **The callee is named as the bytecode names it.** The agent does not resolve which override a virtual call lands on. It sends each class's superclass and interfaces with the class, and Otherlode and the testkit use them to widen a virtual call to every override they know and to walk up to an inherited method.
+- **An edge names the callee as the bytecode does.** The agent does not resolve which override a virtual call lands on. It sends each class's superclass and interfaces with the class, and Otherlode and the testkit use them to widen a virtual call to every override they know and to walk up to an inherited method.
 
 ## Which code shapes make an edge
 
@@ -36,7 +36,7 @@ A body class carries code its creator hands to someone else to run: an anonymous
 
 ### Pass-throughs
 
-Compilers generate methods that only forward a call, such as a bridge method, an `access$` accessor, Kotlin's `$default` method and the class kotlinc generates for a function reference. A forwarder has no probe of its own. The agent follows it and gives its callees to whoever referenced it, across classes if need be. So `x.f(1)` on a function with a default argument reaches `f`, and `::twice` gives its creator an edge to `twice`. If the agent cannot read a class's bytes, the edge stays as written and names the forwarder.
+Compilers generate methods that only forward a call, such as a bridge method, an `access$` accessor, Kotlin's `$default` method and the class kotlinc generates for a function reference. A forwarder has no probe of its own. The agent follows it and gives its callees to whoever referenced it, even across classes. So `x.f(1)` on a function with a default argument reaches `f`, and `::twice` gives its creator an edge to `twice`. If the agent cannot read a class's bytes, the edge stays as written and names the forwarder.
 
 ## Which edges are missing
 
@@ -52,7 +52,7 @@ A never-hit method is a root when it has no in-scope caller at all, or when at l
 
 - **A method called from two clusters belongs to neither.** Deleting either root alone would leave it called.
 - **A cycle of never-hit methods that nothing outside the cycle calls has no root.** No cluster lists it. The methods still appear as never hit.
-- **Whole classes fold together.** A class that never loaded, never initialised or never instantiated is a class finding, and a cluster that holds all of its methods lists the class once. A constructor of a class nothing constructed, such as a utility class's private constructor, is reached through but never listed.
+- **Whole classes fold together.** A class that never loaded, never initialised or never instantiated is a class finding, and a cluster that holds all of its methods lists the class once. A cluster reaches through a constructor of a class nothing constructed, such as a utility class's private constructor, but never lists it.
 
 Edges into Kotlin inline functions resolve to nothing, because the compiler copies an inline body into its callers. Generated methods are not nodes, but a lookup that lands on one continues along its own edges. A generated method with hits counts as a hit caller, as when a `HashMap` calls a data class's `hashCode`.
 
@@ -68,7 +68,7 @@ The testkit's `RootKind` has five kinds of root.
 | `CALLED_FROM_OUTSIDE_SCOPE` | A method with no in-scope caller, but with an [outside caller](#outside-callers). | Code you do not own may call it. |
 | `REACHED_FROM_HIT` | A method that a caller with hits refers to, with the call not behind an untaken branch outcome. | Not dead by structure. Read the callers the cluster names. Usually this is an override that a virtual call never reached, or a call that an exception cut short. |
 | `UNTAKEN_OUTCOME` | A branch outcome that never ran, in a method that did. | Delete that side of the branch. See below. |
-| `CLASS_FINDING` | A class that is never loaded, never initialised or never instantiated. | The class is the finding. Its cluster is listed only when it holds more than the methods the finding already covers. |
+| `CLASS_FINDING` | A class that is never loaded, never initialised or never instantiated. | The class is the finding. The testkit lists its cluster only when it holds more than the methods the finding already covers. |
 
 Otherlode has one more kind, for a method called only by tests. See its [root kinds](/docs/server/unreached-clusters#root-kinds).
 
@@ -85,13 +85,13 @@ A method called under two different untaken outcomes belongs to neither cluster.
 Some code is called by something outside your bytecode: a web framework calls your handler, a scheduler calls your `@Scheduled` method, and whoever holds a `Runnable` calls its `run`. The agent labels each such method with the reason code outside your scope may call it. `ProbeRef.outsideCaller` carries the label in the testkit. The reason is one of two:
 
 - `OVERRIDES_METHOD`: the method overrides or implements a method that a type outside your scope declares, such as `java.lang.Runnable` or `java.lang.Object`. The label names that type.
-- `CALLBACK_ANNOTATION`: the method, or one of its parameters, carries an annotation that a framework calls methods by, such as `@EventListener` or `@GetMapping`, or a method it overrides carries one that its framework honours there. The label names the annotation as written, so an annotation you composed yourself is named, not the one it carries.
+- `CALLBACK_ANNOTATION`: the method, or one of its parameters, carries an annotation that a framework calls methods by, such as `@EventListener` or `@GetMapping`, or a method it overrides carries one that its framework honours there. The label names the annotation as written, so the label names an annotation you composed yourself, not the one it carries.
 
 The agent has a built-in list of callback annotations, covering Spring, Jakarta and `javax`, JAX-RS, the Kafka, Rabbit and JMS listeners, Micronaut, Quarkus, Temporal, Axon and others. For a framework the list does not cover, such as an in-house dispatcher, name its annotations in the [`callbackAnnotations`](configuration#callbackannotations) option. A named annotation counts on a method only, never on a parameter, and passes down from any superclass or interface method. An annotation that is neither on the list nor named, such as `@Nullable`, never counts.
 
 A method takes a callback annotation from a method it overrides, in your code or outside it, where its framework does the same:
 
-- Most web, messaging and event annotations pass down from a superclass or an interface. A Spring controller that implements a generated `XxxApi` interface carrying `@GetMapping` is labelled `@GetMapping`.
+- Most web, messaging and event annotations pass down from a superclass or an interface. A Spring controller that implements a generated `XxxApi` interface carrying `@GetMapping` gets the label `@GetMapping`.
 - `@Bean` passes down from a superclass method or an interface default method, not from an abstract interface method.
 - Scheduling, JMS listener, actuator operation, startup, lifecycle, injection, interceptor, JPA and WebSocket callbacks never pass down.
 - A method that carries any `jakarta.ws.rs` or `javax.ws.rs` annotation, on itself or a parameter, takes no JAX-RS annotation from a method it overrides.
@@ -100,8 +100,8 @@ The label names the annotation as written on the method it came from.
 
 Temporal and Axon follow their own rules:
 
-- A Temporal workflow annotation (`@WorkflowMethod`, `@SignalMethod`, `@QueryMethod`, `@UpdateMethod`, `@UpdateValidatorMethod`) counts from an interface method only. The method that implements it is labelled, and so is an interface's own default method that carries one. A class method that carries one itself is not.
-- An interface annotated `@ActivityInterface` labels every method that implements a method of it or of its unannotated parent interfaces, and its own default methods, `@ActivityInterface`. A default method of an unannotated parent interface that nothing overrides is not labelled, so if it never ran it reads `UNCALLED`.
+- A Temporal workflow annotation (`@WorkflowMethod`, `@SignalMethod`, `@QueryMethod`, `@UpdateMethod`, `@UpdateValidatorMethod`) counts from an interface method only. The agent labels the method that implements it, and an interface's own default method that carries one. It does not label a class method that carries one itself.
+- An interface annotated `@ActivityInterface` labels every method that implements a method of it or of its unannotated parent interfaces, and its own default methods, `@ActivityInterface`. The agent does not label a default method of an unannotated parent interface that nothing overrides, so if it never ran it reads `UNCALLED`.
 - `@TemporalOperation` counts on the method that carries it and never passes down.
 - A composed annotation that carries a Temporal annotation counts for nothing.
 - `@CommandHandler`, `@EventHandler`, `@QueryHandler` and any annotation you compose from them count, and pass down like the other event annotations. Axon's `@StartHandler`, `@ShutdownHandler`, `@EntityCreator` and `@EventCriteriaBuilder` count on the method that carries them and never pass down.
@@ -116,8 +116,8 @@ Treat `CALLED_FROM_OUTSIDE_SCOPE` as a prompt to look. An override of `Object.to
 
 A method that never ran can still change the program by being there. Check these cases first.
 
-- **Java serialization.** A `Serializable` class with no explicit `serialVersionUID` gets one computed from its non-private members. Deleting a non-private method changes it, and data serialized before the deletion then fails to read with `InvalidClassException`.
-- **Frameworks that read metadata.** A framework can act on a method it never calls. While a lazy Spring `@Bean` method that nothing requests exists, a `@ConditionalOnMissingBean` bean of the same type is not created. Deleting the method creates that bean.
+- **Java serialisation.** A `Serializable` class with no explicit `serialVersionUID` gets one computed from its non-private members. Deleting a non-private method changes it, and data serialised before the deletion then fails to read with `InvalidClassException`.
+- **Frameworks that read metadata.** A framework can act on a method it never calls. While a lazy Spring `@Bean` method that nothing requests exists, Spring does not create a `@ConditionalOnMissingBean` bean of the same type. Deleting the method creates that bean.
 - **Reflection over members.** Code that lists `getDeclaredMethods()` or `getDeclaredFields()` and acts on the list sees one member fewer.
 
 ## Reading a cluster in the testkit

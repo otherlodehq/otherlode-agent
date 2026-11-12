@@ -14,7 +14,7 @@ The agent runs from its own `-javaagent` jar. The testkit is a second jar that g
 
 Use the same version of both. The testkit's collector rejects a payload from an agent of another version, and the rejection names both versions.
 
-The testkit bundles its own protobuf under `dev.otherlode.testkit.shaded`. Its one dependency is kotlin-stdlib, and Kotlin test code needs Kotlin 1.9 or later to compile against it. The extension needs `junit-jupiter-api` on the test classpath, and the rest of the testkit doesn't. The jar's classes are class-file version 61 or lower, so it loads on JDK 17 and later.
+The testkit bundles its own protobuf under `dev.otherlode.testkit.shaded`. Its one dependency is `kotlin-stdlib`, and Kotlin test code needs Kotlin 1.9 or later to compile against it. The extension needs `junit-jupiter-api` on the test classpath, and the rest of the testkit doesn't. The jar's classes are class-file version 61 or lower, so it loads on JDK 17 and later.
 
 In a Gradle build, resolve the agent jar through a configuration of its own, so it never lands on the test classpath, and attach it to the test task:
 
@@ -39,7 +39,7 @@ tasks.test {
 }
 ```
 
-The extension never attaches the agent for you. JUnit loads test classes, and often the classes under test, before any extension runs, and a class that loads before the agent attaches is never woven.
+The extension never attaches the agent for you. JUnit loads test classes, and often the classes under test, before any extension runs, and the agent never weaves a class that loads before it attaches.
 
 Each option does a job:
 
@@ -100,9 +100,9 @@ Pick the wait by what you want to know:
 
 Each wait throws `TimeoutException` when the timeout passes.
 
-Class names are dotted binary names, such as `com.acme.Outer$Inner` for a nested class and `com.acme.OrdersKt` for the top-level functions in `Orders.kt`. [Class and method names](testkit-api#class-and-method-names) covers Kotlin's other file classes.
+Class names are dotted binary names, such as `com.acme.Outer$Inner` for a nested class and `com.acme.OrdersKt` for the top-level functions in `Orders.kt`. [Class and method names](testkit-api#class-and-method-names) covers `@file:JvmName` and multi-file facades.
 
-Asking about a method the collector has never heard of throws `UnknownProbeException`, not `false`. The message says why: the class could not be instrumented, loaded where no transformer saw it, was declared by the static baseline but never loaded, has no method by that name, or was never mentioned. A route that no manifest mentioned throws `UnknownEndpointException` in the same way. So a query never reads "the agent never saw it" as "it never ran".
+Asking about a method the collector has no record of throws `UnknownProbeException`, not `false`. The message says why: the class could not be instrumented, loaded where no transformer saw it, was declared by the static baseline but never loaded, has no method by that name, or was never mentioned. A route that no manifest mentioned throws `UnknownEndpointException` in the same way. So a query never reads "the agent never saw it" as "it never ran".
 
 A query that rests on a zero count can also refuse. A class the JVM's verifier rejects fires no probe. While an instance's agent could not install its hook on `VerifyError`, or counted a `VerifyError` message it could not read, a zero count from that instance proves nothing. Queries that rest on one, such as `neverHit`, `neverCalled`, `alwaysSupplied`, `unreachedClusters`, `neverInitialized` and `neverInstantiated`, then throw `IllegalStateException` and name the instance and the reason. Queries that read no zero count, such as `wasHit` and `hitCount`, keep answering. [Queries that refuse](testkit-api#queries-that-refuse) lists both groups.
 
@@ -200,13 +200,13 @@ A collector from `start()` accepts every agent instance that posts to it, and it
 
 ## When the collector rejects a payload
 
-Once the collector has rejected a payload, every query and wait throws `IllegalStateException` with a message that starts `this collector rejected` and lists each reason. `rejectedPayloads()` returns the same reasons. A payload is rejected, for example, when it comes from an agent of another version, from a second run under one instance ID, from a second instance on the extension's collector, or through a collector that stripped fields. [Rejected payloads](testkit-api#rejected-payloads) lists every reason.
+Once the collector has rejected a payload, every query and wait throws `IllegalStateException` with a message that starts `this collector rejected` and lists each reason. `rejectedPayloads()` returns the same reasons. The collector rejects a payload, for example, when it comes from an agent of another version, from a second run under one instance ID, from a second instance on the extension's collector, or through a collector that stripped fields. [Rejected payloads](testkit-api#rejected-payloads) lists every reason.
 
-The testkit's collector listens on `localhost` and checks no token. Any process on the same machine that reaches its port can post payloads to it, and an unexpected payload is rejected or counted with the rest. Run the testkit only on machines where you trust the other processes, as you would for the build itself.
+The testkit's collector listens on `localhost` and checks no token. Any process on the same machine that reaches its port can post payloads to it, and the collector rejects an unexpected payload or counts it with the rest. Run the testkit only on machines where you trust the other processes, as you would for the build itself.
 
 ## Run forks in parallel
 
-With `maxParallelForks` above 1, each fork is its own JVM, and Gradle gives every fork the same `-javaagent` arguments, so every fork's agent posts to the same port. One fork's extension binds that port, accepts the first agent it hears from and rejects the others, so its queries throw. The other forks' extensions cannot bind the port, so their tests fail too.
+With `maxParallelForks` above 1, each fork is its own JVM, and Gradle gives every fork the same `-javaagent` arguments, so every fork's agent posts to the same port. One fork's extension binds that port, accepts the first agent that posts to it and rejects the others, so its queries throw. The other forks' extensions cannot bind the port, so their tests fail too.
 
 Run the tests that use the testkit with `maxParallelForks = 1`. To keep the rest of your tests parallel, tag the testkit tests with `@Tag("otherlode")` and give them a task of their own:
 
@@ -228,7 +228,7 @@ val agentTest by tasks.registering(Test::class) {
 tasks.check { dependsOn(agentTest) }
 ```
 
-The agent then runs only in `agentTest`, so move the `-javaagent` argument off `tasks.test`.
+Move the `-javaagent` argument off `tasks.test`, so the agent runs only in `agentTest`.
 
 ## Run alongside JaCoCo
 

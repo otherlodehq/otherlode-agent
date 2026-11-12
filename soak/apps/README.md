@@ -1,7 +1,7 @@
 # Soak applications
 
-Two control applications for the soak test, and the answers they plant in `../truth.json`. This is a
-Gradle build of its own. The agent's root build does not include it.
+This directory holds the two applications of the soak test, and this file lists the answers they
+plant in `../truth.json`. It is a Gradle build of its own. The agent's root build does not include it.
 
 The packages are `dev.soaktest.shop` and `dev.soaktest.events`. The agent never probes a class under
 `dev.otherlode`, so the include rules in `DESIGN.md` cannot select code in `dev.otherlode.soak.*`.
@@ -71,7 +71,7 @@ put the agent in front, with no `excludePackages`, and add `testRun=true` and
 | `GET /once` | `OnceController.once` | 200 | Never called until it is called, live after. |
 | `GET /broken` | `BrokenController.broken` | 500 | Touches `BrokenConfig`, whose static initialiser throws. |
 | `DELETE /orders/{id}` | `OrderController.delete` | 204 | Never called. |
-| `GET /admin/rebuild` | `AdminController.rebuild` | 500 | Never called. The only code that reaches `LegacyCsvExporter`. Answers 500 if called, since commons-csv is taken without commons-io. |
+| `GET /admin/rebuild` | `AdminController.rebuild` | 500 | Never called. The only code that reaches `LegacyCsvExporter`. Answers 500 if called, since the build takes commons-csv without commons-io. |
 | `GET /health-legacy` | `HealthLegacyServlet.doGet` | 200 | Live. The servlet declares `doPost`, so `POST /health-legacy` is a declared endpoint that is never called. |
 
 ## soak-events routes

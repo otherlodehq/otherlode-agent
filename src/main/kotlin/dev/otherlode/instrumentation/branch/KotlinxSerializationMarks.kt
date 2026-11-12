@@ -23,7 +23,7 @@ internal object KotlinxSerializationMarks {
         }
     }
 
-    // shadowJar rewrites any string in the agent's classes that starts with "kotlin", so kotlinx names are built at run time.
+    // shadowJar rewrites any string in the agent's classes that starts with "kotlin", so this builds kotlinx names at run time.
     private val ROOT = String(charArrayOf('k', 'o', 't', 'l', 'i', 'n', 'x'))
     private val SERIALIZATION = "$ROOT/serialization"
     private val K_SERIALIZER = "$SERIALIZATION/KSerializer"

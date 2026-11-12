@@ -29,7 +29,7 @@ public final class JavaHandlers {
         return target::handle;
     }
 
-    // Run only by the test that spins it before the hook is installed.
+    // Only the test that spins this lambda before it installs the hook calls this method.
     public static HttpHandler lambdaSpunEarly() {
         return exchange -> respond(exchange);
     }

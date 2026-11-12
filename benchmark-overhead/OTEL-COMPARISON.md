@@ -1,6 +1,6 @@
 # Overhead against the OpenTelemetry Java agent
 
-A comparison of three JVMs serving the same app under the same load: no agent, the OpenTelemetry
+This compares three JVMs that serve the same app under the same load: no agent, the OpenTelemetry
 Java agent, and the Otherlode agent. It asks whether Otherlode costs about what an accepted
 industry agent costs. It is a benchmark, not a go-live blocker. The soak week (`soak/DESIGN.md`) and
 its smokes are the go-live blockers, since they find gaps, bugs and memory leaks.
@@ -20,8 +20,8 @@ Postgres, k6 closed loop, OpenTelemetry's `overhead.jfc`, the same containers. I
 precedent lacks: a warmup that ends when throughput is steady, PetClinic pinned to cores of its
 own, CPU per request from the cgroup, RSS from `/proc`, p99, a startup-only mode with 21 repeats,
 and rules that throw out an invalid run. The comparison is that harness with a third variant. The
-JMH benchmarks in `src/jmh` time the agent's own hot path and flush; they cannot run a foreign
-agent, so they play no part.
+JMH benchmarks in `src/jmh` time the agent's own hot path and flush. They cannot run a foreign
+agent, so the comparison does not use them.
 
 Where it departs from the precedent:
 
@@ -67,7 +67,7 @@ than another.
 (`src/main/resources/NoopOtlpSink.java`) run in a container from the PetClinic image, on the cores
 Postgres and the collector share. It answers every `POST` with 200 and an empty
 `application/x-protobuf` body, which decodes as an empty export response, and counts the requests
-and bytes per path. It decodes nothing. Nothing leaves the runner: the sink sits on the harness's own
+and bytes per path. It decodes nothing. Nothing leaves the runner, since the sink is on the harness's own
 Docker network and has no route out that the agent uses.
 
 So the OpenTelemetry agent pays for building, batching, encoding and sending its spans, metrics
@@ -79,14 +79,14 @@ The comparison runs two load shapes, each as a full matrix.
 
 - **Closed loop**, the harness's default: 4 virtual users per PetClinic core, every response
   checked. PetClinic runs at its CPU limit, so throughput, CPU per request, allocation and GC per
-  request compare the agents' work. Latency here is mostly queueing: in a closed loop it moves with
+  request compare the agents' work. Latency here is mostly queueing, so in a closed loop it moves with
   throughput.
 - **Open loop at a fixed rate:** k6's `constant-arrival-rate` executor at a quarter of `none`'s steady
   closed-loop iteration rate, measured at the start of the job on the same runner (see below). PetClinic has headroom, so p50, p95 and
   p99 show the time an agent adds to a request, not a queue. A run is invalid when k6 drops an
   iteration, or when PetClinic averages 80% or more of its pinned cores, since it then queues. The
-  window's steadiness is judged on median latency, since a fixed rate starts the same number of
-  requests in every third: the first third's median over the last's.
+  harness judges the window's steadiness on median latency, as the first third's median over the
+  last's, since a fixed rate starts the same number of requests in every third.
 
 Each run warms until steady (30 s slices, at least 90 s, at most 600 s) and then measures for
 300 s, so each window holds five Otherlode flushes and five OpenTelemetry metric exports.
@@ -104,12 +104,12 @@ All but startup are read over the window, from the sources the harness already u
 | Heap | JFR `jdk.GCHeapSummary`: heap used minimum and maximum. The minimum is the live set after a GC |
 | Allocation | JFR `jdk.ThreadAllocationStatistics`, as KiB per request |
 | GC pauses | JFR `jdk.GCPhasePause`: total and per 1000 requests |
-| RSS | `VmRSS` and `VmHWM` from `/proc/1/status` at the end of the window; JFR `jdk.ResidentSetSize` maximum |
+| RSS | `VmRSS` and `VmHWM` from `/proc/1/status` at the end of the window, and JFR `jdk.ResidentSetSize` maximum |
 | Metaspace, threads | `jcmd VM.metaspace`, JFR peak thread count |
 
 ## Where it runs
 
-Where the harness already runs: GitHub's `ubuntu-latest` (4 vCPU), which costs nothing for a public
+The comparison runs where the harness already runs, on GitHub's `ubuntu-latest` (4 vCPU), which costs nothing for a public
 repository. A workflow of its own, `benchmark-otel-comparison`, starts only by hand
 (`workflow_dispatch`), so the nightly job is unchanged. It has three jobs, each on a runner of its
 own: closed loop, open loop and startup only. All three variants of a job run on the same runner,
@@ -120,13 +120,13 @@ The workflow runs `scripts/fetch-otel-agent.sh`, which downloads the OpenTelemet
 Central and checks its size, SHA-1 and SHA-256 against values pinned in the script, and its PGP
 signature against a key fingerprint pinned there. A mismatch fails the job before any run.
 
-The open loop's rate is measured on its own runner: the job first runs `none` under the closed loop
+The open-loop job measures its rate on its own runner. It first runs `none` under the closed loop
 until steady, takes the iteration rate of its last slice, and runs the matrix at a quarter of it (the workflow's `open_rate_fraction`, default 0.25). The
 rate goes into the results.
 
-A quarter, not half. At half, even `none` collapsed (run 41796109323, an AMD EPYC 9V45 runner,
-at 131 iterations/s, half of the 261 its calibration measured before reaching its warmup cap):
-PetClinic grew from 28 to 219 threads contending for its 10 database
+The rate is a quarter, not a half. At half, even `none` collapsed. In run 41796109323, on an AMD
+EPYC 9V45 runner at 131 iterations/s, half of the 261 its calibration measured before reaching its
+warmup cap, PetClinic grew from 28 to 219 threads contending for its 10 database
 connections, its one core ran full, GC pauses rose from 6.5 to 25 ms and k6 dropped 9,476
 iterations. That is PetClinic's own failure mode on one core, so no agent could be measured
 there.
@@ -140,7 +140,7 @@ validity rules were tuned.
 
 Six repeats per variant for each load shape, in the harness's rotated order so no variant always
 goes first, and 21 startup-only repeats per variant. A load-shape job runs 18 times at 8 to 16 minutes
-each, so 2.5 to 5 hours, inside the six-hour job limit. The three jobs run at once.
+each, so it takes 2.5 to 5 hours, inside the six-hour job limit. The three jobs run at once.
 
 Each table gives each variant's median with its minimum and maximum. Otherlode is above or below
 OpenTelemetry on a metric only when their ranges do not overlap. Where they overlap the two are
@@ -176,8 +176,9 @@ the defaults are what an adopter gets, which is why they are the fair comparison
 
 ### Results on 2026-11-04
 
-GitHub's `ubuntu-latest` (4 vCPU), PetClinic on one pinned core, OpenTelemetry Java agent 2.32.0
-on its defaults, Otherlode with the headline `includePackages` (1,491 probes). Every run of every
+The runs used GitHub's `ubuntu-latest` (4 vCPU), with PetClinic on one pinned core, the
+OpenTelemetry Java agent 2.32.0 on its defaults and Otherlode with the headline `includePackages`
+(1,491 probes). Every run of every
 job was valid. Cells are the median with the minimum to maximum, or with the interquartile range
 for startup. "noise" marks a median inside `none`'s own range.
 
@@ -198,7 +199,7 @@ Closed loop, run 41746864038 at `9bb2c3a`, AMD EPYC 7763, six repeats per varian
 | peak threads | 28 (28 to 29) | 35 (34 to 35) | 39 (39 to 40) |
 | network write (KiB/s) | 2429 (2320 to 2523) | 2474 (2332 to 2576), noise | 6588 (6274 to 6761), +171% |
 
-One repeat of Otherlode and one of OpenTelemetry drifted past 10% (-14.5% and +30.5%); each
+One repeat of Otherlode and one of OpenTelemetry drifted past 10% (-14.5% and +30.5%). Each
 variant's median drift was inside the bound.
 
 Open loop, run 41834023735 at `9955112`, AMD EPYC 7763, six repeats per variant, 34.4
@@ -217,7 +218,7 @@ was dropped, and PetClinic averaged 0.28 to 0.35 of its core:
 
 Memory in the open loop matches the closed loop's to within a few MiB, and peak threads to
 within two. One repeat of
-`none` and one of OpenTelemetry drifted past 10% (-13.9% and +12.3%); each variant's median drift
+`none` and one of OpenTelemetry drifted past 10% (-13.9% and +12.3%). Each variant's median drift
 was inside the bound.
 
 Startup, run 41746864038 at `9bb2c3a`, AMD EPYC 9V45, 21 repeats per variant:
@@ -228,9 +229,10 @@ Startup, run 41746864038 at `9bb2c3a`, AMD EPYC 9V45, 21 repeats per variant:
 | startup CPU (s) | 11.8 (11.0 to 12.3) | 14.3 (13.3 to 15.2), +21.3% | 18.9 (17.8 to 20.0), +60.0% |
 
 Otherlode does as well as or better than OpenTelemetry on every metric. In the closed loop and at
-startup its range does not overlap OpenTelemetry's on any metric above; in the open loop the two
-overlap only on p50. Per request, Otherlode cannot be told from `none`, except for 3.5% more GC
-pause in the closed loop: a probe hit is one array increment, and it sends small counter deltas.
+startup its range does not overlap OpenTelemetry's on any metric above. In the open loop the two
+overlap only on p50. Per request, Otherlode is indistinguishable from `none`, except for 3.5% more GC
+pause in the closed loop. A probe hit is one array increment, and the agent sends small counter
+deltas.
 OpenTelemetry on its defaults builds spans for every request (the servlet, Spring MVC and each JDBC
 call) and exports every one, with metrics and logs. That is about 27 KiB more allocation per
 request and 1.4 to 3.4 GB of OTLP per run, which shows in CPU and the p99, and in GC pauses in the

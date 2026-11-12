@@ -4,8 +4,8 @@ import dev.otherlode.bootstrap.OtherlodeEndpoints;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the exit of {@code RouterFunctionMapping.afterPropertiesSet()}, which fills the
- * private {@code routerFunction} field. The field's object goes unopened to {@link
+ * Runs on exit from {@code RouterFunctionMapping.afterPropertiesSet()}, which fills the
+ * private {@code routerFunction} field. The advice passes the field's object, unopened, to {@link
  * OtherlodeEndpoints#declare}.
  */
 public class DeclareRouterFunctionsAdvice {

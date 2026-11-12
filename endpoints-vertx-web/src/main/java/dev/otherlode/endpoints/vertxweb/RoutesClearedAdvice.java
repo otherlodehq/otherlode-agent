@@ -4,7 +4,7 @@ import dev.otherlode.bootstrap.OtherlodeEndpoints;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the exit of {@code RouterImpl.clear()}, which drops every route and tells nobody.
+ * Runs on exit from {@code RouterImpl.clear()}, which drops every route and tells nobody.
  * The event is {@code {"clear", router}}.
  */
 public class RoutesClearedAdvice {

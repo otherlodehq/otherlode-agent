@@ -6,7 +6,7 @@ import java.util.WeakHashMap
 
 /**
  * Finds the class loaders that cannot resolve `dev.otherlode.bootstrap`, such as JBoss Modules
- * without `jboss.modules.system.pkgs`. The answer is cached per loader, weakly.
+ * without `jboss.modules.system.pkgs`. It caches the answer per loader and holds each loader weakly.
  */
 class BootstrapVisibilityGuard {
     private val log by agentLogger(BootstrapVisibilityGuard::class.java.name)

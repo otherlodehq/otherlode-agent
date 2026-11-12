@@ -18,20 +18,20 @@ import java.util.function.Consumer;
  * Records and counts HTTP endpoints through the {@link Resolver} given to {@link #install(Resolver)}.
  *
  * <p>Methods are safe to call from any thread, before or after {@link #install}. Before {@link
- * #install}, a call for a module not yet disabled that records or declares an endpoint or disables
- * the module is buffered, and {@link #install} replays the buffer in order. A call other than a
- * disabling one that finds the buffer full is dropped and disables its module; a disabling call is
- * buffered even then.
+ * #install}, this class buffers a call for a module not yet disabled that records or declares an
+ * endpoint or disables the module, and {@link #install} replays the buffer in order. When the
+ * buffer is full, this class drops a call other than a disabling one and disables its module, and
+ * still buffers a disabling call.
  *
- * <p>A throw from the resolver is caught and logged once per operation and module. A method that
- * returns an entry returns null when it has none, such as when the call is buffered, its module is
- * disabled or the resolver throws.
+ * <p>This class catches a throw from the resolver and logs it once per operation and module. A
+ * method that returns an entry returns null when it has none, such as when the call is buffered, its
+ * module is disabled or the resolver throws.
  */
 public final class OtherlodeEndpoints {
     /** Template kind for a {@code verbatimTemplate} that is a path. */
     public static final int TEMPLATE_PATH = 0;
 
-    /** Template kind for a {@code verbatimTemplate} that is the regular expression a route is matched by. */
+    /** Template kind for a {@code verbatimTemplate} that is the regular expression that matches a route. */
     public static final int TEMPLATE_REGEX = 1;
 
     /**
@@ -475,7 +475,7 @@ public final class OtherlodeEndpoints {
 
         /**
          * Records that {@code unprefixed} was turned into {@code prefixed}. A null route or an empty
-         * {@code unprefixed} records nothing. Two equal routes are recorded as a pair too, so a different
+         * {@code unprefixed} records nothing. It records two equal routes as a pair too, so a different
          * pair for the same prefixed route makes it ambiguous in either order.
          */
         public void record(String prefixed, String unprefixed) {
@@ -589,8 +589,8 @@ public final class OtherlodeEndpoints {
     }
 
     /**
-     * Whether {@link #resourceServed} marked {@code request} on this thread. Any mark on this thread
-     * is cleared either way.
+     * Whether {@link #resourceServed} marked {@code request} on this thread. It clears any mark on
+     * this thread either way.
      */
     public static boolean takeResourceServed(Object request) {
         WeakReference<Object> mark = RESOURCE_SERVED.get();
@@ -602,7 +602,7 @@ public final class OtherlodeEndpoints {
     /**
      * Returns a consumer to run on each resource a reactive resources route emits. It marks {@code
      * exchange} through {@link #resourceServed}, then counts a hit on {@code entry}. A null {@code
-     * entry} means the endpoint is not yet known: the consumer looks {@code key} up, and records a
+     * entry} means the endpoint is not yet known, so the consumer looks {@code key} up and records a
      * dispatch under {@code verb} and {@code template} if that finds nothing. A null {@code key}
      * means the request is no call, such as a preflight, and counts nothing. The consumer never throws.
      */

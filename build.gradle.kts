@@ -71,8 +71,8 @@ allprojects {
     }
 }
 
-// One version for JaCoCo's core library and its agent jar: CoverageAgentOrderTest reads the agent's
-// execution data with the core's reader.
+// JaCoCo's core library and its agent jar share one version, because CoverageAgentOrderTest reads
+// the agent's execution data with the core's reader.
 val jacocoVersion = "0.8.13"
 allprojects {
     plugins.withType<JavaBasePlugin> {
@@ -103,7 +103,7 @@ evaluationDependsOn(":demo-spring")
 evaluationDependsOn(":endpoints-ktor-3")
 
 dependencies {
-    // Compile-time only: shipping it in this jar too would put a second copy on the system loader.
+    // Shipping it in this jar too would put a second copy on the system loader.
     compileOnly(project(":bootstrap"))
 
     testCompileOnly(project(":bootstrap"))
@@ -198,7 +198,7 @@ tasks.withType<Test>().configureEach {
     exclude(java21FixtureFiles.map { it.removeSuffix(".java") + "*" })
 }
 
-// The name must not end in ".jar": shadowJar explodes every such file it copies, which would
+// The name must not end in ".jar", because shadowJar explodes every such file it copies. That would
 // scatter the holder's classes into this jar as loose files and drop the resource itself.
 val bootstrapResourcePath = "META-INF/otherlode/bootstrap-jar.bin"
 
@@ -466,8 +466,8 @@ tasks.shadowJar {
     finalizedBy(verifyAgentJar)
 }
 
-// No fixture project goes on the test classpath: JUnit discovery would load its classes before
-// install() wires up instrumentation.
+// No fixture project goes on the test classpath, since JUnit discovery would load its classes
+// before install() wires up instrumentation.
 val scala3FixtureClassesDir = project(":fixtures-scala3").layout.buildDirectory.dir("classes/scala/main")
 val scala3FixtureRuntimeClasspath = project(":fixtures-scala3").configurations.named("runtimeClasspath")
 val scala2FixtureClassesDir = project(":fixtures-scala2").layout.buildDirectory.dir("classes/scala/main")
@@ -823,7 +823,7 @@ tasks.shadowJar {
     relocate("java.util.logging.Logger", "dev.otherlode.shaded.jul.Logger")
 
     // A test classpath that carries the testkit carries the wire module too, possibly at another
-    // version: unrelocated, the agent would link against that copy instead of its own.
+    // version. Unrelocated, the agent would link against that copy instead of its own.
     relocate("dev.otherlode.export", "dev.otherlode.shaded.export")
     relocate("dev.otherlode.proto", "dev.otherlode.shaded.proto")
     relocate("dev.otherlode.registry.RouteTemplateNormalizer", "dev.otherlode.shaded.registry.RouteTemplateNormalizer")
@@ -834,7 +834,7 @@ tasks.shadowJar {
     relocate("org.intellij.lang.annotations", "dev.otherlode.shaded.intellij.annotations")
 
     // These excludes drop every dependency's own LICENSE and NOTICE. They do not match the from()
-    // blocks below, which are matched against their own source paths.
+    // blocks below, which shadow matches against their own source paths.
     exclude("META-INF/LICENSE", "META-INF/LICENSE.txt", "META-INF/NOTICE", "META-INF/NOTICE.txt", "META-INF/licenses/**")
     from(layout.projectDirectory.files("LICENSE", "NOTICE")) {
         into("META-INF")
@@ -896,8 +896,8 @@ nmcpAggregation {
         validationTimeout.set(Duration.ofMinutes(60))
         if (publishing == "AUTOMATIC") publishingTimeout.set(Duration.ofMinutes(60))
     }
-    // Off sends .md5, .sha1 and .sha512 beside every artifact and no checksum beside a signature,
-    // which is what the Portal asks for.
+    // With this false, the upload carries .md5, .sha1 and .sha512 beside every artifact and no checksum
+    // beside a signature, which is what the Portal asks for.
     publishAllChecksums.set(false)
 }
 
@@ -916,7 +916,7 @@ val verifyPublication by tasks.registering {
     description = "Builds the Central Portal deployment zip and checks its contents."
     val zipFile = tasks.named<Zip>("nmcpZipAggregation").flatMap { it.archiveFile }
     val agentJar = tasks.shadowJar.flatMap { it.archiveFile }
-    // Resolved when the task graph is built, by which time the testkit project is configured.
+    // Gradle resolves this when it builds the task graph, by which time the testkit project is configured.
     val testkitJar =
         providers.provider {
             project(":testkit")

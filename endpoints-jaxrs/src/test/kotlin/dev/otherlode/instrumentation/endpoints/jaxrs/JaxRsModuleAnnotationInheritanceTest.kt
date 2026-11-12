@@ -45,7 +45,7 @@ class JaxRsModuleAnnotationInheritanceTest {
     @Test
     fun `an annotated native method is neither declared nor hooked`() {
         withRecordingResolver { calls ->
-            // Generated and described from bytes, never loaded, so the test JVM's own agent never sees it.
+            // The test describes the generated class from bytes and never loads it, so the test JVM's own agent never sees it.
             val loader = JaxRsModule::class.java.classLoader
             val name = "com.example.jaxrs.generated.NativeMethodResource"
 
@@ -98,8 +98,8 @@ class JaxRsModuleAnnotationInheritanceTest {
 
             assertEquals(emptyList(), calls, "without Jersey the class has no @Path of its own, so it is no resource")
         }
-        // The INFO line is not asserted: System.Logger reaches java.util.logging only once the JUL LogManager is
-        // initialised, which this test does not control.
+        // This test does not assert the INFO line, because System.Logger reaches java.util.logging only once the JUL
+        // LogManager is initialised, which this test does not control.
     }
 
     @Test
@@ -383,8 +383,8 @@ private fun installResolver(resolver: Any) {
     endpointsClass.getMethod("install", resolverInterface).invoke(null, resolver)
 }
 
-// A compiled implementer of OtherlodeEndpoints.Resolver is verified against the interface when its class file loads,
-// during Gradle's scan for test classes, which can run before the bootstrap loader carries the interface.
+// The JVM verifies a compiled implementer of OtherlodeEndpoints.Resolver against the interface when its class file
+// loads, during Gradle's scan for test classes, which can run before the bootstrap loader carries the interface.
 private fun resolverProxy(dispatch: (methodName: String, args: Array<out Any?>) -> Any?): Any {
     val resolverInterface = Class.forName("dev.otherlode.bootstrap.OtherlodeEndpoints\$Resolver", false, null)
     val loader = Thread.currentThread().contextClassLoader

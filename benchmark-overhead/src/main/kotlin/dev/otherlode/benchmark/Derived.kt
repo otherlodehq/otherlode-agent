@@ -4,10 +4,10 @@ import java.nio.file.Path
 import java.util.Locale
 
 /**
- * How far the median over a variant's repeats of `warmupDrift` (see [warmthProblem]: in a closed loop
- * the window's last-third request count over its first-third count) may lie from 1 in either direction before the variant's windows
- * are judged unsteady. A single run beyond it is named in the summary, and with three or more repeats
- * it does not fail its variant.
+ * How far the median `warmupDrift` over a variant's repeats may lie from 1 in either direction before
+ * [variantWarmthProblem] judges the variant's windows unsteady. In a closed loop, [warmthProblem]
+ * takes the drift as the window's last-third request count over its first-third count. The summary
+ * names a single run beyond it, and with three or more repeats that run does not fail its variant.
  */
 const val MAX_WINDOW_DRIFT = 0.10
 
@@ -59,10 +59,10 @@ fun perRequest(metrics: Map<String, Double>): Map<String, Double> {
 /**
  * Why the run's window cannot be judged for steadiness, or null when it can, recording its drift in
  * [metrics] as `warmupDrift`, where above 1 means the service was still speeding up and below 1
- * means it slowed. A closed loop's drift is the last third's request count over the first's; k6
- * gave no count for a third, or the first served nothing, is a problem. An open loop's drift is the
- * first third's median request latency over the last's; a missing or zero median is a problem.
- * Whether a drift is acceptable is judged over a variant's repeats by [variantWarmthProblem].
+ * means it slowed. A closed loop's drift is the last third's request count over the first's; a
+ * third with no count from k6, or a first third that served nothing, is a problem. An open loop's
+ * drift is the first third's median request latency over the last's; a missing or zero median is a
+ * problem. [variantWarmthProblem] judges whether a drift is acceptable over a variant's repeats.
  */
 fun warmthProblem(
     metrics: MutableMap<String, Double>,

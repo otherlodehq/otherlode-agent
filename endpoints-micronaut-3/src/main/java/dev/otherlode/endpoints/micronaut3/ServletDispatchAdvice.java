@@ -9,15 +9,14 @@ import io.micronaut.web.router.UriRouteMatch;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the entry of micronaut-servlet's {@code ServletHttpHandler.invokeRouteMatch}, which
- * the handler calls once per request with the route it chose, before the filters and the handler.
- * A status route arrives as a {@code StatusRouteMatch} and counts nothing.
+ * Runs on entry to micronaut-servlet's {@code ServletHttpHandler.invokeRouteMatch}. A
+ * {@code StatusRouteMatch} counts nothing.
  *
  * <p>A route counts only when its verb equals the request's.
  *
  * <p>Counting follows {@code DispatchAdvice}: the match's {@code UriRoute} is the registered key,
- * an unseen route is recorded without a handler join, and a HEAD route beside a {@code @Get}
- * counts against the GET endpoint.
+ * the advice records an unseen route without a handler join, and a HEAD route beside a
+ * {@code @Get} counts against the GET endpoint.
  */
 public class ServletDispatchAdvice {
     private static final String MODULE = "micronaut-3";

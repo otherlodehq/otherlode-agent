@@ -6,7 +6,7 @@ import com.example.target.RoutineJavaTarget;
 import com.example.target.RoutineTarget;
 import com.example.target.SwitchTarget;
 
-// Outside com.example.target, so the agent under test leaves it alone.
+// This class sits outside com.example.target, so the agent under test leaves it alone.
 public final class CoverageAgentOrderMain {
     private CoverageAgentOrderMain() {}
 

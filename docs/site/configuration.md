@@ -44,27 +44,27 @@ The system property and environment variable names come from the option name. Th
 
 | Option | Default | Accepted values | If the value is invalid |
 |---|---|---|---|
-| `serviceName` | The first of OpenTelemetry's settings, [service-name detection](#service-name-detection), then `unknown_service:java` | Any text up to 1024 bytes, except `.`, `..` and text with a NUL character | `.`, `..`, a NUL character and a longer value are skipped with a warning, and the next source gives the name |
-| `serviceNamespace` | None, which is the unspecified namespace | Any text up to 1024 bytes, except `.`, `..` and text with a NUL character | `.`, `..`, a NUL character and a longer value are skipped with a warning, and the next source gives the namespace |
-| `serviceVersion` | OpenTelemetry's `service.version`, else none | Any text up to 1024 bytes, with no NUL character | A longer value or one with a NUL character is skipped with a warning, and the next source gives the version |
-| `serviceInstanceId` | A random UUID, new for each process | Any text up to 1024 bytes, with no NUL character | A longer value or one with a NUL character is skipped with a warning, and the next source gives the ID, else the random UUID |
-| `environment` | OpenTelemetry's `deployment.environment.name`, then `deployment.environment`, then `test` when `testRun` is on, else none | Any text up to 1024 bytes, with no NUL character | A longer value or one with a NUL character is skipped with a warning, and the next source gives the environment |
+| `serviceName` | The first of OpenTelemetry's settings, [service-name detection](#service-name-detection), then `unknown_service:java` | Any text up to 1024 bytes, except `.`, `..` and text with a NUL character | The agent skips `.`, `..`, a value with a NUL character and a longer value with a warning, and the next source gives the name |
+| `serviceNamespace` | None, which is the unspecified namespace | Any text up to 1024 bytes, except `.`, `..` and text with a NUL character | The agent skips `.`, `..`, a value with a NUL character and a longer value with a warning, and the next source gives the namespace |
+| `serviceVersion` | OpenTelemetry's `service.version`, else none | Any text up to 1024 bytes, with no NUL character | The agent skips a longer value or one with a NUL character with a warning, and the next source gives the version |
+| `serviceInstanceId` | A random UUID, new for each process | Any text up to 1024 bytes, with no NUL character | The agent skips a longer value or one with a NUL character with a warning, and the next source gives the ID, else the random UUID |
+| `environment` | OpenTelemetry's `deployment.environment.name`, then `deployment.environment`, then `test` when `testRun` is on, else none | Any text up to 1024 bytes, with no NUL character | The agent skips a longer value or one with a NUL character with a warning, and the next source gives the environment |
 | `exportUrl` | `http://localhost:4319` | An absolute `http` or `https` URL with a host, and with no query string, fragment, user name, password or other `@` after the scheme. The host cannot contain an underscore. A path is allowed | ERROR, and the agent is off for this JVM |
 | `authToken` | None | Visible ASCII characters only, `!` to `~` | ERROR, and the agent is off for this JVM |
-| `flushIntervalSeconds` | `60` | A whole number of seconds from `1` to `86400` | Warning, and the default is used |
-| `trimNativeHeapIntervalMinutes` | `60` | A whole number of minutes from `0` to `1440`. `0` turns the trim off | Warning, and the default is used |
-| `includePackages` | None. Required. | Dotted package or class prefixes, separated by `;` | Glob and path prefixes are dropped with a warning. If no prefix is left, the agent logs an ERROR and disables itself |
-| `excludePackages` | None | Dotted package or class prefixes, separated by `;` | Glob and path prefixes are dropped with a warning |
-| `callbackAnnotations` | None | Fully qualified annotation type names, separated by `;` | A name that cannot be a type name is dropped with a warning |
-| `staticBaselineEnabled` | `false` | `true` or `false`, in any letter case | Warning, and the default is used |
-| `classListingEnabled` | `true` | `true` or `false`, in any letter case | Warning, and the default is used |
-| `enabled` | `true` | `true` or `false`, in any letter case | Warning, and the default is used |
-| `endpointsEnabled` | `true` | `true` or `false`, in any letter case | Warning, and the default is used |
-| `disabledEndpointModules` | None | Endpoint module names, separated by `;` | A name that matches no module is skipped with a warning |
-| `otelBridgeEnabled` | `false` | `true` or `false`, in any letter case | Warning, and the default is used |
-| `testRun` | `false` | `true` or `false`, in any letter case | Warning, and the default is used |
+| `flushIntervalSeconds` | `60` | A whole number of seconds from `1` to `86400` | Warning, and the agent uses the default |
+| `trimNativeHeapIntervalMinutes` | `60` | A whole number of minutes from `0` to `1440`. `0` turns the trim off | Warning, and the agent uses the default |
+| `includePackages` | None. Required. | Dotted package or class prefixes, separated by `;` | The agent drops glob and path prefixes with a warning. If no prefix is left, it logs an ERROR and disables itself |
+| `excludePackages` | None | Dotted package or class prefixes, separated by `;` | The agent drops glob and path prefixes with a warning |
+| `callbackAnnotations` | None | Fully qualified annotation type names, separated by `;` | The agent drops a name that cannot be a type name, with a warning |
+| `staticBaselineEnabled` | `false` | `true` or `false`, in any letter case | Warning, and the agent uses the default |
+| `classListingEnabled` | `true` | `true` or `false`, in any letter case | Warning, and the agent uses the default |
+| `enabled` | `true` | `true` or `false`, in any letter case | Warning, and the agent uses the default |
+| `endpointsEnabled` | `true` | `true` or `false`, in any letter case | Warning, and the agent uses the default |
+| `disabledEndpointModules` | None | Endpoint module names, separated by `;` | The agent skips a name that matches no module, with a warning |
+| `otelBridgeEnabled` | `false` | `true` or `false`, in any letter case | Warning, and the agent uses the default |
+| `testRun` | `false` | `true` or `false`, in any letter case | Warning, and the agent uses the default |
 
-No invalid value stops your application. An invalid value gets a warning in the log, and the last column says what the agent uses instead. Three values disable the agent for the life of the JVM instead: an empty `includePackages` (see [includePackages and excludePackages](#includepackages-and-excludepackages)), an `exportUrl` the agent cannot use (see [exportUrl](#exporturl)) and an `authToken` with a character outside visible ASCII (see [authToken](#authtoken)).
+No invalid value stops your application. An invalid value gets a warning in the log, and the last column says what the agent uses instead. Three values disable the agent for the life of the JVM instead: an empty `includePackages`, an `exportUrl` the agent cannot use and an `authToken` with a character outside visible ASCII. [includePackages and excludePackages](#includepackages-and-excludepackages), [exportUrl](#exporturl) and [authToken](#authtoken) cover each case.
 
 ## Where a value comes from
 
@@ -79,15 +79,15 @@ An environment variable cannot override an option that the command line already 
 
 A blank value counts as unset and falls through to the next source. An option set to nothing in the argument string, such as `authToken=`, does not hide the environment variable. The agent trims the leading and trailing spaces of every value.
 
-Four options go on past the default. `serviceName`, `serviceNamespace`, `serviceVersion` and `environment` also read [OpenTelemetry's settings](#opentelemetrys-settings) after the three Otherlode sources. `serviceName` then uses [service-name detection](#service-name-detection).
+Four options read more sources before the default. `serviceName`, `serviceNamespace`, `serviceVersion` and `environment` also read [OpenTelemetry's settings](#opentelemetrys-settings) after the three Otherlode sources. `serviceName` then uses [service-name detection](#service-name-detection).
 
 ### The argument string
 
 The argument string is a comma-separated list of `key=value` pairs. The agent splits each pair at its first `=`, and trims the key and the value. These rules apply.
 
 - A value cannot contain a comma, and there is no quoting. A value that needs a comma has to come from the system property or the environment variable.
-- Keys are case-sensitive. A key the agent does not know, such as `includePackage` or `IncludePackages`, is ignored with a warning that lists the known options.
-- A pair with no `=`, or one that starts with `=`, is ignored with a warning. The warning gives the position of the pair in the string and never quotes it.
+- Keys are case-sensitive. The agent ignores a key it does not know, such as `includePackage` or `IncludePackages`, and logs a warning that lists the known options.
+- The agent ignores a pair with no `=`, or one that starts with `=`, and logs a warning. The warning gives the position of the pair in the string and never quotes it.
 - After an `authToken` pair, the agent quotes no pair up to the next pair with a known key, since such a pair may be the rest of a token that holds a comma. It logs one warning instead, which says the token may be cut short and names `otherlode.auth.token` and `OTHERLODE_AUTH_TOKEN` as the places to set it.
 - When a key appears twice in the string, the last one wins.
 
@@ -105,7 +105,7 @@ otherlode: staticBaselineEnabled must be 'true' or 'false', ignoring 'yes' and u
 
 | Option | When it is on |
 |---|---|
-| `enabled` | The agent runs. When it is `false`, the agent installs no transformer, starts no thread, sends nothing and logs one INFO line. A warning about another option's value can still appear. The agent acts on it before it refuses any value of `includePackages`, `exportUrl` or `authToken`. Set `OTHERLODE_ENABLED=false` to switch off an agent that an image already attaches, without rebuilding the image. See [Turn the agent off](attach#turn-the-agent-off). |
+| `enabled` | The agent runs. When it is `false`, the agent installs no transformer, starts no thread, sends nothing and logs one INFO line. A warning about another option's value can still appear. The agent acts on `enabled` before it refuses any value of `includePackages`, `exportUrl` or `authToken`. Set `OTHERLODE_ENABLED=false` to switch off an agent that an image already attaches, without rebuilding the image. See [Turn the agent off](attach#turn-the-agent-off). |
 | `endpointsEnabled` | The agent installs its framework endpoint modules. A module counts only when its framework is on the application's classpath, and it ignores `includePackages` and `excludePackages`. [disabledEndpointModules](#disabledendpointmodules) keeps single modules off. With the option off, the agent logs one INFO line and reports no endpoints. It reports each module it would have installed as disabled, with the kind `CONFIGURED_OFF`, and includes `otel` only when `otelBridgeEnabled` is on. See [endpoints](endpoints). |
 | `otelBridgeEnabled` | The agent also counts the route that OpenTelemetry's own HTTP server instrumentation resolved, for a framework no endpoint module covers. It needs `endpointsEnabled`. See [endpoints](endpoints). |
 | `staticBaselineEnabled` | The agent scans the classpath once, on a background thread, for classes under `includePackages` that never load. The scan's cost grows with the size of the classpath. See [classes](classes). |
@@ -122,7 +122,7 @@ includePackages=com.acme.shop;com.acme.billing,excludePackages=com.acme.shop.gen
 
 A prefix matches a class when the class name starts with the prefix and the next character is `.` or `$`, or when the name equals the prefix. So `com.acme` matches `com.acme.Order`, `com.acme.shop.Order` and `com.acme.Order$Line`. It does not match `com.acmeinternal.Order`. A prefix can name a package or one class. Matching is case-sensitive.
 
-A class under `excludePackages` is never probed, even when `includePackages` also matches it. Exclusion always wins. The agent's own package, `dev.otherlode`, is never probed.
+The agent never probes a class under `excludePackages`, even when `includePackages` also matches it. Exclusion always wins. The agent never probes its own package, `dev.otherlode`.
 
 The agent cleans each prefix before it uses it. It trims spaces, drops a trailing `.`, and ignores empty entries. `com.acme.` and `com.acme` mean the same.
 
@@ -139,7 +139,7 @@ When `includePackages` has no usable prefix, the agent logs one ERROR, disables 
 The list is empty in cases such as these.
 
 - The option is absent, from every source.
-- The option is blank, `;`, or only spaces. This happens when a template leaves `includePackages=${APP_PACKAGES}` unset.
+- The option is blank, `;`, or only spaces, as when a template leaves `includePackages=${APP_PACKAGES}` unset.
 - Only `excludePackages` is set.
 - Every include prefix is a glob or a path, and the agent dropped them all.
 
@@ -158,15 +158,15 @@ callbackAnnotations=com.acme.bus.Handles;com.acme.jobs.OnJob
 ```
 
 - **Names are exact.** Each entry is one annotation type's fully qualified name, with no prefix or wildcard.
-- **A nested annotation can be written either way.** `com.acme.Bus.Handler` and `com.acme.Bus$Handler` name the same annotation. In a shell or a Dockerfile, `$Handler` is read as a variable and dropped, leaving `com.acme.Bus`, so write the `.` form there.
+- **You can write a nested annotation either way.** `com.acme.Bus.Handler` and `com.acme.Bus$Handler` name the same annotation. A shell or a Dockerfile reads `$Handler` as a variable and drops it, which leaves `com.acme.Bus`, so write the `.` form there.
 - **A named annotation counts with `RUNTIME` or `CLASS` retention**, so a Java annotation declared with no `@Retention` works. A `SOURCE` annotation never reaches the class file and cannot work. An unnamed annotation with `CLASS` retention counts only when it carries a named one, never because it carries a framework annotation from the built-in list.
-- **A repeated annotation is matched through its container.** When a repeatable annotation is used twice on a method, the class file holds only its container, such as `@Handles.List`. Name the repeatable annotation alone. The agent recognises the container, and the label names the container.
+- **The agent matches a repeated annotation through its container.** When you use a repeatable annotation twice on a method, the class file holds only its container, such as `@Handles.List`. Name the repeatable annotation alone. The agent recognises the container, and the label names the container.
 - **It counts on a method, or on one it overrides.** The annotation can be on the method itself or carried by an annotation on the method, at any depth. An annotation on a parameter or on a class marks nothing. A method that implements or overrides an interface or superclass method carrying the annotation takes it too, whether that method is abstract or has a body, and the label names the annotation as written there.
 - **It adds to the built-in list.** The option cannot remove a built-in name.
 
 To mark methods that only your own code calls by reflection, declare an annotation of your own and name it here. The agent ships no annotation for this.
 
-An entry that cannot be an annotation's name, such as one with a `/`, a `*`, a leading `@` or no package, is dropped with a warning that suggests a spelling where it can. The agent cannot tell at startup whether a well-formed name exists. At the first flush five minutes or more after startup, or at shutdown if that comes first, it logs one INFO line naming each annotation it has not yet seen on a method:
+The agent drops an entry that cannot be an annotation's name, such as one with a `/`, a `*`, a leading `@` or no package, and logs a warning that suggests a spelling where it can. The agent cannot tell at startup whether a well-formed name exists. At the first flush five minutes or more after startup, or at shutdown if that comes first, it logs one INFO line naming each annotation it has not yet seen on a method:
 
 ```text
 otherlode: callbackAnnotations names 1 annotation not yet seen on any method: com.acme.bus.Handels. A name is matched exactly; check the spelling if its classes have loaded.
@@ -184,10 +184,10 @@ disabledEndpointModules=jaxrs;ktor-2
 
 - **Names are the module names.** They are `javalin-6`, `javalin-7`, `jaxrs`, `jdk-httpserver`, `ktor-2`, `ktor-3`, `micronaut`, `micronaut-3`, `servlet`, `spring-webflux`, `spring-webmvc`, `vertx-web` and `otel`, as the [supported frameworks](endpoints#supported-frameworks) table lists them.
 - **A kept-off module does nothing.** It matches no class and counts nothing, whether or not its framework is on the classpath.
-- **The agent reports it.** Each module the option keeps off is sent as a disabled module with the kind `CONFIGURED_OFF` and a reason that names the option.
-- **`otel` is reported only when the bridge would have run.** With `otelBridgeEnabled` off, naming `otel` changes nothing.
+- **The agent reports it.** The agent sends each module the option keeps off as a disabled module with the kind `CONFIGURED_OFF` and a reason that names the option.
+- **The agent reports `otel` only when the bridge would have run.** With `otelBridgeEnabled` off, naming `otel` changes nothing.
 
-The agent logs one INFO line listing the modules the option keeps off, which starts `otherlode: disabledEndpointModules keeps these endpoint modules off:`. A name that matches no module is skipped with one WARNING that lists the known names.
+The agent logs one INFO line listing the modules the option keeps off, which starts `otherlode: disabledEndpointModules keeps these endpoint modules off:`. The agent skips a name that matches no module and logs one WARNING that lists the known names.
 
 ## exportUrl
 
@@ -195,23 +195,23 @@ The agent logs one INFO line listing the modules the option keeps off, which sta
 
 | Path | Carries |
 |---|---|
-| `/v1/otherlode/deltas` | Delta batches, which double as the heartbeat |
+| `/v1/otherlode/deltas` | Delta batches, which are also the heartbeat |
 | `/v1/otherlode/manifest` | The probe manifest |
-| `/v1/otherlode/static-baseline` | The static baseline, when it is enabled |
-| `/v1/otherlode/class-listing` | The class listing, unless it is switched off |
+| `/v1/otherlode/static-baseline` | The static baseline, when `staticBaselineEnabled` is on |
+| `/v1/otherlode/class-listing` | The class listing, unless `classListingEnabled` is off |
 
-The agent normalises the value before it uses it. It trims spaces, drops trailing `/` characters, and lowercases the scheme, so `HTTPS://Collector.example.com/` becomes `https://Collector.example.com`. The host and the path keep the letter case you wrote. A path is kept: `https://gateway.example.com/otherlode` posts to `https://gateway.example.com/otherlode/v1/otherlode/deltas`.
+The agent normalises the value before it uses it. It trims spaces, drops trailing `/` characters, and lowercases the scheme, so `HTTPS://Collector.example.com/` becomes `https://Collector.example.com`. The host and the path keep the letter case you wrote. The agent keeps a path, so `https://gateway.example.com/otherlode` posts to `https://gateway.example.com/otherlode/v1/otherlode/deltas`.
 
-The agent refuses these values. It logs one ERROR and turns itself off for the life of the JVM: it instruments nothing and sends nothing. It does not fall back to the default `http://localhost:4319`, which applies only when you set no `exportUrl`.
+The agent refuses these values. It logs one ERROR and turns itself off for the life of the JVM, so it instruments nothing and sends nothing. It does not fall back to the default `http://localhost:4319`, which applies only when you set no `exportUrl`.
 
-- A value that is not an absolute `http` or `https` URL with a host. A relative path such as `/v1/otherlode` and a value with no scheme both fall here.
+- A value that is not an absolute `http` or `https` URL with a host. A relative path such as `/v1/otherlode` and a value with no scheme are both in this case.
 - A value with a query string.
 - A value with a fragment.
 - A value with a user name or password, such as `http://user:secret@collector:4319`, or any other `@` after the scheme. The agent never sends a user name or password, so set the token with [authToken](#authtoken).
 - A value that starts with `http://` when `authToken` is set and the host is `otherlode.dev` or ends with `.otherlode.dev`, in any letter case. Without a token, the agent accepts the value.
 - A host name that contains an underscore, such as `http://my_collector:4319`. Use a host name or network alias without an underscore, or an IP address.
 
-The ERROR names `exportUrl` and the source that gave the value: the agent option, the system property or the environment variable. It does not repeat the value, apart from the host in the underscore case. It starts with the reason, as in `otherlode: exportUrl must be an absolute http or https URL; exportUrl from the environment variable OTHERLODE_EXPORT_URL is refused, so the agent is off for this JVM`. The instance sends no data until you fix the value and restart the JVM. When the agent is disabled with `enabled=false`, it logs no ERROR for these values.
+The ERROR names `exportUrl` and the source that gave the value: the agent option, the system property or the environment variable. It does not repeat the value, apart from the host in the underscore case. It starts with the reason, as in `otherlode: exportUrl must be an absolute http or https URL; exportUrl from the environment variable OTHERLODE_EXPORT_URL is refused, so the agent is off for this JVM`. The instance sends no data until you fix the value and restart the JVM. When you disable the agent with `enabled=false`, it logs no ERROR for these values.
 
 The agent connects through the JVM's proxy settings, such as `-Dhttps.proxyHost` and `-Dhttps.proxyPort`, and trusts the certificates in the JVM's truststore. For JVMs with no route to the internet, send through a collector. See [Add a collector](/docs/collector/add).
 
@@ -247,17 +247,17 @@ otherlode: authToken is set but exportUrl is not, so the token goes to the defau
 
 ## flushIntervalSeconds
 
-`flushIntervalSeconds` is the time between flushes, in whole seconds. The accepted range is `1` to `86400` (one day). A decimal, a negative number, zero, a value above one day and text such as `30s` all produce a warning and the default of `60`.
+`flushIntervalSeconds` is the time between flushes, in whole seconds. The accepted range is `1` to `86400`, which is one day. A decimal, a negative number, zero, a value above one day and text such as `30s` all produce a warning and the default of `60`.
 
-The agent starts the first flush at a random point within the first interval. The flushes after it follow every interval at a fixed rate. Every payload carries the interval as `flush_interval_seconds`.
+The agent starts the first flush at a random point within the first interval. After it, the agent flushes once per interval at a fixed rate. Every payload carries the interval as `flush_interval_seconds`.
 
-A running instance marks every delta batch and manifest `starting` for at least one interval after the agent starts, and for at most 10. [Pending counts](data-sent#pending-counts) says when it stops.
+A running instance marks every delta batch and manifest `starting` for at least one interval after the agent starts, and for at most 10 intervals. [Pending counts](data-sent#pending-counts) says when it stops.
 
 ## trimNativeHeapIntervalMinutes
 
-`trimNativeHeapIntervalMinutes` is the time between native heap trims, in whole minutes, from `0` to `1440` (one day). `0` turns the trim off. A decimal, a negative number, a value above one day and text such as `60m` produce a warning and the default of `60`.
+`trimNativeHeapIntervalMinutes` is the time between native heap trims, in whole minutes, from `0` to `1440`, which is one day. `0` turns the trim off. A decimal, a negative number, a value above one day and text such as `60m` produce a warning and the default of `60`.
 
-A trim returns the native memory that glibc holds free to the operating system, and leaves memory in use alone. The first trim comes one interval after startup. See [Memory over days](overhead#memory-over-days).
+A trim returns to the operating system the native memory that glibc holds free, and leaves memory in use alone. The first trim comes one interval after startup. See [Memory over days](overhead#memory-over-days).
 
 The agent trims only on Linux with glibc, and not when the JVM already trims with `-XX:TrimNativeHeapInterval` above `0`. After a trim fails, it stops trimming for the life of the JVM.
 
@@ -273,9 +273,9 @@ Each payload names the service that sent it with these values.
 | Environment | `environment` from the three Otherlode sources, then OpenTelemetry's `deployment.environment.name`, then `deployment.environment`, then `test` when `testRun` is on, else none |
 | Instance ID | `serviceInstanceId` from the three Otherlode sources, else a random UUID |
 
-At each step, the first value that is not blank wins. A service is known by its namespace and its name together. With no namespace, the service is in the unspecified namespace.
+At each step, the first value that is not blank wins. Otherlode identifies a service by its namespace and its name together. With no namespace, the service is in the unspecified namespace.
 
-A service name or namespace of `.` or `..` is skipped with a warning, as if it were blank, and the next source gives the value. The check covers every source of a name or a namespace, including OpenTelemetry's and detection.
+The agent skips a service name or namespace of `.` or `..` with a warning, as if it were blank, and the next source gives the value. The check covers every source of a name or a namespace, including OpenTelemetry's and detection.
 
 The name, namespace, version, environment and instance ID each hold at most 1024 bytes in UTF-8. Multi-byte characters count by their bytes, so 512 characters of two bytes each fit and 513 do not. The agent skips a longer value, or one with a NUL character, with a warning that names its source and never the value. The next source gives the value, and an instance ID that every source skips falls back to the random UUID.
 
@@ -294,9 +294,9 @@ The agent reads two OpenTelemetry settings.
 | Service name | `otel.service.name` | `OTEL_SERVICE_NAME` |
 | Resource attributes | `otel.resource.attributes` | `OTEL_RESOURCE_ATTRIBUTES` |
 
-Each setting comes whole from one place. The system property wins over the environment variable. A system property that is set and not blank hides the whole environment variable, so a `service.version` in `OTEL_RESOURCE_ATTRIBUTES` is not read when `otel.resource.attributes` is also set. A blank system property counts as unset.
+Each setting comes whole from one place. The system property wins over the environment variable. A system property that is set and not blank hides the whole environment variable, so the agent does not read a `service.version` in `OTEL_RESOURCE_ATTRIBUTES` when `otel.resource.attributes` is also set. A blank system property counts as unset.
 
-The service name is `otel.service.name` (or `OTEL_SERVICE_NAME`), else the `service.name` resource attribute. The first wins.
+The service name is `otel.service.name` or `OTEL_SERVICE_NAME`, else the `service.name` resource attribute.
 
 The agent reads these resource attributes.
 
@@ -320,7 +320,7 @@ OTEL_RESOURCE_ATTRIBUTES=service.namespace=shop,service.version=2.4.1,deployment
 
 - The agent splits the list at commas, and each pair at its first `=`. It trims the key and the value.
 - It percent-decodes each value as UTF-8 bytes, so `%20` is a space and `%2C` is a comma. A `+` stays a `+`. A `%` that is not followed by two hex digits stays as written.
-- A pair with an empty value is dropped. It is not an error.
+- The agent drops a pair with an empty value, and does not treat it as an error.
 - When a key appears twice, the last pair wins.
 - If any pair has no `=` or an empty key, the agent discards the whole list and logs a warning that names the setting. It then reads no name, namespace, version or environment from that list.
 
@@ -351,8 +351,8 @@ Detection reads the classpath files these ways.
 - Each entry of `java.class.path` is a directory or a jar. For each file name, the first entry in classpath order that holds it wins.
 - When any entry holds `BOOT-INF/classes/`, the JVM is running a Spring Boot executable jar, and the agent looks for every name under that prefix.
 - The agent never opens a jar nested inside another jar, such as one under `BOOT-INF/lib/`, and does not follow a manifest's `Class-Path`.
-- A `.properties` file is read as ISO 8859-1.
-- A YAML file is read as nested block mappings (`spring:`, then `application:`, then `name:`) with plain, single-quoted or double-quoted values and `#` comments. The first document that names the application wins when a file holds several documents split by `---`. The agent does not read flow mappings, block scalars (`|`, `>`), anchors, aliases, escapes or a dotted key such as `spring.application.name:`.
+- The agent reads a `.properties` file as ISO 8859-1.
+- The agent reads a YAML file as nested block mappings (`spring:`, then `application:`, then `name:`) with plain, single-quoted or double-quoted values and `#` comments. The first document that names the application wins when a file holds several documents split by `---`. The agent does not read flow mappings, block scalars (`|`, `>`), anchors, aliases, escapes or a dotted key such as `spring.application.name:`.
 
 If detection finds nothing, the name is `unknown_service:java`.
 
@@ -362,7 +362,7 @@ These settings are not agent options, and the three-source scheme does not cover
 
 | Setting | Where | What it does |
 |---|---|---|
-| `otel.service.name`, `otel.resource.attributes` | System property, and `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES` as variables | [OpenTelemetry's settings](#opentelemetrys-settings) above |
+| `otel.service.name`, `otel.resource.attributes` | System properties, and the environment variables `OTEL_SERVICE_NAME` and `OTEL_RESOURCE_ATTRIBUTES` | [OpenTelemetry's settings](#opentelemetrys-settings) above |
 | `spring.application.name`, `SPRING_APPLICATION_NAME` | System property, environment variable | Input to [service-name detection](#service-name-detection) |
 | `net.bytebuddy.naming` | System property | Read only to tell classes that ByteBuddy generates at runtime from your own. With the value `fixed` or `caller`, the agent treats a class whose name ends in `$ByteBuddy` as runtime-generated and leaves it alone. |
 | `otherlode.testkit.port`, `otherlode.testkit.startup.timeout.seconds` | System property | Settings of the testkit's JUnit extension, not of the agent. See [the testkit](testkit). |

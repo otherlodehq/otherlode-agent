@@ -17,7 +17,7 @@ import java.time.Duration
  *
  * The filtered result carries what [ExternalClassRegistry.mappingFor] returns for each kept name.
  * [filter] runs [dependencyListing] first if no one has, then waits up to [listingWait] for the
- * listing to end. If it failed or is still running, every reference list is emptied.
+ * listing to end. If the listing failed or is still running, [filter] empties every reference list.
  */
 class BaselineReferenceFilter(
     private val dependencies: DependencyRegistry,
@@ -30,7 +30,7 @@ class BaselineReferenceFilter(
 
     /**
      * [result] with dropped names removed from every reference list and each kept name the class index
-     * maps recorded. The [DependencyRegistry] class index is released afterwards, whatever the outcome.
+     * maps recorded. It releases the [DependencyRegistry] class index afterwards, whatever the outcome.
      */
     fun filter(result: StaticScanResult): StaticScanResult {
         try {

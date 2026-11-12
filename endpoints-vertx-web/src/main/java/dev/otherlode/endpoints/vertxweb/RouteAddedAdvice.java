@@ -4,7 +4,7 @@ import dev.otherlode.bootstrap.OtherlodeEndpoints;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the exit of {@code RouterImpl.add(RouteImpl)}, which a route reaches the first time
+ * Runs on exit from {@code RouterImpl.add(RouteImpl)}, which a route reaches the first time
  * a handler or a failure handler is set on it. The event is {@code {"add", router, route}}.
  */
 public class RouteAddedAdvice {

@@ -76,6 +76,6 @@ class PendingDeclarations internal constructor() {
         staged.remove()
     }
 
-    /** How many declarations this thread is holding; for tests. */
+    /** How many declarations this thread is holding. */
     fun pendingCount(): Int = staged.get()?.declarations?.size ?: 0
 }

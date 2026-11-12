@@ -60,7 +60,7 @@ class KotlinSmap internal constructor(
 
 /**
  * Parses the `Kotlin` stratum of a class's `SourceDebugExtension`, the JSR-045 SMAP kotlinc
- * writes to record where an inlined copy's bytecode came from. Other strata are skipped.
+ * writes to record where an inlined copy's bytecode came from. It skips other strata.
  */
 object KotlinSmapParser {
     private val lineEntryPattern = Regex("""^(\d+)(?:#(\d+))?(?:,(\d+))?:(\d+)(?:,(\d+))?$""")

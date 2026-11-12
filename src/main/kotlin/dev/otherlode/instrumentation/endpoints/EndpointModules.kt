@@ -7,8 +7,8 @@ import java.util.ServiceConfigurationError
 import java.util.ServiceLoader
 
 /**
- * Finds every [EndpointModule] with [ServiceLoader]. A provider that fails to load is logged and
- * skipped, so one broken module does not hide the others.
+ * Finds every [EndpointModule] with [ServiceLoader]. It logs and skips a provider that fails to
+ * load, so one broken module does not hide the others.
  */
 object EndpointModules {
     private val log by agentLogger(EndpointModules::class.java.name)

@@ -9,7 +9,8 @@ import java.util.concurrent.atomic.AtomicLong;
  * Holds {@code VerifyError} messages passed to {@link #record(String)} until {@link #drain()} takes them.
  *
  * <p>The ring holds up to {@link #CAPACITY} messages between two drains. A call that finds it
- * full counts one overflow and stores nothing. A message equal to one stored recently is skipped.
+ * full counts one overflow and stores nothing. {@link #record} skips a message equal to one stored
+ * recently.
  */
 public final class OtherlodeVerifierMessages {
     /** How many messages the ring holds between two drains. */
@@ -82,7 +83,7 @@ public final class OtherlodeVerifierMessages {
 
         /** Stores {@code message}; see {@link OtherlodeVerifierMessages#record(String)}. */
         public void record(String message) {
-            // Can run inside a VerifyError constructor under a class's initialisation lock: it must
+            // Can run inside a VerifyError constructor under a class's initialisation lock, so it must
             // not block, load or link a class, allocate, log or throw.
             if (message == null) {
                 return;

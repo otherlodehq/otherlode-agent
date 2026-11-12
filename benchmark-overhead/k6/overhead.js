@@ -1,6 +1,6 @@
 // Each request carries a `name` tag, and the harness leaves the `url` system tag off.
 // The thresholds below make k6 export the request count of the first and last thirds.
-// With OPEN_RATE_PER_MIN set, the harness passes neither -u nor --duration: either would replace the scenario.
+// With OPEN_RATE_PER_MIN set, the harness passes neither -u nor --duration, since either would replace the scenario.
 import http from 'k6/http';
 import exec from 'k6/execution';
 import { check } from 'k6';

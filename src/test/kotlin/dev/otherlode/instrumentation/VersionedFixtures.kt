@@ -213,7 +213,7 @@ internal object VersionedFixtures {
 
     fun subroutine(version: Int): Fixture {
         val name = internalName(version, "Finally")
-        // ASM cannot compute frames over jsr; a version 50 class without a StackMapTable is verified by type inference.
+        // ASM cannot compute frames over jsr, and the JVM verifies a version 50 class without a StackMapTable by type inference.
         val cw = ClassWriter(ClassWriter.COMPUTE_MAXS)
         cw.visit(asmVersion(version), Opcodes.ACC_PUBLIC or Opcodes.ACC_SUPER, name, null, "java/lang/Object", null)
         cw.visitSource("Finally.java", null)

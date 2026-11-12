@@ -22,7 +22,7 @@ import kotlin.test.assertTrue
 
 // install() has no uninstall, so this class must run before any other that installs a resolver; the class-level
 // @Order and junit-platform.properties guarantee it. Resolvers here are Proxy instances, never compiled
-// implementers: Gradle loads every test-classpath class before BeforeEach installs the bootstrap holder.
+// implementers, since Gradle loads every test-classpath class before BeforeEach installs the bootstrap holder.
 @Order(Int.MIN_VALUE)
 @TestMethodOrder(MethodOrderer.OrderAnnotation::class)
 class OtherlodeEndpointsSeamTest {

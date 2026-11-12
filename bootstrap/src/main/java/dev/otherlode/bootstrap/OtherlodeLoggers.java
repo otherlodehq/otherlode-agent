@@ -54,7 +54,7 @@ public final class OtherlodeLoggers {
 
     /**
      * True when the system class loader finds a {@code System.LoggerFinder} service file or a boot-layer module
-     * provides that service. Checked once; loads no provider class.
+     * provides that service. It checks once and loads no provider class.
      */
     public static boolean bridgePresent() {
         return Bridge.PRESENT;
@@ -68,7 +68,7 @@ public final class OtherlodeLoggers {
         fallback = factory;
     }
 
-    /** True once the gate is open, by {@link #openGate} or by time. True with no bridge. */
+    /** True once the gate is open, through {@link #openGate} or after {@link #GATE_SECONDS}. True with no bridge. */
     public static boolean isGateOpen() {
         if (gateOpen) {
             return true;
@@ -79,7 +79,10 @@ public final class OtherlodeLoggers {
         return gateOpen;
     }
 
-    /** Opens the gate and wakes {@link #awaitGate}; loggers from {@link #get} then use the JDK's. */
+    /**
+     * Opens the gate and wakes {@link #awaitGate}. Loggers from {@link #get} then write through
+     * {@link System#getLogger}.
+     */
     public static void openGate() {
         synchronized (LOCK) {
             gateOpen = true;

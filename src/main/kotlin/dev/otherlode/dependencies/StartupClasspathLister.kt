@@ -30,7 +30,7 @@ data class ListedDependency(
  * entry of [classPath] (split on [File.pathSeparator]), the files a manifest `Class-Path` reaches
  * from one, and an exploded Spring Boot application's libraries. Two jars with one identity key
  * ([DependencyRegistry.identityKey]) are one dependency, and the first found keeps its location and
- * class count. A jar that cannot be read is skipped with one WARNING. Every jar read and judged not a
+ * class count. It skips a jar it cannot read and logs one WARNING. Every jar read and judged not a
  * dependency goes to [onNotADependency]. With [keepClassNames], each dependency carries the names of
  * its classes, merged across jars with its identity key, and a name held by two jars stays with the
  * first in search order.

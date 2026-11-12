@@ -20,8 +20,8 @@ internal class ShutdownHookWatch internal constructor(
         deadline: Long,
     ): Boolean {
         val pollEnds = minOf(deadline, System.nanoTime() + NEW_POLL.toNanos())
-        // A hook still NEW after NEW_POLL is one the JVM never starts, as JDK 25 leaves a virtual-thread hook it
-        // could not start, so it counts as ended.
+        // A hook still NEW after NEW_POLL is one the JVM never starts, so it counts as ended. JDK 25 leaves a
+        // virtual-thread hook it could not start in that state.
         while (hook.state == Thread.State.NEW) {
             if (remainingMillis(pollEnds) <= 0L) return true
             sleepQuietly(START_POLL_MILLIS)

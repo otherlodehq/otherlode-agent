@@ -191,9 +191,8 @@ data class DeltaBatch(
  * [ProbeKind.OPTIONAL_ARGUMENT] probe. [targetClassName] is null when the target is in the probe's
  * own class.
  *
- * These describe a [ProbeKind.METHOD] probe. [lambdaBody], [static], [branchSites],
- * [parameterNames], [genericSignature] and [extensionReceiver] are false or empty for the type
- * initializer's probe:
+ * [lambdaBody], [static], [branchSites], [parameterNames], [genericSignature] and [extensionReceiver]
+ * are false or empty for the type initialiser's probe. These describe a [ProbeKind.METHOD] probe:
  * - [calls]: the in-scope call edges from the method's bytecode, with a pass-through's callees in
  *   place of the pass-through.
  * - [referencedClasses]: the dotted out-of-scope classes the method's bytecode references, and those
@@ -358,7 +357,7 @@ data class BranchOutcome(
 /**
  * One kept conditional jump or switch in a method, with its outcomes.
  *
- * [siteIndex] is the site's ordinal within its class in bytecode order, dropped sites counted. It
+ * [siteIndex] is the site's ordinal within its class in bytecode order, counting dropped sites. It
  * names the site within one build. [siteKey] is an opaque lowercase hex token that names it across
  * builds, null exactly when the site's branch keys are null. [line] is the line the site's BRANCH probes carry.
  *
@@ -430,7 +429,7 @@ data class FailedClass(
 )
 
 /**
- * Why a class the JVM defined can never run in this JVM: its static initializer threw, or the
+ * Why a class the JVM defined can never run in this JVM: its static initialiser threw, or the
  * verifier rejected it.
  */
 enum class InitializationFailure { STATIC_INITIALIZER_THREW, VERIFIER_REJECTED }
@@ -479,16 +478,15 @@ enum class CallEdgeKind {
  * [CallEdgeKind.CREATES] edge it comes from the implementation handle's kind or from the body class
  * method's access. [kind] says whether the caller runs the callee or hands it off.
  *
- * [capturedCount] is set on a [CallEdgeKind.CREATES] edge from an `invokedynamic`: how many of the
- * target descriptor's leading parameters take values captured at the call site, not counting a
- * bound receiver. It is 0 on other edges.
+ * On a [CallEdgeKind.CREATES] edge from an `invokedynamic`, [capturedCount] is how many of the target
+ * descriptor's leading parameters take values captured at the call site, not counting a bound
+ * receiver. It is 0 on other edges.
  *
  * [guard] is the [BranchOutcome.branchIndex] of the innermost kept outcome that dominates the
  * instruction recording this edge, or null when none does.
  *
- * [implementedInterface] is set on a [CallEdgeKind.CREATES] edge from an `invokedynamic`: the dotted
- * name of the interface the call site returns, such as `java.lang.Runnable`. It is null on other
- * edges.
+ * On a [CallEdgeKind.CREATES] edge from an `invokedynamic`, [implementedInterface] is the dotted name
+ * of the interface the call site returns, such as `java.lang.Runnable`. It is null on other edges.
  */
 data class CallEdge(
     val className: String,
@@ -820,7 +818,7 @@ enum class DependencyIdentitySource {
     JAR_MANIFEST,
 
     /**
-     * The jar's filename with its version suffix stripped; no group. The version comes from the
+     * The jar's filename with its version suffix stripped. It names no group. The version comes from the
      * filename or, when it carries none, from the manifest's `Implementation-Version`.
      */
     FILENAME,

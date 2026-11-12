@@ -13,10 +13,10 @@ import java.util.concurrent.atomic.LongAdder;
 /**
  * A no-op OTLP receiver for the overhead benchmark. Run as {@code java NoopOtlpSink.java <port>}.
  *
- * <p>Every POST is read and discarded, counted against its path with its byte length, and answered
- * 200 with an empty {@code application/x-protobuf} body.
- * {@code GET /counts} answers one {@code <path> <requests> <bytes>} line per path. Nothing else is
- * served, and no request body is kept.
+ * <p>It reads and discards every POST, counts it against its path with its byte length, and answers
+ * it 200 with an empty {@code application/x-protobuf} body.
+ * {@code GET /counts} answers one {@code <path> <requests> <bytes>} line per path. It serves nothing
+ * else and keeps no request body.
  */
 public final class NoopOtlpSink {
     private static final Map<String, LongAdder[]> COUNTS = new ConcurrentHashMap<>();

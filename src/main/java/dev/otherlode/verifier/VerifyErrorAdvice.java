@@ -4,7 +4,7 @@ import dev.otherlode.bootstrap.OtherlodeVerifierMessages;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the exit of both constructors of {@code java.lang.VerifyError}. It hands the
+ * Runs on exit from both constructors of {@code java.lang.VerifyError}. It hands the
  * constructor's message argument, null for the no-argument constructor, to {@link
  * OtherlodeVerifierMessages#record}. It reads the argument, never {@code getMessage()}, which a
  * subclass can override.

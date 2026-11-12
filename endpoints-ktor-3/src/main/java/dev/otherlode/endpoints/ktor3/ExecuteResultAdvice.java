@@ -14,10 +14,10 @@ import java.util.Deque;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto {@code RoutingRoot.executeResult}, Ktor's dispatch point. It records one hit per
- * matched request. When {@link HandleAdvice} never registered the node, the advice builds the verb
- * and path template from the selectors up to the root and records the endpoint as discovered by
- * dispatch.
+ * Runs on entry to {@code RoutingRoot.executeResult}, Ktor's dispatch point. It records one hit
+ * per matched request. When {@link HandleAdvice} never registered the node, the advice builds the
+ * verb and path template from the selectors up to the root and records the endpoint as discovered
+ * by dispatch.
  */
 public class ExecuteResultAdvice {
     private static final String MODULE = "ktor-3";

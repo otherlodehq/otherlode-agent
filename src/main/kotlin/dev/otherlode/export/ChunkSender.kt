@@ -11,8 +11,8 @@ import kotlin.concurrent.withLock
  * [retryPending] sends one through [retryExporter], which should make one attempt.
  *
  * A chunk the receiver refuses for its content (a 400 or 422) drops every pending chunk. Any other
- * failure keeps them for a later call. A chunk that reached the receiver with its answer lost is
- * sent twice. Only one thread sends at a time. A call that finds chunks pending and another thread
+ * failure keeps them for a later call. It sends a chunk twice when the chunk reached the
+ * receiver and the answer was lost. Only one thread sends at a time. A call that finds chunks pending and another thread
  * sending returns false at once.
  *
  * [noun] names a chunk in the log and [whole] names what the chunks make up. [send] makes one
@@ -30,7 +30,7 @@ open class ChunkSender<T : Any>(
     private val log by agentLogger(this::class.java.name)
     private val lock = ReentrantLock()
 
-    // pending and failureLogged are guarded by lock.
+    // lock guards pending and failureLogged.
     private val pending = ArrayDeque<T>()
 
     private var failureLogged = false

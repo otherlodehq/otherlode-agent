@@ -4,7 +4,7 @@ import dev.otherlode.bootstrap.OtherlodeEndpoints;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the entry of {@code RouterImpl.handle(HttpServerRequest)}. Passes the router to
+ * Runs on entry to {@code RouterImpl.handle(HttpServerRequest)}. Passes the router to
  * {@link OtherlodeEndpoints#declare} for the {@code vertx-web} module.
  */
 public class RootRequestAdvice {

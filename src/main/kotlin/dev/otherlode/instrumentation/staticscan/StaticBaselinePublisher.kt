@@ -13,11 +13,11 @@ import java.lang.System.Logger.Level
  * receiver in chunks carrying [includeRules].
  *
  * References pass through [filterReferences] before chunking. Without one, or when it throws an [Exception],
- * every reference list is emptied. A scan holding a class too large for one chunk is not sent, and the agent
- * logs one WARNING that names the class and the bound.
+ * the publisher empties every reference list. It does not send a scan holding a class too large for one
+ * chunk, and the agent logs one WARNING that names the class and the bound.
  *
- * Chunks are sent in order through [sender], and the first failure stops the send. A refusal of the content
- * (400 or 422) drops every chunk not yet sent. After any other failure, the chunks left are sent again after
+ * It sends chunks in order through [sender], and the first failure stops the send. A refusal of the content
+ * (400 or 422) drops every chunk not yet sent. After any other failure, [sender] sends the chunks left again after
  * a later flush whose payloads the receiver stores.
  */
 class StaticBaselinePublisher(
@@ -33,8 +33,8 @@ class StaticBaselinePublisher(
     private val log by agentLogger(StaticBaselinePublisher::class.java.name)
 
     /**
-     * Scans, checks the classes registered so far against the scan, and sends the baseline. A failure is
-     * logged once and ends the run. Only a [VirtualMachineError] is rethrown, after it is logged.
+     * Scans, checks the classes registered so far against the scan, and sends the baseline. It logs a
+     * failure once, and the failure ends the run. It rethrows only a [VirtualMachineError], after logging it.
      */
     fun run(resource: ResourceAttributes) {
         try {

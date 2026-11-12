@@ -124,7 +124,7 @@ class EndpointInstrumentation(
                 .with(classFileCache.locationStrategy())
                 .disableClassFormatChanges()
                 // The default ignore matcher skips bootstrap classes, which endpoint modules need to match.
-                // Runtime-generated proxies are ignored too, since a proxy and its target would count each call twice.
+                // This also ignores runtime-generated proxies, since a proxy and its target would count each call twice.
                 .ignore(
                     nameStartsWith<TypeDescription>(TypeMatchPolicy.AGENT_PACKAGE_PREFIX)
                         .or(ElementMatcher { type -> TypeMatchPolicy.isRuntimeGenerated(type.name) }),
@@ -150,8 +150,8 @@ class EndpointInstrumentation(
                         stageDisableForUnmatchedHook(module, binder, typeDescription, mark)
                         woven
                     } catch (t: Throwable) {
-                        // The builder is returned unchanged, so ByteBuddy sees success: the rollback keeps this
-                        // module's partial declarations out of the registry.
+                        // This returns the builder unchanged, so ByteBuddy sees success. Only the rollback keeps
+                        // this module's partial declarations out of the registry.
                         pendingDeclarations.rollbackTo(mark)
                         log.log(Level.WARNING, "otherlode: endpoint module ${module.name} failed to transform ${typeDescription.name}", t)
                         OtherlodeEndpoints.moduleFailed(module.name, OtherlodeEndpoints.KIND_TRANSFORM_FAILED, t)
@@ -218,8 +218,8 @@ class EndpointInstrumentation(
         }
 
     /**
-     * Calls [EndpointModule.beforeManifest] on every module. A module that throws is switched off and
-     * the others still run, so this never fails the export.
+     * Calls [EndpointModule.beforeManifest] on every module. It switches off a module that throws and
+     * still runs the others, so this never fails the export.
      */
     fun beforeManifest(
         graceMillis: Long,

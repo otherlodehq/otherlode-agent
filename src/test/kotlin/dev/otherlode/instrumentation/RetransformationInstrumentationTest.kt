@@ -648,7 +648,8 @@ class RetransformationInstrumentationTest {
         repeat(3) { assertEquals("positive", classify.invoke(target, 5)) }
         assertEquals("non-positive", classify.invoke(target, -1))
 
-        // Branch index 0 is the class file's taken edge, -1; branch index 1 its fall-through, 5.
+        // Branch index 0 is the class file's taken edge, which -1 takes. Branch index 1 is its fall-through,
+        // which 5 takes.
         assertEquals(7L to listOf(2L, 5L), countsOf(registry, "classify"))
     }
 

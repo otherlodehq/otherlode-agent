@@ -8,7 +8,7 @@ enum class WarmupVerdict {
     /** The last two slices each matched the one before within the drift bound, and the minimum has passed. */
     STEADY,
 
-    /** The cap was reached without the throughput settling. */
+    /** The warmup reached its cap before the throughput settled. */
     CAPPED,
 }
 
@@ -18,7 +18,7 @@ enum class WarmupVerdict {
  * The warmup is steady once at least [minSeconds] have been spent and the last two slices each differ
  * from the slice before them by at most [steadyDrift], as a fraction of that earlier slice. It stops
  * without being steady once [capSeconds] have been spent. A slice whose predecessor served nothing
- * cannot be steady. Steadiness is checked before the cap, so a series that settles on its last
+ * cannot be steady. It checks steadiness before the cap, so a series that settles on its last
  * permitted slice counts as steady.
  */
 fun warmupVerdict(

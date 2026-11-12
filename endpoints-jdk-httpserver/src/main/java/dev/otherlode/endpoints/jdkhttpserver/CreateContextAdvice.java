@@ -8,11 +8,11 @@ import java.lang.reflect.Method;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto both overloads of {@code ServerImpl.createContext}, reporting the new context as a
- * registered endpoint. A context is a prefix match with no verb constraint, so the verb is {@code
- * "*"} and the verbatim template is the context's path as registered. The one-argument overload
- * creates a context with no handler yet, reported with a null handler class; {@link
- * SetHandlerAdvice} fills it in once a handler is attached.
+ * Runs on exit from both overloads of {@code ServerImpl.createContext} and reports the new context
+ * as a registered endpoint. A context is a prefix match with no verb constraint, so the verb is
+ * {@code "*"} and the verbatim template is the context's path as registered. A context from the
+ * one-argument overload has no handler, so this reports it with a null handler class, and {@link
+ * SetHandlerAdvice} fills the class in once the context gets a handler.
  *
  * <p>A handler class that is not hidden joins to {@code handle} and the class that declares it. A
  * hidden class (a lambda or method reference) joins to the method the lambda calls, as {@link

@@ -15,7 +15,7 @@ fun <T> withModules(
     expectNoneDisabled: Boolean = true,
     block: (EndpointRegistry) -> T,
 ): T {
-    // A fresh client per test, so no request reuses a pooled connection that an earlier server on the same port closed.
+    // Each test gets a fresh client, so no request reuses a pooled connection that an earlier server on the same port closed.
     client = newClient()
     val instrumentation = ByteBuddyAgent.install()
     val registry = EndpointRegistry()

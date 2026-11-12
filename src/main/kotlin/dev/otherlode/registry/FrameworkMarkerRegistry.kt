@@ -116,8 +116,8 @@ class FrameworkMarkerRegistry(
     fun seenMarkers(): List<FrameworkMarker> = markers.mapNotNull { seen[it.id]?.marker }
 
     /**
-     * The markers seen and not yet delivered, or null when there are none. Nothing is marked as
-     * delivered here; call [advanceManifest] with the result once the manifest carrying it is
+     * The markers seen and not yet delivered, or null when there are none. This marks nothing as
+     * delivered; call [advanceManifest] with the result once the manifest carrying it is
      * confirmed.
      */
     fun computeManifestEntries(): ManifestSnapshot? {

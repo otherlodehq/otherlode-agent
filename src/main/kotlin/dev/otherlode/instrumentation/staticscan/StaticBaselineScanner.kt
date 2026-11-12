@@ -131,17 +131,17 @@ class StaticBaselineScanner(
 
     /**
      * Scans [classpathRoots] plus every jar and directory they reach through a manifest
-     * `Class-Path` attribute, as [ClasspathWalker] reads them. Only the copy of a class name the
-     * JVM loads is kept, which is the first one in its search order; a later copy lands in no list
-     * of the result. The flat roots come first, in classpath order, and the nested
+     * `Class-Path` attribute, as [ClasspathWalker] reads them. It keeps only the copy of a class name
+     * the JVM loads, which is the first one in its search order; a later copy lands in no list of
+     * the result. The flat roots come first, in classpath order, and the nested
      * `BOOT-INF/classes/` and `WEB-INF/classes/` folders of jars after all of them.
      *
-     * A file that cannot be opened as a jar is left out with a WARNING. So is a jar the JDK drops:
-     * one whose manifest cannot be read when its raw manifest names a `Class-Path` or says
-     * `Multi-Release: true`, and one whose `Class-Path` has a token that is not a valid URL. The
-     * files such a jar names are left out with it. A jar whose manifest cannot be read and that the
-     * JDK keeps contributes the classes of the unnamed package, and the other class names it holds
-     * are taken without being read.
+     * It leaves out, with a WARNING, a file it cannot open as a jar. It does the same for a jar the JDK
+     * drops: one whose manifest cannot be read when its raw manifest names a `Class-Path` or says
+     * `Multi-Release: true`, and one whose `Class-Path` has a token that is not a valid URL. It also
+     * leaves out the files such a jar names. A jar whose manifest cannot be read and that the JDK keeps
+     * contributes the classes of the unnamed package, and the scan takes the other class names it holds
+     * without reading them.
      */
     fun scan(classpathRoots: List<File> = defaultClasspathRoots()): StaticScanResult {
         val buckets = Buckets()

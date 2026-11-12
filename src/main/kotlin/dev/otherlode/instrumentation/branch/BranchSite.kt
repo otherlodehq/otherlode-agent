@@ -15,7 +15,7 @@ import dev.otherlode.export.UnreadShape
  * @property inlinedFromClassName The dotted origin class when the site is a copy of an inline
  * function's body kotlinc planted in this method, otherwise null. A dropped copy carries it too.
  * @property conditionFingerprint The site's canonical fingerprint text, built by
- * [ConditionFingerprinter], or null when the site cannot be fingerprinted with confidence.
+ * [ConditionFingerprinter], or null when [ConditionFingerprinter] cannot fingerprint the site with confidence.
  * @property caseKeys For a switch, one entry per case outcome, in the order [BranchProbeMethodVisitor]
  * numbers case outcomes, so `caseKeys.size + 1 == outcomeCount`.
  * Null for a conditional and for a switch [ConditionFingerprinter] could not read.

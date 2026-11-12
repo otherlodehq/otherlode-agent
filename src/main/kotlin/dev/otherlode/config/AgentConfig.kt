@@ -16,17 +16,17 @@ import java.util.UUID
 data class AgentConfig(
     val serviceName: String,
     /**
-     * The group the service belongs to, as OpenTelemetry's `service.namespace`. It has no default: null
-     * is the unspecified namespace.
+     * The group the service belongs to, as OpenTelemetry's `service.namespace`. It has no default, and
+     * null is the unspecified namespace.
      */
     val serviceNamespace: String?,
-    /** The service version. It has no default: null is an unversioned service. */
+    /** The service version. It has no default, and null is an unversioned service. */
     val serviceVersion: String?,
     val serviceInstanceId: String,
     val environment: String?,
     /**
      * Base URL of the receiver. The exporter appends `/v1/otherlode/{deltas,manifest,static-baseline,class-listing}`
-     * to it, so a query string or fragment is refused.
+     * to it, so [parse] refuses a URL with a query string or fragment.
      */
     val exportUrl: String,
     /** Sent to the receiver as `Authorization: Bearer <token>`. */
@@ -39,18 +39,18 @@ data class AgentConfig(
      */
     val trimNativeHeapInterval: Duration,
     /**
-     * Only types under one of these prefixes are instrumented. Required: when empty,
-     * [dev.otherlode.Agent] refuses to start, logs one ERROR and instruments and exports
+     * The agent instruments only types under one of these prefixes. The option is required. When it
+     * is empty, [dev.otherlode.Agent] refuses to start, logs one ERROR and instruments and exports
      * nothing.
      */
     val includePackages: List<String>,
     /**
-     * A type under one of these prefixes is never instrumented, even if [includePackages]
-     * also matches it. Exclusion always wins over inclusion.
+     * The agent never instruments a type under one of these prefixes, even if [includePackages]
+     * also matches it.
      */
     val excludePackages: List<String>,
     /**
-     * Off unless explicitly enabled. The static baseline reads every class under the include rules.
+     * Off by default. The static baseline reads every class under the include rules.
      */
     val staticBaselineEnabled: Boolean,
     /**
@@ -63,8 +63,8 @@ data class AgentConfig(
     /**
      * On by default. One switch for every endpoint module and the OpenTelemetry route bridge;
      * [disabledEndpointModules] keeps single modules off.
-     * When false, every module that would have installed is reported in `disabled_endpoint_modules`
-     * as kept off by configuration.
+     * When false, the agent reports every module that would have installed in
+     * `disabled_endpoint_modules` as kept off by configuration.
      */
     val endpointsEnabled: Boolean,
     /** Off by default, unlike [endpointsEnabled]. */
@@ -75,13 +75,13 @@ data class AgentConfig(
     val testRun: Boolean,
     /**
      * Annotation types the adopter names as callback annotations, in the order written. Empty unless
-     * `callbackAnnotations` is set. An entry that is not a well-formed type name is dropped with a
-     * WARNING.
+     * `callbackAnnotations` is set. [parse] drops an entry that is not a well-formed type name and
+     * logs a WARNING.
      */
     val callbackAnnotations: List<CallbackAnnotationName>,
     /**
      * Endpoint module names the adopter keeps from installing, in the order written, trimmed and
-     * without blanks. Empty unless `disabledEndpointModules` is set. The names are not checked.
+     * without blanks. Empty unless `disabledEndpointModules` is set. [parse] does not check the names.
      */
     val disabledEndpointModules: List<String>,
     /**
@@ -142,8 +142,8 @@ data class AgentConfig(
          * the first value that is not blank and that the identity checks accept wins: OpenTelemetry's
          * own settings ([OtelResourceSettings]),
          * then for the name only [detectServiceName] and [DEFAULT_SERVICE_NAME], and for the
-         * environment only [TEST_RUN_ENVIRONMENT] when [testRun] is on. The instance id is never read
-         * from OpenTelemetry: it is a random UUID per process unless an Otherlode source sets it.
+         * environment only [TEST_RUN_ENVIRONMENT] when [testRun] is on. [parse] never reads the instance id
+         * from OpenTelemetry. The id is a random UUID per process unless an Otherlode source sets it.
          */
         fun parse(
             agentArgs: String?,

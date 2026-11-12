@@ -9,14 +9,14 @@ import io.micronaut.web.router.UriRouteMatch;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the entry of micronaut-aws 3.x's {@code MicronautLambdaContainerHandler.handleRequest}
- * that takes the {@code MicronautAwsProxyRequest}, not its synthetic bridge that takes {@code Object}.
- * It counts the route that {@code MicronautRequestReader} stored in the request's {@code
- * ROUTE_MATCH} attribute. A request that matched no route carries none and counts nothing.
+ * Runs on entry to micronaut-aws 3.x's {@code MicronautLambdaContainerHandler.handleRequest} that
+ * takes the {@code MicronautAwsProxyRequest}, not its synthetic bridge that takes {@code Object}.
+ * It counts the route in the request's {@code ROUTE_MATCH} attribute. A request with no route in
+ * that attribute counts nothing.
  *
  * <p>Counting follows {@code DispatchAdvice}: the match's {@code UriRoute} is the registered key,
- * an unseen route is recorded without a handler join, and a HEAD route beside a {@code @Get}
- * counts against the GET endpoint.
+ * the advice records an unseen route without a handler join, and a HEAD route beside a
+ * {@code @Get} counts against the GET endpoint.
  */
 public class LambdaDispatchAdvice {
     private static final String MODULE = "micronaut-3";

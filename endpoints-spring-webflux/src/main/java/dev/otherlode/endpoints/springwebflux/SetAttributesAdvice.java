@@ -12,13 +12,13 @@ import org.springframework.web.reactive.function.server.ServerRequest;
 import org.springframework.web.util.pattern.PathPattern;
 
 /**
- * Woven onto the entry of {@code RouterFunctionMapping.setAttributes(Map, ServerRequest,
+ * Runs on entry to {@code RouterFunctionMapping.setAttributes(Map, ServerRequest,
  * HandlerFunction)}, which functional routing calls once it has matched a request to a route and
  * before the handler runs. A CORS preflight counts nothing.
  *
- * <p>A request a {@code resources(pattern, location)} route matched is counted by {@link
- * ResourceLookupAdvice}, which marks the request's exchange. A {@code resources(predicate,
- * resource)} route is counted here under its own key.
+ * <p>{@link ResourceLookupAdvice} counts a request a {@code resources(pattern, location)} route
+ * matched, and marks the request's exchange. This advice counts a {@code resources(predicate,
+ * resource)} route under its own key.
  *
  * <p>The join names the method functional routing invokes. A handler whose class is not hidden
  * reports {@code handle} and the class that declares it. A hidden class reports the method the

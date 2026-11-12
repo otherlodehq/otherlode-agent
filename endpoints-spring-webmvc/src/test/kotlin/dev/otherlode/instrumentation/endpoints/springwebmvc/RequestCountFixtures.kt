@@ -46,7 +46,7 @@ fun lookupOutsideDispatcher(
 }
 
 fun initialisedRouterFunctionMapping(routerFunction: RouterFunction<*>): Any {
-    // Reached by name so no class file here loads RouterFunctionMapping before install runs.
+    // This code reaches RouterFunctionMapping by name, so no class file here loads it before install runs.
     val mappingClass = Class.forName("org.springframework.web.servlet.function.support.RouterFunctionMapping")
     val mapping = mappingClass.getConstructor(RouterFunction::class.java).newInstance(routerFunction)
     mappingClass.getMethod("afterPropertiesSet").invoke(mapping)

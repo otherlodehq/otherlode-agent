@@ -8,7 +8,7 @@ import org.springframework.context.support.ApplicationObjectSupport;
 import org.springframework.util.ClassUtils;
 
 /**
- * Woven onto {@code AbstractUrlHandlerMapping.registerHandler(String, Object)}, the registration
+ * Runs on entry to {@code AbstractUrlHandlerMapping.registerHandler(String, Object)}, the registration
  * hook shared by every URL-mapped handler mapping.
  *
  * <p>Every endpoint declared here uses verb {@code "*"} and joins to the handler's class only.

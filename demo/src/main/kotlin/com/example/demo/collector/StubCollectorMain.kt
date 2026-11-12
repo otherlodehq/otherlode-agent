@@ -27,7 +27,7 @@ import java.net.InetSocketAddress
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 
-// Class, endpoint and dependency ids are assigned per process, and a restart under a pinned
+// The agent assigns class, endpoint and dependency ids per process, and a restart under a pinned
 // instance id is a new process, so every key below is scoped to a run.
 private data class Run(
     val serviceInstanceId: String,
@@ -347,12 +347,12 @@ private data class RootOutcome(
  * Stands in for the real collector.
  *
  * On shutdown, it prints two reports: "never hit" (manifest probes with no delta that ever reported a
- * hit) and "never loaded" (classes the static scan found that never once appeared in the reactive
- * manifest at all). It also prints the optional-argument, endpoint, class-finding, unreached-cluster
+ * hit) and "never loaded" (classes the static scan found that never appeared in the reactive
+ * manifest). It also prints the optional-argument, endpoint, class-finding, unreached-cluster
  * and dependency reports. A constructor prints as `constructor(...)` with its parameter types.
  *
  * Takes the port to bind as its one argument, defaulting to [DemoPorts.COLLECTOR_PORT] for a run
- * by hand. Port 0 binds an ephemeral one; either way the port that was actually bound is printed.
+ * by hand. Port 0 binds an ephemeral one. Either way, it prints the port it bound.
  */
 fun main(args: Array<String>) {
     val requestedPort = args.firstOrNull()?.toIntOrNull() ?: DemoPorts.COLLECTOR_PORT
@@ -1770,7 +1770,7 @@ private fun computeCallGraph(): CallGraph {
             candidates += widenToSubtypes(known, reverseSubtypes, edge.className, edge.methodName, edge.methodDescriptor)
         }
         for (candidate in candidates) {
-            // No bytecode calls <clinit>: a resolved call into a class is its first active use, which runs it.
+            // No bytecode calls <clinit>. A resolved call into a class is its first active use, and that use runs it.
             val typeInitializer = NodeKey(candidate.className, "<clinit>", "()V")
             if (typeInitializer in nodes) into += typeInitializer
             if (candidate in nodes) {

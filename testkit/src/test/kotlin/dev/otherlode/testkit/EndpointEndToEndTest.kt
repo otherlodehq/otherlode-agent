@@ -24,8 +24,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-// Install must run before sun.net.httpserver loads, so before any OtherlodeTestCollector starts: advice weaves only
-// at class load. The Order and junit-platform.properties run this class first.
+// Advice weaves only at class load, so install must run before sun.net.httpserver loads and before any
+// OtherlodeTestCollector starts. The Order and junit-platform.properties run this class first.
 @Order(Int.MIN_VALUE)
 class EndpointEndToEndTest {
     private var installedTransformer: ResettableClassFileTransformer? = null

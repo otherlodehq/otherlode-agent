@@ -4,7 +4,7 @@ import java.util.function.Supplier;
 
 /**
  * Java shapes for the shapes run: two anonymous classes, one run and one only created, and a lambda
- * created but never called. The system properties that would run the others are never set.
+ * created but never called. The shapes run never sets the system properties that would run the others.
  */
 public final class JavaShapes {
     private JavaShapes() {

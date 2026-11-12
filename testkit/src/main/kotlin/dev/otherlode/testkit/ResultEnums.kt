@@ -15,13 +15,13 @@ import dev.otherlode.export.UnreadShape as WireUnreadShape
  * conditional or a switch, and [OPTIONAL_ARGUMENT] calls that leave out one optional parameter's
  * argument. [INITIALIZER_RETURNED] counts normal returns from a class's static initialiser, and
  * [INITIALIZER_THREW] throws out of it. No [ProbeRef] the collector returns has either of these two
- * kinds. Values may be added in a minor release, so a `when` over this enum needs an `else` branch.
+ * kinds. A minor release can add values, so a `when` over this enum needs an `else` branch.
  */
 public enum class ProbeKind { METHOD, BRANCH, OPTIONAL_ARGUMENT, INITIALIZER_RETURNED, INITIALIZER_THREW }
 
 /**
- * The compiler feature that wrote a method's body in place of the adopter. Values may be added in a
- * minor release, so a `when` over this enum needs an `else` branch.
+ * The compiler feature that wrote a method's body in place of the adopter. A minor release can add
+ * values, so a `when` over this enum needs an `else` branch.
  */
 public enum class GeneratedBy {
     /** A method the compiler writes for an enum, such as `values` or `valueOf`. */
@@ -69,8 +69,7 @@ public enum class GeneratedBy {
 
 /**
  * The kind of routine code a branch outcome leads to. [ProbeRef.routine] is null for an outcome that
- * is not routine. Values may be added in a minor release, so a `when` over this enum needs an `else`
- * branch.
+ * is not routine. A minor release can add values, so a `when` over this enum needs an `else` branch.
  */
 public enum class RoutineKind {
     /**
@@ -88,8 +87,8 @@ public enum class RoutineKind {
 
 /**
  * The family of compiler output an unread shape belongs to. [ProbeRef.unreadShape] is null for a
- * probe that is not an unread shape. Values may be added in a minor release, so a `when` over this
- * enum needs an `else` branch.
+ * probe that is not an unread shape. A minor release can add values, so a `when` over this enum
+ * needs an `else` branch.
  */
 public enum class UnreadShape {
     /** A Scala case class's plumbing, or its companion's, with an unread body. */
@@ -127,8 +126,8 @@ public enum class UnreadShape {
 }
 
 /**
- * Why code outside scope may call a method. Values may be added in a minor release, so a `when`
- * over this enum needs an `else` branch.
+ * Why code outside scope may call a method. A minor release can add values, so a `when` over this
+ * enum needs an `else` branch.
  */
 public enum class OutsideCallerKind {
     /** The method overrides or implements a method that an out-of-scope type declares. */
@@ -140,14 +139,14 @@ public enum class OutsideCallerKind {
 
 /**
  * How an endpoint was discovered: [REGISTRATION] when its route was registered, [DISPATCH] when a request
- * reached it before any registration did. Values may be added in a minor release, so a `when` over this enum
- * needs an `else` branch.
+ * reached it before any registration did. A minor release can add values, so a `when` over this enum needs
+ * an `else` branch.
  */
 public enum class EndpointDiscoverySource { REGISTRATION, DISPATCH }
 
 /**
- * How a dependency was discovered. Values may be added in a minor release, so a `when` over this
- * enum needs an `else` branch.
+ * How a dependency was discovered. A minor release can add values, so a `when` over this enum needs
+ * an `else` branch.
  */
 public enum class DependencyDiscoverySource {
     /** Listed from the startup classpath, including jars nested in an executable Spring Boot jar or war. */
@@ -176,8 +175,8 @@ public data class DisabledEndpointModule internal constructor(
 )
 
 /**
- * What switched an endpoint module off. Values may be added in a minor release, so a `when` over
- * this enum needs an `else` branch.
+ * What switched an endpoint module off. A minor release can add values, so a `when` over this enum
+ * needs an `else` branch.
  */
 public enum class DisabledEndpointModuleKind {
     /**

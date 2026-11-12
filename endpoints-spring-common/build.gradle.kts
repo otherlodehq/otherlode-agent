@@ -9,7 +9,7 @@ repositories {
 }
 
 dependencies {
-    // Compile-time only: at runtime OtherlodeEndpoints comes from the target JVM's bootstrap classloader.
+    // At runtime OtherlodeEndpoints comes from the target JVM's bootstrap classloader.
     compileOnly(project(":bootstrap"))
 }
 

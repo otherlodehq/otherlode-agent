@@ -43,8 +43,8 @@ private const val PARAMETERISED_CHAIN = "\u0000parameterised"
 private const val HANDLE_DESCRIPTOR = "(Lio/vertx/ext/web/RoutingContext;)V"
 private const val ERASED_HANDLE_DESCRIPTOR = "(Ljava/lang/Object;)V"
 
-// Reads only Vert.x Web's public API: Vert.x Web 5 exports its implementation package to a few Vert.x
-// modules and no one else.
+// Reads only Vert.x Web's public API, because Vert.x Web 5 exports its implementation package to a few
+// Vert.x modules and no one else.
 private class Api(
     private val loader: ClassLoader?,
 ) {

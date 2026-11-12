@@ -11,11 +11,11 @@ import java.util.WeakHashMap
 /**
  * A JVM-wide, bounded cache of class-file bytes, in front of [ClassFileLocator.ForClassLoader].
  *
- * Entries are keyed by class loader and binary name. Loaders are held weakly, and the bootstrap
- * loader (`null`) is a key of its own. A name no loader can provide is cached too. The total weight
- * of cached bytes is capped at [capBytes], and the least recently used entry goes first. A cached
+ * It keys entries by class loader and binary name. It holds loaders weakly, and the bootstrap loader
+ * (`null`) is a key of its own. It caches a name no loader can provide too. It caps the total weight
+ * of cached bytes at [capBytes] and evicts the least recently used entry first. A cached
  * entry can be wrong for a class whose file appears or changes during the process, until the entry
- * is dropped or evicted. The arrays handed out are shared and must not be modified.
+ * is dropped or evicted. The arrays it hands out are shared, and the caller must not modify them.
  */
 class ClassFileByteCache(
     private val capBytes: Long = DEFAULT_CAP_BYTES,

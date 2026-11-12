@@ -22,12 +22,12 @@ val openTelemetrySdkVersion = providers.gradleProperty("otherlode.framework.otel
 dependencies {
     implementation(project(":endpoints-api"))
 
-    // Compile-time only: at runtime OtherlodeEndpoints comes from the target JVM's bootstrap classloader.
+    // At runtime OtherlodeEndpoints comes from the target JVM's bootstrap classloader.
     compileOnly(project(":bootstrap"))
 
     compileOnly("net.bytebuddy:byte-buddy:1.18.12")
 
-    // Never `implementation`: OpenTelemetry must not be shaded into the agent jar.
+    // Never `implementation`, since OpenTelemetry must not be shaded into the agent jar.
     compileOnly("io.opentelemetry.instrumentation:opentelemetry-instrumentation-api:$openTelemetryInstrumentationApiVersion")
 
     testImplementation(project(":"))
@@ -175,7 +175,7 @@ testing.suites.named<JvmTestSuite>("otelAgentTest") {
     }
 }
 
-// OpenTelemetry's agent listed first, so it has rewritten framework classes before this agent sees them.
+// This suite lists OpenTelemetry's agent first, so it has rewritten framework classes before this agent sees them.
 testing.suites.named<JvmTestSuite>("otelAgentFirstTest") {
     targets {
         all {

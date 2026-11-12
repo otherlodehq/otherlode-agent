@@ -1,7 +1,7 @@
 package dev.otherlode.benchmark
 
 /**
- * One of the ways PetClinic is run. [otherlode] marks the variants that run the Otherlode agent.
+ * One of the ways the harness runs PetClinic. [otherlode] marks the variants that run the Otherlode agent.
  */
 enum class Variant(
     val id: String,

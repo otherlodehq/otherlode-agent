@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # It is safe to run again.
-# A JDK, not a JRE: the sampler runs jcmd.
+# It installs a JDK, not a JRE, because the sampler runs jcmd.
 set -euo pipefail
 
 if [ "$(id -u)" != 0 ]; then

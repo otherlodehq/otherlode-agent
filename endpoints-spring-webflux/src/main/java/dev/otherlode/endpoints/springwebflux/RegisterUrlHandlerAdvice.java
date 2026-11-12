@@ -9,7 +9,7 @@ import org.springframework.util.ClassUtils;
 import org.springframework.web.reactive.handler.AbstractHandlerMapping;
 
 /**
- * Woven onto the exit of {@code AbstractUrlHandlerMapping.registerHandler(String, Object)}, the
+ * Runs on exit from {@code AbstractUrlHandlerMapping.registerHandler(String, Object)}, the
  * registration hook shared by every URL-mapped handler mapping. The advice does not run for a
  * registration that throws.
  *

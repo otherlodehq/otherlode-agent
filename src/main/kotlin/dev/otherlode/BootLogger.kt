@@ -34,8 +34,8 @@ private class SwitchedLogger(
     ): System.Logger = if (StandardErrorLogging.on) standardError.value else normal.value
 }
 
-// Overrides every overload the agent calls: the JDK default methods pass a null array to the vararg
-// overload, which Kotlin's null check rejects.
+// Overrides every overload the agent calls, because the JDK default methods pass a null array to the
+// vararg overload, which Kotlin's null check rejects.
 internal class AgentLogger(
     private val loggerName: String,
     private val switches: Boolean,

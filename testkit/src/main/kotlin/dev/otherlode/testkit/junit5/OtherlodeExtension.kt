@@ -85,7 +85,7 @@ public class OtherlodeExtension :
         return collector
     }
 
-    // Must implement neither CloseableResource nor AutoCloseable: the root store closes such values at
+    // Must implement neither CloseableResource nor AutoCloseable. The root store closes such values at
     // the end of the run, and the collector has to keep listening for the agent's shutdown-hook flush.
     private class CollectorHolder(
         val collector: OtherlodeTestCollector,

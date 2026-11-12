@@ -35,8 +35,8 @@ private class OverridingHandler : HttpHandler {
     }
 }
 
-// Needs a JVM of its own (forkEvery = 1): the endpoint advice weaves ServerImpl only as it first loads,
-// so no HttpServer may be created before the install at the top of the test body.
+// Needs a JVM of its own (forkEvery = 1), because the endpoint advice weaves ServerImpl only as it first loads,
+// so nothing may create an HttpServer before the install at the top of the test body.
 class JdkHttpServerModuleTest {
     @Test
     fun `registration and dispatch through the real JDK HttpServer are tracked end to end`() {

@@ -7,22 +7,22 @@ import java.util.List;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the exit of {@code HttpServerAttributesExtractor.onEnd}. Counts the route in the
+ * Runs on exit from {@code HttpServerAttributesExtractor.onEnd}. Counts the route in the
  * context's {@code HttpRouteState} as an endpoint. Counts nothing when that state or its route is
  * null.
  *
- * <p>Compiled against the unshaded {@code opentelemetry-instrumentation-api} artifact, verified at
- * 2.0.0, its oldest supported release.
+ * <p>It compiles against the unshaded {@code opentelemetry-instrumentation-api} artifact at 2.0.0,
+ * that artifact's oldest supported release.
  *
- * <p>The route is first resolved through the table {@link RoutePrefixAdvice} fills. A route no
- * recorded prefixer built is used as it is.
+ * <p>The advice first resolves the route through the table {@link RoutePrefixAdvice} fills. It uses
+ * a route that no recorded prefixer built as it is.
  *
  * <p>In a route that holds {@code /:}, a segment that is {@code :name} or {@code :name::type}, with
  * each name made of ASCII letters, digits and {@code _}, becomes {@code {name}}. Any other segment stays.
  * With the system property {@code io.vertx.web.route.param.extended-pattern} set to {@code true}, a
  * name may also hold {@code $} and {@code -}.
  *
- * <p>A route whose identity another endpoint module already owns is not counted: {@link
+ * <p>The advice counts no route whose identity another endpoint module already owns, since {@link
  * OtherlodeEndpoints#recordDispatchIfUnowned} returns null for it.
  */
 public class OnEndAdvice {

@@ -8,7 +8,7 @@ import java.nio.file.Path
 import java.util.jar.JarFile
 import java.util.jar.Manifest
 
-// A JarFile handed to a callback is closed when the callback returns.
+// The walker closes a JarFile it hands to a callback when the callback returns.
 internal interface ClasspathVisitor {
     fun jar(
         jar: File,

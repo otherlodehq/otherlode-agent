@@ -4,11 +4,10 @@ import dev.otherlode.bootstrap.OtherlodeEndpoints;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the exit of {@code RouterFunctionMapping.afterPropertiesSet()}, which fills the
+ * Runs on exit from {@code RouterFunctionMapping.afterPropertiesSet()}, which fills the
  * private {@code routerFunction} field.
  *
- * <p>The object goes unopened to {@link OtherlodeEndpoints#declare}, which hands it to {@code
- * SpringWebFluxModule.declare}, the only code that walks it.
+ * <p>The advice passes the field's object, unopened, to {@link OtherlodeEndpoints#declare}.
  */
 public class DeclareRouterFunctionsAdvice {
     private static final String MODULE = "spring-webflux";

@@ -21,8 +21,8 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
 /**
- * Where a dependency's bytes live on this instance. Never sent: the wire carries only
- * [DependencyLocation.location], a display string.
+ * Where a dependency's bytes live on this instance. The agent never sends it, and the wire carries
+ * only [DependencyLocation.location], a display string.
  */
 sealed interface DependencyOrigin {
     /** A jar file on the classpath, by its absolute path. */
@@ -44,13 +44,13 @@ sealed interface DependencyOrigin {
  * The identity key ([identityKey]) is the sorted list of a dependency's `group:artifact` pairs,
  * never its version. Ids are per instance, assigned from 0 in registration order.
  *
- * A record is held back from the manifest until a sweep has counted it and that sweep's counts
+ * It holds a record back from the manifest until a sweep has counted it and that sweep's counts
  * have been delivered ([isSendable]).
  *
  * Constructed with `indexClassNames`, the registry also keeps a class index from class name to
  * dependency id, the first registration of a name winning. [releaseClassIndex] drops it.
  *
- * A location under the home folder is stored with the home written as `~`.
+ * It stores a location under the home folder with the home written as `~`.
  *
  * Safe to use from several threads.
  */
@@ -280,7 +280,7 @@ class DependencyRegistry(
      * loaded-class total differs from its last delivered total. Empty when nothing changed. Stamps
      * a dependency's first-loaded time the first time a compute sees its total above zero.
      *
-     * Nothing is marked delivered here; see [advanceDeltas].
+     * This marks nothing delivered; see [advanceDeltas].
      */
     fun computeDeltas(maxPerBatch: Int): List<DeltaSnapshot> {
         val batches = mutableListOf<DeltaSnapshot>()
@@ -304,8 +304,8 @@ class DependencyRegistry(
 
     /**
      * Records the totals [snapshot] staged as delivered. Call this only once the send carrying it
-     * is confirmed. An older snapshot confirmed after a newer one is ignored per entry, so a
-     * confirmed total is never rolled back.
+     * is confirmed. It ignores, per entry, an older snapshot confirmed after a newer one, so a
+     * confirmed total never rolls back.
      */
     fun advanceDeltas(snapshot: DeltaSnapshot) {
         for ((entry, total) in snapshot.staged) {
@@ -346,7 +346,7 @@ class DependencyRegistry(
 
     /**
      * Records that every delta send computed after the sweep of [generation] was confirmed. The
-     * delivered generation only rises: an older [generation] changes nothing.
+     * delivered generation only rises, so an older [generation] changes nothing.
      */
     fun markCountsDelivered(generation: Long) {
         deliveredGenerations.accumulateAndGet(generation, ::maxOf)
@@ -389,7 +389,7 @@ class DependencyRegistry(
     /**
      * Returns chunks of at most [maxPerChunk] dependencies, covering every dependency not yet
      * delivered whose counts have been delivered ([isSendable]), in id order. Empty when there is
-     * nothing to send. Nothing is marked delivered here; see [advanceManifest].
+     * nothing to send. This marks nothing delivered; see [advanceManifest].
      */
     fun computeManifestEntries(maxPerChunk: Int): List<ManifestSnapshot> =
         chunkedByWeight(

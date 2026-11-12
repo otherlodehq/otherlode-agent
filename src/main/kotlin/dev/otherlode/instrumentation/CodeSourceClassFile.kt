@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.AtomicReference
  * directory, a jar file, and a `jar:` location ending in `!/` over a `file:` or `nested:` URL. It
  * leaves any other location to the class loader, and opens no network connection.
  *
- * A directory is read at once. Each jar shape is warmed up first, keyed by [warmKey]: the first
+ * It reads a directory at once. It warms up each jar shape first, keyed by [warmKey]. The first
  * read hands a read to [warmer], which runs it outside any transform, and answers null unless that
  * warm-up has already finished. Reads while the warm-up runs answer null.
  */
@@ -135,7 +135,7 @@ class CodeSourceClassFile internal constructor(
 
     private object DaemonWarmer : Executor {
         override fun execute(command: Runnable) {
-            // inheritThreadLocals is false: copying them runs each one's childValue, which is application code.
+            // inheritThreadLocals is false, since copying them runs each one's childValue, which is application code.
             val thread = Thread(null, command, WARM_UP_THREAD, 0, false)
             thread.isDaemon = true
             thread.start()
@@ -182,7 +182,7 @@ class CodeSourceClassFile internal constructor(
 
         /**
          * The URL of the class file named by [internalName] (`com/acme/Foo`) under [location], or null
-         * when [location] is null or has a shape this does not read. A jar file's URL is built with
+         * when [location] is null or has a shape this does not read. It builds a jar file's URL with
          * [jarTemplate]'s handler when one is given.
          */
         fun urlOf(

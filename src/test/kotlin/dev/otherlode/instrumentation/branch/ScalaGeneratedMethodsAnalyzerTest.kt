@@ -2432,8 +2432,8 @@ class ScalaGeneratedMethodsAnalyzerTest {
         val build = CompilerFixtures.scalaBaseline("3.3.4")
         val op = "L$PACKAGE/Op;"
         val brokenLit = withNop(build.classBytes("Op\$Lit"), setOf("ordinal"))
-        // Lit must stay the last case of the Op fixture: skipping it then leaves the singletons' ordinals right,
-        // so only the unread case fails fromOrdinal.
+        // Lit must stay the last case of the Op fixture, so that skipping it leaves the singletons' ordinals right
+        // and only the unread case fails fromOrdinal.
         val lookups =
             mapOf(
                 "unreadable" to { name: String -> if (name == "$PACKAGE/Op\$Lit") null else build.lookup(name) },

@@ -34,7 +34,7 @@ The agent under test must run with `includePackages` set and `exportUrl` pointin
 
 | Member | Description |
 |---|---|
-| `OtherlodeTestCollector.start(port: Int = 0)` | Starts a collector bound to `localhost`. Port `0` picks a free port. The server threads are daemon threads, so a collector never keeps the JVM alive. Throws an `IOException` if the port cannot be bound. The method does not declare it, so Java code cannot name `IOException` in a `catch` clause around the call. |
+| `OtherlodeTestCollector.start(port: Int = 0)` | Starts a collector bound to `localhost`. Port `0` picks a free port. The server threads are daemon threads, so a collector never keeps the JVM alive. Throws an `IOException` if it cannot bind the port. The method does not declare it, so Java code cannot name `IOException` in a `catch` clause around the call. |
 | `exportUrl: String` | The base URL for the agent's `exportUrl` option, such as `http://localhost:54321`. |
 | `close()` | Stops the server. A wait that is running, or begins later, throws `IllegalStateException` unless its condition already holds. |
 
@@ -46,10 +46,10 @@ A wait blocks the calling thread until its condition holds. Each takes a `java.t
 
 | Wait | Returns when |
 |---|---|
-| `awaitNextFlush(timeout)` | A delta batch has arrived that was received after the call began. An empty batch counts, because the agent sends one on every flush as a liveness signal. |
-| `awaitSettled(timeout)` | Every instance heard from has completed two flushes since the call began, or has ended with a complete shutdown flush. A flush is complete when its last delta batch carries `flush_complete`. The first complete flush can have read its counts before your last action, so the second one holds every hit made before the call. With no instance heard from yet, it keeps waiting. An instance that went silent, or whose shutdown flush was not complete, never settles, and the timeout names it. A probe's manifest entry can still arrive after its count: wait for it with `awaitProbe`. |
+| `awaitNextFlush(timeout)` | A delta batch has arrived since the call began. An empty batch counts, because the agent sends one on every flush as a liveness signal. |
+| `awaitSettled(timeout)` | Every instance heard from has completed two flushes since the call began, or has ended with a complete shutdown flush. A flush is complete when its last delta batch carries `flush_complete`. The first complete flush can have read its counts before your last action, so the second one holds every hit made before the call. With no instance heard from yet, it keeps waiting. An instance that went silent, or whose shutdown flush was not complete, never settles, and the timeout names it. A probe's manifest entry can still arrive after its count, so wait for it with `awaitProbe`. |
 | `awaitProbe(className, methodName, timeout)` | Some manifest has named a probe in that class for that method. Use it when the test needs the manifest entry itself. |
-| `awaitEndpoint(verb, routeTemplate, timeout)` | Some manifest has named that endpoint. Verb and route template are normalised as in [endpoint queries](#endpoint-queries). |
+| `awaitEndpoint(verb, routeTemplate, timeout)` | Some manifest has named that endpoint. The wait normalises the verb and the route template as [endpoint queries](#endpoint-queries) describes. |
 | `awaitDependency(groupId, artifactId, timeout)` | Some manifest has listed the dependency. After it returns, `dependency` does not throw `UnknownDependencyException`. |
 | `awaitDependenciesListed(timeout)` | At least one instance has been heard from, and every instance heard from has finished listing its dependencies. An agent whose listing failed never finishes, so the wait times out for it. |
 
@@ -75,8 +75,8 @@ A finding method takes no arguments and returns a list. It judges the merged hit
 | `neverHit(): List<ProbeRef>` | Every method or branch outcome that no instance hit and that is worth a person's attention. See the exclusions after this table. |
 | `neverHitRoutineOutcomes(): List<ProbeRef>` | The branch outcomes `neverHit` leaves out because they are routine, each with its `routine` kind. |
 | `neverHitUnreadShapes(): List<ProbeRef>` | The probes `neverHit` leaves out because their code has the outline of compiler output the agent cannot read, each with its `unreadShape` family. |
-| `neverInitialized(): List<ClassFindingRef>` | Classes some instance loaded whose static initialiser ran in no instance. A class with no static initialiser is never listed. |
-| `neverInstantiated(): List<ClassFindingRef>` | Classes some instance loaded, that are not never initialised, with a constructor and an instance method that are neither inline, generated nor an unread shape, and none of whose constructors or instance methods ran, generated and inline instance methods included. A class with only static methods and an interface are never listed. |
+| `neverInitialized(): List<ClassFindingRef>` | Classes some instance loaded whose static initialiser ran in no instance. The query never lists a class with no static initialiser. |
+| `neverInstantiated(): List<ClassFindingRef>` | Classes some instance loaded, that `neverInitialized()` does not list, and none of whose constructors or instance methods ran, generated and inline instance methods included. A listed class has a constructor and an instance method that are neither inline, generated nor an unread shape. The query never lists a class with only static methods, or an interface. |
 | `neverLoaded(): List<String>` | Class names a complete static baseline declared that no instance ever loaded. Leaves out a class in `failedToLoad()` and a class whose every method is inline, generated or an unread shape. Throws `IllegalStateException` until a complete baseline has arrived, which needs the agent option `staticBaselineEnabled=true`. |
 | `failedToLoad(): List<String>` | Class names the agent wove that the JVM never defined in any instance. Each is a deployment problem to fix and never dead code. |
 | `failedToInitialize(): List<String>` | Class names that failed to initialise, sorted. See [Classes that failed to initialise](#classes-that-failed-to-initialise). Each is a deployment problem to fix and never dead code. |
@@ -100,19 +100,19 @@ A finding method takes no arguments and returns a list. It judges the merged hit
 
 #### Classes that failed to initialise
 
-A class the JVM defined can still never run in that JVM, because its static initialiser threw or the JVM's verifier rejected it. The agent names such a class in the manifest with the reason. `failedToInitialize()` lists a class that no instance initialised and that either some instance named, or some instance loaded and it fails with a class that instance named. A class fails with one that instance named when its superclasses or interfaces, followed through the class records that instance sent, reach:
+A class the JVM defined can still never run in that JVM, because its static initialiser threw or the JVM's verifier rejected it. The agent names such a class in the manifest with the reason. `failedToInitialize()` lists a class that no instance initialised and that meets one of two conditions. Some instance named it, or some instance loaded it and it fails with a class that instance named. A class fails with one that instance named when its superclasses or interfaces, followed through the class records that instance sent, reach:
 
-- a class the verifier rejected, as a superclass or an interface;
-- a class whose static initialiser threw, as a superclass;
-- an interface whose static initialiser threw and that declares a default or private instance method.
+- A class the verifier rejected, as a superclass or an interface.
+- A class whose static initialiser threw, as a superclass.
+- An interface whose static initialiser threw and that declares a default or private instance method.
 
-A class is initialised in an instance when its static initialiser's returned slot counted, if that instance sent the class's returned and threw slots. The entry probe and every method the initialiser calls count before it throws, so they are no evidence. When the instance sent no slots for the class, because it declares no static initialiser, any hit on a probe of the class means it initialised.
+A class is initialised in an instance when its static initialiser's returned slot counted, if that instance sent the class's returned and threw slots. The entry probe and every method the initialiser calls count before it throws, so they are no evidence. When the instance sent no slots for the class, because the class declares no static initialiser, any hit on a probe of the class means it initialised.
 
-A name that no instance loaded, such as a library class the verifier rejected, is not listed, but its loaded subtypes are. A class one instance failed and another initialised is not listed.
+`failedToInitialize()` does not list a name that no instance loaded, such as a library class the verifier rejected, but it lists that class's loaded subtypes. It does not list a class that failed to initialise in one instance and initialised in another.
 
-A listed class is left out of `neverHit`, `neverHitRoutineOutcomes`, `neverHitUnreadShapes`, `neverInitialized`, `neverInstantiated` and `unreachedClusters`. A method that only such a class calls is the root of a cluster only when a calling method of that class has hits. The static initialiser of a class whose initialiser threw has hits, so a never-hit method of another class that only it calls is a `REACHED_FROM_HIT` root. `neverCalled` leaves out an endpoint whose handler class failed to initialise.
+`neverHit`, `neverHitRoutineOutcomes`, `neverHitUnreadShapes`, `neverInitialized`, `neverInstantiated` and `unreachedClusters` leave out a listed class. A method that only such a class calls is the root of a cluster only when a calling method of that class has hits. The static initialiser of a class whose initialiser threw has hits, so a never-hit method of another class that only it calls is a `REACHED_FROM_HIT` root. `neverCalled` leaves out an endpoint whose handler class failed to initialise.
 
-A class whose static initialiser is still running is left out of the same queries, apart from `neverCalled`, and `failedToInitialize()` does not list it. Its initialiser is still running when, in every instance that loaded it, the initialiser's entry probe counted, the instance sent its returned and threw slots, and neither slot counted. A never-hit method of another class that only its static initialiser calls is a `REACHED_FROM_HIT` root.
+The same queries, apart from `neverCalled`, leave out a class whose static initialiser is still running, and `failedToInitialize()` does not list it. Its initialiser is still running when, in every instance that loaded it, the initialiser's entry probe counted, the instance sent its returned and threw slots, and neither slot counted. A never-hit method of another class that only its static initialiser calls is a `REACHED_FROM_HIT` root.
 
 #### Queries that refuse
 
@@ -133,13 +133,13 @@ A query that reads no zero count keeps answering: `wasHit`, `hitCount`, `omissio
 
 ### Endpoint queries
 
-`wasCalled`, `callCount` and `awaitEndpoint` normalise `verb` and `routeTemplate` before lookup, so `wasCalled("get", "/checkout/")` finds the endpoint the agent reports as `GET /checkout`. An endpoint is identified by that normalised pair alone, apart from a regex endpoint (see `EndpointRef.isRegexTemplate`) or a servlet pattern endpoint (see `EndpointRef.isServletPatternTemplate`), each of which is another endpoint even when its template reads the same. These queries address path endpoints only, so a regex or servlet pattern endpoint never answers one written for a path. `endpoints()` and `neverCalled()` list them. Several instances that serve one endpoint merge into one.
+`wasCalled`, `callCount` and `awaitEndpoint` normalise `verb` and `routeTemplate` before lookup, so `wasCalled("get", "/checkout/")` finds the endpoint the agent reports as `GET /checkout`. That normalised pair alone identifies a path endpoint. A regex endpoint and a servlet pattern endpoint are each a separate endpoint, even when the template reads the same. `EndpointRef.isRegexTemplate` and `EndpointRef.isServletPatternTemplate` mark them. These queries address path endpoints only, so a regex or servlet pattern endpoint never answers one written for a path. `endpoints()` and `neverCalled()` list them. Several instances that serve one endpoint merge into one.
 
 | Query | Returns |
 |---|---|
 | `wasCalled(verb, routeTemplate): Boolean` | `true` if the summed call count is above zero. |
 | `callCount(verb, routeTemplate): Long` | The count summed over instances, each instance's highest delivered total. |
-| `neverCalled(): List<EndpointRef>` | Every endpoint with a summed count of zero, sorted by route template, then verb, then path, regex and servlet pattern in that order, leaving out one whose handler class failed to initialise and one whose endpoint module every reporting instance switched off. Refuses while an instance's zero counts are not evidence. |
+| `neverCalled(): List<EndpointRef>` | Every endpoint with a summed count of zero, sorted by route template, then verb, then path, regex and servlet pattern in that order. Leaves out an endpoint whose handler class failed to initialise, and one whose endpoint module every reporting instance switched off. Refuses while an instance's zero counts are not evidence. |
 | `endpoints(): List<EndpointRef>` | Every endpoint any instance reported, sorted the same way. |
 | `disabledEndpointModules(): List<DisabledEndpointModule>` | The endpoint modules an instance reported as switched off, each with its kind: those that switched themselves off, such as on a framework version the agent does not support, and those the agent's configuration kept off. Sorted by module name. |
 
@@ -174,10 +174,10 @@ The six list queries sort by `DependencyStatus.identityKey`, except `absentRefer
 
 Once the list is not empty, every other query and wait throws `IllegalStateException`. The message starts `this collector rejected` and lists the reasons. Only `rejectedPayloads` and `close` keep working, so a test that calls any other query or wait fails even if it never reads the list.
 
-A payload is rejected when:
+The collector rejects a payload when:
 
-- Its run id is empty.
-- A second run id arrives under an instance id the collector already heard from. The collector keys on the instance id alone and accepts the first run id.
+- Its run ID is empty.
+- A second run ID arrives under an instance ID the collector already heard from. The collector keys on the instance ID alone and accepts the first run ID.
 - It carries an agent version that differs from the testkit's version. The reason names both versions. An empty version on either side skips the check.
 - A collector between the agent and the testkit stripped fields it did not know.
 - It does not decode, which happens when the agent is newer than the testkit or something other than the agent posted to the port.
@@ -195,13 +195,13 @@ Register it with `@ExtendWith(OtherlodeExtension::class)`. It starts one collect
 | `beforeAll` | Waits with `awaitNextFlush` for a delta batch that arrives after it begins. Throws `IllegalStateException` if none arrives within the startup timeout, with a message that gives the `-javaagent` flag to add. Once one wait has succeeded in the JVM, later test classes skip it. |
 | `OtherlodeExtension.collector()` | A static accessor for the collector the extension started. Throws `IllegalStateException` until the extension has started a collector, and keeps throwing if binding its port failed. |
 
-The extension's collector accepts payloads from one agent instance only. It is not stopped when JUnit closes its store, so the agent's shutdown flush still reaches it.
+The extension's collector accepts payloads from one agent instance only. The collector keeps running when JUnit closes its store, so the agent's shutdown flush still reaches it.
 
 The extension throws `IllegalStateException` when the collector cannot bind its port, when a system property below is malformed, when the collector has rejected a payload before or during `beforeAll`'s wait, when `beforeAll` gets no delta batch in time, and when `collector()` is called before the extension has started a collector.
 
 ## System properties
 
-The testkit reads two system properties, both in the test JVM and both read by the extension. A collector you start with `start` ignores them.
+The extension reads two system properties from the test JVM. A collector you start with `start` ignores them.
 
 | Property | Default | Meaning |
 |---|---|---|
@@ -226,18 +226,18 @@ The agent's default flush interval is 60 seconds, longer than the default timeou
 
 The message names the first reason below that applies.
 
-1. The class matched `includePackages` but could not be instrumented. The message gives the skip reason, the same text `skippedClasses` lists.
+1. The class matched `includePackages` but the agent could not instrument it. The message gives the skip reason, the same text `skippedClasses` lists.
 2. The class loaded, but no transformer saw it, so it has no probes. The JVM hands a class loaded from inside another class's transformation to no transformer.
 3. A complete static baseline declared the class and no instance ever loaded it.
 4. The class is instrumented, but has no probe for that method name or descriptor. For `omissionCount`, it has no omission probe for that method and parameter.
-5. No manifest or baseline ever mentioned the class: it is outside `includePackages`, misspelled, or not loaded yet.
+5. No manifest or baseline ever mentioned the class. It is outside `includePackages`, its name is misspelled, or it has not loaded yet.
 
 Cases 3 and 5 can clear on their own as the application runs. Wait for the class with `awaitProbe` before asking.
 
 ### UnknownEndpointException
 
 1. At least one endpoint module is disabled. The message lists every disabled module and its reason, because the endpoint may belong to one of them.
-2. No path endpoint has that template, but a regex or servlet pattern endpoint does. The message names which and points to `endpoints()` and `neverCalled()`.
+2. No path endpoint has that template, but a regex or servlet pattern endpoint does. The message names which kind does and points to `endpoints()` and `neverCalled()`.
 3. No manifest from any instance named the endpoint.
 
 ### UnknownDependencyException
@@ -273,7 +273,7 @@ One method probe or branch outcome, merged across instances. Some fields apply t
 | `methodDescriptor` | `String` | The method's JVM descriptor. |
 | `line` | `Int` | The source line. `-1` for a member of a cluster that exists only in the static baseline, and for a class compiled without line numbers. |
 | `kind` | `ProbeKind` | What the probe counts. |
-| `branchIndex` | `Int?` | The outcome's ordinal within its class for one build. Null for a method probe. When copies of the class disagree, the lowest. |
+| `branchIndex` | `Int?` | The outcome's ordinal within its class for one build. Null for a method probe. When copies of the class disagree, it is the lowest. |
 | `branchKey` | `String?` | A lowercase hex token that names the outcome across builds and instances. Null for a method probe, and for a branch outcome the agent could not name safely. |
 | `inline` | `Boolean` | Always `false`, since no query returns a probe of a Kotlin inline function. |
 | `inlinedFromClassName` | `String?` | For a branch copied from an inline function, the class that function came from. |
@@ -379,7 +379,7 @@ One endpoint, merged across instances. Every field except `verb`, `routeTemplate
 
 | Field | Type | Meaning |
 |---|---|---|
-| `identityKey` | `String` | The identities of the dependency joined with commas, such as `com.fasterxml.jackson.core:jackson-databind`. An identity read from a file name has no group and reads `:commons-lang3`. A `\`, `:` or `,` inside a group or artifact id is escaped with a backslash. |
+| `identityKey` | `String` | The identities of the dependency joined with commas, such as `com.fasterxml.jackson.core:jackson-databind`. An identity read from a file name has no group and reads `:commons-lang3`. The testkit escapes a `\`, `:` or `,` inside a group or artifact id with a backslash. |
 | `status` | `DependencyUsage` | What the dependency rules say. |
 | `identities` | `List<DependencyIdentityRef>` | Every `groupId:artifactId` the dependency carries. A shaded jar carries several. |
 | `loadedClassesTotal` | `Long` | The largest count of distinct loaded classes any one instance reported. |
@@ -417,8 +417,8 @@ What one probe counts.
 | `METHOD` | Entries to a method. |
 | `BRANCH` | One outcome of a conditional or a switch. |
 | `OPTIONAL_ARGUMENT` | Calls that leave out one optional parameter's argument. No query returns one. |
-| `INITIALIZER_RETURNED` | Normal returns of a static initialiser the class file declares. A slot of that initialiser, not a probe: no query returns it and no finding lists it. |
-| `INITIALIZER_THREW` | Exceptions that left a static initialiser the class file declares. A slot of that initialiser, not a probe: no query returns it and no finding lists it. |
+| `INITIALIZER_RETURNED` | Normal returns of a static initialiser the class file declares. A slot of that initialiser, not a probe, so no query returns it and no finding lists it. |
+| `INITIALIZER_THREW` | Exceptions that left a static initialiser the class file declares. A slot of that initialiser, not a probe, so no query returns it and no finding lists it. |
 
 ### GeneratedBy
 
@@ -518,12 +518,12 @@ What switched an endpoint module off.
 
 | Value | Meaning |
 |---|---|
-| `LINKAGE_ERROR` | A `LinkageError`, wherever it was caught: the framework release differs from the one the module was built for. |
+| `LINKAGE_ERROR` | A `LinkageError`, wherever it was caught. The framework release differs from the one the module was built for. |
 | `ADVICE_FAILED` | Any other throw from the module's advice. |
 | `TRANSFORM_FAILED` | The module's own transform threw, or a framework class it hooks failed to weave. |
 | `ROUTE_WALK_FAILED` | Walking a framework's route objects threw. |
-| `HOOK_UNMATCHED` | A hook matched no method on the framework class it hooks: a framework release renamed or changed the method. |
-| `CONFIGURED_OFF` | The agent's configuration kept the module from installing: `disabledEndpointModules` named it, or `endpointsEnabled` is false. |
+| `HOOK_UNMATCHED` | A hook matched no method on the framework class it hooks, because a framework release renamed or changed the method. |
+| `CONFIGURED_OFF` | The agent's configuration kept the module from installing, because `disabledEndpointModules` named it or `endpointsEnabled` is false. |
 | `ROUTES_NOT_COUNTED` | The runtime constructed no dispatch point the module counts at within one flush interval of building a router, so the module declares no routes. Micronaut only. |
 
 ### DependencyUsage

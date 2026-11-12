@@ -8,13 +8,13 @@ import io.micronaut.web.router.UriRouteMatch;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the entry of {@code RoutingInBoundHandler.handleRouteMatch}. A {@code UriRouteMatch}
+ * Runs on entry to {@code RoutingInBoundHandler.handleRouteMatch}. A {@code UriRouteMatch}
  * counts, unless it is an unregistered WebSocket route. Any other {@code RouteMatch}, such as a
  * {@code StatusRouteMatch}, counts nothing.
  *
- * <p>A route no registration saw is recorded at dispatch, with no handler join. An unregistered
- * HEAD route whose method carries the {@code @Get} stereotype is recorded against the GET endpoint
- * of the same template.
+ * <p>The advice records a route no registration saw at dispatch, with no handler join. It records
+ * an unregistered HEAD route whose method carries the {@code @Get} stereotype against the GET
+ * endpoint of the same template.
  */
 public class DispatchAdvice {
     private static final String MODULE = "micronaut-3";

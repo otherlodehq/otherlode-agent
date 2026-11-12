@@ -19,12 +19,12 @@ val ktorTestVersion = providers.gradleProperty("otherlode.framework.ktor2").getO
 dependencies {
     implementation(project(":endpoints-api"))
 
-    // Compile-time only: at runtime OtherlodeEndpoints comes from the target JVM's bootstrap classloader.
+    // At runtime OtherlodeEndpoints comes from the target JVM's bootstrap classloader.
     compileOnly(project(":bootstrap"))
 
     compileOnly("net.bytebuddy:byte-buddy:$byteBuddyVersion")
 
-    // Never `implementation`: Ktor must not be shaded into the agent jar.
+    // Never `implementation`, since Ktor must not be shaded into the agent jar.
     compileOnly("io.ktor:ktor-server-core-jvm:$ktorVersion")
 
     testImplementation(project(":"))

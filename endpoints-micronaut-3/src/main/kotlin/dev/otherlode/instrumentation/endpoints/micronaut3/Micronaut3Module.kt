@@ -53,13 +53,13 @@ private fun routerIsMicronaut3(classLoader: ClassLoader): Boolean =
 /**
  * Endpoint module for Micronaut 3 (`micronaut-3`), compiled against 3.0.0.
  *
- * If no dispatch point is constructed, [beforeManifest] reports the module off with
- * `ROUTES_NOT_COUNTED` once the router has waited a flush interval.
+ * If the process constructs no dispatch point, [beforeManifest] reports the module off with
+ * `ROUTES_NOT_COUNTED` once the module has held a router for a flush interval.
  *
  * A request counts only when its matched route is a `UriRouteMatch`, and an unregistered WebSocket
  * route counts nothing. At `ServletHttpHandler`, a route counts only when its verb is the request's.
  *
- * A WebSocket route is not declared, and nor is a HEAD route with the `@Get` stereotype that shares
+ * The module declares no WebSocket route, and no HEAD route with the `@Get` stereotype that shares
  * its template and target with a GET route. A request that matches such a HEAD route counts against
  * the GET endpoint of the same template. This module matches nothing on a Micronaut 4 or 5
  * application.

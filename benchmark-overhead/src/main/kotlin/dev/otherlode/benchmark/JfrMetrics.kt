@@ -8,7 +8,7 @@ import java.nio.file.Path
 object JfrMetrics {
     private const val MIB = 1024.0 * 1024.0
 
-    /** Metrics from the `.jfr` at [file]. A metric whose event never fired is left out. */
+    /** Metrics from the `.jfr` at [file]. It leaves out a metric whose event never fired. */
     fun read(file: Path): Map<String, Double> {
         val cpuUser = mutableListOf<Double>()
         val cpuMachine = mutableListOf<Double>()

@@ -166,8 +166,8 @@ class OtherlodeInstrumentationTest {
                     return null
                 }
             }
-        // Not retransformation-capable, so the spy runs after a JaCoCo agent and before the Otherlode
-        // transformer, and sees the bytes the class was woven from.
+        // The spy is not retransformation-capable, so it runs after a JaCoCo agent and before the Otherlode
+        // transformer, and sees the bytes the transformer wove the class from.
         ByteBuddyAgent.install().addTransformer(spy, false)
         val target =
             try {

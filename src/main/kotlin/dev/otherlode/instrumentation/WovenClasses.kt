@@ -255,7 +255,7 @@ internal class WovenClasses {
         private const val OFFSET_BASIS = -3750763034362895579L
         private const val PRIME = 1099511628211L
 
-        // FNV-1a 64 by hand: MessageDigest would initialise a security provider inside a transformer.
+        // FNV-1a 64. MessageDigest must not run here, since it would initialise a security provider inside a transformer.
         fun hashOf(bytes: ByteArray): Long {
             var hash = OFFSET_BASIS
             for (byte in bytes) {

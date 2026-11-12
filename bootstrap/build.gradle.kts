@@ -1,5 +1,5 @@
-// This module loads on the bootstrap classloader, so it stays Java-only with no dependencies: anything
-// else compiles fine and fails at runtime inside a customer JVM with NoClassDefFoundError.
+// This module loads on the bootstrap classloader, so it stays Java-only with no dependencies. Anything
+// else compiles but fails at runtime inside a customer JVM with NoClassDefFoundError.
 plugins {
     java
 }

@@ -4,9 +4,8 @@ import dev.otherlode.bootstrap.OtherlodeEndpoints;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the exit of the {@code RouteExecutor} constructor. The advice declares the {@code
- * "dispatch-point-constructed"} marker, which {@code DispatchGate} reads as the signal to declare
- * the routers it holds.
+ * Runs on exit from the {@code RouteExecutor} constructor and declares the {@code
+ * "dispatch-point-constructed"} marker.
  */
 public class ArmAdvice {
     private static final String MODULE = "micronaut";

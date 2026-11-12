@@ -16,7 +16,7 @@ enum class SizeGuardReason(
 
     CLASS_FILE_LIMIT("would not fit a class file", SizeGuard.CODE_LENGTH_LIMIT),
 
-    /** The entry probe alone can take the method past `HugeMethodLimit`. The method is named and no branch probe is dropped. */
+    /** The entry probe alone can take the method past `HugeMethodLimit`. [SizeGuard] names the method and drops no branch probe. */
     ENTRY_PROBE_ALONE("can be carried past the compile limit by its entry probe alone", SizeGuard.HUGE_METHOD_LIMIT),
 }
 
@@ -84,7 +84,7 @@ internal class SiteCost(
  * and the received bytes.
  */
 object SizeGuard {
-    /** HotSpot's `HugeMethodLimit`: a method over it is never compiled. */
+    /** HotSpot's `HugeMethodLimit`. HotSpot never JIT-compiles a method over it. */
     const val HUGE_METHOD_LIMIT = 8000
 
     /** The most code a method can hold. */
@@ -116,9 +116,9 @@ object SizeGuard {
     private const val TWO_WAY = 0
 
     /**
-     * The upper bound on a method of [length] bytes' woven length with every site of [sites] that is
-     * not already dropped probed. [jumpCount] gives the method's own jump count and is asked only
-     * above [WIDENING_THRESHOLD].
+     * The upper bound on the woven length of a method of [length] bytes, with a probe on every site of
+     * [sites] that is not already dropped. [jumpCount] gives the method's own jump count, and this asks
+     * it only above [WIDENING_THRESHOLD].
      */
     fun bound(
         length: Int,

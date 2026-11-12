@@ -1,6 +1,6 @@
 ---
 title: How the agent works
-description: How the agent counts in the class it instruments, pushes cumulative totals to Otherlode, and leaves your classes loading as they would without it, so you can judge whether to run it in production.
+description: How the agent counts in each class it instruments, pushes cumulative totals to Otherlode, and leaves your classes loading as they would without it, so you can judge whether to run it in production.
 order: 140
 ---
 
@@ -12,7 +12,7 @@ A count of zero means the code did not run in the processes the agent watched, o
 
 Where the agent cannot count something, it reports that it did not count it, so missing data never reads as a zero. The sections below show where.
 
-## Probes are woven in when a class loads
+## The agent weaves probes in when a class loads
 
 The JVM hands the agent each class's bytes just before it defines the class. For each class that matches your include rules, the agent adds counters, called probes, such as one at the entry of each method and one on each outcome of each conditional. The JVM then defines the changed class, and your code runs as usual.
 
@@ -37,9 +37,9 @@ Neither route throws a `NullPointerException` when a superclass's initialiser ru
 otherlode: no registered probe array for com.acme.OrderService; its hits will not be counted (resolver installed: true)
 ```
 
-## Results are pushed on a fixed interval
+## The agent pushes results on a fixed interval
 
-The agent pushes its data to `exportUrl`, which is Otherlode's ingest or your collector, every `flushIntervalSeconds`, 60 seconds by default. It opens no port of its own. Each instance waits a random offset before its first flush, then flushes at a fixed rate, so a fleet that starts together does not send on the same tick.
+The agent pushes its data to `exportUrl`, which is Otherlode's ingest or your collector. It pushes every `flushIntervalSeconds`, 60 seconds by default. It opens no port of its own. Each instance waits a random offset before its first flush, then flushes at a fixed rate, so a fleet that starts together does not send on the same tick.
 
 Every flush sends a delta batch, even when no count changed, so Otherlode can tell an idle instance from one that has stopped. A flush also describes each newly loaded class: which class, method and line each probe is. The agent sends each description once.
 
@@ -47,19 +47,19 @@ The transport is HTTP/1.1 with a protobuf body, through the JDK's own HTTP clien
 
 ## Totals are cumulative, and each process is a run
 
-Each update carries a probe's total since the process started, not the growth since the last flush. A payload sent twice carries the same totals both times, so the agent keeps no queue of payloads. It moves its record of what was delivered forward only after the receiver confirms a send, and after a failed send the next flush reports the live totals again. The memory this takes depends on the size of your code, not your traffic, so an unreachable receiver does not make it grow. A process that dies during an outage loses the counts since its last confirmed flush.
+Each update carries a probe's total since the process started, not the growth since the last flush. A payload sent twice carries the same totals both times, so the agent keeps no queue of payloads. It moves its record of what was delivered forward only after the receiver confirms a send, and after a failed send the next flush reports the live totals again. The memory for these totals depends on the size of your code, not your traffic, so an unreachable receiver does not make that memory grow. A process that dies during an outage loses the counts since its last confirmed flush.
 
 One send makes up to 5 attempts. [Retries inside one send](data-sent#retries-inside-one-send) lists which failures it retries and how it reads `Retry-After`.
 
 A restarted process counts from zero again. The agent makes a random run ID at every start and stamps it on every payload, and Otherlode keeps each run's data apart. The instance ID is a fresh random value per process unless you pin it, for example to a pod name. A restart under a pinned instance ID is a new run.
 
-Outside a [test run](test-runs), on a graceful exit the agent flushes at once, waits for your application's own shutdown hooks to end, up to 18 seconds into shutdown, then sends a final flush marked as the last one. The whole shutdown takes up to 28 seconds. `kill -9` and a crash send no final flush. [When payloads are sent](data-sent#when-payloads-are-sent) lists the steps.
+Outside a [test run](test-runs), the agent flushes at once on a graceful exit. It then waits for your application's own shutdown hooks to end, up to 18 seconds into shutdown, and sends a final flush marked as the last one. The whole shutdown takes up to 28 seconds. `kill -9` and a crash send no final flush. [When payloads are sent](data-sent#when-payloads-are-sent) lists the steps.
 
 ## Shape comes from the class file, probes go in last
 
 The agent works out what a method is by reading its bytecode: which conditions are code you wrote, which jumps are compiler plumbing, and which methods a compiler generated. It reads this shape from the class file, the bytes the compiler wrote, through the class's own loader. Another agent that rewrote the class first, such as JaCoCo, does not change the result.
 
-Every transformer of the agent that changes a class is retransformation-capable, so the JVM runs them after every transformer that is not, whatever order the `-javaagent` flags come in. JaCoCo's agent, AspectJ's weaver and Spring's load-time weaver are not retransformation-capable, so the agent always runs after them. It adds its probes to the bytes it receives, so their changes stay. Where the received bytes no longer line up with the class file for a method's conditionals, the method keeps its entry probe and gets no branch probes. See [other agents in the same JVM](compatibility#other-agents-in-the-same-jvm).
+Every transformer of the agent that changes a class is retransformation-capable, so the JVM runs them after every transformer that is not, whatever order the `-javaagent` flags come in. JaCoCo's agent, AspectJ's weaver and Spring's load-time weaver are not retransformation-capable, so the agent always runs after them. It adds its probes to the bytes it receives, so their changes stay. Where the received bytes no longer match the class file for a method's conditionals, the method keeps its entry probe and gets no branch probes. See [other agents in the same JVM](compatibility#other-agents-in-the-same-jvm).
 
 ## A woven class behaves like the original
 
@@ -68,9 +68,9 @@ A woven class loads, fails and reflects as the same class does without the agent
 - The agent keeps the class's own verification frames and writes new ones only where it inserts code.
 - From class-file version 55, the agent adds no field or method, so reflection over your classes returns what it does without the agent.
 
-When the agent cannot instrument a class, it skips the class, logs why, and reports it as skipped with the reason. A class whose superclass or interface cannot be found is skipped, since the JVM cannot define it either. See [skipped classes](classes#skipped-classes).
+When the agent cannot instrument a class, it skips the class, logs why, and reports it as skipped with the reason. The agent skips a class whose superclass or interface it cannot find, since the JVM cannot define that class either. See [skipped classes](classes#skipped-classes).
 
-A class can be woven and then fail to load, for example when a dependency is missing. The agent holds that class's probes back from its reports until it confirms that the class exists, for example by a count above zero or by the JVM listing the class as loaded. A class it gives up on is reported as failed to load, not as code that never ran. The routes a JAX-RS resource class declares are held back in the same way. See [failed to load](classes#failed-to-load).
+A class can be woven and then fail to load, for example when a dependency is missing. The agent holds that class's probes back from its reports until it confirms that the class exists, for example by a count above zero or by the JVM listing the class as loaded. The agent reports a class it gives up on as failed to load, not as code that never ran. It holds back the routes a JAX-RS resource class declares in the same way. See [failed to load](classes#failed-to-load).
 
 If the agent cannot start safely, it turns itself off and sends nothing, so the instance is missing from Otherlode instead of reporting zero everywhere. It does this, for example, when no include rules are set, when `exportUrl` or `authToken` holds a value it cannot use, or when it cannot install the class it needs in the bootstrap class loader. Each case logs an ERROR, such as:
 

@@ -13,12 +13,12 @@ import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.util.pattern.PathPattern;
 
 /**
- * Woven onto the entry of {@code RequestMappingInfoHandlerMapping.handleMatch(RequestMappingInfo,
+ * Runs on entry to {@code RequestMappingInfoHandlerMapping.handleMatch(RequestMappingInfo,
  * HandlerMethod, ServerWebExchange)}, the dispatch point for annotated controllers. It runs once per
  * matched request, before the handler, with the {@link RequestMappingInfo} narrowed to the patterns
  * and verb that matched.
  *
- * <p>The pattern is the first of the narrowed patterns, which are sorted best match first. The verb
+ * <p>The pattern is the first of the narrowed patterns, which Spring sorts best match first. The verb
  * is the one the methods condition kept, or {@code *} for a mapping with none. A CORS preflight
  * counts nothing.
  */

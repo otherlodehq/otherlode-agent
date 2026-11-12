@@ -3,8 +3,9 @@ package dev.otherlode.instrumentation.endpoints.micronautcommon
 import java.lang.ref.WeakReference
 
 /**
- * Holds back a Micronaut router's routes until a dispatch point the module counts at has been
- * constructed in the process, then declares them. Either order declares.
+ * Holds back a Micronaut router's routes until the process constructs a dispatch point the module
+ * counts at, then declares them. It declares the routes whichever of the two the process
+ * constructs first.
  */
 class DispatchGate(
     private val declareRoutes: (Any) -> Unit,
@@ -24,7 +25,7 @@ class DispatchGate(
     /**
      * Declares router [frameworkObject] at once when the gate is armed and holds it weakly
      * otherwise. [ARMED] arms the gate and declares the held routers. After the gate has switched
-     * the module off, a router is dropped.
+     * the module off, it drops the router.
      */
     fun accept(frameworkObject: Any) {
         if (frameworkObject is String && frameworkObject == ARMED) {
@@ -87,7 +88,7 @@ class DispatchGate(
     }
 
     companion object {
-        /** What the advice on a dispatch point's constructor hands to `OtherlodeEndpoints.declare`. */
+        /** The marker that arms the gate when [accept] receives it. */
         const val ARMED: String = "dispatch-point-constructed"
     }
 }

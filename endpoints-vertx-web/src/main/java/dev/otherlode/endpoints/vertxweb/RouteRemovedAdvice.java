@@ -4,7 +4,7 @@ import dev.otherlode.bootstrap.OtherlodeEndpoints;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the exit of {@code RouterImpl.remove(RouteImpl)}. The event is {@code {"remove",
+ * Runs on exit from {@code RouterImpl.remove(RouteImpl)}. The event is {@code {"remove",
  * router, route}}.
  */
 public class RouteRemovedAdvice {

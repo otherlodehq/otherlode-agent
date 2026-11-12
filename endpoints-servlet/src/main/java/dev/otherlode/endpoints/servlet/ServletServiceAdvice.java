@@ -13,18 +13,20 @@ import javax.servlet.http.HttpServletRequest;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the entry of every non-abstract {@code service(ServletRequest, ServletResponse)} a
+ * Runs on entry to every non-abstract {@code service(ServletRequest, ServletResponse)} a
  * servlet class declares, {@code HttpServlet}'s own included. A filter that answers first never
- * reaches it. The protected {@code service(HttpServletRequest, HttpServletResponse)} is not hooked.
+ * reaches it. The module does not hook the protected {@code service(HttpServletRequest,
+ * HttpServletResponse)}.
  *
  * <p>A frame counts nothing when the servlet it runs on has a name of its own in its {@code
  * ServletConfig} that differs from the mapping's, except for an include, which falls back to that
  * servlet's own registration.
  *
- * <p>A request whose mapping has no match type disables the module: with {@code LINKAGE_ERROR}
- * when the container answers with the servlet API's default {@code getHttpServletMapping}, else
- * with {@code ADVICE_FAILED}. On a servlet API older than 4.0, {@code getHttpServletMapping} does
- * not link and the failure disables the module with {@code LINKAGE_ERROR}.
+ * <p>A request whose mapping has no match type disables the module. The kind is {@code
+ * LINKAGE_ERROR} when the container answers with the servlet API's default {@code
+ * getHttpServletMapping}, and {@code ADVICE_FAILED} otherwise. On a servlet API older than 4.0,
+ * {@code getHttpServletMapping} does not link and the failure disables the module with {@code
+ * LINKAGE_ERROR}.
  */
 public class ServletServiceAdvice {
     private static final String MODULE = "servlet";

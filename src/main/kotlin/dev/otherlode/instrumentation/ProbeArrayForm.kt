@@ -11,7 +11,7 @@ import net.bytebuddy.utility.JavaConstant
 
 /** Loads a woven class's counts array onto the operand stack. */
 fun interface ProbeArrayLoad {
-    /** Emits the instructions that leave the class's `long[]` on the stack: one slot, no local needed. */
+    /** Emits the instructions that leave the class's `long[]` on the stack. They take one slot and need no local. */
     fun load(methodVisitor: MethodVisitor)
 }
 

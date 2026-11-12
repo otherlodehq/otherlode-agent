@@ -14,12 +14,12 @@ import java.util.Deque;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto {@code Route.handle}, Ktor's registration hook. It registers each route node under
- * its own identity, with the verb and path template built from the selectors up to the root.
+ * Runs on entry to {@code Route.handle}, Ktor's registration hook. It registers each route node
+ * under its own identity, with the verb and path template built from the selectors up to the root.
  *
- * <p>Only verb and path selectors contribute. A route with any other selector (headers, content
- * type, query parameters, host, {@code AndRouteSelector}, {@code OrRouteSelector}) merges with any
- * sibling that has the same verb and path.
+ * <p>Only verb and path selectors contribute. A route with any other selector, such as a header,
+ * content type, query parameter, host, {@code AndRouteSelector} or {@code OrRouteSelector}, merges
+ * with any sibling that has the same verb and path.
  *
  * <p>For a suspend lambda the handler join is the lambda's class and {@code invokeSuspend}. For a
  * class that implements the function type by hand it is the class alone. For a hidden class the

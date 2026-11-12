@@ -14,9 +14,9 @@ import org.springframework.web.reactive.result.method.RequestMappingInfo;
 import org.springframework.web.util.pattern.PathPattern;
 
 /**
- * Woven onto the exit of {@code AbstractHandlerMethodMapping.registerHandlerMethod}, the
+ * Runs on exit from {@code AbstractHandlerMethodMapping.registerHandlerMethod}, the
  * registration hook for every annotated controller method Spring WebFlux detects. It runs once per
- * handler method as the route table is built, and does not run for a registration that throws.
+ * handler method as Spring builds the route table, and does not run for a registration that throws.
  *
  * <p>A mapping with no path holds the empty pattern, which the seam normalises to {@code /}.
  *

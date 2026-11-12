@@ -73,7 +73,7 @@ object Agent {
     private val log by agentLogger(Agent::class.java.name)
     private val claimed = AtomicBoolean(false)
 
-    /** Never throws. A failed start is logged and the agent stays inert. */
+    /** Never throws. On a failed start it logs the failure and the agent stays inert. */
     @JvmStatic
     fun premain(
         agentArgs: String?,
@@ -180,7 +180,7 @@ object Agent {
         val unreadShapeCounts = UnreadShapeCounts()
         val callbackAnnotations = ConfiguredCallbackAnnotations(config.callbackAnnotations)
 
-        // Discover before the method tier installs: its analysis writes the forwarder table
+        // Discover before the method tier installs, since its analysis writes the forwarder table
         // for these modules' handler interfaces.
         val endpointSelection = discoverEndpointModules(config)
         endpointSelection?.keptOff?.forEach {

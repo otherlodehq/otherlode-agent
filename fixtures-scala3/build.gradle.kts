@@ -1,5 +1,5 @@
-// Never on the test classpath directly: JUnit discovery would load these classes before
-// instrumentation is installed.
+// Never on the test classpath directly, since JUnit discovery would load these classes before a
+// test installs instrumentation.
 plugins {
     scala
 }

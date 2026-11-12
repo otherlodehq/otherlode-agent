@@ -12,11 +12,11 @@ import org.springframework.web.server.ServerWebExchange;
 import org.springframework.web.util.pattern.PathPattern;
 
 /**
- * Woven onto the exit of {@code AbstractUrlHandlerMapping.lookupHandler(PathContainer,
+ * Runs on exit from {@code AbstractUrlHandlerMapping.lookupHandler(PathContainer,
  * ServerWebExchange)}, the dispatch point shared by every URL-mapped handler mapping. A CORS
  * preflight counts nothing.
  *
- * <p>A miss means a handler this module did not see register, and the dispatch is recorded.
+ * <p>A miss means a handler this module did not see register, and the advice records the dispatch.
  */
 public class LookupHandlerAdvice {
     private static final String MODULE = "spring-webflux";

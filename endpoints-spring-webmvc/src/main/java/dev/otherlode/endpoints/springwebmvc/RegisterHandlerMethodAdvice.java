@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
 
 /**
- * Woven onto {@code AbstractHandlerMethodMapping.registerHandlerMethod}, Spring MVC's registration
+ * Runs on entry to {@code AbstractHandlerMethodMapping.registerHandlerMethod}, Spring MVC's registration
  * hook.
  *
  * <p>The dispatch key, {@code List.of(pattern, verb)}, matches {@link HandleMatchAdvice}.

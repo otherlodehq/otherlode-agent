@@ -8,7 +8,7 @@ import dev.otherlode.registry.ProbeRegistry
 import net.bytebuddy.agent.builder.ResettableClassFileTransformer
 import java.lang.instrument.Instrumentation
 
-// Runs as a -javaagent: Gradle's test discovery loads the fixture classes before any test method runs.
+// Runs as a -javaagent, because Gradle's test discovery loads the fixture classes before any test method runs.
 // The method tier installs before the endpoint tier, so the endpoint transformer sees the class the method tier
 // rewrote.
 object JaxRsTestAgent {

@@ -57,7 +57,7 @@ class HotPathWeavingTest {
             weaver.registry.manifest(resource).probes.count {
                 it.className == BranchyFixture::class.java.name && it.methodName == "call" && it.kind == ProbeKind.BRANCH
             }
-        // Two outcomes for the loop's jump, five for the tableswitch (four cases and the default), two for the if.
+        // The loop's jump has two outcomes, the tableswitch five (four cases and the default) and the if two.
         assertEquals(9, branchProbes)
     }
 
@@ -65,7 +65,7 @@ class HotPathWeavingTest {
     fun `the woven default-argument fixture counts omitted parameters`() {
         val shape = weaver.woven(DefaultArgumentFixture::class.java)
         shape.call(1)
-        // call omits b, c and d once, then c and d once: two of the three parameters are omitted twice.
+        // call omits b, c and d once, then c and d once, so it omits two of the three parameters twice.
         assertEquals(5L, hits(DefaultArgumentFixture::class.java.name, ProbeKind.OPTIONAL_ARGUMENT))
     }
 

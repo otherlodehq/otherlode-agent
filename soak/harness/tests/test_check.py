@@ -762,7 +762,7 @@ class CheckTests(CheckCase):
 
 
 class WindowCheckTests(CheckCase):
-    """Check 8, the window read, and what the other checks do with the new instances and disruptions."""
+    """Check 8, the window read, and what the other checks do with the soak's instances and disruptions."""
 
     def violation(self, **over):
         v = {"event": "start of events-prod-g002", "kind": "fast", "first": T0 + 7200, "last": T0 + 7210, "count": 3,

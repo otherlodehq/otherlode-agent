@@ -19,7 +19,7 @@ jobs:
       - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
         with:
           distribution: temurin
-          # The same JDKs the build job installs: the javac fixtures use 17, 21 and 25 as toolchains.
+          # The same JDKs the build job installs. The javac fixtures use 17, 21 and 25 as toolchains.
           java-version: |
             17
             25

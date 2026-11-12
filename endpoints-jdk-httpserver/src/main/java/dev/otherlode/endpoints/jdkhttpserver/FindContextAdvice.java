@@ -8,11 +8,10 @@ import java.lang.reflect.Method;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the two-argument {@code ContextList.findContext(String, String)}, the call the
- * request path makes to match a request to its context. The dispatch key is the returned {@link
- * HttpContext}. A null return is the framework's 404 path and counts nothing. A key {@link
- * OtherlodeEndpoints#lookup} does not resolve is recorded here as discovered by dispatch, with
- * its handler joined as {@link CreateContextAdvice} does and attached through {@link
+ * Runs on exit from the two-argument {@code ContextList.findContext(String, String)}. The dispatch
+ * key is the returned {@link HttpContext}, and a null return counts nothing. When {@link
+ * OtherlodeEndpoints#lookup} does not resolve the key, this records it as discovered by dispatch,
+ * joins its handler as {@link CreateContextAdvice} does and attaches the join through {@link
  * OtherlodeEndpoints#attachHandler}.
  */
 public class FindContextAdvice {

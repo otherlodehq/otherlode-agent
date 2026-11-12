@@ -48,13 +48,13 @@ private fun routerIsMicronaut4(classLoader: ClassLoader): Boolean =
 /**
  * Endpoint module for Micronaut (`micronaut`), covering the 4.0 to 5.x lines, compiled against 4.0.0.
  *
- * If no `RouteExecutor` is constructed, [beforeManifest] reports the module off with
- * `ROUTES_NOT_COUNTED` once the router has waited a flush interval.
+ * If the process constructs no `RouteExecutor`, [beforeManifest] reports the module off with
+ * `ROUTES_NOT_COUNTED` once the module has held a router for a flush interval.
  *
  * A request counts when `RouteExecutor.findRouteMatch` returns a match, unless the match is an
  * unregistered WebSocket route. A null return counts nothing.
  *
- * A WebSocket route is not declared, and nor is a HEAD route with the `@Get` stereotype that shares
+ * The module declares no WebSocket route, and no HEAD route with the `@Get` stereotype that shares
  * its template and target with a GET route. A request that matches such a HEAD route counts against
  * the GET endpoint of the same template. This module matches nothing on a Micronaut 3 application.
  */

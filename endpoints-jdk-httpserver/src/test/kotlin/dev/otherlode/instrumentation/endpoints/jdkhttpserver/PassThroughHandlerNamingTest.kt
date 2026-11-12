@@ -32,7 +32,7 @@ import kotlin.test.assertTrue
 private const val HANDLE_DESCRIPTOR = "(Lcom/sun/net/httpserver/HttpExchange;)V"
 private const val HANDLERS = "com.example.classsam.HandlersKt"
 
-// HandlersKt must load after the method tier is installed: the reference class's entry is written
+// HandlersKt must load after the method tier is installed, because the reference class's entry is written
 // when HandlersKt is transformed.
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class PassThroughHandlerNamingTest {

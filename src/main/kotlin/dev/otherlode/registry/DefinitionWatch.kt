@@ -15,7 +15,7 @@ internal class DefinitionWatch(
         WITHHELD,
     }
 
-    // isConfirmed, isWithheld and sequence are read without the lock by send-pool threads, so state and
+    // Send-pool threads read isConfirmed, isWithheld and sequence without the lock, so state and
     // registrationSequence stay volatile.
     @Volatile
     private var state = State.PENDING

@@ -18,14 +18,14 @@ import net.bytebuddy.pool.TypePool
  * Hosts the branch-tracking tier's raw ASM rewrite inside ByteBuddy's own class-transform
  * pipeline.
  *
- * No frame is computed: every frame the received bytes carry passes through, and
+ * It computes no frame. Every frame the received bytes carry passes through, and
  * [BranchProbeMethodVisitor] writes one at each label it inserts. A class below version 50, or at
  * version 50 without a StackMapTable ([classHasFrames] false), gets no branch frames.
  *
  * @property probeIndexBase Where branch slots start in the class's shared probe array. Method-entry
  * probes occupy `[0, probeIndexBase)`.
  * @property branchSlotCapacity How many branch slots the array has. The default, `Int.MAX_VALUE`, means
- * unbounded and unchecked. A site that would allocate past it is left uninstrumented. When a capacity
+ * unbounded and unchecked. The wrapper does not instrument a site that would allocate past it. When a capacity
  * is given and the slots the rewrite wants differ from it, [visitEnd] throws `IllegalStateException`.
  * @property droppedOrdinalsByMethod Each method's dropped sites by their per-method encounter ordinal.
  * @property throwingDefaultOrdinalsByMethod In the same numbering, each method's switches whose default only
@@ -35,10 +35,10 @@ import net.bytebuddy.pool.TypePool
  * @property swappedOrdinalsByMethod In the same numbering, each method's conditionals that arrive
  * testing the opposite of the class file's jump, as [SitePairing] found them.
  * @property slotsByMethod When given, each method's own run of slots, relative to [probeIndexBase]. A
- * method it returns null for has no slots, and a site that would run past its method's run is left
- * uninstrumented.
+ * method it returns null for has no slots, and the wrapper does not instrument a site that would
+ * run past its method's run.
  * [visitEnd] throws `IllegalStateException` for the first method whose wanted count differs from
- * its run's [MethodSlots.count]. When null, slots go out in encounter order and are checked class-wide only.
+ * its run's [MethodSlots.count]. When null, slots go out in encounter order and the wrapper checks them class-wide only.
  */
 class BranchProbeAsmVisitorWrapper(
     private val eligibleMethods: (name: String, descriptor: String) -> Boolean,

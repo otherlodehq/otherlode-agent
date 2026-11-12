@@ -80,12 +80,12 @@ import java.util.WeakHashMap
  * [AgentConfig.includePackages], except classes the bootstrap and platform loaders define. An empty
  * list matches nothing.
  *
- * A matched type is registered with [ProbeRegistry] once, after its rewrite succeeds. The
+ * It registers a matched type with [ProbeRegistry] once, after its rewrite succeeds. The
  * transformer sees classes as they load and does not retransform those already loaded when
  * [install] runs. It is retransformation-capable: another agent's retransformation or a
- * redefinition of a class this agent wove weaves it again from its recorded plan, and the call is
- * refused when the class file is no longer the one it was woven from (see [WovenClasses]). A class
- * this agent did not weave is left alone.
+ * redefinition of a class this agent wove weaves it again from its recorded plan, and the
+ * transformer refuses the call when the class file is no longer the one it was woven from (see [WovenClasses]). It
+ * leaves alone a class this agent did not weave.
  */
 class OtherlodeInstrumentation(
     private val config: AgentConfig,
@@ -160,8 +160,8 @@ class OtherlodeInstrumentation(
 
     /**
      * Installs the bootstrap holder, points it at this registry, then registers [ClassBytesCapture]
-     * and ByteBuddy's transformer, in that order, both retransformation-capable. Nothing is
-     * retransformed.
+     * and ByteBuddy's transformer, in that order, both retransformation-capable. It retransforms
+     * nothing.
      *
      * Throws [BootstrapInstallException], before registering anything, if the holder cannot be made
      * bootstrap-visible. Registering throws [UnsupportedOperationException] where retransformation
@@ -197,7 +197,7 @@ class OtherlodeInstrumentation(
             .with(AgentBuilder.DescriptionStrategy.Default.POOL_ONLY)
             .with(classFileCache.locationStrategy())
             .with(AgentBuilder.PoolStrategy.Default.FAST)
-            // Must stay before TransformResultListener: an edge that failed after the commit would
+            // Must stay before TransformResultListener, since an edge that failed after the commit would
             // leave probes registered for a class that runs unwoven.
             .assureReadEdgeTo(instrumentation, OtherlodeProbeArrays::class.java)
             .with(TransformResultListener())
@@ -708,7 +708,7 @@ class OtherlodeInstrumentation(
     ): DynamicType.Builder<*> {
         val name = typeDescription.name
         val plan = wovenClasses.find(classLoader, name) ?: throw ReweaveRefused(name, "no plan was stored for $name")
-        // take is destructive, so it must not be called a second time for the same class.
+        // take is destructive, so nothing may call it a second time for the same class.
         val received = classBytesCapture?.take(typeDescription.internalName)?.let(SubroutineInliner::inline)
         if (plan.hasClassFileHash) {
             val classFile = locateClassBytes(typeDescription, classLoader, protectionDomain)
@@ -1047,7 +1047,7 @@ class OtherlodeInstrumentation(
         classLoader: ClassLoader?,
         protectionDomain: ProtectionDomain?,
     ): ClassBytesSource {
-        // take is destructive, so it must not be called a second time for the same class.
+        // take is destructive, so nothing may call it a second time for the same class.
         val received = classBytesCapture?.take(typeDescription.internalName)?.let(SubroutineInliner::inline)
         val classFile = locateClassBytes(typeDescription, classLoader, protectionDomain)
         if (classFile == null && received != null) {

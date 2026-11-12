@@ -113,10 +113,10 @@ data class OpenRate(
     val measuredPerSecond: Double?,
     val fraction: Double?,
 ) {
-    /** The whole iterations a minute the window runs, as k6 is given them. */
+    /** The whole iterations a minute the window runs, as the harness passes them to k6. */
     val iterationsPerMinute: Int get() = perMinute(perSecond)
 
-    /** How the rate was obtained. */
+    /** How the harness came by the rate. */
     enum class Source(
         val id: String,
     ) {
@@ -153,7 +153,7 @@ data class OpenRate(
     }
 }
 
-/** A Markdown section giving [rate] and how it was obtained, or an empty string when the run was not open-loop. */
+/** A Markdown section giving [rate] and how the harness came by it, or an empty string when the run was not open-loop. */
 fun openRateSection(rate: OpenRate?): String {
     if (rate == null) return ""
     val how =

@@ -6,7 +6,7 @@ import net.bytebuddy.asm.Advice;
 import org.springframework.util.ClassUtils;
 
 /**
- * Woven onto the exit of {@code AbstractUrlHandlerMapping.setRootHandler(Object)}. It declares the
+ * Runs on exit from {@code AbstractUrlHandlerMapping.setRootHandler(Object)}. It declares the
  * root endpoint, verb {@code "*"} and template {@code "/"}, keyed by the handler itself. A handler
  * still named by its bean gets the fixed key {@code List.of("root-by-name")} and has no class join.
  * A null handler removes the root handler and declares nothing.

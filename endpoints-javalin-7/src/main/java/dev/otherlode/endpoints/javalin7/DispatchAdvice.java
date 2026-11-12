@@ -7,11 +7,9 @@ import io.javalin.router.ParsedEndpoint;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the entry of {@code ParsedEndpoint.handle(JavalinServletContext, String)}, which
- * Javalin's HTTP lifecycle task calls once per request for the first endpoint that matched. The
- * before, after, beforeMatched and afterMatched tasks call it on their own endpoints too, and
- * those are no call: an instance this module registered is counted, and one it did not register
- * is counted only when its method {@code isHttpMethod()}.
+ * Runs on entry to {@code ParsedEndpoint.handle(JavalinServletContext, String)}. It counts an
+ * instance this module registered, and counts one it did not register only when its method
+ * {@code isHttpMethod()}.
  */
 public class DispatchAdvice {
     private static final String MODULE = "javalin-7";

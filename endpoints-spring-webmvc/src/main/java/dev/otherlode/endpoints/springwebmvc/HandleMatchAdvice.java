@@ -13,7 +13,7 @@ import org.springframework.web.servlet.mvc.condition.PatternsRequestCondition;
 import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
 
 /**
- * Woven onto {@code RequestMappingInfoHandlerMapping.handleMatch(RequestMappingInfo, String,
+ * Runs on entry to {@code RequestMappingInfoHandlerMapping.handleMatch(RequestMappingInfo, String,
  * HttpServletRequest)}, Spring MVC's dispatch point.
  *
  * <p>A lookup that is not a call of the route it matches counts nothing: one made by {@code
@@ -22,11 +22,11 @@ import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
  * the request, and a second lookup on a {@code REQUEST} dispatch that already carries {@code
  * HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE}. A forward or an include counts.
  *
- * <p>The advice is written against the {@code javax} servlet types and bound to the {@code
- * jakarta} ones by prefix.
+ * <p>The advice compiles against the {@code javax} servlet types, and the module binds it to the
+ * {@code jakarta} ones by prefix.
  *
- * <p>The {@link RequestMappingInfo} is built per request, so the key is rebuilt by value as {@code
- * List.of(pattern, verb)}, the key {@link RegisterHandlerMethodAdvice} registers.
+ * <p>Spring builds the {@link RequestMappingInfo} per request, so the advice rebuilds the key by
+ * value as {@code List.of(pattern, verb)}, the key {@link RegisterHandlerMethodAdvice} registers.
  */
 public class HandleMatchAdvice {
     private static final String MODULE = "spring-webmvc";

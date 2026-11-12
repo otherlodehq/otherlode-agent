@@ -9,9 +9,9 @@ import java.lang.reflect.Method;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the exit of the {@code ParsedEndpoint(Endpoint, RouterConfig)} constructor. The
- * instance is the dispatch key. Only an endpoint whose method {@code isHttpMethod()} is declared:
- * before, after, beforeMatched, afterMatched and the WebSocket upgrade handlers are not endpoints.
+ * Runs on exit from the {@code ParsedEndpoint(Endpoint, RouterConfig)} constructor. The instance
+ * is the dispatch key. It declares only an endpoint whose method {@code isHttpMethod()}, so it
+ * skips handlers such as before, after, beforeMatched, afterMatched and WebSocket upgrade handlers.
  *
  * <p>The handler join names {@code handle} and the class declaring it for a named class, and the
  * method the lambda calls for a hidden one. An endpoint whose {@code handle} is declared by

@@ -24,7 +24,7 @@ import kotlin.test.assertTrue
 import java.util.logging.Level as JulLevel
 import java.util.logging.Logger as JulLogger
 
-// Needs a JVM of its own (forkEvery = 1): the endpoint advice weaves ServerImpl only as it first loads.
+// Needs a JVM of its own (forkEvery = 1), because the endpoint advice weaves ServerImpl only as it first loads.
 class HiddenHandlerNamingSwitchedOffTest {
     @Test
     fun `a lambda factory without the expected shape leaves hidden handlers unnamed and breaks nothing`() {

@@ -502,7 +502,7 @@ class TypeMatchPolicyTest {
 
     @Test
     fun `the ByteBuddy naming property is the one ByteBuddy itself reads`() {
-        // The constant is built at runtime, since the shaded jar relocates a `net.bytebuddy` literal.
+        // TypeMatchPolicy builds the constant at runtime, since the shaded jar relocates a `net.bytebuddy` literal.
         assertEquals(net.bytebuddy.ByteBuddy.DEFAULT_NAMING_PROPERTY, TypeMatchPolicy.BYTE_BUDDY_NAMING_PROPERTY)
     }
 

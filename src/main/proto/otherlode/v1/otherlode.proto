@@ -5,8 +5,8 @@ package otherlode.v1;
 option java_multiple_files = true;
 option java_package = "dev.otherlode.proto";
 
-// A probe is addressed on the wire as (class_id, probe_index): class_id is assigned once per run
-// and carried in ProbeManifest.
+// The wire addresses a probe as (class_id, probe_index). The agent assigns class_id once per run
+// and carries it in ProbeManifest.
 enum ProbeKind {
   PROBE_KIND_UNSPECIFIED = 0;
   METHOD = 1;
@@ -75,8 +75,8 @@ enum GeneratedBy {
   // only reads the class's one field and calls the static method with its own name plus -impl, or
   // its own name when that is already mangled, except a boxed equals, hashCode or toString whose
   // static is not marked. Also the static m-impl whose body only boxes its argument and calls an
-  // interface default m the class inherits. The constructor-impl, the property getter and a member the
-  // adopter wrote are not marked.
+  // interface default m the class inherits. The constructor-impl, the property getter and a member
+  // the adopter wrote are not marked.
   // In a Scala value class (a final class with one field whose companion declares m$extension
   // methods), the boxed method whose body only reads the field and calls the companion's
   // m$extension, and the companion's hashCode$extension and equals$extension when their bodies
@@ -175,9 +175,9 @@ message ResourceAttributes {
 
 // hits_total is a cumulative count from process start, not the count since the last flush.
 //
-// first_seen_at is stamped by the first flush that observed a non-zero count, not by the hit
-// itself. Its precision is therefore one flush interval, and it says "first observed by" rather
-// than "first happened at".
+// The first flush that observed a non-zero count stamps first_seen_at, not the hit itself. Its
+// precision is therefore one flush interval, and it says "first observed by" rather than "first
+// happened at".
 message ProbeDelta {
   int32 class_id = 1;
   int32 probe_index = 2;
@@ -272,8 +272,8 @@ message ProbeLocation {
   // for Kotlin.
   string target_class_name = 13;
   // Set only for a METHOD probe: the in-scope call edges read from this method's own bytecode at
-  // transform time. A pass-through's callees are attributed to whichever probed method referenced
-  // it, so they never appear under the pass-through's own name.
+  // transform time. The agent attributes a pass-through's callees to whichever probed method
+  // referenced it, so they never appear under the pass-through's own name.
   repeated CallEdge calls = 14;
   // Set only for a BRANCH probe that is a kept inlined copy: a site inside code kotlinc copied
   // from an inline function's body into this probe's own method, whose origin class is in scope.
@@ -292,8 +292,8 @@ message ProbeLocation {
   // Set only for a METHOD probe: the out-of-scope classes this method's own bytecode references,
   // dotted. A reference is wider than a call edge: runtime-visible annotations, casts and type
   // tests, types in a descriptor or generic signature, catch types and class literals all count.
-  // Classes the bootstrap or platform loader provides, and classes read from a directory on the
-  // classpath, are never listed. A name's ExternalClass entry may arrive on a later manifest than
+  // The agent never lists a class the bootstrap or platform loader provides, or one read from a
+  // directory on the classpath. A name's ExternalClass entry may arrive on a later manifest than
   // the name itself; a name that never gets one belongs to no dependency (a jar of the adopter's
   // own, an agent jar).
   repeated string referenced_classes = 17;
@@ -483,9 +483,9 @@ message CallEdge {
   string class_name = 1;
   string method_name = 2;
   string method_descriptor = 3;
-  // True for an invokevirtual or invokeinterface call, false for invokestatic or invokespecial,
-  // except that a same-class call to a private, static, or final target is reported false even when
-  // the raw instruction is invokevirtual.
+  // True for an invokevirtual or invokeinterface call, false for invokestatic or invokespecial. A
+  // same-class call to a private, static or final target is false even when the raw instruction is
+  // invokevirtual.
   bool virtual = 4;
   // CALL, the zero value, or CREATES; see CallEdgeKind. An edge that takes the place of a
   // pass-through is CREATES when either the edge to the pass-through or the pass-through's own edge
@@ -522,8 +522,8 @@ message ClassLocation {
   string super_class_name = 2;
   repeated string interface_names = 3;
   // The class file's SourceFile attribute exactly as it appears, such as DemoServerMain.kt. It is a
-  // file name and never a path. Empty when the class has none. The agent does not clean it: a value
-  // such as <generated> is sent as it is.
+  // file name and never a path. Empty when the class has none. The agent does not clean it, so it
+  // sends a value such as <generated> as it is.
   string source_file = 4;
   // What kind of body class this is; see BodyKind. NONE, the zero value, when the class is not a
   // body class.
@@ -547,7 +547,8 @@ enum BodyKind {
   // An anonymous class, such as javac's new Runnable() { ... }: the class's own InnerClasses entry
   // has no name and the class carries no kotlin.Metadata, or the class has no InnerClasses entry
   // for itself at all. A Kotlin body class of a shape the agent does not know, such as one
-  // extending a new Kotlin runtime base class, reads as OBJECT_EXPRESSION instead.
+  // extending a Kotlin runtime base class the agent does not know, reads as OBJECT_EXPRESSION
+  // instead.
   ANONYMOUS_CLASS = 1;
   // A Kotlin object expression, such as object : Runnable { ... }: the class's own InnerClasses
   // entry has no name, and the class carries kotlin.Metadata.
@@ -619,8 +620,8 @@ message ClassFailedToInitialize {
   int64 observed_at = 3;
 }
 
-// A class the agent matched but could not instrument (e.g. bytecode ByteBuddy refuses to redefine),
-// so it never gets a class_id or any probes.
+// A class the agent matched but could not instrument, such as one whose bytecode Byte Buddy refuses
+// to redefine, so it never gets a class_id or any probes.
 message SkippedClass {
   string class_name = 1;
   string reason = 2;
@@ -631,9 +632,9 @@ message SkippedClass {
 // carried yet. Endpoints and disabled endpoint modules share the same incremental delivery, and an
 // endpoint whose handler join changed since it was sent goes out again.
 //
-// class_id is assigned by each process's own registry, in whatever order that process's classes
-// happen to load, so the same class_id can mean a different class in two instances of the same
-// (service, version), or in two runs of one pinned instance.
+// Each process's own registry assigns class_id in the order that process's classes load, so the
+// same class_id can mean a different class in two instances of the same (service, version), or in
+// two runs of one pinned instance.
 message ProbeManifest {
   reserved 1, 2, 5;
   reserved "service_name", "service_version", "service_instance_id";
@@ -657,7 +658,7 @@ message ProbeManifest {
   // ExternalClass.
   repeated ExternalClass external_classes = 12;
   // True when this instance records references, which it does only when its include rules are
-  // set: with every class in scope nothing is out of scope to reference, so empty reference lists
+  // set. With every class in scope nothing is out of scope to reference, so empty reference lists
   // would otherwise read as "no dependency is referenced". Set on every manifest the instance
   // sends.
   bool references_recorded = 13;
@@ -673,7 +674,7 @@ message ProbeManifest {
   // A number the run gives each delta batch and manifest it sends, from 1, one higher each time,
   // drawn together with counts_pending_since just before the payload is sent. Of a run's payloads,
   // the one with the highest number says the run's current delivery state, whatever order they
-  // arrive in. It proves nothing about completeness: a gap means nothing. 0 from an agent that
+  // arrive in. It proves nothing about completeness, and a gap means nothing. 0 from an agent that
   // predates the field.
   int64 payload_sequence = 17;
   // The run's delivery state when the payload was stamped, in milliseconds since the epoch: 0 when
@@ -894,7 +895,7 @@ enum EndpointTemplateKind {
 // One endpoint the framework serves. endpoint_id is per instance, like class_id: cross-instance
 // identity is (verb, route_template, template_kind), never endpoint_id.
 //
-// A record may be re-sent when a field learned later (the handler join) changes.
+// The agent sends a record again when a field it learns later, the handler join, changes.
 message EndpointLocation {
   int32 endpoint_id = 1;
   // Uppercase HTTP method, or "*" when the framework leaves it unconstrained.
@@ -904,7 +905,7 @@ message EndpointLocation {
   string route_template = 3;
   // The framework's own spelling, kept for display only.
   string verbatim_template = 4;
-  // Module name, e.g. "spring-webmvc", "ktor-3", "jdk-httpserver".
+  // Module name, such as "spring-webmvc", "ktor-3" or "jdk-httpserver".
   string framework = 5;
   EndpointDiscoverySource discovery_source = 6;
   // Handler join, set when the framework exposes one. All three are set for

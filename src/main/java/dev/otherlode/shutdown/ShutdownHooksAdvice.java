@@ -5,7 +5,7 @@ import java.util.Map;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the entry of {@code java.lang.ApplicationShutdownHooks.runHooks}. It hands the
+ * Runs on entry to {@code java.lang.ApplicationShutdownHooks.runHooks}. It hands the
  * class's own {@code hooks} field, the table of application hooks, to {@link
  * OtherlodeShutdownHooks#offer}.
  */

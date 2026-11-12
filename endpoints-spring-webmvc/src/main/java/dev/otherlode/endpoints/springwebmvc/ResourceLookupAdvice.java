@@ -11,7 +11,7 @@ import org.springframework.web.servlet.function.ServerRequest;
 import org.springframework.web.util.pattern.PathPattern;
 
 /**
- * Woven onto the exit of {@code PathResourceLookupFunction.apply(ServerRequest)}, the lookup
+ * Runs on exit from {@code PathResourceLookupFunction.apply(ServerRequest)}, the lookup
  * function behind {@code RouterFunctions.resources(pattern, location)}. The dispatch key is {@code
  * List.of("fnres", lookupFunction, nestPattern, verb)} and must match the key in {@code
  * SpringWebMvcModule.declare}.
@@ -19,8 +19,9 @@ import org.springframework.web.util.pattern.PathPattern;
  * <p>A request counts only for {@code GET}, {@code HEAD} and {@code OPTIONS}. An introspector
  * lookup, an async redispatch and a CORS preflight are no call. Every present result marks the
  * request through {@link OtherlodeEndpoints#resourceServed}, so {@link SetAttributesAdvice} does
- * not count it again. The advice is written against the {@code javax} servlet types and bound to
- * the {@code jakarta} ones, by prefix, when {@code ServerRequest.servletRequest()} returns them.
+ * not count it again. The advice compiles against the {@code javax} servlet types, and the module
+ * binds it to the {@code jakarta} ones, by prefix, when {@code ServerRequest.servletRequest()}
+ * returns them.
  */
 public class ResourceLookupAdvice {
     private static final String MODULE = "spring-webmvc";

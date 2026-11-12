@@ -4,7 +4,7 @@ import dev.otherlode.bootstrap.OtherlodeEndpoints;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the exit of {@code RouteImpl.setPath(String)} and {@code RouteImpl.method(HttpMethod)},
+ * Runs on exit from {@code RouteImpl.setPath(String)} and {@code RouteImpl.method(HttpMethod)},
  * which change what a route declares after it has entered a router. The event is {@code
  * {"changed", router, route}}.
  */

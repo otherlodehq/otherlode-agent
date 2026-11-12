@@ -30,7 +30,7 @@ class ProbeLayoutHashTest {
 
     @Test
     fun `a signature list hashes to the same value on every JVM`() {
-        // FNV-1a over each signature's UTF-8 bytes, each followed by 0xff, computed outside the JVM.
+        // The expected value is FNV-1a over each signature's UTF-8 bytes, each followed by 0xff, computed outside the JVM.
         assertEquals(-134230149565136201L, ProbeLayoutHash.of(listOf("bar()V", "foo(I)Z")))
     }
 

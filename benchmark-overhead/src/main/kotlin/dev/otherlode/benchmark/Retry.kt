@@ -3,7 +3,7 @@ package dev.otherlode.benchmark
 /** The attempts a repeat gets when its only problems are environmental. */
 const val MAX_ATTEMPTS = 2
 
-/** The repeats of one run that may run again. Past it, an environmental failure fails the run. */
+/** How many repeats of one run may run again. Past it, an environmental failure fails the run. */
 const val MAX_RETRIES_PER_RUN = 1
 
 /** A repeat that failed only on [isEnvironmental] problems. */

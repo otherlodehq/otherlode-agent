@@ -12,12 +12,12 @@ import java.util.concurrent.atomic.AtomicLong
  * The out-of-scope classes the adopter's code references, each with where the transform found it,
  * resolved to a dependency and delivered once per name.
  *
- * [record] only remembers a location string. A name whose location [resolveLocation] maps to no
- * dependency (a jar of the adopter's own, an agent jar, an unsupported scheme) is resolved once and
- * never sent. A name no loader could find is sent as absent.
+ * [record] only remembers a location string. The registry resolves a name whose location
+ * [resolveLocation] maps to no dependency (a jar of the adopter's own, an agent jar, an unsupported
+ * scheme) once and never sends it. It sends a name no loader could find as absent.
  *
- * A name that maps to a dependency is held while [isDependencySendable] is false for that id. An
- * absent name is never held.
+ * It holds a name that maps to a dependency while [isDependencySendable] is false for that id, and
+ * it never holds an absent name.
  */
 class ExternalClassRegistry(
     private val isListingComplete: () -> Boolean = { false },
@@ -120,7 +120,7 @@ class ExternalClassRegistry(
      * is absent or maps to a dependency [isDependencySendable] allows, in the order the names were
      * first recorded. Resolves any name not yet resolved first. Empty until the dependency listing
      * completes, and when there is nothing to send. The first call after the listing completes
-     * fixes the backlog that [isBacklogDelivered] waits for. Nothing is marked delivered here; see
+     * fixes the backlog that [isBacklogDelivered] waits for. This marks nothing delivered; see
      * [advanceManifest].
      */
     fun computeManifestEntries(maxPerChunk: Int): List<ManifestSnapshot> {

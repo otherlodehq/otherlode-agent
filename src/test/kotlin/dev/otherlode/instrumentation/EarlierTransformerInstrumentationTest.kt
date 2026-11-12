@@ -349,8 +349,8 @@ class EarlierTransformerInstrumentationTest {
                 WovenBytes.isWoven(received),
                 "JaCoCo received $className before this agent wove it",
             )
-            // A JaCoCo agent on the test JVM instruments the fixture first, so only the transformer
-            // order can be checked.
+            // A JaCoCo agent on the test JVM instruments the fixture first, so this test can check only
+            // the transformer order.
             if (isUnderJacocoAgent()) continue
             val classFile = classFileOf(internalName)
             assertTrue(received.contentEquals(classFile), "JaCoCo received $className's class file")

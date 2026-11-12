@@ -71,7 +71,7 @@ def timetable(scale, flush, check_delay):
 
 
 class State:
-    """The persistent state: T0, what is done, the runs, the events. Saved after every change."""
+    """The persistent state: T0, what is done, the runs, the events. The supervisor saves it after every change."""
 
     def __init__(self, path):
         self.path = path
@@ -211,7 +211,7 @@ class RouteGen(threading.Thread):
 class WindowTracker:
     """Which window reads are due. After an event, a live read is due every `fast_period` seconds for
     `fast_span` seconds, and a snapshot read every `slow_period` seconds for `slow_span`. The times are
-    real seconds at every scale. A read that runs late makes the ticks it covered skipped."""
+    real seconds at every scale. A read that runs late skips the ticks it covered."""
 
     def __init__(self, fast_period=cfg.WINDOW_FAST_PERIOD, fast_span=cfg.WINDOW_FAST_SPAN,
                  slow_period=cfg.WINDOW_SLOW_PERIOD, slow_span=cfg.WINDOW_SLOW_SPAN):
@@ -257,7 +257,7 @@ class WindowReader(threading.Thread):
     """One thread that reads every finding in the windows after an event, judges each read, and
     keeps the violations, the counts and the reads of shop-1 while the collector refuses manifests in
     `state/windows.json`, which check 8 reads. A read that is still running when the next is due
-    makes that tick skipped."""
+    skips that tick."""
 
     def __init__(self, sup):
         super().__init__(daemon=True, name="windows")
@@ -531,7 +531,7 @@ class Managed:
         self._finish("kill9")
 
     def check_exit(self):
-        """Called every tick. Notes a process that ended and nobody asked it to."""
+        """The supervisor calls this every tick. It notes a process that ended when nobody asked it to."""
         p = self.popen
         if p is None or self.run is None or self.run["ended"] is not None:
             return False

@@ -7,13 +7,12 @@ import io.micronaut.web.router.UriRouteMatch;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the exit of {@code RouteExecutor.findRouteMatch(HttpRequest)}, which Micronaut calls
- * once per request after the pre-matching filters and before argument binding. A null return is no
- * match and counts nothing.
+ * Runs on exit from {@code RouteExecutor.findRouteMatch(HttpRequest)}. A null return is no match
+ * and counts nothing.
  *
- * <p>A route no registration saw is recorded at dispatch, with no handler join. A HEAD route whose
- * method carries the {@code @Get} stereotype is the one Micronaut adds beside a {@code @Get}, so it
- * is recorded against the GET endpoint of the same template. A WebSocket route counts nothing.
+ * <p>The advice records a route no registration saw at dispatch, with no handler join. It records
+ * a HEAD route whose method carries the {@code @Get} stereotype against the GET endpoint of the
+ * same template. A WebSocket route counts nothing.
  */
 public class DispatchAdvice {
     private static final String MODULE = "micronaut";

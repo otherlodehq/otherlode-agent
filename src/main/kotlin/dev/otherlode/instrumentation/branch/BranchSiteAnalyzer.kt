@@ -36,7 +36,7 @@ import dev.otherlode.export.BranchSite as BranchSitePayload
  * method in a class's original bytecode, plus each method's first source line.
  *
  * Only methods [methodFilter] accepts contribute branch sites, first lines, and inline marks, apart from
- * the first line of `<clinit>`. A `$default` method is found and resolved regardless of [methodFilter].
+ * the first line of `<clinit>`. It finds and resolves a `$default` method regardless of [methodFilter].
  *
  * This is read-only.
  *
@@ -166,8 +166,8 @@ object BranchSiteAnalyzer {
 
         /**
          * The class file's tracked instructions of [name]/[descriptor] as [SitePairing.encodedSequences]
-         * encodes them, or an empty array for a method with none. Only a method [analyze]'s
-         * `methodFilter` accepted is recorded.
+         * encodes them, or an empty array for a method with none. [analyze] records only a method
+         * its `methodFilter` accepted.
          */
         fun trackedSequenceOf(
             name: String,
@@ -208,8 +208,8 @@ object BranchSiteAnalyzer {
         /**
          * The out-of-scope classes this method references, dotted, first seen first: its own
          * bytecode, signature and annotations, plus those of every pass-through it reaches, as
-         * [callsOf] follows them. Empty for any method that does not get a METHOD probe. JDK
-         * classes are still listed here.
+         * [callsOf] follows them. Empty for any method that does not get a METHOD probe. The list
+         * still includes JDK classes.
          */
         fun referencesOf(
             name: String,
@@ -282,7 +282,7 @@ object BranchSiteAnalyzer {
         ): SourceSignature = sourceSignatures[name to descriptor] ?: SourceSignature.NONE
 
         /**
-         * What compiled this method into existence, from bytecode shape alone.
+         * What generated this method, judged from its bytecode shape alone.
          * [GeneratedBy.NONE] on [EMPTY], and for any method none of the shape rules matched.
          */
         fun generatedBy(
@@ -317,12 +317,12 @@ object BranchSiteAnalyzer {
 
     /**
      * Parsed method tables of classes referenced across a class boundary, shared between analyses.
-     * Bounded and least-recently-used. Safe to share between threads. A class whose bytes cannot be
-     * read is remembered as unreadable.
+     * Bounded and least-recently-used. Safe to share between threads. It remembers a class whose
+     * bytes it cannot read as unreadable.
      *
      * It also holds the [TypeHeader] of each type the override walk reads and, for each annotation
      * type, whether it reaches a listed or named annotation ([CallbackAnnotationFinder.Reach]).
-     * Each is bounded separately by the same limit.
+     * The same limit bounds each separately.
      */
     class CrossClassTableCache(
         private val maxEntries: Int,
@@ -621,8 +621,8 @@ object BranchSiteAnalyzer {
      * [lookup] resolves another class's bytes by internal name, for a constructor default getter
      * whose target lives on a different class from the getter itself, and for the map class an enum
      * switch reads its case labels from. It defaults to always returning null, which leaves such a
-     * getter unresolved and such a switch as plain sites instead of failing analysis. A [lookup]
-     * that throws is read as one that returned null.
+     * getter unresolved and such a switch as plain sites instead of failing analysis. It treats a
+     * [lookup] that throws as one that returned null.
      *
      * [handlerInterfaces] names, by `Class.getName()`, the functional interfaces a framework takes
      * a handler as. The analysis yields [Analysis.handlerForwarders] only for those.
@@ -1916,7 +1916,7 @@ object BranchSiteAnalyzer {
             if (key in eligibleMethodKeys || access and BODYLESS_FLAGS != 0) continue
             forwarder(internalClassName, key, rawCandidatesByMethod[key].orEmpty())?.let { forwarders += it }
         }
-        // A snapshot: the walk below can add to this set.
+        // Iterates a snapshot, since the walk below can add to this set.
         for (bodyClass in reachedUnprobedBodyClasses.toList()) {
             val table = methodTableFor(bodyClass) ?: continue
             if (table.interfaceInternalNames.none(::isHandlerInterface)) continue
@@ -1992,8 +1992,8 @@ object BranchSiteAnalyzer {
 
     private const val BODYLESS_FLAGS = Opcodes.ACC_ABSTRACT or Opcodes.ACC_NATIVE
 
-    // These rules must match TypeMatchPolicy.methodMatcher, or a method the method tier probes is
-    // resolved here as a pass-through.
+    // These rules must match TypeMatchPolicy.methodMatcher, or this resolves a method the method tier
+    // probes as a pass-through.
     private fun wouldNotBeProbedByMethodTier(
         access: Int,
         name: String,

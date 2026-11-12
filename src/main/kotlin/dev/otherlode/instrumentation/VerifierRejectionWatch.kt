@@ -7,7 +7,7 @@ import dev.otherlode.registry.ProbeRegistry
  * What the run can see of the JVM's verifier rejections. [watched] is true once [VerifyErrorHook]
  * installed.
  *
- * A class whose retransformation by the agent itself failed is dropped. A message in no read
+ * It drops a class whose retransformation by the agent itself failed. A message in no read
  * format, and each message the ring lost to overflow, adds to the run's unplaced total. [carried] and
  * [carriedOverflow] are messages and overflow drained before the watch was built; the first [drainInto]
  * reads them.
@@ -47,7 +47,7 @@ class VerifierRejectionWatch(
     }
 
     companion object {
-        /** A run without the hook: it reads nothing and says so. */
+        /** A run without the hook. It reads nothing and says so. */
         val NOT_WATCHED = VerifierRejectionWatch(watched = false)
     }
 }

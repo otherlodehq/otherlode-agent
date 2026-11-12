@@ -22,7 +22,7 @@ class CollectorMetrics private constructor(
         private val LINE = Regex("""^([a-zA-Z_:][a-zA-Z0-9_:]*)(?:\{(.*)})?\s+(\S+)\s*$""")
         private val LABEL = Regex("""([a-zA-Z_][a-zA-Z0-9_]*)="((?:[^"\\]|\\.)*)"""")
 
-        /** Parses an exposition. Comment and unparseable lines are ignored. */
+        /** Parses an exposition and ignores comment and unparseable lines. */
         fun parse(text: String): CollectorMetrics {
             val parsed =
                 text.lineSequence().filterNot { it.startsWith("#") || it.isBlank() }.mapNotNull { line ->

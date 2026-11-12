@@ -13,9 +13,9 @@ import net.bytebuddy.matcher.ElementMatcher
 import net.bytebuddy.pool.TypePool
 
 /**
- * Binds advice classes by name without loading them. Class files are read from `agentClassLoader`
- * first, then from `targetClassLoader`, where null means the bootstrap loader. Each [hook] call is
- * recorded in [recordedHooks].
+ * Binds advice classes by name without loading them. It reads class files from `agentClassLoader`
+ * first, then from `targetClassLoader`, where null means the bootstrap loader, and records each
+ * [hook] call in [recordedHooks].
  */
 class AdviceBinder private constructor(
     private val locator: ClassFileLocator,
@@ -36,8 +36,8 @@ class AdviceBinder private constructor(
 
     /**
      * Returns a wrapper that applies [adviceClassName] to the declared methods with a body that [methodMatcher]
-     * accepts, and records the pair in [recordedHooks]. In the advice class, an internal name that starts with a
-     * key of [remapPrefixes] has that prefix replaced by the key's value. The longest matching key wins.
+     * accepts, and records the pair in [recordedHooks]. In the advice class, it replaces the prefix of each
+     * internal name that starts with a key of [remapPrefixes] with the key's value. The longest matching key wins.
      */
     fun hook(
         adviceClassName: String,
@@ -78,7 +78,7 @@ class AdviceBinder private constructor(
         ): ClassFileLocator =
             ClassFileLocator.Compound(
                 ClassFileLocator.ForClassLoader.of(agentClassLoader),
-                // Must stay weakly referenced: the cached binder is a WeakHashMap value keyed by this
+                // Must stay weakly referenced. The cached binder is a WeakHashMap value keyed by this
                 // loader, and a strong reference would keep the entry alive forever.
                 if (targetClassLoader == null) {
                     ClassFileLocator.ForClassLoader.ofBootLoader()

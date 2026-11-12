@@ -53,7 +53,7 @@ fun <T> serve(
     properties: Map<String, Any> = emptyMap(),
     block: (Int) -> T,
 ): T {
-    // A fresh client per server, so no request reuses a pooled connection an earlier server on the same port closed.
+    // Each server gets a fresh client, so no request reuses a pooled connection an earlier server on the same port closed.
     client = newClient()
     val defaults =
         mapOf<String, Any>(

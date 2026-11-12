@@ -22,7 +22,7 @@ dependencies {
     compileOnly(project(":bootstrap"))
     compileOnly("net.bytebuddy:byte-buddy:$byteBuddyVersion")
 
-    // The oldest supported release. Never `implementation`: Vert.x must not be shaded into the agent jar.
+    // The oldest supported release. Never `implementation`, since Vert.x must not be shaded into the agent jar.
     compileOnly("io.vertx:vertx-web:4.5.0")
 
     testImplementation(project(":"))

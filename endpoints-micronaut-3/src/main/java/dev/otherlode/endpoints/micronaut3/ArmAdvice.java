@@ -4,10 +4,10 @@ import dev.otherlode.bootstrap.OtherlodeEndpoints;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the exit of the constructor of each dispatch point this module counts at: Netty's
+ * Runs on exit from the constructor of each dispatch point this module counts at: Netty's
  * {@code RoutingInBoundHandler}, micronaut-servlet's {@code ServletHttpHandler} and micronaut-aws's
  * {@code MicronautLambdaContainerHandler}. It declares the {@code "dispatch-point-constructed"}
- * marker, which {@code DispatchGate} reads as the signal to declare the routers it holds.
+ * marker.
  */
 public class ArmAdvice {
     private static final String MODULE = "micronaut-3";

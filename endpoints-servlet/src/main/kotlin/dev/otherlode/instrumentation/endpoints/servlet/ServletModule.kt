@@ -107,9 +107,9 @@ private class ServletApiGate : ElementMatcher<ClassLoader?> {
  *
  * A request counts at the entry of the servlet's public `service(ServletRequest,
  * ServletResponse)`, against the mapping the container matched. Exactly one of the frames a
- * request passes through counts it. A servlet context is declared at the first dispatch that
- * reaches a hooked servlet in it, and again before each manifest for a mapping added since.
- * Servlets another module counts behind, and a container's own servlets, are left out.
+ * request passes through counts it. The module declares a servlet context at the first dispatch
+ * that reaches a hooked servlet in it, and again before each manifest for a mapping added since.
+ * It leaves out servlets another module counts behind, and a container's own servlets.
  */
 class ServletModule : EndpointModule {
     override val name: String = MODULE_NAME
@@ -129,9 +129,9 @@ class ServletModule : EndpointModule {
     override fun typeMatcher(): ElementMatcher<in TypeDescription> = typeMatcher(null)
 
     /**
-     * A supertype the pool has no class file for is asked of [classLoader] (see
-     * [SupertypeResolver]). One that cannot be loaded means the class can never be defined, so the
-     * answer is no match.
+     * Asks [classLoader], through [SupertypeResolver], for a supertype the pool has no class file
+     * for. When [classLoader] cannot load one, the class can never be defined, so the matcher
+     * answers no match.
      */
     override fun typeMatcher(classLoader: ClassLoader?): ElementMatcher<in TypeDescription> {
         val resolver = SupertypeResolver(classLoader, supertypeCaches.cacheFor(classLoader), ::isSkippedSupertype)

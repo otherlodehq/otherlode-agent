@@ -4,7 +4,7 @@ import dev.otherlode.bootstrap.OtherlodeEndpoints;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the exit of {@code RouteImpl.handler(Handler)}, which every context handler reaches,
+ * Runs on exit from {@code RouteImpl.handler(Handler)}, which every context handler reaches,
  * including the one {@code subRouter} sets and the decorator {@code blockingHandler} wraps. The
  * event is {@code {"handler", router, route, handler}}.
  */

@@ -14,7 +14,7 @@ import org.springframework.web.reactive.result.method.RequestMappingInfo;
 import org.springframework.web.util.pattern.PathPattern;
 
 /**
- * Woven onto the exit of {@code AbstractHandlerMethodMapping.registerMapping(mapping, handler,
+ * Runs on exit from {@code AbstractHandlerMethodMapping.registerMapping(mapping, handler,
  * method)}, the public method for registering a handler method in code.
  *
  * <p>The body is {@link RegisterHandlerMethodAdvice}'s with the arguments in this method's order.

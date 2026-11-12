@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.RequestMethod;
 import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
 
 /**
- * Woven onto {@code AbstractHandlerMethodMapping.registerMapping(mapping, handler, method)}, the
+ * Runs on entry to {@code AbstractHandlerMethodMapping.registerMapping(mapping, handler, method)}, the
  * public method for registering a handler method in code. It declares endpoints as {@link
  * RegisterHandlerMethodAdvice} does, with the arguments in this method's order.
  */

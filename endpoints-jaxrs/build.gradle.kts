@@ -27,7 +27,7 @@ dependencies {
 
     implementation(project(":endpoints-api"))
 
-    // Compile-time only: at runtime OtherlodeEndpoints comes from the target JVM's bootstrap classloader.
+    // At runtime OtherlodeEndpoints comes from the target JVM's bootstrap classloader.
     compileOnly(project(":bootstrap"))
 
     compileOnly("net.bytebuddy:byte-buddy:1.18.12")
@@ -46,8 +46,8 @@ kotlin {
     jvmToolchain(21)
 }
 
-// JaxRsTestAgent must be a real -javaagent: JUnit discovery loads the fixture resource classes
-// before any test method runs.
+// JaxRsTestAgent must be a real -javaagent, because JUnit discovery loads the fixture resource
+// classes before any test method runs.
 val jaxRsTestAgentJar =
     tasks.register<Jar>("jaxRsTestAgentJar") {
         archiveBaseName.set("jaxrs-test-agent")

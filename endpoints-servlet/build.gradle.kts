@@ -29,16 +29,16 @@ val h2Version = providers.gradleProperty("otherlode.framework.h2").getOrElse("2.
 dependencies {
     implementation(project(":endpoints-api"))
 
-    // Compile-time only: at runtime OtherlodeEndpoints comes from the target JVM's bootstrap classloader.
+    // At runtime OtherlodeEndpoints comes from the target JVM's bootstrap classloader.
     compileOnly(project(":bootstrap"))
 
-    // compileOnly: the root project ships the wire module in the agent jar.
+    // The root project ships the wire module in the agent jar.
     compileOnly(project(":wire"))
 
     compileOnly("net.bytebuddy:byte-buddy:$byteBuddyVersion")
 
-    // The oldest supported servlet API: Servlet 4.0 is the first to have getHttpServletMapping. Never
-    // `implementation`: the servlet API must not be shaded into the agent jar.
+    // Servlet 4.0 is the oldest supported servlet API, because it is the first to have getHttpServletMapping.
+    // Never `implementation`, since the servlet API must not be shaded into the agent jar.
     compileOnly("javax.servlet:javax.servlet-api:4.0.1")
 
     testImplementation(project(":"))
@@ -58,8 +58,8 @@ sourceSets.test {
     kotlin.srcDir("src/shapes/kotlin")
 }
 
-// A test agent must be a real -javaagent: the container loads HttpServlet before any test method
-// runs, and the weave has to come first.
+// A test agent must be a real -javaagent, because the container loads HttpServlet before any test
+// method runs and the weave has to come first.
 fun servletTestAgentJar(
     name: String,
     agentClass: String,

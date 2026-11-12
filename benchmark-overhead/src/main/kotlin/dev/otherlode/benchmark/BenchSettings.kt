@@ -34,7 +34,7 @@ data class BenchSettings(
         require(openRateFraction > 0 && openRateFraction <= 1) { "-PopenRateFraction must be above 0 and at most 1" }
     }
 
-    /** Where this config's results land: a startup-only run and an open-loop run each keep their own directory. */
+    /** Where this config's results go. A startup-only run and an open-loop run each keep their own directory. */
     val configDir: Path
         get() =
             resultsDir.resolve(

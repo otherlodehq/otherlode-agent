@@ -8,9 +8,9 @@ order: 110
 
 The agent and the testkit are compiled against the JDK 17 API and emit class-file version 61, so they run on JDK 17 and later.
 
-The build runs the tests on JDK 17, 21 and 25 (Temurin), each as its own CI job. Micronaut 5's suite needs JDK 25 and runs there in every job, and the framework marker tests run on JDK 21. No other JDK version is tested. The agent reads two fields of the JDK's lambda factory to name Java lambda handlers, and a JDK that renames them fails a test.
+The build runs the tests on JDK 17, 21 and 25 (Temurin), each as its own CI job. Micronaut 5's suite needs JDK 25 and runs there in every job, and the framework marker tests run on JDK 21. The build tests no other JDK version. The agent reads two fields of the JDK's lambda factory to name Java lambda handlers, and a JDK that renames them fails a test.
 
-The agent weaves the two constructors of `java.lang.VerifyError` at startup to learn which classes the JVM's verifier rejects. This works alongside JFR, which on JDK 17 and 21 also transforms `Error` and `Throwable` when it starts. See [classes](classes#rejected-by-the-verifier).
+The agent weaves the two constructors of `java.lang.VerifyError` at startup to learn which classes the JVM's verifier rejects. The weave works alongside JFR, which on JDK 17 and 21 also transforms `Error` and `Throwable` when it starts. See [classes](classes#rejected-by-the-verifier).
 
 The agent attaches with `-javaagent` only. The jar has no `agentmain` entry point, so you cannot attach it to a running JVM. See [Attach the agent](attach).
 
@@ -42,26 +42,26 @@ To instrument the classes of such a loader, delegate the package to the boot loa
 
 ## Compilers
 
-The agent tells a compiler's generated code, such as a data class's `copy`, a case class's `productElement` or a suspend function's state machine, from yours by the exact body the compiler wrote. Those bodies change between compiler releases, so the marks are exact only for releases the agent was checked against:
+The agent tells a compiler's generated code, such as a data class's `copy`, a case class's `productElement` or a suspend function's state machine, from yours by the exact body the compiler wrote. Those bodies change between compiler releases, so the marks are exact only for the releases the project checked the agent against:
 
 | Language | Compiler releases checked |
 |---|---|
-| Kotlin | kotlinc 1.9.25, 2.1.21, 2.2.21 and 2.4.21, standing for 1.9 to 2.4. 2.1.21 stands for the releases that default to `-jvm-default=disable`. The kotlinx.serialization plugin's output is checked with each release's own plugin, and with 2.1.21 and 2.2.21 also under `-language-version 1.9`, which compiles with the K1 frontend. |
+| Kotlin | kotlinc 1.9.25, 2.1.21, 2.2.21 and 2.4.21, standing for 1.9 to 2.4. 2.1.21 stands for the releases that default to `-jvm-default=disable`. The tests check the kotlinx.serialization plugin's output with each release's own plugin, and with 2.1.21 and 2.2.21 also under `-language-version 1.9`, which compiles with the K1 frontend. |
 | Java | javac 17, 21 and 25 |
 | Scala 2 | scalac 2.12.20, 2.13.15, 2.13.16 and 2.13.18. A Scala 2 class does not name its compiler, so the rules accept every body shape found in a survey of 2.12.18 to 2.12.21 and 2.13.14 to 2.13.18. |
-| Scala 3 | Each release from 3.3.3 to 3.10.0. A Scala 3 class's `.tasty` file names the release that wrote it, and a class whose `.tasty` file its class loader does not serve is read as Scala 2 is. The releases the agent reads are listed in `scala3-read-releases.txt` inside the agent jar. |
+| Scala 3 | Each release from 3.3.3 to 3.10.0. A Scala 3 class's `.tasty` file names the release that wrote it, and the agent reads a class as Scala 2 when its class loader does not serve the class's `.tasty` file. The agent jar lists the releases the agent reads in `scala3-read-releases.txt`. |
 
-Code from any other compiler, or from a release that changed a shape, is probed and counted like any other code. If its outline looks like compiler output but its body is not one the agent has read, the agent reports it as an unread shape, which is never called dead code. On the first flush that finds one, the agent logs a WARNING that counts them by family and names each Scala 3 release it has not read. See [Unread shapes](methods-and-branches#unread-shapes).
+The agent probes and counts code from any other compiler, or from a release that changed a shape, like any other code. If its outline looks like compiler output but its body is not one the agent has read, the agent reports it as an unread shape, which never counts as dead code. On the first flush that finds one, the agent logs a WARNING that counts them by family and names each Scala 3 release it has not read. See [Unread shapes](methods-and-branches#unread-shapes).
 
 A scheduled CI job compiles the fixtures every week with the newest release of kotlinc, scalac 2.12, scalac 2.13 and Scala 3. A release that writes a shape the agent has not read fails that build.
 
 ## JPA enhancers
 
-The agent reads classes that Hibernate, Ebean, EclipseLink and OpenJPA enhanced. See [methods and branches](methods-and-branches#methods-a-jpa-enhancer-adds). The rules are checked against entities that Ebean 19.7, EclipseLink 4.0 and OpenJPA 4.1 enhanced at build time.
+The agent reads classes that Hibernate, Ebean, EclipseLink and OpenJPA enhanced. See [methods and branches](methods-and-branches#methods-a-jpa-enhancer-adds). The tests check the rules against entities that Ebean 19.7, EclipseLink 4.0 and OpenJPA 4.1 enhanced at build time.
 
-Enhance OpenJPA entities that use property access at build time. When OpenJPA enhances one as it loads, a getter or setter it wrapped keeps its entry probe and gets no branch probes, so the branches you wrote in it are not reported. A `writeObject` you wrote in a serializable entity is the same.
+Enhance OpenJPA entities that use property access at build time. When OpenJPA enhances one as it loads, a getter or setter it wrapped keeps its entry probe and gets no branch probes, so the agent does not report the branches you wrote in it. A `writeObject` you wrote in a `Serializable` entity is the same.
 
-OpenJPA's `openjpa.RuntimeUnenhancedClasses=supported` is not supported. Enhance the entities at build time instead.
+The agent does not support OpenJPA's `openjpa.RuntimeUnenhancedClasses=supported`. Enhance the entities at build time instead.
 
 ## Frameworks
 
@@ -69,19 +69,19 @@ The agent counts HTTP endpoints for Spring MVC and Spring WebFlux, each with its
 
 ## Other agents in the same JVM
 
-Every transformer of the agent that changes a class is retransformation-capable, and the JVM calls those after every transformer that is not, whatever order the `-javaagent` flags list. So the agent runs after JaCoCo's agent, AspectJ's weaver and Spring's load-time weaver. It reads each class's shape from the class file on disk, not from the bytes it receives, so its report does not depend on the flag order. The agent's class listing also registers an observer that is not retransformation-capable, and it changes no class.
+Every transformer of the agent that changes a class is retransformation-capable, and the JVM calls those after every transformer that is not, whatever order the `-javaagent` flags list. So the agent runs after JaCoCo's agent, AspectJ's weaver and Spring's load-time weaver. It reads each class's shape from the class file, not from the bytes it receives, so its report does not depend on the flag order. The agent's class listing also registers an observer that is not retransformation-capable, and it changes no class.
 
 | Other agent | What changes |
 |---|---|
-| JaCoCo, listed before or after | Nothing. The agent weaves after JaCoCo, so JaCoCo's class ids still match the class files. The agent's manifest equals a run without JaCoCo. Gradle's `jacoco` plugin can stay applied to the test task that carries the agent. |
+| JaCoCo, listed before or after | Nothing. The agent weaves after JaCoCo, so JaCoCo's class ids still match the class files. The agent's manifest equals that of a run without JaCoCo. Gradle's `jacoco` plugin can stay applied to the test task that carries the agent. |
 | AspectJ's weaver, Spring's load-time weaver | The agent sees the weaver's output as the bytes it receives. A method whose conditional jumps the weaver added, removed or reordered keeps its entry probe and gets no branch probes. A method missing from the bytes the agent receives gets no probes. The agent logs one INFO line per class, which starts `otherlode: <class> reached this agent rewritten by an earlier transformer`. |
-| OpenTelemetry's agent | Tested in both orders. A Spring MVC request counts once, and no endpoint module switches off. With `otelBridgeEnabled`, the agent can also read OpenTelemetry's HTTP route. See [endpoints](endpoints). |
+| OpenTelemetry's agent | The tests run it in both orders. A Spring MVC request counts once, and no endpoint module switches off. With `otelBridgeEnabled`, the agent can also read OpenTelemetry's HTTP route. See [endpoints](endpoints). |
 | An APM agent that retransforms woven classes | The agent weaves the class again from the plan it stored at first load, so the retransformation succeeds and the probes keep counting. A change the other agent makes to a method body stays. A method whose jumps no longer line up with the class file keeps its entry probe, its branch counts stay where they were, and the agent logs one INFO line per class. |
-| An agent that calls `redefineClasses` | Handled like a retransformation. |
+| An agent that calls `redefineClasses` | The agent handles it like a retransformation. |
 
 The agent refuses a retransformation or redefinition of a woven class in two cases:
 
-- The class file on disk differs from the one the class was woven from, as after a recompile or a HotSwap.
+- The class file differs from the one the class was woven from, as after a recompile or a HotSwap.
 - The new bytes arrive at a class-file version that needs another probe form, such as below 55 for a class woven at 55 or later.
 
 The JVM then refuses the change, the class keeps running with its probes, and the agent logs one WARNING per class, such as:
@@ -90,13 +90,13 @@ The JVM then refuses the change, the class keeps running with its probes, and th
 otherlode: the class file of com.example.Orders differs from the one it was woven from, as after a recompile or a HotSwap; it cannot be woven again, so the JVM refuses the redefinition or retransformation, and the class keeps running with its probes
 ```
 
-Tests launch a JVM with JaCoCo's agent in both orders, and retransform and redefine woven classes with another transformer. No test launches AspectJ's weaver. OpenTelemetry's agent is launched only by the route bridge's tests, in both orders.
+Tests launch a JVM with JaCoCo's agent in both orders, and retransform and redefine woven classes with another transformer. No test launches AspectJ's weaver. Only the route bridge's tests launch OpenTelemetry's agent, in both orders.
 
 ## HotSwap and IDE redefinition
 
-HotSwap does not work on a woven class whose code you changed. When you debug with the agent on the JVM and edit a method, the JVM refuses the redefinition. Your IDE reports that HotSwap failed, and the old code keeps running until you restart. The agent logs the WARNING above, and the woven class keeps counting. A recompile into a classes directory or a rewritten jar is refused the same way, because the class file no longer matches the one the class was woven from.
+HotSwap does not work on a woven class whose code you changed. When you debug with the agent on the JVM and edit a method, the JVM refuses the redefinition. Your IDE reports that HotSwap failed, and the old code keeps running until you restart. The agent logs the WARNING above, and the woven class keeps counting. The agent refuses a recompile into a classes directory or a rewritten jar the same way, because the class file no longer matches the one the class was woven from.
 
-A redefinition that leaves the class file unchanged and keeps the probe form is accepted. That happens in a remote debug session or an application run from a jar, where new code never reaches the class file. The report then keeps describing the class file, not the redefined code.
+The agent accepts a redefinition that leaves the class file unchanged and keeps the probe form. That happens in a remote debug session or an application run from a jar, where new code never reaches the class file. The report then keeps describing the class file, not the redefined code.
 
 To use HotSwap, restart without the agent or leave it off the task you debug with.
 
@@ -120,4 +120,4 @@ If the agent cannot install that jar, for example on a read-only file system or 
 
 The agent jar bundles its dependencies and relocates them into `dev.otherlode.shaded`: Byte Buddy (with ASM), protobuf-java, the Kotlin standard library and the JetBrains annotations. Your application can carry its own copies at other versions without a clash.
 
-The wire module's packages are relocated the same way, so a test classpath that carries a different version of the testkit's wire module does not replace the agent's.
+The agent jar relocates the wire module's packages the same way, so a test classpath that carries a different version of the testkit's wire module does not replace the agent's.

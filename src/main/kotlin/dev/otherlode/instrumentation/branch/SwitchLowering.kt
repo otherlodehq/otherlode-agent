@@ -451,8 +451,8 @@ internal object SwitchLowering {
 
 /**
  * The enum map arrays a class declares, read from its static initialiser: javac's `$SwitchMap$` arrays
- * and kotlinc's `$EnumSwitchMapping$` arrays. [lookup] returns a class's bytes and the class is never
- * loaded. A class the lookup cannot read, or throws on, has no maps.
+ * and kotlinc's `$EnumSwitchMapping$` arrays. [lookup] returns a class's bytes, and this never loads
+ * the class. A class the lookup cannot read, or throws on, has no maps.
  */
 class EnumSwitchMappings(
     private val lookup: (internalName: String) -> ByteArray?,

@@ -39,19 +39,19 @@ private val EXTENSION_ROUTE = Regex("/\\*\\.[^/*]+")
  *
  * Identity is `(verb, route template, template kind)`, the template normalised by
  * [RouteTemplateNormalizer] only when it is a path. Registrations with the same identity are one
- * endpoint with one [EndpointEntry.endpointId] and one count. A regex or servlet pattern template
- * is kept as given and never merges with a template of another kind.
+ * endpoint with one [EndpointEntry.endpointId] and one count. The registry keeps a regex or servlet
+ * pattern template as given, and such a template never merges with a template of another kind.
  *
  * A framework module supplies dispatch keys that identify the framework's own route, and [lookup]
- * resolves a key to its entry. A key made of values (a string, or a list of strings) is compared by
- * `equals`. Any other key object is compared by identity and held weakly. A list holding one such
- * object beside values is held weakly on that object and compared by value otherwise. A key whose
+ * resolves a key to its entry. The registry compares a key made of values (a string, or a list of
+ * strings) by `equals`, and any other key object by identity, holding it weakly. It holds a list with
+ * one such object beside values weakly on that object, and compares the list by value otherwise. A key whose
  * object was collected is unbound; its endpoint stays.
  *
- * An endpoint a module declares from inside a class's transform is published only once a source of
- * it is confirmed: the declaring class is confirmed defined, the endpoint was also registered
+ * The registry publishes an endpoint a module declares from inside a class's transform only once a
+ * source of it is confirmed: the declaring class is confirmed defined, the endpoint was also registered
  * outside a transform or discovered by dispatch, or it has a hit. [confirmFrom] settles the class
- * against the JVM's loaded classes. The dispatch key is bound at once, so a hit before confirmation
+ * against the JVM's loaded classes. The registry binds the dispatch key at once, so a hit before confirmation
  * still counts.
  *
  * @param dispatchLimit how many identities each framework module may create at dispatch, and how
@@ -287,16 +287,16 @@ class EndpointRegistry(
      * Records an endpoint from a framework's own registration hook, finds or creates the entry for
      * its identity, binds [key] to it, and marks it discovered by registration.
      *
-     * [verb] and [verbatimTemplate] are normalised with [contextPath] folded in. When
-     * [templateKind] is not [EndpointTemplateKind.PATH], [verbatimTemplate] is kept as given and
-     * [contextPath] is ignored.
+     * It normalises [verb] and [verbatimTemplate] with [contextPath] folded in. When
+     * [templateKind] is not [EndpointTemplateKind.PATH], it keeps [verbatimTemplate] as given and
+     * ignores [contextPath].
      *
-     * An entry first known from a dispatch is upgraded and goes out again on the next manifest
-     * compute. [handler], when given, is attached as [attachHandler] does.
+     * It upgrades an entry first known from a dispatch, and the entry goes out again on the next
+     * manifest compute. It attaches [handler], when given, as [attachHandler] does.
      *
-     * [declaringClass] is set for a registration made from inside a class's transform. The key is
-     * bound at once, but the endpoint is published only once a source of it is confirmed; see the
-     * class description. A registration without one is a source in itself.
+     * [declaringClass] is set for a registration made from inside a class's transform. This binds the
+     * key at once, but the registry publishes the endpoint only once a source of it is confirmed; see
+     * the class description. A registration without one is a source in itself.
      */
     fun register(
         key: Any,
@@ -321,12 +321,12 @@ class EndpointRegistry(
      * not resolve. Finds or creates the entry for the normalised identity, marks a new one as
      * discovered by dispatch, and binds [key] to it. The caller calls [EndpointEntry.hit] itself.
      *
-     * [handlerClass] is attached as [attachHandler] does, so it never replaces a join that names a
+     * It attaches [handlerClass] as [attachHandler] does, so it never replaces a join that names a
      * method.
      *
      * A module may create at most the dispatch limit of identities this way. Past it this binds
-     * nothing and returns null, and the registry logs one warning per module. An identity that
-     * exists already is returned, and one declared by [register] does not count toward the limit.
+     * nothing and returns null, and the registry logs one warning per module. This returns an
+     * identity that exists already, and one declared by [register] does not count toward the limit.
      * A module may also bind at most that many request-built keys. Past it the entry is still
      * returned, and the key is resolved again on its next request.
      */
@@ -597,7 +597,7 @@ class EndpointRegistry(
     /**
      * Reconciles every declaring class not yet confirmed defined against [loadedClassNames], the
      * JVM's loaded-class names, by the rule [ProbeRegistry.confirmFrom] applies to a class's
-     * probes. A class is confirmed when its name is in that set or its classloader was collected. A
+     * probes. It confirms a class when its name is in that set or its classloader was collected. A
      * class found in neither takes a miss only when every definition attempt it recorded has ended,
      * and two misses withhold it until it declares endpoints again. An unwatchable class never
      * takes a miss.
@@ -632,7 +632,7 @@ class EndpointRegistry(
 
     /**
      * Returns batches of at most [maxPerBatch] endpoints whose live count differs from the last
-     * successfully sent value. Empty when nothing changed. Nothing is marked as sent; call
+     * successfully sent value. Empty when nothing changed. This marks nothing as sent; call
      * [advanceDeltas] with each [DeltaSnapshot] once that batch is confirmed delivered.
      */
     fun computeDeltas(maxPerBatch: Int): List<DeltaSnapshot> {
@@ -677,8 +677,8 @@ class EndpointRegistry(
 
     /**
      * Records [snapshot]'s per-entry counts as delivered. Call this only once that batch is
-     * confirmed delivered. An older snapshot confirmed after a newer one is ignored per entry, so a
-     * confirmed count is never rolled back.
+     * confirmed delivered. It ignores, per entry, an older snapshot confirmed after a newer one, so a
+     * confirmed count never rolls back.
      */
     fun advanceDeltas(snapshot: DeltaSnapshot) {
         for ((entry, count) in snapshot.staged) {
@@ -692,11 +692,11 @@ class EndpointRegistry(
 
     /**
      * Returns chunks of at most [maxPerChunk] endpoints never delivered or changed since last
-     * delivered (a discovery-source upgrade, a newly attached handler). An endpoint whose only
-     * source is a declaring class not yet confirmed defined is left out until it is. Empty when
+     * delivered (a discovery-source upgrade, a newly attached handler). It leaves out an endpoint
+     * whose only source is a declaring class not yet confirmed defined, until that class is. Empty when
      * there is nothing to send. Disabled modules are not here; see [computeDisabledModules].
      *
-     * Nothing is marked as delivered here; call [advanceManifest] with each [ManifestSnapshot] once
+     * This marks nothing as delivered; call [advanceManifest] with each [ManifestSnapshot] once
      * that chunk is confirmed delivered.
      */
     fun computeManifestEntries(maxPerChunk: Int): List<ManifestSnapshot> {
@@ -726,8 +726,8 @@ class EndpointRegistry(
     }
 
     /**
-     * Every disabled module not yet delivered, or null when there is none. Nothing is marked as
-     * delivered here; call [advanceDisabledModules] with the result once that manifest is confirmed.
+     * Every disabled module not yet delivered, or null when there is none. This marks nothing as
+     * delivered; call [advanceDisabledModules] with the result once that manifest is confirmed.
      */
     fun computeDisabledModules(): DisabledModulesSnapshot? {
         val modules =

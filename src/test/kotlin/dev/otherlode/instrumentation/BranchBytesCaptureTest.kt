@@ -255,7 +255,8 @@ class BranchBytesCaptureTest {
         assertEquals(1L, hits[methodProbes.single { it.methodName == "classify" }.probeIndex])
         assertEquals(1L, hits[methodProbes.single { it.methodName == "classifySparse" }.probeIndex])
 
-        // Class-file branch indexes: classify 0 and 1, classifyDense's 2 to 5 left out, classifySparse 6 to 8.
+        // In the class file, classify has branch indexes 0 and 1, classifyDense 2 to 5 and classifySparse 6 to 8.
+        // No probe carries classifyDense's.
         val classify = probes.filter { it.methodName == "classify" && it.kind == ProbeKind.BRANCH }
         assertEquals(listOf(0, 1), classify.map { it.branchIndex })
         assertEquals(listOf(1L, 0L), classify.map { hits[it.probeIndex] ?: 0L }, "-1 takes javac's IFLE")

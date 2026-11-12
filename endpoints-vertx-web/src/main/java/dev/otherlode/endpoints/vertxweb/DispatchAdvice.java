@@ -7,9 +7,10 @@ import java.util.Set;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the exit of {@code RouteState.matches(RoutingContextImplBase, String, boolean)},
+ * Runs on exit from {@code RouteState.matches(RoutingContextImplBase, String, boolean)},
  * which {@code RoutingContextImplBase.iterateNext} calls for each route a request tries and which
- * returns 0 when the route matched. A failure pass and a mount (an exclusive route) count nothing.
+ * returns 0 when the route matched. A failure pass and a mount, which is an exclusive route, count
+ * nothing.
  * A request that runs through several routes counts each, and a {@code reroute} counts again.
  *
  * <p>The dispatch key is the route and its chain, with the request's verb as a last element when

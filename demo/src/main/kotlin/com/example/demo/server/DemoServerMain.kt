@@ -7,14 +7,14 @@ import com.sun.net.httpserver.HttpServer
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
 
-// Each odd shape in the demo server is deliberate: the demo report shows a finding for it.
+// Each odd shape in the demo server is deliberate, because the demo report shows a finding for it.
 private const val FREE_SHIPPING_THRESHOLD = 100.0
 
 /**
  * Two endpoints and one feature-flagged class.
  *
- * `/checkout`'s free-shipping branch is only ever exercised one way, given how
- * [com.example.demo.client] calls it. `/promo` is reachable, but never called at all.
+ * [com.example.demo.client] exercises `/checkout`'s free-shipping branch only one way. `/promo` is
+ * reachable, but nothing calls it.
  */
 fun main() {
     val server = HttpServer.create(InetSocketAddress(DemoPorts.SERVER_PORT), 0)

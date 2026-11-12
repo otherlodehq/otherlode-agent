@@ -17,7 +17,7 @@ WARNING: otherlode: ignoring unknown agent option 'foo' (known options: [authTok
 
 The agent logs startup failures at ERROR, which `java.util.logging` prints as `SEVERE`. It logs problems it can name at WARNING, and a few events at INFO, such as `otherlode: disabled by configuration, nothing will be instrumented or exported`. A healthy agent prints a few INFO lines, such as `otherlode: installing endpoint modules: ...` at startup, and the JVM prints its own [CDS warning](#the-jvm-prints-a-cds-warning-at-startup).
 
-If a bridge such as `log4j-jpl` or `slf4j-jdk-platform-logging` sends `System.Logger` output to Logback, Log4j or another backend, the agent's lines go there from 10 seconds after it starts. Until then the agent writes its INFO and higher lines to standard error and sends no payload, so your `main` has time to configure the backend. Without a bridge, lines logged during `premain`, before your application configures logging, go to standard error.
+If a bridge such as `log4j-jpl` or `slf4j-jdk-platform-logging` sends `System.Logger` output to Logback, Log4j or another backend, the agent's lines go there from 10 seconds after it starts. Until then the agent writes its INFO and higher lines to standard error and sends no payload, so your `main` has time to configure the backend. Without a bridge, the lines the agent logs during `premain`, before your application configures logging, go to standard error.
 
 The agent leaves the choice of `java.util.logging` manager to your application, so a launcher such as JBoss Modules that sets `java.util.logging.manager` in its own `main` gets its manager. If the command line sets `java.util.logging.config.file` or `java.util.logging.config.class`, the JDK creates its default manager when the agent first logs.
 
@@ -49,7 +49,7 @@ otherlode: includePackages is not set, so the agent is disabled for this JVM and
 
 When the agent can find your main class, the line goes on with `; the main class is com.acme.shop.ShopApplication; includePackages=com.acme.shop covers its package, or name a broader prefix that also covers your shared libraries`. The agent never applies that suggestion itself.
 
-The option is absent, blank, set only to separators, or set only through `excludePackages`, or every prefix in it was a glob or a path. An unset template variable is a common cause: `includePackages=${APP_PACKAGES}` with `APP_PACKAGES` unset.
+The option is absent, blank, set only to separators, or set only through `excludePackages`, or every prefix in it is a glob or a path. An unset template variable is a common cause: `includePackages=${APP_PACKAGES}` with `APP_PACKAGES` unset.
 
 Set `includePackages` to a dotted package prefix, such as `includePackages=com.acme.shop`. See [Choose includePackages](attach#choose-includepackages) and [configuration options](configuration#includepackages-and-excludepackages).
 
@@ -69,11 +69,11 @@ otherlode: exportUrl must be an absolute http or https URL; exportUrl from the e
 
 The line names the source of the value: the agent option, the system property or the environment variable. It does not repeat the value, apart from the host in the underscore case. The first part of the line gives the reason:
 
-- `exportUrl must be an absolute http or https URL`: the value is not an absolute `http` or `https` URL with a host. A mistyped `collector:4319` with no scheme lands here.
+- `exportUrl must be an absolute http or https URL`: the value is not an absolute `http` or `https` URL with a host. A mistyped `collector:4319` with no scheme gives this reason.
 - `exportUrl must not have a query string`, or `exportUrl must not have a fragment`.
 - `exportUrl must not hold an @ after the scheme, ...`: the value holds a user name or password, or any other `@` after the scheme. Set the token with `authToken`, and write an `@` in a path as `%40`.
 - `exportUrl must use https for an otherlode.dev host while authToken is set, ...`: the value starts with `http://`, `authToken` is set, and the host is `otherlode.dev` or ends with `.otherlode.dev`. Use `https://ingest.otherlode.dev`.
-- `exportUrl's host 'otherlode_collector' has an underscore, ...`: Java's HTTP client cannot reach such a host, which a Docker Compose service name can be. Use a network alias or host name without an underscore, or an IP address.
+- `exportUrl's host 'otherlode_collector' has an underscore, ...`: Java's HTTP client cannot reach a host with an underscore, and a Docker Compose service name can have one. Use a network alias or host name without an underscore, or an IP address.
 
 Fix the value at the source the line names and restart the JVM. The agent does not fall back to `http://localhost:4319`.
 
@@ -119,11 +119,11 @@ The `enabled` option is `false`, often through `OTHERLODE_ENABLED=false` in the 
 otherlode: endpoint instrumentation failed to install, continuing without endpoint tracking
 ```
 
-The method and branch tiers work, and the instance reports no endpoints. The stack trace names the cause. A variant, `otherlode: endpoint module discovery failed, continuing without endpoint tracking`, means the agent could not load its list of endpoint modules. It loads that list even with `endpointsEnabled=false`, to report each module as kept off, so this line can appear with the option off too. The instance then reports no module at all, so Otherlode cannot tell that its endpoints were not instrumented. Report the trace.
+The method and branch tiers work, and the instance reports no endpoints. The stack trace names the cause. A variant, `otherlode: endpoint module discovery failed, continuing without endpoint tracking`, means the agent could not load its list of endpoint modules. It loads that list even with `endpointsEnabled=false`, to report each module as kept off, so this line can appear with the option off too. The instance then reports no module at all, so Otherlode cannot tell that the agent did not instrument its endpoints. Report the trace.
 
 ## An option is ignored
 
-With each of these warnings the agent keeps running without your value, with three exceptions. The plain http warning keeps the value as given, the warning about an unset `exportUrl` uses the default, and the `authToken` comma warning keeps the token cut at the comma.
+With each of these warnings the agent keeps running without your value, with three exceptions. After the plain http warning the agent keeps the value as given, after the warning about an unset `exportUrl` it uses the default, and after the `authToken` comma warning it keeps the token cut at the comma.
 
 | Message | Cause and fix |
 |---|---|
@@ -136,7 +136,7 @@ With each of these warnings the agent keeps running without your value, with thr
 | `otherlode: exportUrl uses plain http, so the auth token is sent unencrypted` | `authToken` is set, `exportUrl` starts with `http://`, and its host is not `localhost`, an address from `127.0.0.0` to `127.255.255.255`, or `[::1]`. Use an `https://` URL, or a loopback address when the collector is on the same host. |
 | `otherlode: authToken is set but exportUrl is not, so the token goes to the default http://localhost:4319` | No agent option, system property or environment variable sets `exportUrl`. Set it to `https://ingest.otherlode.dev` or to your collector. An `exportUrl` you set to `http://localhost:4319` yourself gives no warning. |
 | `otherlode: ignoring all of OTEL_RESOURCE_ATTRIBUTES, since its entry 'x' is not key=value; no service name, namespace, version or environment is read from it` | One malformed entry discards the whole list. Fix the entry. |
-| `otherlode: ignoring '..' from <source>, since no URL path can name a service or namespace '..'` | A service name or namespace of `.` or `..` is refused. |
+| `otherlode: ignoring '..' from <source>, since no URL path can name a service or namespace '..'` | The agent refuses a service name or namespace of `.` or `..`. |
 | `otherlode: ignoring the value from <source>, since it is longer than 1024 bytes in UTF-8` | A service name, namespace, version, environment or instance ID is too long. The agent skips it and takes the value from the next source. Shorten it at the source the line names. |
 | `otherlode: ignoring the value from <source>, since it holds a NUL character` | A service name, namespace, version, environment or instance ID holds a NUL character. The agent skips it and takes the value from the next source. Remove the character at the source the line names. |
 | `otherlode: callbackAnnotations entry '@com.acme.Handles' is not a fully qualified annotation type name and is ignored: write the dotted name with its package and no wildcard, such as 'com.acme.Handles'` | An entry in [`callbackAnnotations`](configuration#callbackannotations) has a leading `@`, a `/`, a `*`, a trailing `.class`, no package, or a part that is not a Java identifier. The agent drops that entry and keeps the others. Write the name as you would import it. |
@@ -162,8 +162,8 @@ The exception under the line names the cause. If neither line appears, the sends
 The exception is a `java.net.ConnectException` or a timeout.
 
 - The agent cannot reach the address. From the same host or pod, run `curl` against the same URL.
-- The host reaches the internet only through a proxy. Set the JVM's `-Dhttps.proxyHost` and `-Dhttps.proxyPort`, or send through a collector (see [Add a collector](/docs/collector/add)).
-- You set no `exportUrl`, so the agent sends to its default, `http://localhost:4319`, which reaches nothing in a container that runs no collector. An `exportUrl` the agent cannot use turns the agent off instead (see [the export URL is refused](#the-export-url-is-refused)).
+- The host reaches the internet only through a proxy. Set the JVM's `-Dhttps.proxyHost` and `-Dhttps.proxyPort`, or send through a collector. See [Add a collector](/docs/collector/add).
+- You set no `exportUrl`, so the agent sends to its default, `http://localhost:4319`, which reaches nothing in a container that runs no collector. An `exportUrl` the agent cannot use turns the agent off instead. See [The export URL is refused](#the-export-url-is-refused).
 - The receiver accepts the connection and never answers. The agent gives up on a request after 10 seconds.
 
 One send makes up to 5 attempts, so a failure can take several seconds to log. An answer with a `Retry-After` over 2 seconds ends the send at once. [What the agent sends](data-sent#when-the-receiver-is-down-or-refuses-a-payload) gives the retry rules.
@@ -179,16 +179,16 @@ The exception message is `otherlode: unexpected status <code> from <exportUrl>/v
 | `404` | The URL does not reach Otherlode's ingest or a collector. The agent appends `/v1/otherlode/deltas`, `/v1/otherlode/manifest`, `/v1/otherlode/static-baseline` and `/v1/otherlode/class-listing` to `exportUrl`, so a proxy must forward those paths. For Otherlode, set `exportUrl` to `https://ingest.otherlode.dev` with no path. For a collector, drop any path it does not expect. |
 | `301`, `302`, `307`, `308` | The agent does not follow redirects. A proxy that redirects `http` to `https` causes this. Put the final `https://` URL in `exportUrl`. |
 | `400`, `422` | The receiver rejected the content. With the testkit's collector, see [A test fails with a version mismatch](#a-test-fails-with-a-version-mismatch). With another receiver, its log gives the reason. |
-| `413` | A reverse proxy or gateway in front of the receiver refused the request body as too large. The agent keeps each payload under 8 MiB and under 90% of the ingest element limit ([chunk caps](data-sent#chunk-caps)), so raise the limit in front of the receiver. The agent keeps the static baseline and the class listing after a `413` and sends them once the limit is raised, with no restart. Once a count has been refused, each later payload marks its counts as pending (`counts_pending_since`) until a flush's counts are all stored, so Otherlode does not read its zero hits as never hit. Payloads stamped before the first refusal in that flush do not carry the mark. |
+| `413` | A reverse proxy or gateway in front of the receiver refused the request body as too large. The agent keeps each payload under 8 MiB and under 90% of the ingest element limit, which [chunk caps](data-sent#chunk-caps) lists, so raise the limit in front of the receiver. The agent keeps the static baseline and the class listing after a `413` and sends them once you raise the limit, with no restart. Once a proxy or the receiver refuses a count, each later payload marks its counts as pending (`counts_pending_since`) until the receiver answers `202` to all of a flush's counts, so Otherlode does not read the payload's zero hits as never hit. Payloads the agent stamped before the first refusal in that flush do not carry the mark. |
 | `408`, `429`, `5xx` | The agent retries within the send and honours a `Retry-After` of up to 2 seconds. A longer `Retry-After` ends the send, and the next flush sends again. If these persist across flushes, Otherlode or the collector is overloaded or down, or the collector reports that Otherlode is. |
 
-The agent sends again on the next flush for every status above, so a repeated warning means the answer has not changed. The static baseline and the class listing are the exception. After a `400` or `422`, each logs a warning and is not sent again in this process:
+The agent sends again on the next flush for every status above, so a repeated warning means the answer has not changed. The static baseline and the class listing are the exception. After a `400` or `422`, the agent logs a warning for each and does not send it again in this process:
 
 ```text
 otherlode: static baseline chunk 3 of 7 was refused with status 400, which resending the same bytes cannot change; the scan is not sent again
 ```
 
-The class listing logs the same line with `class listing chunk` and `the listing is not sent again`.
+For the class listing, the agent logs the same line with `class listing chunk` and `the listing is not sent again`.
 
 ### A static baseline send fails
 
@@ -226,7 +226,7 @@ This logs once, and the chunks go out one per flush after a flush whose own send
 otherlode: could not read /opt/app/lib/broken.jar for the class listing, so no class listing is sent: zip END header not found
 ```
 
-A directory, a jar, or a jar nested in a Spring Boot executable jar could not be read, so this process sends no class listing at all. The line names the file and the cause. Fix or remove the file and restart. A classpath entry that does not exist is not an error: the listing skips it.
+The agent could not read a directory, a jar, or a jar nested in a Spring Boot executable jar, so this process sends no class listing at all. The line names the file and the cause. Fix or remove the file and restart. A classpath entry that does not exist is not an error, and the listing skips it.
 
 ```text
 otherlode: java.class.path is empty or has an empty element, which the JVM reads as the working directory, so no class listing is sent
@@ -235,7 +235,7 @@ otherlode: this JVM upgrades or patches modules, which the class listing does no
 otherlode: this JVM has no java.management module, so the agent cannot tell whether it patches modules, so no class listing is sent
 ```
 
-The listing reads only the class path, and only when the class path names every folder the JVM reads. Name the class path, or remove a leading, trailing or doubled path separator, to get a listing. An application that runs from the module path, launches a `jlink` image's main module, or uses `--upgrade-module-path` or `--patch-module` sends none. So does a linked image without `java.management`, since the agent needs that module to see `--patch-module`.
+The listing reads only the classpath, and only when the classpath names every folder the JVM reads. Name the classpath, or remove a leading, trailing or doubled path separator, to get a listing. An application that runs from the module path, launches a `jlink` image's main module, or uses `--upgrade-module-path` or `--patch-module` sends none. So does a linked image without `java.management`, since the agent needs that module to see `--patch-module`.
 
 ### The class listing missed a root
 
@@ -254,7 +254,7 @@ Each line means a class loaded that the class listing may not cover:
 - The third is a JVM that, before the listing finished, loaded classes in scope from more than 4096 places, or more than 4096 such classes with no code source, so the agent could not check them all.
 - The last two are a class the agent could not name, or could not tell where it loaded from.
 
-The agent logs one such line per run, at INFO, and marks every manifest the run sends from then on with `class_listing_blind`. While the run is live, Otherlode claims no class removed in its environment. To get removal claims, put that code on the class path the listing reads. The mark belongs to the run, so a restarted process starts without it.
+The agent logs one such line per run, at INFO, and marks every manifest the run sends from then on with `class_listing_blind`. While the run is live, Otherlode claims no class removed in its environment. To get removal claims, put that code on the classpath the listing reads. The mark belongs to the run, so a restarted process starts without it.
 
 ### A test run ended before the scan did
 
@@ -330,7 +330,7 @@ The testkit's collector refuses a payload whose agent version is not the testkit
 delta batch from instance 3f1c... comes from agent version 0.1.0, but this testkit is version 0.2.0. The agent and the testkit are released as one version: use the testkit of the agent's version, 0.1.0
 ```
 
-Use the testkit dependency and the `-javaagent` jar of the same version. The testkit's collector also refuses a payload with an empty run id, a second run under one instance id, or fields stripped by a collector that forwarded it. `collector.rejectedPayloads()` lists each refusal with its reason. See [the testkit](testkit).
+Use the testkit dependency and the `-javaagent` jar of the same version. The testkit's collector also refuses a payload with an empty run id, a second run under one instance id, or fields that a collector stripped when it forwarded the payload. `collector.rejectedPayloads()` lists each refusal with its reason. See [the testkit](testkit).
 
 Two more testkit messages point at the agent:
 
@@ -343,7 +343,7 @@ Two more testkit messages point at the agent:
 otherlode: com.acme.shop.Report cannot be defined: its supertype com.acme.shop.Base could not be read from its loader, so it is not instrumented
 ```
 
-The class is in your include rules, but a superclass or interface, at any depth, has no class file its loader can read. The class fails with `NoClassDefFoundError` without the agent too, so the agent leaves it alone and reports it as skipped with this reason. Add the missing dependency to the classpath, or remove the class.
+The class is in your include rules, but a superclass or interface, at any depth, has no class file its loader can read. The class fails with `NoClassDefFoundError` without the agent too, so the agent does not instrument it and reports it as skipped with this reason. Add the missing dependency to the classpath, or remove the class.
 
 ```text
 otherlode: the class loader org.jboss.modules.ModuleClassLoader cannot see dev.otherlode.bootstrap, so the agent does not instrument the classes it defines; delegate dev.otherlode.bootstrap to the boot loader, for example with -Djboss.modules.system.pkgs=dev.otherlode.bootstrap or org.osgi.framework.bootdelegation=dev.otherlode.bootstrap
@@ -367,17 +367,17 @@ otherlode: com.acme.shop.Plugin was woven and registered but the JVM never defin
 
 At shutdown the agent adds `otherlode: 3 classes were woven and registered but never confirmed defined`.
 
-The agent rewrote the class, and then two sweeps in a row found it not defined. Most often the JVM refused to define the class for a reason in your application, such as a supertype it cannot load. A class the verifier rejects is defined, so it does not cause this line; see [failed to initialise](classes#failed-to-initialise). Run the application without the agent. If the class loads there, report the class and its loader.
+The agent rewrote the class, and then two sweeps in a row found it not defined. Most often the JVM refused to define the class for a reason in your application, such as a supertype it cannot load. A class the verifier rejects is defined, so it does not cause this line. See [failed to initialise](classes#failed-to-initialise). Run the application without the agent. If the class loads there, report the class and its loader.
 
 The agent withholds the class's probes, so the report does not list it as dead code.
 
-A JAX-RS resource class that declared routes and was never defined gets its own line, which counts the routes nothing else reports. Those routes stay out of the report:
+A JAX-RS resource class that declared routes and that the JVM never defined gets its own line, which counts the routes nothing else reports. Those routes stay out of the report:
 
 ```text
 otherlode: com.acme.shop.PluginResource declared 2 endpoints while being woven but the JVM never defined it; its endpoints are withheld for good
 ```
 
-At shutdown the agent adds `otherlode: 1 classes declared endpoints while being woven but were never confirmed defined`. A route that another class or framework also serves is still reported, and a class whose routes all have another source gets no line.
+At shutdown the agent adds `otherlode: 1 classes declared endpoints while being woven but were never confirmed defined`. The agent still reports a route that another class or framework also serves, and a class whose routes all have another source gets no line.
 
 ## A method has no branch probes
 
@@ -387,13 +387,13 @@ A method keeps its entry probe and loses its branch probes in the situations bel
 otherlode: com.acme.shop.Parser#parse(Ljava/lang/String;)V would not fit a class file with branch probes: it is 65000 bytes of code and could grow to 70100 bytes, over the 65535 byte limit; its branch probes are left out and its entry probe is kept
 ```
 
-The branch probes would take the method past the JVM's limit of 65,535 bytes of code. A second form reads `would not be JIT-compiled with branch probes` and names an 8000 byte limit, over which HotSpot does not compile a method, so probes would leave it interpreted for good. A third form, `its entry probe can take it to <n>, over the 8000 byte limit; HotSpot may not compile it, and its branch probes are kept`, is for a method near 8000 bytes that the entry probe alone can push over. Splitting the method clears all three.
+The branch probes would take the method past the JVM's limit of 65,535 bytes of code. A second form reads `would not be JIT-compiled with branch probes` and names an 8000 byte limit, over which HotSpot does not compile a method, so probes would keep it interpreted for the rest of the process. A third form, `its entry probe can take it to <n>, over the 8000 byte limit; HotSpot may not compile it, and its branch probes are kept`, is for a method near 8000 bytes that the entry probe alone can push over. Split the method to clear all three.
 
 ```text
 otherlode: com.acme.shop.Cart reached this agent rewritten by an earlier transformer; the branches of ... do not line up with its class file, so those methods keep their entry probe and get no branch probes
 ```
 
-At INFO. Another agent, such as an aspect weaver, changed the methods' bodies, so the branches in the bytes the agent received do not match the class file. See [other agents in the same JVM](compatibility#other-agents-in-the-same-jvm).
+The agent logs this line at INFO. Another agent, such as an aspect weaver, changed the methods' bodies, so the branches in the bytes the agent received do not match the class file. See [other agents in the same JVM](compatibility#other-agents-in-the-same-jvm).
 
 When another agent retransforms a class the agent already wove, the lines `was transformed again with bytes whose branches no longer line up` (INFO) and `was transformed again with bytes whose branch probes would not fit` (WARNING) name the methods that keep their entry probe. Their branch counts stay where they were.
 
@@ -413,7 +413,7 @@ A never-hit method that a framework calls, such as a handler your own dispatcher
 otherlode: callbackAnnotations names 1 annotation not yet seen on any method: com.acme.bus.Handels. A name is matched exactly; check the spelling if its classes have loaded.
 ```
 
-This INFO line names each listed annotation the agent has not yet found on a method. It is logged once, only when some name is unseen, at the first flush five minutes or more after startup, or at shutdown if that comes first. Check the spelling, and that the name is the annotation's own and not the class it sits in. A correct name is listed too when none of the classes that use it has loaded yet.
+This INFO line names each listed annotation the agent has not yet found on a method. The agent logs it once, only when some name is unseen, at the first flush five minutes or more after startup, or at shutdown if that comes first. Check the spelling, and that the name is the annotation's own and not the class it sits in. The line also lists a correct name when none of the classes that use it has loaded yet.
 
 ## A Kotlin class has no line numbers
 
@@ -437,7 +437,7 @@ Some methods are compiler output in a shape this agent does not read, such as co
 otherlode: com.acme.shop.web.OrderController registered dynamically but was not in the static baseline computed at startup for this process; the static scan cannot see classes a server or plugin loader finds at run time, such as a deployed WAR, so this deployment may have such a blind spot
 ```
 
-This appears only with `staticBaselineEnabled=true`. The scan walks the classpath the JVM was launched with, so it cannot see a class loaded from elsewhere, such as a WAR that Tomcat deployed after startup or a plugin directory. The class itself is fully counted. A class in such a location is never reported as never loaded, so treat that finding as incomplete for this deployment. A variant says `registered dynamically before the static baseline scan finished` and has the same cause. [Classes](classes) explains the baseline.
+This appears only with `staticBaselineEnabled=true`. The scan walks the classpath you launched the JVM with, so it cannot see a class loaded from elsewhere, such as a WAR that Tomcat deployed after startup or a plugin directory. The agent counts the class itself in full. Otherlode never reports a class in such a location as never loaded, so treat that finding as incomplete for this deployment. A variant says `registered dynamically before the static baseline scan finished` and has the same cause. [Classes](classes) explains the baseline.
 
 The dependency listing has its own warnings, such as `otherlode: the startup dependency listing failed; no dependencies will be reported` and `otherlode: could not read <path> for the dependency listing, skipping it`. The listing skipped a jar, the libraries of an unpacked Spring Boot application, or all jars, so this instance's dependency findings are missing or incomplete. [Dependencies](dependencies) describes the listing.
 
@@ -472,7 +472,7 @@ An endpoint module met a framework it cannot handle and switched itself off for 
 - its advice throws,
 - one of its hooks matches no method on the framework class, as when a framework release renamed or changed the method,
 - a framework class it hooks fails to weave, or its type matcher throws on a class,
-- the class loader that defines a framework class it hooks cannot see `dev.otherlode.bootstrap` (see [A class is skipped](#a-class-is-skipped)),
+- the class loader that defines a framework class it hooks cannot see `dev.otherlode.bootstrap`, as [A class is skipped](#a-class-is-skipped) describes,
 - it cannot read the framework's route table, such as a servlet mapped in none of the forms the servlet specification defines,
 - the servlet container does not implement Servlet 4.0's request mappings,
 - it throws while the agent builds a manifest, which also logs `otherlode: endpoint module <name> failed before a manifest was built`.
@@ -495,15 +495,15 @@ Related lines:
 |---|---|
 | `otherlode: endpoint module <name> found 8192 endpoints at dispatch, its limit; it records no new ones, and the endpoints it holds keep counting` | The module has created its limit of endpoints that no registration declared. Requests for endpoints it already holds still count. |
 | `otherlode: endpoint module <name> bound 8192 request keys at dispatch, its limit; a request with a new key still counts, and the agent resolves its endpoint again each time` | Requests reached the module's endpoints under 8,192 different keys, such as raw paths a route bridge saw. Every request still counts. Nothing needs fixing unless the module also reports its endpoint limit. See [declared and discovered](endpoints#declared-and-discovered). |
-| `otherlode: endpoint module <name> failed to transform <class>` | The module failed on one class and is switched off for the process. |
-| `otherlode: endpoint module <name> could not decide whether to match <class>, so it is switched off` | The module's type matcher threw on the class. The agent logs this line with the stack trace, then the `disabled itself` line. Only that module is switched off, with the kind `TRANSFORM_FAILED`, or `LINKAGE_ERROR` when the matcher threw a linkage error. Other modules that match the class weave it as usual. A class with a supertype that cannot be loaded at all does not cause this line. Report the trace. |
+| `otherlode: endpoint module <name> failed to transform <class>` | The module failed on one class and switched itself off for the process. |
+| `otherlode: endpoint module <name> could not decide whether to match <class>, so it is switched off` | The module's type matcher threw on the class. The agent logs this line with the stack trace, then the `disabled itself` line. Only that module switches itself off, with the kind `TRANSFORM_FAILED`, or `LINKAGE_ERROR` when the matcher threw a linkage error. Other modules that match the class weave it as usual. A class with a supertype that cannot be loaded at all does not cause this line. Report the trace. |
 | `otherlode: endpoint module <name> failed while declaring its routes` | The module threw while it read the framework's route table. |
 | `otherlode: endpoint module <name> could not weave its advice into <class> again for a redefinition or retransformation, so it is switched off` | Another agent retransformed, or a debugger redefined, a class the module already wove, and the module threw while weaving it again. The `disabled itself` line follows. |
-| `otherlode: endpoint instrumentation failed for <class>, class will run without endpoint tracking` | One class could not take the module's advice. Every module that matched it is switched off, except JAX-RS on the class's first weave. |
-| `otherlode: endpoint replay buffer is full (4096); dropping new endpoint records until a resolver is installed` | Endpoint records filled the buffer before the agent was ready to take them. Logged once. Each module whose record was dropped is switched off with the kind `UNSPECIFIED`. |
+| `otherlode: endpoint instrumentation failed for <class>, class will run without endpoint tracking` | One class could not take the module's advice. Every module that matched it switches itself off, except JAX-RS on the class's first weave. |
+| `otherlode: endpoint replay buffer is full (4096); dropping new endpoint records until a resolver is installed` | Endpoint records filled the buffer before the agent was ready to take them. The agent logs it once. Each module whose record the agent dropped switches itself off with the kind `UNSPECIFIED`. |
 | `otherlode: handler lambdas and method references will not be named on this JVM: <reason>` | The JDK internals the agent reads to name a Java lambda handler differ on this JVM. Endpoints still count, and the handler of a lambda route shows no method. |
 | `otherlode: jaxrs: <class>#<method> inherits conflicting JAX-RS annotations from more than one interface, using <interface>` | The first interface's annotations win. Remove the conflict. |
-| `otherlode: endpoint module discovery stopped early` | A module's provider failed to load and the rest were skipped. Report the trace. |
+| `otherlode: endpoint module discovery stopped early` | A module's provider failed to load, and the agent skipped the rest. Report the trace. |
 
 ## A count went backward
 
@@ -511,7 +511,7 @@ Related lines:
 otherlode: probe count went backward for com.acme.Foo#12 (was 40, now 3); reporting it as-is
 ```
 
-The agent increments counts without a lock. On a busy method, a thread paused mid-increment can write back an older value over other threads' increments, so a count can drop between two flushes. That is expected on hot code, and it never turns a method that ran into one that did not. The agent logs the line once per probe, and a similar line exists for endpoints. A drop on a probe with almost no traffic is unexpected: report it with the full line.
+The agent increments counts without a lock. On a busy method, a thread paused mid-increment can write back an older value over other threads' increments, so a count can drop between two flushes. Such a drop is expected on hot code, and it never turns a method that ran into one that did not. The agent logs the line once per probe, and a similar line exists for endpoints. A drop on a probe with almost no traffic is unexpected, so report it with the full line.
 
 ## Lines that point to a bug in the agent
 
@@ -519,7 +519,7 @@ These mean the agent hit a case it did not expect. The application is not affect
 
 | Message | Meaning |
 |---|---|
-| `otherlode: flush failed outside its own send guards, will retry next flush` | An unexpected exception in the flush, logged at ERROR. |
+| `otherlode: flush failed outside its own send guards, will retry next flush` | The flush threw an unexpected exception. The agent logs this line at ERROR. |
 | `otherlode: no registered probe array for com.acme.Foo; its hits will not be counted (resolver installed: true)` | A woven class asked for its counter array and the agent had none. The class runs and its hits are not counted. |
 | `otherlode: endpoint resolver threw from <operation>: <exception>` | The endpoint tier threw while recording. |
 | `otherlode: the loaded-class sweep failed, will retry on a later flush` | The check for classes that no transformer saw failed. |

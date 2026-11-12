@@ -54,7 +54,7 @@ class VerifierHookTest {
         hook.uninstall(instrumentation)
     }
 
-    // Each call names its classes afresh: the ring keeps an equal message only once, and these tests share one JVM.
+    // Each call names its classes afresh, since the ring keeps an equal message only once and these tests share one JVM.
     private fun rejectedByVerifier(): List<Triple<String, Int, String>> {
         val n = fixtureNames.incrementAndGet()
         return listOf(

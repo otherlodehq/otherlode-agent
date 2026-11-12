@@ -14,7 +14,7 @@ private const val RESOURCE_KEY = "fnres"
 
 private const val PREDICATE_RESOURCE_KEY = "fnrespred"
 
-// The key holds no handler: Spring wraps a filtered route's handler in a new function on every request.
+// The key holds no handler, because Spring wraps a filtered route's handler in a new function on every request.
 private const val FUNCTIONAL_KEY = "fn"
 
 /**
@@ -26,7 +26,7 @@ private const val FUNCTIONAL_KEY = "fn"
  * @property handleDescriptor `HandlerFunction.handle`'s descriptor.
  * @property paramLeaf the `RequestPredicates.Visitor` method that reports a request-parameter predicate.
  * @property dslClassPrefixes the class-name prefixes of Spring's own Kotlin DSL classes. A handler
- * that resolves to a class under one of them is inside Spring, so the route has no handler.
+ * that resolves to a class under one of them is inside Spring, so the route gets no handler join.
  */
 class FunctionalRouteStack(
     val moduleName: String,
@@ -59,8 +59,8 @@ class FunctionalRouteWalk(
     private val resourcesPathlessLogged = AtomicBoolean(false)
 
     /**
-     * Registers each route of [frameworkObject] whose path the walk can resolve when it is a
-     * `RouterFunction`, and does nothing otherwise.
+     * When [frameworkObject] is a `RouterFunction`, registers each of its routes whose path the walk
+     * can resolve. Does nothing otherwise.
      */
     fun declare(frameworkObject: Any) {
         val loader = frameworkObject.javaClass.classLoader

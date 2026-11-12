@@ -98,7 +98,7 @@ class RegistryResolver(
 
     /**
      * Routes [frameworkObject] to the [EndpointModule] named [module], which registers what it finds.
-     * An unknown module name is logged once and ignored. A module whose walk throws goes through
+     * It logs an unknown module name once and ignores it. A module whose walk throws goes through
      * [OtherlodeEndpoints.moduleFailed], like an advice failure.
      */
     override fun declare(

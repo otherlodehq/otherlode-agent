@@ -12,22 +12,22 @@ import org.springframework.web.servlet.function.ServerRequest;
 import org.springframework.web.util.pattern.PathPattern;
 
 /**
- * Woven onto {@code RouterFunctionMapping.setAttributes(HttpServletRequest, ServerRequest,
+ * Runs on entry to {@code RouterFunctionMapping.setAttributes(HttpServletRequest, ServerRequest,
  * HandlerFunction)}, where functional routing has matched a request to a route and is about to hand
  * it to the handler.
  *
- * <p>The advice is written against the {@code javax} servlet types and bound to the {@code
- * jakarta} ones, by prefix, when the woven method takes them. An introspector lookup, an async
- * redispatch and a CORS preflight are no call. A request a {@code resources(pattern, location)}
- * route matched is counted by {@link ResourceLookupAdvice}, not here. A {@code
- * resources(predicate, resource)} route is counted here under its own key.
+ * <p>The advice compiles against the {@code javax} servlet types, and the module binds it to the
+ * {@code jakarta} ones, by prefix, when the woven method takes them. An introspector lookup, an
+ * async redispatch and a CORS preflight are no call. {@link ResourceLookupAdvice} counts a request
+ * a {@code resources(pattern, location)} route matched, and this advice does not. This advice
+ * counts a {@code resources(predicate, resource)} route under its own key.
  *
  * <p>The dispatch key is {@code List.of("fn", pattern, verb)} and must match the key in {@code
  * SpringWebMvcModule.declare}. A second lookup with verb {@code "*"} covers a route declared as
- * unconstrained. A route found by neither lookup is recorded at dispatch. Its handler join is the
- * method named by {@link OtherlodeEndpoints#lambdaImplementation} for a hidden lambda class, or
- * {@code handle} on the class that declares that method otherwise. A handler of Spring's {@code
- * RouterFunctionDsl} gets no join.
+ * unconstrained. The advice records a route that neither lookup finds as discovered by dispatch.
+ * Its handler join is the method named by {@link OtherlodeEndpoints#lambdaImplementation} for a
+ * hidden lambda class, or {@code handle} on the class that declares that method otherwise. A
+ * handler of Spring's {@code RouterFunctionDsl} gets no join.
  */
 public class SetAttributesAdvice {
     private static final String MODULE = "spring-webmvc";

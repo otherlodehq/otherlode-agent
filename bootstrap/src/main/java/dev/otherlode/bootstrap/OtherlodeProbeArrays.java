@@ -29,7 +29,7 @@ public final class OtherlodeProbeArrays {
 
     /**
      * Bootstrap method for a dynamic constant that loads a probe array. {@code layoutHash} and
-     * {@code probeCount} are its static arguments, and the array is resolved for the lookup class.
+     * {@code probeCount} are its static arguments, and it resolves the array for the lookup class.
      * Returns as {@link #resolve} does.
      */
     public static long[] probeArray(

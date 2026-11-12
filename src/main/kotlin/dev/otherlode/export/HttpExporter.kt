@@ -19,10 +19,10 @@ import java.util.concurrent.TimeoutException
  * Sends every payload shape to a receiver at [endpoint] over plain HTTP/1.1, with up to
  * [maxAttempts] attempts and capped exponential backoff.
  *
- * An attempt that throws is retried, unless [authToken] is not a valid header value, which fails at
- * once. A 5xx, a 408 or a 429 is retried too. Any other 4xx fails at once with an
- * [ExportFailedException] whose [ExportFailedException.refused] is true. Only a 202 counts as stored:
- * any other 2xx fails at once without a retry and without being a refusal. A 202 may carry
+ * It retries an attempt that throws, unless [authToken] is not a valid header value, which fails at
+ * once. It retries a 5xx, a 408 or a 429 too. Any other 4xx fails at once with an
+ * [ExportFailedException] whose [ExportFailedException.refused] is true. Only a 202 counts as stored.
+ * Any other 2xx fails at once without a retry and without being a refusal. A 202 may carry
  * `Otherlode-Notice` headers, which [notices] logs. A `Retry-After` of at most [maxRetryAfter]
  * replaces the backoff for that wait. A longer one ends the send with the failure an exhausted
  * retry gives. If every attempt fails, the last failure propagates.

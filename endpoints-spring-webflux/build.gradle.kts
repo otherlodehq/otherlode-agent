@@ -23,12 +23,12 @@ dependencies {
     implementation(project(":endpoints-api"))
     implementation(project(":endpoints-spring-common"))
 
-    // Compile-time only: at runtime OtherlodeEndpoints comes from the target JVM's bootstrap classloader.
+    // At runtime OtherlodeEndpoints comes from the target JVM's bootstrap classloader.
     compileOnly(project(":bootstrap"))
 
     compileOnly("net.bytebuddy:byte-buddy:$byteBuddyVersion")
 
-    // The oldest supported release. Never `implementation`: Spring must not be shaded into the agent jar.
+    // The oldest supported release. Never `implementation`, since Spring must not be shaded into the agent jar.
     compileOnly("org.springframework:spring-webflux:5.3.39")
     compileOnly("org.springframework:spring-context:5.3.39")
 

@@ -527,7 +527,7 @@ class InitializerSlotsTest {
     private companion object {
         const val CLINIT = "<clinit>()V"
 
-        // ldc of the array (2), iconst_n of the slot (1), then DUP2 LALOAD LCONST_1 LADD LASTORE (5).
+        // The probe is ldc of the array (2), iconst_n of the slot (1), then DUP2 LALOAD LCONST_1 LADD LASTORE (5).
         const val PROBE_BYTES = 8
 
         const val ATHROW_BYTES = 1

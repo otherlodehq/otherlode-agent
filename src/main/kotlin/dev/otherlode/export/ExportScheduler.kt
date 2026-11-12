@@ -113,7 +113,7 @@ class ExportScheduler(
         executor.scheduleAtFixedRate(::flush, initialDelayMillis, intervalMillis, TimeUnit.MILLISECONDS)
     }
 
-    /** Stops the schedule and the send pool. [flush] must not be called after this. */
+    /** Stops the schedule and the send pool. The caller must not call [flush] after this. */
     fun stop() {
         executor?.shutdown()
         sendPool.shutdown()
@@ -122,8 +122,8 @@ class ExportScheduler(
 
     /**
      * The first flush of a graceful JVM exit: a normal flush, run at once. It stops the scheduled
-     * executor first and waits for a flush in flight. It is bounded by [budget] in total: its sends
-     * stop being waited for at the deadline, and it starts no hit batch or manifest chunk after that.
+     * executor first and waits for a flush in flight. [budget] bounds it in total. At the deadline
+     * it stops waiting for its sends, and it starts no hit batch or manifest chunk after that.
      * It sends no static baseline or class listing retry.
      */
     fun flushAtShutdownStart(budget: Duration) {
@@ -149,7 +149,7 @@ class ExportScheduler(
      * Best-effort final flush for a graceful JVM exit, bounded by [budget] in total.
      *
      * It stops the scheduled executor and waits for a flush in flight, then runs the final flush.
-     * The budget covers both, and the final flush is skipped when the wait uses it all. An early
+     * The budget covers both, and it skips the final flush when the wait uses it all. An early
      * flush from [flushAtShutdownStart] that is still running its last send does not hold the final
      * flush back. An interrupt of the calling thread does not end any wait.
      */
@@ -240,15 +240,15 @@ class ExportScheduler(
 
     /**
      * One flush attempt. It sends the manifest entries not yet sent and the delta since the last
-     * acknowledged baseline, on two threads at once. The delta batch is sent even when empty. A failed
+     * acknowledged baseline, on two threads at once. It sends the delta batch even when it is empty. A failed
      * send leaves its state where it is, and a later flush retries it. This never throws.
      *
      * [final] is true only for the flush [flushOnShutdown] runs. It ends with one empty delta batch
      * carrying `finalFlush`, after every other send.
      *
      * [early] marks the flush [flushAtShutdownStart] runs. A nonzero [deadlineNanos], a
-     * `System.nanoTime` value, bounds how long a flush waits for each send. A send it stops waiting
-     * for is marked pending. An early flush starts no hit batch or manifest chunk after the deadline.
+     * `System.nanoTime` value, bounds how long a flush waits for each send. The flush marks a send
+     * pending when it stops waiting for it. An early flush starts no hit batch or manifest chunk after the deadline.
      *
      * [flushId] numbers the flush when the caller drew it. A flush clears a pending state only when
      * no later flush marked it, and a mark is ignored when a later flush has cleared it.

@@ -171,7 +171,7 @@ class CoroutineMachineryInstrumentationTest {
         // earlyHandOff (2) + pauseNow (1) + pauseLater (1) in CoroutineTargetKt, plus 2 in its wrapper class
         // CoroutineTargetKt$runTwoPoints$1.
         assertEquals(27, branchDropCounts.countOf(BranchDropReason.COROUTINE_MACHINERY))
-        // One record() call from CoroutineTargetKt and one from its wrapper class.
+        // The agent calls record() once for CoroutineTargetKt and once for its wrapper class.
         assertEquals(2, branchDropCounts.classesWithDrops())
     }
 }

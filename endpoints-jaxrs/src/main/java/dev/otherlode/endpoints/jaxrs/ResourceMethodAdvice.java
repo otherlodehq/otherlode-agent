@@ -4,12 +4,11 @@ import dev.otherlode.bootstrap.OtherlodeEndpoints;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto every JAX-RS resource method {@code JaxRsModule} declared and registered at
- * transform time.
+ * Runs on entry to every JAX-RS resource method that {@code JaxRsModule} declared and registered
+ * at transform time.
  *
  * <p>When {@link OtherlodeEndpoints#lookup} finds no registration for the key, this records the
- * dispatch with the key as the verbatim template and verb {@code "*"}, so the hit is still
- * counted.
+ * dispatch with the key as the verbatim template and verb {@code "*"}, so the hit still counts.
  */
 public class ResourceMethodAdvice {
     private static final String MODULE = "jaxrs";

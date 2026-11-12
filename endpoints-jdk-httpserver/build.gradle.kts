@@ -11,10 +11,10 @@ repositories {
 dependencies {
     implementation(project(":endpoints-api"))
 
-    // Compile-time only: at runtime OtherlodeEndpoints comes from the target JVM's bootstrap classloader.
+    // At runtime OtherlodeEndpoints comes from the target JVM's bootstrap classloader.
     compileOnly(project(":bootstrap"))
 
-    // Compile-only: at runtime the test must reach the one copy BootstrapHolder puts on the bootstrap loader.
+    // At runtime the test must reach the one copy BootstrapHolder puts on the bootstrap loader.
     testCompileOnly(project(":bootstrap"))
 
     compileOnly("net.bytebuddy:byte-buddy:1.18.12")

@@ -5,8 +5,8 @@ import java.security.ProtectionDomain
 
 /**
  * Captures a class's bytes as they reach this agent's transformer chain, after every earlier
- * transformer, on a load, retransformation or redefinition. It must be registered
- * retransformation-capable immediately before ByteBuddy's own transformer. Bytes are kept per thread
+ * transformer, on a load, retransformation or redefinition. The caller must register it
+ * retransformation-capable immediately before ByteBuddy's own transformer. It keeps bytes per thread
  * and per class.
  */
 class ClassBytesCapture(

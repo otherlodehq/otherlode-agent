@@ -264,8 +264,8 @@ def collect_removed(rd, svc, env):
 def fingerprint(api, truth_path, wait=60.0):
     """The identity of every finding of every service and environment in truth.json, read live.
 
-    A live read (active_within_days) never comes from a snapshot. Counts and dates are left out,
-    so the fingerprint changes only when a finding appears or goes away."""
+    A live read (active_within_days) never comes from a snapshot. The fingerprint leaves out counts
+    and dates, so it changes only when a finding appears or goes away."""
     with open(truth_path) as f:
         truth = json.load(f)
     rd = Reader(api, wait)
@@ -371,8 +371,8 @@ def class_lists(tl):
 
 
 def explained(f, tl, ctx):
-    """True when truth.json names this finding row, in an entry whose time window holds now. A row
-    is explained only by an entry of its own kind: a class in a class list never explains a method
+    """True when truth.json names this finding row, in an entry whose time window holds now. Only an
+    entry of its own kind explains a row: a class in a class list never explains a method
     row, since the server keeps methods a class row covers out of the method findings."""
     def live(entries):
         return [e for e in entries if not isinstance(e, dict) or ctx.may_explain(e)]
@@ -448,8 +448,8 @@ def removed_by_truth(f, entries):
     return False
 
 
-# Kinds a window read judges before T0 plus the lag: a class that loaded, and a jar's references,
-# are known from the start.
+# Kinds a window read judges before T0 plus the lag, since a class that loaded and a jar's
+# references are known from the start.
 EARLY_WINDOW_KINDS = ("never-loaded", "dependency")
 
 
@@ -488,9 +488,9 @@ def cluster_test_problem(cluster, tests):
 
 def crash_hold(ctx, svc, env):
     """True while a crash-cycle run of this scope can still hold claims back: from its start until
-    three of its flush intervals after its kill, plus the lag a snapshot may trail by. A crash run
-    is killed while it is still starting, so it holds claims whether or not it delivered (server
-    ADR 0087, agent ADR 0086)."""
+    three of its flush intervals after its kill, plus the lag a snapshot may trail by. The
+    supervisor kills a crash run while it is still starting, so it holds claims whether or not it
+    delivered."""
     for e in ctx.state.get("events", []):
         if e.get("kind") != "crash-cycle":
             continue
@@ -513,8 +513,8 @@ JVM_BOOT_ALLOWANCE = 60.0
 
 def start_hold(ctx, svc, env, at):
     """True when a run of this scope could have been starting at `at`: from its start until the
-    starting cap, or until three flush intervals after it stopped if that came first. A starting run that is live
-    holds its scope's claims back (server ADR 0092). `at` is the time the read's data is from: a
+    starting cap, or until three flush intervals after it stopped if that came first. A starting
+    run that is live holds its scope's claims back. `at` is the time the read's data is from: a
     snapshot's as_of, or now for a live read."""
     for r in ctx.state.get("runs", []):
         inst = cfg.BY_NAME.get(r.get("instance"))
@@ -553,8 +553,8 @@ def check1(ctx):
 
         def run(entry, label, test, extra_start=0.0, live=False):
             nonlocal ok, notdue
-            # /endpoints, /optional-parameters and /dependencies are always read live, so a run
-            # starting now holds what they show, whatever the snapshot's as_of.
+            # The server always serves /endpoints, /optional-parameters and /dependencies from a live
+            # read, so a run starting now holds what they show, whatever the snapshot's as_of.
             if held or (live and start_hold(ctx, svc, env, ctx.clock())) or not ctx.asserted(entry, extra_start):
                 notdue += 1
                 return
@@ -908,10 +908,10 @@ def slope(xs, ys):
 
 def check5(ctx):
     """Each agent process against the control of its own app at the same age. A process's age counts
-    from its start in state.json. Its first WARM_S seconds are JVM warm-up and are left out, so a
-    process restarted every 12 hours is compared with the control's own hours 0.5 to 12, not with a
-    control that has run for days. A control has one segment for each pid; the one that started
-    closest to the agent process is used, and only the ages both cover are compared."""
+    from its start in state.json. The check leaves out its first warm_s seconds, which are JVM
+    warm-up, so a process restarted every 12 hours is compared with the control's own hours 0.5 to
+    12, not with a control that has run for days. A control has one segment for each pid. The check
+    uses the one that started closest to the agent process and compares only the ages both cover."""
     try:
         with open(ctx.paths["memory"]) as f:
             rows = list(csv.DictReader(f))
@@ -1315,10 +1315,10 @@ def violation_key(line):
 
 
 def read_window(api, truth, state, now, t0, scale, flush, lag, kind, wait=30.0):
-    """One window read of every finding, judged by check 2's rule. Check 1's planted answers are
-    not judged here: a run that has not delivered its counts holds those claims back on purpose
-    (server ADR 0059, 0087), and the six-hourly checker judges them. A `fast` read is live. A `slow` read is what a page of the UI reads:
-    the snapshot-served routes and the report. Returns the violations, the read errors and the
+    """One window read of every finding, judged by check 2's rule. This read leaves check 1's
+    planted answers to the six-hourly checker, because a run that has not delivered its counts
+    holds those claims back on purpose. A `fast` read is live. A `slow` read is what a page of the
+    UI reads: the snapshot-served routes and the report. Returns the violations, the read errors and the
     number of reads of the report."""
     rd = Reader(api, wait, extra={"active_within_days": 36500} if kind == "fast" else None)
     ctx = Ctx(paths={}, truth=truth, state=state, now=now, t0=t0, scale=scale, flush=flush, lag=lag, final=False,

@@ -1,7 +1,7 @@
 # Otherlode
 
 A Java agent that instruments a running JVM application to find code that's
-reachable but never actually exercised at runtime: unused endpoints, methods
+reachable but never exercised at runtime: unused endpoints, methods
 that are never invoked, and conditionals that only ever take one branch.
 
 Attach it with `-javaagent` and run your app. It sends hit counts to a
@@ -12,17 +12,19 @@ README covers building and developing the agent.
 
 ## How it works, briefly
 
-- Method-level probes (ASM, woven through ByteBuddy's `AgentBuilder`) catch
-  unused methods and classes.
-- Endpoint modules for Spring MVC, Spring WebFlux, Javalin, Micronaut 3 to 5, Ktor, Vert.x Web, JAX-RS, plain servlets and the JDK's `HttpServer`
-  count each endpoint where the framework matches a request to it, and list
-  the endpoints it registered, so one never called shows up.
-- Branch-level probes (ASM, woven in the same transform pass) catch
-  conditionals and switches that only ever take one path.
+- Method-level probes, written with ASM and woven through Byte Buddy's
+  `AgentBuilder`, catch unused methods and classes.
+- Endpoint modules for Spring MVC, Spring WebFlux, Javalin, Micronaut 3 to
+  5, Ktor, Vert.x Web, JAX-RS, plain servlets and the JDK's `HttpServer` count
+  each endpoint where the framework matches a request to it. They also list
+  the endpoints the framework registered, so an endpoint that is never called
+  still appears.
+- Branch-level probes, written with ASM and woven in the same transform pass,
+  catch conditionals and switches that only ever take one path.
 - The agent batches hit counts and pushes them to a collector on a fixed
-  interval (OTLP-style: delta batches plus an incremental probe manifest)
-  instead of exposing them for scraping, so a collector can aggregate
-  results across every instance in a fleet.
+  interval, as delta batches plus an incremental probe manifest in the style
+  of OTLP. It does not expose them for scraping, so the server behind the
+  collector can aggregate results across every instance in a fleet.
 
 ## Build
 
@@ -30,10 +32,10 @@ README covers building and developing the agent.
 ./gradlew build
 ```
 
-Produces a shaded agent jar at `build/libs/otherlode-agent-<version>.jar` with
-ByteBuddy, protobuf, the Kotlin standard library and the agent's own wire
-classes relocated, so it won't collide with copies already on the target
-application's classpath.
+The build produces a shaded agent jar at
+`build/libs/otherlode-agent-<version>.jar`. It relocates Byte Buddy,
+protobuf, the Kotlin standard library and the agent's own wire classes, so
+they don't collide with copies already on the target application's classpath.
 
 ### Benchmark the transform-time analysis
 
@@ -73,16 +75,16 @@ minimal stub, or point it at a real collector.
 ./gradlew :demo:runSpringDemo
 ```
 
-Runs a stub collector, an instrumented demo server (`/checkout`, always hit
-one way; `/promo`, never called), and a client that drives the server, all as
-separate JVM processes. On shutdown, the stub collector prints a report of
+`runDemo` runs a stub collector, an instrumented demo server and a client
+that drives the server, each as a separate JVM process. The client always
+calls `/checkout` the same way and never calls `/promo`. On shutdown, the stub collector prints a report of
 probes that were never hit and any classes it had to skip. `runSpringDemo`
 does the same for the Spring Boot fat-jar demo.
 
 A never-hit branch prints as its condition, the result that never happened,
 and the lines that run only through that result. Its branch index stays in
-brackets at the end. A condition reads the way the code just after the check
-sees it, which for a plain `if` is the condition the source wrote. The demo's
+brackets at the end. A condition prints as it holds in the code just after the
+check. For a plain `if`, that is the condition the source wrote. The demo's
 two checkout conditions print like this:
 
 ```
@@ -92,10 +94,10 @@ NEVER HIT: handleCheckout (DemoServerMain.kt:78) `discounted > 100.0` was never 
 
 A condition carries the string literals the source compared against, such
 as `"ENABLE_LEGACY_DISCOUNT"` above, and so does a string `when` case. The
-agent sends them as written; it has no redaction setting of its own. The
+agent sends them as written. It has no redaction setting of its own. The
 collector can replace them before they leave your network (collector ADR
 0001), so a deployment that needs redaction sends through a collector with
-it switched on. An agent that posts straight to a backend sends literals in
+redaction switched on. An agent that posts straight to a backend sends literals in
 clear.
 
 Some outcomes are real but not worth a person's time when they never run.
@@ -119,7 +121,8 @@ The demo also has two files that `@file:JvmMultifileClass` joins into one
 class, `DemoText`. That class holds only forwarders, one per function, and
 the code lives in one part class per file. The checkout handler calls
 `checkoutGreeting` through the forwarder, and the agent follows the call to
-the part, so the forwarder is marked generated and never reported. Nothing
+the part, so the agent marks the forwarder generated and the report never
+lists it. Nothing
 calls `farewellNote`, so its part never loads and prints by its file:
 
 ```
@@ -128,7 +131,7 @@ NEVER LOADED: DemoTextFarewell.kt (methods: farewellNote)
 
 Some findings are about a whole class, not a method in it. `main` names `AuditLog` and `ReceiptPrinter` through class
 literals, which load a class without initialising it. `AuditLog` is an
-object, so its static initialiser is where its one instance is made; that
+object, so its static initialiser makes its one instance. That initialiser
 never runs, so the class is never initialised. `ReceiptPrinter` has no
 static initialiser, but it declares an instance method and none of its
 constructors ran, so it is never instantiated. The report prints both, and
@@ -145,31 +148,30 @@ of its class did. The checkout handler builds every `Money` from pence, so
 `Money`'s pounds-and-pence constructor is one. `Price` has one constructor
 with `@JvmOverloads`, and the checkout always passes its scale, so the
 extra overload kotlinc adds never runs either. The agent marks that
-overload generated, so it is never reported. Constructors print with their
+overload generated, so the report never lists it. Constructors print with their
 parameter types:
 
 ```
 NEVER HIT: com.example.demo.server.Money#constructor(int, int):10 [CONSTRUCTOR, unused overload] (instance 17e3afc3-76f1-435c-b30a-5e594350530f, class 5, probe 1)
 ```
 
-The last report groups those never-hit probes into unreached clusters: a
-root that's either reached from code that does run, never called at all, a
-branch outcome that never ran in a method that did, or a class that holds a
-class finding, plus every never-hit method beneath it whose only callers are
-also in the cluster. `/promo`'s handler calls a helper that calls a
+The last report groups those never-hit probes into unreached clusters. A
+cluster holds a root and every never-hit method beneath it whose only callers
+are also in the cluster. The root is a method reached from code that does
+run, a method never called at all, a branch outcome that never ran in a
+method that did, or a class that holds a class finding. `/promo`'s handler calls a helper that calls a
 repository method neither the handler nor anything else ever reaches, so it
 prints as one four-method cluster: the handler, its helper, and the
 repository's method and constructor. The repository class never loads at
 all in this demo, and the cluster holds every method of it, so it prints
 once as a whole class with its finding. A call into a class counts as a
-call into its static initialiser, which is why the whole class follows the
-handler into the cluster; the initialiser itself is never listed or
-counted. The handler is a named class, so the endpoint record names its
-`handle` method and the route is printed beside the root. Nothing in the
+call into its static initialiser, so the whole class follows the handler
+into the cluster. The report never lists or counts the initialiser itself. The handler is a named class, so the endpoint record names its
+`handle` method and the report prints the route beside the root. Nothing in the
 demo's own code calls `handle`, only the server. The method overrides
 `HttpHandler.handle`, and `HttpHandler` is outside scope, so the root reads
 as called from outside scope, not uncalled. Code outside scope may call it,
-which makes it weaker evidence for deletion:
+so the root is weaker evidence for deletion:
 
 ```
 UNREACHED CLUSTER: root com.example.demo.server.PromoHandler#handle (called from outside scope: overrides HttpHandler), 4 methods, 1 never-loaded classes routes=[* /promo]
@@ -178,11 +180,11 @@ UNREACHED CLUSTER: root com.example.demo.server.PromoHandler#handle (called from
   com.example.demo.server.PromoHandler#handle
 ```
 
-`/checkout` is registered the other way, as a function reference that
+The demo registers `/checkout` the other way, as a function reference that
 Kotlin converts to the `HttpHandler` interface through `invokedynamic`.
 That handler is a hidden class with no stable name. The agent records
-which method it calls as the JDK spins it (ADR 0035), so the two shapes
-sit side by side in the endpoint report: `* /promo` names
+which method the handler calls when the JDK generates its class (ADR 0035),
+so the endpoint report lists both shapes: `* /promo` names
 `PromoHandler#handle`, and `* /checkout` names
 `DemoServerMainKt#handleCheckout`.
 
@@ -201,8 +203,8 @@ UNREACHED CLUSTER: root `System.getenv("ENABLE_LEGACY_DISCOUNT") == "true"` was 
 ```
 
 A class that holds a class finding roots a cluster of its own when nothing
-calls it, or when a method that ran does. It is listed only when the
-cluster holds more than the methods the finding folds, since the class
+calls it, or when a method that ran does. The report lists it only when
+the cluster holds more than the methods the finding folds, since the class
 findings report already names the class. A lambda body goes with the
 methods that create it: `ReceiptPrinter`'s `print` hands a lambda to
 `joinToString`, and kotlinc compiles that lambda to a static method of the
@@ -212,7 +214,7 @@ class, which folds into the class finding with `print`. So neither
 A never-hit method called from a method that ran, and not from behind an
 untaken outcome, is a root "reached from hit", and the report names the
 callers after it. The checkout handler also calls its response helper
-through a function reference; the class the compiler generates for that
+through a function reference. The class the compiler generates for that
 reference is reached from the handler and never appears in a cluster.
 
 ## Run the demo against a real collector
@@ -225,38 +227,39 @@ These tasks need Otherlode's server, which is not public.
 ./gradlew :demo:runShapesStack
 ```
 
-Runs the same instrumented demo server and client, but against a real
-collector instead of the stub, then prints what the backend behind it
+`runDemoStack` runs the same instrumented demo server and client, but against a
+real collector instead of the stub, then prints what the backend behind it
 reports. `runSpringDemoStack` does the same for the Spring Boot fat-jar
 demo, as service `otherlode-spring-demo`. `runShapesStack` runs three short
 programs one after another, each as its own service: `otherlode-shapes`
 touches Java anonymous classes and a lambda, a companion object, a data
 class and a suspend function, each with a part that never runs, and
 `otherlode-fixtures-scala2` and `otherlode-fixtures-scala3` call some of the Scala
-fixture modules' `Driver` methods and leave the rest. Each prints: probe and class counts, the never-hit probes, the never-loaded,
+fixture modules' `Driver` methods and leave the rest. Each prints the
+probe and class counts, the never-hit probes, the never-loaded,
 never-initialised and never-instantiated classes, and the unreached
 clusters. It expects a collector at `http://localhost:4319` and the
 otherlode-server read API at `http://localhost:4320`, which is what
-otherlode-server's `docker compose --profile stack up --build` provides. Every
-address and credential can be overridden:
+otherlode-server's `docker compose --profile stack up --build` provides. You
+can override every address and credential:
 
 | Property | Default |
 |---|---|
 | `-PotherlodeEndpoint` | `http://localhost:4319` |
 | `-PotherlodeAgentToken` | `local-stack-agent-token` |
 | `-PotherlodeServerUrl` | `http://localhost:4320` |
-| `-PotherlodeServerReadApiKey` | `otl_stack-read-key-for-local-dev-only`, the stack's read key; the demo only reads the server's API. |
+| `-PotherlodeServerReadApiKey` | `otl_stack-read-key-for-local-dev-only`, the stack's read key. The demo only reads the server's API. |
 | `-PotherlodeServiceVersion` | `stack-demo`, `spring-stack-demo` for the Spring demo, `shapes-stack-demo` for the shapes run |
 
 The defaults match the compose stack's own development defaults, so with
-the stack up it works with no arguments. Each run registers as a new
+the stack up the tasks run with no arguments. Each run registers as a new
 instance, and the server keeps every run until its tenant's retention
-period passes, so the report covers every run of that service and version
-within it; pass a fresh
-`-PotherlodeServiceVersion` to start a clean slate.
+period passes. The report therefore covers every run of that service and
+version within that period. To report on new runs alone, pass a fresh
+`-PotherlodeServiceVersion`.
 
 The demo runs in the unspecified namespace. To run it in a named one, set
-`OTHERLODE_SERVICE_NAMESPACE` in the environment of the Gradle command; the
+`OTHERLODE_SERVICE_NAMESPACE` in the environment of the Gradle command. The
 tasks pass it to the demo server, and the report names the namespace.
 
 ## Test your app against the agent
@@ -298,20 +301,21 @@ agent, the collector, and those records share.
 - A release publishes the agent as `dev.otherlode:otherlode-agent` and the
   testkit as `dev.otherlode:otherlode-testkit` on Maven Central, at one
   version.
-- Branch tracking covers two-outcome conditional jumps and
-  `TABLESWITCH`/`LOOKUPSWITCH`; `GOTO`/`JSR` aren't tracked (no second
-  outcome to observe).
-- A class the agent cannot instrument is skipped and reported, not silently
-  dropped from coverage. Two causes: a supertype its loader cannot serve as a
-  class file, or a failure while rewriting it. See
+- Branch tracking covers two-outcome conditional jumps, `TABLESWITCH` and
+  `LOOKUPSWITCH`. The agent does not track `GOTO` or `JSR`, since neither has
+  a second outcome to observe.
+- The agent skips and reports a class it cannot instrument, rather than
+  dropping it from coverage silently. It skips a class for one of two causes:
+  a supertype its loader cannot serve as a class file, or a failure while
+  rewriting it. See
   [`docs/site/classes.md`](docs/site/classes.md).
-- Wire schema (`src/main/proto/otherlode/v1/otherlode.proto`) is published
-  to the Buf Schema Registry as `buf.build/otherlode/otherlode` for external
-  consumers (e.g. a separately-versioned collector).
+- The wire schema (`src/main/proto/otherlode/v1/otherlode.proto`) is
+  published to the Buf Schema Registry as `buf.build/otherlode/otherlode` for
+  external consumers, such as a collector versioned on its own.
 
 ## Licence
 
-Apache License 2.0; see `LICENSE`. The agent jar bundles Byte Buddy (with
+Apache License 2.0. See `LICENSE`. The agent jar bundles Byte Buddy (with
 ASM), protobuf-java, the Kotlin standard library, and the JetBrains
-annotations, relocated; their licence texts are under `licenses/` here and
+annotations, relocated. Their licence texts are under `licenses/` here and
 `META-INF/licenses/` in the jar, and `NOTICE` lists them.

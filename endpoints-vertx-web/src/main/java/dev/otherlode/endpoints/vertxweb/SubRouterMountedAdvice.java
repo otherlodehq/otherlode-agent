@@ -5,7 +5,7 @@ import io.vertx.ext.web.Router;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto {@code RouteImpl.subRouter(Router)}, which turns a route into a mount only after it
+ * Runs on entry to and exit from {@code RouteImpl.subRouter(Router)}, which turns a route into a mount only after it
  * has set the route's handlers, so the route looks like a leaf until then. Entry raises
  * {@code {"mounting", router, route}}, so the walk skips the route meanwhile; exit raises
  * {@code {"mount", router, route, child}}, or {@code {"mountFailed", router, route}} when the call

@@ -22,8 +22,8 @@ class BootstrapInstallException(
 ) : RuntimeException(message, cause)
 
 /**
- * Puts the `:bootstrap` module's classes onto the target JVM's bootstrap classloader. The holder
- * jar is copied from the agent jar to a temp file first, so an unwritable `java.io.tmpdir` makes
+ * Puts the `:bootstrap` module's classes onto the target JVM's bootstrap classloader. It copies the
+ * holder jar from the agent jar to a temp file first, so an unwritable `java.io.tmpdir` makes
  * [install] throw a [BootstrapInstallException].
  */
 object BootstrapHolder {

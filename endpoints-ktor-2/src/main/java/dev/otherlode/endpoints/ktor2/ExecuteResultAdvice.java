@@ -14,10 +14,10 @@ import java.util.Deque;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto {@code Routing.executeResult}, Ktor's dispatch point.
+ * Runs on entry to {@code Routing.executeResult}, Ktor's dispatch point.
  *
- * <p>A route this module never saw register falls back to walking the route up to the root and
- * recording it as discovered by dispatch.
+ * <p>When this module never saw a route register, the advice walks the route up to the root and
+ * records it as discovered by dispatch.
  */
 public class ExecuteResultAdvice {
     private static final String MODULE = "ktor-2";
@@ -27,7 +27,7 @@ public class ExecuteResultAdvice {
     @Advice.OnMethodEnter(suppress = Throwable.class)
     public static void onEnter(@Advice.Argument(1) Object route) {
         try {
-            // executeResult is a suspend function: each resumption re-enters it from its
+            // executeResult is a suspend function. Each resumption re-enters it from its
             // continuation with null arguments, and only the first entry is a dispatch.
             if (route == null) return;
             Object entry = OtherlodeEndpoints.lookup(MODULE, route);

@@ -13,7 +13,7 @@ A release publishes one agent jar, `otherlode-agent-<version>.jar`, in two place
 - Maven Central, as `dev.otherlode:otherlode-agent`. The jar is at `https://repo1.maven.org/maven2/dev/otherlode/otherlode-agent/<version>/otherlode-agent-<version>.jar`.
 - The GitHub release for the same version, which carries the jar, its `.asc` signature, and a `SHA256SUMS` file.
 
-The two jars are byte for byte the same. The jar is self-contained: it bundles and relocates its own libraries, so it cannot collide with copies on your application's classpath. Keep it out of your application's own classpath and only pass it to `-javaagent`.
+The two jars are byte for byte the same. The jar is self-contained. It bundles and relocates its own libraries, so they cannot collide with copies on your application's classpath. Keep it out of your application's own classpath and pass it only to `-javaagent`.
 
 To build the jar from a checkout instead, run `./gradlew build`. The agent jar is `build/libs/otherlode-agent-<version>.jar`. Ignore the `-plain` jar beside it, which has no manifest entry for the agent.
 
@@ -41,7 +41,7 @@ tasks.named<JavaExec>("run") {
 }
 ```
 
-To bake the flag into the start scripts that `installDist` produces, set `applicationDefaultJvmArgs` in the `application` block instead. A Spring Boot project uses `bootRun` in place of `run`:
+To add the flag to the start scripts that `installDist` produces, set `applicationDefaultJvmArgs` in the `application` block instead. A Spring Boot project uses `bootRun` in place of `run`:
 
 ```kotlin
 tasks.named<org.springframework.boot.gradle.tasks.run.BootRun>("bootRun") {
@@ -105,7 +105,7 @@ Choose the root of the code you can delete. That includes your internal librarie
 
 The agent has no default for this option and no wildcard. If `includePackages` is missing or empty, even when `excludePackages` is set, the agent logs one ERROR, disables itself for the life of the JVM, and instruments and exports nothing. Your application still starts and runs normally. Otherlode lists no instance for it.
 
-A prefix written as a glob (`com.acme.*`) or a path (`com/acme`) matches no class. The agent drops it with a warning that names the spelling that would match, and does not apply that spelling for you. If every prefix is dropped this way, the agent refuses to start, as it does for a missing option.
+A prefix written as a glob (`com.acme.*`) or a path (`com/acme`) matches no class. The agent drops it with a warning that names the spelling that would match, and does not apply that spelling for you. If the agent drops every prefix this way, it refuses to start, as it does for a missing option.
 
 When the agent can find your application's main class, the error names the class and a prefix that covers its package:
 
@@ -113,15 +113,15 @@ When the agent can find your application's main class, the error names the class
 otherlode: includePackages is not set, so the agent is disabled for this JVM and nothing will be instrumented or exported; set includePackages to your application's own package prefixes, ';'-separated; the main class is com.acme.shop.ShopApplication; includePackages=com.acme.shop covers its package, or name a broader prefix that also covers your shared libraries
 ```
 
-The agent finds the main class from the launch command. It takes the class you name on the command line, `Start-Class`, else `Main-Class`, from the manifest of a `-jar` launch, or the main class of a module launch. It prints no suggestion when the main class is under `org.springframework.boot.loader`, `io.ktor.server` or `org.apache.catalina`, when it is in the default package, or when the agent cannot find a main class. The agent never applies the suggestion. Copy it into the option yourself.
+The agent finds the main class from the launch command. It takes the class you name on the command line. For a `-jar` launch, it takes `Start-Class` from the manifest, else `Main-Class`. For a module launch, it takes the module's main class. It prints no suggestion when the main class is under `org.springframework.boot.loader`, `io.ktor.server` or `org.apache.catalina`, when it is in the default package, or when the agent cannot find a main class. The agent never applies the suggestion. Copy it into the option yourself.
 
 ## Point the agent at Otherlode or a collector
 
 `exportUrl` is where the agent sends. Set it to `https://ingest.otherlode.dev` to send straight to Otherlode, or to the base URL of your collector. It defaults to `http://localhost:4319`. [Add a collector](/docs/collector/add) says when you need one. The agent appends its own paths to the URL and keeps a path you write. A value the agent cannot use, such as one with a query string or a fragment, turns the agent off for the life of the JVM with one ERROR. The agent does not fall back to the default. [exportUrl](configuration#exporturl) lists the values it refuses.
 
-`authToken` is sent as `Authorization: Bearer <token>`. Sending straight to Otherlode, it is your ingest key. Sending through a collector, it is the token the collector checks. It may hold only the visible ASCII characters `!` to `~`. A token with any other character, such as an invisible one copied from a web page, turns the agent off with one ERROR. Set the token through the `OTHERLODE_AUTH_TOKEN` environment variable, not the option string, since any user on the host can read a process's arguments with `ps`.
+The agent sends `authToken` as `Authorization: Bearer <token>`. When the agent sends straight to Otherlode, the token is your ingest key. When it sends through a collector, the token is the one the collector checks. It may hold only the visible ASCII characters `!` to `~`. A token with any other character, such as an invisible one copied from a web page, turns the agent off with one ERROR. Set the token through the `OTHERLODE_AUTH_TOKEN` environment variable, not the option string, since any user on the host can read a process's arguments with `ps`.
 
-If `authToken` is set and `exportUrl` starts with `http://`, the agent logs a warning that the token travels unencrypted. It skips the warning when the host is `localhost`, an address from `127.0.0.0` to `127.255.255.255` or `[::1]`. Use an `https://` URL for any other host. If the host is `otherlode.dev` or ends with `.otherlode.dev`, the agent refuses the `http://` URL and turns itself off with one ERROR. If you set a token and no `exportUrl`, the agent logs a warning that the token goes to the default `http://localhost:4319`.
+If `authToken` is set and `exportUrl` starts with `http://`, the agent logs a warning that the token travels unencrypted. It skips the warning when the host is `localhost`, `[::1]` or an address from `127.0.0.0` to `127.255.255.255`. Use an `https://` URL for any other host. If the host is `otherlode.dev` or ends with `.otherlode.dev`, the agent refuses the `http://` URL and turns itself off with one ERROR. If you set a token and no `exportUrl`, the agent logs a warning that the token goes to the default `http://localhost:4319`.
 
 The agent sends one batch every 60 seconds by default, starting at a random point within the first interval. `flushIntervalSeconds` changes the interval. [What the agent sends](data-sent) lists what leaves the process and what happens while Otherlode or the collector is down.
 
@@ -133,11 +133,13 @@ To disable the agent without rebuilding anything, set the `OTHERLODE_ENABLED` en
 OTHERLODE_ENABLED=false java -javaagent:/opt/otherlode/otherlode-agent-0.1.0.jar=includePackages=com.acme.shop -jar shop.jar
 ```
 
-The agent logs this line at INFO, instruments no class and sends nothing. A warning about another option's value, such as an unknown option name, can still appear before it:
+The agent logs this line at INFO, instruments no class and sends nothing:
 
 ```text
 otherlode: disabled by configuration, nothing will be instrumented or exported
 ```
+
+A warning about another option, such as an unknown option name, can still appear before this line.
 
 The agent acts on `enabled` before it refuses any other value, so a switched-off agent logs no ERROR about `includePackages`, `exportUrl` or `authToken`. The variable works only when neither the option string nor the `otherlode.enabled` system property sets `enabled`, since both win over a variable.
 
@@ -169,9 +171,9 @@ If a flush cannot reach Otherlode or the collector, the agent logs a warning at 
 otherlode: delta export failed, will retry next flush
 ```
 
-A 401 or 403 response is not retried within a send. The warning's cause names the status and the URL, such as `unexpected status 401 from https://ingest.otherlode.dev/v1/otherlode/deltas`, and means the ingest key or the collector's token is missing or wrong. [Read what ingest answers](/docs/server/connect#read-what-ingest-answers) says what each status means.
+The agent does not retry a 401 or 403 response within a send. The warning's cause names the status and the URL, such as `unexpected status 401 from https://ingest.otherlode.dev/v1/otherlode/deltas`, and means the ingest key or the collector's token is missing or wrong. [Read what ingest answers](/docs/server/connect#read-what-ingest-answers) says what each status means.
 
-If the instance never appears and no line says why, [troubleshooting](troubleshooting) walks through the causes.
+If the instance never appears and no line says why, [troubleshooting](troubleshooting) lists the causes.
 
 ## Next steps
 

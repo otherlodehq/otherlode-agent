@@ -1,6 +1,6 @@
 // Never on the test classpath directly: see fixtures-scala3/build.gradle.kts for why. A release joins
 // scala3-read-releases.txt only after this sweep passes for it. A -Potherlode.matrix.scalac override
-// must keep a Scala 2 release: the Scala 2 parameterised tests fail to start when none is given.
+// must keep a Scala 2 release, since the Scala 2 parameterised tests fail to start when none is given.
 import java.io.ByteArrayOutputStream
 
 plugins {

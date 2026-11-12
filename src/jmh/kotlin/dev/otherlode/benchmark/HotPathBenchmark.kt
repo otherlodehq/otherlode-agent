@@ -24,11 +24,11 @@ import java.util.concurrent.TimeUnit
 @Warmup(iterations = 3, time = 5, timeUnit = TimeUnit.SECONDS)
 @Measurement(iterations = 5, time = 5, timeUnit = TimeUnit.SECONDS)
 open class HotPathBenchmark {
-    // Not final, so the JIT cannot fold the call away.
+    // The field is not final, so the JIT cannot fold the call away.
     @JvmField
     var input: Int = 7
 
-    // Not final, so the JIT cannot fold the key that endpointDispatch builds from pattern and verb.
+    // These fields are not final, so the JIT cannot fold the key that endpointDispatch builds from pattern and verb.
     @JvmField
     var pattern: String = HotPathEndpointSeam.PATTERN
 

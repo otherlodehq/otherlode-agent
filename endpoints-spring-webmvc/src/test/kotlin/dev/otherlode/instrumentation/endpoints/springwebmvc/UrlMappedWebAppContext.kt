@@ -22,7 +22,7 @@ fun buildUrlMappedWebApplicationContext(
     // registerBean ends in a vararg customizer, so a trailing lambda would bind there instead of to the Supplier.
     context.registerBean("testController", TestController::class.java, Supplier { TestController() })
 
-    // SimpleUrlHandlerMapping is reached by name so no class file here loads it before install runs.
+    // This code reaches SimpleUrlHandlerMapping by name, so no class file here loads it before install runs.
     @Suppress("UNCHECKED_CAST")
     val mappingClass = Class.forName("org.springframework.web.servlet.handler.SimpleUrlHandlerMapping") as Class<Any>
     val constructor = mappingClass.getDeclaredConstructor()

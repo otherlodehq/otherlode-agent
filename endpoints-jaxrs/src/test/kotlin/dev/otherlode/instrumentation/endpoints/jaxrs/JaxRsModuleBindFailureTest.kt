@@ -14,8 +14,8 @@ import kotlin.test.Test
 import kotlin.test.assertFailsWith
 import kotlin.test.assertTrue
 
-// The resource class is generated in memory: JUnit's discovery loads every class in the test output,
-// so the test agent would declare an on-disk one before this test runs.
+// This test generates the resource class in memory, because JUnit's discovery loads every class in the test
+// output and the test agent would declare an on-disk one before this test runs.
 class JaxRsModuleBindFailureTest {
     private val generatedName = "com.example.jaxrs.generated.BindFailureResource"
 

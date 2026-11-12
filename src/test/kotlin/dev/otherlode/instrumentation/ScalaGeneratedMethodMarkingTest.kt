@@ -502,8 +502,8 @@ class ScalaGeneratedMethodMarkingTest {
                 "equals" to "(Ljava/lang/Object;)Z",
             )
 
-        // Scala 2.13.15 stores only `b`, so no field holds element 0 and no element-based member
-        // is marked. Scala 3.3.4 stores `a` first.
+        // Scala 2.13.15 stores only `b`, so no field holds element 0 and the agent marks no element-based
+        // member. Scala 3.3.4 stores `a` first.
         val expected = if (module == "scala2") GeneratedBy.NONE else GeneratedBy.CASE_CLASS
         for ((name, descriptor) in elementBased) {
             assertEquals(expected, probes.method("Q", name, descriptor).generatedBy, "$module Q.$name")

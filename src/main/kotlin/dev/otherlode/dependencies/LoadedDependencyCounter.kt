@@ -5,8 +5,8 @@ import java.security.ProtectionDomain
 
 /**
  * Counts the distinct classes loaded from each dependency. Counts nothing until
- * [DependencyRegistry.isListingComplete]. Arrays, primitives, hidden classes, and classes with no
- * protection domain or code source are skipped. A class name stays in its dependency's set when
+ * [DependencyRegistry.isListingComplete]. It skips arrays, primitives, hidden classes, and classes
+ * with no protection domain or code source. A class name stays in its dependency's set when
  * the class unloads, so a total never falls.
  */
 class LoadedDependencyCounter internal constructor(

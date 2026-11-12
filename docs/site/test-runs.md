@@ -4,7 +4,7 @@ description: Run the agent in your test JVM with testRun so Otherlode can name t
 order: 100
 ---
 
-Production holds no test classes, so a method that only your tests call reads as uncalled in production. To have Otherlode name those tests, run the agent in your test JVM too, send to the same tenant as production, and mark the run as a test run. [Test callers](/docs/server/unreached-clusters#test-callers) shows how Otherlode uses it.
+Production holds no test classes, so a method that only your tests call reads as uncalled in production. To have Otherlode name those tests, run the agent in your test JVM too, send to the same tenant as production, and mark the run as a test run. [Test callers](/docs/server/unreached-clusters#test-callers) shows how Otherlode uses a test run.
 
 ## What the agent does with `testRun`
 
@@ -59,7 +59,7 @@ If another plugin, such as JaCoCo's `prepare-agent`, also sets `argLine`, put `@
 
 ## Expect a longer shutdown
 
-A test run can add up to 25 seconds to a test task's exit: up to 10 seconds for the final flush and up to 15 for the scan. The agent flushes before it waits for the scan, so a runner that halts a slow JVM still delivers the final manifest.
+A test run can add up to 25 seconds to a test task's exit: up to 10 seconds for the final flush and up to 15 for the scan. The agent flushes before it waits for the scan, so it delivers the final manifest even when a runner halts a slow JVM.
 
 If the scan has not ended after 15 seconds, the agent stops waiting and logs this warning:
 
