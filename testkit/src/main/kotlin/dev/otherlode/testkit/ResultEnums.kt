@@ -13,92 +13,73 @@ import dev.otherlode.export.UnreadShape as WireUnreadShape
 /**
  * What one probe counts. [METHOD] counts entries to a method, [BRANCH] one outcome of a
  * conditional or a switch, and [OPTIONAL_ARGUMENT] calls that leave out one optional parameter's
- * argument. [INITIALIZER_RETURNED] and [INITIALIZER_THREW] are slots of a `<clinit>` the class file
- * declares: the first counts before each normal return of the initialiser, the second in one
- * catch-all handler around its body that rethrows what it caught. A slot is never a probe to judge
- * and never a row of a finding. Values may be added in a minor release, so a `when` over this enum
- * needs an `else` branch.
+ * argument. [INITIALIZER_RETURNED] counts normal returns from a class's static initialiser, and
+ * [INITIALIZER_THREW] throws out of it. Values may be added in a minor release, so a `when` over
+ * this enum needs an `else` branch.
  */
 public enum class ProbeKind { METHOD, BRANCH, OPTIONAL_ARGUMENT, INITIALIZER_RETURNED, INITIALIZER_THREW }
 
 /**
- * What compiled a method into existence rather than the adopter writing its body. Every [ProbeRef]
- * the collector returns holds null instead of a value of this enum. Values may be added in a minor
- * release, so a `when` over this enum needs an `else` branch.
+ * The compiler feature that wrote a method's body in place of the adopter. Values may be added in a
+ * minor release, so a `when` over this enum needs an `else` branch.
  */
 public enum class GeneratedBy {
-    /**
-     * An enum's `values`, `valueOf` or `getEntries`, or a Scala 3 enum's plumbing such as `fromOrdinal`
-     * and `$new`.
-     */
+    /** A method the compiler writes for an enum, such as `values` or `valueOf`. */
     ENUM,
 
-    /**
-     * A data class's `componentN` and `copy`, and whichever of `equals`, `hashCode` and `toString` the
-     * adopter did not write, or a data object's compiler-written `equals`, `hashCode` and `toString`.
-     */
+    /** A member the compiler writes for a Kotlin data class or data object, such as `copy` or `componentN`. */
     DATA_CLASS,
 
     /**
-     * A `$DefaultImpls` method that only forwards to the interface's own default method or to a
-     * superinterface's `$DefaultImpls`, or a class's stub that only forwards to `$DefaultImpls`.
+     * A forwarder in a Kotlin interface's `$DefaultImpls` class, or a class's stub that forwards to
+     * `$DefaultImpls`.
      */
     DEFAULT_IMPLS,
 
     /** A Java record's `equals`, `hashCode` or `toString`. */
     RECORD,
 
-    /** An overload `@JvmOverloads` adds, whose body only forwards to its own class's `$default` twin. */
+    /** An overload that `@JvmOverloads` adds. */
     JVM_OVERLOADS,
 
-    /** A function of a Kotlin multi-file facade whose body only forwards to the same function on a part class. */
+    /** A function of a Kotlin multi-file facade that forwards to the same function on a part class. */
     MULTIFILE_FACADE,
 
     /** A Scala case class's plumbing, or its companion's. */
     CASE_CLASS,
 
-    /** A static forwarder scalac adds for an object's method, or the static proxy kotlinc adds for a `@JvmStatic` companion function. */
+    /** A static forwarder that scalac or kotlinc adds for a method of an object or a companion. */
     STATIC_FORWARDER,
 
-    /** A Scala object's `writeReplace`, or a Scala 2 object's `readResolve`. */
+    /** A serialization method scalac writes for a Scala object, such as `writeReplace`. */
     SCALA_OBJECT,
 
-    /**
-     * A Kotlin value class's `equals-impl`, `equals-impl0`, `hashCode-impl` and `toString-impl` that the
-     * compiler wrote, the boxed methods that only forward to a static, and the static whose body only
-     * calls an interface default the class inherits. A Scala value class's boxed methods that only
-     * forward to the companion's `$extension` method, and the companion's `hashCode$extension` and
-     * `equals$extension`.
-     */
+    /** A method the compiler writes for a Kotlin or Scala value class, such as `equals-impl` or a boxed forwarder. */
     VALUE_CLASS,
 
-    /**
-     * What the kotlinx.serialization compiler plugin generates: a `$serializer` class's members, the
-     * `serializer()` or `generatedSerializer()` of a companion or a serializable object, and the lambda
-     * that builds a lazy serializer.
-     */
+    /** Code the kotlinx.serialization compiler plugin generates, such as a `$serializer` class's members. */
     KOTLINX_SERIALIZATION,
 
-    /** A trait's concrete method scalac mixes into a class as a forwarder, or the trait's static entry for it. */
+    /** A forwarder scalac writes for a trait's concrete method, in a class or in the trait. */
     TRAIT_FORWARDER,
 
-    /** A method kotlinc writes for interface delegation, whose body only forwards to the delegate's method of the same name and descriptor. */
+    /** A method kotlinc writes for interface delegation that forwards to the delegate's method. */
     CLASS_DELEGATION,
 }
 
 /**
- * Why a kept branch outcome is real but not worth a person's time when it never runs. A [ProbeRef]
- * whose outcome is not routine holds null instead of a value of this enum. Values may be added in a
- * minor release, so a `when` over this enum needs an `else` branch.
+ * The kind of routine code a branch outcome leads to. [ProbeRef.routine] is null for an outcome that
+ * is not routine. Values may be added in a minor release, so a `when` over this enum needs an `else`
+ * branch.
  */
 public enum class RoutineKind {
     /**
-     * The null side of a null check whose path only loads constants or locals, stores locals, pops,
-     * duplicates or swaps stack values, casts or jumps before it rejoins the other side or returns.
+     * The null side of a null check whose path does trivial stack and local work, such as loading a
+     * constant, before it rejoins the other side or returns.
      */
     NULL_DEFAULT,
 
-    /** The path only builds an exception and throws it. */
+    /** A path that does nothing but build an exception and throw it. */
     THROW_ONLY,
 
     /** An outcome of a site inside the exception-path copy of a `finally` body. */
@@ -106,39 +87,42 @@ public enum class RoutineKind {
 }
 
 /**
- * The family of compiler output a probe's code belongs to when the agent could not read its body. A
- * [ProbeRef] that is not an unread shape holds null instead of a value of this enum. Values may be
- * added in a minor release, so a `when` over this enum needs an `else` branch.
+ * The family of compiler output an unread shape belongs to. [ProbeRef.unreadShape] is null for a
+ * probe that is not an unread shape. Values may be added in a minor release, so a `when` over this
+ * enum needs an `else` branch.
  */
 public enum class UnreadShape {
-    /** A Scala case class's plumbing, or its companion's, whose body the agent has not read. */
+    /** A Scala case class's plumbing, or its companion's, with an unread body. */
     CASE_CLASS,
 
-    /** A static method with a `$` twin of the same name and descriptor, whose body is unread. */
+    /** A static method with a `$` twin of the same name and descriptor, with an unread body. */
     STATIC_FORWARDER,
 
-    /** A Scala object's `writeReplace` or `readResolve` whose body the agent has not read. */
+    /** A Scala object's `writeReplace` or `readResolve` with an unread body. */
     SCALA_OBJECT,
 
-    /** Scala 3 enum plumbing whose body the agent has not read. */
+    /** Scala 3 enum plumbing with an unread body. */
     SCALA_ENUM,
 
     /** A method of a Kotlin multi-file facade that is not a recognised forwarder. */
     MULTIFILE_FACADE,
 
-    /** A jump or switch in a suspend-shaped method that matches no coroutine shape the agent reads. */
+    /** A jump or switch in a suspend-shaped method that matches no read coroutine shape. */
     COROUTINE_MACHINERY,
 
-    /** The collision side of a bucket in a string switch's `hashCode` lowering the agent cannot read. */
+    /** The collision side of a bucket in a string switch's `hashCode` lowering, with an unread shape. */
     STRING_SWITCH,
 
-    /** A `@Serializer(forClass = ...)` object's `serialize`, `deserialize` and `getDescriptor`, which the plugin may have filled in. */
+    /** A `@Serializer(forClass = ...)` object's `serialize`, `deserialize` or `getDescriptor`. */
     KOTLINX_SERIALIZER_OBJECT,
 
-    /** A Scala value class's boxed method, or its companion's `hashCode$extension` or `equals$extension`, whose body the agent has not read. */
+    /**
+     * A Scala value class's boxed method, or its companion's `hashCode$extension` or `equals$extension`, with an
+     * unread body.
+     */
     VALUE_CLASS,
 
-    /** A Scala trait forwarder, in a class or in the trait, whose body the agent has not read. */
+    /** A Scala trait forwarder, in a class or in the trait, with an unread body. */
     TRAIT_FORWARDER,
 }
 
@@ -150,43 +134,37 @@ public enum class OutsideCallerKind {
     /** The method overrides or implements a method that an out-of-scope type declares. */
     OVERRIDES_METHOD,
 
-    /**
-     * The method, one of its parameters, or a method it overrides carries an annotation a framework
-     * calls through.
-     */
+    /** A callback annotation marks the method, for example on the method itself or on one of its parameters. */
     CALLBACK_ANNOTATION,
 }
 
 /**
- * How the agent learned of an endpoint: the framework declared it at registration, or a request
- * matched it at dispatch before any registration had. Values may be added in a minor release, so a
- * `when` over this enum needs an `else` branch.
+ * How an endpoint was discovered: [REGISTRATION] when its route was registered, [DISPATCH] when a request
+ * reached it before any registration did. Values may be added in a minor release, so a `when` over this enum
+ * needs an `else` branch.
  */
 public enum class EndpointDiscoverySource { REGISTRATION, DISPATCH }
 
 /**
- * How the agent learned of a dependency. Values may be added in a minor release, so a `when` over
- * this enum needs an `else` branch.
+ * How a dependency was discovered. Values may be added in a minor release, so a `when` over this
+ * enum needs an `else` branch.
  */
 public enum class DependencyDiscoverySource {
-    /**
-     * Listed from the startup classpath, including every jar under an executable Spring Boot jar's
-     * `BOOT-INF/lib` or an executable war's `WEB-INF/lib` and `WEB-INF/lib-provided`.
-     */
+    /** Listed from the startup classpath, including jars nested in an executable Spring Boot jar or war. */
     STARTUP_CLASSPATH,
 
-    /** Seen only when a class from it loaded. Such a dependency can never read as unloaded. */
+    /** Seen when a class from it loaded. */
     LOAD,
 }
 
-/** A class the agent matched by `includePackages` but could not instrument, with the [reason] it gives. */
+/** A class matched by `includePackages` that was not instrumented, with the [reason] given for it. */
 @ConsistentCopyVisibility
 public data class SkippedClass internal constructor(
     val className: String,
     val reason: String,
 )
 
-/** An endpoint module that is not instrumenting, and [kind], what switched it off or kept it off. */
+/** An endpoint module that is switched off, with the [reason] given and the [kind] of cause. */
 @ConsistentCopyVisibility
 public data class DisabledEndpointModule internal constructor(
     val module: String,
@@ -199,18 +177,15 @@ public data class DisabledEndpointModule internal constructor(
  * this enum needs an `else` branch.
  */
 public enum class DisabledEndpointModuleKind {
-    /**
-     * A `LinkageError`, or another sign that the framework release differs from the one the module was
-     * built for. A `LinkageError` from the servlet module's route walk reads [ROUTE_WALK_FAILED].
-     */
+    /** A sign of a framework release the module was not built for, such as a `LinkageError`. */
     LINKAGE_ERROR,
 
-    /** Any other throw from the module's advice, or a request the advice could not read. */
+    /** A throw from the module's advice that is not a [LINKAGE_ERROR], or a request the advice could not read. */
     ADVICE_FAILED,
 
     /**
-     * The module's matcher or its own `transform` threw, a framework class it hooks failed to weave, or
-     * that class's loader cannot see the agent's bootstrap package.
+     * Installing the module's hooks into a framework class failed, for example because the module's own
+     * `transform` threw.
      */
     TRANSFORM_FAILED,
 
@@ -223,7 +198,7 @@ public enum class DisabledEndpointModuleKind {
     /** The adopter's configuration kept the module from installing. */
     CONFIGURED_OFF,
 
-    /** The module has no dispatch point on this runtime to count its routes at, so it declares none. */
+    /** The module has no dispatch point on this runtime to count its routes at. */
     ROUTES_NOT_COUNTED,
 }
 

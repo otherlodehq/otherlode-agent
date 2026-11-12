@@ -4,10 +4,9 @@ import dev.otherlode.export.FrameworkMarker
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * One entry of the agent's fixed list of framework markers: a stable kebab-case [id] and the
- * alternative [classSets] that show a framework's routing is set up. A set matches when every class
- * in it is defined; the marker is seen when any set matches. The wording of what a marker claims
- * belongs to the server.
+ * A framework marker: a stable kebab-case [id] and the alternative [classSets] that show a
+ * framework's routing is set up. A set matches when every class in it is defined; the marker is
+ * seen when any set matches.
  */
 class FrameworkMarkerDefinition(
     val id: String,

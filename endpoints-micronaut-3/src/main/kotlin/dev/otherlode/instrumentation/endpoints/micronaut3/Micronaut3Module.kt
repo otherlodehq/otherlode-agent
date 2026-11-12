@@ -59,14 +59,13 @@ private fun routerIsMicronaut3(classLoader: ClassLoader): Boolean =
  * no dispatch point is constructed, [beforeManifest] reports the module off with
  * `ROUTES_NOT_COUNTED` once the router has waited a flush interval.
  *
- * A request counts when its matched route is a `UriRouteMatch`. A 404, a 405, an unsupported media
- * type and a CORS preflight that the server answers itself reach no `UriRouteMatch`, and a status
- * route is not one. micronaut-servlet counts a route only when its verb is the request's.
+ * A request counts only when its matched route is a `UriRouteMatch`, and an unregistered WebSocket
+ * route counts nothing. At `ServletHttpHandler`, a route counts only when its verb is the request's.
  *
- * A HEAD route that Micronaut adds beside a `@Get` and a WebSocket route are not declared. A HEAD
- * request that matches such a route counts against the GET endpoint. `micronaut.server.context-path`
- * is part of an annotated route's template and not of a programmatic one. This module matches
- * nothing on a Micronaut 4 or 5 application.
+ * A WebSocket route is not declared, and nor is a HEAD route with the `@Get` stereotype that shares
+ * its template and target with a GET route. A request that matches such a HEAD route counts against
+ * the GET endpoint of the same template. This module matches nothing on a Micronaut 4 or 5
+ * application.
  */
 class Micronaut3Module : EndpointModule {
     override val name: String = MODULE_NAME

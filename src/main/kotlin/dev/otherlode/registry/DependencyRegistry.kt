@@ -38,14 +38,14 @@ sealed interface DependencyOrigin {
 }
 
 /**
- * Tracks the dependencies this instance has seen, one record per identity key, and delivers each
- * record to the collector once.
+ * Tracks the dependencies this instance has seen, one record per identity key, and offers each
+ * record to a manifest until a confirmed send carries it ([advanceManifest]).
  *
  * The identity key ([identityKey]) is the sorted list of a dependency's `group:artifact` pairs,
  * never its version. Ids are per instance, assigned from 0 in registration order.
  *
- * A record is held back from the manifest until its loaded-class count has reached the collector
- * ([isSendable]).
+ * A record is held back from the manifest until a sweep has counted it and that sweep's counts
+ * have been delivered ([isSendable]).
  *
  * Constructed with `indexClassNames`, the registry also keeps a class index from class name to
  * dependency id, the first registration of a name winning. [releaseClassIndex] drops it.

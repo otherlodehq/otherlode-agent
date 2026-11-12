@@ -48,19 +48,16 @@ private fun routerIsMicronaut4(classLoader: ClassLoader): Boolean =
 /**
  * Endpoint module for Micronaut (`micronaut`), covering the 4.0 to 5.x lines, compiled against 4.0.0.
  *
- * The module holds each `DefaultRouter` weakly. Once a `RouteExecutor` is constructed, which every
- * Micronaut 4 and 5 runtime uses to find a route, [DispatchGate] declares the router's
- * `UriRouteInfo` objects. If no `RouteExecutor` is constructed, [beforeManifest] reports the module
- * off with `ROUTES_NOT_COUNTED` once the router has waited a flush interval.
+ * The module holds each `DefaultRouter` weakly. Once a `RouteExecutor` is constructed, [DispatchGate]
+ * declares the router's `UriRouteInfo` objects. If no `RouteExecutor` is constructed, [beforeManifest]
+ * reports the module off with `ROUTES_NOT_COUNTED` once the router has waited a flush interval.
  *
- * A request counts when `RouteExecutor.findRouteMatch` returns a match. A CORS preflight a filter
- * answers, an `OPTIONS` request, a 404, a 405 and an ambiguous match return no match and count
- * nothing. A filter that rejects the request after the match still counts it.
+ * A request counts when `RouteExecutor.findRouteMatch` returns a match, unless the match is an
+ * unregistered WebSocket route. A null return counts nothing.
  *
- * A HEAD route that Micronaut adds beside a `@Get` and a WebSocket route are not declared. A HEAD
- * request that matches such a route counts against the GET endpoint.
- * `micronaut.server.context-path` is part of an annotated route's template and not of a
- * programmatic one. This module matches nothing on a Micronaut 3 application.
+ * A WebSocket route is not declared, and nor is a HEAD route with the `@Get` stereotype that shares
+ * its template and target with a GET route. A request that matches such a HEAD route counts against
+ * the GET endpoint of the same template. This module matches nothing on a Micronaut 3 application.
  */
 class MicronautModule : EndpointModule {
     override val name: String = MODULE_NAME

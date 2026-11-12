@@ -1,41 +1,41 @@
 package dev.otherlode.export
 
 /**
- * The limits a chunk of any payload kind is built under. The element limits are the collector's
- * `ingest.Max*Elements` in otherlode-collector, which refuses a payload over one with 413. A chunk
- * closes at [MAX_ELEMENT_PERCENT] percent of the limit for its kind, and at [MAX_ENCODED_BYTES] of
- * encoded bytes, which is half the collector's body limit.
+ * The limits a payload chunk is built under: an element limit per payload kind, the share of it a
+ * chunk may use, and a cap on encoded bytes.
  */
 object ChunkLimits {
+    // The element limits must equal ingest.Max*Elements in otherlode-collector, which refuses a payload
+    // over one with 413. MAX_ENCODED_BYTES is half the collector's body limit.
+
     /** The most encoded bytes a chunk holds. */
     const val MAX_ENCODED_BYTES: Long = 8L * 1024 * 1024
 
-    /** The collector's element limit for a delta batch. */
+    /** The element limit for a delta batch. */
     const val DELTA_BATCH_ELEMENT_LIMIT: Long = 500_000
 
-    /** The collector's element limit for a probe manifest. */
+    /** The element limit for a probe manifest. */
     const val MANIFEST_ELEMENT_LIMIT: Long = 100_000
 
-    /** The collector's element limit for a static baseline. */
+    /** The element limit for a static baseline. */
     const val STATIC_BASELINE_ELEMENT_LIMIT: Long = 200_000
 
-    /** The collector's element limit for a class listing. */
+    /** The element limit for a class listing. */
     const val CLASS_LISTING_ELEMENT_LIMIT: Long = 100_000
 
     /** The share of an element limit a chunk may use. */
     const val MAX_ELEMENT_PERCENT: Long = 90
 
     /**
-     * What a chunk of riders leaves for the manifest around it: the resource, whose values are each at
-     * most 1024 bytes, and the manifest's own scalar fields.
+     * The weight a chunk of manifest entries reserves for the manifest around it: a resource whose
+     * values are each at most 1024 bytes, and the manifest's own scalar fields.
      */
     val MANIFEST_FRAME_ALLOWANCE: PayloadWeight = PayloadWeight(64L * 1024, 64)
 }
 
 /**
- * Splits [items] into chunks of at most [maxPerChunk] items. Each chunk, with [allowance] for the
- * payload around it, weighs no more than a chunk of [kind] admits. An item that alone breaks a
- * bound gets a chunk of its own.
+ * Splits [items], in order, into chunks of at most [maxPerChunk] items. [kind] admits each chunk's
+ * weight plus [allowance], except a chunk whose single item alone breaks a bound.
  */
 fun <T> chunkedByWeight(
     items: List<T>,
@@ -69,7 +69,7 @@ enum class ChunkBound(
     ELEMENTS("the limit on elements"),
 }
 
-/** The four payload kinds, each with the collector's element limit for it. */
+/** A payload kind, with its element limit. */
 enum class PayloadKind(
     val collectorElementLimit: Long,
 ) {
@@ -95,11 +95,8 @@ enum class PayloadKind(
 }
 
 /**
- * An upper bound on what a part of a payload adds to its encoded size and its element count.
- * The sum over the parts of a payload is at least the payload's own size and element count.
- *
- * An element is every embedded message and every element of a repeated field, at every depth. The
- * resource counts as one. A packed repeated scalar counts one per value.
+ * An encoded size in [bytes] and an element count, used as an upper bound for part of a payload. An
+ * element is an embedded message or one entry of a repeated field, at any depth.
  */
 data class PayloadWeight(
     val bytes: Long,

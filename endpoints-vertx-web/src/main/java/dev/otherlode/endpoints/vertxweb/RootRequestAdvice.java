@@ -4,10 +4,8 @@ import dev.otherlode.bootstrap.OtherlodeEndpoints;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the entry of {@code RouterImpl.handle(HttpServerRequest)}. Only a root router
- * receives the server request, since a mounted router is entered through {@code handleContext}.
- * The router itself, not an event array, goes to the module, which declares the routes reachable
- * from it.
+ * Woven onto the entry of {@code RouterImpl.handle(HttpServerRequest)}. Passes the router to
+ * {@link OtherlodeEndpoints#declare} for the {@code vertx-web} module.
  *
  * <p>The advice body is inlined into the woven method, so {@code onEnter} stays one flat body with
  * no helper methods.

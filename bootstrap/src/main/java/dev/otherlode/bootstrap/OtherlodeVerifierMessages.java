@@ -6,12 +6,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Holds the messages of the {@code VerifyError}s the JVM constructs until the agent drains them.
- *
- * <p>The agent weaves both constructors of {@code java.lang.VerifyError} to call {@link
- * #record(String)}. A link-time {@code VerifyError} is constructed while the failing class's
- * initialisation lock is held, so {@link #record} must not block, load, link, allocate beyond one
- * array store, log or throw. {@link #warm()} runs every path once at install for that reason.
+ * Holds {@code VerifyError} messages passed to {@link #record(String)} until {@link #drain()} takes them.
  *
  * <p>The ring holds up to {@link #CAPACITY} messages between two drains. A call that finds it
  * full counts one overflow and stores nothing. A message equal to one stored recently is skipped.
@@ -20,7 +15,7 @@ public final class OtherlodeVerifierMessages {
     /** How many messages the ring holds between two drains. */
     public static final int CAPACITY = 8192;
 
-    /** How many distinct messages {@link #record} remembers, to skip a message it already stored. */
+    /** How many slots {@link #record} has for the recently stored messages it skips a repeat of. */
     public static final int SEEN = 64;
 
     private static final Ring RING = new Ring(CAPACITY);
@@ -28,18 +23,18 @@ public final class OtherlodeVerifierMessages {
     private OtherlodeVerifierMessages() {}
 
     /**
-     * Stores {@code message}, the argument a {@code VerifyError} constructor received. Does nothing
-     * when it is null or equal to a message stored recently, and counts one overflow when the ring
-     * is full. Never blocks and never throws.
+     * Stores {@code message}, a {@code VerifyError}'s message. Does nothing when it is null or equal
+     * to a message stored recently, and counts one overflow when the ring is full. Takes no lock and
+     * never throws.
      */
     public static void record(String message) {
         RING.record(message);
     }
 
     /**
-     * Returns the messages recorded since the last drain, and removes them. A message behind a slot
-     * still being written waits for a later drain, and counts as overflow if that slot is still
-     * empty two drains later.
+     * Returns and removes the messages recorded since the last drain. A message behind a slot still
+     * being written waits for a later drain, and counts as overflow if that slot is still empty two
+     * drains later.
      */
     public static String[] drain() {
         return RING.drain();
@@ -51,8 +46,8 @@ public final class OtherlodeVerifierMessages {
     }
 
     /**
-     * Runs every path of the ring once, on a ring of its own, so that a later call from a {@code
-     * VerifyError} constructor loads and links nothing. Leaves the shared ring as it is.
+     * Runs the ring's paths once on a ring of its own, so a later {@link #record} has its classes
+     * loaded and linked. Call it before {@link #record} can run. Leaves the shared ring as it is.
      */
     public static void warm() {
         Ring probe = new Ring(2);
@@ -87,6 +82,8 @@ public final class OtherlodeVerifierMessages {
 
         /** Stores {@code message}; see {@link OtherlodeVerifierMessages#record(String)}. */
         public void record(String message) {
+            // Can run inside a VerifyError constructor under a class's initialisation lock: it must
+            // not block, load or link a class, allocate, log or throw.
             if (message == null) {
                 return;
             }
@@ -102,10 +99,7 @@ public final class OtherlodeVerifierMessages {
             }
         }
 
-        /**
-         * The slots a write claims from. {@link #record} skips a null or recently stored message, then calls this,
-         * {@link #claim} and {@link #store}.
-         */
+        /** Returns the slots a write claims from; pass them to {@link #claim} and then {@link #store}. */
         public Object writeTarget() {
             return current;
         }
@@ -128,8 +122,8 @@ public final class OtherlodeVerifierMessages {
         }
 
         /**
-         * Removes and returns the messages recorded since the last drain. A message behind a slot still being
-         * written waits for a later drain, and counts as overflow if that slot is still empty two drains later.
+         * Returns and removes the messages recorded since the last drain; see {@link
+         * OtherlodeVerifierMessages#drain()}.
          */
         public synchronized String[] drain() {
             List<String> out = new ArrayList<>();

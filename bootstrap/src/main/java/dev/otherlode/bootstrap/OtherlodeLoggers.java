@@ -6,17 +6,12 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 
 /**
- * The only way the agent asks for a {@link System.Logger}.
+ * Hands out {@link System.Logger}s that can hold back from a {@code System.LoggerFinder} bridge.
  *
- * <p>The boot loader defines this class, so without a {@code System.LoggerFinder} bridge the JDK
- * hands out a surrogate logger and does not create the {@code java.util.logging.LogManager} at
- * once.
- *
- * <p>While a {@code System.LoggerFinder} bridge such as {@code log4j-jpl} is present, a logger
- * from {@link #get} writes through the fallback set by {@link #setFallback} until the gate opens,
- * or through the JDK's logger when no fallback is set. The gate opens by itself {@link
- * #GATE_SECONDS} seconds after this class first checks for a bridge, or at once through {@link
- * #openGate}.
+ * <p>While a bridge is present, a logger from {@link #get} writes through the fallback set by {@link
+ * #setFallback} until the gate opens, or through {@link System#getLogger} when no fallback is set. The gate
+ * opens by itself {@link #GATE_SECONDS} seconds after this class first checks for a bridge, or at once
+ * through {@link #openGate}.
  */
 public final class OtherlodeLoggers {
     /** How long the gate stays closed at most. */
@@ -52,30 +47,28 @@ public final class OtherlodeLoggers {
         }
     }
 
-    /** Returns the logger named {@code name}, requested on behalf of a system class. */
+    /** Returns a logger named {@code name}, gated while a bridge is present. */
     public static System.Logger get(String name) {
         return Bridge.PRESENT ? new GatedLogger(name) : System.getLogger(name);
     }
 
     /**
-     * True when a class-path jar or a boot-layer module provides {@code System.LoggerFinder}. Loads no provider class.
+     * True when the system class loader finds a {@code System.LoggerFinder} service file or a boot-layer module
+     * provides that service. Checked once; loads no provider class.
      */
     public static boolean bridgePresent() {
         return Bridge.PRESENT;
     }
 
     /**
-     * Sets the factory a gated logger uses for its stand-in while the gate is closed. A logger keeps the stand-in it
-     * already made.
+     * Sets the factory a gated logger makes its stand-in from while the gate is closed, or null for none. While a
+     * factory is set, a logger keeps the stand-in it already made.
      */
     public static void setFallback(Function<String, System.Logger> factory) {
         fallback = factory;
     }
 
-    /**
-     * True once the gate is open, by {@link #openGate} or by time, and always with no bridge. A volatile read once it
-     * is.
-     */
+    /** True once the gate is open, by {@link #openGate} or by time. True with no bridge. */
     public static boolean isGateOpen() {
         if (gateOpen) {
             return true;
@@ -86,7 +79,7 @@ public final class OtherlodeLoggers {
         return gateOpen;
     }
 
-    /** Opens the gate; loggers from {@link #get} then use the JDK's. */
+    /** Opens the gate and wakes {@link #awaitGate}; loggers from {@link #get} then use the JDK's. */
     public static void openGate() {
         synchronized (LOCK) {
             gateOpen = true;

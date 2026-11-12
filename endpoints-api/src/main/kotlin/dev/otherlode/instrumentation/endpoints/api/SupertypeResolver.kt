@@ -7,19 +7,15 @@ import java.util.Collections
 import java.util.WeakHashMap
 import java.util.concurrent.ConcurrentHashMap
 
-/**
- * Thrown when a supertype can be neither described from the pool nor loaded, so the class extending
- * it can never be defined.
- */
+/** Thrown when a supertype can be neither described from the type pool nor loaded. */
 class UndefinableTypeException(
     typeName: String,
 ) : RuntimeException("$typeName cannot be described or loaded", null, false, false)
 
 /**
- * What a [SupertypeResolver] remembers for one class loader: which supertypes loaded and which
- * were found definable. It holds no strong reference to a class, so a cache kept for a loader
- * never keeps that loader alive. A module extends it to keep answers of its own and overrides
- * [isKnown] to say which names those answers cover.
+ * What a [SupertypeResolver] remembers for one class loader: which supertypes loaded and which were
+ * found definable. It holds loaded classes weakly. A subclass can keep answers of its own and
+ * override [isKnown] to cover them.
  */
 open class SupertypeCache {
     private val loaded = ConcurrentHashMap<String, LoadAnswer>()
@@ -31,12 +27,12 @@ open class SupertypeCache {
         definable.add(name)
     }
 
-    /** Whether an earlier read has already shown [name] to be described, so its description needs no further check. */
+    /** Whether [name]'s type pool description can be used without a further check. The default is [isDefinable]. */
     open fun isKnown(name: String): Boolean = isDefinable(name)
 
     /**
-     * The class named [name] as [loader] loads it, or null when [loader] cannot load it. Answers are
-     * kept by [name] alone, so every call on one cache must pass the same loader.
+     * The class named [name] as [loader] loads it, without initializing it, or null when [loader]
+     * cannot load it. Answers are kept by [name] alone, so pass the same loader on each call to one cache.
      */
     fun loadedClass(
         name: String,
@@ -70,8 +66,8 @@ open class SupertypeCache {
 }
 
 /**
- * One cache per class loader, built by [create] and keyed weakly by the loader, so a retired
- * loader stays collectible. A `null` loader gets a fresh cache on every call, which is the same as no cache.
+ * One cache per class loader, built by [create] and keyed weakly by the loader. A `null` loader gets
+ * a fresh cache on each call.
  */
 class SupertypeCaches<C : SupertypeCache>(
     private val create: () -> C,
@@ -82,14 +78,11 @@ class SupertypeCaches<C : SupertypeCache>(
 }
 
 /**
- * Reads a type's supertypes, erased, for [loader]'s classes, leaving out those [skipped] names.
- * It holds [loader] weakly, so a matcher built on it never keeps a retired loader alive.
- *
- * A supertype the pool has no class file for is asked of [loader] with
- * `Class.forName(name, false, loader)` and described from the loaded class. One that does not
- * load is a class [loader] cannot define, and [UndefinableTypeException] says so. One that loads
- * but whose methods cannot be reflected is not undefinable: the error reaches the caller, which
- * for a matcher switches its module off rather than guess.
+ * Reads a type's erased supertypes for `loader`'s classes, leaving out names that `skipped` accepts.
+ * It holds `loader` weakly. A supertype the type pool cannot describe is loaded through `loader`
+ * without initializing it and described from the loaded class. When it does not load, or `loader`
+ * has been collected, [UndefinableTypeException] is thrown. A supertype that loads but cannot be
+ * reflected raises its own error.
  */
 class SupertypeResolver(
     loader: ClassLoader?,
@@ -99,16 +92,16 @@ class SupertypeResolver(
     private val loader: WeakReference<ClassLoader>? = loader?.let { WeakReference(it) }
     private val isBootstrap = loader == null
 
-    /** [type]'s superclass, erased, or null when there is none or it is [skipped]. */
+    /** [type]'s superclass, erased, or null when there is none or it is skipped. */
     fun superErasure(type: TypeDescription): TypeDescription? = locate { type.superClass }?.let(::describe)
 
-    /** [type]'s own declared interfaces, erased, without those [skipped]. */
+    /** [type]'s own declared interfaces, erased, without those skipped. */
     fun interfaceErasures(type: TypeDescription): List<TypeDescription> = locateInterfaces(type).mapNotNull(::describe)
 
     /**
-     * Returns true when every supertype above [type] can be described or loaded, so the class can be
-     * defined, and throws [UndefinableTypeException] when one cannot. It never returns false. A
-     * supertype found to be definable is remembered for the loader, with everything above it.
+     * Returns true when each supertype above [type] that it reaches without passing a skipped one can be
+     * described or loaded, and throws [UndefinableTypeException] when one cannot. It never returns false.
+     * Types it finds definable are marked so in the cache.
      */
     fun canBeDefined(type: TypeDescription): Boolean {
         val seen = mutableSetOf<String>()

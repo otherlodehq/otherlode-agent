@@ -36,11 +36,10 @@ import java.util.concurrent.TimeoutException
  * ```
  *
  * The collector binds to the port named by the `otherlode.testkit.port` system property, defaulting
- * to 4319, the port of the agent's default `exportUrl`. The agent always needs `includePackages`:
- * without it the agent refuses to start and sends nothing. [beforeAll] waits for a delta batch that
- * arrives after it begins, for the number of seconds in the `otherlode.testkit.startup.timeout.seconds`
- * system property, defaulting to 15. Once one wait has succeeded, later test classes in the test JVM
- * skip it.
+ * to 4319. [beforeAll] waits for a delta batch that arrives after it begins, for the number of seconds
+ * in the `otherlode.testkit.startup.timeout.seconds` system property, defaulting to 15, and throws
+ * [IllegalStateException] if none arrives. Once one wait has succeeded, later test classes in the test
+ * JVM skip it.
  */
 public class OtherlodeExtension :
     BeforeAllCallback,
@@ -66,8 +65,7 @@ public class OtherlodeExtension :
     ): Boolean = parameterContext.parameter.type == OtherlodeTestCollector::class.java
 
     /**
-     * Starts the collector if [beforeAll] has not run yet. Under `@TestInstance(PER_CLASS)`, JUnit
-     * resolves a constructor parameter before it calls [beforeAll].
+     * Returns the collector, and starts it if [beforeAll] has not. It does not wait for a delta batch.
      */
     override fun resolveParameter(
         parameterContext: ParameterContext,
@@ -106,10 +104,8 @@ public class OtherlodeExtension :
         private var sharedCollector: OtherlodeTestCollector? = null
 
         /**
-         * The collector [OtherlodeExtension] started for this test JVM.
-         *
-         * Throws [IllegalStateException] if no test class with [OtherlodeExtension] registered has
-         * started the collector yet, as when binding its port failed.
+         * Returns the collector [OtherlodeExtension] started in this test JVM. Throws
+         * [IllegalStateException] if the extension has not started one, as when binding its port failed.
          */
         @JvmStatic
         public fun collector(): OtherlodeTestCollector =

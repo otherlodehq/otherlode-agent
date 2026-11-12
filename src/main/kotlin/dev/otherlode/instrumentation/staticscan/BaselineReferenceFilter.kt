@@ -10,15 +10,10 @@ import java.lang.System.Logger.Level
 import java.time.Duration
 
 /**
- * Filters a static scan's references and maps each one kept to its dependency, without a defining
- * loader. One referenced name resolves, in order:
- *
- * 1. Provided by the platform or bootstrap loader: dropped.
- * 2. Seen by the scan in a directory root or under `BOOT-INF/classes` or `WEB-INF/classes`: dropped.
- * 3. In the startup listing's class index ([DependencyRegistry.dependencyForClass]): kept, and
- *    recorded into [externalClasses] as that dependency's.
- * 4. Seen by the scan at the root of a jar the listing did not register as a dependency: dropped.
- * 5. Anything else: kept and recorded nowhere, so a collector ignores it until the transform path maps it.
+ * Filters a static scan's references without a defining loader. Drops names the platform provides,
+ * names among the scan's own classes, and names the scan saw at the root of a jar when the startup
+ * listing's class index does not map them. Keeps every other name, and records a kept name the class
+ * index maps ([DependencyRegistry.dependencyForClass]) into [externalClasses] as that dependency's.
  *
  * The filtered result carries what [ExternalClassRegistry.mappingFor] returns for each kept name.
  * [filter] runs [dependencyListing] first if no one has, then waits up to [listingWait] for the
@@ -34,8 +29,8 @@ class BaselineReferenceFilter(
     private val log by agentLogger(BaselineReferenceFilter::class.java.name)
 
     /**
-     * [result] with dropped names removed from every reference list and every kept name recorded. The
-     * [DependencyRegistry] class index is released afterwards, whatever the outcome.
+     * [result] with dropped names removed from every reference list and each kept name the class index
+     * maps recorded. The [DependencyRegistry] class index is released afterwards, whatever the outcome.
      */
     fun filter(result: StaticScanResult): StaticScanResult {
         try {

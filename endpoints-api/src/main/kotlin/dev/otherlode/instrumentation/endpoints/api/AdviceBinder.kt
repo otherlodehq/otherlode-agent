@@ -13,12 +13,9 @@ import net.bytebuddy.matcher.ElementMatcher
 import net.bytebuddy.pool.TypePool
 
 /**
- * Resolves an advice class by name, without loading it, reading its bytecode from
- * [agentClassLoader] and the framework types it references from [targetClassLoader]. A null
- * [targetClassLoader] means the bootstrap loader.
- *
- * A module attaches each hook through [hook], which records the hook's method matcher so the
- * pipeline can check that the matcher found a method to weave.
+ * Binds advice classes by name without loading them. Class files are read from `agentClassLoader`
+ * first, then from `targetClassLoader`, where null means the bootstrap loader. Each [hook] call is
+ * recorded in [recordedHooks].
  */
 class AdviceBinder private constructor(
     private val locator: ClassFileLocator,
@@ -31,21 +28,16 @@ class AdviceBinder private constructor(
 
     private constructor(locator: ClassFileLocator) : this(locator, TypePool.Default.of(locator), mutableListOf())
 
-    /**
-     * A binder that shares this one's locator and type pool and holds a record of its own, so the
-     * hooks a module records in one call belong to that call alone.
-     */
+    /** A binder that shares this one's class file sources and type pool, with an empty record of its own. */
     fun forCall(): AdviceBinder = AdviceBinder(locator, typePool, mutableListOf())
 
     /** The hooks attached through [hook] on this binder, in the order they were attached. */
     fun recordedHooks(): List<RecordedHook> = record.toList()
 
     /**
-     * Binds [adviceClassName] to every declared method with a body that [methodMatcher] accepts, and
-     * records the pair so the pipeline can tell a hook that matched nothing. In every internal-name
-     * reference in the advice class that starts with a key in [remapPrefixes], that prefix is
-     * replaced by the key's value, and the longest matching key wins. So one advice class can weave
-     * onto a relocated copy of a library.
+     * Returns a wrapper that applies [adviceClassName] to the declared methods [methodMatcher] accepts,
+     * and records the pair in [recordedHooks]. In the advice class, an internal name that starts with a
+     * key of [remapPrefixes] has that prefix replaced by the key's value. The longest matching key wins.
      */
     fun hook(
         adviceClassName: String,
@@ -97,7 +89,7 @@ class AdviceBinder private constructor(
     }
 }
 
-/** A hook a module attached through [AdviceBinder.hook]: its advice class and the methods it targets. */
+/** A hook attached through [AdviceBinder.hook]: its advice class and its method matcher. */
 class RecordedHook(
     val adviceClassName: String,
     val methodMatcher: ElementMatcher<in MethodDescription>,

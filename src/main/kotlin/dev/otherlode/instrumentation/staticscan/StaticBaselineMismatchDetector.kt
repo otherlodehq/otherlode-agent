@@ -4,8 +4,7 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Detects a class that registers dynamically without having been in the static baseline computed at
- * startup, which shows the static scan missed it for this process. It is a local diagnostic and needs
- * no collector.
+ * startup.
  */
 class StaticBaselineMismatchDetector {
     /** Every class name the static scan saw, in any bucket. Null until the scan completes, so no comparison is possible before then. */

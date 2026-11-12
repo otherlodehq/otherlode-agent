@@ -1,32 +1,19 @@
 package dev.otherlode.registry
 
-/**
- * Turns a framework's own route spelling into one identity template, so the same endpoint
- * compares equal across frameworks and across differently spelled path parameters.
- *
- * The grammar strips regex constraints, collapses wildcards and runs of slashes, and spells an
- * optional parameter one way. [normalize] gives the full set of rules.
- */
+/** Turns a framework's route spelling and HTTP verb into an identity form. */
 object RouteTemplateNormalizer {
     /**
-     * Produces the identity route template for [verbatim], optionally prefixed with
-     * [contextPath] before the rest of the grammar runs.
+     * Returns the identity route template for [verbatim], with [contextPath], when given, put in front
+     * first. The result starts with a slash and does not end with one, except for `/` itself and after an
+     * unclosed brace. Runs of slashes outside braces collapse to one. A blank [verbatim] gives the normalized
+     * [contextPath], or `/` without one.
      *
-     * The result always starts with a slash. It never ends with one, except the root template `/`
-     * and a result with an unclosed brace. An empty or blank [verbatim] gives the normalised
-     * [contextPath], which is `/` when [contextPath] is null or blank. Runs of slashes collapse to
-     * one, except after an unclosed brace, and a slash inside a parameter's braces belongs to its
-     * regex, not to the path. A path parameter keeps its name and the literal text around it, so `{id:\d+}.{ext}`
-     * becomes `{id}.{ext}`. A regex constraint inside the braces is dropped, and whitespace around the
-     * name is trimmed. Ktor's `{name?}` optional marker is kept.
-     * A whole-segment wildcard or tail collapses to one `*` segment: `*`, `**`, `{...}`,
-     * `{name...}`, `{*name}`, `{+name}` and Javalin's `<name>`. A `*` inside a segment, such as
-     * `*.txt`, is kept. Micronaut's `{name:?}` becomes `{name?}` and its optional segment `{/name}`
-     * becomes a segment of its own, `{name?}`, so `/books{/id}` is `/books/{id?}`. A form whose
-     * meaning would be a guess, such as `{.name}`, `{;name}`, `{name*}`, `{a,b}`, `{?q}`, `{&q}`,
-     * `{#f}`, `{/a,b}`, a `<name>` sharing its segment with other text, or an unclosed brace, is
-     * kept as written, except that the wildcard rules above apply, any text after a `:` in its
-     * braces is dropped and the rest is trimmed.
+     * A path parameter keeps its name and drops any text after a `:` in its braces, so `{id:\d+}.{ext}`
+     * becomes `{id}.{ext}`. A whole-segment wildcard or tail, such as `**`, `{name...}` or `<name>`,
+     * becomes one `*` segment. `{name:?}` becomes `{name?}`, and `{/name}` becomes a segment of its own,
+     * `{name?}`, so `/books{/id}` becomes `/books/{id?}`. A brace form it does not read, such as `{.name}`,
+     * is kept, trimmed and without any text after a `:`. An unclosed brace is kept as written, and the
+     * slashes after it are kept as they are.
      */
     fun normalize(
         verbatim: String,
@@ -37,7 +24,7 @@ object RouteTemplateNormalizer {
         return if (segments.isEmpty()) "/" else segments.joinToString("/", prefix = "/")
     }
 
-    /** Uppercases and trims [verb]. A null, blank, or already-`*` verb means unconstrained. */
+    /** Returns [verb] trimmed and uppercased, or `*` for a null, blank or `*` verb. */
     fun normalizeVerb(verb: String?): String {
         val trimmed = verb?.trim().orEmpty()
         return if (trimmed.isEmpty() || trimmed == "*") "*" else trimmed.uppercase()

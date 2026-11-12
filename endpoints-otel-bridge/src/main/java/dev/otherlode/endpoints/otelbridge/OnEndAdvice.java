@@ -7,27 +7,25 @@ import java.util.List;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the exit of {@code HttpServerAttributesExtractor.onEnd}, which OpenTelemetry's HTTP
- * server instrumentation calls once per server span, after the final route is settled. The advice
- * counts that route as an endpoint.
+ * Woven onto the exit of {@code HttpServerAttributesExtractor.onEnd}. Counts the route in the
+ * context's {@code HttpRouteState} as an endpoint. Counts nothing when that state or its route is
+ * null.
  *
  * <p>Compiled against the unshaded {@code opentelemetry-instrumentation-api} artifact, verified at
  * 2.0.0, its oldest supported release. {@link
  * dev.otherlode.instrumentation.endpoints.otelbridge.OtelBridgeModule} binds the same class for the
  * OpenTelemetry Java agent's relocated copy of the extractor.
  *
- * <p>The route is first resolved through the table {@link RoutePrefixAdvice} fills, which removes
- * the application root and servlet path OpenTelemetry put in front of it. A route no recorded
- * prefixer built is used as it is.
+ * <p>The route is first resolved through the table {@link RoutePrefixAdvice} fills. A route no
+ * recorded prefixer built is used as it is.
  *
- * <p>A Vert.x Web route reaches OpenTelemetry spelled {@code /users/:id}. A segment that is {@code
- * :name}, or {@code :name::type} as Vert.x Web 5.2 writes a typed parameter, becomes {@code
- * {name}}. A colon anywhere else in a segment stays. The name pattern follows Vert.x's {@code
- * io.vertx.web.route.param.extended-pattern} property.
+ * <p>In a route that holds {@code /:}, a segment that is {@code :name} or {@code :name::type}, with
+ * each name made of letters, digits and {@code _}, becomes {@code {name}}. Any other segment stays.
+ * With the system property {@code io.vertx.web.route.param.extended-pattern} set to {@code true}, a
+ * name may also hold {@code $} and {@code -}.
  *
  * <p>A route whose identity another endpoint module already owns is not counted: {@link
- * OtherlodeEndpoints#recordDispatchIfUnowned} refuses to bind it, so a request the owning module
- * counted is never counted twice.
+ * OtherlodeEndpoints#recordDispatchIfUnowned} returns null for it.
  */
 public class OnEndAdvice {
     private static final String MODULE = "otel";

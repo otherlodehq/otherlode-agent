@@ -75,8 +75,8 @@ object ProtoPayloadCodec {
     fun decodeClassListing(bytes: ByteArray): ClassListing = fromProto(ProtoClassListing.parseFrom(bytes))
 
     /**
-     * The encoded size and element count of [batch], with the fields the exporter stamps just before
-     * it sends set to their widest values.
+     * The encoded size and element count of [batch], with its send-time fields, such as
+     * [DeltaBatch.payloadSequence], set to their widest values.
      */
     fun weightOf(batch: DeltaBatch): PayloadWeight =
         weightOf(
@@ -92,7 +92,10 @@ object ProtoPayloadCodec {
             ),
         )
 
-    /** The encoded size and element count of [manifest], with the stamped fields at their widest. */
+    /**
+     * The encoded size and element count of [manifest], with its send-time fields, such as
+     * [ProbeManifest.payloadSequence], set to their widest values.
+     */
     fun weightOf(manifest: ProbeManifest): PayloadWeight =
         weightOf(
             toProto(
@@ -110,7 +113,7 @@ object ProtoPayloadCodec {
             ),
         )
 
-    /** The encoded size and element count of [baseline], with the chunk position at its widest. */
+    /** The encoded size and element count of [baseline], with its chunk position set to its widest. */
     fun weightOf(baseline: StaticBaseline): PayloadWeight =
         weightOf(
             toProto(
@@ -122,7 +125,7 @@ object ProtoPayloadCodec {
             ),
         )
 
-    /** The encoded size and element count of [listing], with the chunk position at its widest. */
+    /** The encoded size and element count of [listing], with its chunk position set to its widest. */
     fun weightOf(listing: ClassListing): PayloadWeight =
         weightOf(
             toProto(
@@ -136,9 +139,8 @@ object ProtoPayloadCodec {
 
     /**
      * An upper bound on what one entry adds to a payload that holds it in a repeated field: its tag, its
-     * length prefix, its encoding and the elements it brings. A delta overload returns the widest any delta
-     * of its type encodes to. The weight of a payload is at most the weight of its empty form plus the
-     * weights of its entries.
+     * length prefix, its encoding and its elements. A delta overload ignores [delta] and returns the
+     * widest weight any delta of its type has.
      */
     fun entryWeight(
         @Suppress("UNUSED_PARAMETER") delta: ProbeDelta,

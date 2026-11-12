@@ -1,60 +1,52 @@
 package dev.otherlode.testkit
 
 /**
- * What the collector's rules say about one dependency. Values may be added in a minor release, so a
- * `when` over this enum needs an `else` branch.
+ * The status [OtherlodeTestCollector.dependency] gives one dependency. A dependency reads [RESOURCES_ONLY] or
+ * [UNLOADED] before any status that rests on references. Values may be added in a minor release, so a `when`
+ * over this enum needs an `else` branch.
  */
 public enum class DependencyUsage {
-    /**
-     * Listed from an instance's startup classpath, and no instance loaded a class from it, unless every
-     * listing counted no class in it ([RESOURCES_ONLY]).
-     */
+    /** Listed from a startup classpath, and no class from it loaded, unless it reads [RESOURCES_ONLY]. */
     UNLOADED,
 
-    /** A class from it loaded, and nothing in the adopter's code references it, per a complete baseline. */
+    /** Nothing in the adopter's code references it, per complete static baselines. */
     UNREFERENCED,
 
-    /**
-     * Referenced only from methods never hit, classes never loaded, or loaded classes the agent did not
-     * instrument, per a complete baseline.
-     */
+    /** Referenced, but from no live site, per complete static baselines. */
     UNREACHED,
 
     /**
-     * Loaded, with no live reference, from an instance that sent no complete static baseline: it is
-     * unreferenced or unreached, and without the baseline the two cannot be told apart.
+     * No live site references it, and a static baseline is incomplete, so [UNREFERENCED] and
+     * [UNREACHED] cannot be told apart.
      */
     NO_LIVE_REFERENCE,
 
-    /**
-     * Loaded, with no live reference, and referenced from a class that failed to load. A prompt to
-     * review, not a claim that it can go.
-     */
+    /** No live site references it, and a class that failed to load does. */
     FAILED_TO_LOAD,
 
-    /** Loaded, and referenced from a method with hits, or at class level by a class that loaded and can run. */
+    /** Referenced from a live site, such as a method with hits. */
     USED,
 
-    /** Loaded, and no instance listing it records references (its include rules are unset), so nothing further is claimed. */
+    /** No instance that listed it records references, so no finer status applies. */
     LOADED,
 
     /**
-     * Every listing counted no class in it: native libraries, web assets, message bundles. Whether
-     * a class loaded from it says nothing about whether it is used, so nothing is claimed.
+     * Its listings count zero classes in it and no class from it loaded, as for a jar of web assets
+     * or native libraries.
      */
     RESOURCES_ONLY,
 
     /**
-     * Loaded, with no live reference, and referenced from a class that failed to initialise, and
-     * from none that failed to load. A prompt to review, not a claim that it can go.
+     * No live site references it. A class that failed to initialise references it, and no class that
+     * failed to load does.
      */
     FAILED_TO_INITIALIZE,
 }
 
 /**
- * One `groupId:artifactId` a dependency carries, with every non-empty version any instance listed
- * it at, or no versions when either id contains `\`, `:` or `,`. [groupId] is empty for an identity
- * read from the jar's filename, which carries no group.
+ * One `groupId:artifactId` a dependency carries, with the non-empty versions it was listed at, sorted.
+ * [versions] is empty when either id contains `\`, `:` or `,`. [groupId] is empty for an identity
+ * read from a jar's file name.
  */
 @ConsistentCopyVisibility
 public data class DependencyIdentityRef internal constructor(
@@ -64,12 +56,14 @@ public data class DependencyIdentityRef internal constructor(
 )
 
 /**
- * One place in the adopter's code that references a dependency: `Class#method`, or the class
- * itself for a class-level reference ([methodName] null). [neverLoaded] is true for a site the
- * static baseline declared in a class no manifest from that instance named as loaded, unless the
- * site is [failedToLoad]. [failedToLoad] is true for a site from a complete baseline in a class
- * that some instance failed to load and none loaded.
- * [failedToInitialize] is true for a site that is not live, in a class that failed to initialise.
+ * One place in the adopter's code that references a dependency or an absent class. [methodName] is
+ * null for a class-level reference.
+ *
+ * - [neverLoaded] marks a site from a static baseline in a class that its instance did not load. It
+ *   is false when [failedToLoad] is true.
+ * - [failedToLoad] marks a site from a complete static baseline in a class that some instance failed
+ *   to load and none loaded.
+ * - [failedToInitialize] marks a site that is not live, in a class that failed to initialise.
  */
 @ConsistentCopyVisibility
 public data class DependencyReferenceSite internal constructor(
@@ -91,17 +85,16 @@ public data class DependencyReferenceSite internal constructor(
 }
 
 /**
- * One dependency as [OtherlodeTestCollector.dependency] reports it, merged across every instance that
- * listed it by its sorted identity pairs, never by the per-instance id.
+ * One dependency as [OtherlodeTestCollector.dependency] reports it, merged across the instances that
+ * listed it under the same [identityKey].
  *
- * [identityKey] is those pairs joined with commas, for example `com.fasterxml.jackson.core:jackson-databind`,
- * or `:commons-lang3` for a filename-derived identity. A `\`, `:` or `,` inside a group or artifact
- * id is escaped with a backslash. [identities] names each pair with its
- * versions; a shaded jar carries several. [loadedClassesTotal] is the largest distinct-class count
- * any one instance reported, [classCount] the jar's class count when the listing knew it.
- * [sites] lists every referencing site the rules found, sorted, live or not: for an
- * [DependencyUsage.UNREACHED] or [DependencyUsage.NO_LIVE_REFERENCE] dependency these are the dead
- * references, and for [DependencyUsage.UNREFERENCED] the list is empty.
+ * - [identityKey] is its sorted `groupId:artifactId` pairs joined with commas. A backslash escapes a
+ *   `\`, `:` or `,` inside an id. A file-name identity has an empty group, as in `:commons-lang3`.
+ * - [identities] holds each pair with its versions. A shaded jar can carry several.
+ * - [loadedClassesTotal] is the largest loaded-class count any one instance reported.
+ * - [classCount] is the largest class count a listing gave, or null when none gave one.
+ * - [discoverySources] holds the sources its listings came from.
+ * - [sites] holds the sites that reference it, live or not, sorted by their string form.
  */
 @ConsistentCopyVisibility
 public data class DependencyStatus internal constructor(
@@ -115,8 +108,8 @@ public data class DependencyStatus internal constructor(
 )
 
 /**
- * A referenced class no loader could find, with every site that references it: code guarded by a
- * check for an optional library, for one. It maps to no dependency, so it is listed on its own.
+ * A referenced class recorded as absent, with the sites that reference it, sorted by their string form.
+ * It belongs to no dependency.
  */
 @ConsistentCopyVisibility
 public data class AbsentReference internal constructor(
@@ -125,9 +118,8 @@ public data class AbsentReference internal constructor(
 )
 
 /**
- * Thrown when [OtherlodeTestCollector.dependency] names a `groupId:artifactId` no manifest has listed,
- * instead of reading as unloaded or unreferenced. The message names every identity the collector
- * does know, or says that no instance has listed any dependency yet.
+ * Thrown by [OtherlodeTestCollector.dependency] for a `groupId:artifactId` that no manifest has
+ * listed. The message names the dependencies this collector knows, or says that it knows none.
  */
 public class UnknownDependencyException internal constructor(
     message: String,

@@ -30,19 +30,14 @@ internal val PREFIXER_NAMES: List<String> =
     )
 
 /**
- * Route bridge endpoint module. Counts the route OpenTelemetry's HTTP server instrumentation
- * resolved for a request, for a framework without a dedicated endpoint module. It discovers
- * endpoints by dispatch only and never declares one.
+ * Route bridge endpoint module. Counts the route recorded in OpenTelemetry's `HttpRouteState` for a
+ * request. It discovers endpoints by dispatch only and never declares one.
  *
- * It weaves [OnEndAdvice] onto the exit of `onEnd` in both the unshaded
+ * It weaves `OnEndAdvice` onto the exit of `onEnd` in both the unshaded
  * `HttpServerAttributesExtractor` and the OpenTelemetry Java agent's relocated copy, for which
- * [AdviceBinder] rewrites the `io/opentelemetry/...` references to the agent's
- * `io/opentelemetry/javaagent/shaded/...` prefix. It weaves [RoutePrefixAdvice] onto the exit of
- * each OpenTelemetry route prefixer found loaded, so the application root and servlet path do not
- * make a second endpoint of a route a framework module already counts.
- *
- * Off by default. [dev.otherlode.Agent] drops it unless
- * [dev.otherlode.config.AgentConfig.otelBridgeEnabled] is set.
+ * [AdviceBinder] rewrites the `io/opentelemetry/...` references to the
+ * `io/opentelemetry/javaagent/shaded/...` prefix. It weaves `RoutePrefixAdvice` onto the exit of
+ * each OpenTelemetry route prefixer found loaded.
  */
 class OtelBridgeModule : EndpointModule {
     override val name: String = "otel"

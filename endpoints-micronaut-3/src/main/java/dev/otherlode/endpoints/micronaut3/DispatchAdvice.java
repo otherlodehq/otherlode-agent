@@ -8,14 +8,14 @@ import io.micronaut.web.router.UriRouteMatch;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto the entry of the Netty server's {@code RoutingInBoundHandler.handleRouteMatch}, which
- * runs once per request that matched a route, before the filters and the handler. A {@code
- * UriRouteMatch} counts. A status route arrives as a {@code StatusRouteMatch} and counts nothing.
+ * Woven onto the entry of {@code RoutingInBoundHandler.handleRouteMatch}. A {@code UriRouteMatch}
+ * counts, unless it is an unregistered WebSocket route. Any other {@code RouteMatch}, such as a
+ * {@code StatusRouteMatch}, counts nothing.
  *
  * <p>The match's {@code UriRoute} is the key {@code Micronaut3Module.declare} registered the route
- * under. A route no registration saw is recorded at dispatch, with no handler join. A HEAD route
- * whose method carries the {@code @Get} stereotype is the one Micronaut adds beside a {@code @Get},
- * so it is recorded against the GET endpoint of the same template.
+ * under. A route no registration saw is recorded at dispatch, with no handler join. An unregistered
+ * HEAD route whose method carries the {@code @Get} stereotype is recorded against the GET endpoint
+ * of the same template.
  *
  * <p>The advice body is inlined into the woven method, so {@code onEnter} stays one flat body with
  * no helper methods.
