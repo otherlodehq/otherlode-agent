@@ -11,12 +11,7 @@ import net.bytebuddy.matcher.ElementMatchers.isNative
 import net.bytebuddy.matcher.ElementMatchers.isTypeInitializer
 import net.bytebuddy.matcher.ElementMatchers.not
 
-/**
- * Decides which types and methods the agent instruments.
- *
- * The type matcher and the static baseline scanner both call it, so they answer the same for the
- * same type. [isIncluded] and [typeNameMatcher] take both an include and an exclude list for that reason.
- */
+/** Decides which types and methods the agent instruments. */
 object TypeMatchPolicy {
     /** The agent's own classes are never instrumented, whatever `includePackages` says. */
     const val AGENT_PACKAGE_PREFIX = "dev.otherlode."
@@ -161,11 +156,7 @@ object TypeMatchPolicy {
         return encoded.isEmpty() || encoded[0] in '0'..'9' || encoded[0] in 'a'..'f'
     }
 
-    /**
-     * Whether [className] names a class a framework generated at runtime, which the agent leaves alone.
-     * Recognised by the generator's naming: Spring CGLIB, javassist, Hibernate, ByteBuddy, Mockito
-     * and JDK proxies.
-     */
+    /** Whether [className] names a class a framework generated at runtime. */
     fun isRuntimeGenerated(className: String): Boolean = isRuntimeGenerated(className, byteBuddyNaming)
 
     internal fun isRuntimeGenerated(
@@ -260,8 +251,8 @@ object TypeMatchPolicy {
 
     /**
      * Whether a method named [name] is the instance `create` or `invoke` of a suspend lambda's
-     * class, whose direct superclass, dotted, [superClassName] gives. The lambda's body is in
-     * `invokeSuspend`. [superClassName] is read only for those two names.
+     * class, whose direct superclass, dotted, [superClassName] gives. [superClassName] is read only
+     * for those two names.
      */
     fun isSuspendLambdaEntry(
         name: String,

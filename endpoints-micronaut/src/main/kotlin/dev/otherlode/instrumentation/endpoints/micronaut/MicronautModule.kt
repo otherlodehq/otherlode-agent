@@ -48,9 +48,8 @@ private fun routerIsMicronaut4(classLoader: ClassLoader): Boolean =
 /**
  * Endpoint module for Micronaut (`micronaut`), covering the 4.0 to 5.x lines, compiled against 4.0.0.
  *
- * The module holds each `DefaultRouter` weakly. Once a `RouteExecutor` is constructed, [DispatchGate]
- * declares the router's `UriRouteInfo` objects. If no `RouteExecutor` is constructed, [beforeManifest]
- * reports the module off with `ROUTES_NOT_COUNTED` once the router has waited a flush interval.
+ * If no `RouteExecutor` is constructed, [beforeManifest] reports the module off with
+ * `ROUTES_NOT_COUNTED` once the router has waited a flush interval.
  *
  * A request counts when `RouteExecutor.findRouteMatch` returns a match, unless the match is an
  * unregistered WebSocket route. A null return counts nothing.

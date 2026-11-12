@@ -78,7 +78,7 @@ import java.util.WeakHashMap
 /**
  * Weaves method-entry, branch, optional-argument and `<clinit>` probes into every type matched by
  * [AgentConfig.includePackages], except classes the bootstrap and platform loaders define. An empty
- * list matches nothing; the agent refuses to start with one.
+ * list matches nothing.
  *
  * A matched type is registered with [ProbeRegistry] once, after its rewrite succeeds. The
  * transformer sees classes as they load and does not retransform those already loaded when
@@ -132,8 +132,8 @@ class OtherlodeInstrumentation(
 
     /**
      * Releases the table cache and the class-file bytes of every loader not used since the previous
-     * call, so a loader is released one or two calls after its last use. Meant for the flush
-     * thread. A later transform refills what was released.
+     * call, so a loader is released one or two calls after its last use. A later transform refills
+     * what was released.
      */
     fun releaseQuietCaches() {
         val byteActive = classFileCache.takeActiveLoaders()

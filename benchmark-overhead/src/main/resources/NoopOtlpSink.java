@@ -14,7 +14,7 @@ import java.util.concurrent.atomic.LongAdder;
  * A no-op OTLP receiver for the overhead benchmark. Run as {@code java NoopOtlpSink.java <port>}.
  *
  * <p>Every POST is read and discarded, counted against its path with its byte length, and answered
- * 200 with an empty {@code application/x-protobuf} body, which decodes as an empty export response.
+ * 200 with an empty {@code application/x-protobuf} body.
  * {@code GET /counts} answers one {@code <path> <requests> <bytes>} line per path. Nothing else is
  * served, and no request body is kept.
  */

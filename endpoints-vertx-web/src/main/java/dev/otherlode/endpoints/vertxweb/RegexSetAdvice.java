@@ -5,16 +5,14 @@ import net.bytebuddy.asm.Advice;
 
 /**
  * Woven onto the exit of {@code RouteImpl.setRegex(String)}, which every regex route reaches
- * through its constructor or {@code pathRegex}. The route keeps only the compiled pattern, and
- * on Vert.x Web 5 the agent cannot read the implementation package, so the source is taken here.
- * The event is {@code {"regex", router, route, source}}.
- *
- * <p>The advice body is inlined into the woven method, so {@code onExit} stays one flat body with
- * no helper methods.
+ * through its constructor or {@code pathRegex}. The event is {@code {"regex", router, route,
+ * source}}.
  */
 public class RegexSetAdvice {
     private static final String MODULE = "vertx-web";
 
+    // Advice inlines only this method's bytecode, so a helper call here would stay a real call that
+    // the target loader cannot resolve. Keep the body flat.
     @Advice.OnMethodExit(suppress = Throwable.class)
     public static void onExit(
             @Advice.This Object route, @Advice.FieldValue("router") Object router, @Advice.Argument(0) String regex) {

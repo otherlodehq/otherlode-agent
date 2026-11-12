@@ -21,15 +21,14 @@ import java.util.concurrent.TimeoutException
  *
  * An attempt that throws is retried, unless [authToken] is not a valid header value, which fails at
  * once. A 5xx, a 408 or a 429 is retried too. Any other 4xx fails at once with an
- * [ExportFailedException] whose [ExportFailedException.refused] is true. A 401 or 403
- * is such a refusal, whether [authToken] is wrong or missing. Only a 202 counts as stored: any
- * other 2xx fails at once without a retry and without being a refusal. A 202 may carry
+ * [ExportFailedException] whose [ExportFailedException.refused] is true. Only a 202 counts as stored:
+ * any other 2xx fails at once without a retry and without being a refusal. A 202 may carry
  * `Otherlode-Notice` headers, which [notices] logs. A `Retry-After` of at most [maxRetryAfter]
  * replaces the backoff for that wait. A longer one ends the send with the failure an exhausted
  * retry gives. If every attempt fails, the last failure propagates.
  *
- * The client is built on the first send, on the sending thread. Exporters given the same
- * [lazyClient] share one client. [requestTimeout] bounds each attempt's whole exchange, response body included.
+ * Exporters given the same [lazyClient] share one client. [requestTimeout] bounds each attempt's
+ * whole exchange, response body included.
  */
 class HttpExporter(
     private val endpoint: String,

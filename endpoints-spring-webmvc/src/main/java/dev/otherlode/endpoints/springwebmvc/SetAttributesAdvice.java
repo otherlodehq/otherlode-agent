@@ -14,7 +14,7 @@ import org.springframework.web.util.pattern.PathPattern;
 /**
  * Woven onto {@code RouterFunctionMapping.setAttributes(HttpServletRequest, ServerRequest,
  * HandlerFunction)}, where functional routing has matched a request to a route and is about to hand
- * it to the handler. It runs once per matched request.
+ * it to the handler.
  *
  * <p>The advice is written against the {@code javax} servlet types and bound to the {@code
  * jakarta} ones, by prefix, when the woven method takes them. An introspector lookup, an async
@@ -23,15 +23,11 @@ import org.springframework.web.util.pattern.PathPattern;
  * resources(predicate, resource)} route is counted here under its own key.
  *
  * <p>The dispatch key is {@code List.of("fn", pattern, verb)} and must match the key in {@code
- * SpringWebMvcModule.declare}. It names no handler, since Spring hands a filtered route a new handler
- * function on every request. A second lookup with verb {@code "*"} covers a route declared as
+ * SpringWebMvcModule.declare}. A second lookup with verb {@code "*"} covers a route declared as
  * unconstrained. A route found by neither lookup is recorded at dispatch. Its handler join is the
  * method named by {@link OtherlodeEndpoints#lambdaImplementation} for a hidden lambda class, or
  * {@code handle} on the class that declares that method otherwise. A handler of Spring's {@code
  * RouterFunctionDsl} gets no join.
- *
- * <p>The advice body is inlined into the woven method, so {@code onEnter} stays one flat body with
- * no helper methods.
  */
 public class SetAttributesAdvice {
     private static final String MODULE = "spring-webmvc";
@@ -45,6 +41,8 @@ public class SetAttributesAdvice {
     private static final String HANDLE_DESCRIPTOR =
             "(Lorg/springframework/web/servlet/function/ServerRequest;)Lorg/springframework/web/servlet/function/ServerResponse;";
 
+    // Advice inlines only this method's bytecode, so a helper call here would stay a real call that
+    // the target loader cannot resolve. Keep the body flat.
     @Advice.OnMethodEnter(suppress = Throwable.class)
     public static void onEnter(
             @Advice.Argument(0) HttpServletRequest servletRequest,

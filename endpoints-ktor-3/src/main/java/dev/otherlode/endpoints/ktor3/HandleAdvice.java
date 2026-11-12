@@ -16,7 +16,6 @@ import net.bytebuddy.asm.Advice;
 /**
  * Woven onto {@code RoutingNode.handle}, Ktor's registration hook. It registers each routing node
  * under its own identity, with the verb and path template built from the selectors up to the root.
- * {@link ExecuteResultAdvice} receives the same node at dispatch.
  *
  * <p>Only verb and path selectors contribute. A route with any other selector (headers, content
  * type, query parameters, host, {@code AndRouteSelector}, {@code OrRouteSelector}) merges with any
@@ -25,14 +24,13 @@ import net.bytebuddy.asm.Advice;
  * <p>For a suspend lambda the handler join is the lambda's class and {@code invokeSuspend}. For a
  * class that implements the function type by hand it is the class alone. For a hidden class the
  * class, method and descriptor are all null.
- *
- * <p>The advice body is inlined into the woven method, so {@code onEnter} stays one flat body with
- * no helper methods.
  */
 public class HandleAdvice {
     private static final String MODULE = "ktor-3";
     private static final String INVOKE_SUSPEND_DESCRIPTOR = "(Ljava/lang/Object;)Ljava/lang/Object;";
 
+    // Advice inlines only this method's bytecode, so a helper call here would stay a real call that
+    // the target loader cannot resolve. Keep the body flat.
     @Advice.OnMethodEnter(suppress = Throwable.class)
     public static void onEnter(@Advice.This Object node, @Advice.Argument(0) Object body) {
         try {

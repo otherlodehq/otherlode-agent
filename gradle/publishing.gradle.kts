@@ -1,7 +1,5 @@
-// Publishing setup shared by the agent and the testkit, applied after each project declares what
-// differs: `otherlode.artifactId`, `otherlode.pomName` and `otherlode.pomDescription` as extra
-// properties, and a `javadocJar` task. Both publish the shadow component, the one whose POM lists
-// no bundled dependency and whose main jar is the shaded one.
+// Apply after declaring the extra properties `otherlode.artifactId`, `otherlode.pomName` and
+// `otherlode.pomDescription`, and a `javadocJar` task.
 import org.gradle.api.publish.PublishingExtension
 import org.gradle.api.publish.maven.MavenPublication
 import org.gradle.api.tasks.bundling.Jar
@@ -13,8 +11,6 @@ val pomNameValue = project.extra["otherlode.pomName"] as String
 val pomDescriptionValue = project.extra["otherlode.pomDescription"] as String
 val repositoryUrl = "https://github.com/otherlodehq/otherlode-agent"
 
-// Only this project's own Kotlin and Java sources. The bundled modules' sources, the embedded
-// bootstrap jar and the proto files stay out.
 val sourcesJar =
     tasks.register<Jar>("sourcesJar") {
         archiveBaseName.set(artifactIdValue)
@@ -23,7 +19,6 @@ val sourcesJar =
         from("src/main/java")
     }
 
-// Every published jar carries the licence and this project's own NOTICE, as the main jars do.
 listOf(sourcesJar, tasks.named<Jar>("javadocJar")).forEach { jar ->
     jar.configure {
         from(rootProject.layout.projectDirectory.file("LICENSE")) { into("META-INF") }
@@ -68,16 +63,9 @@ configure<PublishingExtension> {
     }
 }
 
-// The key is the signing subkey alone, exported with `gpg --export-secret-subkeys <id>!`, so the
-// primary key in it is a stub. Gradle names the signing key by the low 32 bits of its id, exactly
-// eight hex digits (PgpKeyId.normaliseKeyId), and fails late and unclearly on anything else, so the
-// id is reduced to those digits here and checked before the build starts. It defaults to the
-// release subkey (fingerprint 62EB A55C 989D 53C1 7D6B C63F 8CD7 0F20 BC8D 3F42), which is public.
-// An empty variable counts as unset, which is what a workflow passes for a missing secret.
-// Signing is required only when the build uploads to the Portal: a release-version build that only
-// checks the deployment, as CI's test job does on a release tag, signs when a key is present and
-// otherwise builds an unsigned zip, which verifyPublication accepts as unsigned. An upload with no
-// key fails at its sign task.
+// The key is the signing subkey alone, exported with `gpg --export-secret-subkeys <id>!`. Gradle
+// takes exactly the eight hex digits of the id's low 32 bits and fails late and unclearly on anything
+// else. An empty variable counts as unset, which is what a workflow passes for a missing secret.
 val releaseSubkeyId = "BC8D3F42"
 
 configure<SigningExtension> {
@@ -85,7 +73,7 @@ configure<SigningExtension> {
     setRequired(
         Callable {
             !project.version.toString().endsWith("-SNAPSHOT") &&
-                // The upload task; build.gradle.kts guards the same path against a SNAPSHOT.
+                // build.gradle.kts guards the same task path against a SNAPSHOT.
                 gradle.taskGraph.hasTask(":nmcpPublishAggregationToCentralPortal")
         },
     )
@@ -104,8 +92,7 @@ configure<SigningExtension> {
     sign(the<PublishingExtension>().publications)
 }
 
-// Gradle metadata names the JVM the jars need, so a consumer targeting an older one fails at
-// resolution instead of with an UnsupportedClassVersionError. Shadow's variant sets no such attribute.
+// Shadow's variant sets no target JVM attribute.
 configurations.named("shadowRuntimeElements") {
     attributes { attribute(TargetJvmVersion.TARGET_JVM_VERSION_ATTRIBUTE, 17) }
 }

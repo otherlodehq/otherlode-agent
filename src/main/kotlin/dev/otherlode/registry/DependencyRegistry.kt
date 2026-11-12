@@ -74,7 +74,6 @@ class DependencyRegistry(
         TIMED_OUT,
     }
 
-    /** One tracked dependency. */
     class DependencyEntry internal constructor(
         val dependencyId: Int,
         val identities: List<DependencyIdentity>,
@@ -251,10 +250,7 @@ class DependencyRegistry(
      */
     fun idForOrigin(origin: DependencyOrigin): Int? = entriesByOrigin[origin.canonical()]?.dependencyId
 
-    /**
-     * Records that the startup listing judged the jar at [origin] not a dependency, so the sweep
-     * does not read it again.
-     */
+    /** Records that the startup listing judged the jar at [origin] not a dependency. */
     fun recordNotADependency(origin: DependencyOrigin) {
         judgedNotDependencies += origin.canonical()
     }

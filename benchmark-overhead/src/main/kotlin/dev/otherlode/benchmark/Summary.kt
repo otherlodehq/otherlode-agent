@@ -70,7 +70,7 @@ object MetricNames {
 /**
  * One finished run: its metrics, and the classes the agent logged as skipped. The manifests'
  * `manifestSkippedClasses` count is complete; [skippedClasses] names only those the agent logged a
- * failure for, since a class turned away by the type matcher is recorded without a log line.
+ * failure for.
  */
 data class RunRecord(
     val config: Config,

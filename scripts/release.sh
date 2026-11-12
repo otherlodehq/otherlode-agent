@@ -1,13 +1,7 @@
 #!/usr/bin/env bash
-# Cuts an agent release from Luke's machine (ADR 0063):
-#
-#   scripts/release.sh X.Y.Z [--dry-run] [--allow-stale-bindings]
-#
-# Every check runs before any change. The script then commits `version=X.Y.Z`, tags `vX.Y.Z`,
-# commits the next SNAPSHOT and pushes the branch and the tag in one atomic push; the tag starts
-# the release workflow. `--dry-run` stops after the checks. `--allow-stale-bindings` skips the
-# check that the server and the collector carry bindings at least as new as the proto, for a schema
-# change nothing reads. Needs git, gh (signed in, with access to otherlode-server), buf and jq.
+# Needs git, gh (signed in, with access to otherlode-server), buf and jq. `--allow-stale-bindings`
+# skips the check that the server and the collector carry bindings at least as new as the proto,
+# for a schema change nothing reads.
 set -euo pipefail
 
 BSR_MODULE='buf.build/gen/go/otherlode/otherlode/protocolbuffers/go'
@@ -21,9 +15,6 @@ die() {
   exit 1
 }
 
-# Reads a go.mod on stdin and prints "<timestamp> <commit>" from the version of the BSR bindings
-# requirement: the schema commit's UTC creation time (YYYYMMDDHHMMSS) and the first twelve hex
-# digits of its id, whether the requirement sits in a `require (...)` block or on one line.
 bsr_pin_from_gomod() {
   local line version
   line=$(grep -F "$BSR_MODULE " | head -n 1) || true
@@ -46,7 +37,6 @@ gomod_at() { # repo ref
   gh api "repos/$1/contents/go.mod?ref=$2" --jq .content | base64 -d
 }
 
-# The collector's newest release tag: its latest release, else the highest v* tag.
 latest_collector_tag() {
   local tag
   if tag=$(gh api "repos/$COLLECTOR_REPO/releases/latest" --jq .tag_name 2>/dev/null) && [ -n "$tag" ]; then
@@ -58,8 +48,6 @@ latest_collector_tag() {
   echo "$tag"
 }
 
-# Passes when a consumer's pinned bindings are the schema's newest BSR commit, or one created no
-# earlier. Both times are BSR's, so no git clock is compared with a registry clock.
 check_binding() { # label repo ref newest_commit newest_epoch
   local label=$1 repo=$2 ref=$3 newest=$4 newest_epoch=$5 gomod pin ts commit
   gomod=$(gomod_at "$repo" "$ref") || die "cannot read go.mod of $repo at $ref through gh"
@@ -76,9 +64,6 @@ check_binding() { # label repo ref newest_commit newest_epoch
   fi
 }
 
-# Skipped when no proto changed since the last release. Otherwise BSR's master label must already
-# carry the agent's proto (the buf workflow pushes it on every master commit that touches it), and
-# the server's master and the collector's latest release must pin that commit or a newer one.
 check_bindings() { # last_tag
   local last=$1 label_json commit_json newest created source tag newest_epoch
   if [ -n "$last" ] && git diff --quiet "$last" HEAD -- src/main/proto; then
@@ -94,7 +79,7 @@ check_bindings() { # last_tag
   git cat-file -e "$source^{commit}" 2>/dev/null || die "BSR's master label names agent commit $source, which this clone does not have"
   git diff --quiet "$source" HEAD -- src/main/proto ||
     die "BSR's master label is at agent commit ${source:0:12}, but src/main/proto changed after it: wait for the buf workflow to push the schema"
-  # create_time is RFC 3339 UTC with fractional seconds; whole seconds are enough here.
+  # create_time is RFC 3339 UTC with fractional seconds.
   created=$(echo "$created" | sed -E 's/^([0-9]{4})-([0-9]{2})-([0-9]{2})T([0-9]{2}):([0-9]{2}):([0-9]{2}).*/\1\2\3\4\5\6/')
   [[ "$created" =~ ^[0-9]{14}$ ]] || die "cannot read the creation time of BSR commit $newest"
   newest_epoch=$(epoch_from_timestamp "$created") || die "cannot convert BSR time $created"

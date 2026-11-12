@@ -276,8 +276,8 @@ class ScalaOptionalArgumentInstrumentationTest {
         val forwarder = parameterZeroProbes.single { it.className == "com.example.scalatarget.Cc" }
         assertEquals(null, forwarder.targetClassName, "Cc's own static forwarder resolves in class")
 
-        // Targets.scala declares Cc on line 71, and the forwarder on Cc has no line-number table.
-        assertEquals(71, moduleGetter.line)
+        // Targets.scala declares Cc on line 51, and the forwarder on Cc has no line-number table.
+        assertEquals(51, moduleGetter.line)
         assertEquals(-1, forwarder.line, "the forwarder never borrows the module getter's line")
     }
 
@@ -302,8 +302,8 @@ class ScalaOptionalArgumentInstrumentationTest {
                 .probes
                 .filter { it.className == "com.example.scalatarget.DefaultLines" && it.kind == ProbeKind.OPTIONAL_ARGUMENT }
                 .associate { checkNotNull(it.parameterIndex) to it.line }
-        // Targets.scala declares b = 1 on line 113 and c's expression on line 115.
-        assertEquals(mapOf(1 to 113, 2 to 115), lines)
+        // Targets.scala declares b = 1 on line 79 and c's expression on line 81.
+        assertEquals(mapOf(1 to 79, 2 to 81), lines)
     }
 
     @Test

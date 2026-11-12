@@ -22,8 +22,7 @@ dependencies {
     compileOnly(project(":bootstrap"))
     compileOnly("net.bytebuddy:byte-buddy:$byteBuddyVersion")
 
-    // Compiled against the oldest supported release, per ADR 0017. Never `implementation`: Vert.x
-    // belongs to the target application and must not be shaded into the agent jar.
+    // The oldest supported release. Never `implementation`: Vert.x must not be shaded into the agent jar.
     compileOnly("io.vertx:vertx-web:4.5.0")
 
     testImplementation(project(":"))
@@ -43,8 +42,7 @@ tasks.test {
     jvmArgs("-Djdk.attach.allowAttachSelf=true")
 }
 
-// `test` runs the newest 4.x. One more suite runs the tests that start a server against each other
-// tested release; the ones that read the module's internals belong to `test` alone.
+// Tests that read the module's internals belong to `test` alone.
 testing {
     suites {
         for ((suiteName, version) in listOf(

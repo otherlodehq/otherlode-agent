@@ -1,21 +1,7 @@
 #!/usr/bin/env bash
-# Builds everything the VM needs, on the Mac, into one directory:
-#
-#   bin/otherlode-server        linux/amd64, with the web UI embedded
-#   bin/otherlode-collector     linux/amd64
-#   bin/otherlode-collector-lowmanifest
-#                               the same collector with a low manifest element limit, for the refused
-#                               manifest of DESIGN.md (the collector has no variable for the limit)
-#   agent/otherlode-agent.jar   the agent's shadow jar
-#   apps/soak-shop.jar, apps/soak-events-1.0.0.jar, apps/soak-events-2.0.0.jar, apps/lib/commons-codec-*.jar
-#   truth.json, harness/, VERSION
-#
-#   build-bundle.sh [output-dir]
-#
-# The server and the collector are read from sibling checkouts of this repository. Set
-# OTHERLODE_SERVER_DIR and OTHERLODE_COLLECTOR_DIR when they are somewhere else. Set
-# SOAK_SHOP_JAR, SOAK_EVENTS_1_JAR and SOAK_EVENTS_2_JAR when the apps build names its jars
-# differently from what this script looks for.
+# usage: build-bundle.sh [output-dir]
+# The server and the collector are read from sibling checkouts unless OTHERLODE_SERVER_DIR and
+# OTHERLODE_COLLECTOR_DIR name them.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -79,7 +65,6 @@ cp "$agent_jar" "$stage/agent/otherlode-agent.jar"
 log "building the apps"
 (cd "$agent_dir" && ./gradlew --console=plain -p soak/apps build)
 
-# The newest jar of a directory whose name matches, never a -plain or -sources jar.
 find_jar() {
   local dir=$1 pattern=$2
   find "$dir" -maxdepth 2 -name "$pattern" -name '*.jar' ! -name '*-plain.jar' ! -name '*-sources.jar' \

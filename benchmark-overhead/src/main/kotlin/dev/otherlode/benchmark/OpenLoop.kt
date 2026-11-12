@@ -9,7 +9,7 @@ enum class Load(
     /** A fixed number of virtual users, each starting an iteration as the last finishes. */
     CLOSED("closed"),
 
-    /** Iterations start at a fixed rate whatever PetClinic does, so latency is not queueing. */
+    /** Iterations start at a fixed rate whatever PetClinic does. */
     OPEN("open"),
     ;
 
@@ -22,15 +22,15 @@ enum class Load(
 /** The most virtual users k6 may start for an open-loop window, unless twice the pre-allocated virtual users is more. */
 const val OPEN_MAX_VUS = 200
 
-/** How long, in seconds, an iteration may take before the pre-allocated virtual users run out: one is held per iteration started in it. */
+/** How long, in seconds, an iteration may take before the pre-allocated virtual users run out. */
 const val OPEN_STALL_SECONDS = 1.0
 
-/** The open loop pre-allocates at least this many times the closed loop's virtual users, so its first iterations do not wait for a VU to start. */
+/** The open loop pre-allocates at least this many times the closed loop's virtual users. */
 const val OPEN_PREALLOCATION_FACTOR = 4
 
 /**
  * The open-loop window: the `constant-arrival-rate` scenario `k6/overhead.js` builds from [env].
- * The rate is whole iterations a minute, the unit that expresses a fractional rate per second exactly.
+ * The rate is whole iterations a minute.
  */
 data class OpenLoopLoad(
     val iterationsPerMinute: Int,
@@ -80,7 +80,7 @@ private const val K6_SYSTEM_TAGS =
 
 /**
  * The arguments of `k6`. A closed run passes [virtualUsers] and [seconds]; an open run ([open] set)
- * passes neither, since `-u` and `--duration` on the command line replace the scenarios the script declares.
+ * passes neither.
  */
 fun k6Arguments(
     seconds: Int,
@@ -169,7 +169,7 @@ fun openRateSection(rate: OpenRate?): String {
     return "\n### Open loop rate\n\nArrival rate ${num(rate.perSecond)} iterations/s, run as ${rate.iterationsPerMinute} a minute, $how.\n"
 }
 
-/** PetClinic must average under this share of its pinned cores in an open loop, or its requests queued. */
+/** PetClinic must average under this share of its pinned cores in an open loop. */
 const val OPEN_MAX_UTILISATION = 0.8
 
 /** Why the window's load was not a valid test of PetClinic under [load], or null when it was. */
@@ -191,7 +191,7 @@ fun loadProblem(
 
 /**
  * Why PetClinic had no headroom in an open loop, or null when it had: its container averaged
- * [OPEN_MAX_UTILISATION] or more of [pinnedCores], so its requests queued and latency measured the queue.
+ * [OPEN_MAX_UTILISATION] or more of [pinnedCores].
  */
 fun headroomProblem(
     cpuCoresAvg: Double,

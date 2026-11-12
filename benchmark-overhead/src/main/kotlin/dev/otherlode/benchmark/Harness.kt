@@ -24,7 +24,7 @@ class Box(
     image: String,
 ) : GenericContainer<Box>(image)
 
-/** A run broke one of the validity rules. The build fails with this. */
+/** A run broke one of the validity rules. */
 open class InvalidRunException(
     message: String,
 ) : RuntimeException(message)

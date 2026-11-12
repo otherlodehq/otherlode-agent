@@ -19,8 +19,7 @@ class LoadedDependencyCounter internal constructor(
 
     /**
      * Adds every class in [loaded] to the dependency it came from, then marks a counting generation
-     * ([DependencyRegistry.markCounted]). Does nothing until the listing is complete. A call that
-     * throws partway marks nothing.
+     * ([DependencyRegistry.markCounted]). A call that throws partway marks nothing.
      */
     fun count(loaded: Array<Class<*>>) {
         if (!registry.isListingComplete) return

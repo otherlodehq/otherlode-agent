@@ -6,7 +6,7 @@ const val MAX_ATTEMPTS = 2
 /** The repeats of one run that may run again. Past it, an environmental failure fails the run. */
 const val MAX_RETRIES_PER_RUN = 1
 
-/** A repeat that failed only on [isEnvironmental] problems. [attemptRepeat] runs it again. */
+/** A repeat that failed only on [isEnvironmental] problems. */
 class EnvironmentalRunException(
     message: String,
 ) : InvalidRunException(message)

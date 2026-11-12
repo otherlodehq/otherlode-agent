@@ -5,10 +5,8 @@ package otherlode.v1;
 option java_multiple_files = true;
 option java_package = "dev.otherlode.proto";
 
-// A probe is addressed on the wire as (class_id, probe_index) rather than a
-// flat global ID: class_id is assigned once per run and carried in
-// ProbeManifest, so delta batches don't repeat fully-qualified class names
-// on every flush.
+// A probe is addressed on the wire as (class_id, probe_index): class_id is assigned once per run
+// and carried in ProbeManifest.
 enum ProbeKind {
   PROBE_KIND_UNSPECIFIED = 0;
   METHOD = 1;
@@ -23,15 +21,13 @@ enum ProbeKind {
   // nothing about it.
   INITIALIZER_RETURNED = 4;
   // A slot of a <clinit> the class file declares. Counts in one catch-all handler around the
-  // original body, last in the exception table, that rethrows what it caught. Sits beside that
-  // <clinit>'s METHOD probe and carries its method name and descriptor.
+  // original body. Sits beside that <clinit>'s METHOD probe and carries its method name and
+  // descriptor.
   INITIALIZER_THREW = 5;
 }
 
 // Why a class the JVM defined can never run in this JVM. Never written as
-// INITIALIZATION_FAILURE_UNSPECIFIED; a consumer reads it as unset. STATIC_INITIALIZER_THREW is
-// read from the class's own INITIALIZER_THREW slot. VERIFIER_REJECTED is read from a VerifyError
-// whose message named the class in a format the agent has read.
+// INITIALIZATION_FAILURE_UNSPECIFIED; a consumer reads it as unset.
 enum InitializationFailure {
   INITIALIZATION_FAILURE_UNSPECIFIED = 0;
   STATIC_INITIALIZER_THREW = 1;
@@ -40,14 +36,11 @@ enum InitializationFailure {
 
 // What compiled a method into existence rather than the adopter writing its body: an enum's
 // values/valueOf/getEntries, a data class's componentN/copy and whichever of
-// equals/hashCode/toString the adopter did not override (the generated ones have no line-number
-// table), a $DefaultImpls method that only forwards to the interface's own default method, a Java
-// record's equals/hashCode/toString, an overload @JvmOverloads adds, a Kotlin value class's
-// generated members, the kotlinx.serialization plugin's output, or Scala's case-class plumbing,
-// static forwarders and object serialization. A branch probe carries the mark of the
-// method it sits in. The server leaves a generated probe out of never-hit, stale-hit, and the call
-// graph by default, since the compiler will emit the method again regardless of what the adopter
-// does; its hit count is still evidence, so the probe itself is kept rather than dropped.
+// equals/hashCode/toString the adopter did not override, a $DefaultImpls method that only forwards
+// to the interface's own default method, a Java record's equals/hashCode/toString, an overload
+// @JvmOverloads adds, a Kotlin value class's generated members, the kotlinx.serialization plugin's
+// output, or Scala's case-class plumbing, static forwarders and object serialization. A branch
+// probe carries the mark of the method it sits in.
 enum GeneratedBy {
   // Never written: GeneratedBy is only set inside an origin oneof, where unset means the adopter's
   // code. A consumer reads this value as unset.
@@ -56,15 +49,10 @@ enum GeneratedBy {
   DATA_CLASS = 2;
   DEFAULT_IMPLS = 3;
   RECORD = 4;
-  // An overload kotlinc adds for a @JvmOverloads constructor or function. Its body only passes its
-  // own arguments, a zero value for each omitted one and the mask to the $default twin in its own
-  // class. The agent reads this from the body, never from the annotation, which sits on the source
-  // declaration and not on the overloads. The source's own full constructor or function is not
-  // marked.
+  // An overload kotlinc adds for a @JvmOverloads constructor or function. The source's own full
+  // constructor or function is not marked.
   JVM_OVERLOADS = 5;
-  // A function of a multi-file facade, the class @file:JvmMultifileClass makes. Its body only loads
-  // its arguments, calls the static method with the same name and descriptor on a part class in the
-  // same package, and returns. kotlinc's parameter null checks may come first. The part's function
+  // A function of a multi-file facade, the class @file:JvmMultifileClass makes. The part's function
   // holds the code and is not marked.
   MULTIFILE_FACADE = 6;
   // A Scala case class's plumbing (canEqual, copy, equals, hashCode, toString, productArity,
@@ -76,9 +64,7 @@ enum GeneratedBy {
   // methods, and those methods, with the companion's apply and unapply, are marked too.
   CASE_CLASS = 7;
   // A static method scalac puts on an object's own class, or on a case class for its companion's
-  // methods. Its body only reads the object's MODULE$ field, loads its arguments, calls the method
-  // with its own name and descriptor on the object, and returns. The object's method holds the
-  // code and is not marked.
+  // methods. The object's method holds the code and is not marked.
   STATIC_FORWARDER = 8;
   // A Scala object's private writeReplace, whose body only constructs a
   // scala.runtime.ModuleSerializationProxy for the object's class.
@@ -97,8 +83,7 @@ enum GeneratedBy {
   // are the ones scalac writes. The adopter's own m$extension holds the code and is not marked.
   VALUE_CLASS = 10;
   // Output of the kotlinx.serialization compiler plugin: a $serializer class's members, a
-  // companion's serializer() and the lazy cached serializer. The agent marks it when the bytecode
-  // has the plugin's shape.
+  // companion's serializer() and the lazy cached serializer.
   KOTLINX_SERIALIZATION = 11;
   // The forwarders scalac writes for a trait's concrete method. In a class that has the trait as a
   // supertype, an instance method m whose body only loads this and its arguments, calls the
@@ -106,23 +91,16 @@ enum GeneratedBy {
   // calls the trait's default method m with invokespecial and returns. The default method m holds
   // the code and is not marked.
   TRAIT_FORWARDER = 12;
-  // A method kotlinc writes for interface delegation (class C(d: I) : I by d). It is public, not
-  // static, not synthetic and not a bridge, has no line-number table, and its body only null-checks
-  // its non-null reference parameters, reads the delegate field, loads its arguments, calls the
-  // method with its own name and descriptor on the field's type and returns. The delegate field is
-  // $$delegate_<n>, or the private final field of the constructor property the class delegates
-  // through. For that field the class must also have line numbers and the field's type must be an
-  // interface the class implements directly.
-  // The delegate's own method holds the code and is not marked. A forwarder that casts or boxes
-  // for a generic type argument is not marked.
+  // A method kotlinc writes for interface delegation (class C(d: I) : I by d). The delegate's own
+  // method holds the code and is not marked. A forwarder that casts or boxes for a generic type
+  // argument is not marked.
   CLASS_DELEGATION = 13;
 }
 
 // The family of compiler output a probe's code belongs to when the agent could not read its body.
 // An unread shape is a probe whose code has the outline of compiler output but whose body matches
 // no shape this agent has read for that compiler. It is a statement about the agent, not about who
-// wrote the code. The server keeps the probe and its count, leaves it out of every never-hit
-// finding and the call graph, and lists it apart under its family.
+// wrote the code.
 enum UnreadShape {
   // Never written: UnreadShape is only set inside an origin oneof, where unset means the adopter's
   // code. A consumer reads this value as unset.
@@ -146,9 +124,7 @@ enum UnreadShape {
   // The collision side of the last equals check in a bucket of a switch on String.hashCode(),
   // when the agent cannot read the lowering.
   UNREAD_SHAPE_STRING_SWITCH = 7;
-  // A @Serializer(forClass = ...) object's serialize, deserialize and getDescriptor: the
-  // kotlinx.serialization plugin fills in the members the adopter did not write, and nothing in
-  // the bytecode tells which those are (ADR 0078).
+  // A @Serializer(forClass = ...) object's serialize, deserialize and getDescriptor.
   UNREAD_SHAPE_KOTLINX_SERIALIZER_OBJECT = 8;
   // A Scala value class's boxed method, or its companion's hashCode$extension or equals$extension,
   // in the outline GeneratedBy.VALUE_CLASS reads but with a body the agent has not read for that
@@ -161,8 +137,7 @@ enum UnreadShape {
 }
 
 // Who sent a payload. DeltaBatch, ProbeManifest, StaticBaseline and ClassListing each carry one,
-// and one process stamps the same values on all four. A collector may set fields_stripped on any
-// one of them.
+// and one process stamps the same values on all four.
 message ResourceAttributes {
   string service_name = 1;
   optional string service_version = 2;
@@ -171,50 +146,38 @@ message ResourceAttributes {
   // A random id the agent makes once per process at startup. It names one run of one instance:
   // every payload from that process carries the same value, and a new process always gets a new
   // one, even under a pinned service_instance_id. class_id, endpoint_id and every cumulative total
-  // mean something only within one run, so a consumer keeps each run's data apart and merges with
-  // max() only within a run. Empty means missing, and a consumer rejects the payload.
+  // mean something only within one run. Empty means missing, and a consumer rejects the payload.
   string run_id = 5;
   // The group the service belongs to, as OpenTelemetry's service.namespace. A service is known by
   // its namespace and its name together. Absent or blank means the unspecified namespace, which
-  // never matches a named one. The agent never works one out for itself.
+  // never matches a named one.
   optional string service_namespace = 6;
   // True when the agent was started with testRun, which the adopter sets in the JVM that runs their
-  // tests. Every payload of the run carries the same value. A consumer keeps a test run out of
-  // every finding about production and uses its call edges to name the tests that call production
-  // code. When no source names an environment, the agent sets it to "test" for a test run, so a
-  // consumer that drops this field still keeps the run apart from production.
+  // tests. Every payload of the run carries the same value. When no source names an environment,
+  // the agent sets it to "test" for a test run.
   bool test_run = 7;
   // The agent's own version, as its jar manifest's Implementation-Version gives it. Empty when
   // unknown, such as when the agent runs from classes in a test JVM. Every payload of a process
-  // carries the same value. An unread shape is a fact about one agent version, so a consumer reads
-  // it together with this.
+  // carries the same value.
   string agent_version = 8;
   // Set by a collector, never by the agent, when it removed at least one field its own bindings did
-  // not know before forwarding the payload (redaction, collector ADR 0005). A consumer makes no
-  // never-hit or cluster claim from a run that carried it.
+  // not know before forwarding the payload.
   bool fields_stripped = 9;
   // The time between the run's flushes, in whole seconds, from 1 to 86400. Every payload of a
-  // process carries the same value. Zero means unknown: a sender that does not set the field. A
-  // run whose last delta batch carried no final_flush and that has sent nothing for several
-  // intervals may be treated as stopped, so a consumer reads this to tell a killed run from a
-  // quiet one (server ADR 0066). An agent that cannot reach its collector also sends nothing.
+  // process carries the same value. Zero means unknown: a sender that does not set the field.
   int32 flush_interval_seconds = 10;
   // False until the collector confirms a probe manifest of this run that held at least one class,
-  // and true on every payload the run sends after that. It never goes back to false. The agent sets
-  // it from its own record of confirmed deliveries, so a manifest whose answer was lost does not
-  // count. A consumer that first hears of a run through a payload that carries true has lost the
-  // manifest the run delivered earlier, and the agent cannot send it again (agent ADR 0091).
+  // and true on every payload the run sends after that. It never goes back to false. A consumer
+  // that first hears of a run through a payload that carries true has lost the manifest the run
+  // delivered earlier, and the agent cannot send it again.
   bool manifest_confirmed = 11;
 }
 
-// hits_total is a cumulative count from process start, not the count since
-// the last flush. The server merges it with max() across retries and
-// reordering, so a re-delivered or reordered value cannot double-count.
+// hits_total is a cumulative count from process start, not the count since the last flush.
 //
-// first_seen_at is stamped by the first flush that observed a non-zero
-// count, not by the hit itself: the hot path is a bare array increment
-// with no clock read. Its precision is therefore one flush interval, and
-// it says "first observed by" rather than "first happened at".
+// first_seen_at is stamped by the first flush that observed a non-zero count, not by the hit
+// itself. Its precision is therefore one flush interval, and it says "first observed by" rather
+// than "first happened at".
 message ProbeDelta {
   int32 class_id = 1;
   int32 probe_index = 2;
@@ -223,22 +186,16 @@ message ProbeDelta {
   int64 hits_total = 5;
 }
 
-// Sent on every flush, every 60 s by default. flushIntervalSeconds sets
-// the interval from 1 to 86400 s. Carries only the probes and endpoints
-// whose hits_total changed, and the dependencies whose
-// loaded_classes_total changed, since the last successfully delivered
-// batch. It is not a full snapshot, so payload size stays independent of
-// the number of probes, endpoints and dependencies. A flush with no change
-// still sends an empty batch, as a heartbeat that tells the server the
-// instance is alive.
+// Sent on every flush, every 60 s by default. Carries only the probes and endpoints whose
+// hits_total changed, and the dependencies whose loaded_classes_total changed, since the last
+// successfully delivered batch. It is not a full snapshot. A flush with no change still sends an
+// empty batch, as a heartbeat.
 message DeltaBatch {
   ResourceAttributes resource = 1;
   repeated ProbeDelta deltas = 2;
   repeated EndpointDelta endpoint_deltas = 3;
   // Set on the last delta batch of the agent's shutdown flush, an empty batch sent after the
-  // others. The server uses it to tell an instance that ended cleanly from one that went silent,
-  // and may report how many instances stopped without one, since up to one flush interval of
-  // their hits may be missing. Never set on a scheduled flush.
+  // others. Never set on a scheduled flush.
   bool final_flush = 4;
   // One entry per dependency whose loaded_classes_total changed since the last successfully
   // delivered batch. See DependencyDelta.
@@ -248,25 +205,19 @@ message DeltaBatch {
   // See ProbeManifest.counts_pending_since.
   int64 counts_pending_since = 7;
   // Set on at most one delta batch of a flush: the last delta batch that flush sends, and only when
-  // the flush read its counts and every delta batch it sent before that one was confirmed. A flush
-  // in which an earlier batch is refused or fails, or whose counts could not be read, sets it on no
-  // batch. An idle flush sets it on its one heartbeat, a flush with hits on its
-  // last hit batch, and a flush that started with pending counts on its closing heartbeat. The
+  // the flush read its counts and every delta batch it sent before that one was confirmed. The
   // shutdown flush sets it on its final_flush batch. A batch carrying it says that every probe
   // counter, endpoint and dependency the flush read is on the wire.
   bool flush_complete = 8;
-  // True on every payload the run sends while it is starting: before its application's class loading
-  // has settled (agent ADR 0086 and ADR 0087). False after, and never true again. A starting run that
-  // is live has not settled; once it stops reporting, what it delivered is evidence like any other
-  // run's. False from an agent that predates the field.
+  // True on every payload the run sends while it is starting: before its application's class
+  // loading has settled. False after, and never true again. False from an agent that predates the
+  // field.
   bool starting = 9;
 }
 
-// Why code outside scope may call a method that no in-scope code calls. Set only on a METHOD
-// probe, which has at most one reason. An annotation wins over an override, and the first
-// annotation in class-file order wins. The server labels a never-hit root that has no in-scope
-// caller and an outside caller "called from outside scope". The field changes no count and no
-// cluster.
+// Why code outside scope may call a method that no in-scope code calls. Set only on a METHOD probe,
+// which has at most one reason. An annotation wins over an override, and the first annotation in
+// class-file order wins.
 message OutsideCaller {
   OutsideCallerKind kind = 1;
   // The type that gives the reason, dotted. What it names depends on kind.
@@ -307,23 +258,18 @@ message ProbeLocation {
   // code.
   bool inline = 9;
   // Set only for an OPTIONAL_ARGUMENT probe: the parameter's zero-based value index. Kotlin does
-  // not count receivers; a Scala extension receiver counts, since it is an ordinary first JVM
-  // parameter and the getter's own number counts it too.
+  // not count receivers; a Scala extension receiver counts.
   optional int32 parameter_index = 10;
   // Set only for an OPTIONAL_ARGUMENT probe: the parameter's name from the target's
   // LocalVariableTable, or empty when the target carries no debug info.
   string parameter_name = 11;
-  // Set only for an OPTIONAL_ARGUMENT probe. The server claims "never supplied" (omission total
-  // equals the target's hit total) only when this is false and inline is false, since an
-  // overridable target's omissions are spread across whichever override actually ran, which this
-  // location cannot relate. It claims "always supplied" (omission total zero while the target was
-  // hit) for any target, so long as inline is false.
+  // Set only for an OPTIONAL_ARGUMENT probe. An overridable target's omissions are spread across
+  // whichever override actually ran, which this location cannot relate.
   bool overridable = 12;
   // Set only for an OPTIONAL_ARGUMENT probe whose target lives in another class: a Scala
-  // constructor getter declared on a companion module class, whose target constructor lives on
-  // the class the module compiles for. Empty when the target is in the probe's own class, and
-  // never set for Kotlin. The server joins an omission probe to its target's METHOD probe by
-  // target_class_name when set, otherwise by class_name.
+  // constructor getter declared on a companion module class, whose target constructor lives on the
+  // class the module compiles for. Empty when the target is in the probe's own class, and never set
+  // for Kotlin.
   string target_class_name = 13;
   // Set only for a METHOD probe: the in-scope call edges read from this method's own bytecode at
   // transform time. A pass-through's callees are attributed to whichever probed method referenced
@@ -334,14 +280,11 @@ message ProbeLocation {
   // Dotted, and empty when the probe is the class's own code.
   string inlined_from_class_name = 15;
   // Set for a METHOD probe, for a BRANCH probe as the mark of the method it sits in, and for an
-  // OPTIONAL_ARGUMENT probe as its target's own mark, so the server leaves a generated method's
-  // conditionals out of never-hit with the method, and abstains from never-supplied and
-  // always-supplied on a generated target (a data class's copy) the way it abstains on an inline
-  // one. Unset (GENERATED_BY_UNSPECIFIED is never sent) for an ordinary method the adopter wrote; see
-  // GeneratedBy. Origin is one of three states: unset means the adopter's code, generated_by means
-  // recognised compiler output, and unread_shape means the outline of compiler output whose body
-  // matches no shape this agent has read for that compiler, which is a statement about the agent,
-  // not about who wrote the code.
+  // OPTIONAL_ARGUMENT probe as its target's own mark. Unset (GENERATED_BY_UNSPECIFIED is never
+  // sent) for an ordinary method the adopter wrote; see GeneratedBy. Origin is one of three states:
+  // unset means the adopter's code, generated_by means recognised compiler output, and unread_shape
+  // means the outline of compiler output whose body matches no shape this agent has read for that
+  // compiler, which is a statement about the agent, not about who wrote the code.
   oneof origin {
     GeneratedBy generated_by = 16;
     UnreadShape unread_shape = 26;
@@ -351,22 +294,15 @@ message ProbeLocation {
   // tests, types in a descriptor or generic signature, catch types and class literals all count.
   // Classes the bootstrap or platform loader provides, and classes read from a directory on the
   // classpath, are never listed. A name's ExternalClass entry may arrive on a later manifest than
-  // the name itself, since it is resolved only once the startup listing has finished; a name that
-  // never gets one belongs to no dependency (a jar of the adopter's own, an agent jar) and the
-  // server ignores it.
+  // the name itself; a name that never gets one belongs to no dependency (a jar of the adopter's
+  // own, an agent jar).
   repeated string referenced_classes = 17;
   // Set only for a BRANCH probe: an opaque lowercase hex token naming this outcome across builds
-  // and instances, compared only for equality. Unset when the agent cannot name the outcome
-  // safely. The server treats a missing key as an outcome it has never seen.
+  // and instances, compared only for equality. Unset when the agent cannot name the outcome safely.
   optional string branch_key = 18;
-  // Set only for a METHOD probe. True when the method is a lambda body: an invokedynamic in its own
-  // class names it as the LambdaMetafactory implementation (directly or through scalac's boxing
-  // forwarder), and its name is one a compiler gives a body the source never named (javac's
-  // lambda$..., scalac's $anonfun$... or Scala 3's <owner>$$anonfun$N, never an $adapted forwarder,
-  // or kotlinc's ...$lambda$N, nested ones included). A body Scala 3 lifted out of a nested class,
-  // whose creator stays in that class, is marked by its name alone, Scala 3's expanded
-  // <class>$$_$...$$anonfun$N. False for a named method passed by reference, and for every other
-  // method. The method that creates the body is the source of its CREATES edge.
+  // Set only for a METHOD probe. True when the method is a lambda body. False for a named method
+  // passed by reference, and for every other method. The method that creates the body is the source
+  // of its CREATES edge.
   bool lambda_body = 19;
   // Set only for a METHOD probe: the method's kept branch sites, in site_index order, each with its
   // outcomes listed inside it. A dropped site (coroutine machinery, an inlined copy from
@@ -378,29 +314,24 @@ message ProbeLocation {
   // outcome in that site.
   optional int32 site_index = 21;
   // Set only for a METHOD probe: true when the method has ACC_STATIC. False for a constructor and
-  // for the <clinit> probe, whose meaning a consumer takes from its name.
+  // for the <clinit> probe.
   bool static = 22;
   // Set only for a METHOD probe: the names of the method's declared parameters, one per
-  // method_descriptor parameter, in order. They come from the MethodParameters attribute when it
-  // names every parameter, and otherwise from the LocalVariableTable entries that start at the
-  // method's first instruction in each parameter's slot. An instance method's this is not a
-  // declared parameter. Names are sent as the class file writes them, compiler names such as
-  // $this$shout, $completion or a lambda body's captured values included. Empty when the method
-  // has no parameters, when the class file names none of them, and when it names only some, so a
-  // list is never partial. Empty for the <clinit> probe.
+  // method_descriptor parameter, in order. An instance method's this is not a declared parameter.
+  // Names are sent as the class file writes them, compiler names such as $this$shout, $completion
+  // or a lambda body's captured values included. Empty when the method has no parameters, when the
+  // class file names none of them, and when it names only some, so a list is never partial. Empty
+  // for the <clinit> probe.
   repeated string parameter_names = 23;
   // Set only for a METHOD probe: the method's Signature attribute exactly as the class file writes
-  // it, which keeps the generic types method_descriptor erases. Empty when the method has none,
-  // and for the <clinit> probe.
+  // it. Empty when the method has none, and for the <clinit> probe.
   string generic_signature = 24;
   // Set only for a METHOD probe: true when the method's first declared parameter is a Kotlin
-  // extension receiver, that is, its name in parameter_names starts with $this$ or is $receiver,
-  // the name older kotlinc gave it. False when parameter_names is empty.
+  // extension receiver, that is, its name in parameter_names starts with $this$ or is $receiver.
+  // False when parameter_names is empty.
   bool extension_receiver = 25;
   // Set only for a METHOD probe, and unset when the method has no outside caller. See
-  // OutsideCaller. DeclaredMethod carries none: the static scan cannot read the supertypes or
-  // annotations of a library inside a fat jar, and a never-loaded class's methods fold into its
-  // class finding.
+  // OutsideCaller. DeclaredMethod carries none.
   OutsideCaller outside_caller = 27;
 }
 
@@ -417,9 +348,7 @@ enum BranchRole {
   DEFAULT = 4;
 }
 
-// Why a kept branch outcome is real but not worth a person's time when it never runs. The agent
-// reads it from the bytecode of the outcome's path. The server keeps the probe and its count, but
-// leaves a routine outcome out of every never-hit finding and counts it apart.
+// Why a kept branch outcome is real but not worth a person's time when it never runs.
 enum RoutineKind {
   // Never written: RoutineKind is only set inside an origin oneof, where unset means the outcome is
   // judged like any other. A consumer reads this value as unset.
@@ -459,8 +388,7 @@ message BranchOutcome {
   repeated LineRange partly_guarded_lines = 5;
   // Set only for a CASE of a switch the agent read back from a string or enum lowering: the label
   // the source names, as one part. An enum constant, a class pattern's type, an integer or `null`
-  // is one CODE part, and a string is one STRING_LITERAL part, so collector redaction covers it.
-  // Such a CASE has no case_key.
+  // is one CODE part, and a string is one STRING_LITERAL part. Such a CASE has no case_key.
   repeated ConditionPart case_label = 6;
   // Why this outcome is routine, or why it is an unread shape. Unset when it is neither and the
   // outcome is judged like any other. An outcome inside an unread-shape method carries the
@@ -480,15 +408,14 @@ message LineRange {
   int32 last_line = 3;
 }
 
-// One kept conditional jump or switch in a method, with its outcomes listed inside it. A consumer
-// groups outcomes into sites by this message.
+// One kept conditional jump or switch in a method, with its outcomes listed inside it.
 message BranchSite {
   // The site's ordinal within its class, in bytecode order across every method, dropped sites
   // counted. It names the site within one build only, never across builds.
   int32 site_index = 1;
   // An opaque lowercase hex token naming this site across builds and instances, compared only for
-  // equality. Made the way a branch_key is, without the outcome, and unset in exactly the cases
-  // the site's branch keys are unset. A consumer groups a site's outcomes across builds by it, and
+  // equality. Made the way a branch_key is, without the outcome, and unset in exactly the cases the
+  // site's branch keys are unset. A consumer groups a site's outcomes across builds by it, and
   // within one run by site_index when it is unset.
   optional string site_key = 2;
   // The same line the site's BRANCH probes carry, including the origin line for a kept inlined
@@ -512,8 +439,7 @@ message BranchSite {
   repeated ConditionPart condition = 6;
   // True for a switch on the value String.hashCode() returns, which the agent left as a plain
   // switch. Each case_key of such a switch is the hash code of a string, often a literal the source
-  // names, so a collector that redacts literals can clear them. A string switch the agent read back
-  // has no such site, since the agent drops its hash switch. False for a conditional.
+  // names. A string switch the agent read back has no such site. False for a conditional.
   bool string_hash_code_switch = 7;
 }
 
@@ -522,9 +448,8 @@ enum ConditionPartKind {
   CONDITION_PART_KIND_UNSPECIFIED = 0;
   // Source text, such as `discounted > ` or `System.getenv(`.
   CODE = 1;
-  // A string constant from the class's bytecode. The text is the string's value, not quoted and
-  // not escaped. A consumer quotes it for display, and a collector can redact it without parsing
-  // anything.
+  // A string constant from the class's bytecode. The text is the string's value, not quoted and not
+  // escaped. A consumer quotes it for display.
   STRING_LITERAL = 2;
   // One sub-expression the agent could not write in source terms. The text is empty. A consumer
   // shows it as `…`.
@@ -537,8 +462,7 @@ message ConditionPart {
   string text = 2;
 }
 
-// What a CallEdge records. The server reaches the target of either kind the same way; the kind
-// only changes how the edge is named and drawn.
+// What a CallEdge records.
 enum CallEdgeKind {
   // The caller runs the callee: an invoke instruction, a new, or a static field use that runs the
   // owner's initializer. Every edge that is not CREATES.
@@ -546,9 +470,8 @@ enum CallEdgeKind {
   // The caller hands a body to someone else to run, so the body can only run after the caller ran.
   // It is the edge to the implementation method of a LambdaMetafactory invokedynamic, whether a
   // lambda body or a named method passed by reference. It is also the edge to each probed method of
-  // a body class the caller creates with new or reads with getstatic INSTANCE. The constructor
-  // edge of that new, and the initializer edge of that getstatic, stay CALL edges, since the caller
-  // runs them itself.
+  // a body class the caller creates with new or reads with getstatic INSTANCE. The constructor edge
+  // of that new, and the initializer edge of that getstatic, stay CALL edges.
   CREATES = 1;
 }
 
@@ -556,25 +479,22 @@ enum CallEdgeKind {
 // transform time.
 message CallEdge {
   // The callee's owner class, dotted, as the caller's own bytecode names it. Verbatim, not
-  // resolved: the agent never has the type hierarchy for the class it is transforming.
+  // resolved.
   string class_name = 1;
   string method_name = 2;
   string method_descriptor = 3;
   // True for an invokevirtual or invokeinterface call, false for invokestatic or invokespecial,
-  // except that a same-class call to a private, static, or final target is reported false even
-  // when the raw instruction is invokevirtual, since such a target can never be overridden. The
-  // server widens a virtual edge to every override it knows about, and treats a non-virtual
-  // edge as naming its one real target exactly.
+  // except that a same-class call to a private, static, or final target is reported false even when
+  // the raw instruction is invokevirtual.
   bool virtual = 4;
   // CALL, the zero value, or CREATES; see CallEdgeKind. An edge that takes the place of a
-  // pass-through is CREATES when either the edge to the pass-through or the pass-through's own
-  // edge is CREATES, since what a created body reaches runs only once that body runs. Otherwise it
-  // is CALL. An edge a lambda body's own bytecode records is judged like any other method's.
+  // pass-through is CREATES when either the edge to the pass-through or the pass-through's own edge
+  // is CREATES. Otherwise it is CALL. An edge a lambda body's own bytecode records is judged like
+  // any other method's.
   CallEdgeKind kind = 5;
   // Set only on a CREATES edge from an invokedynamic: how many of the target descriptor's leading
   // parameters take values captured at the call site rather than the functional interface's own
-  // arguments. It is read from the call site's invokedType. A receiver bound by a reference to an
-  // instance method is not counted, since it is not in the target's parameter list. 0 on every
+  // arguments. A receiver bound by a reference to an instance method is not counted. 0 on every
   // other edge, and on a CREATES edge that captures nothing.
   uint32 captured_count = 6;
   // The branch_index of the innermost kept outcome that dominates the instruction recording this
@@ -584,32 +504,26 @@ message CallEdge {
   // guard of the call to the pass-through. A catch handler has no guard unless a kept outcome
   // dominates its whole try. One callee reached under two guards gives two edges.
   optional int32 guard = 7;
-  // Set only on a CREATES edge from an invokedynamic: the interface the call site returns, which is
-  // the return type of its invokedType. It is dotted and named as the bytecode names it, such as
-  // com.sun.net.httpserver.HttpHandler, java.lang.Runnable or kotlin.jvm.functions.Function1. The
-  // agent sends every interface and leaves it to the reader to judge which names help. It travels
-  // with the CREATES kind: an edge that takes the place of a pass-through keeps the interface of
-  // the edge it takes its kind from. An implied edge to a class's <clinit> carries none, since an
-  // initialiser implements nothing. Empty on a CALL edge, and on a CREATES edge from the new or
-  // getstatic INSTANCE of a body class, whose own interfaces travel on its ClassLocation. One body
-  // created for two interfaces gives two edges.
+  // Set only on a CREATES edge from an invokedynamic: the interface the call site returns. It is
+  // dotted and named as the bytecode names it, such as com.sun.net.httpserver.HttpHandler,
+  // java.lang.Runnable or kotlin.jvm.functions.Function1. It travels with the CREATES kind: an edge
+  // that takes the place of a pass-through keeps the interface of the edge it takes its kind from.
+  // An implied edge to a class's <clinit> carries none. Empty on a CALL edge, and on a CREATES edge
+  // from the new or getstatic INSTANCE of a body class, whose own interfaces travel on its
+  // ClassLocation. One body created for two interfaces gives two edges.
   string implemented_interface = 8;
 }
 
-// What a loaded class's own header says about it, sent once per class alongside its probes. Its
-// superclass and direct interfaces let the server widen a CallEdge.virtual call to every type that
-// overrides or inherits its callee. Its source file lets the server say where the class's code is.
+// What a loaded class's own header says about it, sent once per class alongside its probes.
 message ClassLocation {
   int32 class_id = 1;
-  // Dotted, as the class header names it. Empty only for java.lang.Object itself, which this
-  // agent never instruments. An interface's own super_class_name is java.lang.Object, the same
-  // as any other type, since that is what the class file's own super_class entry names.
+  // Dotted, as the class header names it. Empty only for java.lang.Object itself, which this agent
+  // never instruments. An interface's own super_class_name is java.lang.Object.
   string super_class_name = 2;
   repeated string interface_names = 3;
-  // The class file's SourceFile attribute exactly as it appears, such as DemoServerMain.kt. It is
-  // a file name and never a path, since the class file records nothing more. Empty when the class
-  // has none. The agent does not clean it: a value such as <generated> is sent as it is, and
-  // whoever displays it decides whether it names a real file.
+  // The class file's SourceFile attribute exactly as it appears, such as DemoServerMain.kt. It is a
+  // file name and never a path. Empty when the class has none. The agent does not clean it: a value
+  // such as <generated> is sent as it is.
   string source_file = 4;
   // What kind of body class this is; see BodyKind. NONE, the zero value, when the class is not a
   // body class.
@@ -633,8 +547,7 @@ enum BodyKind {
   // An anonymous class, such as javac's new Runnable() { ... }: the class's own InnerClasses entry
   // has no name and the class carries no kotlin.Metadata, or the class has no InnerClasses entry
   // for itself at all. A Kotlin body class of a shape the agent does not know, such as one
-  // extending a new Kotlin runtime base class, reads as OBJECT_EXPRESSION instead, since it has an
-  // unnamed entry and kotlin.Metadata.
+  // extending a new Kotlin runtime base class, reads as OBJECT_EXPRESSION instead.
   ANONYMOUS_CLASS = 1;
   // A Kotlin object expression, such as object : Runnable { ... }: the class's own InnerClasses
   // entry has no name, and the class carries kotlin.Metadata.
@@ -646,20 +559,16 @@ enum BodyKind {
   // kotlin.jvm.internal.Lambda, kotlin.coroutines.jvm.internal.SuspendLambda or
   // kotlin.coroutines.jvm.internal.RestrictedSuspendLambda.
   LAMBDA_CLASS = 4;
-  // A Kotlin function or property reference class has no kind, and 5 stays unused. kotlinc marks
-  // such a class synthetic, so the agent never sends it, and its creator's CREATES edges pass
-  // through it to the function it names.
+  // A Kotlin function or property reference class has no kind, and 5 stays unused.
   reserved 5;
   reserved "REFERENCE";
 }
 
-// What kind of class kotlinc says a class is: the k element of its kotlin.Metadata, which the agent
-// reads as one int and decodes nothing else from. The values match k. A consumer names a file
-// facade or a multi-file part by its source file, not its JVM name.
+// What kind of class kotlinc says a class is: the k element of its kotlin.Metadata. The values
+// match k.
 enum KotlinKind {
-  // No kotlin.Metadata on the class, such as a Java or Scala class. Also a k outside 1 to 5, which
-  // kotlin.Metadata's own documentation says is read as a class that is not Kotlin's. The zero
-  // value.
+  // No kotlin.Metadata on the class, such as a Java or Scala class. Also a k outside 1 to 5. The
+  // zero value.
   KOTLIN_KIND_NONE = 0;
   // A class, interface, object, enum or annotation class, or a companion. kotlin.Metadata's k
   // defaults to 1, so an annotation with no k element is this kind too.
@@ -672,31 +581,25 @@ enum KotlinKind {
   SYNTHETIC_CLASS = 3;
   // The class @file:JvmMultifileClass makes to join several files under one name. It holds only
   // forwarders to its parts, which GeneratedBy marks MULTIFILE_FACADE. It has no SourceFile
-  // attribute, since it has no one file.
+  // attribute.
   MULTIFILE_CLASS_FACADE = 4;
   // One file's part of a multi-file facade. It holds that file's code, and its source_file names
   // the file. kotlinc marks it synthetic, but the agent probes it as it probes any other class.
   MULTIFILE_CLASS_PART = 5;
 }
 
-// A class the JVM has loaded that reached no manifest, neither as a probed
-// class nor as a skipped one. The agent has no reason to give: a class it
-// turned away on purpose carries one, and this is what is left over after
-// those are accounted for. Carries no reason field for that reason.
+// A class the JVM has loaded that reached no manifest, neither as a probed class nor as a skipped
+// one.
 //
-// first_seen_unreported_at is when a sweep first found it, which separates a
-// blind spot that existed from startup from one that appeared later.
+// first_seen_unreported_at is when a sweep first found it.
 message UnreportedClass {
   string class_name = 1;
   int64 first_seen_unreported_at = 2;
 }
 
 // A class the agent wove and withheld for good because the JVM never defined it. The agent cannot
-// see why the JVM refused it: a definition failure such as a LinkageError for a supertype the
-// loader cannot load is thrown after the transformer returns. A verifier rejection happens at
-// linking, after the class is defined, so such a class is never here; see
-// ClassFailedToInitialize. The server reads it as failed to load, never as never loaded. A class
-// any in-scope run loaded is loaded, whatever another run says. Sent once, and delivered
+// see why the JVM refused it. A verifier rejection happens at linking, after the class is defined,
+// so such a class is never here; see ClassFailedToInitialize. Sent once, and delivered
 // incrementally like unreported_classes.
 //
 // withheld_at is when the agent withheld it, in milliseconds since the epoch.
@@ -706,9 +609,8 @@ message FailedClass {
 }
 
 // A class the JVM defined that can never run in this JVM, because its verification or its static
-// initializer failed. The server reads it as failed to initialize, never as dead code. A run in
-// which the class initialized wins over a run that failed it. Sent once per class and reason, and
-// delivered incrementally like failed_classes.
+// initializer failed. Sent once per class and reason, and delivered incrementally like
+// failed_classes.
 //
 // observed_at is when the agent first saw the evidence, in milliseconds since the epoch.
 message ClassFailedToInitialize {
@@ -717,29 +619,21 @@ message ClassFailedToInitialize {
   int64 observed_at = 3;
 }
 
-// A class the agent matched but could not instrument (e.g. bytecode
-// ByteBuddy refuses to redefine), so it never gets a class_id or any probes.
-// Reported by name rather than class_id for exactly that reason: it never
-// enters the class_id-assigning path a successfully instrumented class does.
+// A class the agent matched but could not instrument (e.g. bytecode ByteBuddy refuses to redefine),
+// so it never gets a class_id or any probes.
 message SkippedClass {
   string class_name = 1;
   string reason = 2;
   int64 skipped_at = 3;
 }
 
-// Sent incrementally, per instance and run: a flush carries only what no
-// confirmed manifest has carried yet, so the server can resolve probe IDs
-// to source locations without the agent repeating this metadata on every
-// delta batch. Endpoints and disabled endpoint modules share the same
-// incremental delivery, and an endpoint whose handler join changed since it
-// was sent goes out again.
+// Sent incrementally, per instance and run: a flush carries only what no confirmed manifest has
+// carried yet. Endpoints and disabled endpoint modules share the same incremental delivery, and an
+// endpoint whose handler join changed since it was sent goes out again.
 //
-// class_id is assigned by each process's own registry, in whatever order
-// that process's classes happen to load, so the same class_id can mean a
-// different class in two instances of the same (service, version), or in
-// two runs of one pinned instance. The server keys every class_id and
-// endpoint_id on the resource's service_instance_id and run_id, the same
-// way it keys a delta batch's.
+// class_id is assigned by each process's own registry, in whatever order that process's classes
+// happen to load, so the same class_id can mean a different class in two instances of the same
+// (service, version), or in two runs of one pinned instance.
 message ProbeManifest {
   reserved 1, 2, 5;
   reserved "service_name", "service_version", "service_instance_id";
@@ -749,10 +643,9 @@ message ProbeManifest {
   repeated SkippedClass skipped_classes = 4;
   repeated EndpointLocation endpoints = 6;
   repeated DisabledEndpointModule disabled_endpoint_modules = 7;
-  // Sent once per class alongside its probes, staged and committed the same way.
+  // Sent once per class alongside its probes.
   repeated ClassLocation class_locations = 8;
-  // Found by the sweep, not by a transform. Delivered incrementally like the
-  // rest of this message.
+  // Delivered incrementally like the rest of this message.
   repeated UnreportedClass unreported_classes = 9;
   // The dependencies this instance has seen, each sent once and delivered incrementally like
   // classes. See DependencyLocation.
@@ -766,14 +659,13 @@ message ProbeManifest {
   // True when this instance records references, which it does only when its include rules are
   // set: with every class in scope nothing is out of scope to reference, so empty reference lists
   // would otherwise read as "no dependency is referenced". Set on every manifest the instance
-  // sends. The server claims unreferenced or unreached only for an instance that sent it true.
+  // sends.
   bool references_recorded = 13;
   // True once every dependency the startup listing found, and every reference mapping recorded
   // before the listing ended, has been delivered on a confirmed manifest. Each dependency's entry
-  // is sent only after a confirmed delta send carried its first counts, so the server can judge a
-  // dependency once its entry arrives. Once true, it is set on every manifest the instance sends.
-  // A listing that failed never sets it. Before it is true, an empty list of dependencies or
-  // absent references means "not listed yet", not "none".
+  // is sent only after a confirmed delta send carried its first counts. Once true, it is set on
+  // every manifest the instance sends. A listing that failed never sets it. Before it is true, an
+  // empty list of dependencies or absent references means "not listed yet", not "none".
   bool dependencies_listed = 15;
   // Classes withheld for good because the JVM never defined them. Each is sent once and delivered
   // incrementally like unreported_classes. See FailedClass.
@@ -789,46 +681,39 @@ message ProbeManifest {
   // which its unconfirmed hits began. A flush clears it only by sending and confirming every delta
   // batch with hits it built, and then sends an empty delta batch carrying 0. While the
   // highest-sequence payload of a run carries a value other than 0, some of its hits have not
-  // reached the collector, so its zero hit totals are not evidence that code never ran. A run is
-  // judged that way only once a delta batch from it has arrived.
+  // reached the collector, so its zero hit totals are not evidence that code never ran.
   int64 counts_pending_since = 18;
   // Classes the JVM defined that can never run in this JVM because their verification or static
   // initializer failed. Each is sent once per class and reason and delivered incrementally like
   // failed_classes. See ClassFailedToInitialize.
   repeated ClassFailedToInitialize classes_failed_to_initialize = 19;
-  // The number of VerifyErrors this run has seen whose message named no class in a format the
-  // agent has read. A running total, set on every manifest. While it is above 0 the run's zero
-  // counts are not evidence that code never ran, since any zero-hit class may be the one the
-  // verifier rejected.
+  // The number of VerifyErrors this run has seen whose message named no class in a format the agent
+  // has read. A running total, set on every manifest. While it is above 0 the run's zero counts are
+  // not evidence that code never ran.
   int64 unplaced_verification_failures = 20;
   // True when the agent's hook on the JVM's VerifyError is installed and so can see the verifier's
-  // rejections. Set on every manifest the run sends. The agent installs the hook before its first
-  // payload, so a run's manifests agree; a rejection before the hook would be lost for good, so a run
-  // any of whose manifests carries false is unwatched, and its zero counts are not evidence that code
-  // never ran, since a class the verifier rejected fires no probe. False from an agent that predates
-  // the field.
+  // rejections. Set on every manifest the run sends. A run any of whose manifests carries false is
+  // unwatched, and its zero counts are not evidence that code never ran. False from an agent that
+  // predates the field.
   bool verifier_rejections_watched = 21;
   // Framework markers the agent saw load: classes defined only once a framework's own routing is
   // set up. Each marker is delivered once per run, resent until a manifest carrying it is
-  // confirmed; the wire has no retraction, so a marker once sent stands. See FrameworkMarker.
+  // confirmed; a marker once sent stands. See FrameworkMarker.
   repeated FrameworkMarker framework_markers = 22;
   // True on every manifest the run sends once a class the include rules admit loaded from a code
   // source the run's class listing did not read, such as a plugin folder, a war that an external
   // container deployed, or an OSGi bundle, or loaded with no code source and a name the listing
   // lacks. False before, and never false again. A run whose classpath the listing could not read
-  // whole never sets it. While it is true, the run's listing does not cover the code the
-  // JVM loads, so the server claims no class removed on that listing's word. False from an agent
-  // that predates the field.
+  // whole never sets it. While it is true, the run's listing does not cover the code the JVM loads.
+  // False from an agent that predates the field.
   bool class_listing_blind = 23;
   // The same as DeltaBatch.starting.
   bool starting = 24;
 }
 
 // Evidence that a framework's own routing loaded in this JVM: every class of one of the marker's
-// class sets was defined, as the loaded-class sweep saw it. The agent reports what loaded and
-// nothing more. Whether a module covers that framework, and how to word the claim, is the
-// server's to decide, from the id, the agent version and the modules the manifests list.
-// Reported whatever other endpoints the instance declares or counts.
+// class sets was defined, as the loaded-class sweep saw it. Reported whatever other endpoints the
+// instance declares or counts.
 message FrameworkMarker {
   // The marker's id from the agent's fixed list, kebab-case and stable, such as "grpc-server".
   string id = 1;
@@ -839,18 +724,14 @@ message FrameworkMarker {
   int64 seen_at = 3;
 }
 
-// No line field, unlike ProbeLocation: the static scan records no line for a
-// declared method. Identity is (class, method_name, method_descriptor), which
-// is how the server joins a declared method to a manifest probe.
+// Identity is (class, method_name, method_descriptor).
 message DeclaredMethod {
   string method_name = 1;
   string method_descriptor = 2;
   // Read from the LocalVariableTable, the same rule as ProbeLocation.inline.
   bool inline = 3;
-  // The in-scope call edges read from this method's own bytecode, the same rule
-  // ProbeLocation.calls uses. The server treats a baseline edge and a manifest edge as one
-  // graph: for a class the agent both scanned and later loaded, the two describe the same
-  // bytecode.
+  // The in-scope call edges read from this method's own bytecode, the same rule ProbeLocation.calls
+  // uses.
   repeated CallEdge calls = 4;
   // Read from the same class shape the METHOD probe rule uses; see ProbeLocation.origin,
   // ProbeLocation.generated_by and GeneratedBy. Unset for the class's own <clinit> entry.
@@ -918,30 +799,21 @@ message UnreadableClass {
   string reason = 2;
 }
 
-// An in-scope class with no concrete method to put a probe in: an
-// interface with only abstract methods, an annotation type. The agent
-// never registers such a class dynamically, so it can never appear in a
-// ProbeManifest, and the server must not read its absence there as
-// "never loaded". Kept as its own bucket so it stays visible rather than
-// silently dropped from the inventory.
+// An in-scope class with no concrete method to put a probe in: an interface with only abstract
+// methods, an annotation type. The agent never registers such a class dynamically, so it can never
+// appear in a ProbeManifest.
 message UnprobedClass {
   string class_name = 1;
   string reason = 2;
 }
 
-// Sent once per process, independent of the reactive ProbeManifest: a
-// load-independent inventory of what exists on the classpath under
-// includePackages, built by reading bytecode directly rather than
-// waiting for the JVM to load it. The server diffs this against
-// classes that actually register dynamically; one declared here and
-// never reported dynamically was never even constructed.
+// Sent once per process, independent of the reactive ProbeManifest: a load-independent inventory of
+// what exists on the classpath under includePackages.
 //
-// One scan may arrive as several messages. Every chunk of the same scan
-// carries the same resource and scanned_at, so (service_instance_id,
-// run_id, scanned_at) identifies the scan; chunk_index (0-based) and chunk_count
-// say which part this is and how many to expect. The server should only
-// diff a scan once it holds every chunk; a partial scan can only say
-// "declared" for the classes it has, never "never loaded" for the rest.
+// One scan may arrive as several messages. Every chunk of the same scan carries the same resource
+// and scanned_at, so (service_instance_id, run_id, scanned_at) identifies the scan; chunk_index
+// (0-based) and chunk_count say which part this is and how many to expect. A partial scan can only
+// say "declared" for the classes it has, never "never loaded" for the rest.
 message StaticBaseline {
   ResourceAttributes resource = 1;
   repeated DeclaredClass declared_classes = 2;
@@ -973,18 +845,16 @@ message IncludeRules {
   repeated string exclude_packages = 2;
 }
 
-// The names of the classes a run's build holds under its include rules, sent once per process
-// (agent ADR 0070). The agent reads them from jar central directories and class folders without
-// reading a class file, so the listing says which classes exist, not what they contain. Like the
-// static baseline, it leaves out module-info, package-info and every class file under META-INF/.
+// The names of the classes a run's build holds under its include rules, sent once per process. The
+// listing says which classes exist, not what they contain. Like the static baseline, it leaves out
+// module-info, package-info and every class file under META-INF/.
 //
 // One listing may be delivered as several of these. Every chunk of the same listing carries the
-// same resource, include_rules and listed_at, so run_id and listed_at name one listing;
-// chunk_index (0-based) and chunk_count (at least 1) say which part this is and how many to
-// expect. A consumer may read a class's absence from a listing only once it holds every chunk. A
-// listing that matches no class is one chunk with no names. A run sends no listing at all when a
-// root, jar or nested jar it reads fails to open or read, since a listing with a hole would read
-// as classes the build lacks.
+// same resource, include_rules and listed_at, so run_id and listed_at name one listing; chunk_index
+// (0-based) and chunk_count (at least 1) say which part this is and how many to expect. A consumer
+// may read a class's absence from a listing only once it holds every chunk. A listing that matches
+// no class is one chunk with no names. A run sends no listing at all when a root, jar or nested jar
+// it reads fails to open or read.
 message ClassListing {
   ResourceAttributes resource = 1;
   // Dotted binary names, distinct across the listing. The agent sends them in ascending order, but
@@ -1014,20 +884,17 @@ enum EndpointTemplateKind {
   // A path, normalised into route_template.
   PATH = 1;
   // The regular expression a framework matches the route by, exactly as written. Both templates
-  // hold the same text, never normalised. No path exists to derive a template from.
+  // hold the same text, never normalised.
   REGEX = 2;
   // A servlet extension mapping (*.do) or the default mapping (/), exactly as written. Both
-  // templates hold the same text. No path template matches at any depth, or matches only what no
-  // other mapping did.
+  // templates hold the same text.
   SERVLET_PATTERN = 3;
 }
 
-// One endpoint the framework serves. endpoint_id is per instance, like
-// class_id: cross-instance identity is (verb, route_template, template_kind),
-// never endpoint_id.
+// One endpoint the framework serves. endpoint_id is per instance, like class_id: cross-instance
+// identity is (verb, route_template, template_kind), never endpoint_id.
 //
-// A record may be re-sent when a field learned later (the handler join)
-// changes; the server upserts by (service_instance_id, run_id, endpoint_id).
+// A record may be re-sent when a field learned later (the handler join) changes.
 message EndpointLocation {
   int32 endpoint_id = 1;
   // Uppercase HTTP method, or "*" when the framework leaves it unconstrained.
@@ -1060,11 +927,10 @@ message EndpointDelta {
   int64 hits_total = 3;
 }
 
-// An endpoint module that is not instrumenting: it switched itself off because it could no
-// longer vouch for the endpoints it declares and counts, or the adopter's configuration kept it
-// from installing. Reported so the server can tell "no endpoints" from "endpoints not
-// instrumented", the same reason SkippedClass exists for classes. A module is switched off
-// whole and once; its endpoints declared before that stop being counted.
+// An endpoint module that is not instrumenting: it switched itself off because it could no longer
+// vouch for the endpoints it declares and counts, or the adopter's configuration kept it from
+// installing. A module is switched off whole and once; its endpoints declared before that stop
+// being counted.
 message DisabledEndpointModule {
   string module = 1;
   // Free text for a person: the failure, for HOOK_UNMATCHED the hooked method and its class,
@@ -1095,8 +961,8 @@ enum DisabledEndpointModuleKind {
   // The adopter's configuration kept the module from installing: `disabledEndpointModules`
   // named it, or `endpointsEnabled` is false.
   CONFIGURED_OFF = 6;
-  // The framework declares routes on a runtime where the module has no dispatch point to count
-  // them at, so every one would read as never called. The module declares none of them.
+  // The framework declares routes on a runtime where the module has no dispatch point to count them
+  // at. The module declares none of them.
   ROUTES_NOT_COUNTED = 7;
 }
 
@@ -1105,9 +971,8 @@ enum DependencyDiscoverySource {
   DEPENDENCY_DISCOVERY_SOURCE_UNSPECIFIED = 0;
   // Listed from the startup classpath: java.class.path, and a Spring Boot fat jar's nested jars.
   STARTUP_CLASSPATH = 1;
-  // Seen only when a class from it loaded, such as a jar in a WAR's WEB-INF/lib that the app
-  // server opened after premain. A dependency found this way can never read as unloaded, since a
-  // class from it has loaded.
+  // Seen only when a class from it loaded, such as a jar in a WAR's WEB-INF/lib that the app server
+  // opened after premain.
   LOAD = 2;
 }
 
@@ -1116,8 +981,7 @@ enum DependencyIdentitySource {
   DEPENDENCY_IDENTITY_SOURCE_UNSPECIFIED = 0;
   // META-INF/maven/<group>/<artifact>/pom.properties inside the jar.
   POM_PROPERTIES = 1;
-  // Never produced: a manifest's Implementation-Title is a display name, not an artifact ID, and
-  // several jars can share one. Kept so the number is not reused.
+  // Never produced.
   JAR_MANIFEST = 2;
   // The jar's filename with its version suffix stripped, the version taken from the filename or,
   // when it carries none, from the manifest's Implementation-Version. group_id is empty.
@@ -1144,8 +1008,7 @@ message DependencyIdentity {
 // flush after it was first seen.
 message DependencyLocation {
   int32 dependency_id = 1;
-  // At least one. A shaded jar that bundles several libraries carries one per library, since it
-  // cannot be half-removed.
+  // At least one. A shaded jar that bundles several libraries carries one per library.
   repeated DependencyIdentity identities = 2;
   DependencyIdentitySource identity_source = 3;
   // For display only, such as the jar path or BOOT-INF/lib/x.jar.

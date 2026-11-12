@@ -5,7 +5,7 @@ import net.bytebuddy.jar.asm.ClassReader
 import net.bytebuddy.jar.asm.ClassVisitor
 import net.bytebuddy.jar.asm.Opcodes
 
-/** Detects the `Scala` (Scala 3) or `ScalaSig` (Scala 2) class attribute that scalac writes onto every class file it compiles. */
+/** Detects the `Scala` (Scala 3) or `ScalaSig` (Scala 2) class attribute. */
 object ScalaClassDetector {
     private val SCALA_ATTRIBUTE_TYPES = setOf("Scala", "ScalaSig")
 

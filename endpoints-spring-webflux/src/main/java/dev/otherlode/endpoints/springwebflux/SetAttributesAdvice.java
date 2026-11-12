@@ -14,9 +14,7 @@ import org.springframework.web.util.pattern.PathPattern;
 /**
  * Woven onto the entry of {@code RouterFunctionMapping.setAttributes(Map, ServerRequest,
  * HandlerFunction)}, which functional routing calls once it has matched a request to a route and
- * before the handler runs. Argument 0 is the exchange's attribute map, which holds the matched
- * pattern under {@link RouterFunctions#MATCHING_PATTERN_ATTRIBUTE}. A CORS preflight counts
- * nothing.
+ * before the handler runs. A CORS preflight counts nothing.
  *
  * <p>A request a {@code resources(pattern, location)} route matched is counted by {@link
  * ResourceLookupAdvice}, which marks the request's exchange. A {@code resources(predicate,
@@ -28,12 +26,8 @@ import org.springframework.web.util.pattern.PathPattern;
  * recorded nothing. A handler that resolves to one of Spring's own Kotlin DSL classes reports
  * nothing. A route the walk declared already carries its join.
  *
- * <p>The key, {@code List.of("fn", pattern, verb)}, matches the walk's. It names no handler, since
- * Spring hands a filtered route a new handler function on every request. A second lookup with the verb {@code *} covers a route declared without one. {@code
- * ServerRequest.method()} is null on Spring 5.3 for a verb outside its {@code HttpMethod} enum.
- *
- * <p>The advice body is inlined into the woven method, so {@code onEnter} stays one flat body with
- * no helper methods.
+ * <p>The key, {@code List.of("fn", pattern, verb)}, matches the walk's. A second lookup with the
+ * verb {@code *} covers a route declared without one.
  */
 public class SetAttributesAdvice {
     private static final String MODULE = "spring-webflux";
@@ -46,6 +40,8 @@ public class SetAttributesAdvice {
     private static final String HANDLE_DESCRIPTOR =
             "(Lorg/springframework/web/reactive/function/server/ServerRequest;)Lreactor/core/publisher/Mono;";
 
+    // Advice inlines only this method's bytecode, so a helper call here would stay a real call that
+    // the target loader cannot resolve. Keep the body flat.
     @Advice.OnMethodEnter(suppress = Throwable.class)
     public static void onEnter(
             @Advice.Argument(0) Map<String, Object> attributes,

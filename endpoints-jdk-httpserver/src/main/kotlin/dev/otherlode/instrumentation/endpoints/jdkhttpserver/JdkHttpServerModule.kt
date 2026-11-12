@@ -16,15 +16,7 @@ private const val CONTEXT_LIST = "sun.net.httpserver.ContextList"
 private const val ADVICE_PACKAGE = "dev.otherlode.endpoints.jdkhttpserver"
 
 /**
- * Endpoint module for the JDK's own `com.sun.net.httpserver.HttpServer`. It hooks
- * `sun.net.httpserver.ServerImpl` and two package-private types it works through, never
- * `HttpServer` itself:
- *
- * - `ServerImpl.createContext` (both overloads) is the registration hook.
- * - `HttpContextImpl.setHandler` gives a context created without a handler its handler.
- * - `ContextList.findContext(String protocol, String path)`, the two-argument overload, is the
- *   dispatch point. A null return is the framework's own 404 path, which counts nothing. The
- *   three-argument overload backs `contains` and `remove` and is left alone.
+ * Endpoint module for the JDK's own `com.sun.net.httpserver.HttpServer`.
  *
  * A context path is a prefix match with no verb constraint, so every endpoint this module
  * declares has verb `"*"` and a verbatim template equal to `HttpContext.getPath()` as registered.

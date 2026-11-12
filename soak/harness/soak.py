@@ -40,9 +40,6 @@ def iso(t=None):
     return datetime.datetime.fromtimestamp(t, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
-# ---------------------------------------------------------------- timetable (dry run)
-
-
 def timetable(scale, flush, check_delay):
     """Return the lines the dry run prints."""
     out = []
@@ -73,9 +70,6 @@ def timetable(scale, flush, check_delay):
     return out
 
 
-# ---------------------------------------------------------------- state
-
-
 class State:
     """The persistent state: T0, what is done, the runs, the events. Saved after every change."""
 
@@ -103,9 +97,6 @@ class State:
             r = fn(self.d)
             self.save()
             return r
-
-
-# ---------------------------------------------------------------- traffic
 
 
 class Counters:
@@ -215,9 +206,6 @@ class RouteGen(threading.Thread):
                 sup.counters.add(inst.name, r.key, "ok")
             else:
                 sup.counters.add(inst.name, r.key, "non2xx")
-
-
-# ---------------------------------------------------------------- window reads
 
 
 class WindowTracker:
@@ -382,9 +370,6 @@ class WindowReader(threading.Thread):
                "counts_behind_since": (row or {}).get("counts_behind_since")}
         ref["last"] = (ref["last"] + [obs])[-20:]
         return True
-
-
-# ---------------------------------------------------------------- processes
 
 
 def read_vmrss_kb(pid):
@@ -565,9 +550,6 @@ class Managed:
         return None
 
 
-# ---------------------------------------------------------------- the supervisor
-
-
 class Supervisor:
     def __init__(self, args):
         self.args = args
@@ -607,7 +589,6 @@ class Supervisor:
         self.sampling = False
         self.windows = WindowReader(self)
 
-    # ---- helpers
     def log(self, msg):
         print("%s %s" % (iso(), msg), flush=True)
         self.slog.write(msg)
@@ -641,7 +622,6 @@ class Supervisor:
         extra = self.check_delay if it.kind == "check" else 0.0
         return self.t0 + it.at / self.scale + extra
 
-    # ---- start up
     def adopt(self):
         """A run record with no end belongs to a process of an earlier supervisor."""
         def fix(d):
@@ -680,7 +660,6 @@ class Supervisor:
             for r in cfg.ROUTES.get(i.name, []):
                 RouteGen(self, i, r).start()
 
-    # ---- actions
     def run_item(self, it):
         """Do one schedule item. Return True when done, False to try again."""
         k, a = it.kind, it.args
@@ -834,7 +813,6 @@ class Supervisor:
         self.log("checker %sexited %d%s" % ("(final) " if final else "", r.returncode,
                                            ", report " + report if report else ""))
 
-    # ---- the sampler
     def sample(self):
         rows = []
         ts = iso()
@@ -878,7 +856,6 @@ class Supervisor:
                 self.sampling = False
         threading.Thread(target=go, daemon=True).start()
 
-    # ---- the loop
     LATE = {"graceful-restart": 6 * H, "check": 3 * H, "testrun": 12 * H, "collector-stop": 0.5 * H,
             "collector-limit": 0.5 * H, "crash-cycle": 6 * H}
 

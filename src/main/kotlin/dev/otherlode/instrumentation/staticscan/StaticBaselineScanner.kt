@@ -65,8 +65,7 @@ data class StaticScanResult(
 }
 
 /**
- * Builds a load-independent inventory of what exists on the classpath under [includePackages], by
- * reading bytecode directly instead of waiting for the JVM to load it.
+ * Builds a load-independent inventory of what exists on the classpath under [includePackages].
  *
  * Applies the same [TypeMatchPolicy] a loaded class would be matched against. A class the reactive
  * tier would match but never register, because it has no concrete method to probe, lands in

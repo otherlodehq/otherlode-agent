@@ -4,14 +4,7 @@ import dev.otherlode.instrumentation.branch.HandlerForwarder
 import dev.otherlode.registry.HandlerRef
 import java.util.concurrent.ConcurrentHashMap
 
-/**
- * Maps a pass-through that a framework can report as a handler to the one probed method it forwards
- * to. The method tier's analysis writes entries, only for the functional interfaces in
- * [handlerInterfaces]. [RegistryResolver] reads them.
- *
- * Two writes for one pass-through that name different targets leave no entry for it, and a miss
- * keeps the name the framework reported.
- */
+/** Maps a pass-through that a framework can report as a handler to the one probed method it forwards to. */
 class HandlerForwarders(
     /** Functional interfaces a framework takes a handler as, by `Class.getName()`. Empty turns the table off. */
     val handlerInterfaces: Set<String> = emptySet(),

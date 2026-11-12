@@ -18,20 +18,16 @@ import org.springframework.web.util.pattern.PathPattern;
  * registration hook for every annotated controller method Spring WebFlux detects. It runs once per
  * handler method as the route table is built, and does not run for a registration that throws.
  *
- * <p>A mapping with no path holds the empty pattern, which the seam normalises to {@code /}. The
- * dispatch key, {@code List.of(pattern, verb)}, matches {@link HandleMatchAdvice}.
+ * <p>A mapping with no path holds the empty pattern, which the seam normalises to {@code /}.
  *
  * <p>The join names the class that declares the method. A handler bean whose type cannot be
  * resolved is still an endpoint, with no join.
- *
- * <p>{@code onExit} is deliberately one flat body with no private helper method: {@link Advice}
- * inlines only the bytecode of the annotated method, so a call to a helper, even one on this class,
- * would remain a real call in the woven bytecode and require the target classloader to resolve this
- * advice class at runtime. The other advice classes of this module follow the same rule.
  */
 public class RegisterHandlerMethodAdvice {
     private static final String MODULE = "spring-webflux";
 
+    // Advice inlines only this method's bytecode, so a helper call here would stay a real call that
+    // the target loader cannot resolve. Keep the body flat.
     @Advice.OnMethodExit(suppress = Throwable.class)
     public static void onExit(
             @Advice.This Object mapping,

@@ -3,11 +3,7 @@ package com.example.demo.server
 import kotlin.math.pow
 import kotlin.math.round
 
-/**
- * An amount rounded to [scale] decimal places. `@JvmOverloads` makes kotlinc add a `Price(Double)`
- * overload that nobody wrote. [handleCheckout] always passes the scale, so that overload never
- * runs, and the agent marks it generated so it is never read as an unused overload.
- */
+/** An amount rounded to [scale] decimal places. */
 class Price
     @JvmOverloads
     constructor(

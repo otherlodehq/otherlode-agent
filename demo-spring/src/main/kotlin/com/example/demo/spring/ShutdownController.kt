@@ -3,11 +3,7 @@ package com.example.demo.spring
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RestController
 
-/**
- * Exits the process directly instead of relying on SIGTERM, which can race the agent's
- * shutdown-hook flush: the signal can arrive while that flush is still writing its final batch,
- * the same reasoning the plain demo server's own `/__shutdown` endpoint carries.
- */
+/** Exits the process directly. */
 @RestController
 class ShutdownController {
     @PostMapping("/__shutdown")

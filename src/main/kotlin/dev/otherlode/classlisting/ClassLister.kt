@@ -29,10 +29,7 @@ import java.util.jar.Manifest
  * Lists the classes the startup classpath holds under the include rules, by name, without reading
  * a class file.
  *
- * It lists what [ClasspathWalker] reaches from [classPath], including Spring Boot fat jars and
- * exploded applications. A class counts by [isClassEntry], or as a multi-release entry by its path
- * after `META-INF/versions/N/`, and is listed when [TypeMatchPolicy.isIncluded] admits it. A
- * complete listing hands the keys of the roots it read and the listed names to [onRoots].
+ * A complete listing hands the keys of the roots it read and the listed names to [onRoots].
  */
 class ClassLister(
     private val includes: List<String>,
@@ -49,10 +46,7 @@ class ClassLister(
 
     /**
      * The sorted, distinct, dotted names of the listed classes. Returns null and logs one WARNING
-     * when the listing would be partial: a root that exists, a jar or a nested jar cannot be read, an
-     * exploded application's classpath index is malformed, [classPath] is empty or has an empty
-     * element, [modulePath] or [mainModule] is set, [upgradeModulePath] is set, [jvmArguments]
-     * returns null, or `--patch-module` is among [jvmArguments].
+     * when the listing would be partial.
      */
     fun list(): List<String>? {
         if (modulePath.isNotBlank() || mainModule.isNotBlank()) {

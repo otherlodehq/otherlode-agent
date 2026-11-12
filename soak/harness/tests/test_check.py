@@ -296,7 +296,6 @@ class CheckCase(unittest.TestCase):
 
 
 class CheckTests(CheckCase):
-    # ---- 1
     def test_1_planted_answers_pass(self):
         res = self.run_check(1)
         self.assertEqual(res["status"], "pass", res)
@@ -314,7 +313,6 @@ class CheckTests(CheckCase):
         res = self.run_check(1, now=T0 + 600)
         self.assertEqual(res["status"], "skip")
 
-    # ---- 2
     def test_2_no_false_claim_pass(self):
         res = self.run_check(2)
         self.assertEqual(res["status"], "pass", res)
@@ -357,7 +355,6 @@ class CheckTests(CheckCase):
         res = self.run_check(2)
         self.assertEqual(res["status"], "pass", res)
 
-    # ---- 3
     def test_3_counts_pass(self):
         res = self.run_check(3)
         self.assertEqual(res["status"], "pass", res)
@@ -373,7 +370,6 @@ class CheckTests(CheckCase):
         res = self.run_check(3)
         self.assertEqual(res["status"], "pass", res)
 
-    # ---- 4
     def test_4_runs_pass(self):
         res = self.run_check(4)
         self.assertEqual(res["status"], "pass", res)
@@ -397,7 +393,6 @@ class CheckTests(CheckCase):
         self.assertEqual(res["status"], "fail")
         self.assertIn("exited on its own", self.evidence(res))
 
-    # ---- 5
     def test_5_memory_pass(self):
         res = self.run_check(5)
         self.assertEqual(res["status"], "pass", res)
@@ -543,7 +538,6 @@ class CheckTests(CheckCase):
         self.mem(("events-prod", 21, b, 60))
         self.assertEqual(self.run_check(5)["status"], "skip")
 
-    # ---- 6
     def test_6_logs_pass(self):
         warn = "%s WARNING: otherlode: delta export failed, will retry next flush\n" % iso(T0 + 20 * 3600 + 30)
         self.w.logs(extra_shop=warn)
@@ -686,7 +680,6 @@ class CheckTests(CheckCase):
         res = self.run_check(6)
         self.assertEqual(res["status"], "pass", res)
 
-    # ---- 7
     def test_7_test_run_pass(self):
         res = self.run_check(7)
         self.assertEqual(res["status"], "pass", res)
@@ -745,7 +738,6 @@ class CheckTests(CheckCase):
         self.assertEqual(res["status"], "fail")
         self.assertIn("no cluster rooted at a.Pricing.applyLegacyDiscount", self.evidence(res))
 
-    # ---- the whole run
     def test_all_eight_and_the_report_files(self):
         out = io.StringIO()
         with redirect_stdout(out):
@@ -921,7 +913,6 @@ class WindowCheckTests(CheckCase):
         self.assertEqual(check.violation_key("x: not on /never-hit (12 method rows listed)"),
                          check.violation_key("x: not on /never-hit (13 method rows listed)"))
 
-    # ---- the new instances and disruptions
     def test_1_a_live_method_must_leave_never_hit(self):
         self.edit_truth(lambda t: t["services"]["soak-shop"]["prod"].update(
             live_methods=[{"class": "a.Pricing", "method": "applyLegacyDiscount", "from": "PT12H"}]))

@@ -1,11 +1,6 @@
 #!/usr/bin/env bash
-# Copies a bundle to the VM and installs it under /opt/soak. Secrets, state, logs and reports
-# stay where they are; bin, agent, apps, harness and truth.json are replaced.
-#
-#   push.sh [bundle-dir] [--setup]
-#
+# usage: push.sh [bundle-dir] [--setup]
 # --setup also runs vm-setup.sh on the VM. Do that on the first push.
-# SOAK_VM, SOAK_PROJECT and SOAK_ZONE override the VM.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)

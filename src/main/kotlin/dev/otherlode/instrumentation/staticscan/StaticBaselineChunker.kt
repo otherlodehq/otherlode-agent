@@ -24,7 +24,7 @@ import dev.otherlode.export.UnreadableClass
  * in the chunk of the first declared class that references its name. Every chunk carries the same
  * resource, [includeRules] and [scannedAt], and its own `chunkIndex` out of `chunkCount`.
  *
- * [chunk] produces at least one chunk, so an empty scan is still a statement.
+ * [chunk] produces at least one chunk.
  */
 object StaticBaselineChunker {
     fun chunk(

@@ -1,8 +1,7 @@
 package dev.otherlode.benchmark
 
 /**
- * One of the ways PetClinic is run. [otherlode] marks the variants that run the Otherlode agent, the
- * only ones the agent's error scan, the collector's delivery checks and the manifest counts apply to.
+ * One of the ways PetClinic is run. [otherlode] marks the variants that run the Otherlode agent.
  */
 enum class Variant(
     val id: String,
@@ -19,7 +18,7 @@ val DEFAULT_VARIANTS = listOf(Variant.NONE, Variant.AGENT, Variant.AGENT_BASELIN
 
 /**
  * The variants named in [text], a comma-separated list of ids, in the order given. Refuses an
- * unknown id, a repeated one, and a list without `none`, which every change is measured against.
+ * unknown id, a repeated one, and a list without `none`.
  */
 fun parseVariants(text: String): List<Variant> {
     val variants =
@@ -53,7 +52,7 @@ enum class Config(
     }
 }
 
-/** [variants] in the order round [round] runs them, so no variant always goes first. */
+/** [variants] in the order round [round] runs them. */
 fun rotatedVariants(
     round: Int,
     variants: List<Variant> = DEFAULT_VARIANTS,

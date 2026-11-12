@@ -6,9 +6,8 @@ import java.security.ProtectionDomain
 /**
  * Captures a class's bytes as they reach this agent's transformer chain, after every earlier
  * transformer, on a load, retransformation or redefinition. It must be registered
- * retransformation-capable immediately before ByteBuddy's own transformer, so that it sees each
- * class just before ByteBuddy does, on the same thread. Bytes are kept per thread and per class, since
- * a nested class load during a transform must not overwrite the bytes of the class being transformed.
+ * retransformation-capable immediately before ByteBuddy's own transformer. Bytes are kept per thread
+ * and per class.
  */
 class ClassBytesCapture(
     private val isCandidate: (internalName: String) -> Boolean,

@@ -1,15 +1,11 @@
 .gradle
 build/
 
-### Project ###
-# The running changelog CLAUDE.md used to carry, kept because it is the only
-# copy. History, not a tracker: STATUS.md is the tracker and is in git.
 STATUS-ARCHIVE.md
 !gradle/wrapper/gradle-wrapper.jar
 !**/src/main/**/build/
 !**/src/test/**/build/
 
-### IntelliJ IDEA ###
 .idea/
 *.iws
 *.iml
@@ -18,10 +14,8 @@ out/
 !**/src/main/**/out/
 !**/src/test/**/out/
 
-### Kotlin ###
 .kotlin
 
-### Eclipse ###
 .apt_generated
 .classpath
 .factorypath
@@ -33,15 +27,12 @@ bin/
 !**/src/main/**/bin/
 !**/src/test/**/bin/
 
-### NetBeans ###
 /nbproject/private/
 /nbbuild/
 /dist/
 /nbdist/
 /.nb-gradle/
 
-### VS Code ###
 .vscode/
 
-### Mac OS ###
 .DS_Store

@@ -16,22 +16,17 @@ import org.springframework.web.util.pattern.PathPattern;
  * Woven onto the entry of {@code RequestMappingInfoHandlerMapping.handleMatch(RequestMappingInfo,
  * HandlerMethod, ServerWebExchange)}, the dispatch point for annotated controllers. It runs once per
  * matched request, before the handler, with the {@link RequestMappingInfo} narrowed to the patterns
- * and verb that matched. The module's matcher excludes the class's synthetic bridge with the same
- * name and arity, so a request counts once.
+ * and verb that matched.
  *
  * <p>The pattern is the first of the narrowed patterns, which are sorted best match first. The verb
  * is the one the methods condition kept, or {@code *} for a mapping with none. A CORS preflight
  * counts nothing.
- *
- * <p>The key is rebuilt by value as {@code List.of(pattern, verb)}, from the same two accessors
- * {@link RegisterHandlerMethodAdvice} uses.
- *
- * <p>The advice body is inlined into the woven method, so {@code onEnter} stays one flat body with
- * no helper methods.
  */
 public class HandleMatchAdvice {
     private static final String MODULE = "spring-webflux";
 
+    // Advice inlines only this method's bytecode, so a helper call here would stay a real call that
+    // the target loader cannot resolve. Keep the body flat.
     @Advice.OnMethodEnter(suppress = Throwable.class)
     public static void onEnter(
             @Advice.Argument(0) RequestMappingInfo info,

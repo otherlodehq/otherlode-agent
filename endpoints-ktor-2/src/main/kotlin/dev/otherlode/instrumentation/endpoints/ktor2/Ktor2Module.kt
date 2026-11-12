@@ -16,10 +16,7 @@ private const val ROUTE = "io.ktor.server.routing.Route"
 private const val ROUTING = "io.ktor.server.routing.Routing"
 private const val ADVICE_PACKAGE = "dev.otherlode.endpoints.ktor2"
 
-/**
- * Endpoint module for Ktor 2 (`ktor-2`), covering the `io.ktor:ktor-server-core-jvm` 2.x line.
- * `Route.handle` registers each route and `Routing.executeResult` records each dispatch.
- */
+/** Endpoint module for Ktor 2 (`ktor-2`), covering the `io.ktor:ktor-server-core-jvm` 2.x line. */
 class Ktor2Module : EndpointModule {
     override val name: String = "ktor-2"
 

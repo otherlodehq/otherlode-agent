@@ -13,8 +13,7 @@ data class AllocationSample(
 /**
  * Bytes allocated inside the recording, summed over threads.
  *
- * The event reports each thread's cumulative total, so summing the readings counts early
- * allocation again at every sample. Each thread contributes its last reading minus its first. A
+ * Each thread contributes its last reading minus its first. A
  * thread whose first reading comes after the recording began started inside it, so everything it
  * allocated counts.
  */

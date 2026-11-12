@@ -7,8 +7,6 @@ plugins {
     kotlin("jvm") version "2.2.21"
     `jvm-test-suite`
     id("com.gradleup.shadow") version "8.3.11"
-    // 0.18.2 is the newest release (2026-09-02). Its only change since 0.18.1 is a configuration
-    // crash fix.
     id("org.jetbrains.kotlinx.binary-compatibility-validator") version "0.18.2"
     `maven-publish`
     signing
@@ -23,35 +21,23 @@ repositories {
 }
 
 dependencies {
-    // The wire models and codec, and nothing else of the agent's: the agent itself reaches a test
-    // JVM only as its shaded -javaagent jar, never as classes on the test classpath.
+    // The agent itself reaches a test JVM only as its shaded -javaagent jar, never as classes on the
+    // test classpath.
     implementation(project(":wire"))
 
-    // compileOnly: an adopter who does not use JUnit pays nothing for OtherlodeExtension, the same
-    // shape OpenTelemetry uses for opentelemetry-sdk-testing. JUnit's own launcher supplies the
-    // real jar at test time for anyone who does add it. Pinned to the version already resolved
-    // on this module's test classpath (checked with `./gradlew :testkit:dependencies
-    // --configuration testRuntimeClasspath`), so main and test code compile against the same API.
+    // compileOnly, so an adopter who does not use JUnit pays nothing. Pinned to the version on this
+    // module's test classpath, so main and test code compile against the same API.
     compileOnly("org.junit.jupiter:junit-jupiter-api:5.10.1")
 
     testImplementation(kotlin("test"))
 
-    // The end-to-end tests drive the agent's instrumentation and exporter in-process.
     testImplementation(project(":"))
 
-    // byte-buddy-agent gives the end-to-end test ByteBuddyAgent.install() to self-attach.
-    // Plain byte-buddy is needed too: OtherlodeInstrumentation.install()/uninstall() are typed in
-    // terms of net.bytebuddy.agent.builder.ResettableClassFileTransformer, which is only an
-    // implementation (not api) dependency of the root project and so does not arrive on this
-    // module's compile classpath transitively.
     testImplementation("net.bytebuddy:byte-buddy-agent:1.18.12")
     testImplementation("net.bytebuddy:byte-buddy:1.18.12")
 
-    // Gives the endpoint end-to-end test JdkHttpServerModule, the real HttpServer endpoint module.
     testImplementation(project(":endpoints-jdk-httpserver"))
 
-    // EndpointModule is only an implementation dependency of :endpoints-jdk-httpserver, so it does
-    // not arrive transitively; needed directly for EndpointInstrumentation's List<EndpointModule>.
     testImplementation(project(":endpoints-api"))
 }
 
@@ -70,9 +56,8 @@ tasks.named<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>("compileKotlin") {
     }
 }
 
-// The plain jar keeps its own classifier so it cannot overwrite the shadow jar, which is the
-// testkit artifact. Both carry the version the agent's jar carries: the testkit reads it back from
-// its package to refuse an agent of another version.
+// The plain jar's classifier keeps it from overwriting the shadow jar. The testkit reads the version
+// back from its package to refuse an agent of another version.
 tasks.jar {
     archiveBaseName.set("otherlode-testkit")
     archiveClassifier.set("plain")
@@ -81,9 +66,6 @@ tasks.jar {
     }
 }
 
-// Licence texts the shadow jar carries under META-INF, taken from the files the agent jar already
-// uses: the repository's LICENSE and the protobuf-java text under licenses/. The NOTICE is this
-// module's own.
 val bundledLicenseFiles =
     mapOf(
         "META-INF/LICENSE" to rootProject.layout.projectDirectory.file("LICENSE"),
@@ -95,15 +77,11 @@ tasks.shadowJar {
     archiveBaseName.set("otherlode-testkit")
     archiveClassifier.set("")
 
-    // kotlin-stdlib is the testkit's one runtime dependency; the adopter's own copy serves it.
     dependencies {
         exclude(dependency("org.jetbrains.kotlin:kotlin-stdlib"))
         exclude(dependency("org.jetbrains:annotations"))
     }
 
-    // The wire module and protobuf-java travel inside the jar under the testkit's own prefix, so a
-    // test classpath that carries another protobuf, or the wire module at another version, never
-    // meets these copies.
     relocate("com.google.protobuf", "dev.otherlode.testkit.shaded.protobuf")
     relocate("dev.otherlode.export", "dev.otherlode.testkit.shaded.export")
     relocate("dev.otherlode.proto", "dev.otherlode.testkit.shaded.proto")
@@ -113,8 +91,6 @@ tasks.shadowJar {
     // unrelocated on an adopter's classpath; the generated classes carry their own descriptors.
     exclude("google/protobuf/**", "otherlode/**")
 
-    // META-INF/LICENSE and META-INF/NOTICE must describe this jar, not whichever dependency
-    // shadow copied first, so every dependency's own copies are dropped and the files above go in.
     exclude("META-INF/LICENSE", "META-INF/LICENSE.txt", "META-INF/NOTICE", "META-INF/NOTICE.txt", "META-INF/licenses/**")
     for ((entry, source) in bundledLicenseFiles) {
         from(source) {
@@ -132,8 +108,6 @@ tasks.build {
     dependsOn(tasks.shadowJar)
 }
 
-// The `mv` of a class's kotlin.Metadata annotation, or null for a class without one. Reads the
-// constant pool and the class attributes of a class file; nothing else of it.
 fun kotlinMetadataVersion(bytes: ByteArray): List<Int>? {
     val input = DataInputStream(bytes.inputStream())
     input.skipBytes(8)
@@ -208,9 +182,6 @@ fun readElementValue(
         else -> pool[input.readUnsignedShort()].takeIf { tag == 'I' }
     }
 
-// Fails the build if the shadow jar is not what an adopter's test classpath can take: only the
-// testkit's own classes, protobuf and the wire module present only relocated, no copy of
-// kotlin-stdlib, and the licence files in place.
 val verifyTestkitJar by tasks.registering {
     dependsOn(tasks.shadowJar)
     val jarFile = tasks.shadowJar.flatMap { it.archiveFile }
@@ -270,8 +241,7 @@ val verifyTestkitJar by tasks.registering {
     }
 }
 
-// A Java caller of every public query, compiled and never run: it fails the build when a change
-// makes the API unusable from Java.
+// A Java caller of every public query, compiled and never run.
 val javaApiTest = sourceSets.create("javaApiTest")
 dependencies {
     "javaApiTestImplementation"(sourceSets.main.get().output)
@@ -279,10 +249,7 @@ dependencies {
     "javaApiTestCompileOnly"("org.junit.jupiter:junit-jupiter-api:5.10.1")
 }
 
-// The Scala fixture modules, wired in the way the root build wires them: a task dependency and two
-// system properties each, never a test dependency, so no fixture class loads before a test installs
-// instrumentation. The never-hit test for Scala's generated methods loads them through a child-first
-// loader.
+// Never a test dependency, so no fixture class loads before a test installs instrumentation.
 evaluationDependsOn(":fixtures-scala3")
 evaluationDependsOn(":fixtures-scala2")
 val scalaFixtureModules = listOf("scala3", "scala2")
@@ -312,17 +279,12 @@ tasks.test {
     }
 }
 
-// Proves OtherlodeExtension against the real, shaded agent jar rather than hand-built payloads or a
-// self-attach. A distinct port (4329) and a distinct source set keep this suite from colliding
-// with anything an adopter runs on the agent's own default port (4319), and from putting
-// -javaagent on the plain `test` suite above, whose tests self-attach instead and must stay
-// that way.
+// Kept apart from the agent's default port (4319). The plain `test` suite's tests self-attach and
+// must stay that way.
 val agentTestCollectorPort = 4329
 
-// Two one-class jars for the agentTest suite's dependency test, built here rather than taken from
-// the suite's own classpath so which one loads is fully under the test's control. dep-used carries
-// a pom.properties and is called from com.example.agenttarget; dep-unused has none, so its
-// identity comes from the filename with an empty group, and nothing ever loads it.
+// dep-used carries a pom.properties; dep-unused has none, so its identity comes from the filename,
+// and nothing ever loads it.
 val depUsed = sourceSets.create("depUsed")
 val depUnused = sourceSets.create("depUnused")
 val fixtureDependencyDir = layout.buildDirectory.dir("fixture-dependencies")
@@ -345,14 +307,7 @@ testing {
                 kotlin.srcDir("src/agentTest/kotlin")
             }
             dependencies {
-                // A registered suite, unlike the built-in `test` suite, does not inherit this
-                // project's own main output automatically: project() gives it OtherlodeTestCollector
-                // and OtherlodeExtension. kotlin("test") is a build-script-scoped helper, not
-                // available inside a suite's own dependencies block, so this names the same
-                // artifact directly, as the endpoints-spring-webmvc and endpoints-jaxrs suites
-                // already do.
-                // The shadow jar, so the relocation and the manifest version are exercised exactly as
-                // an adopter's classpath sees them. kotlin-stdlib arrives through kotlin-test-junit5.
+                // kotlin-stdlib arrives through kotlin-test-junit5.
                 implementation(files(tasks.shadowJar))
                 implementation("org.jetbrains.kotlin:kotlin-test-junit5:2.2.21")
                 implementation(files(depUsedJar, depUnusedJar))
@@ -393,9 +348,7 @@ tasks.check {
     dependsOn(tasks.named("compileJavaApiTestJava"))
 }
 
-// kotlin-stdlib stays out of the shaded jar, and the shadow component's POM lists only the
-// `shadow` configuration. It goes on the published variant itself: a `shadow(...)` dependency would
-// also write a Class-Path entry into the jar's manifest.
+// A `shadow(...)` dependency would also write a Class-Path entry into the jar's manifest.
 configurations.named("shadowRuntimeElements") {
     dependencies.add(project.dependencies.create("org.jetbrains.kotlin:kotlin-stdlib:2.0.21"))
 }

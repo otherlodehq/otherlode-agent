@@ -14,46 +14,28 @@ import java.util.UUID
  * matching system property or environment variable; see [parse].
  */
 data class AgentConfig(
-    /**
-     * The service name. When no Otherlode source sets it, it comes from OpenTelemetry's own settings,
-     * then from detection by [ServiceNameDetector], then [DEFAULT_SERVICE_NAME].
-     */
     val serviceName: String,
     /**
-     * The group the service belongs to, as OpenTelemetry's `service.namespace`. When no Otherlode source
-     * sets it, it comes from OpenTelemetry's own settings. It has no default: null is the
-     * unspecified namespace.
+     * The group the service belongs to, as OpenTelemetry's `service.namespace`. It has no default: null
+     * is the unspecified namespace.
      */
     val serviceNamespace: String?,
-    /**
-     * The service version. When no Otherlode source sets it, it comes from `service.version` in
-     * OpenTelemetry's resource attributes. It has no default: null is an unversioned service.
-     */
+    /** The service version. It has no default: null is an unversioned service. */
     val serviceVersion: String?,
     val serviceInstanceId: String,
-    /**
-     * The deployment environment. When no Otherlode source sets it, it comes from OpenTelemetry's
-     * `deployment.environment.name` or older `deployment.environment` resource attribute. When no
-     * source names one and [testRun] is on, it is [TEST_RUN_ENVIRONMENT].
-     */
     val environment: String?,
     /**
      * Base URL of the receiver. The exporter appends `/v1/otherlode/{deltas,manifest,static-baseline,class-listing}`
      * to it, so a query string or fragment is refused.
      */
     val exportUrl: String,
-    /**
-     * Sent to the receiver as `Authorization: Bearer <token>`. Prefer the `OTHERLODE_AUTH_TOKEN`
-     * environment variable over the `authToken` agent option, since a `-javaagent` argument is
-     * visible to every user on the host.
-     */
+    /** Sent to the receiver as `Authorization: Bearer <token>`. */
     val authToken: String?,
-    /** How often the agent flushes. Set in whole seconds by `flushIntervalSeconds`; held as a [Duration]. */
+    /** How often the agent flushes. Set in whole seconds by `flushIntervalSeconds`. */
     val flushInterval: Duration,
     /**
      * How often the agent asks the JVM to return freed native memory to the operating system, on Linux.
-     * Set in whole minutes by `trimNativeHeapIntervalMinutes`; held as a [Duration]. [Duration.ZERO]
-     * turns the trim off.
+     * Set in whole minutes by `trimNativeHeapIntervalMinutes`. [Duration.ZERO] turns the trim off.
      */
     val trimNativeHeapInterval: Duration,
     /**
@@ -76,33 +58,25 @@ data class AgentConfig(
      * classpath holds under the include rules and the agent sends them as a class listing.
      */
     val classListingEnabled: Boolean,
-    /**
-     * On by default. When false, [dev.otherlode.Agent] logs one line and does
-     * nothing else: no bootstrap holder, no transformer, no exporter, no scheduler.
-     */
+    /** On by default. When false, [dev.otherlode.Agent] logs one line and does nothing else. */
     val enabled: Boolean,
     /**
      * On by default. One switch for every endpoint module and the OpenTelemetry route bridge;
      * [disabledEndpointModules] keeps single modules off.
-     * A module whose advice or transform throws switches itself off and is reported in
-     * `disabled_endpoint_modules`. When false, every module that would have installed is reported
-     * there as kept off by configuration.
+     * When false, every module that would have installed is reported in `disabled_endpoint_modules`
+     * as kept off by configuration.
      */
     val endpointsEnabled: Boolean,
-    /**
-     * Off by default, unlike [endpointsEnabled]. The route bridge module hooks OpenTelemetry's own
-     * internal classes, so it depends on the OpenTelemetry agent's version.
-     */
+    /** Off by default, unlike [endpointsEnabled]. */
     val otelBridgeEnabled: Boolean,
     /**
      * Off by default. Marks every payload of this run as a test run.
      */
     val testRun: Boolean,
     /**
-     * Annotation types the adopter names as callback annotations, in the order written. A method that
-     * carries one, directly or through meta-annotations, has an outside caller of kind
-     * `CALLBACK_ANNOTATION`, as for the built-in list. Empty unless `callbackAnnotations` is set. An
-     * entry that is not a well-formed type name is dropped with a WARNING.
+     * Annotation types the adopter names as callback annotations, in the order written. Empty unless
+     * `callbackAnnotations` is set. An entry that is not a well-formed type name is dropped with a
+     * WARNING.
      */
     val callbackAnnotations: List<CallbackAnnotationName>,
     /**
@@ -112,11 +86,7 @@ data class AgentConfig(
     val disabledEndpointModules: List<String>,
     /**
      * Why the agent refuses this configuration, one message for each problem, or empty when it
-     * accepts it. A set [exportUrl] the agent cannot use, a plain http [exportUrl] on an
-     * `otherlode.dev` host while [authToken] is set, and an [authToken] with a character outside
-     * `!` to `~`, each add one. [dev.otherlode.Agent] logs each as an ERROR, unless [enabled] is false,
-     * and turns itself off for this JVM. No message quotes the token, or any of the URL but an
-     * underscore host.
+     * accepts it. No message quotes the token, or any of the URL but an underscore host.
      */
     val refusals: List<String> = emptyList(),
 ) {

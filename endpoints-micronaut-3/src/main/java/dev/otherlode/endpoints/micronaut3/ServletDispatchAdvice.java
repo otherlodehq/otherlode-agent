@@ -13,19 +13,17 @@ import net.bytebuddy.asm.Advice;
  * the handler calls once per request with the route it chose, before the filters and the handler.
  * A status route arrives as a {@code StatusRouteMatch} and counts nothing.
  *
- * <p>From micronaut-servlet 3.3 the handler dispatches a CORS preflight to the first route that
- * matches the path under any verb. A route counts only when its verb equals the request's.
+ * <p>A route counts only when its verb equals the request's.
  *
  * <p>Counting follows {@code DispatchAdvice}: the match's {@code UriRoute} is the registered key,
  * an unseen route is recorded without a handler join, and a HEAD route beside a {@code @Get}
  * counts against the GET endpoint.
- *
- * <p>The advice body is inlined into the woven method, so {@code onEnter} stays one flat body with
- * no helper methods.
  */
 public class ServletDispatchAdvice {
     private static final String MODULE = "micronaut-3";
 
+    // Advice inlines only this method's bytecode, so a helper call here would stay a real call that
+    // the target loader cannot resolve. Keep the body flat.
     @Advice.OnMethodEnter(suppress = Throwable.class)
     public static void onEnter(@Advice.Argument(0) HttpRequest<?> request, @Advice.Argument(2) RouteMatch<?> match) {
         try {

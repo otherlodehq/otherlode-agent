@@ -12,17 +12,15 @@ import net.bytebuddy.asm.Advice;
  * counts, unless it is an unregistered WebSocket route. Any other {@code RouteMatch}, such as a
  * {@code StatusRouteMatch}, counts nothing.
  *
- * <p>The match's {@code UriRoute} is the key {@code Micronaut3Module.declare} registered the route
- * under. A route no registration saw is recorded at dispatch, with no handler join. An unregistered
+ * <p>A route no registration saw is recorded at dispatch, with no handler join. An unregistered
  * HEAD route whose method carries the {@code @Get} stereotype is recorded against the GET endpoint
  * of the same template.
- *
- * <p>The advice body is inlined into the woven method, so {@code onEnter} stays one flat body with
- * no helper methods.
  */
 public class DispatchAdvice {
     private static final String MODULE = "micronaut-3";
 
+    // Advice inlines only this method's bytecode, so a helper call here would stay a real call that
+    // the target loader cannot resolve. Keep the body flat.
     @Advice.OnMethodEnter(suppress = Throwable.class)
     public static void onEnter(@Advice.Argument(0) RouteMatch<?> match) {
         try {

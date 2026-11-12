@@ -14,14 +14,10 @@ import java.util.Deque;
 import net.bytebuddy.asm.Advice;
 
 /**
- * Woven onto {@code Routing.executeResult}, Ktor's dispatch point. It runs once per matched
- * request, with the winning route resolved, before that route's handler pipeline runs. The method
- * is private and {@code suspend}, so it is matched by name and the route is bound as argument
- * index 1.
+ * Woven onto {@code Routing.executeResult}, Ktor's dispatch point.
  *
- * <p>{@link HandleAdvice} registers under the route node's own identity, so the first lookup
- * here usually succeeds. A route this module never saw register falls back to walking the route
- * up to the root and recording it as discovered by dispatch.
+ * <p>A route this module never saw register falls back to walking the route up to the root and
+ * recording it as discovered by dispatch.
  */
 public class ExecuteResultAdvice {
     private static final String MODULE = "ktor-2";

@@ -13,7 +13,6 @@ class FrameworkMarkerDefinition(
     val classSets: List<List<String>>,
 )
 
-/** The markers the agent looks for. */
 object FrameworkMarkers {
     val ALL: List<FrameworkMarkerDefinition> =
         listOf(
@@ -110,10 +109,7 @@ class FrameworkMarkerRegistry(
         }
     }
 
-    /**
-     * Whether some marker in the list has not been seen yet, so the loaded classes are still worth
-     * reading.
-     */
+    /** Whether some marker in the list has not been seen yet. */
     fun hasUnseen(): Boolean = seen.size < markers.size
 
     /** Every marker seen so far, in the fixed list's order. */

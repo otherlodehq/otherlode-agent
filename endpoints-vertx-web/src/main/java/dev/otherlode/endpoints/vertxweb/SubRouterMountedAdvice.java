@@ -10,9 +10,6 @@ import net.bytebuddy.asm.Advice;
  * {@code {"mounting", router, route}}, so the walk skips the route meanwhile; exit raises
  * {@code {"mount", router, route, child}}, or {@code {"mountFailed", router, route}} when the call
  * throws. The router is the one the mount route belongs to.
- *
- * <p>The advice bodies are inlined into the woven method, so the advice methods stay flat bodies
- * with no helper methods.
  */
 public class SubRouterMountedAdvice {
     private static final String MODULE = "vertx-web";

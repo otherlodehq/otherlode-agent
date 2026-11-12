@@ -14,9 +14,7 @@ import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
 
 /**
  * Woven onto {@code RequestMappingInfoHandlerMapping.handleMatch(RequestMappingInfo, String,
- * HttpServletRequest)}, Spring MVC's dispatch point. It runs once per matched request, before the
- * handler, with the winning {@link RequestMappingInfo} narrowed to the patterns that matched, best
- * match first, and the matched verb.
+ * HttpServletRequest)}, Spring MVC's dispatch point.
  *
  * <p>A lookup that is not a call of the route it matches counts nothing: one made by {@code
  * HandlerMappingIntrospector}, an async redispatch, a CORS preflight, a lookup made before {@code
@@ -25,13 +23,10 @@ import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
  * HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE}. A forward or an include counts.
  *
  * <p>The advice is written against the {@code javax} servlet types and bound to the {@code
- * jakarta} ones by prefix, so one class covers every supported Spring Framework major version.
+ * jakarta} ones by prefix.
  *
  * <p>The {@link RequestMappingInfo} is built per request, so the key is rebuilt by value as {@code
  * List.of(pattern, verb)}, the key {@link RegisterHandlerMethodAdvice} registers.
- *
- * <p>The advice body is inlined into the woven method, so {@code onEnter} stays one flat body with
- * no helper methods.
  */
 public class HandleMatchAdvice {
     private static final String MODULE = "spring-webmvc";
@@ -39,6 +34,8 @@ public class HandleMatchAdvice {
             "org.springframework.web.servlet.handler.HandlerMappingIntrospector$AttributesPreservingRequest";
     private static final String DISPATCHER_CONTEXT = "org.springframework.web.servlet.DispatcherServlet.CONTEXT";
 
+    // Advice inlines only this method's bytecode, so a helper call here would stay a real call that
+    // the target loader cannot resolve. Keep the body flat.
     @Advice.OnMethodEnter(suppress = Throwable.class)
     public static void onEnter(
             @Advice.Argument(0) RequestMappingInfo info,

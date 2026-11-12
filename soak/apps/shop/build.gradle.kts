@@ -17,8 +17,7 @@ dependencies {
 
     compileOnly("jakarta.servlet:jakarta.servlet-api")
 
-    // Each is taken without its own dependencies, so the jar list holds only the libraries the
-    // soak test plants a status for.
+    // Without transitives, so the jar list holds only the libraries the soak test plants a status for.
     implementation("com.google.guava:guava:33.7.2-jre") { isTransitive = false }
     implementation("org.apache.commons:commons-csv:1.14.1") { isTransitive = false }
     runtimeOnly("org.apache.commons:commons-text:1.14.0") { isTransitive = false }

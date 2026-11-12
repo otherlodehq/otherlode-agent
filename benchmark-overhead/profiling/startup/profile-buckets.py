@@ -1,5 +1,3 @@
-# Buckets a collapsed async-profiler wall profile of PetClinic startup by what the main thread was
-# doing: premain, each part of the transform pipeline, or the application.
 # usage: profile-buckets.py <collapsed profile> [main|<thread name prefix>]
 # Profile with async-profiler 4.x: -agentpath:<libasyncProfiler>=start,event=wall,interval=1ms,file=out.txt,collapsed
 import sys, collections, re

@@ -7,49 +7,14 @@ import com.sun.net.httpserver.HttpServer
 import java.net.InetSocketAddress
 import java.nio.charset.StandardCharsets
 
+// Each odd shape in the demo server is deliberate: the demo report shows a finding for it.
 private const val FREE_SHIPPING_THRESHOLD = 100.0
 
 /**
- * Two endpoints and one feature-flagged class, illustrating three things static analysis can't
- * catch.
+ * Two endpoints and one feature-flagged class.
  *
  * `/checkout`'s free-shipping branch is only ever exercised one way, given how
- * [com.example.demo.client] calls it. `/promo` is reachable, but never called at all -
- * both are method-level "loaded but never hit" findings. [LegacyDiscountCalculator] is a level
- * further: its feature flag is always off in this demo, so the class itself never loads, which
- * only the static baseline (opted into below via `staticBaselineEnabled=true`) can report.
- * [formatTotal]'s two optional parameters add a fourth: [handleCheckout] always supplies
- * `decimals` and never supplies `currency`, giving the omission tier one finding of each kind.
- *
- * [PromoHandler.handle] also demonstrates an unreached cluster: it alone calls [applyPromoCode],
- * which alone calls [PromoRepository.find], so a client that never calls `/promo` leaves all three
- * methods, and `PromoRepository` itself, unreached together. [handleCheckout] demonstrates the
- * same call-edge attribution for a class that never loads at all: it calls
- * [LegacyDiscountCalculator]'s constructor and `apply`, and reads a static field of [LegacyRates],
- * both under the branch this demo never takes; the constructor and the field read are two
- * different ways an unloaded class is reached from [handleCheckout]. [handleCheckout] also holds
- * [respond] as a function-typed value and calls it through that value: kotlinc compiles the
- * reference to its own class, a body class, whose `invoke` only the reference's holder ever
- * calls. Calling it on every request keeps that `invoke` and [respond] itself out of
- * every unreached cluster, which proves the body-class edge rather than manufacturing a finding.
- *
- * The two handlers are registered in deliberately different shapes. `/checkout` takes a function
- * reference, which Kotlin converts to the Java [HttpHandler] interface through `invokedynamic`:
- * the handler is a hidden class with no stable name, so the endpoint carries no handler join and
- * the collector learns which method backs it only from the call graph. `/promo` takes
- * [PromoHandler], a named class, so its endpoint record names `PromoHandler.handle` and the
- * collector can put the route beside that method's never-hit row and its unreached cluster's root.
- *
- * Four more shapes cover the class findings otherlode-server reports. [main] names [AuditLog]
- * and [ReceiptPrinter] through class literals, which load a class without initialising it:
- * `AuditLog` is loaded and never initialised, and `ReceiptPrinter`, which has no static
- * initialiser, is loaded and never instantiated. [handleCheckout] builds every [Money] from pence,
- * leaving its pounds-and-pence constructor an unused overload, and always passes [Price]'s scale,
- * so the overload `@JvmOverloads` adds never runs and is never reported.
- *
- * [checkoutGreeting] and [farewellNote] sit in two files that `@file:JvmMultifileClass` joins into
- * one facade, `DemoText`, which holds only generated forwarders. [handleCheckout] calls the first,
- * and nothing calls the second, so its part never loads. Both parts read by their file names.
+ * [com.example.demo.client] calls it. `/promo` is reachable, but never called at all.
  */
 fun main() {
     val server = HttpServer.create(InetSocketAddress(DemoPorts.SERVER_PORT), 0)

@@ -1,7 +1,4 @@
-// Java fixture classes compiled with each javac version in the compiler matrix (ADR 0055), each through a toolchain of that
-// version at its own default target, for the record and switch rules in BranchSiteAnalyzer. The
-// sources under src/java21 use pattern switches and are compiled by 21 and later only. Never on the
-// test classpath directly: see the comment in fixtures-scala3/build.gradle.kts for why.
+// Never on the test classpath directly: see fixtures-scala3/build.gradle.kts for why.
 plugins {
     java
 }

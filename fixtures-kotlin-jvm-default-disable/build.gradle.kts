@@ -1,8 +1,4 @@
-// Kotlin fixture classes compiled with -jvm-default=disable, the default up to language version
-// 2.1, for generated-method marking (BranchSiteAnalyzer). In this mode an interface
-// default method is abstract and its real body lives in the interface's $DefaultImpls class, a
-// shape the root build's own mode never produces. Never on the test classpath directly: see the
-// comment in fixtures-scala3/build.gradle.kts for why.
+// Never on the test classpath directly: see fixtures-scala3/build.gradle.kts for why.
 import org.jetbrains.kotlin.gradle.dsl.JvmDefaultMode
 
 plugins {

@@ -17,12 +17,9 @@ class BranchDropCounts {
         classesWithDrops.incrementAndGet()
     }
 
-    /** The total number of dropped sites, every reason included. */
     fun total(): Long = countsByReason.values.sumOf { it.get() }
 
-    /** How many sites were dropped for [reason]. */
     fun countOf(reason: BranchDropReason): Long = countsByReason.getValue(reason).get()
 
-    /** How many classes dropped at least one site. */
     fun classesWithDrops(): Long = classesWithDrops.get()
 }

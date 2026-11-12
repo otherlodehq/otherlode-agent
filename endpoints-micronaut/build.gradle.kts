@@ -34,12 +34,10 @@ dependencies {
     compileOnly(project(":bootstrap"))
     compileOnly("net.bytebuddy:byte-buddy:$byteBuddyVersion")
 
-    // Compiled against the oldest supported release, per ADR 0017. Never `implementation`: Micronaut
-    // belongs to the target application and must not be shaded into the agent jar.
+    // The oldest supported release. Never `implementation`: Micronaut must not be shaded into the agent jar.
     compileOnly("io.micronaut:micronaut-router:4.0.0")
     compileOnly("io.micronaut:micronaut-http-server:4.0.0")
 
-    // Micronaut 3's router and server jars, read as class files by the matcher test, never loaded.
     micronaut3("io.micronaut:micronaut-router:3.10.15")
     micronaut3("io.micronaut:micronaut-http-server:3.10.15")
 }
@@ -51,10 +49,6 @@ kotlin {
 val java25Launcher = javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(25)) }
 val java25Compiler = javaToolchains.compilerFor { languageVersion.set(JavaLanguageVersion.of(25)) }
 
-// One test source set per Micronaut release under test. The controllers need Micronaut's annotation
-// processor at the release they run on, so each set compiles the shared sources again with its own.
-// `test` runs the newest 4.x, micronaut40Test the 4.0.0 floor and micronaut5Test the newest 5.x, which
-// needs class-file version 69 and so JDK 25 to compile and to run.
 fun registerMicronautTests(
     setName: String,
     micronautVersion: String,
@@ -118,8 +112,7 @@ fun registerMicronautTests(
     tasks.check { dependsOn(testTask) }
 }
 
-// Micronaut 5 publishes for JVM 25, and the root build compiles this module for 17. The suite that
-// needs it resolves for 25 and compiles and runs on JDK 25.
+// Micronaut 5 publishes for JVM 25, and the root build compiles this module for 17.
 tasks.withType<KotlinCompile>().matching { it.name.contains("Micronaut5Test") }.configureEach {
     compilerOptions.freeCompilerArgs.add("-Xskip-metadata-version-check")
 }

@@ -38,7 +38,7 @@ import dev.otherlode.export.BranchSite as BranchSitePayload
  * Only methods [methodFilter] accepts contribute branch sites, first lines, and inline marks, apart from
  * the first line of `<clinit>`. A `$default` method is found and resolved regardless of [methodFilter].
  *
- * This is read-only. It only sizes the probe array and builds manifest metadata.
+ * This is read-only.
  *
  * A switch's outcome count is one per case entry whose target is not the default label, plus the default.
  * The filler entries of a sparse `TABLESWITCH` jump to the default label, so they count as the default outcome.
@@ -53,13 +53,7 @@ object BranchSiteAnalyzer {
         val unresolvedDefaultSites: List<Pair<String, String>> = emptyList(),
         val scalaGetterSites: List<ScalaGetterSite> = emptyList(),
         val unresolvedScalaGetterSites: List<Pair<String, String>> = emptyList(),
-        /**
-         * Whether the class's own original bytecode declares a `<clinit>`. `<clinit>` is excluded from
-         * [dev.otherlode.instrumentation.TypeMatchPolicy.methodMatcher], so it never contributes a
-         * [sites] entry or an ordinary method probe. This flag lets
-         * [dev.otherlode.instrumentation.OtherlodeInstrumentation] give such a class one METHOD probe
-         * anyway. A marker interface, or a class with only instance methods, has none.
-         */
+        /** Whether the class's own original bytecode declares a `<clinit>`. */
         val hasTypeInitializer: Boolean = false,
         private val callEdgesByMethod: Map<Pair<String, String>, List<CallEdge>> = emptyMap(),
         /** Dotted, as the class file's own super_class entry names it. Null for `java.lang.Object` and on [EMPTY]. */
@@ -68,11 +62,7 @@ object BranchSiteAnalyzer {
         val interfaceNames: List<String> = emptyList(),
         private val droppedOrdinalsByMethod: Map<Pair<String, String>, Set<Int>> = emptyMap(),
         private val generatedByMethod: Map<Pair<String, String>, GeneratedBy> = emptyMap(),
-        /**
-         * Whether any method this analysis visited carried at least one `LineNumberTable` entry.
-         * False when debug info was stripped (ProGuard, R8), or the class carries none to begin
-         * with.
-         */
+        /** Whether any method this analysis visited carried at least one `LineNumberTable` entry. */
         val hasLineNumbers: Boolean = false,
         /**
          * Whether the class carries a class-level annotation shaped like `kotlin.Metadata`: one package
@@ -186,9 +176,7 @@ object BranchSiteAnalyzer {
 
         /**
          * Each kept site of [sites], in site index order, with its outcomes numbered, given roles
-         * and keyed by [KeptBranchSite.of], and with its guard and guarded lines. This is the one
-         * numbering both the manifest's BRANCH and METHOD probes and the static baseline's declared
-         * methods use.
+         * and keyed by [KeptBranchSite.of], and with its guard and guarded lines.
          */
         val keptSites: List<KeptBranchSite> by lazy {
             KeptBranchSite.of(sites, className, siteGuards) { name, descriptor -> reportedNames[name to descriptor] ?: name }
@@ -221,7 +209,7 @@ object BranchSiteAnalyzer {
          * The out-of-scope classes this method references, dotted, first seen first: its own
          * bytecode, signature and annotations, plus those of every pass-through it reaches, as
          * [callsOf] follows them. Empty for any method that does not get a METHOD probe. JDK
-         * classes are still listed here; the transform drops them.
+         * classes are still listed here.
          */
         fun referencesOf(
             name: String,
@@ -240,8 +228,7 @@ object BranchSiteAnalyzer {
 
         /**
          * Whether the method is a Kotlin inline function, detected from its own `$i$f$<name>`
-         * marker local. Always false on [EMPTY], and false when the class carries no debug info,
-         * since the marker lives only in the LocalVariableTable.
+         * marker local. Always false on [EMPTY], and false when the class carries no debug info.
          */
         fun isInline(
             name: String,
@@ -329,10 +316,9 @@ object BranchSiteAnalyzer {
     )
 
     /**
-     * Parsed method tables of classes referenced across a class boundary, shared between analyses
-     * so a class that many others reference is read and parsed once. Bounded and
-     * least-recently-used. Safe to share between threads. A class whose bytes cannot be read is
-     * remembered as unreadable.
+     * Parsed method tables of classes referenced across a class boundary, shared between analyses.
+     * Bounded and least-recently-used. Safe to share between threads. A class whose bytes cannot be
+     * read is remembered as unreadable.
      *
      * It also holds the [TypeHeader] of each type the override walk reads and, for each annotation
      * type, whether it reaches a listed or named annotation ([CallbackAnnotationFinder.Reach]).

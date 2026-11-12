@@ -12,18 +12,15 @@ import org.springframework.web.util.pattern.PathPattern;
 
 /**
  * Woven onto the exit of {@code PathResourceLookupFunction.apply(ServerRequest)}, the lookup
- * function behind {@code RouterFunctions.resources(pattern, location)}. A present result means
- * the route function returns this resource route. The dispatch key is {@code List.of("fnres",
- * lookupFunction, nestPattern, verb)} and must match the key in {@code SpringWebMvcModule.declare}.
+ * function behind {@code RouterFunctions.resources(pattern, location)}. The dispatch key is {@code
+ * List.of("fnres", lookupFunction, nestPattern, verb)} and must match the key in {@code
+ * SpringWebMvcModule.declare}.
  *
  * <p>A request counts only for {@code GET}, {@code HEAD} and {@code OPTIONS}. An introspector
  * lookup, an async redispatch and a CORS preflight are no call. Every present result marks the
  * request through {@link OtherlodeEndpoints#resourceServed}, so {@link SetAttributesAdvice} does
  * not count it again. The advice is written against the {@code javax} servlet types and bound to
  * the {@code jakarta} ones, by prefix, when {@code ServerRequest.servletRequest()} returns them.
- *
- * <p>The advice body is inlined into the woven method, so {@code onExit} stays one flat body with
- * no helper methods.
  */
 public class ResourceLookupAdvice {
     private static final String MODULE = "spring-webmvc";
@@ -32,6 +29,8 @@ public class ResourceLookupAdvice {
             "org.springframework.web.servlet.handler.HandlerMappingIntrospector$AttributesPreservingRequest";
     private static final String DISPATCHER_CONTEXT = "org.springframework.web.servlet.DispatcherServlet.CONTEXT";
 
+    // Advice inlines only this method's bytecode, so a helper call here would stay a real call that
+    // the target loader cannot resolve. Keep the body flat.
     @Advice.OnMethodExit(suppress = Throwable.class)
     public static void onExit(
             @Advice.This Object lookupFunction,

@@ -1,6 +1,5 @@
 package com.example.scalatarget
 
-/** An extension method with a default; the receiver is an ordinary first JVM parameter. */
 object Extensions {
   extension (n: Int)
     def pad(width: Int = 5): String = {
@@ -9,18 +8,15 @@ object Extensions {
     }
 }
 
-/** An `inline def` with a default: its getter is emitted and called, but the function itself has no bytecode. */
 object InlineHost {
   inline def inlineF(a: Int, b: Int = 7): Int = a + b
 }
 
-/** A defaulted constructor parameter on a Scala 3 enum, resolved the same way a case class's constructor default is. */
 enum Color(val code: Int = 0) {
   case Red extends Color(1)
   case Blue
 }
 
-/** Scala-3-only call patterns, kept separate from [[Driver]] since the scala2 fixture has no equivalents. */
 object Driver3 {
   def callExtensionAllOmitted(): String = {
     import Extensions.pad
@@ -35,7 +31,6 @@ object Driver3 {
   def callInline(): Int = InlineHost.inlineF(1)
 }
 
-/** A case class with a hand-written `a$access$0`, a name Scala 3.3.4 never generates. */
 case class Acc(private val a: Int) {
   def a$access$0: Int = a
 }

@@ -1,6 +1,5 @@
 package com.example.scalatarget
 
-/** Enums declared in the methods of an object: singleton cases only, a parameterised case beside singletons, and cases extending the constructor. */
 object LocalObjectHost {
   def singletons(): Int = {
     enum Pip {
@@ -60,7 +59,6 @@ object LocalObjectHost {
   }
 }
 
-/** Enums declared in the methods of a class, in a lambda, and two of one name in two methods. */
 class LocalClassHost {
   def singletons(): Int = {
     enum Rune {
@@ -110,7 +108,6 @@ class LocalClassHost {
   }
 }
 
-/** A trait whose method declares a local enum, so the host's lazy accessor is an interface method. */
 trait LocalTraitHost {
   def inTrait(): Int = {
     enum Tide {
@@ -120,12 +117,10 @@ trait LocalTraitHost {
   }
 }
 
-/** A companion trait declaring `fromOrdinal` generically. */
 trait LocalEnumCompanion[E] {
   def fromOrdinal(i: Int): E
 }
 
-/** A local enum whose explicit companion extends a generic trait declaring `fromOrdinal`, so scalac adds a bridge. */
 object LocalGenericHost {
   def generic(): Int = {
     enum Shade {
@@ -137,5 +132,4 @@ object LocalGenericHost {
   }
 }
 
-/** A class implementing the trait host, so its local enum is used. */
 class LocalTraitUser extends LocalTraitHost

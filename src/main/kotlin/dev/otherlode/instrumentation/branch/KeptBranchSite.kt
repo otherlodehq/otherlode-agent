@@ -45,7 +45,6 @@ data class KeptBranchSite(
     val outcomes: List<KeptBranchOutcome>,
     val guard: Int? = null,
 ) {
-    /** This site as the wire payload. */
     fun toPayload(): BranchSitePayload =
         BranchSitePayload(
             siteIndex = site.siteIndex,

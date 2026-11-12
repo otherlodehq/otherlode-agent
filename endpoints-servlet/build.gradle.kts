@@ -15,9 +15,7 @@ repositories {
 val kotlinVersion = "2.2.21"
 val byteBuddyVersion = "1.18.12"
 
-// The container release each test suite runs against, one property per line. The weekly framework
-// canary sets them to the newest release of the line; the compile-against floor (the Servlet 4.0
-// API below) is not one of them.
+// The framework canary sets these to the newest release of each line.
 val tomcat9Version = providers.gradleProperty("otherlode.framework.tomcat9").getOrElse("9.0.123")
 val tomcat10Version = providers.gradleProperty("otherlode.framework.tomcat10").getOrElse("10.1.61")
 val tomcat11Version = providers.gradleProperty("otherlode.framework.tomcat11").getOrElse("11.0.27")
@@ -31,25 +29,16 @@ val h2Version = providers.gradleProperty("otherlode.framework.h2").getOrElse("2.
 dependencies {
     implementation(project(":endpoints-api"))
 
-    // Compile-time only: at runtime OtherlodeEndpoints comes from the target JVM's bootstrap
-    // classloader, where BootstrapHolder appends the embedded jar (see the root project's
-    // build.gradle.kts for the full rationale).
+    // Compile-time only: at runtime OtherlodeEndpoints comes from the target JVM's bootstrap classloader.
     compileOnly(project(":bootstrap"))
 
-    // The route normaliser a mapping is checked against; the root project ships the wire module in
-    // the agent jar.
+    // compileOnly: the root project ships the wire module in the agent jar.
     compileOnly(project(":wire"))
 
-    // Needed directly for net.bytebuddy.asm.Advice (the Java advice class), for the EndpointModule
-    // types and for the ASM the class-file reads use. compileOnly: at runtime, ByteBuddy comes from
-    // the root project's own dependency once this module's classes are merged into the shaded
-    // agent jar.
     compileOnly("net.bytebuddy:byte-buddy:$byteBuddyVersion")
 
-    // Compiled against the oldest supported servlet API, per ADR 0017 and ADR 0074: Servlet 4.0 is
-    // the first to have HttpServletRequest.getHttpServletMapping. The advice is rebound to
-    // jakarta.servlet where the woven method takes that namespace. Never `implementation`: the
-    // servlet API belongs to the target application and must not be shaded into the agent jar.
+    // The oldest supported servlet API: Servlet 4.0 is the first to have getHttpServletMapping. Never
+    // `implementation`: the servlet API must not be shaded into the agent jar.
     compileOnly("javax.servlet:javax.servlet-api:4.0.1")
 
     testImplementation(project(":"))
@@ -69,10 +58,8 @@ sourceSets.test {
     kotlin.srcDir("src/shapes/kotlin")
 }
 
-// A test agent is installed as a real -javaagent on the test JVM's own command line, as
-// JaxRsTestAgent is: the container loads HttpServlet before any test method runs, and the weave
-// has to come first. The jar packages the suite's compiled test output; everything the agent's
-// premain references resolves off the test JVM's ordinary classpath.
+// A test agent must be a real -javaagent: the container loads HttpServlet before any test method
+// runs, and the weave has to come first.
 fun servletTestAgentJar(
     name: String,
     agentClass: String,
@@ -104,19 +91,12 @@ tasks.test {
     jvmArgumentProviders.add(agentArguments(tomcat10AgentJar))
 }
 
-/** A directory of test sources a suite compiles; [rewrite] turns its jakarta.servlet into javax.servlet. */
 class SourceDir(
     val path: String,
     val rewrite: Boolean = false,
     val excludes: List<String> = emptyList(),
 )
 
-/**
- * One container's suite, in its own JVM with a real -javaagent. The tests are written once against
- * jakarta.servlet. A suite for a javax container compiles a copy of them with the namespace
- * rewritten, so adding a container is a dependency list, a directory with its ServletContainer
- * and a suite.
- */
 fun containerSuite(
     name: String,
     kotlinDirs: List<SourceDir>,
@@ -260,9 +240,6 @@ containerSuite(
     implementation("org.eclipse.jetty:jetty-servlet:$jetty9Version")
 }
 
-// Spring Boot 2.7 on Jetty 9.4 puts the Servlet 4.0 API jar (javax.servlet-api 4.0.1, which
-// spring-boot-starter-jetty ships as jakarta.servlet-api 4.0.4) beside a container that has no
-// getHttpServletMapping, so the API's default method answers.
 containerSuite(
     "jetty9Servlet4Api",
     listOf(
@@ -280,8 +257,6 @@ containerSuite(
     implementation("javax.servlet:javax.servlet-api:4.0.1")
 }
 
-// A Spring Boot application on embedded Tomcat, with the servlet module and the Spring MVC module
-// both installed by the test agent from the module service files, as the agent finds them.
 containerSuite(
     "springBoot",
     listOf(SourceDir("src/springboot/kotlin")),

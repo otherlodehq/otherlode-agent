@@ -3,8 +3,5 @@
 
 package com.example.demo.server
 
-/**
- * The other file of the multi-file facade `DemoText`. Nothing calls this function, so its part,
- * `DemoText__DemoTextFarewellKt`, never loads, and the report names it by this file.
- */
+/** The other file of the multi-file facade `DemoText`. */
 fun farewellNote(): String = "come back soon"

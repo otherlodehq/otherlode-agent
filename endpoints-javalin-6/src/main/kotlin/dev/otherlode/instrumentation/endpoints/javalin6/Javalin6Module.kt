@@ -41,11 +41,6 @@ private fun parsedEndpointIsJavalin6(classLoader: ClassLoader): Boolean =
  *
  * It accepts `ParsedEndpoint` only when it declares `getEndpoint()`, and `ApiBuilder` only on a
  * class loader whose `ParsedEndpoint` has that shape, so it does not weave Javalin 7.
- *
- * The exit of the `ParsedEndpoint` constructor declares an endpoint. The entry of
- * `ParsedEndpoint.handle` counts it. The entry and exit of `ApiBuilder.crud` open and close a
- * registration scope that the registration advice reads to join each endpoint to the handler's
- * method.
  */
 class Javalin6Module : EndpointModule {
     override val name: String = "javalin-6"

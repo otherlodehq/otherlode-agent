@@ -15,44 +15,25 @@ val kotlinVersion = "2.2.21"
 val byteBuddyVersion = "1.18.12"
 val ktorVersion = "3.0.3"
 
-// The Ktor release the default test suite runs against. The weekly framework canary sets it to the
-// newest 3.x; compileOnly stays on ktorVersion, the 3.0.3 floor, as does the ktor3_0Test suite.
+// The framework canary sets this to the newest 3.x. compileOnly stays on ktorVersion, the 3.0.3 floor.
 val ktorTestVersion = providers.gradleProperty("otherlode.framework.ktor3").getOrElse("3.5.2")
 
 dependencies {
     implementation(project(":endpoints-api"))
 
-    // Compile-time only: at runtime OtherlodeEndpoints comes from the target JVM's bootstrap
-    // classloader, where BootstrapHolder appends the embedded jar (see the root project's
-    // build.gradle.kts for the full rationale).
+    // Compile-time only: at runtime OtherlodeEndpoints comes from the target JVM's bootstrap classloader.
     compileOnly(project(":bootstrap"))
 
-    // :endpoints-api depends on byte-buddy as `implementation`, which is never transitive, so it
-    // does not put ByteBuddy on this module's own compile classpath. Needed here directly for
-    // net.bytebuddy.asm.Advice (the Java advice classes) and for the EndpointModule types
-    // (TypeDescription, DynamicType.Builder, ElementMatcher) this module's own Kotlin code is
-    // written against. compileOnly: at runtime, ByteBuddy comes from the root project's own
-    // dependency once this module's classes are merged into the shaded agent jar.
     compileOnly("net.bytebuddy:byte-buddy:$byteBuddyVersion")
 
-    // Compiled against Ktor 3.0.3, the oldest 3.x release the module supports (ADR 0017): a
-    // module disables itself on a LinkageError against a version it does not match, and
-    // compiling against the floor keeps a newer-only reference out. Never `implementation`: Ktor
-    // must never be shaded into the agent jar, since it belongs to the target application.
+    // The oldest supported release. Never `implementation`: Ktor must not be shaded into the agent jar.
     compileOnly("io.ktor:ktor-server-core-jvm:$ktorVersion")
 
-    // Gives EndpointRegistry, EndpointInstrumentation, and BootstrapHolder to Ktor3TestAgent and
-    // the integration test below, the same way :endpoints-spring-webmvc's own tests depend on the
-    // root project.
     testImplementation(project(":"))
     testImplementation(kotlin("test"))
 
-    // Needed for net.bytebuddy.agent.builder.ResettableClassFileTransformer, the handle
-    // Ktor3TestAgent holds between its own premain install and Ktor3ModuleTest's teardown.
     testImplementation("net.bytebuddy:byte-buddy:$byteBuddyVersion")
 
-    // The default test suite runs against Ktor 3.5.2, the newest 3.x release this module supports.
-    // ktor-server-cio-jvm is the embedded engine the test starts a real server with.
     testImplementation("io.ktor:ktor-server-core-jvm:$ktorTestVersion")
     testImplementation("io.ktor:ktor-server-cio-jvm:$ktorTestVersion")
 }
@@ -61,12 +42,7 @@ kotlin {
     jvmToolchain(21)
 }
 
-// Ktor3TestAgent is installed as a real -javaagent on the test JVM's own command line, not through
-// ByteBuddyAgent's self-attach: see Ktor3TestAgent's Javadoc for why self-attach from inside the
-// test method is too late for this module specifically. The jar packages the whole compiled test
-// output, which is small and already includes Ktor3TestAgent; everything the agent's premain
-// references (EndpointInstrumentation, ByteBuddy) resolves off the test JVM's ordinary classpath,
-// which is already in place before any agent's premain runs.
+// Ktor3TestAgent must be a real -javaagent, not a self-attach: see the comment on it.
 val ktor3TestAgentJar =
     tasks.register<Jar>("ktor3TestAgentJar") {
         archiveBaseName.set("ktor3-test-agent")
@@ -74,8 +50,6 @@ val ktor3TestAgentJar =
         from(sourceSets.test.get().output)
         manifest {
             attributes["Premain-Class"] = "dev.otherlode.instrumentation.endpoints.ktor3.Ktor3TestAgent"
-            // Both tiers register retransformation-capable transformers, which the JVM
-            // allows only for an agent whose manifest says so.
             attributes["Can-Retransform-Classes"] = "true"
         }
     }
@@ -90,10 +64,6 @@ tasks.test {
     )
 }
 
-// A second JVM Test Suite exercises the exact same test sources (src/test/kotlin) against Ktor
-// 3.0.3, the floor of the 3.x line, in its own forked test JVM with its own classpath, so the one
-// Ktor3Module this module ships is proven against both ends of Ktor 3.x without a per-version
-// module or a per-version copy of the test file.
 testing {
     suites {
         register<JvmTestSuite>("ktor3_0Test") {
@@ -102,9 +72,6 @@ testing {
                 kotlin.srcDir("src/test/kotlin")
             }
             dependencies {
-                // Unlike the built-in `test` suite, a suite registered here has no implicit
-                // dependency on this same project's own production code, so Ktor3Module itself
-                // has to be added explicitly.
                 implementation(project())
                 implementation(project(":"))
                 implementation(project(":endpoints-api"))
@@ -117,8 +84,6 @@ testing {
     }
 }
 
-// Same -javaagent wiring as the default test task above, built from ktor3_0Test's own compiled
-// output so its Ktor3TestAgent resolves Ktor 3.0.3's classes rather than 3.5.2's.
 val ktor30TestAgentJar =
     tasks.register<Jar>("ktor30TestAgentJar") {
         archiveBaseName.set("ktor3-0-test-agent")
@@ -126,8 +91,6 @@ val ktor30TestAgentJar =
         from(testing.suites.named<JvmTestSuite>("ktor3_0Test").map { it.sources.output })
         manifest {
             attributes["Premain-Class"] = "dev.otherlode.instrumentation.endpoints.ktor3.Ktor3TestAgent"
-            // Both tiers register retransformation-capable transformers, which the JVM
-            // allows only for an agent whose manifest says so.
             attributes["Can-Retransform-Classes"] = "true"
         }
     }

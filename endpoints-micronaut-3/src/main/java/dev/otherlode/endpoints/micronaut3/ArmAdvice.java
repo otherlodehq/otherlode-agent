@@ -8,13 +8,12 @@ import net.bytebuddy.asm.Advice;
  * {@code RoutingInBoundHandler}, micronaut-servlet's {@code ServletHttpHandler} and micronaut-aws's
  * {@code MicronautLambdaContainerHandler}. It declares the {@code "dispatch-point-constructed"}
  * marker, which {@code DispatchGate} reads as the signal to declare the routers it holds.
- *
- * <p>The advice body is inlined into the woven method, so {@code onExit} stays one flat body with
- * no helper methods.
  */
 public class ArmAdvice {
     private static final String MODULE = "micronaut-3";
 
+    // Advice inlines only this method's bytecode, so a helper call here would stay a real call that
+    // the target loader cannot resolve. Keep the body flat.
     @Advice.OnMethodExit(suppress = Throwable.class)
     public static void onExit() {
         try {

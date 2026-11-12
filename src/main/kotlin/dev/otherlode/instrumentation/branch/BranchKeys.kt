@@ -6,7 +6,6 @@ import java.security.MessageDigest
  * Derives the branch key of each kept branch outcome, and the site key of each kept site, from the
  * site's condition fingerprint.
  *
- * An outcome or site missing from a result has no key, because the agent could not name it safely.
  * Two tracked sites in one method collide, and get no key, when they share a
  * [BranchSite.conditionFingerprint] and [BranchSite.inlinedFromClassName]. Dropped sites count
  * toward a collision. A site with a null fingerprint never gets a key and never takes part in a

@@ -19,17 +19,11 @@ repositories {
     mavenCentral()
 }
 
-// The demo server and client run on this classpath, not the module's runtime classpath. That one
-// carries the root project's unshaded classes for the stub collector, and on a server's `-cp` it
-// would load the agent ahead of the shaded `-javaagent` jar and list the agent's own libraries as
-// the demo's dependencies.
+// The demo server and client run on this classpath. The runtime classpath carries the root project's
+// unshaded classes, which on a server's `-cp` would load ahead of the shaded `-javaagent` jar.
 val demoAppRuntime by configurations.creating
 
 dependencies {
-    // The stub collector decodes the root project's generated protobuf
-    // classes directly (dev.otherlode.proto.*); the demo server
-    // and client don't reference Otherlode at all, matching how a real
-    // consumer's app never depends on the agent at compile time.
     implementation(project(":"))
     implementation("com.google.protobuf:protobuf-java:3.25.5")
 
@@ -105,9 +99,6 @@ tasks.register("runDemo") {
 
 val springDemoClientMainClass = "com.example.demo.client.SpringDemoClientMainKt"
 
-// Boot's context refresh is slower to reach a listening port than the plain demo server's bare
-// HttpServer.create/start, so this task gets its own, longer port-wait timeout rather than
-// sharing portWaitTimeoutSeconds.
 val springPortWaitTimeoutSeconds = 60L
 
 tasks.register("runSpringDemo") {
@@ -181,27 +172,22 @@ tasks.register("runSpringDemo") {
 val stackEndpoint = providers.gradleProperty("otherlodeEndpoint").getOrElse("http://localhost:4319")
 val stackAgentToken = providers.gradleProperty("otherlodeAgentToken").getOrElse("local-stack-agent-token")
 val stackServerUrl = providers.gradleProperty("otherlodeServerUrl").getOrElse("http://localhost:4320")
-// The demo only reads the server's API, so it needs a read key. The stack's collector holds the ingest key.
 val stackServerReadApiKey =
     providers.gradleProperty("otherlodeServerReadApiKey").getOrElse("otl_stack-read-key-for-local-dev-only")
 val stackServiceVersion = providers.gradleProperty("otherlodeServiceVersion").getOrElse("stack-demo")
 val springStackServiceVersion = providers.gradleProperty("otherlodeServiceVersion").getOrElse("spring-stack-demo")
 
-// One service as the stack's read API knows it: the name and version a demo's agent reports under.
 class StackService(
     val name: String,
     val version: String,
     namespace: String?,
 ) {
-    // The server's path for the service: under its namespace when one is named.
     val path: String =
         namespace?.let {
             "/api/v1/namespaces/${URLEncoder.encode(it, Charsets.UTF_8).replace("+", "%20")}/services/$name"
         } ?: "/api/v1/services/$name"
 }
 
-// The demo runs in the unspecified namespace unless OTHERLODE_SERVICE_NAMESPACE names one. The agent
-// reads it from its own environment, so the stack tasks hand it to the demo server as it is.
 val stackServiceNamespace: String? =
     providers
         .environmentVariable("OTHERLODE_SERVICE_NAMESPACE")
@@ -260,8 +246,6 @@ tasks.register("runSpringDemoStack") {
     }
 }
 
-// Runs one demo server under the agent against the stack's collector, drives it with its client,
-// waits for the shutdown flush to land, then prints the server's report for [service].
 fun runStackDemo(
     service: StackService,
     includePackages: String,
@@ -302,10 +286,8 @@ fun runStackDemo(
     println("otherlode demo: done")
 }
 
-// Runs one program under the agent against the stack's collector until it exits by itself, waits
-// for its shutdown flush to land, then prints the server's report for [service]. The program's
-// first argument is how long to wait before exiting, so its static baseline scan and a regular
-// flush land first.
+// The program's first argument is how long to wait before exiting, so its static baseline scan and
+// a regular flush land first.
 fun runStackOneShot(
     service: StackService,
     includePackages: String,
@@ -329,8 +311,6 @@ fun runStackOneShot(
             throw GradleException("otherlode demo: ${service.name} did not exit within ${oneShotTimeoutSeconds}s")
         }
     } finally {
-        // A program that hung, or a build that was cancelled mid-wait, must not leave a JVM behind
-        // still sending to the collector.
         if (program.process.isAlive) program.process.destroyForcibly().waitFor()
         program.outputThread.join()
     }
@@ -341,8 +321,6 @@ fun runStackOneShot(
     printStackReport(service)
 }
 
-// How long a one-shot program may run: its own wait before exiting, plus JVM start-up and the
-// agent's shutdown flush, with room to spare.
 val oneShotTimeoutSeconds = flushIntervalSeconds + 60
 
 fun requireStackCollector() {
@@ -354,7 +332,6 @@ fun requireStackCollector() {
     }
 }
 
-// The -javaagent argument for one stack run of [service] as instance [instanceId].
 fun stackAgentArg(
     service: StackService,
     includePackages: String,
@@ -379,8 +356,6 @@ fun stackAgentArg(
 
 val shapesStackServiceVersion = providers.gradleProperty("otherlodeServiceVersion").getOrElse("shapes-stack-demo")
 
-// The Scala fixture modules' `Driver` methods runShapesStack calls. The rest of each module's
-// classes and methods are left for the report to show as never run.
 val scalaDriverCalls =
     listOf("callSimpleAllOmitted", "callCurried", "callCaseClassApply", "callTraitDefault", "callThroughPlainOverridesOnly")
 
@@ -435,7 +410,6 @@ tasks.register("runShapesStack") {
 fun stackServiceNamespaceEnv(): Map<String, String> =
     stackServiceNamespace?.let { mapOf("OTHERLODE_SERVICE_NAMESPACE" to it) } ?: emptyMap()
 
-// A suffix that names the namespace for a printed line, or an empty string when there is none.
 fun stackNamespaceSuffix(): String = stackServiceNamespace?.let { " in namespace $it" } ?: ""
 
 class HttpResult(
@@ -473,8 +447,6 @@ fun readApi(
     return groovy.json.JsonSlurper().parseText(result.body) as Map<*, *>
 }
 
-// Whether the server reports this run's instance as ended cleanly: its shutdown flush, the delta
-// batch marked final_flush, has landed. False while the service or the instance is unknown to it.
 fun instanceEndedCleanly(
     service: StackService,
     instanceId: String,
@@ -486,11 +458,8 @@ fun instanceEndedCleanly(
         false
     }
 
-// The agent's shutdown hook sends one last delta batch, and the collector forwards it
-// asynchronously, so it can still be in flight after the demo server has exited. Wait until the
-// server has it, so the report is not read before the last hits arrive; because the store keeps
-// data across runs, "any probes known" cannot tell one run from the last. The instance id is fresh
-// each run, so its ended_cleanly flag can only come from this run's final flush.
+// The collector forwards the agent's last delta batch asynchronously, so it can still be in flight
+// after the demo server has exited.
 fun awaitShutdownFlush(
     service: StackService,
     instanceId: String,
@@ -505,8 +474,6 @@ fun awaitShutdownFlush(
     )
 }
 
-// A site row's condition parts as one line: code as sent, a string literal
-// quoted, a placeholder as an ellipsis.
 fun conditionText(parts: List<*>): String =
     parts.joinToString("") { part ->
         val p = part as Map<*, *>
@@ -517,8 +484,7 @@ fun conditionText(parts: List<*>): String =
         }
     }
 
-// The result a never-hit outcome did not reach. The agent writes a condition
-// as its fall-through side reads it.
+// The agent writes a condition as its fall-through side reads it.
 fun neverHappened(outcome: Map<*, *>): String =
     when (outcome["role"]) {
         "fall_through" -> "was never true"
@@ -528,7 +494,6 @@ fun neverHappened(outcome: Map<*, *>): String =
         else -> "never ran"
     }
 
-// The lines only this outcome reaches, or a note that it guards nothing.
 fun guardedText(outcome: Map<*, *>): String {
     fun ranges(key: String) =
         (outcome[key] as List<*>).joinToString(", ") { range ->
@@ -546,8 +511,6 @@ fun guardedText(outcome: Map<*, *>): String {
     }
 }
 
-// Each outcome that put a never-hit site row on the list, as its condition,
-// the result that never happened and the lines only it reaches.
 fun siteFindings(row: Map<*, *>): List<String> {
     val condition = conditionText(row["condition"] as List<*>).ifEmpty { "branch" }
     return (row["outcomes"] as List<*>)
@@ -556,9 +519,7 @@ fun siteFindings(row: Map<*, *>): List<String> {
         .map { "`$condition` ${neverHappened(it)}, ${guardedText(it)}" }
 }
 
-// A constructor's name as source reads it: `constructor(...)` with its
-// parameters' simple type names, read from the JVM descriptor. The stub collector
-// prints constructors the same way.
+// The stub collector prints constructors the same way.
 fun constructorText(descriptor: String): String {
     val primitives =
         mapOf('Z' to "boolean", 'B' to "byte", 'C' to "char", 'S' to "short", 'I' to "int", 'J' to "long", 'F' to "float", 'D' to "double")
@@ -583,28 +544,19 @@ fun constructorText(descriptor: String): String {
     return "constructor(${types.joinToString(", ")})"
 }
 
-// The source file a row's class reads as: set for a file facade or a multi-file
-// part that has one, null for every other kind. A server that sends no kotlin_kind
-// gives null, so the row reads by its JVM name.
 fun sourceFileNaming(row: Map<*, *>): String? {
     val sourceFile = (row["source_file"] as? String).orEmpty()
     val isFileKind = row["kotlin_kind"] == "file_facade" || row["kotlin_kind"] == "multifile_part"
     return sourceFile.takeIf { isFileKind && it.isNotEmpty() }
 }
 
-// A class row's name: a file facade or a multi-file part as its source file, a multi-file facade
-// by its JVM name with a tag, anything else by its JVM name. The stub collector prints classes
-// the same way.
+// The stub collector prints classes the same way.
 fun classText(row: Map<*, *>): String {
     val className = row["class_name"] as String
     val tag = if (row["kotlin_kind"] == "multifile_facade") " (multi-file facade)" else ""
     return sourceFileNaming(row) ?: "$className$tag"
 }
 
-// A method row or node as `Class#name`, or `Class#constructor(...)` for a constructor. A member of
-// a file facade or a multi-file part reads as a top-level function with its file, such as
-// `handleCheckout (DemoServerMain.kt)`, and a line joins the file: `handleCheckout
-// (DemoServerMain.kt:121)`. A member of a multi-file facade carries the facade's tag.
 fun methodText(
     node: Map<*, *>,
     line: Any? = null,
@@ -617,13 +569,8 @@ fun methodText(
     return "${node["class_name"]}#$shown$lineSuffix$tag"
 }
 
-// A class finding's name as a report line spells it: "never_initialized" reads
-// "never initialized".
 fun findingText(finding: Any?): String = (finding as String).replace('_', ' ')
 
-// A cluster's root as one line. An untaken outcome
-// reads as its site row does, then the method that holds it. A root reached
-// from hit, and a class root that a method with hits calls, name those callers.
 fun clusterRootText(root: Map<*, *>): String {
     val method = methodText(root)
     val callers = (root["reached_from"] as List<*>).joinToString(", ") { methodText(it as Map<*, *>) }
@@ -649,8 +596,6 @@ fun clusterRootText(root: Map<*, *>): String {
     }
 }
 
-// The report covers every instance of this service and version the server
-// has ever seen, so repeated runs against the same stack accumulate.
 fun printStackReport(service: StackService) {
     val version = "?version=${service.version}"
     val report = readApi(service, "/report$version")
@@ -771,11 +716,7 @@ class DemoProcess(
     val captured: CompletableFuture<String>,
 )
 
-// The stub collector binds whatever port it is given and prints the one it actually bound, so
-// asking it for 0 and reading the number back out of its output is how a demo run stays clear of
-// the compose stack's collector on 4319 and of the testkit's. Reading it rather than picking a
-// free port here and passing it in leaves no window between choosing the port and binding it for
-// something else to take it.
+// The stub collector binds whatever port it is given and prints the one it actually bound.
 val collectorPortPattern = Regex("""otherlode stub collector listening on (\d+)""")
 
 fun startStubCollector(
@@ -800,12 +741,8 @@ fun startStubCollector(
     return collector to port.toInt()
 }
 
-// Redirect.INHERIT would inherit the Gradle daemon's own stdio, not this
-// build invocation's terminal, so child output would silently disappear.
-// Forwarding each line through println instead routes it through Gradle's
-// own logging, which does reach the console regardless of the daemon. The
-// output thread is joined after the process exits so the collector's
-// shutdown-hook report (printed as it's torn down) isn't cut off.
+// Redirect.INHERIT would inherit the Gradle daemon's own stdio, not this build invocation's
+// terminal, so child output would silently disappear.
 fun startProcess(
     tag: String,
     javaBin: String,
@@ -827,8 +764,6 @@ fun startProcess(
                     capturePattern?.find(line)?.let { captured.complete(it.groupValues[1]) }
                 }
             }
-            // The stream ends when the process does, so a process that died before printing what
-            // was wanted fails its waiter here instead of leaving it to time out.
             captured.completeExceptionally(IOException("$tag exited without matching $capturePattern"))
         }, "otherlode-demo-$tag-output").apply {
             isDaemon = true
@@ -837,10 +772,7 @@ fun startProcess(
     return DemoProcess(process, outputThread, captured)
 }
 
-// POSTing to /__shutdown lets each process exit itself and flush any final output first;
-// destroy() (SIGTERM) is only a fallback if that doesn't work. The wait outlasts the
-// agent's own ten-second shutdown flush budget, so a slow collector is never the
-// reason the final flush is cut off.
+// The wait outlasts the agent's own ten-second shutdown flush budget.
 fun gracefulShutdown(
     tag: String,
     demoProcess: DemoProcess,
@@ -879,8 +811,6 @@ fun waitForPort(
     throw GradleException("otherlode demo: timed out waiting for port $port")
 }
 
-// The stub collector's port is not here: the demo tasks let it bind an ephemeral one and read
-// back what it got. See startStubCollector.
 object DemoPorts {
     const val SERVER_PORT = 8085
     const val SPRING_SERVER_PORT = 8090

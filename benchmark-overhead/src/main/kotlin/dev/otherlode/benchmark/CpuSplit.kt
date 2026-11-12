@@ -5,11 +5,7 @@ package dev.otherlode.benchmark
  *
  * The split follows the host's CPU count `n`: PetClinic gets `max(1, n / 4)` cores, at most
  * [MAX_PETCLINIC_CORES], Postgres and the collector share `max(1, n / 4)`, and k6 gets every core
- * left over. A 4-CPU runner gives PetClinic core 0, k6 cores 1-2 and Postgres with the collector core
- * 3; 8 CPUs give 2, 4 and 2. PetClinic's cores overlap no other container's, so its throughput is
- * limited by its own cores and not by the client or the database. Its cores are capped so one run's
- * numbers compare with another's on a larger host, and so a closed loop of [virtualUsers] can keep
- * them busy.
+ * left over.
  *
  * With 2 CPUs PetClinic keeps core 0 and k6, Postgres and the collector all share core 1. A single
  * CPU cannot be split, and [of] refuses it.
@@ -24,10 +20,9 @@ data class CpuSplit(
     val virtualUsers: Int get() = USERS_PER_CORE * petclinicCores
 
     companion object {
-        /** The most cores PetClinic is pinned to, the 2 the harness has always measured it on. */
         const val MAX_PETCLINIC_CORES = 2
 
-        /** Closed-loop users per PetClinic core; five on two cores held a 2-CPU quota at its limit. */
+        /** Closed-loop users per PetClinic core. */
         const val USERS_PER_CORE = 4
 
         fun of(hostCpus: Int): CpuSplit {

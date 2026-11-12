@@ -1,6 +1,5 @@
 package com.example.scalatarget
 
-/** Fixtures for the condition writer's Scala idioms. Each method holds one conditional. See agent ADR 0037. */
 class Conditions {
   def anyEquals(a: Any, b: Any): Int = if (a == b) 1 else 0
 

@@ -14,16 +14,14 @@ import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
 
 /**
  * Woven onto {@code AbstractHandlerMethodMapping.registerMapping(mapping, handler, method)}, the
- * public method for registering a handler method in code. Spring Boot Actuator registers its
- * operations this way, bypassing {@code registerHandlerMethod}. It declares endpoints as
- * {@link RegisterHandlerMethodAdvice} does, with the arguments in this method's order.
- *
- * <p>The advice body is inlined into the woven method, so {@code onEnter} stays one flat body with
- * no helper methods.
+ * public method for registering a handler method in code. It declares endpoints as {@link
+ * RegisterHandlerMethodAdvice} does, with the arguments in this method's order.
  */
 public class RegisterMappingAdvice {
     private static final String MODULE = "spring-webmvc";
 
+    // Advice inlines only this method's bytecode, so a helper call here would stay a real call that
+    // the target loader cannot resolve. Keep the body flat.
     @Advice.OnMethodEnter(suppress = Throwable.class)
     public static void onEnter(
             @Advice.This Object mapping,

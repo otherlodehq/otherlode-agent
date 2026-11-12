@@ -96,7 +96,6 @@ class BaselineReferenceFilter(
     }
 
     companion object {
-        /** A backstop only: the listing releases the wait itself when it finishes or fails. */
         val DEFAULT_LISTING_WAIT: Duration = Duration.ofMinutes(2)
     }
 }

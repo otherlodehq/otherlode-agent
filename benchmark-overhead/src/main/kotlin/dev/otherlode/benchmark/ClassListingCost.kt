@@ -26,7 +26,7 @@ data class ClassListingCost(
         /**
          * The cost in `ListingCost.java`'s output line.
          *
-         * @throws InvalidRunException when [output] has no such line, which is what a null listing leaves.
+         * @throws InvalidRunException when [output] has no such line.
          */
         fun parse(output: String): ClassListingCost {
             val m =
@@ -41,8 +41,7 @@ data class ClassListingCost(
 /**
  * The command that runs `ListingCost.java` in the PetClinic container: `javac` compiles it against
  * the agent jar, then a separate `java` runs it with PetClinic's jar, [config]'s include rules and no
- * excludes. A JVM that compiled the program itself, as the source launcher does, has already loaded
- * and warmed the zip and collection code the listing uses, so its first call would read low.
+ * excludes.
  */
 fun listingCostCommand(config: Config): List<String> =
     listOf(

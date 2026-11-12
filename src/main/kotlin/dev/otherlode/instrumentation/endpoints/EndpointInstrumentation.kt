@@ -30,7 +30,7 @@ import java.util.concurrent.atomic.AtomicBoolean
  * `AgentBuilder` pipeline, separate from the method tier's.
  *
  * When any module names a handler interface, [install] also installs a [LambdaFactoryHook]. It checks
- * the JDK against [lambdaFactoryShape]. [handlerForwarders] is the forwarder table the method tier fills.
+ * the JDK against [lambdaFactoryShape].
  *
  * The transformer is retransformation-capable. Another agent's retransformation of a class it wove
  * reaches it with bytes that carry none of its advice, and it weaves the advice in again.
@@ -263,9 +263,7 @@ class EndpointInstrumentation(
 
         /**
          * The matcher [install] registers for [module]. It calls [onMatched] with [module] when it accepts a
-         * class. It checks the pre-filter's candidates, then [EndpointModule.classLoaderMatcher], then
-         * [EndpointModule.classFileMayMatch] on the class's bytes when this thread is transforming that
-         * class, then [EndpointModule.typeMatcher] for the defining loader.
+         * class.
          *
          * A matcher that throws switches the module off as [OtherlodeEndpoints.KIND_TRANSFORM_FAILED], and
          * it answers no from then on. The type matcher is built once per loader and held weakly, so a

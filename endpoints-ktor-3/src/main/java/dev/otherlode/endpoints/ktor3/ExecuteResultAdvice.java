@@ -18,16 +18,12 @@ import net.bytebuddy.asm.Advice;
  * matched request. When {@link HandleAdvice} never registered the node, the advice builds the verb
  * and path template from the selectors up to the root and records the endpoint as discovered by
  * dispatch.
- *
- * <p>{@code executeResult} is private and {@code suspend}, so it takes a trailing {@code
- * Continuation}. The node is argument index 1, after the {@code PipelineContext}.
- *
- * <p>The advice body is inlined into the woven method, so {@code onEnter} stays one flat body with
- * no helper methods.
  */
 public class ExecuteResultAdvice {
     private static final String MODULE = "ktor-3";
 
+    // Advice inlines only this method's bytecode, so a helper call here would stay a real call that
+    // the target loader cannot resolve. Keep the body flat.
     @Advice.OnMethodEnter(suppress = Throwable.class)
     public static void onEnter(@Advice.Argument(1) Object route) {
         try {

@@ -9,18 +9,15 @@ import org.springframework.util.ClassUtils;
 
 /**
  * Woven onto {@code AbstractUrlHandlerMapping.registerHandler(String, Object)}, the registration
- * hook shared by every URL-mapped handler mapping: {@code SimpleUrlHandlerMapping}, {@code
- * BeanNameUrlHandlerMapping}, and Spring Boot's static-resource and webjars mappings. It runs once
- * per URL path. The {@code registerHandler(String[], String)} overload delegates to this one.
+ * hook shared by every URL-mapped handler mapping.
  *
  * <p>Every endpoint declared here uses verb {@code "*"} and joins to the handler's class only.
- *
- * <p>The advice body is inlined into the woven method, so {@code onEnter} stays one flat body with
- * no helper methods.
  */
 public class RegisterUrlHandlerAdvice {
     private static final String MODULE = "spring-webmvc";
 
+    // Advice inlines only this method's bytecode, so a helper call here would stay a real call that
+    // the target loader cannot resolve. Keep the body flat.
     @Advice.OnMethodEnter(suppress = Throwable.class)
     public static void onEnter(
             @Advice.This Object mapping,

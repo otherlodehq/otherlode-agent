@@ -5,12 +5,7 @@ import net.bytebuddy.asm.Advice;
 
 /**
  * Woven onto every JAX-RS resource method {@code JaxRsModule} declared and registered at
- * transform time. It runs once per invocation, after the framework has matched a request to the
- * method, so it is the endpoint's dispatch point.
- *
- * <p>The {@code Advice.Origin} pattern renders the key {@code JaxRsModule} registers the method
- * under: the declaring type's binary name, a literal {@code #}, the method name, then its
- * descriptor.
+ * transform time.
  *
  * <p>When {@link OtherlodeEndpoints#lookup} finds no registration for the key, this records the
  * dispatch with the key as the verbatim template and verb {@code "*"}, so the hit is still

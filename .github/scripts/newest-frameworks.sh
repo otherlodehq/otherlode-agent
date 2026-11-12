@@ -1,29 +1,18 @@
 #!/usr/bin/env bash
-# Prints the newest stable release of each framework line the endpoint modules' tests run against,
-# as Gradle -P arguments (the otherlode.framework.* properties the modules' build files read).
-# Pre-releases (-M, -RC, -beta, -alpha, -eap, -SNAPSHOT and any other suffixed version) are never
-# picked. A newer major than any supported line gets a warning annotation, not a failure:
-# supporting a new major is a decision, not drift.
-#
-#   newest-frameworks.sh            prints the arguments
-#   newest-frameworks.sh --github   writes them to $GITHUB_OUTPUT as `args=...` as well
 set -euo pipefail
 
 central="${MAVEN_CENTRAL:-https://repo1.maven.org/maven2}"
 
-# All versions of group/artifact, from maven-metadata.xml.
 versions() {
   curl --fail --silent --show-error --location --retry 3 "$central/$1/maven-metadata.xml" \
     | sed -n 's|.*<version>\(.*\)</version>.*|\1|p'
 }
 
-# The newest purely numeric version (digits and dots) matching the grep pattern $2.
 newest() {
   # grep finds nothing for a line with no stable release; the caller then names the line.
   versions "$1" | { grep -E "$2" || true; } | sort -V | tail -n 1
 }
 
-# Fails when a line resolves to nothing.
 require() {
   if [[ -z "$1" ]]; then
     echo "no stable release found for $2" >&2
@@ -31,7 +20,6 @@ require() {
   fi
 }
 
-# Warns when $1 (group/artifact) has a stable release in a major above $2.
 warn_newer_major() {
   local above
   above="$(versions "$1" | grep -E '^[0-9]+(\.[0-9]+)*$' | awk -F. -v max="$2" '$1 > max' | sort -V | tail -n 1)"

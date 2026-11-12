@@ -6,18 +6,17 @@ import java.util.Locale
 /**
  * How far the median over a variant's repeats of `warmupDrift` (see [warmthProblem]: in a closed loop
  * the window's last-third request count over its first-third count) may lie from 1 in either direction before the variant's windows
- * are judged unsteady: rising means the JIT was still compiling when measurement began, falling means
- * something degraded through it. A single run beyond it is named in the summary, and with three or
- * more repeats it does not fail its variant.
+ * are judged unsteady. A single run beyond it is named in the summary, and with three or more repeats
+ * it does not fail its variant.
  */
 const val MAX_WINDOW_DRIFT = 0.10
 
-/** PetClinic must average at least this share of its pinned cores, or its throughput measured the client or Postgres. */
+/** PetClinic must average at least this share of its pinned cores. */
 const val MIN_SATURATION = 0.9
 
 /**
  * Why PetClinic was not saturated, or null when it was: its container averaged under [MIN_SATURATION]
- * of [pinnedCores], so the closed loop was limited by something other than PetClinic.
+ * of [pinnedCores].
  */
 fun saturationProblem(
     cpuCoresAvg: Double,
@@ -31,10 +30,7 @@ fun saturationProblem(
 
 /**
  * CPU figures from two readings of the container's cgroup `cpu.stat` taken [elapsedSeconds] apart.
- * When the closed loop saturates the container's pinned cores, `cpuCoresAvg` sits at their count for
- * every variant, and CPU per request is the same measurement as throughput seen from the other side;
- * [saturationProblem] fails a run below [MIN_SATURATION]. `cpuThrottledMs` is zero without a quota
- * and is kept so a harness change that restores one shows.
+ * `cpuThrottledMs` is zero without a quota.
  */
 fun cpuMetrics(
     before: CgroupCpu,
@@ -50,11 +46,7 @@ fun cpuMetrics(
     )
 }
 
-/**
- * Totals divided by the requests k6 completed in the window. A closed loop serves as many requests
- * as the service can, so a variant that serves more also allocates and collects more in total; only
- * the per-request figures compare variants.
- */
+/** Totals divided by the requests k6 completed in the window. */
 fun perRequest(metrics: Map<String, Double>): Map<String, Double> {
     val requests = metrics["k6Requests"]?.takeIf { it > 0 } ?: return emptyMap()
     val out = linkedMapOf<String, Double>()
@@ -68,10 +60,9 @@ fun perRequest(metrics: Map<String, Double>): Map<String, Double> {
  * Why the run's window cannot be judged for steadiness, or null when it can, recording its drift in
  * [metrics] as `warmupDrift`, where above 1 means the service was still speeding up and below 1
  * means it slowed. A closed loop's drift is the last third's request count over the first's; k6
- * gave no count for a third, or the first served nothing, is a problem. An open loop starts the same
- * number of iterations in every third, so its drift is the first third's median request latency over
- * the last's; a missing or zero median is a problem. Whether a drift is acceptable is judged over a
- * variant's repeats by [variantWarmthProblem].
+ * gave no count for a third, or the first served nothing, is a problem. An open loop's drift is the
+ * first third's median request latency over the last's; a missing or zero median is a problem.
+ * Whether a drift is acceptable is judged over a variant's repeats by [variantWarmthProblem].
  */
 fun warmthProblem(
     metrics: MutableMap<String, Double>,
@@ -93,11 +84,9 @@ fun warmthProblem(
 
 /**
  * Why a variant's windows do not look steady, or null when they do: the median `warmupDrift` of its
- * [runs] lies outside 1 plus or minus [MAX_WINDOW_DRIFT], or a run recorded no `warmupDrift`, so the
- * median would describe fewer runs than the variant had. A single run drifts with runner noise in
- * either direction; a median that drifts means the variant's windows did. The advice for a rise
- * depends on `warmupSteady`: warmups that hit their cap need a longer cap, ones judged steady need a
- * stricter rule, and the advice names both when the variant had both.
+ * [runs] lies outside 1 plus or minus [MAX_WINDOW_DRIFT], or a run recorded no `warmupDrift`. The
+ * advice for a rise depends on `warmupSteady`: warmups that hit their cap need a longer cap, ones
+ * judged steady need a stricter rule, and the advice names both when the variant had both.
  */
 fun variantWarmthProblem(
     variant: Variant,
@@ -155,7 +144,7 @@ fun variantWarmthProblems(
 
 /**
  * The `git` arguments that list the agent repository's changes, leaving out [collectorDir] when it
- * lies inside [agentRepoDir], as the workflow's collector checkout does.
+ * lies inside [agentRepoDir].
  */
 fun dirtyCheck(
     agentRepoDir: Path,

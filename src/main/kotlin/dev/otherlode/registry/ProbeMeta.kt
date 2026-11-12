@@ -8,8 +8,8 @@ import dev.otherlode.export.ProbeKind
 import dev.otherlode.export.UnreadShape
 
 /**
- * Source-location metadata for one probe slot, used to build the manifest payload. A field that
- * applies to one [ProbeKind] is empty, null or false on the others.
+ * Source-location metadata for one probe slot. A field that applies to one [ProbeKind] is empty,
+ * null or false on the others.
  *
  * [inline] marks a probe in a Kotlin inline function, or a branch inside one, so a zero hit total
  * is not evidence the code never ran.

@@ -14,7 +14,6 @@ import net.bytebuddy.jar.asm.Opcodes
  * conditional opcode, the inverse conditional opcode (which swaps the two outcomes), or a switch of the same
  * kind with the same keys or bounds and the same entries sent to the default. Any other difference,
  * a different count, or a method the received bytes do not declare leaves the method in [unpairedMethods].
- * A method in [unpairedMethods] gets no branch probes.
  */
 class SitePairing private constructor(
     /** Methods, by name and descriptor, whose sites did not pair, in class-file order. */

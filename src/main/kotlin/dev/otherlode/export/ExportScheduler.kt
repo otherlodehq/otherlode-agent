@@ -32,8 +32,7 @@ import kotlin.random.Random
 
 /**
  * Flushes the registries to an [Exporter] on a fixed interval. Each instance waits a random offset
- * within the interval before its first flush, so a fleet started together does not flush on the
- * same tick.
+ * within the interval before its first flush.
  */
 class ExportScheduler(
     private val config: AgentConfig,
@@ -122,11 +121,10 @@ class ExportScheduler(
     }
 
     /**
-     * The first flush of a graceful JVM exit: a normal flush, run at once, so the counts made so far
-     * are on their way while the application's shutdown hooks run. It stops the scheduled executor
-     * first and waits for a flush in flight. It is bounded by [budget] in total: its sends stop
-     * being waited for at the deadline, and it starts no hit batch or manifest chunk after that. It
-     * sends no static baseline or class listing retry.
+     * The first flush of a graceful JVM exit: a normal flush, run at once. It stops the scheduled
+     * executor first and waits for a flush in flight. It is bounded by [budget] in total: its sends
+     * stop being waited for at the deadline, and it starts no hit batch or manifest chunk after that.
+     * It sends no static baseline or class listing retry.
      */
     fun flushAtShutdownStart(budget: Duration) {
         val deadlineNanos = System.nanoTime() + budget.toNanos()
@@ -242,9 +240,8 @@ class ExportScheduler(
 
     /**
      * One flush attempt. It sends the manifest entries not yet sent and the delta since the last
-     * acknowledged baseline, on two threads at once. The delta batch is sent even when empty, so a
-     * receiver can tell an idle instance from a crashed one. A failed send leaves its state where it
-     * is, and a later flush retries it. This never throws.
+     * acknowledged baseline, on two threads at once. The delta batch is sent even when empty. A failed
+     * send leaves its state where it is, and a later flush retries it. This never throws.
      *
      * [final] is true only for the flush [flushOnShutdown] runs. It ends with one empty delta batch
      * carrying `finalFlush`, after every other send.

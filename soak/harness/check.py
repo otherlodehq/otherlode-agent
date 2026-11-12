@@ -39,9 +39,6 @@ NAMES = {
 MAX_EVIDENCE = 40
 
 
-# ---------------------------------------------------------------- API
-
-
 class ApiError(Exception):
     def __init__(self, status, message):
         super().__init__("HTTP %s: %s" % (status, message))
@@ -137,9 +134,6 @@ class Reader:
             time.sleep(min(60.0, max(1.0, deadline - time.time())))
 
 
-# ---------------------------------------------------------------- context
-
-
 class Ctx:
     def __init__(self, **kw):
         self.clock = time.time
@@ -195,9 +189,6 @@ def site_text(row):
     labels = ["".join(p.get("text", "") for p in o.get("case_label") or [])
               for o in row.get("outcomes") or [] if o.get("in_finding")]
     return " ".join([cond_text(row)] + [l for l in labels if l])
-
-
-# ---------------------------------------------------------------- finding rows
 
 
 class Finding:
@@ -318,9 +309,6 @@ def fingerprint_diff(a, b):
         for k in sorted(sa - sb):
             lines.append("%s: went away: %s" % (scope, k))
     return lines
-
-
-# ---------------------------------------------------------------- truth matching
 
 
 def _split_member(text):
@@ -460,9 +448,8 @@ def removed_by_truth(f, entries):
     return False
 
 
-# Kinds a window read judges before T0 plus the lag. Until then the planned first requests have not
-# all come, so a never-hit or never-called row is a true finding truth.json does not name; a class
-# that loaded, and a jar's references, are known from the start.
+# Kinds a window read judges before T0 plus the lag: a class that loaded, and a jar's references,
+# are known from the start.
 EARLY_WINDOW_KINDS = ("never-loaded", "dependency")
 
 
@@ -478,9 +465,6 @@ def _split_member_list(members):
 def cl_names():
     return {"never-loaded": "never_loaded", "never-initialized": "never_initialized",
             "never-instantiated": "never_instantiated", "failed-to-initialize": "failed_to_initialize"}
-
-
-# ---------------------------------------------------------------- check 1
 
 
 def _cap(lines):
@@ -519,8 +503,8 @@ def crash_hold(ctx, svc, env):
     return False
 
 
-# Flush intervals after which a run stops starting at the latest (agent ADR 0086). The cap is
-# checked at a flush, which can come up to one interval later.
+# Flush intervals after which a run stops starting at the latest. The cap is checked at a flush,
+# which can come up to one interval later.
 STARTING_CAP_INTERVALS = 10
 
 # Seconds a JVM may take from its start to the agent's.
@@ -714,9 +698,6 @@ def check1(ctx):
     return result(1, status, "%d entries hold, %d fail, %d not due yet" % (ok, len(bad), notdue), _cap(bad))
 
 
-# ---------------------------------------------------------------- check 2
-
-
 def pattern_matches(pattern, cls):
     """A class_pattern is a class name, a regular expression that matches the whole name, or a name suffix."""
     if cls == pattern or cls.endswith(pattern):
@@ -764,9 +745,6 @@ def check2(ctx):
     if unexplained:
         return result(2, "fail", "%d of %d finding rows are not explained by truth.json" % (unexplained, total), _cap(evidence))
     return result(2, "pass", "all %d finding rows are named in truth.json" % total, evidence)
-
-
-# ---------------------------------------------------------------- check 3
 
 
 def read_json(path, default=None):
@@ -850,9 +828,6 @@ def check3(ctx):
     return result(3, "pass", "%d endpoint counts agree with the traffic" % ok, _cap(lines))
 
 
-# ---------------------------------------------------------------- check 4
-
-
 def check4(ctx):
     runs = ctx.state.get("runs", [])
     if not runs:
@@ -911,16 +886,12 @@ def check4(ctx):
             else:
                 good += 1
                 notes.append("%s: %s, ended_cleanly=%s" % (iid, how, clean))
-    # A test run counts toward no instance figure (api.md), so /instances never lists it. Check 7
-    # shows that a test run arrived, through the cluster it makes read called only by tests.
+    # A test run counts toward no instance figure, so /instances never lists it.
     if not good and not bad:
         return result(4, "skip", "no stopped run is old enough to judge", notes)
     if bad:
         return result(4, "fail", "%d runs read wrong, %d right" % (len(bad), good), _cap(bad + notes))
     return result(4, "pass", "%d stopped runs read as expected" % good, _cap(notes))
-
-
-# ---------------------------------------------------------------- check 5
 
 
 def parse_ts(text):
@@ -1034,8 +1005,6 @@ def check5(ctx):
     return result(5, "pass", "%d agent processes grow no faster than their control plus 10%%%s" % (
         judged, "; %d age spans not compared" % uncompared if uncompared else ""), _cap(ev))
 
-
-# ---------------------------------------------------------------- check 6
 
 ISO_PREFIX = re.compile(r"^(\d{4}-\d\d-\d\dT[\d:.]+Z) (.*)$")
 AGENT_LINE = re.compile(r"(?<![\w.])otherlode: |dev\.otherlode\.(?!soak)|^(?:OpenJDK|Java HotSpot).*warning:", re.I)
@@ -1224,9 +1193,6 @@ def check6(ctx):
     return result(6, "pass", "no unexplained ERROR or WARN line", summary)
 
 
-# ---------------------------------------------------------------- check 7
-
-
 def planned_changes(ctx):
     """Design times, in seconds from T0, at which a finding is planned to change: every truth.json
     from and until, every one-off request, the upgrade, and the first request of each route sent
@@ -1288,7 +1254,6 @@ def check7(ctx):
             bad.extend("%s changed a finding: %s" % (label, d) for d in diff)
         else:
             ev.append("%s: no finding changed (%d scopes compared)" % (label, len(t["before"])))
-    # the cluster: every root marked called_only_by_tests, else the default target of DESIGN.md
     targets = []
     for svc, env in ctx.pairs():
         tl = ctx.truth_lists(svc, env)
@@ -1337,8 +1302,6 @@ def check7(ctx):
         return result(7, "skip", "no test run could be compared yet (%d finished)" % len(runs), _cap(ev))
     return result(7, "pass", "%d of %d test runs compared, and each left every finding as it was" % (compared, len(runs)), _cap(ev))
 
-
-# ---------------------------------------------------------------- window reads and check 8
 
 WINDOW_CAP = 1000
 REFUSED_SERVICE = ("soak-shop", "prod")
@@ -1446,9 +1409,6 @@ def check8(ctx):
 
 
 CHECKS = {1: check1, 2: check2, 3: check3, 4: check4, 5: check5, 6: check6, 7: check7, 8: check8}
-
-
-# ---------------------------------------------------------------- report
 
 
 def render_md(rep):

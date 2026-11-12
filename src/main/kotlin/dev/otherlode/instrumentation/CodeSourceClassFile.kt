@@ -16,10 +16,7 @@ import java.util.concurrent.atomic.AtomicReference
  *
  * A directory is read at once. Each jar shape is warmed up first, keyed by [warmKey]: the first
  * read hands a read to [warmer], which runs it outside any transform, and answers null unless that
- * warm-up has already finished. Reads while the warm-up runs answer null. A warm-up that finds
- * nothing sends the key back to unwarmed until [MAX_WARM_UP_ATTEMPTS] misses leave it on the
- * loader for the life of the instance. A class read while its key is not warm is analysed from the
- * copy its loader returns.
+ * warm-up has already finished. Reads while the warm-up runs answer null.
  */
 class CodeSourceClassFile internal constructor(
     private val warmer: Executor,
@@ -44,7 +41,7 @@ class CodeSourceClassFile internal constructor(
 
     /**
      * The bytes of the class file for [internalName] at the code source of [protectionDomain], or null
-     * when this cannot read them. A null answer sends the caller to the class loader.
+     * when this cannot read them.
      */
     fun read(
         protectionDomain: ProtectionDomain?,

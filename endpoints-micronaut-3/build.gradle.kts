@@ -27,8 +27,6 @@ fun jarsOnly(
     dependencies.addAll(coordinates.map { project.dependencies.create(it) })
 }
 
-// Class files read by the matcher test, never loaded: the Micronaut 3 classes it must accept at
-// the floor, and the Micronaut 4 classes it must reject at the floor and at the newest tested.
 val micronaut3FloorJars =
     jarsOnly(
         "micronaut3FloorJars",
@@ -59,8 +57,7 @@ dependencies {
     compileOnly(project(":bootstrap"))
     compileOnly("net.bytebuddy:byte-buddy:$byteBuddyVersion")
 
-    // Compiled against the oldest supported release, per ADR 0017. Never `implementation`: Micronaut
-    // belongs to the target application and must not be shaded into the agent jar.
+    // The oldest supported release. Never `implementation`: Micronaut must not be shaded into the agent jar.
     compileOnly("io.micronaut:micronaut-router:$micronaut3FloorVersion")
     compileOnly("io.micronaut:micronaut-http-server:$micronaut3FloorVersion")
 }
@@ -69,13 +66,6 @@ kotlin {
     jvmToolchain(21)
 }
 
-// One test source set per Micronaut release and server under test. The controllers need Micronaut's
-// annotation processor at the release they run on, so each set compiles the shared sources again
-// with its own. `test` runs the newest tested 3.x on Netty, micronaut30Test the 3.0.0 floor on
-// Netty, servletTest micronaut-servlet's Jetty server on the newest and servlet30Test on the floor,
-// each servlet set aligned to its core release by the Micronaut BOM. lambdaTest drives micronaut-aws
-// 3.17's Lambda handler on the Micronaut release that aws release was built against, lambda30Test
-// the 3.0.0 floor of both.
 fun registerMicronautTests(
     setName: String,
     micronautVersion: String,

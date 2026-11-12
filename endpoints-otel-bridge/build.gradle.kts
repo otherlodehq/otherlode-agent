@@ -11,57 +11,31 @@ repositories {
     mavenCentral()
 }
 
-// The oldest 2.x release of the unshaded artifact: instrumentation-api 2.0.0 already carries
-// HttpServerAttributesExtractor.onEnd and internal.HttpRouteState at the names this module's
-// advice is written against (see OnEndAdvice's own KDoc for what was verified and how). Compiling
-// against the floor version, never a newer one, is this project's no-muzzle policy: a module
-// disables itself once on a LinkageError against a version its advice does not match, rather than
-// pinning to whatever is newest today.
+// The oldest 2.x release of the unshaded artifact, the floor this module compiles against.
 val openTelemetryInstrumentationApiVersion = "2.0.0"
 
-// A newer release, matched to the OpenTelemetry SDK versions below, for the module's own tests:
-// they drive a real Instrumenter end to end, which needs more of the API surface than the advice
-// class itself touches.
-// The weekly framework canary sets both to the newest release of their lines.
+// A newer release for the tests, matched to the OpenTelemetry SDK version below. The framework
+// canary sets both to the newest release of their lines.
 val openTelemetryInstrumentationApiTestVersion = providers.gradleProperty("otherlode.framework.otelInstrumentationApi").getOrElse("2.31.1")
 val openTelemetrySdkVersion = providers.gradleProperty("otherlode.framework.otelSdk").getOrElse("1.65.0")
 
 dependencies {
     implementation(project(":endpoints-api"))
 
-    // Compile-time only: at runtime OtherlodeEndpoints comes from the target JVM's bootstrap
-    // classloader, where BootstrapHolder appends the embedded jar (see the root project's
-    // build.gradle.kts for the full rationale).
+    // Compile-time only: at runtime OtherlodeEndpoints comes from the target JVM's bootstrap classloader.
     compileOnly(project(":bootstrap"))
 
-    // :endpoints-api depends on byte-buddy as `implementation`, which is never transitive, so it
-    // does not put ByteBuddy on this module's own compile classpath. Needed here directly for
-    // net.bytebuddy.asm.Advice (the Java advice class) and for the EndpointModule types
-    // (TypeDescription, DynamicType.Builder, ElementMatcher) this module's own Kotlin code is
-    // written against. compileOnly: at runtime, ByteBuddy comes from the root project's own
-    // dependency once this module's classes are merged into the shaded agent jar.
     compileOnly("net.bytebuddy:byte-buddy:1.18.12")
 
-    // Never shaded into the agent jar: OpenTelemetry, when present at all, belongs to the target
-    // application or to the separate OpenTelemetry javaagent, never to this one. OnEndAdvice's own
-    // bytecode is inlined directly into whichever copy is present at the woven call site; this
-    // dependency only lets javac resolve its signature.
+    // Never `implementation`: OpenTelemetry must not be shaded into the agent jar.
     compileOnly("io.opentelemetry.instrumentation:opentelemetry-instrumentation-api:$openTelemetryInstrumentationApiVersion")
 
-    // Gives EndpointRegistry, EndpointInstrumentation, and BootstrapHolder to the integration
-    // test below, the same way :endpoints-jdk-httpserver's own tests depend on the root project.
     testImplementation(project(":"))
     testImplementation(kotlin("test"))
 
-    // Lets the test self-attach with ByteBuddyAgent.install() and weave real advice into a real
-    // OpenTelemetry Instrumenter's own classes, the same way :endpoints-jdk-httpserver's test does
-    // for the JDK's HttpServer.
     testImplementation("net.bytebuddy:byte-buddy-agent:1.18.12")
     testImplementation("net.bytebuddy:byte-buddy:1.18.12")
 
-    // A newer instrumentation-api release than the advice class compiles against, plus a plain
-    // OpenTelemetry SDK (no OpenTelemetryExtension convenience) so the test builds and drives a
-    // real Instrumenter, ending real spans an InMemorySpanExporter captures.
     testImplementation("io.opentelemetry.instrumentation:opentelemetry-instrumentation-api:$openTelemetryInstrumentationApiTestVersion")
     testImplementation("io.opentelemetry:opentelemetry-sdk:$openTelemetrySdkVersion")
     testImplementation("io.opentelemetry:opentelemetry-sdk-testing:$openTelemetrySdkVersion")
@@ -89,10 +63,7 @@ dependencies {
     otelJavaagent("io.opentelemetry.javaagent:opentelemetry-javaagent:$openTelemetryInstrumentationApiTestVersion")
 }
 
-// The two suites below run a real servlet container with OpenTelemetry's own instrumentation, in a
-// JVM of their own per test class, since the endpoint registry is one per JVM. PrefixTestAgent is
-// the agent on that command line. The jar packages the suite's compiled output; everything its
-// premain references resolves off the test JVM's ordinary classpath.
+// These suites run a JVM per test class, since the endpoint registry is one per JVM.
 fun prefixTestAgentJar(
     name: String,
     output: Provider<out FileCollection>,
@@ -204,8 +175,7 @@ testing.suites.named<JvmTestSuite>("otelAgentTest") {
     }
 }
 
-// OpenTelemetry's agent listed first, so it has rewritten framework classes before this agent sees
-// them; otelAgentTest lists this agent first.
+// OpenTelemetry's agent listed first, so it has rewritten framework classes before this agent sees them.
 testing.suites.named<JvmTestSuite>("otelAgentFirstTest") {
     targets {
         all {

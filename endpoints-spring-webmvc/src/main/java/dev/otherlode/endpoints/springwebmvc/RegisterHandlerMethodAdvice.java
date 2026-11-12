@@ -14,27 +14,20 @@ import org.springframework.web.servlet.mvc.method.RequestMappingInfo;
 
 /**
  * Woven onto {@code AbstractHandlerMethodMapping.registerHandlerMethod}, Spring MVC's registration
- * hook. It runs once per handler method as Spring builds its route table, for every
- * {@code @Controller} bean, before any request is dispatched.
+ * hook.
  *
  * <p>The dispatch key, {@code List.of(pattern, verb)}, matches {@link HandleMatchAdvice}.
  *
- * <p>The join names the class that declares the method, since a mapping inherited from a base
- * controller or an interface default method is not declared on the bean's class. A handler whose
- * type cannot be resolved is still an endpoint, with no join.
+ * <p>The join names the class that declares the method. A handler whose type cannot be resolved is
+ * still an endpoint, with no join.
  *
- * <p>The context path is not part of the identity. Reading it would need this advice to name a
- * servlet type and so split the module by {@code javax}/{@code jakarta} namespace. The
- * application-relative template is what the module reports.
- *
- * <p>{@code onEnter} is deliberately one flat body with no private helper method: {@link Advice}
- * inlines only the bytecode of the annotated method, so a call to a helper, even one on this class,
- * would remain a real call in the woven bytecode and require the target classloader to resolve this
- * advice class at runtime. The other advice classes of this module follow the same rule.
+ * <p>The context path is not part of the identity.
  */
 public class RegisterHandlerMethodAdvice {
     private static final String MODULE = "spring-webmvc";
 
+    // Advice inlines only this method's bytecode, so a helper call here would stay a real call that
+    // the target loader cannot resolve. Keep the body flat.
     @Advice.OnMethodEnter(suppress = Throwable.class)
     public static void onEnter(
             @Advice.This Object mapping,

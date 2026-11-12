@@ -2,7 +2,6 @@ package dev.otherlode.instrumentation
 
 import java.util.concurrent.ConcurrentHashMap
 
-/** The names of classes the agent itself failed to retransform. */
 class OwnRetransformationFailures {
     private val names = ConcurrentHashMap.newKeySet<String>()
 
@@ -11,6 +10,5 @@ class OwnRetransformationFailures {
         names.add(className)
     }
 
-    /** Whether the agent's own retransformation of [className] failed. */
     fun contains(className: String): Boolean = className in names
 }

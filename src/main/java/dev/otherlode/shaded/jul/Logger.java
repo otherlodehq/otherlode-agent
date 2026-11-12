@@ -4,10 +4,8 @@ import dev.otherlode.bootstrap.OtherlodeLoggers;
 import java.util.logging.Level;
 
 /**
- * Stands in for {@code java.util.logging.Logger} in the shaded protobuf classes, since the real class
- * would create the application's {@code LogManager} before the application can choose its own. The
- * shaded jar's {@code relocate} rule points their calls here, and each call goes to {@link
- * OtherlodeLoggers}.
+ * Stands in for {@code java.util.logging.Logger} in the shaded protobuf classes. The shaded jar's
+ * {@code relocate} rule points their calls here, and each call goes to {@link OtherlodeLoggers}.
  */
 public final class Logger {
     private final System.Logger delegate;
@@ -16,17 +14,14 @@ public final class Logger {
         this.delegate = delegate;
     }
 
-    /** Returns the logger named {@code name}. */
     public static Logger getLogger(String name) {
         return new Logger(OtherlodeLoggers.get(name));
     }
 
-    /** Logs {@code message} at INFO. */
     public void info(String message) {
         delegate.log(System.Logger.Level.INFO, message);
     }
 
-    /** Logs {@code message} at WARNING. */
     public void warning(String message) {
         delegate.log(System.Logger.Level.WARNING, message);
     }

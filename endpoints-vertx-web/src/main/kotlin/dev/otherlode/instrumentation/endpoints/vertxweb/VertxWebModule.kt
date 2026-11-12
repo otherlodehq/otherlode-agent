@@ -21,10 +21,9 @@ private const val ADVICE_PACKAGE = "dev.otherlode.endpoints.vertxweb"
 /**
  * Endpoint module for Vert.x Web (`vertx-web`), covering 4.5 to 5.x.
  *
- * The advice on `RouterImpl` and `RouteImpl` raises an event for each change to the router graph,
- * and the entry of `RouterImpl.handle(HttpServerRequest)` hands the root router to [declare]. A
- * root declares every route reachable from it at its first request, and again at a later request
- * after a router it reached changed. A JVM whose routers never receive a request declares nothing.
+ * A root router declares every route reachable from it at its first request, and again at a later
+ * request after a router it reached changed. A JVM whose routers never receive a request declares
+ * nothing.
  *
  * An endpoint is a route with a context handler that is not a sub-router mount. The exit of
  * `RouteState.matches` counts a route that matched, so a request that passes through several routes

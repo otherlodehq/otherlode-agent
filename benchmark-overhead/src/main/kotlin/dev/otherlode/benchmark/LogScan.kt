@@ -77,9 +77,7 @@ data class ProcStatus(
 }
 
 /**
- * The CPU time a cgroup v2 container has used, from its own `/sys/fs/cgroup/cpu.stat`. Unlike JFR's
- * `jdk.CPULoad`, whose share is taken against a machine-wide base, two readings of this give the
- * exact CPU seconds the container spent between them.
+ * The CPU time a cgroup v2 container has used, from its own `/sys/fs/cgroup/cpu.stat`.
  */
 data class CgroupCpu(
     val usageMicros: Long,
@@ -103,10 +101,7 @@ data class CgroupCpu(
     }
 }
 
-/**
- * What the agent's manifests said during one run, summed over the collector's log lines for it:
- * the collector's log sink writes one JSON line per manifest with the size of each list.
- */
+/** What the agent's manifests said during one run, summed over the collector's log lines for it. */
 data class ManifestCounts(
     val manifests: Int,
     val probes: Long,
@@ -133,11 +128,7 @@ data class ManifestCounts(
 
 private val AGENT_ERROR = Regex("""^(?:SEVERE:|.*\bERROR\b.*?)\s*otherlode:""")
 
-/**
- * The agent's own ERROR lines in PetClinic's log. Before Spring Boot sets up logging,
- * `java.util.logging` prints one as `SEVERE: otherlode: ...`; after, Spring routes it through its
- * own logging, which prints the level and the logger first (`ERROR ExportScheduler - otherlode: ...`).
- */
+/** The agent's own ERROR lines in PetClinic's log. */
 fun agentErrors(log: String): List<String> = log.lineSequence().filter { AGENT_ERROR.containsMatchIn(it) }.toList()
 
 /** Class space committed and used, in bytes, from `jcmd VM.metaspace scale=1`. */

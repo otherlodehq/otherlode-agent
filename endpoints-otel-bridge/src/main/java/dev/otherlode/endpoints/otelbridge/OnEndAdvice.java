@@ -12,9 +12,7 @@ import net.bytebuddy.asm.Advice;
  * null.
  *
  * <p>Compiled against the unshaded {@code opentelemetry-instrumentation-api} artifact, verified at
- * 2.0.0, its oldest supported release. {@link
- * dev.otherlode.instrumentation.endpoints.otelbridge.OtelBridgeModule} binds the same class for the
- * OpenTelemetry Java agent's relocated copy of the extractor.
+ * 2.0.0, its oldest supported release.
  *
  * <p>The route is first resolved through the table {@link RoutePrefixAdvice} fills. A route no
  * recorded prefixer built is used as it is.

@@ -1,4 +1,3 @@
-# Prints the native memory areas that differ between `jcmd VM.native_memory summary` outputs.
 # usage: nmt-diff.py <baseline> <other>...
 import re,sys
 def nmt(p):

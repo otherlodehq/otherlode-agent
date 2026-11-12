@@ -1,9 +1,5 @@
-// The fixtures that prove each framework marker (ADR 0072): per framework and release, a JVM that
-// uses only the framework's client side or no routing, one that configures its routing without
-// serving, and one that serves a request, each run with -Xlog:class+load. Nothing here ships. The
-// small programs in src/main/java are compiled against one release of each framework and run
-// against every release listed below. Helidon 4 is compiled for Java 21, so the programs are compiled
-// for 21 and the forked JVMs run on this project's 21 toolchain.
+// Helidon 4 is compiled for Java 21, so the programs are compiled for 21 and the forked JVMs run
+// on this project's 21 toolchain.
 import org.gradle.api.artifacts.Configuration
 import org.gradle.api.tasks.bundling.AbstractArchiveTask
 import java.util.Properties
@@ -20,9 +16,6 @@ repositories {
 
 val slf4jVersion = "2.0.16"
 
-// Every release a marker is proved against: framework, release, and the artifacts that make its
-// runtime classpath. A release is named by its framework and version in the test's system
-// properties.
 val scenarioArtifacts: Map<String, Map<String, List<String>>> =
     mapOf(
         "grpc" to

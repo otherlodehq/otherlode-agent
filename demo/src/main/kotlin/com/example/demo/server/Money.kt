@@ -1,9 +1,6 @@
 package com.example.demo.server
 
-/**
- * An amount in pence with an unused overload. [handleCheckout] builds every `Money` from pence, so
- * the pounds-and-pence constructor below never runs while the class itself is in use.
- */
+/** An amount in pence with an unused overload. */
 class Money(
     private val pence: Long,
 ) {

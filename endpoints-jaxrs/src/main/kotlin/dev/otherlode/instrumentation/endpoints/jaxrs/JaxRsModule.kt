@@ -53,17 +53,12 @@ private val ELIGIBLE_METHOD: ElementMatcher.Junction<MethodDescription> =
  * Endpoint module for JAX-RS, covering the `javax.ws.rs` and `jakarta.ws.rs` namespaces with one
  * module and no compile-time dependency on either.
  *
- * A resource class declares its routes through annotations, so this module reads them from the
- * [TypeDescription] ByteBuddy hands to [transform] and registers each endpoint through the
- * endpoint seam from this Kotlin code, not from woven advice.
- *
  * A method the concrete class declares with no JAX-RS annotation of its own inherits the
  * annotations of the method it overrides or implements. A class-level `@Path` on a supertype is
  * inherited only when Jersey or Quarkus REST (RESTEasy Reactive) is on the resource class's loader.
  *
  * [jerseyPresent] and [restEasyReactivePresent] answer whether Jersey, or RESTEasy Reactive's
- * server classes, are on a resource class's loader. A test supplies its own function to force
- * either branch.
+ * server classes, are on a resource class's loader.
  */
 class JaxRsModule
     // Keeps the no-argument constructor that java.util.ServiceLoader needs.

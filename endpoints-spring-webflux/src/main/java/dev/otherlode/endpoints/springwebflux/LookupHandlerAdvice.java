@@ -13,19 +13,16 @@ import org.springframework.web.util.pattern.PathPattern;
 
 /**
  * Woven onto the exit of {@code AbstractUrlHandlerMapping.lookupHandler(PathContainer,
- * ServerWebExchange)}, the dispatch point shared by every URL-mapped handler mapping. A non-null
- * return means a registered pattern matched, and Spring has stored it under {@link
- * HandlerMapping#BEST_MATCHING_PATTERN_ATTRIBUTE}. A CORS preflight counts nothing.
+ * ServerWebExchange)}, the dispatch point shared by every URL-mapped handler mapping. A CORS
+ * preflight counts nothing.
  *
- * <p>The key, {@code List.of(pattern, "*")}, matches {@link RegisterUrlHandlerAdvice}. A miss
- * means a handler this module did not see register, and the dispatch is recorded.
- *
- * <p>The advice body is inlined into the woven method, so {@code onExit} stays one flat body with
- * no helper methods.
+ * <p>A miss means a handler this module did not see register, and the dispatch is recorded.
  */
 public class LookupHandlerAdvice {
     private static final String MODULE = "spring-webflux";
 
+    // Advice inlines only this method's bytecode, so a helper call here would stay a real call that
+    // the target loader cannot resolve. Keep the body flat.
     @Advice.OnMethodExit(suppress = Throwable.class)
     public static void onExit(
             @Advice.Argument(1) ServerWebExchange exchange,

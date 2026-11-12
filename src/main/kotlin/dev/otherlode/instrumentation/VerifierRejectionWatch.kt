@@ -5,8 +5,7 @@ import dev.otherlode.registry.ProbeRegistry
 
 /**
  * What the run can see of the JVM's verifier rejections. [watched] is true once [VerifyErrorHook]
- * installed, and every manifest the run sends says so. [drainInto] moves the messages the hook
- * collected into the registry, and runs on the export thread.
+ * installed.
  *
  * A class whose retransformation by the agent itself failed is dropped. A message in no read
  * format, and each message the ring lost to overflow, adds to the run's unplaced total. [carried] and

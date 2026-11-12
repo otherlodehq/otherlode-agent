@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
-# Sets up the soak VM (Debian 12): Docker, a JDK, python3, the user `soak`, the directories under
-# /opt/soak, the systemd units and the sudoers rule. Run it as root, or with sudo. It is safe to run again.
-#
-# Java: Temurin 21 from Adoptium; Debian's OpenJDK 17 when Temurin is not reachable. Both are the
-# JDK, not the JRE, because the sampler runs jcmd.
+# It is safe to run again.
+# A JDK, not a JRE: the sampler runs jcmd.
 set -euo pipefail
 
 if [ "$(id -u)" != 0 ]; then

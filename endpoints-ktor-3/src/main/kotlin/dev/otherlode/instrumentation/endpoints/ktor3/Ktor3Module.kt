@@ -14,10 +14,7 @@ private const val ROUTING_NODE = "io.ktor.server.routing.RoutingNode"
 private const val ROUTING_ROOT = "io.ktor.server.routing.RoutingRoot"
 private const val ADVICE_PACKAGE = "dev.otherlode.endpoints.ktor3"
 
-/**
- * Endpoint module for Ktor 3 (`ktor-3`), covering the `io.ktor:ktor-server-core-jvm` 3.x line.
- * `RoutingNode.handle` registers each route and `RoutingRoot.executeResult` records each dispatch.
- */
+/** Endpoint module for Ktor 3 (`ktor-3`), covering the `io.ktor:ktor-server-core-jvm` 3.x line. */
 class Ktor3Module : EndpointModule {
     override val name: String = "ktor-3"
 

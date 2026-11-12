@@ -1,23 +1,7 @@
 #!/bin/bash
-# Measures the agent's heap and native memory on spring-petclinic-rest, before and after the
-# manifest is delivered.
-#
 # usage: measure.sh <label> <includePackages|none> <http port>
-#
-# Needs, as environment variables:
-#   JAVA_HOME     a JDK 21
-#   AGENT_JAR     the shaded agent jar (build/libs/otherlode-agent-*.jar)
-#   PETCLINIC_JAR spring-petclinic-rest's fat jar (benchmark-overhead/Dockerfile.petclinic builds it;
-#                 docker create + docker cp /app/petclinic.jar out of the image)
-#   OUT_DIR       where results go; <OUT_DIR>/<label>/ is created
-#   DUMP=1        optional: also write a heap dump after delivery (several hundred MB)
-# and, running already: Postgres on localhost:25432 (user, password and database "petclinic"),
-# and the image `otherlode-bench-collector` built from otherlode-collector's Dockerfile.
-#
-# The agent exports to port 14320 with nothing listening, so the first measurement sees the
-# registry before any delivery; then a collector starts on 14320 and the second measurement
-# follows about 60 s of successful flushes. Each measurement runs two full GCs first, so the
-# histogram is live objects only.
+# Needs JAVA_HOME (a JDK 21), AGENT_JAR, PETCLINIC_JAR, OUT_DIR and optional DUMP=1, with Postgres
+# running on localhost:25432 and the image otherlode-bench-collector built.
 set -u
 J=$JAVA_HOME/bin
 L=$1; INC=$2; PORT=$3

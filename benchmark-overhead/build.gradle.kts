@@ -29,8 +29,6 @@ val iterationRate = providers.gradleProperty("iterationRate")
 val openRateFraction = providers.gradleProperty("openRateFraction")
 
 tasks.test {
-    // The macro run needs both inputs. With neither, only the unit tests run, so the harness's own
-    // logic can be checked without Docker. With one, the build stops rather than guess.
     val macro = agentJar.isPresent || collectorDir.isPresent
     useJUnitPlatform {
         if (!macro) excludeTags("macro")
@@ -63,8 +61,7 @@ tasks.test {
     systemProperty("bench.resultsDir", results.absolutePath)
     systemProperty("bench.projectDir", projectDir.absolutePath)
     systemProperty("bench.agentRepoDir", projectDir.parentFile.absolutePath)
-    // A relative path resolves against this directory, not the one Gradle was started from: `-p`
-    // makes this directory Gradle's own start directory. The harness checks both paths exist.
+    // A relative path resolves against this directory, not the one Gradle was started from.
     if (agentJar.isPresent) systemProperty("bench.agentJar", file(agentJar.get()).absolutePath)
     if (collectorDir.isPresent) systemProperty("bench.collectorDir", file(collectorDir.get()).absolutePath)
     if (otelAgentJar.isPresent) systemProperty("bench.otelAgentJar", file(otelAgentJar.get()).absolutePath)

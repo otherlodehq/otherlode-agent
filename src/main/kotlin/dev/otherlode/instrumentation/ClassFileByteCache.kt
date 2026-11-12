@@ -102,7 +102,6 @@ class ClassFileByteCache(
         }
     }
 
-    /** Forgets everything cached. */
     fun dropAll() {
         synchronized(this) {
             entries.clear()
@@ -213,7 +212,6 @@ class ClassFileByteCache(
     }
 
     companion object {
-        /** The default cap on the weight of cached bytes, 16 MB. */
         const val DEFAULT_CAP_BYTES: Long = 16L * 1024 * 1024
 
         /** What a negative entry weighs against the cap. */

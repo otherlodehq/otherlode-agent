@@ -23,19 +23,16 @@ import reactor.core.publisher.Mono;
  * SetAttributesAdvice} does not count it under the nest's path, and then counts the endpoint. A
  * preflight and a verb the resource handler refuses count nothing.
  *
- * <p>The key, nest pattern, verb and preflight flag are computed synchronously, since the
- * attributes of a nested request are not stable once the Mono is returned. The key, {@code
- * List.of("fnres", lookupFunction, nestPattern, verb)}, matches the walk's, and the registry holds
- * the lookup function weakly. An endpoint the walk did not declare is recorded as discovered when
- * the Mono emits, so a lookup that finds nothing creates none.
- *
- * <p>The advice body is inlined into the woven method, so {@code onExit} stays one flat body with
- * no helper methods.
+ * <p>The key, {@code List.of("fnres", lookupFunction, nestPattern, verb)}, matches the walk's, and
+ * the registry holds the lookup function weakly. An endpoint the walk did not declare is recorded
+ * as discovered when the Mono emits, so a lookup that finds nothing creates none.
  */
 public class ResourceLookupAdvice {
     private static final String MODULE = "spring-webflux";
     private static final String RESOURCE_KEY = "fnres";
 
+    // Advice inlines only this method's bytecode, so a helper call here would stay a real call that
+    // the target loader cannot resolve. Keep the body flat.
     @Advice.OnMethodExit(suppress = Throwable.class)
     public static void onExit(
             @Advice.This Object lookupFunction,

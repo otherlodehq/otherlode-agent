@@ -17,18 +17,14 @@ COLLECTOR_URL = "http://localhost:4319"
 # The design time of the whole run, in seconds.
 RUN_SECONDS = 168 * 3600
 
-# The shortest gap between two requests of one route, so a very small --scale cannot flood
-# an app.
 MIN_PERIOD = 0.02
 
-# Used by the checker when a check names the test run.
 TEST_TARGET_METHOD = "applyLegacyDiscount"
 TEST_CALLER = "SoakTestDriver"
 TEST_INSTANCE_ID = "soak-shop-tests"
 TEST_SERVICE = "soak-shop"
 
-# How the shop jar runs its test driver: Spring Boot's launcher with loader.main set. The jar is a
-# fat jar, so a plain `-cp` would not see its classes.
+# The jar is a fat jar, so a plain `-cp` would not see its classes.
 TESTDRIVER_LAUNCHER = os.environ.get(
     "SOAK_TESTDRIVER_LAUNCHER", "org.springframework.boot.loader.launch.PropertiesLauncher"
 )
@@ -149,8 +145,7 @@ _SHOP_ROUTES = [
     Route("GET", "/reports/monthly", "/reports/monthly", 6 * H),
     Route("GET", "/health-legacy", "/health-legacy", 60.0),
 ]
-# The fields of the events app's `Event`: id, kind and payload. Ktor's default JSON refuses an
-# unknown key, so a wrong name answers 400.
+# Ktor's default JSON refuses an unknown key, so a wrong name answers 400.
 _EVENT_BODY = b'{"id":1,"kind":"soak","payload":"x"}'
 _EVENTS_ROUTES = [
     Route("GET", "/events", "/events", 0.5, scaled=False),
@@ -211,8 +206,7 @@ class Item:
     text: str = ""
 
 
-# Real seconds, at every scale. A window read, a crash cycle and the refusal window are not scaled
-# the way the design hours are.
+# Real seconds, at every scale.
 WINDOW_FAST_PERIOD = 5.0
 WINDOW_FAST_SPAN = 150.0
 WINDOW_SLOW_PERIOD = 60.0

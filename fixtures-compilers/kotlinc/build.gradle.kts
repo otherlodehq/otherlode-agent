@@ -1,11 +1,5 @@
-// Kotlin fixture classes compiled by each kotlinc release in the compiler matrix (ADR 0055), for
-// the generated-method, default-filling, coroutine and lowering rules in BranchSiteAnalyzer. One
-// task per release runs that release's own K2JVMCompiler from kotlin-compiler-embeddable against
-// the same release's kotlin-stdlib. KGP's Build Tools API was tried first and cannot drive these
-// releases from KGP 2.2.21 (kotlin.compiler.runViaBuildToolsApi with kotlin { compilerVersion }
-// fails on 1.9.25 and 2.4.20). Only -jvm-target is set, so the language version, API version and
-// -jvm-default mode stay each release's own defaults. Never on the test classpath directly: see
-// the comment in fixtures-scala3/build.gradle.kts for why.
+// Only -jvm-target is set, so the language version, API version and -jvm-default mode stay each
+// release's own defaults. Never on the test classpath directly: see fixtures-scala3/build.gradle.kts.
 plugins {
     base
     `java-base`
@@ -76,18 +70,11 @@ val compileTasks =
         }
     }
 
-// The kotlinx.serialization plugin's output (ADR 0078), compiled apart from the fixtures above: each
-// release with its matching compiler plugin and a kotlinx-serialization-core that release can read
-// (the newest core metadata a compiler reads is its own plus one). A release from 2.0 to 2.2 also
-// compiles them under -language-version 1.9, which makes the frontend K1 and leaves the $serializer
-// class non-synthetic; 2.3 and later reject that language version. The K1-only and 2.x-only
-// sources join where they compile.
+// Each release needs a kotlinx-serialization-core it can read: the newest core metadata a compiler
+// reads is its own plus one. 2.3 and later reject -language-version 1.9.
 val serializationRuntimes =
     mapOf("1.9.25" to "1.6.3", "2.1.21" to "1.8.1", "2.2.21" to "1.9.0", "2.4.21" to "1.9.0")
 
-// A release the map does not list (the canary adds the newest one) takes the runtime of the newest
-// listed release below it, since a compiler reads older core metadata. A plugin that needs a newer
-// runtime then fails its own serialization compile, not the whole build's configuration.
 fun serializationRuntimeFor(version: String): String {
     serializationRuntimes[version]?.let { return it }
     fun key(release: String) = release.split(".").map(String::toInt)
@@ -168,10 +155,8 @@ val serializationTasks =
         }
     }
 
-// A build that mixes a library compiled with -jvm-default=disable and a consumer compiled with
-// -jvm-default=all or all-compatibility (ADR 0026). The flag is -Xjvm-default before 2.2, which names
-// the modes all and all-compatibility, and -jvm-default from 2.2, whose modes no-compatibility and
-// enable are the same two. Each release's classes go to classes/mixed/<release>/{lib,all,all-compatibility}.
+// The flag is -Xjvm-default before 2.2 and -jvm-default from 2.2, whose modes no-compatibility and
+// enable are all and all-compatibility.
 val mixedRoot = layout.projectDirectory.dir("src/mixed")
 
 val mixedTasks =

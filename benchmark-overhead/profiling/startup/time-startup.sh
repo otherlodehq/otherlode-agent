@@ -1,16 +1,7 @@
 #!/bin/bash
-# Starts spring-petclinic-rest once and prints the label, Spring Boot's "Started ... in" seconds and
-# its "process running for" seconds.
-#
 # usage: time-startup.sh <label> [JVM options...]
-#   e.g. time-startup.sh headline "-javaagent:$AGENT_JAR=includePackages=org.springframework.samples.petclinic,exportUrl=http://127.0.0.1:1"
-#
-# Needs, as environment variables:
-#   JAVA          a JDK 21 java binary with a CDS archive (`java -Xshare:on -version` must work)
-#   PETCLINIC_JAR spring-petclinic-rest's fat jar (see ../heap/measure.sh)
-#   OUT_DIR       where each run's log goes
-# and Postgres on localhost:55432 (user, password and database "petclinic"). Repeat each label five
-# to seven times and take the median; the machine should be otherwise idle.
+# Needs JAVA (a JDK 21 java binary with a CDS archive), PETCLINIC_JAR and OUT_DIR, with Postgres
+# on localhost:55432 (user, password and database "petclinic").
 set -u
 label=$1; shift
 mkdir -p "$OUT_DIR"

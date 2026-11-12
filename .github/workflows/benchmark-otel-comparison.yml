@@ -1,7 +1,5 @@
 name: benchmark-otel-comparison
 
-# Overhead of the Otherlode agent against the OpenTelemetry Java agent and no agent, on one runner per job.
-# Only by hand, so the nightly benchmark-overhead job is unchanged. See benchmark-overhead/OTEL-COMPARISON.md.
 on:
   workflow_dispatch:
     inputs:
@@ -42,8 +40,6 @@ jobs:
     if: ${{ inputs.jobs == 'all' || inputs.jobs == 'closed' }}
     name: closed loop (headline)
     runs-on: ubuntu-latest
-    # A run is startup, a warmup of 90 to 600 s (it ends once throughput is steady), the window and teardown:
-    # about eight to sixteen minutes at the default 300 s window. 18 runs at the default 6 repeats, plus image builds.
     # More repeats or a longer window need a longer limit.
     timeout-minutes: 360
     steps:
@@ -95,9 +91,7 @@ jobs:
     if: ${{ inputs.jobs == 'all' || inputs.jobs == 'open' }}
     name: open loop (headline)
     runs-on: ubuntu-latest
-    # A run is startup, a warmup of 90 to 600 s (it ends once throughput is steady), the window and teardown:
-    # about eight to sixteen minutes at the default 300 s window. 18 runs at the default 6 repeats, plus image builds.
-    # The open-loop job also calibrates its rate first, one more warmup. More repeats or a longer window need a longer limit.
+    # More repeats or a longer window need a longer limit.
     timeout-minutes: 360
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -150,8 +144,7 @@ jobs:
     if: ${{ inputs.jobs == 'all' || inputs.jobs == 'startup' }}
     name: startup (headline)
     runs-on: ubuntu-latest
-    # Each start takes under a minute, and a repeat starts each of three variants once. 21 repeats at the default,
-    # plus one warm-up start and the image builds: about 80 minutes. More repeats need a longer limit.
+    # More repeats need a longer limit.
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

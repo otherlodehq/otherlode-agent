@@ -11,8 +11,7 @@ private const val CREATE_ORDER_COUNT = 5
 
 /**
  * Drives the Spring Boot demo server: `GET /orders/{id}` and `POST /orders` repeatedly, plus one
- * unconstrained-verb `GET /ping`. Never calls the invoice endpoint or `DELETE /orders/{id}`, so
- * both stay "never called" in the endpoint report.
+ * unconstrained-verb `GET /ping`. Never calls the invoice endpoint or `DELETE /orders/{id}`.
  */
 fun main() {
     val client = HttpClient.newHttpClient()

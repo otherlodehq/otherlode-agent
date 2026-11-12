@@ -1,14 +1,5 @@
 #!/usr/bin/env bash
-# Starts, stops and inspects the soak run on the VM. Run it over ssh; it uses sudo.
-#
-#   soakctl start [--scale N] [--flush S]   start a run (a smoke run is --scale 60 --flush 10);
-#                                           with a run in the state file, resume it
-#   soakctl stop                            stop the supervisor and the instances; keep the state
-#   soakctl down                            stop the supervisor and the whole stack
-#   soakctl status                          what runs, how far the run is, the last report
-#   soakctl check [check.py options]        run the checker now
-#   soakctl session                         mint a browser session token for soak@example.com
-#   soakctl reset --yes                     delete the run: state, logs, reports, database, secrets
+# Run it over ssh; it uses sudo.
 set -euo pipefail
 
 home=${SOAK_HOME:-/opt/soak}

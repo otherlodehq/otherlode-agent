@@ -93,7 +93,6 @@ enum class KotlinKind {
  * shape for that compiler.
  */
 enum class UnreadShape {
-    /** Not an unread shape. */
     NONE,
 
     /** A Scala case class's plumbing, or its companion's, with an unread body. */
@@ -295,7 +294,6 @@ enum class BranchRole {
 
 /** The kind of routine path a kept branch outcome leads to. */
 enum class RoutineKind {
-    /** Not routine. */
     NONE,
 
     /**
@@ -803,7 +801,6 @@ enum class DisabledEndpointModuleKind {
     ROUTES_NOT_COUNTED,
 }
 
-/** How a dependency was found. */
 enum class DependencyDiscoverySource {
     /**
      * Listed from the startup classpath, such as a `java.class.path` entry, a jar a manifest
@@ -815,7 +812,6 @@ enum class DependencyDiscoverySource {
     LOAD,
 }
 
-/** Where a dependency's identity was read from. */
 enum class DependencyIdentitySource {
     /** `META-INF/maven/<group>/<artifact>/pom.properties` inside the jar. */
     POM_PROPERTIES,

@@ -17,13 +17,12 @@ import net.bytebuddy.asm.Advice;
  * <p>Counting follows {@code DispatchAdvice}: the match's {@code UriRoute} is the registered key,
  * an unseen route is recorded without a handler join, and a HEAD route beside a {@code @Get}
  * counts against the GET endpoint.
- *
- * <p>The advice body is inlined into the woven method, so {@code onEnter} stays one flat body with
- * no helper methods.
  */
 public class LambdaDispatchAdvice {
     private static final String MODULE = "micronaut-3";
 
+    // Advice inlines only this method's bytecode, so a helper call here would stay a real call that
+    // the target loader cannot resolve. Keep the body flat.
     @Advice.OnMethodEnter(suppress = Throwable.class)
     public static void onEnter(@Advice.Argument(0) HttpRequest<?> request) {
         try {

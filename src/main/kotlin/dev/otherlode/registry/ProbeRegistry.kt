@@ -30,12 +30,10 @@ import java.util.concurrent.atomic.AtomicLong
  * Holds one probe-count `long[]` per class, keyed by class name, probe-layout hash and defining
  * classloader identity, and does the delta and manifest accounting for them. A probe hit is a plain
  * `arr[index]++`, so counts are approximate under concurrency: increments can be lost and a read can
- * see a count fall. A probe that ran at least once stays at one or more on 64-bit HotSpot, which is
- * all a "never hit" claim needs. A new registry starts every count at zero.
+ * see a count fall. A probe that ran at least once stays at one or more on 64-bit HotSpot.
  *
  * A class whose manifest entries alone break a bound of [PayloadKind.MANIFEST] is reported as a
- * skipped class, and its probe deltas are left out of every delta batch. A class's manifest is
- * send-once: [advanceManifestBaseline] releases its probe locations.
+ * skipped class, and its probe deltas are left out of every delta batch.
  *
  * @property confirmsDefinitions When true, [computeManifestDeltas] and [manifest] withhold a class's
  * probe locations and its [ClassLocation] and [ClassReferences] records until the class is confirmed
@@ -362,9 +360,6 @@ open class ProbeRegistry(
         return removed
     }
 
-    /**
-     * How many classes are recorded as unreported.
-     */
     fun unreportedClassCount(): Int = unreportedByClassName.size
 
     private fun isConfirmed(entry: ClassEntry): Boolean {
@@ -429,8 +424,7 @@ open class ProbeRegistry(
 
     /**
      * Records a class the agent matched but could not instrument, so it reaches the wire as a skipped
-     * class with [reason]. The class never reaches [register]. A repeat call for a class name keeps the
-     * first reason and time.
+     * class with [reason]. A repeat call for a class name keeps the first reason and time.
      */
     fun recordSkipped(
         className: String,
@@ -457,8 +451,7 @@ open class ProbeRegistry(
      * [PayloadKind.DELTA_BATCH]. A class is never split across batches, so a class with more changed
      * probes than the cap gets a batch of its own. A class reported as skipped for size has no deltas.
      *
-     * Always returns at least one batch. An empty one is the liveness heartbeat described in
-     * [dev.otherlode.export.ExportScheduler.flush].
+     * Always returns at least one batch.
      */
     open fun computeDeltaBatches(
         resource: ResourceAttributes,

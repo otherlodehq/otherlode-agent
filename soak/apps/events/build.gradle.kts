@@ -36,14 +36,11 @@ kotlin {
     }
 }
 
-// Each version has its own source set on top of the common sources: src/v1 holds ReplayEngine and
-// the replay route, src/v2 holds the stats route. -PeventsVersion=1.0.0 or 2.0.0 builds one jar;
-// the default builds both.
 val versionSourceSets = mapOf("1.0.0" to "v1", "2.0.0" to "v2")
 val wanted = providers.gradleProperty("eventsVersion").orNull
 
-// Version 2.0.0 names commons-codec in its manifest Class-Path and ships it beside the jar, so the agent
-// sees it as a jar of its own. Only LegacyDigest, a class nothing loads, refers to it.
+// 2.0.0 names commons-codec in its manifest Class-Path. Only LegacyDigest, a class nothing loads,
+// refers to it.
 val codecJarName = "commons-codec-1.19.0.jar"
 val copyCodec =
     tasks.register<Copy>("copyCodec") {

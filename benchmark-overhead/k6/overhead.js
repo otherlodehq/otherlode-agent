@@ -1,16 +1,6 @@
-// One iteration lists specialties and pet types, creates an owner, adds a pet and a visit, reads the
-// pet, deletes the pet and the owner, creates, reads and deletes a vet, and lists owners and vets.
-// Every response status is checked: the harness fails a run whose checks pass rate is below 1.
-//
-// Each request carries a `name` tag, and the harness leaves the `url` system tag off, so a URL with
-// an id in it does not start a metric series of its own. With WINDOW_MS set, every iteration is
-// tagged with the third of the window it started in, and the thresholds below make k6 export the
-// request count of the first and last thirds, which the harness compares to tell a warm JVM from
-// one still compiling.
-//
-// With OPEN_RATE_PER_MIN set, the window is one constant-arrival-rate scenario: that many iterations
-// a minute for OPEN_DURATION_S seconds, from OPEN_PRE_ALLOCATED_VUS up to OPEN_MAX_VUS virtual users.
-// The harness passes neither -u nor --duration then, since either would replace the scenario.
+// Each request carries a `name` tag, and the harness leaves the `url` system tag off.
+// The thresholds below make k6 export the request count of the first and last thirds.
+// With OPEN_RATE_PER_MIN set, the harness passes neither -u nor --duration: either would replace the scenario.
 import http from 'k6/http';
 import exec from 'k6/execution';
 import { check } from 'k6';
@@ -38,8 +28,6 @@ const open = {
   },
 };
 
-// A fixed rate starts the same number of iterations in every third, so the open loop also exports
-// each third's median latency, which the harness compares instead of the counts.
 const latencyThirds = {
   thresholds: Object.assign({}, thirds.thresholds, {
     'http_req_duration{third:first}': ['med>=0'],

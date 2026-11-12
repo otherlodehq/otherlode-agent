@@ -49,17 +49,7 @@ private const val JAKARTA_SERVLET_PREFIX = "jakarta/servlet/"
 
 /**
  * Endpoint module for Spring MVC (`spring-webmvc`), covering Spring Framework 5.3, 6.x and 7.x
- * with one module. Each dispatch advice is written once against `javax.servlet` and, when the
- * woven method takes `jakarta` types, bound with the `javax/servlet/` prefix rewritten to
- * `jakarta/servlet/`.
- *
- * Annotation-mapped endpoints are declared at `registerHandlerMethod` and `registerMapping` and
- * counted at `handleMatch`. URL-mapped endpoints are declared at `registerHandler` and
- * `setRootHandler` and counted at `PathExposingHandlerInterceptor.preHandle`. Functional routes
- * are declared by [declare], which walks the `RouterFunction` of a `RouterFunctionMapping`, and
- * counted at `setAttributes` or, for `resources(pattern, location)`, at
- * `PathResourceLookupFunction.apply`. An introspector lookup, an async redispatch and a CORS
- * preflight are no call.
+ * with one module. An introspector lookup, an async redispatch and a CORS preflight are no call.
  */
 class SpringWebMvcModule : EndpointModule {
     override val name: String = FUNCTIONAL_ROUTE_STACK.moduleName

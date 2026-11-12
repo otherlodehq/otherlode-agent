@@ -5,19 +5,14 @@ import net.bytebuddy.asm.Advice;
 
 /**
  * Woven onto the exit of {@code RouterFunctionMapping.afterPropertiesSet()}, which fills the
- * private {@code routerFunction} field. The field is set when this method returns, before any
- * request is dispatched.
- *
- * <p>The field is bound as a plain {@code Object}, so this class has no symbolic reference to
- * {@code RouterFunction}. The object goes unopened to {@link OtherlodeEndpoints#declare}, which
- * hands it to {@code SpringWebMvcModule.declare}, the only code that walks it.
- *
- * <p>The advice body is inlined into the woven method, so {@code onExit} stays one flat body with
- * no helper methods.
+ * private {@code routerFunction} field. The field's object goes unopened to {@link
+ * OtherlodeEndpoints#declare}.
  */
 public class DeclareRouterFunctionsAdvice {
     private static final String MODULE = "spring-webmvc";
 
+    // Advice inlines only this method's bytecode, so a helper call here would stay a real call that
+    // the target loader cannot resolve. Keep the body flat.
     @Advice.OnMethodExit(suppress = Throwable.class)
     public static void onExit(@Advice.FieldValue("routerFunction") Object routerFunction) {
         try {

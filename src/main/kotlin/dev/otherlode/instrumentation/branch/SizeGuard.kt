@@ -6,17 +6,14 @@ import net.bytebuddy.jar.asm.Label
 import net.bytebuddy.jar.asm.MethodVisitor
 import net.bytebuddy.jar.asm.Opcodes
 
-/** Why [SizeGuard] named a method. */
 enum class SizeGuardReason(
     /** What the WARNING says about the method. */
     val text: String,
     /** The code length the weave would have crossed. */
     val limit: Int,
 ) {
-    /** HotSpot never compiles a method over `HugeMethodLimit` bytes, so probes would leave it interpreted for good. */
     NOT_COMPILED("would not be JIT-compiled", SizeGuard.HUGE_METHOD_LIMIT),
 
-    /** A method's code is capped at 65535 bytes; weaving past it fails the whole class. */
     CLASS_FILE_LIMIT("would not fit a class file", SizeGuard.CODE_LENGTH_LIMIT),
 
     /** The entry probe alone can take the method past `HugeMethodLimit`. The method is named and no branch probe is dropped. */
@@ -79,8 +76,7 @@ internal class SiteCost(
  * is never JIT-compiled, or past the class file's 65535 bytes of code per method, above which the class
  * cannot be written and is skipped whole.
  *
- * [apply] bounds each method's woven code length from its length in the class file and its tracked
- * sites. When the bound crosses a limit, it drops every still-kept branch site of that method as
+ * When the bound crosses a limit, [apply] drops every still-kept branch site of that method as
  * [BranchDropReason.SIZE_GUARD], unless the entry probe alone takes the method past that limit or past
  * 65535. The method keeps its entry probe.
  *

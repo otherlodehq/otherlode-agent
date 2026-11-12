@@ -2,9 +2,7 @@ package com.example.demo.server
 
 /**
  * Guarded the same way [LegacyDiscountCalculator] is: the environment flag that reaches it is
- * always off in this demo, so this object never loads either. [handleCheckout] reads [FLAT_FEE]
- * directly and never constructs this object, proving the same "declared, never loaded" signal for
- * a class used only through a static field rather than through `new`.
+ * always off in this demo, so this object never loads either.
  */
 object LegacyRates {
     @JvmField

@@ -10,12 +10,11 @@ import net.bytebuddy.asm.Advice;
  * class, the functional interface it implements, and the method it calls to {@link
  * OtherlodeEndpoints#recordLambdaClass}.
  *
- * <p>This advice is inlined into {@code java.base}, so it may only call the bootstrap seam. It
- * must not contain a lambda or a method reference: either would call the method it is woven into.
- * The field names must match {@code LambdaFactoryShape.JDK}, which checks them on the running JDK
- * before the hook installs.
+ * <p>The field names must match {@code LambdaFactoryShape.JDK}.
  */
 public class SpinInnerClassAdvice {
+    // Inlined into java.base: it may call only the bootstrap seam, and a lambda or method
+    // reference here would call the method it is woven into.
     @Advice.OnMethodExit(suppress = Throwable.class)
     public static void onExit(
             @Advice.Return Class<?> lambdaClass,

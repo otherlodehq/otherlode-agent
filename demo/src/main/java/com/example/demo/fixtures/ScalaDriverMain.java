@@ -6,9 +6,7 @@ import java.util.Arrays;
 /**
  * Runs once under the agent and exits, calling the named methods of a Scala fixture module's
  * {@code Driver} object through the static forwarders scalac puts on its class. The first argument
- * is how many seconds to wait before exiting, so the static baseline scan and a regular flush land
- * first; the rest name the methods to call. Written in Java so the run's classpath carries no Kotlin
- * standard library, which the report would otherwise list as a dependency of the Scala service.
+ * is how many seconds to wait before exiting; the rest name the methods to call.
  */
 public final class ScalaDriverMain {
     private ScalaDriverMain() {

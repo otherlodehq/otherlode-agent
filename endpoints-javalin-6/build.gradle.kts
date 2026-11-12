@@ -21,8 +21,7 @@ dependencies {
     compileOnly(project(":bootstrap"))
     compileOnly("net.bytebuddy:byte-buddy:$byteBuddyVersion")
 
-    // Compiled against the oldest supported release, per ADR 0017. Never `implementation`: Javalin
-    // belongs to the target application and must not be shaded into the agent jar.
+    // The oldest supported release. Never `implementation`: Javalin must not be shaded into the agent jar.
     compileOnly("io.javalin:javalin:6.1.0")
 
     testImplementation(project(":"))

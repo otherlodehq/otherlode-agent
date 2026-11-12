@@ -8,8 +8,7 @@ import net.bytebuddy.asm.Advice;
 /**
  * Woven onto {@code ApiBuilder.crud(String, CrudHandler, RouteRole...)}. The entry opens a
  * registration scope on this thread that holds the handler and the two paths {@code crud}
- * registers under. The exit closes it, also when {@code crud} throws. {@link
- * RegisterEndpointAdvice} reads the scope for each registration.
+ * registers under. The exit closes it, also when {@code crud} throws.
  */
 public class CrudAdvice {
     private static final String MODULE = "javalin-7";

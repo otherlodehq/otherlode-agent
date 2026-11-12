@@ -344,23 +344,15 @@ private data class RootOutcome(
 )
 
 /**
- * Stands in for the real collector, which lives outside this repo.
+ * Stands in for the real collector.
  *
- * It decodes the same generated protobuf classes the agent sends. It keeps the manifest and
- * hit history in memory. On shutdown, it prints two reports: "never hit" (manifest probes with
- * no delta that ever reported a hit) and, since the demo server opts into
- * `staticBaselineEnabled=true`, "never loaded" (classes the static scan found that never once
- * appeared in the reactive manifest at all). It also prints the optional-argument, endpoint,
- * class-finding, unreached-cluster and dependency reports, the last giving each dependency the
- * instances listed a status through [computeDependencyReport]. The never-hit, class-finding and
- * cluster reports follow the class-finding rules `OtherlodeTestCollector` applies: a class finding
- * stands in for the methods that can only run through it, a static initialiser is never a row, and
- * a constructor is a row only as an unused overload. A constructor prints as `constructor(...)` with its parameter
- * types, as the server's web UI shows it.
+ * On shutdown, it prints two reports: "never hit" (manifest probes with no delta that ever reported a
+ * hit) and "never loaded" (classes the static scan found that never once appeared in the reactive
+ * manifest at all). It also prints the optional-argument, endpoint, class-finding, unreached-cluster
+ * and dependency reports. A constructor prints as `constructor(...)` with its parameter types.
  *
  * Takes the port to bind as its one argument, defaulting to [DemoPorts.COLLECTOR_PORT] for a run
- * by hand. Port 0 binds an ephemeral one; either way the port that was actually bound is printed,
- * so a caller that asked for 0 learns which one it got by reading this process's output.
+ * by hand. Port 0 binds an ephemeral one; either way the port that was actually bound is printed.
  */
 fun main(args: Array<String>) {
     val requestedPort = args.firstOrNull()?.toIntOrNull() ?: DemoPorts.COLLECTOR_PORT

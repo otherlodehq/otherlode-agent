@@ -1,28 +1,5 @@
 #!/usr/bin/env bash
-# The soak stack on the VM: Postgres in Docker, the Otherlode server with its snapshot refresh
-# loop, and the collector. Every command is safe to run again.
-#
-#   stack.sh up                start what is not running, then print where things are
-#   stack.sh down              stop the collector, the refresh loop, the server and Postgres
-#   stack.sh status            print what runs; exit 1 when something does not
-#   stack.sh stop-collector    stop only the collector (the supervisor's outage)
-#   stack.sh start-collector   start only the collector
-#   stack.sh collector-limit low|normal
-#                              restart the collector with a low manifest element limit (the build of
-#                              bin/otherlode-collector-lowmanifest) or the normal one; the collector
-#                              keeps the mode across later stops and starts
-#   stack.sh restart-server    stop and start only the server
-#   stack.sh session           mint a browser session for soak@example.com into secrets/session-token
-#   stack.sh run-server|run-collector|refresh-loop
-#                              run one process in the foreground; the systemd units soak-server,
-#                              soak-collector and soak-refresh call these
-#   stack.sh purge --yes       delete the database volume and every secret
-#
-# The server, the collector and the refresh loop each run in a systemd unit of their own, so a
-# restart or a stop of the supervisor's unit never kills them. vm-setup.sh writes the units and a
-# sudoers rule that lets the user soak start, stop and restart those three units and nothing else.
-#
-# State lives under $SOAK_HOME (default /opt/soak). No command prints a key, a token or a password.
+# Every command is safe to run again. No command prints a key, a token or a password.
 set -euo pipefail
 
 home=${SOAK_HOME:-/opt/soak}
@@ -45,8 +22,6 @@ wait_for() {
   exit 1
 }
 
-# Writes a random secret once, mode 600. $1 is the file name, $2 the number of random bytes,
-# $3 an optional prefix.
 new_secret() {
   if [ -s "$secrets/$1" ]; then return 0; fi
   (umask 077 && printf '%s%s' "${3:-}" "$(openssl rand -hex "$2")" >"$secrets/$1")
@@ -66,7 +41,6 @@ ensure_secrets() {
   fi
 }
 
-# Runs psql inside the container over its socket, which trusts local users. SQL comes on stdin.
 psql_admin() { docker exec -i "$pg_name" psql -qtAX -v ON_ERROR_STOP=1 -U otherlode -d otherlode "$@"; }
 
 start_postgres() {
@@ -86,7 +60,7 @@ start_postgres() {
   exit 1
 }
 
-# The roles compose.yaml's init script creates, plus the refresh login. They share one password.
+# The roles compose.yaml's init script creates, plus the refresh login.
 ensure_roles() {
   local pw
   pw=$(cat "$secrets/pg.password")
@@ -113,7 +87,6 @@ END
 SQL
 }
 
-# Sets the database login in the calling subshell's environment. $1 is the role.
 db_env() {
   export OTHERLODE_SERVER_DB_HOST=127.0.0.1 OTHERLODE_SERVER_DB_PORT=$pg_port \
     OTHERLODE_SERVER_DB_NAME=otherlode OTHERLODE_SERVER_DB_SSLMODE=disable
@@ -170,8 +143,7 @@ start_refresh() {
   unit start refresh
 }
 
-# The refresh job runs every 5 minutes, as Cloud Scheduler runs it. A snapshot is replaced at
-# most once in 15 minutes.
+# The refresh job runs every 5 minutes, as Cloud Scheduler runs it.
 refresh_loop() {
   trap 'exit 0' TERM INT
   while :; do
@@ -211,8 +183,8 @@ run_collector() {
   exec "$bin/otherlode-collector"
 }
 
-# Restarts the collector in a limit mode. The collector has no variable for its element limits, so the
-# low mode runs a build of it with a lower manifest limit.
+# The collector has no variable for its element limits, so the low mode runs a build of it with a
+# lower manifest limit.
 set_collector_limit() {
   case "$1" in
     low) [ -x "$bin/otherlode-collector-lowmanifest" ] || { log "no $bin/otherlode-collector-lowmanifest"; exit 1; } ;;
@@ -226,8 +198,7 @@ set_collector_limit() {
   start_collector
 }
 
-# Writes a session for the bootstrap user. The database keeps only the token's SHA-256, as the
-# server does. The plaintext goes to a file only this user can read.
+# The database keeps only the token's SHA-256, as the server does.
 mint_session() {
   local token hash n
   token=$(head -c 32 /dev/urandom | base64 | tr '+/' '-_' | tr -d '=\n')

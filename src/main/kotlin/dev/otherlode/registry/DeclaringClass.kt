@@ -3,8 +3,7 @@ package dev.otherlode.registry
 import java.lang.ref.WeakReference
 
 /**
- * The class whose transform declared endpoints, which [EndpointRegistry] watches for whether the
- * JVM defines it. Every endpoint of one commit shares the same instance.
+ * The class whose transform declared endpoints. Every endpoint of one commit shares the same instance.
  *
  * @property className The binary name of the class being transformed.
  */

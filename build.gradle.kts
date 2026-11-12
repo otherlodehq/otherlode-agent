@@ -26,19 +26,9 @@ repositories {
     mavenCentral()
 }
 
-// `-Potherlode.testJdk=25` runs every project's tests on that JDK. Compilation keeps the JDK 21
-// toolchain; only the JVM that runs the tests changes. CI sets it so a JDK that renames an
-// internal the agent reads, such as the lambda factory's `interfaceClass` and `implInfo` fields,
-// fails a test. Micronaut 5's suite is the exception: its class files need JDK 25, so it runs
-// there whatever this says. The framework marker fixtures run on the JDK 21 toolchain whatever this
-// says: their forked JVMs use the test JVM's JDK, and Helidon 4 needs 21.
 val testJdk = providers.gradleProperty("otherlode.testJdk")
 
-// The shipped modules and the modules whose tests run on the test JVM compile against the JDK 17
-// API and emit class-file version 61, so the agent and the testkit load on a JDK 17 and an API
-// added later is a compile error here, not a NoSuchMethodError in an adopter's JVM. The toolchain
-// is JDK 21. The compiler-matrix and probe-window fixtures are left out: their point is a
-// specific compiler or class-file version.
+// Holds every shipped module and every module whose tests run on the test JVM.
 val jdk17Projects =
     setOf(
         ":",
@@ -81,8 +71,8 @@ allprojects {
     }
 }
 
-// One JaCoCo version for its core library and its agent jar: CoverageAgentOrderTest reads the
-// agent's execution data with the core's reader and compares ids with the core's CRC64.
+// One version for JaCoCo's core library and its agent jar: CoverageAgentOrderTest reads the agent's
+// execution data with the core's reader.
 val jacocoVersion = "0.8.13"
 allprojects {
     plugins.withType<JavaBasePlugin> {
@@ -92,7 +82,7 @@ allprojects {
                 javaLauncher.set(toolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(testJdk.get())) })
             }
             // These test JVMs start as an installed agent does, so agent loggers reach java.util.logging
-            // whatever order the tests run in. Forked fixture JVMs build their own command line.
+            // whatever order the tests run in.
             val bootstrapJar = rootProject.project(":bootstrap").tasks.named<Jar>("jar").flatMap { it.archiveFile }
             inputs.file(bootstrapJar)
             jvmArgumentProviders.add(CommandLineArgumentProvider { listOf("-Xbootclasspath/a:${bootstrapJar.get().asFile.absolutePath}") })
@@ -113,99 +103,55 @@ evaluationDependsOn(":demo-spring")
 evaluationDependsOn(":endpoints-ktor-3")
 
 dependencies {
-    // Compile-time only: at runtime the holder class comes from the target JVM's bootstrap
-    // classloader, where BootstrapHolder appends the embedded jar below. Shipping it as loose
-    // classes in this jar too would put a second copy on the system loader.
+    // Compile-time only: shipping it in this jar too would put a second copy on the system loader.
     compileOnly(project(":bootstrap"))
 
-    // testCompileOnly does not extend compileOnly by default, so tests that reference a
-    // bootstrap-resident type directly (loaded for real via BootstrapHolder.install) need the
-    // same compile-time-only dependency repeated here.
     testCompileOnly(project(":bootstrap"))
 
-    // Main artifact ships ASM shaded under net.bytebuddy.jar.asm.*, which the
-    // branch-tracking tier's AsmVisitorWrapper uses directly instead of pulling
-    // in a second, independently-versioned ASM dependency.
     implementation("net.bytebuddy:byte-buddy:1.18.12")
 
-    // ASM's JSRInlinerAdapter and AnalyzerAdapter, relocated into Byte Buddy's ASM package, which
-    // bundles the core classes but not these: the inliner removes the jsr/ret of a class file below
-    // version 51, and the analyser gives the branch tier the frame at each jump it rewrites.
     implementation(files(asmSubroutinesJar))
 
-    // EndpointModule, AdviceBinder, and the ByteBuddy-facing types a per-framework endpoint
-    // module is written against. A per-framework subproject depends on this module and never on
-    // this one, the root project, since the root project depends on the per-framework modules to
-    // merge their advice into the shaded jar: depending the other way would be a cycle.
     implementation(project(":endpoints-api"))
 
-    // The first real endpoint module: the JDK's own com.sun.net.httpserver.HttpServer.
     implementation(project(":endpoints-jdk-httpserver"))
 
-    // The functional-route walk the Spring endpoint modules share.
     implementation(project(":endpoints-spring-common"))
 
-    // Endpoint module for Spring MVC, covering Spring Framework 5.3, 6.x and 7.x with one module.
     implementation(project(":endpoints-spring-webmvc"))
 
-    // Endpoint module for Spring WebFlux, covering Spring Framework 5.3, 6.x and 7.x with one module.
     implementation(project(":endpoints-spring-webflux"))
 
-    // Endpoint modules for Javalin 6 and 7.
     implementation(project(":endpoints-javalin-6"))
     implementation(project(":endpoints-javalin-7"))
 
-    // The class-file handler join the Micronaut endpoint modules share.
     implementation(project(":endpoints-micronaut-common"))
 
-    // Endpoint module for Micronaut 3.
     implementation(project(":endpoints-micronaut-3"))
 
-    // Endpoint module for Micronaut 4.0 to 5.x.
     implementation(project(":endpoints-micronaut"))
 
-    // Endpoint modules for Ktor. Route became the interface RoutingNode between 2.x and 3.x, so
-    // the two major versions need their own module rather than one shared one.
     implementation(project(":endpoints-ktor-2"))
     implementation(project(":endpoints-ktor-3"))
 
-    // Endpoint module for JAX-RS, covering both the javax.ws.rs and jakarta.ws.rs namespaces with
-    // one module. JAX-RS has no registration hook to advise, so its declared list comes from
-    // reading annotations at transform time instead; see the module's own KDoc.
     implementation(project(":endpoints-jaxrs"))
 
-    // Endpoint module for Vert.x Web, covering 4.5 to 5.x with one module.
     implementation(project(":endpoints-vertx-web"))
 
-    // Endpoint module for plain servlets, covering the javax.servlet and jakarta.servlet namespaces
-    // with one module. It counts a servlet at its own entry against the mapping the container matched.
     implementation(project(":endpoints-servlet"))
 
-    // Route bridge endpoint module: counts the route OpenTelemetry's own HTTP server
-    // instrumentation resolved, for a framework none of the modules above cover. Off by default
-    // (AgentConfig.otelBridgeEnabled).
     implementation(project(":endpoints-otel-bridge"))
 
-    // The payload models, the codec and the wire schema they encode
-    // (src/main/proto/otherlode/v1/otherlode.proto), shared with the testkit. Every type the agent
-    // takes from it is part of this project's own API, and protobuf-java comes with it; both are
-    // relocated in the shaded jar below.
     api(project(":wire"))
 
     testImplementation(kotlin("test"))
 
-    // The compiler matrix tests run once per kotlinc release and javac version. The version is the
-    // one kotlin("test") already brings in for junit-jupiter-api.
+    // The version kotlin("test") already brings in for junit-jupiter-api.
     testImplementation("org.junit.jupiter:junit-jupiter-params:5.10.1")
     testImplementation("net.bytebuddy:byte-buddy-agent:1.18.12")
 
-    // Drives javassist's own proxy generator, so the name rule for its classes is tested against
-    // a class it really defined.
     testImplementation("org.javassist:javassist:3.30.2-GA")
 
-    // JaCoCo's offline instrumenter, used only to produce the bytecode shape a coverage agent
-    // attached ahead of this one hands to the transformer chain, so the analyser is tested
-    // against the real thing rather than a hand-written imitation of it.
     testImplementation("org.jacoco:org.jacoco.core:$jacocoVersion")
 }
 
@@ -213,13 +159,7 @@ kotlin {
     jvmToolchain(21)
 }
 
-// Java test fixtures that use pattern matching for switch, a JDK 21 language feature, compile at
-// release 21 beside the rest of the Java fixtures, which compile at 17. compileTestJava takes their
-// class files as an input and copies them into its own output directory, where the tests read and
-// load fixtures from, so every consumer of the test classes sees them and no two tasks share an
-// output. A changed input forces compileTestJava into a full recompile, which clears the directory
-// first, so a deleted fixture leaves no stale class behind. A test JVM older than 21 cannot define
-// these classes; the tests that do define them skip for that reason (see ClassFileSupport).
+// Java test fixtures that need release 21. The rest of the Java fixtures compile at 17.
 val java21FixtureFiles =
     listOf(
         "com/example/target/SwitchJavaTarget.java",
@@ -233,8 +173,7 @@ sourceSets.test {
 val compileTestJava21 by tasks.registering(JavaCompile::class) {
     source = fileTree("src/test/java") { include(java21FixtureFiles) }
     classpath = sourceSets.test.get().compileClasspath
-    // Other Java fixtures these name (SwitchColor) resolve from source but are not compiled here:
-    // compileTestJava owns their class files.
+    // compileTestJava owns the class files of the other fixtures these name.
     options.sourcepath = files("src/test/java")
     options.compilerArgs.add("-implicit:none")
     destinationDirectory.set(layout.buildDirectory.dir("classes/java/test21"))
@@ -242,7 +181,6 @@ val compileTestJava21 by tasks.registering(JavaCompile::class) {
     javaCompiler.set(javaToolchains.compilerFor { languageVersion.set(JavaLanguageVersion.of(21)) })
 }
 
-/** Gives a task action file operations without capturing the project. */
 interface InjectedFileSystem {
     @get:Inject
     val fs: FileSystemOperations
@@ -256,21 +194,12 @@ tasks.compileTestJava {
     doLast { injected.fs.copy { from(java21Classes).into(into) } }
 }
 tasks.withType<Test>().configureEach {
-    // The release-21 fixtures are not tests, and Gradle's class scan fails on a JVM that cannot define them.
+    // Gradle's class scan fails on a JVM that cannot define the release-21 fixtures.
     exclude(java21FixtureFiles.map { it.removeSuffix(".java") + "*" })
 }
 
-// The bootstrap module's jar rides inside this one as a plain resource. premain writes it to a
-// temp file and hands it to Instrumentation.appendToBootstrapClassLoaderSearch, which takes a jar
-// on disk and nothing else. Embedding the finished jar rather than its classes is what keeps the
-// holder out of this jar's own class tree, so the shadow relocation below never touches it and
-// the system loader never sees a second copy.
-//
-// The resource deliberately does not end in ".jar": shadowJar explodes every file with that
-// extension it copies, dependency or not, which would scatter the holder's classes into this
-// jar as loose files and drop the resource itself. The demo would not have caught that, since
-// its classpath also carries the plain jar where the resource survives; verifyAgentJar below
-// checks the shaded jar directly.
+// The name must not end in ".jar": shadowJar explodes every such file it copies, which would
+// scatter the holder's classes into this jar as loose files and drop the resource itself.
 val bootstrapResourcePath = "META-INF/otherlode/bootstrap-jar.bin"
 
 val embedBootstrapJar by tasks.registering(Sync::class) {
@@ -278,8 +207,6 @@ val embedBootstrapJar by tasks.registering(Sync::class) {
         into(bootstrapResourcePath.substringBeforeLast('/'))
         rename { bootstrapResourcePath.substringAfterLast('/') }
     }
-    // This directory becomes a resource root, so the META-INF/otherlode prefix above is what the
-    // resource path inside the agent jar ends up being.
     into(layout.buildDirectory.dir("generated-resources/bootstrap"))
 }
 
@@ -287,17 +214,10 @@ sourceSets.main {
     resources.srcDir(embedBootstrapJar)
 }
 
-// Licence texts for the dependencies relocated into the shaded jar, one directory per
-// component. Byte Buddy is the only one of them that ships its own LICENSE and NOTICE entries;
-// the rest carry nothing, so the texts are checked in here rather than extracted at build time.
 val bundledLicensesDir = layout.projectDirectory.dir("licenses")
 val bundledLicenseEntries =
     fileTree(bundledLicensesDir).files.map { it.relativeTo(bundledLicensesDir.asFile).invariantSeparatorsPath }.sorted()
 
-// Fails the build if the shaded jar does not have the shape premain relies on: the embedded
-// holder jar present as one resource, and none of the holder's classes present loose. Also
-// checks that META-INF/NOTICE is this project's own and that every vendored third-party licence
-// made it under META-INF/licenses/.
 val verifyAgentJar by tasks.registering {
     dependsOn(tasks.shadowJar)
     val jarFile = tasks.shadowJar.flatMap { it.archiveFile }
@@ -314,18 +234,10 @@ val verifyAgentJar by tasks.registering {
             check(bootstrapResourcePath in names) {
                 "agent jar is missing the embedded bootstrap holder at $bootstrapResourcePath"
             }
-            // The subroutine inliner reaches the jar from :asm-subroutines, relocated twice; without it every
-            // class below version 51 with a subroutine fails to weave.
             val inliner = "dev/otherlode/shaded/bytebuddy/jar/asm/commons/JSRInlinerAdapter.class"
             check(inliner in names) { "agent jar is missing ASM's subroutine inliner at $inliner" }
-            // The branch tier reads the frame at each jump from ASM's analyser; without it every class with a
-            // tracked jump at version 50 or above fails to weave.
             val analyser = "dev/otherlode/shaded/bytebuddy/jar/asm/commons/AnalyzerAdapter.class"
             check(analyser in names) { "agent jar is missing ASM's frame analyser at $analyser" }
-            // The agent runs on a JDK 17. A dependency or a compiler setting that raises a class's version
-            // would fail there with an UnsupportedClassVersionError. An entry under META-INF/versions/N/ is
-            // held to Java N's version: the manifest carries no Multi-Release attribute, so no JVM reads
-            // them, but one added later would make every N up to 17 load on a JDK 17.
             val tooNew =
                 names
                     .filter { it.endsWith(".class") }
@@ -370,16 +282,9 @@ val verifyAgentJar by tasks.registering {
                 "agent jar is missing vendored third-party licence entries: $missingLicenses"
             }
 
-            // Shadow rewrites a string constant as well as a class reference, so a literal in the agent's own
-            // code that starts with a relocated package name ("kotlin.", "kotlin/", "net.bytebuddy") ships
-            // with the shaded name and no longer matches what it was written to match. A rewritten constant
-            // reads in the jar as one that starts with the shaded prefix. The third-party code the jar
-            // shades is not checked: it holds such constants by design.
             val relocatedLiteralPrefixes = listOf("dev.otherlode.shaded.", "dev/otherlode/shaded/", "Ldev/otherlode/shaded/")
             val thirdPartyShaded = listOf("bytebuddy", "kotlin", "protobuf", "intellij", "annotations").map { "dev/otherlode/shaded/$it/" }
-            // These constants start with a shaded prefix on purpose. AgentLogger writes the stand-in logger's
-            // relocated name in its source. A Kotlin null check on a parameter named kotlinKind carries the
-            // name as its message, which only an NPE reads.
+            // A Kotlin null check on a parameter named kotlinKind carries the name as its message.
             val intendedRewrites = mapOf("dev/otherlode/AgentLogger" to setOf("dev.otherlode.shaded.jul.Logger"))
             val parameterNameRewrite = "dev.otherlode.shaded.kotlinKind"
             val rewrittenLiterals =
@@ -400,17 +305,9 @@ val verifyAgentJar by tasks.registering {
                     rewrittenLiterals.joinToString("\n  ")
             }
 
-            // Advice classes are inlined into framework or JDK bytecode by ByteBuddy, never
-            // loaded as ordinary agent classes. Only the annotated method's own bytecode is
-            // copied; anything else the advice touches stays a reference the target's own
-            // classloader has to resolve, and from a bootstrap-loaded target, or an isolating
-            // container loader, that resolution fails with NoClassDefFoundError and the module
-            // disables itself at the first request. Each class under an advice package must
-            // therefore reference no agent class except itself and its bootstrap seam (with the
-            // seam's nested classes, which load from the same bootstrap jar), call no method on
-            // itself (a private helper is a real call at the woven site), carry no synthetic
-            // member (a lambda, a switch over an enum, or an assert compiles to one), and never
-            // mention the relocated Kotlin stdlib. Passes trivially while the packages are empty.
+            // Advice is inlined, so anything else it touches resolves through the target's classloader and can
+            // fail with NoClassDefFoundError. A private helper is a real call at the woven site, and a lambda,
+            // a switch over an enum or an assert compiles to a synthetic member.
             val adviceSeams =
                 listOf(
                     "dev/otherlode/bootstrap/OtherlodeEndpoints",
@@ -446,13 +343,10 @@ val verifyAgentJar by tasks.registering {
     }
 }
 
-/** The newest class-file major version a JDK 17 defines. */
 val jdk17ClassVersion = 61
 
-/** The major version in a class file's first eight bytes. */
 fun classFileMajorVersion(header: ByteArray): Int = ByteBuffer.wrap(header).getShort(6).toInt() and 0xFFFF
 
-/** The parts of a class file the advice check reads; see [parseClassShape]. */
 class ClassShape(
     val name: String,
     val utf8Constants: List<String>,
@@ -462,12 +356,6 @@ class ClassShape(
     val syntheticMembers: List<String>,
 )
 
-/**
- * Reads a class file's constant pool and member tables, enough to know which classes it
- * references, which of its own methods it calls, and whether it declares a synthetic member.
- * Written here rather than through ASM because the build script has no bytecode library on its
- * classpath, and the class-file format's constant pool is a short, fixed set of tagged entries.
- */
 fun parseClassShape(bytes: ByteArray): ClassShape {
     val buf = ByteBuffer.wrap(bytes)
 
@@ -578,16 +466,8 @@ tasks.shadowJar {
     finalizedBy(verifyAgentJar)
 }
 
-// Scala default-getter resolution is proven against real scalac output, compiled by the two
-// Scala fixture modules below, `$DefaultImpls` marking against kotlinc output under
-// -jvm-default=disable, compiled by the third, the handler forwarder table against kotlinc
-// output under class-based SAM conversion, compiled by the fourth, and the generated-method and
-// lowering rules against every kotlinc and javac in the compiler matrix. None is a
-// test dependency, only a task dependency: putting one on the test classpath would let JUnit
-// discovery load these classes before install() wires up instrumentation, defeating the
-// fixture's purpose (see FixtureClassLoader). The output directory and runtime classpath are
-// read lazily through providers, resolved only when the test task actually runs, so configuring
-// this project never forces a fixture project to evaluate its dependencies.
+// No fixture project goes on the test classpath: JUnit discovery would load its classes before
+// install() wires up instrumentation.
 val scala3FixtureClassesDir = project(":fixtures-scala3").layout.buildDirectory.dir("classes/scala/main")
 val scala3FixtureRuntimeClasspath = project(":fixtures-scala3").configurations.named("runtimeClasspath")
 val scala2FixtureClassesDir = project(":fixtures-scala2").layout.buildDirectory.dir("classes/scala/main")
@@ -598,9 +478,6 @@ val jvmDefaultDisableFixtureRuntimeClasspath =
     project(":fixtures-kotlin-jvm-default-disable").configurations.named("runtimeClasspath")
 val classSamFixtureClassesDir = project(":fixtures-kotlin-class-sam").layout.buildDirectory.dir("classes/kotlin/main")
 
-// The probe-window fixtures (ADR 0060), compiled once at class-file version 52 and once at 61
-// (Java 17): each form's Java and Kotlin class directories, and the Kotlin stdlib the Kotlin
-// ones link against.
 val probeWindowProject = project(":fixtures-probe-window")
 val probeWindowForms = listOf("legacy", "modern")
 val probeWindowClassesDirs =
@@ -609,17 +486,12 @@ val probeWindowClassesDirs =
     }
 val probeWindowKotlinStdlib = probeWindowProject.configurations.named("kotlinStdlib")
 
-// The compiler matrix (ADR 0055): one fixture build per kotlinc release and per javac version, each
-// compiled by that compiler (see fixtures-compilers). Same arrangement as above, a task dependency
-// and a system property per build holding its class directory, named by the release.
 val kotlincMatrix = providers.gradleProperty("otherlode.matrix.kotlinc").get().split(",")
 val javacMatrix = providers.gradleProperty("otherlode.matrix.javac").get().split(",")
 val kotlincSuspendsSource =
     project(":fixtures-kotlinc").file("src/main/kotlin/com/example/target/kotlinc/Suspends.kt")
 val kotlincMatrixClassesDirs =
     kotlincMatrix.associateWith { project(":fixtures-kotlinc").layout.buildDirectory.dir("classes/kotlinc/$it") }
-// The kotlinx.serialization fixtures (ADR 0078): one build per release and, for a release in
-// otherlode.matrix.kotlincK1, one more under -language-version 1.9, keyed "<release>-k1".
 val kotlincK1Matrix =
     providers
         .gradleProperty("otherlode.matrix.kotlincK1")
@@ -634,8 +506,6 @@ val kotlincMixedClassesDirs =
     kotlincMatrix.associateWith { project(":fixtures-kotlinc").layout.buildDirectory.dir("classes/mixed/$it") }
 val javacMatrixClassesDirs =
     javacMatrix.associateWith { project(":fixtures-javac").layout.buildDirectory.dir("classes/javac/$it") }
-// The entities Ebean, EclipseLink and OpenJPA enhanced (ADR 0079), by library, with the runtime
-// classpath each needs to define them.
 val jpaFixtureLibraries = listOf("ebean", "eclipselink", "openjpa")
 val jpaFixtureClassesDirs =
     jpaFixtureLibraries.associateWith { project(":fixtures-jpa").layout.buildDirectory.dir("classes/$it") }
@@ -657,10 +527,8 @@ val scalacMatrixClassesDirs =
 val scalacMatrixVersionFiles =
     scalacMatrix.associateWith { project(":fixtures-scalac").layout.buildDirectory.file("scalac-version/$it.txt") }
 
-// JaCoCo's own agent jar, for CoverageAgentOrderTest, which launches JVMs with it beside this
-// agent in each command-line order. The test needs only the jar's path, so it stays off the test
-// classpath. The name stays clear of `jacocoAgent`, which the `jacoco` plugin creates when an init
-// script applies it.
+// The name stays clear of `jacocoAgent`, which the `jacoco` plugin creates when an init script
+// applies it.
 val coverageAgentOrderJacoco by configurations.creating {
     isCanBeConsumed = false
     isTransitive = false
@@ -669,8 +537,6 @@ dependencies {
     coverageAgentOrderJacoco("org.jacoco:org.jacoco.agent:$jacocoVersion:runtime")
 }
 
-// The jars of a `System.LoggerFinder` bridge, for LoggerBridgeTest, which puts them on a forked
-// JVM's class path. The test needs only their paths, so they stay off the test class path.
 val loggerBridgeTestJars by configurations.creating {
     isCanBeConsumed = false
 }
@@ -694,8 +560,7 @@ tasks.test {
         ":fixtures-scalac:classes",
         ":fixtures-jpa:classes",
     )
-    // A fixture build is not on the test classpath, so its classes are declared as inputs here:
-    // otherwise a fixture change would recompile the fixture and leave the test task up to date.
+    // Without these inputs, a fixture change would leave the test task up to date.
     listOf(
         "scala3" to scala3FixtureClassesDir,
         "scala2" to scala2FixtureClassesDir,
@@ -718,12 +583,8 @@ tasks.test {
             inputs.dir(dir).withPropertyName("fixtureClasses.probeWindow.$form.$index").withPathSensitivity(PathSensitivity.RELATIVE)
         }
     }
-    // KotlincMatrixTest reads the source's marker comments for line numbers, which the class files
-    // alone do not reflect.
+    // KotlincMatrixTest reads line numbers from this source's marker comments.
     inputs.file(kotlincSuspendsSource).withPropertyName("kotlincSuspendsSource").withPathSensitivity(PathSensitivity.NONE)
-    // ShadedBodyKindRuleTest runs the analyser from the shaded jar, since relocation rewrites
-    // string constants in the agent's own classes and only the shaded copy shows the effect.
-    // CoverageAgentOrderTest launches JVMs with the shaded jar as their -javaagent.
     dependsOn(tasks.shadowJar)
     val shadedAgentJar = tasks.shadowJar.flatMap { it.archiveFile }
     inputs.file(shadedAgentJar)
@@ -795,13 +656,6 @@ tasks.test {
     }
 }
 
-// The transform-time benchmark's corpora: class sets by corpus name, each one module's output or
-// one jar. BenchmarkCorpus reads them from the system properties below, in the JMH fork and in the
-// test that keeps them loadable. spring-webmvc is the jar demo-spring already resolves, a large
-// body of real Java. ktor-server-core is the jar endpoints-ktor-3 tests against, a large body of
-// real Kotlin with suspend functions and inline functions. The agent's own classes are not a
-// corpus: TypeMatchPolicy never includes the agent's package, so the analyser would drop their
-// inlined copies and call edges, which no adopter class sees.
 val benchmarkCorpora: Map<String, Map<String, FileCollection>> =
     mapOf(
         "ktor-server-core" to
@@ -844,9 +698,6 @@ fun benchmarkCorpusProperties(): Map<String, String> =
             }
         }.toMap()
 
-// The classpath that resolves each class set's own dependencies when the code-size test weaves it,
-// keyed `<corpus>.<class set>` as the corpus properties are. The test reads the class files from the
-// corpus and defines nothing from it, so the loader only has to answer the transformer's type lookups.
 val codeSizeClasspaths: Map<String, FileCollection> =
     mapOf(
         "demo.main" to files({ project(":demo").configurations.getByName("runtimeClasspath") }),
@@ -871,18 +722,15 @@ tasks.test {
     }
 }
 
-// `-PupdateVisibilityBaseline` has VisibilityFloorTest rewrite its committed baseline instead of
-// comparing against it. Without the property the test never writes.
+// `-PupdateVisibilityBaseline` has VisibilityFloorTest rewrite its committed baseline.
 tasks.test {
     if (project.hasProperty("updateVisibilityBaseline")) {
         systemProperty("otherlode.visibility.baselineSource", file("src/test/resources/visibility-baseline.txt").absolutePath)
     }
 }
 
-// ProbeAllocationTest runs in its own JVM with escape analysis off: C2 would otherwise remove a
-// boxed value or a varargs array that stays inside the call, so a probe that made one would read as
-// allocating nothing, though it allocates in a larger method or before C2 compiles it. Run it with
-// `./gradlew probeAllocationTest`; `test` leaves it out.
+// With escape analysis on, C2 removes a boxed value or a varargs array that stays inside the call,
+// so a probe that made one would read as allocating nothing.
 val probeAllocationTest by tasks.registering(Test::class) {
     description = "Checks that the woven probes allocate nothing, with escape analysis off."
     group = "verification"
@@ -898,9 +746,8 @@ val probeAllocationTest by tasks.registering(Test::class) {
 tasks.test { filter { excludeTestsMatching("dev.otherlode.benchmark.ProbeAllocationTest") } }
 tasks.check { dependsOn(probeAllocationTest) }
 
-// The VerifyError hook weaves a boot class for the rest of the JVM, so each of its test classes
-// runs in a JVM of its own. `-XX:+BytecodeVerificationLocal` makes the JVM verify the woven boot
-// class, which it skips by default. Run it with `./gradlew verifierHookTest`; `test` leaves it out.
+// The hook weaves a boot class for the rest of the JVM, so each test class needs a JVM of its own.
+// `-XX:+BytecodeVerificationLocal` makes the JVM verify the woven boot class, which it skips by default.
 val verifierHookTest by tasks.registering(Test::class) {
     description = "Weaves java.lang.VerifyError in a JVM per test class and checks what the hook reads."
     group = "verification"
@@ -917,17 +764,11 @@ val verifierHookTest by tasks.registering(Test::class) {
 tasks.test { filter { excludeTestsMatching("dev.otherlode.instrumentation.VerifierHook*Test") } }
 tasks.check { dependsOn(verifierHookTest) }
 
-// The hot-path suite weaves fixtures through the real transformer, which self-attaches, and reaches
-// the bootstrap seam classes the same way the test source set does.
 dependencies {
     "jmhCompileOnly"(project(":bootstrap"))
     "jmhImplementation"("net.bytebuddy:byte-buddy-agent:1.18.12")
 }
 
-// Fork, warmup and measurement settings live on the benchmark classes. `-Potherlode.benchmark.corpus=demo`
-// runs one corpus of the analyser benchmark; a comma-separated list runs several.
-// `-Potherlode.benchmark.include=HotPathBenchmark` runs only the benchmarks whose names match that
-// regular expression. Every run adds JMH's GC profiler, so each score carries its allocation per operation.
 jmh {
     jmhVersion.set("1.37")
     includeTests.set(false)
@@ -954,8 +795,6 @@ tasks.named("jmh") {
     inputs.files(codeSizeClasspaths.values).withPropertyName("codeSizeClasspaths")
 }
 
-// BenchmarkCorpusTest compiles against the benchmark's own corpus loader. So every build also
-// compiles the benchmark, and an analyser change that breaks it fails the build.
 sourceSets.test {
     compileClasspath += sourceSets["jmh"].output
     runtimeClasspath += sourceSets["jmh"].output
@@ -963,18 +802,8 @@ sourceSets.test {
 
 val agentMainClass = "dev.otherlode.Agent"
 
-// The plain jar task would otherwise write to the same build/libs/otherlode-agent-*.jar
-// path as shadowJar below (its classifier is cleared to make that the single
-// distributable file), and whichever task happened to run last would win,
-// silently overwriting the shaded agent jar with one missing the
-// Premain-Class manifest attribute and the relocated dependencies. Giving the
-// plain jar its own classifier keeps the two outputs apart without disabling
-// the task outright: disabling it breaks `project(":")` consumers
-// (the demo module's compile classpath), which resolve a local project
-// dependency's default `apiElements`/`runtimeElements` variant back to this
-// task's output. Only shadowJar's output is ever meant to be distributed or
-// used as the -javaagent jar; the plain jar exists solely so in-repo project
-// dependencies keep working.
+// Without its own classifier this jar would overwrite the shaded agent jar at the same path, and
+// disabling the task breaks `project(":")` consumers such as the demo.
 tasks.jar {
     archiveClassifier.set("plain")
 }
@@ -982,51 +811,30 @@ tasks.jar {
 tasks.shadowJar {
     archiveClassifier.set("")
 
-    // Each per-framework endpoint module subproject ships its own
-    // META-INF/services/dev.otherlode.instrumentation.endpoints.api.EndpointModule
-    // entry. Without this, shadow keeps only one such file (whichever dependency it copies
-    // last), so every module but one would silently vanish from ServiceLoader discovery.
+    // Without this, shadow keeps one EndpointModule services file and drops every other module.
     mergeServiceFiles()
 
-    // Relocate ByteBuddy so it can't collide with a possibly
-    // differently-versioned copy already on the target application's classpath.
     relocate("net.bytebuddy", "dev.otherlode.shaded.bytebuddy")
 
-    // Same rationale for protobuf-java: the target app may already carry its
-    // own, differently-versioned copy on the classpath.
     relocate("com.google.protobuf", "dev.otherlode.shaded.protobuf")
 
     // protobuf-java asks for a java.util.logging.Logger in static initialisers, which creates the
-    // LogManager before the application can choose its own. The stand-in logs through the boot
-    // loader's OtherlodeLoggers instead. verifyAgentJar fails on any class still naming the JDK's.
+    // LogManager before the application can choose its own.
     relocate("java.util.logging.Logger", "dev.otherlode.shaded.jul.Logger")
 
-    // The wire module's classes, and the root's own in the same packages. A test classpath that
-    // carries the testkit carries the wire module too, possibly at another version, and the agent
-    // jar is appended behind it: unrelocated, the agent would link against that copy instead of
-    // its own.
+    // A test classpath that carries the testkit carries the wire module too, possibly at another
+    // version: unrelocated, the agent would link against that copy instead of its own.
     relocate("dev.otherlode.export", "dev.otherlode.shaded.export")
     relocate("dev.otherlode.proto", "dev.otherlode.shaded.proto")
     relocate("dev.otherlode.registry.RouteTemplateNormalizer", "dev.otherlode.shaded.registry.RouteTemplateNormalizer")
 
-    // Most of the agent itself is Kotlin, so kotlin-stdlib is unavoidably on this jar's own
-    // classpath too. Left unrelocated, it collides exactly the same way ByteBuddy and protobuf
-    // would: a Kotlin target app almost certainly carries its own, possibly differently-versioned
-    // copy of the same classes on the system classloader the agent shares with it.
     relocate("kotlin", "dev.otherlode.shaded.kotlin")
 
-    // Transitive dependency of kotlin-stdlib (org.jetbrains:annotations). Same collision
-    // rationale, lower stakes since these are stable marker annotations, but no reason to leave
-    // them unshaded either.
     relocate("org.jetbrains.annotations", "dev.otherlode.shaded.annotations")
     relocate("org.intellij.lang.annotations", "dev.otherlode.shaded.intellij.annotations")
 
-    // META-INF/LICENSE and META-INF/NOTICE must describe this jar, not whichever dependency's
-    // entries shadow happened to copy first, so every dependency's own copies are dropped and
-    // the vendored texts under licenses/ go in under META-INF/licenses/ instead. The exclude
-    // patterns match a dependency entry's path inside its jar; the from() blocks below are
-    // matched against their own source paths (LICENSE, byte-buddy/NOTICE), which the patterns
-    // do not cover, so they land where into() sends them.
+    // These excludes drop every dependency's own LICENSE and NOTICE. They do not match the from()
+    // blocks below, which are matched against their own source paths.
     exclude("META-INF/LICENSE", "META-INF/LICENSE.txt", "META-INF/NOTICE", "META-INF/NOTICE.txt", "META-INF/licenses/**")
     from(layout.projectDirectory.files("LICENSE", "NOTICE")) {
         into("META-INF")
@@ -1049,8 +857,7 @@ tasks.build {
     dependsOn(tasks.shadowJar)
 }
 
-// The agent has no public API to document. The Portal accepts a jar holding only a README for code
-// like that.
+// The Portal accepts a javadoc jar holding only a README for code with no public API.
 val agentJavadocReadme = layout.buildDirectory.file("javadoc-readme/README.md")
 val writeJavadocReadme by tasks.registering {
     val readme = agentJavadocReadme
@@ -1084,22 +891,17 @@ nmcpAggregation {
         val publishing = providers.gradleProperty("otherlode.centralPublishingType").getOrElse("USER_MANAGED")
         publishingType.set(publishing)
         publicationName.set("otherlode $version")
-        // nmcp's ten-minute default can end the upload task while the Portal is still validating,
-        // failing the release job over a deployment that goes on to validate (or, under AUTOMATIC,
-        // to publish). Under AUTOMATIC the task also waits for PUBLISHED, so the GitHub release
-        // follows files Central already serves. The gate matters: under USER_MANAGED nmcp rejects a
-        // publishing timeout, and only after it has uploaded and validated.
+        // nmcp's ten-minute default can end the upload task while the Portal is still validating. Under
+        // USER_MANAGED nmcp rejects a publishing timeout, and only after it has uploaded and validated.
         validationTimeout.set(Duration.ofMinutes(60))
         if (publishing == "AUTOMATIC") publishingTimeout.set(Duration.ofMinutes(60))
     }
     // Off sends .md5, .sha1 and .sha512 beside every artifact and no checksum beside a signature,
-    // which is what the Portal asks for: .md5 and .sha1 required, .asc files needing none
-    // (central.sonatype.org/publish/requirements).
+    // which is what the Portal asks for.
     publishAllChecksums.set(false)
 }
 
-// Only a publishing task orders the jar checks before itself; `shadowJar` finalising `verifyAgentJar`
-// does not make an upload wait for it.
+// `shadowJar` finalising `verifyAgentJar` does not make an upload wait for it.
 tasks.configureEach {
     if (this is AbstractPublishToMaven || name.startsWith("nmcpZip") || name.startsWith("nmcpPublish") ||
         name.startsWith("publishAggregation") || name.startsWith("publishAllPublications")
@@ -1109,8 +911,6 @@ tasks.configureEach {
     }
 }
 
-// Builds the Central Portal deployment and checks the zip as the Portal will see it. Not part of
-// `check`: the testkit's Dokka run makes it slow.
 val verifyPublication by tasks.registering {
     group = "verification"
     description = "Builds the Central Portal deployment zip and checks its contents."
@@ -1243,8 +1043,6 @@ val verifyPublication by tasks.registering {
                 }
             }
 
-            // Each published main jar is its shadowJar output entry for entry, and names this version in
-            // its manifest: the testkit refuses an agent whose Implementation-Version differs from its own.
             val builtJars = mapOf("otherlode-agent" to agentJar.get().asFile, "otherlode-testkit" to testkitJar.get().asFile)
             for ((artifactId, builtJar) in builtJars) {
                 val entry =
@@ -1283,7 +1081,6 @@ val verifyPublication by tasks.registering {
                         "different ${built.filter { (k, v) -> publishedEntries[k] != null && publishedEntries[k] != v }.keys.take(5)}"
                 }
 
-                // Gradle metadata: one variant, needing JVM 17, so an older consumer fails at resolution.
                 val module = text(names.single { it.startsWith("dev/otherlode/$artifactId/") && it.endsWith(".module") })
                 val variants =
                     Regex(
@@ -1298,9 +1095,8 @@ val verifyPublication by tasks.registering {
     }
 }
 
-// The upload checks the exact deployment it sends: nmcp resolves the aggregation leniently, so a
-// testkit that failed to resolve would drop out of the bundle without an error, and an agent-only
-// release could not be taken back. A SNAPSHOT is refused as soon as the task graph is known.
+// nmcp resolves the aggregation leniently, so a testkit that failed to resolve would drop out of
+// the bundle without an error.
 tasks.named("nmcpPublishAggregationToCentralPortal") { dependsOn(verifyPublication) }
 gradle.taskGraph.whenReady {
     // gradle/publishing.gradle.kts requires signing on the same task path.

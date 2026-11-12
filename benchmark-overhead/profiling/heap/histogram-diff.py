@@ -1,4 +1,3 @@
-# Prints the classes whose live bytes differ most between two `jcmd GC.class_histogram` outputs.
 # usage: histogram-diff.py <before> <after> [rows]
 import re,sys
 def h(p):

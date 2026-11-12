@@ -5,10 +5,6 @@ import java.lang.ref.WeakReference
 /**
  * Holds back a Micronaut router's routes until a dispatch point the module counts at has been
  * constructed in the process, then declares them. Either order declares.
- *
- * The module hands every object it receives through `declare` to [accept]: a router, or [ARMED].
- * [beforeManifest] calls [notCounted] and stops declaring when no dispatch point has armed the gate
- * and a router has been held past the grace period or is held at the final flush.
  */
 class DispatchGate(
     private val declareRoutes: (Any) -> Unit,

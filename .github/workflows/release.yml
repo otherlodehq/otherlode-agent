@@ -1,9 +1,7 @@
 name: release
 
-# Started by a v*.*.* tag that scripts/release.sh pushed (ADR 0063). Refuses a tag that does not
-# match the declared version, runs the whole suite, uploads one Central Portal deployment, then
-# creates the GitHub release. The jobs that hold the signing key or can write to the repository use
-# actions pinned to a commit and no Gradle cache, so nothing another run wrote reaches a signed build.
+# The jobs that hold the signing key or can write to the repository use actions pinned to a
+# commit and no Gradle cache, so nothing another run wrote reaches a signed build.
 on:
   push:
     tags: ['v*.*.*']
@@ -54,8 +52,6 @@ jobs:
             USER_MANAGED | AUTOMATIC) ;;
             *) echo "::error::CENTRAL_PUBLISHING_TYPE is '$type', not USER_MANAGED or AUTOMATIC"; exit 1 ;;
           esac
-          # Until a release has been published by hand on the Portal, none is published automatically
-          # (ADR 0063). Central's metadata for the agent exists only once one has.
           if [ "$type" = AUTOMATIC ]; then
             code=$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 30 \
               https://repo1.maven.org/maven2/dev/otherlode/otherlode-agent/maven-metadata.xml || echo 000)
@@ -83,9 +79,8 @@ jobs:
     outputs:
       deployment: ${{ steps.deployment.outputs.id }}
     steps:
-      # "Re-run all jobs", or a rerun after this job failed, would upload a second deployment of the
-      # same version from a jar that differs byte for byte from the first. It matches the upload
-      # step by its name below, so renaming that step needs this filter changed with it.
+      # This matches the upload step by its name below, so renaming that step needs this filter
+      # changed with it.
       - name: Refuse a second upload
         if: fromJSON(github.run_attempt) > 1
         env:
@@ -119,9 +114,6 @@ jobs:
             17
             25
             21
-      # verifyPublication runs first, as a dependency of the upload. nmcp waits for the Portal to
-      # validate the deployment in both modes and fails on FAILED; under AUTOMATIC it also waits for
-      # PUBLISHED, so the GitHub release follows files Central already serves.
       # The rerun guard above finds this step by its name.
       - name: Upload to the Central Portal
         id: upload
@@ -144,8 +136,6 @@ jobs:
           id=$(sed -n "s/.*Nmcp: deployment bundle '\([^']*\)' uploaded\..*/\1/p" upload.log 2>/dev/null | head -n 1 || true)
           echo "id=$id" >> "$GITHUB_OUTPUT"
           echo "Central Portal deployment: ${id:-none in the log}" >> "$GITHUB_STEP_SUMMARY"
-      # Collected whenever a deployment exists, even if the upload task then failed (a timeout while
-      # the Portal goes on to validate or publish), so the matching copies survive for a manual release.
       - name: Collect the release assets
         if: always() && steps.deployment.outputs.id != ''
         env:
@@ -175,8 +165,6 @@ jobs:
           path: release-assets/
           if-no-files-found: error
 
-  # Its own job, with write access and no signing secrets. Rerunning it alone after a failure never
-  # uploads to the Portal again; a draft it left behind is replaced, a published release is left.
   github-release:
     name: github release
     needs: [guard, publish]
@@ -223,10 +211,8 @@ jobs:
           if [ "$TYPE" = USER_MANAGED ]; then args+=(--draft); fi
           gh release create "$TAG" "${args[@]}" release-assets/*
 
-  # Opens a pull request on otherlode.dev that copies docs/site/ into its
-  # /docs (otherlode.dev ADR 0001). It does nothing until the release
-  # environment's secret OTHERLODE_DEV_DOCS_TOKEN exists. Scope the token
-  # to otherlode.dev alone, and keep it out of the repository secrets.
+  # Does nothing until the release environment's secret OTHERLODE_DEV_DOCS_TOKEN exists. Scope
+  # the token to otherlode.dev alone, and keep it out of the repository secrets.
   docs:
     name: sync docs to otherlode.dev
     needs: github-release

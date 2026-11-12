@@ -15,9 +15,7 @@ import net.bytebuddy.jar.asm.Type
  * `ClassReader` pass ([analyze]) or teed into another visitor's pass.
  *
  * The fingerprint is the canonical text of the instructions from the last point in the method
- * where the operand stack was empty up to the site's own jump or switch. [BranchSiteAnalyzer]
- * attaches fingerprint `i` of a method to that method's `i`-th tracked site, in the same encounter
- * order it numbers sites itself, dropped sites included.
+ * where the operand stack was empty up to the site's own jump or switch.
  */
 object ConditionFingerprinter {
     private val TRAILING_COUNTER = Regex("""\$\d+$""")

@@ -45,17 +45,7 @@ private const val ADVICE_PACKAGE = "dev.otherlode.endpoints.springwebflux"
 
 /**
  * Endpoint module for Spring WebFlux (`spring-webflux`), covering Spring Framework 5.3, 6.x and
- * 7.x with one module. No advice is rebound by namespace.
- *
- * Annotated controllers are declared by `AbstractHandlerMethodMapping.registerHandlerMethod` and
- * `registerMapping`, and counted at `RequestMappingInfoHandlerMapping.handleMatch`. URL-mapped
- * handlers are declared by `AbstractUrlHandlerMapping.registerHandler` and counted at the exit of
- * `lookupHandler`. Functional routes are declared by walking the `RouterFunction` that
- * `RouterFunctionMapping.afterPropertiesSet` hands to [declare], with the walk the Spring MVC module
- * shares, and counted at `setAttributes`. A `resources(pattern, location)` route is counted when its
- * `PathResourceLookupFunction` emits a resource.
- *
- * A CORS preflight counts nothing.
+ * 7.x with one module. A CORS preflight counts nothing.
  */
 class SpringWebFluxModule : EndpointModule {
     override val name: String = FUNCTIONAL_ROUTE_STACK.moduleName

@@ -68,7 +68,6 @@ class EndpointRegistry(
         val templateKind: EndpointTemplateKind,
     )
 
-    /** One tracked endpoint. */
     class EndpointEntry internal constructor(
         val endpointId: Int,
         val verb: String,
@@ -199,11 +198,7 @@ class EndpointRegistry(
 
     internal var attemptEnded: (DefinitionAttempt) -> Boolean = { it.hasEnded() }
 
-    /**
-     * Resolves a dispatch key to its entry, or null when [key] is not bound to any entry yet. A
-     * dispatch hook calls this on every request: it is one [ConcurrentHashMap.get], and a route
-     * object key costs one small wrapper allocation.
-     */
+    /** Resolves a dispatch key to its entry, or null when [key] is not bound to any entry yet. */
     fun lookup(key: Any): EndpointEntry? = keyToEntry[lookupKeyOf(key)]
 
     private fun bind(
@@ -289,9 +284,8 @@ class EndpointRegistry(
     fun boundKeyCount(): Int = keyToEntry.size
 
     /**
-     * Records an endpoint from a framework's own registration hook (Spring's handler-method
-     * mapping, Ktor's `handle`, `HttpServer.createContext`), finds or creates the entry for its
-     * identity, binds [key] to it, and marks it discovered by registration.
+     * Records an endpoint from a framework's own registration hook, finds or creates the entry for
+     * its identity, binds [key] to it, and marks it discovered by registration.
      *
      * [verb] and [verbatimTemplate] are normalised with [contextPath] folded in. When
      * [templateKind] is not [EndpointTemplateKind.PATH], [verbatimTemplate] is kept as given and
@@ -732,10 +726,8 @@ class EndpointRegistry(
     }
 
     /**
-     * Every disabled module not yet delivered, or null when there is none. A module goes out on a
-     * manifest of its own, ahead of any class chunk, and never in an endpoint chunk. Nothing is
-     * marked as delivered here; call [advanceDisabledModules] with the result once that manifest is
-     * confirmed.
+     * Every disabled module not yet delivered, or null when there is none. Nothing is marked as
+     * delivered here; call [advanceDisabledModules] with the result once that manifest is confirmed.
      */
     fun computeDisabledModules(): DisabledModulesSnapshot? {
         val modules =

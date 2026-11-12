@@ -32,12 +32,6 @@ internal val PREFIXER_NAMES: List<String> =
 /**
  * Route bridge endpoint module. Counts the route recorded in OpenTelemetry's `HttpRouteState` for a
  * request. It discovers endpoints by dispatch only and never declares one.
- *
- * It weaves `OnEndAdvice` onto the exit of `onEnd` in both the unshaded
- * `HttpServerAttributesExtractor` and the OpenTelemetry Java agent's relocated copy, for which
- * [AdviceBinder] rewrites the `io/opentelemetry/...` references to the
- * `io/opentelemetry/javaagent/shaded/...` prefix. It weaves `RoutePrefixAdvice` onto the exit of
- * each OpenTelemetry route prefixer found loaded.
  */
 class OtelBridgeModule : EndpointModule {
     override val name: String = "otel"

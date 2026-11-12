@@ -18,8 +18,7 @@ permissions:
   contents: read
   pull-requests: write
 
-# Publishes to one fixed label, so runs on a ref go one at a time: two in flight could otherwise
-# land out of order and move the label back to the older schema.
+# Two runs in flight could land out of order and move the label back to the older schema.
 concurrency:
   group: buf-${{ github.ref }}
   cancel-in-progress: false
@@ -31,13 +30,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      # Build, lint and format run on every event, and breaking does too unless a pull request
-      # carries the "buf skip breaking" label. A pull request is checked against its base commit.
-      # A push to master publishes, so it and a manual run are checked against what the registry
-      # already serves, not against the previous commit: a break that reached master unpublished is
-      # still caught, and shipping an intended break needs a manual push. A change to this file
-      # alone does not trigger a push run, so it never publishes an unchanged schema; run the
-      # workflow by hand to check it.
+      # A push or manual run checks against what the registry serves, so shipping an intended
+      # break needs a manual push.
       - uses: bufbuild/buf-action@85aebf73123b5c15fd5528aaecbf9129cddf7fa7 # v1.6.0
         with:
           token: ${{ secrets.BUF_TOKEN }}
@@ -46,10 +40,6 @@ jobs:
           breaking: ${{ github.event_name != 'pull_request' || !contains(github.event.pull_request.labels.*.name, 'buf skip breaking') }}
           breaking_against_registry: ${{ github.event_name != 'pull_request' }}
           push: false
-      # Runs only when every check above passed, since the action fails its step otherwise. The
-      # action's own push uses --git-metadata, which labels the commit from a live look at origin
-      # and fails once master has moved past it; naming the module's default label directly does
-      # not depend on that.
       - name: Push to the registry
         if: github.event_name == 'push'
         env:

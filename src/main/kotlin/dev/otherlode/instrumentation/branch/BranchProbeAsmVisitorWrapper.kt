@@ -16,7 +16,7 @@ import net.bytebuddy.pool.TypePool
 
 /**
  * Hosts the branch-tracking tier's raw ASM rewrite inside ByteBuddy's own class-transform
- * pipeline, so branch probes are woven in the same pass as the method-entry probes.
+ * pipeline.
  *
  * No frame is computed: every frame the received bytes carry passes through, and
  * [BranchProbeMethodVisitor] writes one at each label it inserts. A class below version 50, or at
@@ -26,8 +26,7 @@ import net.bytebuddy.pool.TypePool
  * probes occupy `[0, probeIndexBase)`.
  * @property branchSlotCapacity How many branch slots the array has. The default, `Int.MAX_VALUE`, means
  * unbounded and unchecked. A site that would allocate past it is left uninstrumented. When a capacity
- * is given and the slots the rewrite wants differ from it, [visitEnd] throws `IllegalStateException`
- * and the class is skipped through the transform-failure path.
+ * is given and the slots the rewrite wants differ from it, [visitEnd] throws `IllegalStateException`.
  * @property droppedOrdinalsByMethod Each method's dropped sites by their per-method encounter ordinal.
  * @property throwingDefaultOrdinalsByMethod In the same numbering, each method's switches whose default only
  * throws and gets no probe.

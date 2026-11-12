@@ -1,10 +1,5 @@
 package com.example.scalatarget
 
-/**
- * Known call patterns the integration tests invoke reflectively, so an omission count can be
- * checked against an exact number of real calls rather than only against `$default`'s own
- * reflective invocation.
- */
 object Driver {
   def callSimpleAllOmitted(): Int = new Simple().f(1)
   def callSimpleNoneOmitted(): Int = new Simple().f(1, 2, "y")
@@ -34,7 +29,6 @@ object Driver {
   def callCaseClassConstructor(): Cc = new Cc(9)
   def callCaseClassConstructorBothOmitted(): Cc = new Cc()
 
-  /** Calls through a `Plain`-typed reference whose runtime class overrides only `f`. */
   def callThroughPlainOverridesOnly(): Int = {
     val p: Plain = new PlainOverridesOnly()
     p.f()

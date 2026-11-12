@@ -35,9 +35,7 @@ class HandleJoin(
 
     /**
      * The method [route] runs, as the class file that declares it has it, or null when the route is
-     * not method-based or the method is not found. For an AOP bean Micronaut names the generated
-     * `$Definition$Intercepted` subclass, so the method is searched among the bean's superclasses
-     * and interfaces by name and arguments.
+     * not method-based or the method is not found.
      */
     fun of(route: Any): Handler? {
         if (!getTargetMethod.declaringClass.isInstance(route)) return null

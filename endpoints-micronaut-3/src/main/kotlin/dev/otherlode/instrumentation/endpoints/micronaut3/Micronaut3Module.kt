@@ -53,10 +53,7 @@ private fun routerIsMicronaut3(classLoader: ClassLoader): Boolean =
 /**
  * Endpoint module for Micronaut 3 (`micronaut-3`), compiled against 3.0.0.
  *
- * The module holds each `DefaultRouter` weakly. Once a dispatch point is constructed (Netty's
- * `RoutingInBoundHandler`, micronaut-servlet's `ServletHttpHandler` or micronaut-aws's
- * `MicronautLambdaContainerHandler`), [DispatchGate] declares the router's `UriRoute` objects. If
- * no dispatch point is constructed, [beforeManifest] reports the module off with
+ * If no dispatch point is constructed, [beforeManifest] reports the module off with
  * `ROUTES_NOT_COUNTED` once the router has waited a flush interval.
  *
  * A request counts only when its matched route is a `UriRouteMatch`, and an unregistered WebSocket

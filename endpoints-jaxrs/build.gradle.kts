@@ -11,8 +11,7 @@ repositories {
     mavenCentral()
 }
 
-// The Jersey release each test suite runs against, one property per line. The weekly framework
-// canary sets them to the newest release of the line. The JAX-RS API artifacts stay on their pins.
+// The framework canary sets these to the newest release of each line.
 val jersey3Version = providers.gradleProperty("otherlode.framework.jersey3").getOrElse("3.1.12")
 val jersey4Version = providers.gradleProperty("otherlode.framework.jersey4").getOrElse("4.0.3")
 val jersey2Version = providers.gradleProperty("otherlode.framework.jersey2").getOrElse("2.48")
@@ -26,40 +25,18 @@ dependencies {
     resteasyReactiveServer("io.quarkus.resteasy.reactive:resteasy-reactive:$resteasyReactiveVersion")
     resteasyReactiveCommon("io.quarkus.resteasy.reactive:resteasy-reactive-common:$resteasyReactiveVersion")
 
-    // EndpointModule, AdviceBinder, and the ByteBuddy-facing types this module is written
-    // against. No JAX-RS artifact is a dependency anywhere in main: JaxRsModule reads annotation
-    // names off ByteBuddy descriptions instead of matching against loaded JAX-RS types, and
-    // ResourceMethodAdvice references nothing framework-specific at all.
     implementation(project(":endpoints-api"))
 
-    // Compile-time only: at runtime OtherlodeEndpoints comes from the target JVM's bootstrap
-    // classloader, where BootstrapHolder appends the embedded jar (see the root project's
-    // build.gradle.kts for the full rationale).
+    // Compile-time only: at runtime OtherlodeEndpoints comes from the target JVM's bootstrap classloader.
     compileOnly(project(":bootstrap"))
 
-    // :endpoints-api depends on byte-buddy as `implementation`, which is never transitive, so it
-    // does not put ByteBuddy on this module's own compile classpath. Needed here directly for
-    // net.bytebuddy.asm.Advice (the Java advice class) and for the EndpointModule types
-    // (TypeDescription, DynamicType.Builder, ElementMatcher, AnnotationSource) JaxRsModule is
-    // written against. compileOnly: at runtime, ByteBuddy comes from the root project's own
-    // dependency once this module's classes are merged into the shaded agent jar.
     compileOnly("net.bytebuddy:byte-buddy:1.18.12")
 
-    // Gives EndpointRegistry, EndpointInstrumentation, ProbeRegistry, OtherlodeInstrumentation, and
-    // BootstrapHolder to JaxRsTestAgent and the integration test below, the same way
-    // :endpoints-spring-webmvc's own tests depend on the root project.
     testImplementation(project(":"))
     testImplementation(kotlin("test"))
 
-    // Needed for net.bytebuddy.agent.builder.ResettableClassFileTransformer, the handle
-    // JaxRsTestAgent holds between its own premain install and the test's teardown.
     testImplementation("net.bytebuddy:byte-buddy:1.18.12")
 
-    // The default test suite runs against Jersey's Jakarta line: jersey-container-jdk-http hosts
-    // a real JAX-RS server on the JDK's own HttpServer with no servlet container, jersey-hk2
-    // supplies the dependency-injection provider Jersey needs to instantiate resource classes,
-    // and jakarta.ws.rs-api is pinned explicitly even though Jersey already pulls it in
-    // transitively.
     testImplementation("org.glassfish.jersey.containers:jersey-container-jdk-http:$jersey3Version")
     testImplementation("org.glassfish.jersey.inject:jersey-hk2:$jersey3Version")
     testImplementation("jakarta.ws.rs:jakarta.ws.rs-api:3.1.0")
@@ -69,15 +46,8 @@ kotlin {
     jvmToolchain(21)
 }
 
-// JaxRsTestAgent is installed as a real -javaagent on the test JVM's own command line, not
-// through ByteBuddyAgent's self-attach: the fixture resource classes are referenced from the
-// test body, which Gradle's JUnit Platform integration loads while discovering @Test methods,
-// before any test method's own first statement runs. A -javaagent installs the transformer
-// during premain, which the JVM runs before any application class loads at all, discovery
-// included, the same reasoning Ktor3TestAgent's Javadoc gives in full. The jar packages the
-// whole compiled test output; everything the agent's premain references (OtherlodeInstrumentation,
-// EndpointInstrumentation, ByteBuddy) resolves off the test JVM's ordinary classpath, which is
-// already in place before any agent's premain runs.
+// JaxRsTestAgent must be a real -javaagent: JUnit discovery loads the fixture resource classes
+// before any test method runs.
 val jaxRsTestAgentJar =
     tasks.register<Jar>("jaxRsTestAgentJar") {
         archiveBaseName.set("jaxrs-test-agent")
@@ -85,14 +55,12 @@ val jaxRsTestAgentJar =
         from(sourceSets.test.get().output)
         manifest {
             attributes["Premain-Class"] = "dev.otherlode.instrumentation.endpoints.jaxrs.JaxRsTestAgent"
-            // Both tiers register retransformation-capable transformers, which the JVM
-            // allows only for an agent whose manifest says so.
             attributes["Can-Retransform-Classes"] = "true"
         }
     }
 
 // On a test classpath the RESTEasy Reactive server jar would open the inheritance gate for every
-// test that sets jerseyPresent to false, so its jars reach the tests only as a test loader's contents.
+// test that sets jerseyPresent to false.
 val resteasyReactiveJarProperties =
     CommandLineArgumentProvider {
         listOf(
@@ -112,17 +80,6 @@ tasks.test {
     )
 }
 
-// A second JVM Test Suite exercises the javax.ws.rs namespace against Jersey 2.48, the last
-// Jersey 2.x line, in its own forked test JVM with its own classpath. The resource fixture's
-// imports differ by namespace (javax.ws.rs vs jakarta.ws.rs), so this suite owns its own source
-// directory (src/javaxTest/kotlin) rather than reusing src/test/kotlin the way Ktor3Module's and
-// SpringWebMvcModule's version suites reuse one shared file: those differ only by dependency
-// version, never by import statement.
-//
-// A third suite, jersey4Test, runs the default suite's own sources (src/test/kotlin) against
-// Jersey 4 and Jakarta REST 4.0 (Jakarta EE 11). Jersey 4 keeps the jakarta.ws.rs namespace, so
-// the same fixtures and tests apply and only the dependency versions differ. It exists because
-// the module must keep working across a Jakarta REST major bump, which the 3.1 suite cannot show.
 testing {
     suites {
         register<JvmTestSuite>("javaxTest") {
@@ -131,9 +88,6 @@ testing {
                 kotlin.srcDir("src/javaxTest/kotlin")
             }
             dependencies {
-                // Unlike the built-in `test` suite, a suite registered here has no implicit
-                // dependency on this same project's own production code, so JaxRsModule itself
-                // has to be added explicitly.
                 implementation(project())
                 implementation(project(":"))
                 implementation(project(":endpoints-api"))
@@ -164,8 +118,6 @@ testing {
     }
 }
 
-// Same -javaagent wiring as the default test task above, built from javaxTest's own compiled
-// output so its JaxRsTestAgent resolves the javax.ws.rs fixture rather than the jakarta one.
 val javaxTestAgentJar =
     tasks.register<Jar>("javaxTestAgentJar") {
         archiveBaseName.set("jaxrs-javax-test-agent")
@@ -173,8 +125,6 @@ val javaxTestAgentJar =
         from(testing.suites.named<JvmTestSuite>("javaxTest").map { it.sources.output })
         manifest {
             attributes["Premain-Class"] = "dev.otherlode.instrumentation.endpoints.jaxrs.JaxRsTestAgent"
-            // Both tiers register retransformation-capable transformers, which the JVM
-            // allows only for an agent whose manifest says so.
             attributes["Can-Retransform-Classes"] = "true"
         }
     }
@@ -194,7 +144,6 @@ testing.suites.named<JvmTestSuite>("javaxTest") {
     }
 }
 
-// The same -javaagent wiring again, built from jersey4Test's own compiled output.
 val jersey4TestAgentJar =
     tasks.register<Jar>("jersey4TestAgentJar") {
         archiveBaseName.set("jaxrs-jersey4-test-agent")

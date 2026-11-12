@@ -11,8 +11,7 @@ import net.bytebuddy.jar.asm.Type
  *
  * [parameterNames] holds one name per descriptor parameter, in order, or is empty.
  * [genericSignature] is the method's `Signature` attribute, or empty when the method has none.
- * [extensionReceiver] is true when the first name is a Kotlin extension receiver's, which kotlinc
- * names `$this$<function>` (older kotlinc: `$receiver`).
+ * [extensionReceiver] is true when the first name is a Kotlin extension receiver's.
  */
 data class SourceSignature(
     val parameterNames: List<String>,
@@ -20,7 +19,6 @@ data class SourceSignature(
     val extensionReceiver: Boolean,
 ) {
     companion object {
-        /** No names, no generic signature and no receiver. A `<clinit>` and an unread class get this. */
         val NONE = SourceSignature(emptyList(), "", false)
 
         /** Sets [extensionReceiver] when the first name is one kotlinc gives an extension receiver. */
@@ -37,7 +35,7 @@ data class SourceSignature(
          * Picks a method's parameter names. [methodParameters] holds the `MethodParameters` names, null for
          * an unnamed entry, or is null when the method has no such attribute. It wins when it names every
          * descriptor parameter. Otherwise each name is [namesBySlot]'s entry for the parameter's slot.
-         * The result is empty when any slot has no name, so a list is never partial.
+         * The result is empty when any slot has no name.
          */
         fun pickNames(
             descriptor: String,

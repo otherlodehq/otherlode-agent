@@ -6,7 +6,6 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * The annotation types the adopter named in `callbackAnnotations`, and which of them a transform
  * has found on a method, directly or through the annotation types it carries.
- * Recording happens at transform time and never on a probe hit.
  */
 class ConfiguredCallbackAnnotations(
     names: List<CallbackAnnotationName>,

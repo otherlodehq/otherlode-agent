@@ -1,13 +1,6 @@
 name: rehearsal
 
-# Proves the Central Portal accepts the bundle without spending a real version (ADR 0063): builds
-# and signs at 0.0.0-rehearsal.<n>, uploads it USER_MANAGED, waits for validation, then drops it
-# through the Portal API. No release tag, no GitHub release. Started by pushing a tag
-# rehearsal/<n>, or rehearsal/<n>-<suffix> (letters, digits and dots) to run the same number again,
-# which shows whether a dropped deployment frees its version. A tag, not a branch, so the `release`
-# environment's secrets are reachable only from `v*` and `rehearsal/*` tags, which a tag ruleset
-# lets only Luke push.
-#
+# The `release` environment's secrets are reachable only from `v*` and `rehearsal/*` tags.
 # nmcp makes up to three attempts at the upload POST, so a lost response can leave a second
 # deployment whose id this workflow never sees. Drop any such stray by hand on central.sonatype.com.
 on:
@@ -75,10 +68,8 @@ jobs:
           id=$(sed -n "s/.*Nmcp: deployment bundle '\([^']*\)' uploaded\..*/\1/p" upload.log 2>/dev/null | head -n 1 || true)
           echo "id=$id" >> "$GITHUB_OUTPUT"
           if [ -z "$id" ]; then echo "no deployment id in the log"; fi
-      # The Portal drops only a VALIDATED or FAILED deployment, so the step waits up to 30 minutes for
-      # one of those first. Errors are handled line by line (`set +e`): a failed status call must not
-      # skip the drop. The token is the base64 of username:password; it reaches curl on stdin, never
-      # on the command line, and is masked in case a later line echoes it.
+      # The Portal drops only a VALIDATED or FAILED deployment. A failed status call must not skip the
+      # drop. The token reaches curl on stdin, never on the command line.
       - name: Wait for validation, then drop the deployment
         id: drop
         if: always() && steps.deployment.outputs.id != ''

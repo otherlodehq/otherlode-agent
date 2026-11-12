@@ -1,10 +1,5 @@
-// Scala 3 fixture classes for the analyser's default-getter resolution
-// (BranchSiteAnalyzer). Never on the test classpath directly: the root
-// build wires its compiled output and runtime classpath in as system properties
-// instead, loaded through a child-first classloader at test time, the same way
-// the existing Kotlin fixtures under com.example.target are loaded. Putting the
-// module on the test classpath would let JUnit discovery load these classes
-// before instrumentation is installed, defeating the fixture's purpose.
+// Never on the test classpath directly: JUnit discovery would load these classes before
+// instrumentation is installed.
 plugins {
     scala
 }

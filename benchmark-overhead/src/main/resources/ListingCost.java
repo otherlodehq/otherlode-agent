@@ -12,14 +12,6 @@ import java.util.concurrent.CountDownLatch;
  * third, and prints one {@code LISTING_COST} line with the first call's CPU and wall milliseconds,
  * the median CPU milliseconds of the other four, and the number of classes listed. Exits 1 when the
  * listing is null or a call throws.
- *
- * <p>The listers are built first, on the main thread, as the agent builds its lister in {@code premain}.
- * The calls run on a thread of their own, as the agent's listing does, and nothing touches
- * {@code java.lang.management} before the first call. That call reads the JVM's input arguments
- * through it, as the agent's does, so it pays the platform MXBeans' first use. Its CPU is the
- * thread's CPU time from its start, read by the main thread while the listing thread waits. The
- * agent's {@code onRoots} work, judging the classes its watch saw and those already loaded, needs an
- * {@code Instrumentation} and is not timed.
  */
 public final class ListingCost {
     private static final int CALLS = 5;

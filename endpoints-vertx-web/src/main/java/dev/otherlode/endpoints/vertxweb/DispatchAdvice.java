@@ -16,15 +16,14 @@ import net.bytebuddy.asm.Advice;
  * the route lists more than one. The chain is the mount point, or a marker for a root router. A
  * lookup that misses with a mount point falls back to the marker for the router's parameterised
  * chain. {@code RouterWalk} builds the same keys when it declares.
- *
- * <p>The advice body is inlined into the woven method, so {@code onExit} stays one flat body with
- * no helper methods.
  */
 public class DispatchAdvice {
     private static final String MODULE = "vertx-web";
     private static final String ROOT_CHAIN = "\u0000root";
     private static final String PARAMETERISED_CHAIN = "\u0000parameterised";
 
+    // Advice inlines only this method's bytecode, so a helper call here would stay a real call that
+    // the target loader cannot resolve. Keep the body flat.
     @Advice.OnMethodExit(suppress = Throwable.class)
     public static void onExit(
             @Advice.Return int result,

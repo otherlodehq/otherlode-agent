@@ -11,19 +11,15 @@ import net.bytebuddy.asm.Advice;
  * once per request after the pre-matching filters and before argument binding. A null return is no
  * match and counts nothing.
  *
- * <p>The route's {@code UriRouteInfo} is the key {@code MicronautModule.declare} registered the
- * route under. A route no registration saw is recorded at dispatch, with no handler join. A HEAD
- * route whose method carries the {@code @Get} stereotype is the one Micronaut adds beside a
- * {@code @Get}, so it is recorded against the GET endpoint of the same template. A WebSocket route
- * counts nothing. {@code isWebSocketRoute()} reports one only for an {@code @OnMessage} method, so
- * an {@code @OnOpen} method is checked by its annotation.
- *
- * <p>The advice body is inlined into the woven method, so {@code onExit} stays one flat body with
- * no helper methods.
+ * <p>A route no registration saw is recorded at dispatch, with no handler join. A HEAD route whose
+ * method carries the {@code @Get} stereotype is the one Micronaut adds beside a {@code @Get}, so it
+ * is recorded against the GET endpoint of the same template. A WebSocket route counts nothing.
  */
 public class DispatchAdvice {
     private static final String MODULE = "micronaut";
 
+    // Advice inlines only this method's bytecode, so a helper call here would stay a real call that
+    // the target loader cannot resolve. Keep the body flat.
     @Advice.OnMethodExit(suppress = Throwable.class)
     public static void onExit(@Advice.Return UriRouteMatch<?, ?> returned) {
         try {

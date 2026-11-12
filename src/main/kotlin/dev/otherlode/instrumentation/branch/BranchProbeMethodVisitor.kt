@@ -10,17 +10,7 @@ import net.bytebuddy.jar.asm.commons.AnalyzerAdapter
 /**
  * Splits each [ConditionalJump] into two private edges, one per outcome, and each
  * `TABLESWITCH`/`LOOKUPSWITCH` into one private edge per case plus the default. Every edge
- * increments its own slot in the class's shared counts array, which [probeArray] loads:
- *
- * ```
- * IFEQ original_target              IFEQ taken
- *                            ->        probes[notTakenIndex]++
- *                                      GOTO continue
- *                                    taken:
- *                                      probes[takenIndex]++
- *                                      GOTO original_target
- *                                    continue:
- * ```
+ * increments its own slot in the class's shared counts array, which [probeArray] loads.
  *
  * Every frame the received bytes carry passes through as it is. A label this visitor inserts gets a
  * frame only when [frameTracker] is set. A jump or switch the analyser has no state for throws
@@ -37,8 +27,8 @@ import net.bytebuddy.jar.asm.commons.AnalyzerAdapter
  * @property unprobedOutcomes In the same numbering, the conditionals with one outcome that gets no
  * probe, and that outcome's offset (see [BranchSite.unprobedOutcome]).
  * @property swappedOrdinals In the same numbering, the conditionals that test the opposite of the
- * class file's jump because an earlier transformer inverted them. Every offset above is the class
- * file's, so a swapped conditional's two edges trade slots, and an unprobed outcome trades sides with them.
+ * class file's jump. Every offset above is the class file's, so a swapped conditional's two edges
+ * trade slots, and an unprobed outcome trades sides with them.
  */
 class BranchProbeMethodVisitor(
     methodVisitor: MethodVisitor,

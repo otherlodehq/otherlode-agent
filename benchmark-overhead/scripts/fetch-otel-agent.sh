@@ -1,7 +1,4 @@
 #!/usr/bin/env bash
-# Downloads the OpenTelemetry Java agent jar into an empty directory and verifies it against values
-# pinned here: size, SHA-1, SHA-256, and the PGP signature against the project's key fingerprint.
-# Usage: fetch-otel-agent.sh <empty-dir>. Prints the jar's path. Exits non-zero on any mismatch.
 set -euo pipefail
 
 VERSION=2.32.0

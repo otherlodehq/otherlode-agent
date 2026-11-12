@@ -12,13 +12,9 @@ import java.util.concurrent.atomic.AtomicLong
  * The out-of-scope classes the adopter's code references, each with where the transform found it,
  * resolved to a dependency and delivered once per name.
  *
- * [record] only remembers a location string. Resolution runs on the export thread, or on the scan
- * thread through [mappingFor], and waits for [isListingComplete]. A name whose location
- * [resolveLocation] maps to no dependency (a jar of the adopter's own, an agent jar, an unsupported
- * scheme) is resolved once and never sent. A name no loader could find is sent as absent.
- *
- * The static baseline records names it has already mapped through [recordResolved] and sends the
- * mapping [mappingFor] returns. The manifest sends the same mapping.
+ * [record] only remembers a location string. A name whose location [resolveLocation] maps to no
+ * dependency (a jar of the adopter's own, an agent jar, an unsupported scheme) is resolved once and
+ * never sent. A name no loader could find is sent as absent.
  *
  * A name that maps to a dependency is held while [isDependencySendable] is false for that id. An
  * absent name is never held.

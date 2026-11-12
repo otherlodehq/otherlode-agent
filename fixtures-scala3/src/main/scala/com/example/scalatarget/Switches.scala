@@ -1,11 +1,9 @@
 package com.example.scalatarget
 
-/** The enum the Scala 3 switch fixtures match on. See agent ADR 0038. */
 enum Hue {
   case Red, Green, Blue
 }
 
-/** Each scalac lowering of a match on a string and on an enum. See agent ADR 0038. */
 class Switches {
   def stringMatch(status: String): Int = status match {
     case "open"            => 1

@@ -7,12 +7,7 @@ import java.lang.System.Logger.Level
 
 /**
  * Holds endpoint registrations a module made while ByteBuddy was rewriting a class, until the rewrite
- * is known to have succeeded. The slot is per thread, since ByteBuddy runs a class's transform and
- * result callbacks back to back on the loading thread.
- *
- * [begin] opens the slot for a declaring class and [discard] drops it. Each staged declaration
- * receives that class, so the registry can hold the endpoints back until the JVM has defined it.
- * When no transform is in flight, [stage] declines and the caller registers directly.
+ * is known to have succeeded. The slot is per thread.
  */
 class PendingDeclarations internal constructor() {
     private val log by agentLogger(PendingDeclarations::class.java.name)
@@ -47,7 +42,7 @@ class PendingDeclarations internal constructor() {
         return 0
     }
 
-    /** Drops everything staged past [mark], for a module that threw partway through declaring. */
+    /** Drops everything staged past [mark]. */
     fun rollbackTo(mark: Int) {
         val pending = staged.get()?.declarations ?: return
         while (pending.size > mark) pending.removeAt(pending.size - 1)

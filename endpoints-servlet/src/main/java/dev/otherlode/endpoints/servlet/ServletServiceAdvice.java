@@ -17,30 +17,20 @@ import net.bytebuddy.asm.Advice;
  * servlet class declares, {@code HttpServlet}'s own included. A filter that answers first never
  * reaches it. The protected {@code service(HttpServletRequest, HttpServletResponse)} is not hooked.
  *
- * <p>The dispatch key carries the name of the class the frame is hooked on, and the module binds a
- * servlet's keys only for the most derived class that declares the method, so one frame finds an
- * entry when a {@code service} calls {@code super.service}. A frame counts nothing when the servlet
- * it runs on has a name of its own in its {@code ServletConfig} that differs from the mapping's,
- * except for an include, which falls back to that servlet's own registration.
+ * <p>A frame counts nothing when the servlet it runs on has a name of its own in its {@code
+ * ServletConfig} that differs from the mapping's, except for an include, which falls back to that
+ * servlet's own registration.
  *
  * <p>A request whose mapping has no match type disables the module: with {@code LINKAGE_ERROR}
  * when the container answers with the servlet API's default {@code getHttpServletMapping}, else
  * with {@code ADVICE_FAILED}. On a servlet API older than 4.0, {@code getHttpServletMapping} does
  * not link and the failure disables the module with {@code LINKAGE_ERROR}.
- *
- * <p>The advice is woven into servlet classes at their own class file version, which can be 48, so
- * it uses no string concatenation with {@code +} and no class literal. The Servlet 3.1 {@code
- * HttpServlet} is version 51, so it calls no static interface method such as {@code List.of}. It
- * is written against the {@code javax} servlet types and bound to the {@code jakarta} ones by
- * prefix. A string constant is not rebound, so each request attribute name is built for the
- * namespace in use.
- *
- * <p>The advice body is inlined into the woven method, so {@code onEnter} stays one flat body with
- * no helper methods.
  */
 public class ServletServiceAdvice {
     private static final String MODULE = "servlet";
 
+    // Advice inlines only this method's bytecode, so a helper call here would stay a real call that
+    // the target loader cannot resolve. Keep the body flat.
     @Advice.OnMethodEnter(suppress = Throwable.class)
     public static void onEnter(
             @Advice.Origin("#t") String hooked, @Advice.This Object servlet, @Advice.Argument(0) ServletRequest request) {

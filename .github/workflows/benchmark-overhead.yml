@@ -1,7 +1,6 @@
 name: benchmark-overhead
 
 on:
-  # Nightly on master. Results live in the run (job summary and artifacts), not in the repository.
   schedule:
     - cron: "17 3 * * *"
   workflow_dispatch:
@@ -23,7 +22,6 @@ on:
 permissions:
   contents: read
 
-# A run can take hours; a new one waits rather than competing for the same runner time.
 concurrency:
   group: benchmark-overhead
   cancel-in-progress: false
@@ -33,8 +31,7 @@ jobs:
     name: benchmark (${{ matrix.config }})
     if: ${{ !inputs.startup_only }}
     runs-on: ubuntu-latest
-    # A run is startup, a warmup of 90 to 600 s (it ends once throughput is steady), a 180 s window and teardown:
-    # about six to fourteen minutes. 18 runs at the default 6 repeats, plus image builds. More repeats need a longer limit.
+    # More repeats need a longer limit.
     timeout-minutes: 360
     strategy:
       fail-fast: false
@@ -78,8 +75,7 @@ jobs:
   startup:
     name: startup (headline)
     runs-on: ubuntu-latest
-    # Each start takes under a minute, and a repeat starts each of three variants once. 21 repeats at the default,
-    # plus one warm-up start and the image builds: about 80 minutes. More repeats need a longer limit.
+    # More repeats need a longer limit.
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

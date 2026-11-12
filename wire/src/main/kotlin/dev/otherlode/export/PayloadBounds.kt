@@ -8,19 +8,14 @@ object ChunkLimits {
     // The element limits must equal ingest.Max*Elements in otherlode-collector.
     // MAX_ENCODED_BYTES is half the collector's body limit.
 
-    /** The most encoded bytes a chunk holds. */
     const val MAX_ENCODED_BYTES: Long = 8L * 1024 * 1024
 
-    /** The element limit for a delta batch. */
     const val DELTA_BATCH_ELEMENT_LIMIT: Long = 500_000
 
-    /** The element limit for a probe manifest. */
     const val MANIFEST_ELEMENT_LIMIT: Long = 100_000
 
-    /** The element limit for a static baseline. */
     const val STATIC_BASELINE_ELEMENT_LIMIT: Long = 200_000
 
-    /** The element limit for a class listing. */
     const val CLASS_LISTING_ELEMENT_LIMIT: Long = 100_000
 
     /** The share of an element limit a chunk may use. */
@@ -69,7 +64,6 @@ enum class ChunkBound(
     ELEMENTS("the limit on elements"),
 }
 
-/** A payload kind, with its element limit. */
 enum class PayloadKind(
     val collectorElementLimit: Long,
 ) {
@@ -102,7 +96,6 @@ data class PayloadWeight(
     val bytes: Long,
     val elements: Long,
 ) {
-    /** The weight of both parts together. */
     operator fun plus(other: PayloadWeight): PayloadWeight = PayloadWeight(bytes + other.bytes, elements + other.elements)
 
     companion object {

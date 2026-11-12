@@ -1,18 +1,6 @@
-// Scala fixture classes compiled by each scalac release in the compiler matrix (ADR 0055), for the
-// generated-method rules in ScalaGeneratedMethods. The sources are the ones the baseline modules
-// compile, fixtures-scala2 (2.13.15) for the 2.x releases and fixtures-scala3 (3.3.4) for the 3.x
-// ones, read in place and never copied. One task per release runs that release's own compiler
-// (scala.tools.nsc.Main from scala-compiler, dotty.tools.dotc.Main from scala3-compiler_3) with its
-// own library on the compile classpath, and a second task per release records what that compiler
-// prints for -version, so the build shows which compiler ran. Never on the test classpath
-// directly: see the comment in fixtures-scala3/build.gradle.kts for why.
-//
-// The releases come from otherlode.matrix.scalac in gradle.properties, which -P overrides. A release
-// joins src/main/resources/dev/otherlode/scala3-read-releases.txt only after this sweep passes for
-// it, so the sweep over every Scala 3 release in that file is
-//   ./gradlew :test --tests '*ScalacMatrixTest*' -Potherlode.matrix.scalac=<every Scala 3 release in scala3-read-releases.txt>
-// with the Scala 2 releases of gradle.properties kept in the list: the Scala 2 parameterised tests
-// fail to start when no Scala 2 release is given.
+// Never on the test classpath directly: see fixtures-scala3/build.gradle.kts for why. A release joins
+// scala3-read-releases.txt only after this sweep passes for it. A -Potherlode.matrix.scalac override
+// must keep a Scala 2 release: the Scala 2 parameterised tests fail to start when none is given.
 import java.io.ByteArrayOutputStream
 
 plugins {

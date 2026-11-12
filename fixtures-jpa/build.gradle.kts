@@ -1,8 +1,4 @@
-// Entity classes enhanced by Ebean, EclipseLink and OpenJPA, for the rules of ADR 0079. Each
-// library runs its own offline enhancer over the compiled entities, then the callers are compiled
-// against the enhanced classes so they can name the methods the enhancer added. Never on the test
-// classpath directly: see the comment in fixtures-scala3/build.gradle.kts for why. The root build
-// passes each variant's class directory and runtime classpath to the tests as system properties.
+// Never on the test classpath directly: see fixtures-scala3/build.gradle.kts for why.
 plugins {
     java
 }
@@ -45,7 +41,6 @@ dependencies {
     openJpaRuntime("org.apache.openjpa:openjpa:$openJpaVersion")
 }
 
-/** One library's fixtures: its sources, its runtime classpath, and how its enhancer runs over the compiled classes. */
 class Variant(
     val name: String,
     val runtime: Configuration,
@@ -146,10 +141,8 @@ tasks.named("classes") {
     dependsOn(variants.map { "assemble${it.name.replaceFirstChar(Char::uppercase)}" })
 }
 
-/** The class directory of variant [name], with its enhanced entities and callers. */
 val fixtureClassesDirs = variants.associate { it.name to layout.buildDirectory.dir("classes/${it.name}") }
 
-/** The runtime classpath variant [name] needs to define its entities, which the tests add to the fixture loader. */
 val fixtureRuntimeClasspaths = variants.associate { it.name to it.runtime }
 
 extra["fixtureClassesDirs"] = fixtureClassesDirs
