@@ -37,8 +37,9 @@ multi-tenant backend.
    jobs have never run.
 4. **Before the first customer:** the server STATUS's "Go-live
    checklist" (the company, the privacy policy, the site, the front door,
-   the database tier). No collector can be given
-   an ingest URL until the front door exists. None of it blocks publishing
+   the database tier, data handling, and catching false claims in early
+   access). No agent or collector can be given an ingest URL until the
+   front door exists. None of it blocks publishing
    the agent.
 After release: what "Parked" lists, the server's performance-only
 deferrals, gzip, a collector config file, and agent-level redaction
@@ -177,7 +178,7 @@ changed under a running JVM is refused on a re-weave (ADR 0053, amended): the
 JVM rejects the redefinition and the old code keeps running woven, so with the
 agent attached an IDE's HotSwap of edited code fails, all of a batch together.
 Only development meets it, chiefly debugging a test with the agent on the test
-task; the README says so beside the testkit's set-up. Below class-file version
+task; the testkit page says so under "Debug a test with the agent attached". Below class-file version
 55 nothing else was possible, since new bytes would need the probe field a
 redefinition cannot add. From 55 a class carries nothing added, so the agent
 could re-scan instead: analyse the new class file, weave it with a fresh plan
@@ -324,18 +325,18 @@ consumer decide what is old enough to act on. This also answers most of the
 trust problem with agent-raised PRs: the judgement sits with the party that
 has the context for it.
 
-The store mostly holds this already. `service_probe_locations` keeps each
-probe location's first and last hit per environment, `instances.first_seen_at`
-and `runs.last_seen_at` bound the observation window, and the stale-hit
-finding derives `last_hit_at` as the latest `updated_at` of a count with
-hits, null when nothing ever hit it. Putting these on the
-never-hit rows is read-path work, not a schema change. Two facts have to
+The read path serves most of this already. Each `/never-hit` row carries
+`first_known_at` and `dates_capped`, and each reply carries `watched_since`.
+`service_probe_locations` keeps each probe location's first and last hit per
+environment. `/unreached-clusters` filters on `known_for_days` but carries no
+age on its rows, so per-cluster ages are read-path work, not a schema
+change. Two facts have to
 travel together, because either alone misleads: how long the finding has been
 dead, and how long Otherlode has been watching. "Dead for 90 days" says nothing
 until the reader knows whether the window is 90 days or three years.
 
 The age gap this once waited on is closed. `otherlode-server` keeps location
-dates once per service (its "Service-wide dates" entry), so a method's age no
+dates once per service (server ADRs 0021 and 0027), so a method's age no
 longer stops at the oldest in-scope instance or the retention window, and
 every reply carries `watched_since`. The server also keeps service-wide
 dates for each keyed branch outcome (its ADR 0025), so branch-level ages are
@@ -442,10 +443,6 @@ Settings:
 
 Endpoints:
 
-- An endpoint module that throws on a re-weave loses its advice for that
-  class without landing in `disabled_endpoint_modules` (logged once per
-  module), so its endpoints read as never called from then on. ADR 0017
-  accepts it, since a re-weave's inputs equal the first load's.
 - Ktor regex routes merge with their parent: `PathSegmentRegexRouteSelector`
   adds nothing to the template. It is absent from Ktor 2.0.3, and its
   `getRegex()` returns a `kotlin.text.Regex` the shaded jar renames, so a
@@ -528,8 +525,8 @@ Dependencies and the testkit:
   entries, as in `java -cp app.jar:x.jar ...JarLauncher`; `java -jar` leaves
   only the fat jar.
 - `withHomeAsTilde` turns a home of `C:\` into `C:`, so on Windows every
-  `C:\...` location would read as `~\...`, though its KDoc says a root home
-  changes nothing.
+  `C:\...` location would read as `~\...`. A root home should change
+  nothing.
 
 Overhead and memory:
 
