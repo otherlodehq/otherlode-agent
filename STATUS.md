@@ -47,6 +47,11 @@ deferrals, gzip, a collector config file, and agent-level redaction
 
 ## TODO
 
+- **The README's demo sample output is stale: regenerate it.** The
+  sample report lines under "Try the demo" quote `DemoServerMain.kt`
+  line numbers and a condition (`discounted > 100.0`) that the code no
+  longer has. Run `./gradlew :demo:runDemo` and paste the real lines.
+
 - **Testkit / server parity: to fix, after one grill.** The 2026-11-12
   audit compared each testkit query with the server's judgement. The
   server departs from its own ADRs nowhere. The testkit misses rules the
