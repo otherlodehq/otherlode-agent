@@ -125,7 +125,7 @@ class BranchProbeFramesTest {
         val transformer = HotPathWeaver.offlineTransformer(listOf("com.example.deadcode"), registry)
         val loader = ResourceLoader(BranchProbeFramesTest::class.java.classLoader, mapOf(name to original))
 
-        // Called directly, ByteBuddy's transformer rethrows what the JVM would swallow, leaving the class as it arrived.
+        // Called directly, ByteBuddy's transformer rethrows what the JVM would swallow.
         val failure = assertFailsWith<IllegalStateException> { transformer.transform(loader, name, null, null, original) }
         val cause = generateSequence<Throwable>(failure) { it.cause }.last()
         assertTrue("no frame can be derived" in cause.message.orEmpty(), cause.message)

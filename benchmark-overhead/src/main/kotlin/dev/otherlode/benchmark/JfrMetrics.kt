@@ -57,7 +57,7 @@ object JfrMetrics {
                     }
 
                     "jdk.NetworkUtilization" -> {
-                        // One event per interface per period: summed per period, so a period's total covers every interface.
+                        // One event per interface per period.
                         networkRead.merge(e.startTime, e.getLong("readRate"), Long::plus)
                         networkWrite.merge(e.startTime, e.getLong("writeRate"), Long::plus)
                     }

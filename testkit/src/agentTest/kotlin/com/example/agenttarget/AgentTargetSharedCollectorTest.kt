@@ -8,12 +8,6 @@ import org.junit.jupiter.api.extension.ExtendWith
 import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
-/**
- * Runs after [AgentTargetExercisedTest] (see this module's `junit-platform.properties`) to prove
- * one [OtherlodeTestCollector] is shared for the life of the test JVM: [AgentTarget]'s manifest
- * entry, delivered once during the first test class, still answers a query here with no
- * `UnknownProbeException`.
- */
 @ExtendWith(OtherlodeExtension::class)
 @Order(2)
 class AgentTargetSharedCollectorTest {

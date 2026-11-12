@@ -61,7 +61,7 @@ fun main() {
     }
     server.start()
     println("otherlode demo server listening on ${DemoPorts.SERVER_PORT}")
-    // A class literal loads a class without initialising it. See AuditLog and ReceiptPrinter.
+    // A class literal loads a class without initialising it.
     println(
         "otherlode demo server can audit with ${AuditLog::class.java.simpleName} and print with ${ReceiptPrinter::class.java.simpleName}",
     )
@@ -86,42 +86,20 @@ private fun handleCheckout(exchange: HttpExchange) {
     send(exchange, "${checkoutGreeting()}: $message")
 }
 
-/**
- * Inline so every call from Kotlin, including [handleCheckout]'s, copies this body into the
- * caller instead of invoking this method. Its own probe reads zero no matter how often a request
- * comes in, so the demo report shows it under neither `NEVER HIT` nor a hit count.
- */
 private inline fun describeOrder(total: Double): String = "order of ${formatTotal(total, decimals = 2)}"
 
-/**
- * Always called with `decimals` supplied and never with `currency`: the demo report shows
- * `decimals` under `ALWAYS SUPPLIED` (the default is dead) and `currency` under `NEVER SUPPLIED`
- * (every caller took the default, so the parameter can go).
- */
 private fun formatTotal(
     total: Double,
     currency: String = "GBP",
     decimals: Int = 2,
 ): String = "%.${decimals}f %s".format(total, currency)
 
-/**
- * The `/promo` handler as a named class. The endpoint record names this class and `handle`, so
- * the never-called endpoint and the never-hit method are the same finding seen from two sides.
- * Nothing in the demo's own packages calls `handle`, only the server. The method overrides
- * `HttpHandler.handle`, so the root reads as called from outside scope. The endpoint join carries
- * the route to it.
- */
 private class PromoHandler : HttpHandler {
     override fun handle(exchange: HttpExchange) {
         respond(exchange, applyPromoCode(exchange.requestURI.query ?: ""))
     }
 }
 
-/**
- * Only [PromoHandler.handle] calls this, and the demo client never calls `/promo`, so neither
- * this method nor [PromoRepository.find] ever runs. That grows the unreached cluster rooted at
- * `PromoHandler.handle` by one more method and, through `find`, one more never-loaded class.
- */
 private fun applyPromoCode(code: String): String {
     val discount = PromoRepository.find(code)
     return "promo code applied: $discount% off"

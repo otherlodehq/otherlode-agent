@@ -1,9 +1,5 @@
 package com.example.target;
 
-/**
- * A Java class compiled with -g, so the LocalVariableTable names each parameter. The analyser reads
- * the names from it, and a test strips the table to show an empty list.
- */
 public class SignatureJavaTarget {
 
     private final String name;

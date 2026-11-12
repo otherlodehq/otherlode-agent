@@ -229,7 +229,6 @@ class EarlierTransformerInstrumentationTest {
 
     @Test
     fun `the manifest of Kotlin and Java classes is the same with JaCoCo ahead`() {
-        // The release-21 Java fixtures cannot be defined on an older test JVM; the rest still compare.
         val classNames =
             listOf(
                 "GeneratedPoint",
@@ -350,8 +349,8 @@ class EarlierTransformerInstrumentationTest {
                 WovenBytes.isWoven(received),
                 "JaCoCo received $className before this agent wove it",
             )
-            // A JaCoCo agent on the test JVM instruments the fixture first, so only the order of the two
-            // transformers can be checked.
+            // A JaCoCo agent on the test JVM instruments the fixture first, so only the transformer
+            // order can be checked.
             if (isUnderJacocoAgent()) continue
             val classFile = classFileOf(internalName)
             assertTrue(received.contentEquals(classFile), "JaCoCo received $className's class file")
@@ -490,7 +489,7 @@ class EarlierTransformerInstrumentationTest {
 
         val probes = registry.manifest(RESOURCE).probes.filter { it.className == "$TARGET.BranchTarget" }
         val classify = probes.single { it.methodName == "classify" && it.kind == ProbeKind.METHOD }
-        assertEquals(7, classify.line, "the received bytes carry the line table")
+        assertEquals(6, classify.line, "the received bytes carry the line table")
         assertEquals(1, classify.branchSites.size, "and the branch site")
         assertEquals(2, probes.count { it.methodName == "classify" && it.kind == ProbeKind.BRANCH })
         assertTrue(records.none { it.level == JulLevel.WARNING }, "the received bytes were enough: ${records.map { it.message }}")

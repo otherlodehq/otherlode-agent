@@ -3,7 +3,6 @@ package com.example.target.kotlinc
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 
-/** Suspends through `suspendCoroutine`, whose inlined body holds the stack-form suspended-marker compare. */
 suspend fun leaf(): Int = suspendCoroutine { it.resume(1) }
 
 suspend fun topLevel(x: Int): Int {

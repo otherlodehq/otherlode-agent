@@ -167,12 +167,11 @@ class CoroutineMachineryInstrumentationTest {
 
         target.getMethod("runTwoPoints", Int::class.java).invoke(null, 5)
 
-        // The count sums every suspend-shaped method CoroutineTargetKt declares: twoPoints (5) +
-        // twoPointsSuspending (5) + compareRefs (4) + compareAfterMarker (5) + handOff (2) +
-        // earlyHandOff (2) + pauseNow (1) + pauseLater (1), plus the two machinery sites of the
-        // wrapper class CoroutineTargetKt$runTwoPoints$1.
+        // twoPoints (5) + twoPointsSuspending (5) + compareRefs (4) + compareAfterMarker (5) + handOff (2) +
+        // earlyHandOff (2) + pauseNow (1) + pauseLater (1) in CoroutineTargetKt, plus 2 in its wrapper class
+        // CoroutineTargetKt$runTwoPoints$1.
         assertEquals(27, branchDropCounts.countOf(BranchDropReason.COROUTINE_MACHINERY))
-        // CoroutineTargetKt makes one record() call for the whole class and its wrapper class makes another.
+        // One record() call from CoroutineTargetKt and one from its wrapper class.
         assertEquals(2, branchDropCounts.classesWithDrops())
     }
 }

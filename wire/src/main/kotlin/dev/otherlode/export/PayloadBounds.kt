@@ -5,8 +5,8 @@ package dev.otherlode.export
  * chunk may use, and a cap on encoded bytes.
  */
 object ChunkLimits {
-    // The element limits must equal ingest.Max*Elements in otherlode-collector, which refuses a payload
-    // over one with 413. MAX_ENCODED_BYTES is half the collector's body limit.
+    // The element limits must equal ingest.Max*Elements in otherlode-collector.
+    // MAX_ENCODED_BYTES is half the collector's body limit.
 
     /** The most encoded bytes a chunk holds. */
     const val MAX_ENCODED_BYTES: Long = 8L * 1024 * 1024

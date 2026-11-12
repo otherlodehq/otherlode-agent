@@ -8,7 +8,6 @@ import com.example.outside.named.RepeatedCall;
 import com.example.outside.named.RuntimeCall;
 import org.springframework.context.event.EventListener;
 
-/** Methods that carry an adopter's own annotations in each place the option reads. */
 public class NamedCallbacks {
     @RuntimeCall
     public void runtimeCall() {}

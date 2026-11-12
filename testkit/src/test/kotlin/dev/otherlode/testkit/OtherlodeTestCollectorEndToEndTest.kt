@@ -468,7 +468,7 @@ class OtherlodeTestCollectorEndToEndTest {
         val target = collectSiteFolds("e2e-fold-1")
 
         val neverCalledRows = siteFoldRows(target.neverHit(), methods = true).filter { it.startsWith("neverCalled:") }
-        assertEquals(listOf("neverCalled:14 METHOD"), neverCalledRows, "only the method row is listed")
+        assertEquals(listOf("neverCalled:8 METHOD"), neverCalledRows, "only the method row is listed")
         assertEquals(
             emptyList(),
             siteFoldRows(target.neverHitRoutineOutcomes()).filter { it.startsWith("neverCalled:") },
@@ -481,8 +481,8 @@ class OtherlodeTestCollectorEndToEndTest {
         val target = collectSiteFolds("e2e-fold-2")
 
         val nestedRows = siteFoldRows(target.neverHit()).filter { it.startsWith("nested:") }
-        assertTrue("nested:28" in nestedRows, "the never-taken side of `if (outer)` is listed: $nestedRows")
-        assertTrue(nestedRows.none { it == "nested:30" }, "the `middle` site behind it folds: $nestedRows")
+        assertTrue("nested:18" in nestedRows, "the never-taken side of `if (outer)` is listed: $nestedRows")
+        assertTrue(nestedRows.none { it == "nested:20" }, "the `middle` site behind it folds: $nestedRows")
     }
 
     @Test
@@ -490,7 +490,7 @@ class OtherlodeTestCollectorEndToEndTest {
         val target = collectSiteFolds("e2e-fold-3")
 
         val nestedRows = siteFoldRows(target.neverHit()).filter { it.startsWith("nested:") }
-        assertEquals(listOf("nested:28"), nestedRows, "the `inner` site folds into the never-hit `middle` outcome")
+        assertEquals(listOf("nested:18"), nestedRows, "the `inner` site folds into the never-hit `middle` outcome")
     }
 
     @Test
@@ -507,12 +507,12 @@ class OtherlodeTestCollectorEndToEndTest {
         val target = collectSiteFolds("e2e-fold-4")
 
         assertEquals(
-            listOf("behindRoutine:58"),
+            listOf("behindRoutine:43"),
             siteFoldRows(target.neverHitRoutineOutcomes()).filter { it.startsWith("behindRoutine:") },
             "the null side of `?:` is the method's one routine outcome",
         )
         assertEquals(
-            listOf("behindRoutine:58", "behindRoutine:58"),
+            listOf("behindRoutine:43", "behindRoutine:43"),
             siteFoldRows(target.neverHit()).filter { it.startsWith("behindRoutine:") },
             "a routine outcome is in no finding, so both outcomes of the `flag` site behind it stay listed",
         )
@@ -523,8 +523,8 @@ class OtherlodeTestCollectorEndToEndTest {
         val target = collectSiteFolds("e2e-fold-5")
 
         val rows = siteFoldRows(target.neverHit())
-        assertTrue("guardRan:44" in rows, "the skip side of `if (first)` is listed: $rows")
-        assertTrue("nested:28" in rows, "the entering side of `if (outer)` is listed: $rows")
+        assertTrue("guardRan:33" in rows, "the skip side of `if (first)` is listed: $rows")
+        assertTrue("nested:18" in rows, "the entering side of `if (outer)` is listed: $rows")
     }
 
     @Test
@@ -532,7 +532,7 @@ class OtherlodeTestCollectorEndToEndTest {
         val target = collectSiteFolds("e2e-fold-6")
 
         assertEquals(
-            listOf("guardRan:44", "guardRan:46"),
+            listOf("guardRan:33", "guardRan:35"),
             siteFoldRows(target.neverHit()).filter { it.startsWith("guardRan:") },
         )
     }

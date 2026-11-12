@@ -7,30 +7,9 @@ import javax.servlet.http.HttpServletRequest;
 import net.bytebuddy.asm.Advice;
 import org.springframework.util.ClassUtils;
 
-/**
- * Woven onto {@code AbstractUrlHandlerMapping$PathExposingHandlerInterceptor.preHandle}, the
- * dispatch point shared by every URL-mapped handler mapping. Only {@code DispatcherServlet} runs an
- * interceptor, once per dispatch, so a lookup by {@code HandlerMappingIntrospector} never reaches
- * it. A request stopped before the interceptors run, by a {@code Last-Modified} answer of 304
- * (Spring 5.3 and 6) or a refused CORS request, is not counted. An async redispatch and a CORS
- * preflight count nothing.
- *
- * <p>The advice is written against the {@code javax} servlet types and bound to the {@code
- * jakarta} ones by prefix.
- *
- * <p>The key, {@code List.of(bestMatchingPattern, "*")}, matches {@link RegisterUrlHandlerAdvice}.
- * A lookup miss means a handler this module did not see register, and the dispatch is recorded.
- *
- * <p>When no registered path matches, Spring falls back to the root handler for {@code "/"} or the
- * {@code "/*"} handler for anything else, and passes the raw lookup path as both the pattern and
- * the path within the mapping. A miss whose two strings are equal is therefore a fallback. A
- * fallback for {@code "/"} served by a root handler {@link RegisterRootHandlerAdvice} declared
- * counts against {@code "/"}, looked up by that handler, and any other fallback against {@code
- * "/*"}.
- *
- * <p>The advice body is inlined into the woven method, so {@code onEnter} stays one flat body with
- * no helper methods.
- */
+// The advice body is inlined into the woven method, so onEnter stays one flat body with no helper methods.
+// The key matches RegisterUrlHandlerAdvice's. A miss whose pattern equals the path within the mapping is
+// Spring's fallback to the root handler or the "/*" handler.
 public class PathExposingPreHandleAdvice {
     private static final String MODULE = "spring-webmvc";
 

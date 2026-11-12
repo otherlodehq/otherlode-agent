@@ -5,7 +5,6 @@ value class DisabledId(
     val v: Int,
 )
 
-/** Defaults that take and return the type parameter, fixed by the sub-interfaces below at a value class and at `Unit`. */
 interface DisabledStore<T> {
     fun put(t: T): T = t
 
@@ -24,7 +23,6 @@ interface DisabledSuspend {
 
 interface DisabledSuspendSub : DisabledSuspend
 
-/** Overrides a suspend default only to call `super`: the same tail as a sub-interface's forwarder, with no receiver cast. */
 interface DisabledSuspendOverride : DisabledSuspend {
     override suspend fun run() = super.run()
 }
@@ -34,7 +32,6 @@ value class DisabledLabel(
     val s: String,
 )
 
-/** A default at a type variable with a bound, fixed by a sub-interface and a value class at `String`. */
 interface DisabledMid<T : CharSequence> {
     fun f(t: T): Int = t.length
 }
@@ -46,7 +43,6 @@ value class DisabledMidValue(
     val v: Int,
 ) : DisabledMid<String>
 
-/** Defaults fixed by sub-interfaces and value classes at a value class over a reference. */
 interface DisabledHolds<T> {
     fun get(): T? = null
 
@@ -73,7 +69,6 @@ value class DisabledLabelTakesValue(
     val v: Int,
 ) : DisabledTakes<DisabledLabel>
 
-/** Overrides the defaults only to call `super`, in a sub-interface, which declares the methods. */
 interface DisabledMidOverride : DisabledMid<String> {
     override fun f(t: String): Int = super.f(t)
 }

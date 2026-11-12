@@ -5,7 +5,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Scheduled;
 
-/** A superclass whose methods carry callback annotations. */
 public class InheritBase {
     @EventListener
     public void fromSuperclass() {}

@@ -48,7 +48,6 @@ class CollectorMetricsTest {
                         "payload=\"deltas\"} 9",
                     ).replace("payload=\"manifest\"} 2", "payload=\"manifest\"} 3"),
             )
-        // The rejected series are unchanged, so the diff is clean.
         assertEquals(emptyList<String>(), collectorProblems(before, after, expectBaseline = false))
     }
 

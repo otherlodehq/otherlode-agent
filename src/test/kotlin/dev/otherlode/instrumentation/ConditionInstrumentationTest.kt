@@ -83,9 +83,9 @@ class ConditionInstrumentationTest {
         val value = demoLineOf("return value?.toDoubleOrNull() ?: 0.0")
         assertEquals(
             listOf(
-                // kotlinc tests `ifnonnull` for the `?: return` elvis, so its null side is the fall-through.
-                // It tests `ifnull` for the safe calls and for the elvis that unboxes to a Double, so their
-                // null side is the taken jump.
+                // kotlinc tests `ifnonnull` for the `?: return` elvis, so its null side is the fall-through; it tests
+                // `ifnull` for the safe calls and the elvis that unboxes to a Double, so their null side is
+                // the taken jump.
                 query to listOf(NONE, NULL_DEFAULT),
                 getOrNull to listOf(NULL_DEFAULT, NONE),
                 value to listOf(NULL_DEFAULT, NONE),

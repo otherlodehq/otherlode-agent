@@ -27,8 +27,7 @@ class ProbeAllocationTest {
         return after - before
     }
 
-    // The JVM can allocate a few hundred bytes once as it moves the loop between compiler tiers. An allocation
-    // per call shows in every window and a one-off in at most one, so this takes the smallest.
+    // The JVM can allocate a few hundred bytes once as it moves the loop between compiler tiers.
     private fun allocatedBy(shape: HotPathShape): Long {
         window(shape, CALLS)
         return (1..WINDOWS).minOf { window(shape, CALLS) }

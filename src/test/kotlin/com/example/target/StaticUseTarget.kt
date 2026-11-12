@@ -9,7 +9,6 @@ object Config {
     var flag: Boolean = true
 }
 
-/** Reads and writes its own static field from a method on the same class, never through another class's edge. */
 object SelfStaticUser {
     @JvmField
     var counter: Int = 0
@@ -24,12 +23,6 @@ class FinalMethodTarget {
     fun method(): Int = 5
 }
 
-/**
- * Exercises every field-use call-edge shape [dev.otherlode.instrumentation.branch.BranchSiteAnalyzer]
- * records: a static read and a static write on another in-scope class (deduplicated to one edge),
- * an out-of-scope static read, an instance field on another in-scope class (no edge beyond its
- * own existing constructor edge), and a call to another in-scope class's final method.
- */
 class StaticUseTarget {
     fun readEnumConstant(): Suit = Suit.HEARTS
 

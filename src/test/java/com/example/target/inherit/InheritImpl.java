@@ -1,6 +1,5 @@
 package com.example.target.inherit;
 
-/** Overrides every annotated supertype method without repeating its annotation. */
 public class InheritImpl extends InheritBase implements InheritApi, GenericApi<String> {
     @Override
     public String fromInterface() {

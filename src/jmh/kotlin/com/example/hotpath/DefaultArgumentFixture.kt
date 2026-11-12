@@ -2,9 +2,7 @@ package com.example.hotpath
 
 import dev.otherlode.benchmark.HotPathShape
 
-/** Calls a function with three optional parameters, once omitting all three and once omitting two. */
 class DefaultArgumentFixture : HotPathShape {
-    /** The target of the `$default` calls. */
     fun scale(
         a: Int,
         b: Int = 2,

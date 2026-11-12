@@ -32,8 +32,7 @@ class BootstrapHolderTest {
 
     @Test
     fun `a missing embedded jar is reported as an install failure rather than a later NoClassDefFoundError`() {
-        // install() returns early once another test has appended the holder to this JVM, so the
-        // resource lookup is driven directly.
+        // install() returns early once another test has appended the holder to this JVM.
         val exception =
             assertFailsWith<BootstrapInstallException> {
                 BootstrapHolder.readEmbeddedJar("META-INF/otherlode/does-not-exist.jar")

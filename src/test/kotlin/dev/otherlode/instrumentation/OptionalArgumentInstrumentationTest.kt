@@ -190,36 +190,36 @@ class OptionalArgumentInstrumentationTest {
 
     @Test
     fun `each default on its own line gives its omission probe that line, not the function's`() {
-        // DefaultArgumentTarget.kt declares b on line 7, c on line 8 and d on line 9.
+        // DefaultArgumentTarget.kt declares b on line 6, c on line 7 and d on line 8.
         assertEquals(
-            mapOf(1 to 7, 2 to 8, 3 to 9),
+            mapOf(1 to 6, 2 to 7, 3 to 8),
             omissionLines("com.example.target.DefaultArgumentTarget", "f"),
         )
     }
 
     @Test
     fun `two defaults on one line both read that line`() {
-        // DefaultLineTarget.kt declares both defaults of sameLine on line 8.
+        // DefaultLineTarget.kt declares both defaults of sameLine on line 5.
         assertEquals(
-            mapOf(0 to 8, 1 to 8),
+            mapOf(0 to 5, 1 to 5),
             omissionLines("com.example.target.DefaultLineTargetKt", "sameLine"),
         )
     }
 
     @Test
     fun `a constructor's default reads its own line, not the constructor's`() {
-        // DefaultArgumentTarget.kt declares b on line 22 and the class header on line 20.
+        // DefaultArgumentTarget.kt declares b on line 21 and the class header on line 19.
         assertEquals(
-            mapOf(1 to 22),
+            mapOf(1 to 21),
             omissionLines("com.example.target.ConstructedWithDefault", "<init>"),
         )
     }
 
     @Test
     fun `a default whose expression is on the next line reads the expression's line`() {
-        // DefaultLineTarget.kt declares label's name on line 13 and its expression on line 14.
+        // DefaultLineTarget.kt declares label's name on line 9 and its expression on line 10.
         assertEquals(
-            mapOf(1 to 14),
+            mapOf(1 to 10),
             omissionLines("com.example.target.DefaultLineTargetKt", "wrappedDefault"),
         )
     }

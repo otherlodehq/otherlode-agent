@@ -2,7 +2,6 @@ package com.example.target
 
 import java.io.File
 
-/** Fixtures for the condition writer's Kotlin idioms. Each method holds one site. */
 class ConditionTarget(
     val limit: Int,
 ) {
@@ -114,31 +113,26 @@ class ConditionTarget(
     }
 }
 
-/** An extension function. kotlinc names its receiver `$this$extensionCheck` and reads [ConditionTarget.limit] through its getter. */
 fun ConditionTarget.extensionCheck(): Int {
     if (limit > 2) return 1
     return 0
 }
 
-/** Reads [ConditionTarget.limit] from outside its class, so kotlinc calls the getter. */
 fun getterCheck(target: ConditionTarget): Int {
     if (target.limit > 3) return 1
     return 0
 }
 
-/** Narrows a `Long` to an `Int`, so kotlinc emits `l2i`. */
 fun narrowingCheck(total: Long): Int {
     if (total.toInt() > 3) return 1
     return 0
 }
 
-/** Narrows an `Int` to a `Byte`, so kotlinc emits `i2b`. */
 fun byteCheck(code: Int): Int {
     if (code.toByte() > 3) return 1
     return 0
 }
 
-/** Compares an `Int` with a `Long`, so kotlinc widens the `Int` with `i2l`. */
 fun wideningCheck(
     count: Int,
     limit: Long,
@@ -147,7 +141,6 @@ fun wideningCheck(
     return 0
 }
 
-/** `===` between two instances of an ordinary class. */
 fun sameInstanceCheck(
     a: ConditionTarget,
     b: ConditionTarget,
@@ -156,23 +149,19 @@ fun sameInstanceCheck(
     return 0
 }
 
-/** An in-scope inline function whose one site is copied into [ConditionTarget.inlineCaller]. */
 inline fun conditionInlineHelper(value: Int): Int {
     if (value > 10) return 1
     return 0
 }
 
-/** Holds a companion property read from [ConditionTarget.companionCheck]. */
 class ConditionHolder {
     companion object {
         val threshold: Int = System.getProperty("condition.threshold")?.length ?: 7
     }
 }
 
-/** An `object` whose property [ConditionTarget.objectCheck] reads. */
 object ConditionSettings {
     val enabled: Boolean = System.getProperty("condition.enabled") != null
 }
 
-/** An enum compared with `==` in [ConditionTarget.enumCheck]. */
 enum class ConditionMode { FAST, SLOW }

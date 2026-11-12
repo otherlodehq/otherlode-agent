@@ -13,8 +13,7 @@ private const val HTTP_HANDLER = "com.sun.net.httpserver.HttpHandler"
 private const val HANDLE = "(Lcom/sun/net/httpserver/HttpExchange;)V"
 
 class HandlerForwarderAnalyzerTest {
-    // scalac names no `$adapted` forwarder for an `HttpHandler` lambda, so these tests use
-    // `scala.Function1` as the handler interface.
+    // scalac names no `$adapted` forwarder for an `HttpHandler` lambda, so these tests use `scala.Function1`.
     private fun analyzeScala(
         module: String,
         handlerInterfaces: Set<String>,

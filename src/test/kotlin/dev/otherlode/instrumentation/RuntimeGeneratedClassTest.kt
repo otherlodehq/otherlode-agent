@@ -41,7 +41,7 @@ class RuntimeGeneratedClassTest {
         watcher?.let { instrumentation.removeTransformer(it) }
     }
 
-    // Seeded: a random tail reads as a word about once in 500 names, and TypeMatchPolicy keeps those.
+    // A random tail reads as a word about once in 500 names, and TypeMatchPolicy keeps those.
     private fun seeded(prefix: String) =
         NamingStrategy.SuffixingRandom(
             prefix,

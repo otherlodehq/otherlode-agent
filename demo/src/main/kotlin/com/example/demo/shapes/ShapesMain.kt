@@ -58,10 +58,8 @@ private suspend fun expressFee(): Double {
     return 5.0
 }
 
-/** A suspension point that resumes at once, so kotlinc builds a state machine around it. */
 private suspend fun handOff() = suspendCoroutine { it.resume(Unit) }
 
-/** Runs [block] to completion on this thread with the standard library alone. */
 private fun <T> runSuspending(block: suspend () -> T): T {
     var outcome: Result<T>? = null
     block.startCoroutine(Continuation(EmptyCoroutineContext) { outcome = it })

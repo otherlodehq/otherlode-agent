@@ -227,7 +227,6 @@ fun summaryMarkdown(
     return sb.toString()
 }
 
-/** Warmup length per variant as mean and range, with how many runs ended steady, or an empty string when no run recorded one. */
 private fun warmupSection(
     variants: List<Variant>,
     byVariant: Map<Variant, List<RunRecord>>,

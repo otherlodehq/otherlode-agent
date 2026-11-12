@@ -4,7 +4,6 @@ import java.net.URL
 import java.net.URLClassLoader
 
 // PingTarget is defined here so that it is first defined after the transformer under test is installed.
-// PingAdvice resolves through the parent, so the test reads the same class object the target writes to.
 class FixtureClassLoader(
     urls: Array<URL>,
     parent: ClassLoader,

@@ -1,9 +1,5 @@
 package com.example.testkittarget
 
-/**
- * Eight classes of twenty methods each. The settled-wait end-to-end test calls one method of every
- * class per cycle, so each cycle changes eight probes that a flush splits across batches.
- */
 class SettledA {
     fun m00(): Int = 0
 

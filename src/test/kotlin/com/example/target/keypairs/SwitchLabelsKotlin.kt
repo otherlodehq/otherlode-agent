@@ -2,7 +2,6 @@ package com.example.target.keypairs
 
 import com.example.target.Tint
 
-/** A `when` over an enum, before a case is added to it. */
 class SwitchLabelsKotlinV1 {
     fun enumWhen(tint: Tint): Int =
         when (tint) {
@@ -12,10 +11,7 @@ class SwitchLabelsKotlinV1 {
         }
 }
 
-/**
- * [SwitchLabelsKotlinV1] with a case added first, which renumbers every value in kotlinc's
- * `$WhenMappings` array.
- */
+// Adding a case first renumbers every value in kotlinc's `$WhenMappings` array.
 class SwitchLabelsKotlinV2 {
     fun enumWhen(tint: Tint): Int =
         when (tint) {

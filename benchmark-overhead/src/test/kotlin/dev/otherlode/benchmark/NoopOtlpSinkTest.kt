@@ -16,7 +16,6 @@ import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.time.Duration
 
-/** Runs `NoopOtlpSink.java` as the harness's sink container does, on a free local port, and talks to it over HTTP. */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class NoopOtlpSinkTest {
     private val http = HttpClient.newHttpClient()

@@ -2,23 +2,17 @@ package com.example.demo.collector
 
 import dev.otherlode.proto.DependencyDiscoverySource
 
-/** One library a dependency carries, as one instance's listing named it. */
 internal data class DependencyIdentityView(
     val groupId: String,
     val artifactId: String,
     val version: String,
 ) {
-    /**
-     * `group:artifact`, the cross-instance name, with `\`, `:` and `,` in either id escaped by a
-     * backslash as the server escapes them. The group is empty for a filename-derived
-     * identity.
-     */
+    // Must escape `\`, `:` and `,` with a backslash as the server does.
     val key: String get() = "${escape(groupId)}:${escape(artifactId)}"
 
     private fun escape(id: String) = id.replace("\\", "\\\\").replace(":", "\\:").replace(",", "\\,")
 }
 
-/** One instance's `DependencyLocation`, with that instance's own [dependencyId]. */
 internal data class DependencyView(
     val dependencyId: Int,
     val identities: List<DependencyIdentityView>,
@@ -26,7 +20,6 @@ internal data class DependencyView(
     val classCount: Int?,
     val location: String,
 ) {
-    /** The distinct [DependencyIdentityView.key]s, sorted and joined with `,`, which name the dependency across instances. */
     val identityKey: String get() =
         identities
             .map { it.key }
@@ -35,46 +28,30 @@ internal data class DependencyView(
             .joinToString(",")
 }
 
-/** Where one referenced class name lives on one instance: a dependency id, or absent. */
 internal data class ExternalClassView(
     val dependencyId: Int?,
     val absent: Boolean,
 )
 
-/** Which payload a [HeldReferences] came from, which decides whether it can be live. */
 internal enum class ReferenceOrigin {
-    /** A METHOD probe's `referenced_classes`: live when the method has hits on any instance. */
     MANIFEST_METHOD,
 
-    /** A class's `ClassReferences`: live when the instance's manifest names the class, since it loaded. */
     MANIFEST_CLASS,
 
-    /** A declared method or class in the static baseline: never live on its own. */
     BASELINE,
 }
 
-/**
- * The out-of-scope class names one site in the adopter's code references. [methodName] and
- * [methodDescriptor] are null for a class-level site. [inline] marks an inline method, whose own
- * references never count, since its Kotlin callers carry copies of them.
- */
 internal data class HeldReferences(
     val className: String,
     val methodName: String?,
     val methodDescriptor: String?,
     val origin: ReferenceOrigin,
     val referencedClasses: List<String>,
+    // An inline method's own references never count, since its Kotlin callers carry copies of them.
     val inline: Boolean = false,
     val hits: Long = 0L,
 )
 
-/**
- * Everything one instance said about dependencies. [baselineComplete] is true only when the
- * instance sent at least one static scan and every chunk of it arrived. [loadedClassNames] is every
- * class the instance's manifest named, probed or skipped, so every class that loaded.
- * [dependenciesListed] is true once any manifest from the instance carried `dependencies_listed`.
- * Until then the instance's listing may still be missing entries.
- */
 internal data class InstanceDependencyView(
     val instanceId: String,
     val referencesRecorded: Boolean,
@@ -88,7 +65,6 @@ internal data class InstanceDependencyView(
     val zeroCountsAreEvidence: Boolean = true,
 )
 
-/** The statuses [computeDependencyReport] assigns, in the order the report prints them. */
 internal enum class DependencyStatus(
     val label: String,
 ) {
@@ -97,24 +73,18 @@ internal enum class DependencyStatus(
     UNREACHED("UNREACHED"),
     NO_LIVE_REFERENCE("NO LIVE REFERENCE"),
 
-    /** Loaded, with no live reference, and referenced from a class that failed to load. */
     FAILED_TO_LOAD("FAILED TO LOAD"),
 
-    /** Loaded, with no live reference, and referenced from a class that failed to initialise. */
     FAILED_TO_INITIALIZE("FAILED TO INITIALISE"),
 
-    /** Its status would rest on zero counts, and no instance that judges it has zero counts that are evidence. */
     NOT_JUDGED("NOT JUDGED"),
     USED("USED"),
 
-    /** Loaded, and no instance that lists it records references, so nothing further can be said. */
     LOADED("LOADED"),
 
-    /** Every listing counted no class in it, so loading says nothing about whether it is used. */
     RESOURCES_ONLY("RESOURCES ONLY"),
 }
 
-/** One referencing site, as printed: `Class#method` or `Class (class level)`, with whether its class never loaded or failed to load. */
 internal data class ReferenceSite(
     val className: String,
     val methodName: String?,
@@ -133,7 +103,6 @@ internal data class ReferenceSite(
     }
 }
 
-/** One dependency merged across instances by its identity key, with its status. */
 internal data class DependencyFinding(
     val identityKey: String,
     val status: DependencyStatus,
@@ -144,17 +113,11 @@ internal data class DependencyFinding(
     val sites: List<ReferenceSite>,
 )
 
-/** A referenced class no loader could find, with the sites that reference it. */
 internal data class AbsentReference(
     val className: String,
     val sites: List<ReferenceSite>,
 )
 
-/**
- * The dependency report's content. [referencesUnavailable] is true when no instance recorded
- * references, so nothing past loaded or unloaded is claimed. [unlistedInstances] names, sorted,
- * each instance that never sent `dependencies_listed`. Its listing may be missing entries.
- */
 internal data class DependencyReport(
     val findings: List<DependencyFinding>,
     val absentReferences: List<AbsentReference>,
@@ -162,24 +125,6 @@ internal data class DependencyReport(
     val unlistedInstances: List<String>,
 )
 
-/**
- * Judges every dependency across [instances]. A dependency is unloaded when some instance listed
- * it from the startup classpath and no instance loaded a class from it. Past that, only the
- * instances that list it and record references are consulted, and with none it reads as loaded: a
- * reference is a referenced class whose `ExternalClass` mapping on that instance names the
- * dependency, and it is live when held by a non-inline method with hits on any instance or by a
- * class that loaded. Baseline references are never live. A baseline reference held by a class in
- * [failedClassNames] is a failed site when its instance's baseline is complete, since that is
- * the scan the server reads. A dependency with a failed site and no live reference is failed to
- * load. A class that any instance loaded is never failed,
- * even when it is in [failedClassNames]. A class in [failedToInitializeClassNames] holds no live
- * class-level reference, only method references that were hit, and a dependency it alone
- * references reads as failed to initialise. A dependency with references whose status would rest
- * on zero counts is not judged when one of its references that is not live comes from an instance
- * whose zero counts are not evidence: that reference's code may have been unable to run. With a complete baseline from every one of those
- * instances, no reference is unreferenced and no live one is unreached; otherwise the two merge
- * into no live reference, which is true either way.
- */
 internal fun computeDependencyReport(
     instances: List<InstanceDependencyView>,
     failedClassNames: Set<String> = emptySet(),
@@ -231,8 +176,6 @@ internal fun computeDependencyReport(
                     absentSites.getOrPut(referenced) { mutableSetOf() } += site
                     continue
                 }
-                // A mapping to no known dependency is a jar of the adopter's own or an agent jar,
-                // and neither is a dependency.
                 val identityKey = mapping.dependencyId?.let(identityKeys::get) ?: continue
                 referencesByDependency.getOrPut(identityKey) { mutableSetOf() } += site to live
                 if (!live && !instance.zeroCountsAreEvidence) unjudgedDependencies += identityKey
@@ -247,8 +190,6 @@ internal fun computeDependencyReport(
             .map { (identityKey, listings) ->
                 val loaded = listings.maxOf { (instance, dependency) -> instance.loadedClassesTotal[dependency.dependencyId] ?: 0L }
                 val references = referencesByDependency[identityKey].orEmpty()
-                // Only an instance that lists the dependency can hold a reference to it, so only
-                // those decide whether levels 2 and 3 apply and whether the baseline splits them.
                 val judging = listings.map { (instance, _) -> instance }.filter { it.referencesRecorded }
                 val status =
                     when {
@@ -326,12 +267,6 @@ internal fun computeDependencyReport(
     )
 }
 
-/**
- * The report as the lines [printDependencyReport] prints, headers included: counts per status
- * first, then one line per dependency, then the absent references. An unreached dependency, one
- * with no live reference and one that failed to load list the sites holding its references, so the
- * reader sees where the dead reference sits.
- */
 internal fun formatDependencyReport(report: DependencyReport): List<String> {
     val lines = mutableListOf<String>()
     lines += ""
@@ -355,7 +290,6 @@ internal fun formatDependencyReport(report: DependencyReport): List<String> {
             "so levels 2 and 3 (unreferenced, unreached) are unavailable"
     }
     for (finding in report.findings) {
-        // One identity, the usual case, needs only its versions; a bundling jar names each one.
         val versions =
             finding.versionsByIdentity.entries
                 .singleOrNull()

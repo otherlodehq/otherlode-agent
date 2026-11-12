@@ -15,7 +15,6 @@ private fun HttpServletResponse.say(text: String) {
     writer.write(text)
 }
 
-/** Declares `GET` and `POST`. */
 open class GetPostServlet : HttpServlet() {
     override fun doGet(
         req: HttpServletRequest,
@@ -28,7 +27,6 @@ open class GetPostServlet : HttpServlet() {
     ) = resp.say("post")
 }
 
-/** Declares every `do*` method but `doPatch`. */
 class AllVerbsServlet : HttpServlet() {
     override fun doGet(
         req: HttpServletRequest,
@@ -61,7 +59,6 @@ class AllVerbsServlet : HttpServlet() {
     ) = resp.say("trace")
 }
 
-/** Declares `GET` and `HEAD`, so `HEAD` is a verb of its own. */
 class GetAndHeadServlet : HttpServlet() {
     override fun doGet(
         req: HttpServletRequest,
@@ -76,7 +73,6 @@ class GetAndHeadServlet : HttpServlet() {
     }
 }
 
-/** Declares `GET` in a superclass and `POST` here. */
 open class BaseGetServlet : HttpServlet() {
     override fun doGet(
         req: HttpServletRequest,
@@ -91,7 +87,6 @@ class InheritingServlet : BaseGetServlet() {
     ) = resp.say("post")
 }
 
-/** Overrides the protected `service`, so it serves every verb. */
 class ProtectedServiceServlet : HttpServlet() {
     override fun service(
         req: HttpServletRequest,
@@ -99,7 +94,6 @@ class ProtectedServiceServlet : HttpServlet() {
     ) = resp.say("service")
 }
 
-/** Overrides the public `service` and calls `super`, which reaches the protected one and `doGet`. */
 class PublicServiceSuperServlet : HttpServlet() {
     override fun service(
         req: ServletRequest,
@@ -114,7 +108,6 @@ class PublicServiceSuperServlet : HttpServlet() {
     ) = resp.say("get")
 }
 
-/** Overrides the protected `service` and calls `super`. */
 class ProtectedServiceSuperServlet : HttpServlet() {
     override fun service(
         req: HttpServletRequest,
@@ -129,7 +122,6 @@ class ProtectedServiceSuperServlet : HttpServlet() {
     ) = resp.say("get")
 }
 
-/** A subclass of one that overrides the public `service`, which overrides it again and calls `super`. */
 open class OuterServiceServlet : PublicServiceBase() {
     override fun service(
         req: ServletRequest,
@@ -153,7 +145,6 @@ open class PublicServiceBase : HttpServlet() {
     ) = resp.say("get")
 }
 
-/** Not an `HttpServlet`. */
 class GenericOnlyServlet : GenericServlet() {
     override fun service(
         req: ServletRequest,
@@ -164,7 +155,6 @@ class GenericOnlyServlet : GenericServlet() {
     }
 }
 
-/** A bare `Servlet`. */
 class BareServlet : Servlet {
     private var config: ServletConfig? = null
 
@@ -187,7 +177,6 @@ class BareServlet : Servlet {
     override fun destroy() {}
 }
 
-/** Forwards to [target]. */
 class ForwardingServlet(
     private val target: String,
 ) : HttpServlet() {
@@ -199,7 +188,6 @@ class ForwardingServlet(
     }
 }
 
-/** Includes [target] and then writes. */
 class IncludingServlet(
     private val target: String,
 ) : HttpServlet() {
@@ -212,7 +200,6 @@ class IncludingServlet(
     }
 }
 
-/** Forwards to the servlet named [target], then includes it. */
 class NamedDispatchingServlet(
     private val target: String,
 ) : HttpServlet() {
@@ -225,7 +212,6 @@ class NamedDispatchingServlet(
     }
 }
 
-/** Fails, so the container dispatches to its error page. */
 class FailingServlet : HttpServlet() {
     override fun doGet(
         req: HttpServletRequest,
@@ -233,7 +219,6 @@ class FailingServlet : HttpServlet() {
     ): Unit = throw ServletException("boom")
 }
 
-/** Fails on POST, so the container dispatches the failed POST to its error page. */
 class FailingPostServlet : HttpServlet() {
     override fun doPost(
         req: HttpServletRequest,
@@ -241,12 +226,10 @@ class FailingPostServlet : HttpServlet() {
     ): Unit = throw ServletException("boom")
 }
 
-/** The methods the error pages below were reached with. */
 object ErrorPageMethods {
     val seen: MutableList<String> = java.util.concurrent.CopyOnWriteArrayList()
 }
 
-/** An error page that declares only GET. */
 class GetOnlyErrorPageServlet : HttpServlet() {
     override fun doGet(
         req: HttpServletRequest,
@@ -257,7 +240,6 @@ class GetOnlyErrorPageServlet : HttpServlet() {
     }
 }
 
-/** An error page that declares GET and POST. */
 class GetPostErrorPageServlet : HttpServlet() {
     override fun doGet(
         req: HttpServletRequest,
@@ -276,7 +258,6 @@ class GetPostErrorPageServlet : HttpServlet() {
     }
 }
 
-/** Answers an error page dispatch, and records the dispatcher type the container showed it. */
 class ErrorPageServlet : HttpServlet() {
     override fun doGet(
         req: HttpServletRequest,
@@ -291,10 +272,8 @@ class ErrorPageServlet : HttpServlet() {
     }
 }
 
-/** A subclass of a servlet the module leaves out by its hierarchy. */
 class SubOfOwnedServlet : io.javalin.http.servlet.JavalinServlet()
 
-/** Calls [target]'s public `service` directly, as a servlet that delegates to another does. */
 class DelegatingServlet(
     private val target: HttpServlet,
 ) : HttpServlet() {
@@ -308,7 +287,6 @@ class DelegatingServlet(
     }
 }
 
-/** Starts asynchronous processing and dispatches back to its own path with no argument. */
 class SelfDispatchingServlet : HttpServlet() {
     override fun doGet(
         req: HttpServletRequest,
@@ -322,7 +300,6 @@ class SelfDispatchingServlet : HttpServlet() {
     }
 }
 
-/** Starts asynchronous processing and dispatches to [target]. */
 class AsyncDispatchingServlet(
     private val target: String,
 ) : HttpServlet() {

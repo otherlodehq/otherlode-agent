@@ -1,6 +1,5 @@
 package com.example.target
 
-/** Methods whose branch outcomes guard known lines and calls. */
 class GuardTarget {
     fun sink(value: Int): Int = value + 1
 
@@ -157,16 +156,13 @@ class GuardTarget {
     }
 }
 
-/** An in-scope class used only through a static field, so a read of it is an edge to its initializer. */
 object GuardConfig {
     @JvmField
     val limit: Int = System.getProperty("guard.limit")?.toIntOrNull() ?: 5
 }
 
-/** A plain call a test can find after a suspension point. */
 fun afterSuspension(value: Int): Int = value + 1
 
-/** A suspension point inside an `if` arm, with a call after it. */
 suspend fun suspendInArm(value: Int): Int {
     if (value > 0) {
         val paused = pauseNow() // marker: suspendInArm-call

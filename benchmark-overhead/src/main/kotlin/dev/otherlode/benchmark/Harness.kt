@@ -29,21 +29,12 @@ open class InvalidRunException(
     message: String,
 ) : RuntimeException(message)
 
-/**
- * What the warmup measured: the metrics every run records, the last slice's iterations per second
- * (null when k6 gave no count or there was no warmup), and whether the rule ended it steady.
- */
 private class WarmupOutcome(
     val metrics: Map<String, Double>,
     val lastSliceIterationsPerSec: Double?,
     val steady: Boolean,
 )
 
-/**
- * Does not wait at all. The harness polls readiness itself, every 100 ms, because Testcontainers'
- * stock HTTP wait shares a rate limiter that allows one request a second, which would put a one
- * second grain on the startup time.
- */
 private class NoWait : AbstractWaitStrategy() {
     override fun waitUntilReady() = Unit
 }
@@ -69,11 +60,7 @@ class Harness(
             .get()
     }
 
-    /**
-     * Built with the `docker` command line, not Testcontainers. The collector's Dockerfile uses
-     * `FROM --platform=$BUILDPLATFORM`, and only BuildKit sets that variable. Testcontainers
-     * builds through the classic builder, which leaves it empty and rejects the build.
-     */
+    // Testcontainers' classic builder cannot build the collector's Dockerfile, which needs BuildKit.
     private val collectorImageBuild =
         lazy {
             println("Building the collector image from ${settings.collectorDir}...")
@@ -101,7 +88,6 @@ class Harness(
 
     /** Runs the whole matrix, writes the results, and throws if any run was invalid. */
     fun runAll() {
-        // Each invocation starts from an empty results directory, so no file from an earlier one is read as this one's.
         settings.configDir.toFile().deleteRecursively()
         Files.createDirectories(settings.configDir)
         val runs = mutableListOf<RunRecord>()
@@ -131,7 +117,6 @@ class Harness(
                 }
             }
             if (settings.startupOnly) {
-                // The job's first start is the coldest: nothing has read the image's files or started its JDK yet.
                 println("=== ${settings.config.id} warm-up start, not recorded ===")
                 try {
                     startupOne(collector, Variant.NONE, 0)
@@ -170,10 +155,6 @@ class Harness(
         }
     }
 
-    /**
-     * Runs the agent's class listing five times in one JVM in a container from the PetClinic image,
-     * on PetClinic's cores, and reads its cost from the program's output.
-     */
     private fun measureClassListing(): ClassListingCost {
         println("Measuring the class listing...")
         val container =
@@ -216,11 +197,6 @@ class Harness(
             .withDatabaseName("petclinic")
             .withCreateContainerCmdModifier { it.hostConfig!!.withCpusetCpus(cpuSplit.support) }
 
-    /**
-     * Starts the no-op OTLP sink once for the matrix: a container from the PetClinic image, which has
-     * a JDK, running `NoopOtlpSink.java` on the cores Postgres and the collector share. Returns when
-     * its `/counts` answers.
-     */
     private fun startSink() {
         println("Starting the OTLP sink...")
         val container =
@@ -251,10 +227,6 @@ class Harness(
         return SinkCounts.parse(res.body())
     }
 
-    /**
-     * The problems with the OpenTelemetry agent's run of [variant], and the sink's deltas since
-     * [sinkBefore] added to [metrics]. Empty for any other variant.
-     */
     private fun otelProblems(
         variant: Variant,
         sinkBefore: SinkCounts?,
@@ -273,7 +245,6 @@ class Harness(
         return CollectorMetrics.parse(res.body())
     }
 
-    /** [runOne]. When it fails on environmental problems only and another attempt can follow, its run directory moves to `-attemptN`. */
     private fun runOneKeeping(
         collector: Box,
         variant: Variant,
@@ -325,7 +296,6 @@ class Harness(
             metrics += measuredWindow(dir)
             val elapsedSeconds = (System.nanoTime() - windowStart) / 1e9
             val cpuAfter = CgroupCpu.parse(exec(petclinic, "cat", CPU_STAT))
-            // Stopped here, so the recording covers the window and not the shutdown, which only the agent variants pay for in full.
             run(petclinic, "JFR.stop", "name=measure", "filename=$JFR_PATH")
             requireRunning(petclinic, "after the measured window")
             metrics += cpuMetrics(cpuBefore, cpuAfter, elapsedSeconds)
@@ -389,10 +359,6 @@ class Harness(
         }
     }
 
-    /**
-     * What the collector saw of [variant]'s run, between [before] and [after], as problems that make
-     * the run invalid; the manifest counts go into [metrics]. A variant that does not run the Otherlode agent has none.
-     */
     private fun deliveryProblems(
         variant: Variant,
         before: CollectorMetrics,
@@ -412,11 +378,6 @@ class Harness(
         return problems
     }
 
-    /**
-     * A startup-only repeat: starts Postgres and PetClinic as [runOne] does, records the startup
-     * metrics when PetClinic first answers 200, then stops PetClinic gracefully. There is no warmup
-     * and no window.
-     */
     private fun startupOne(
         collector: Box,
         variant: Variant,
@@ -468,14 +429,9 @@ class Harness(
         return RunRecord(settings.config, variant, repeat, metrics, skipped)
     }
 
-    /**
-     * `/proc/stat` as the Docker host's kernel reports it, read through [via], a running container,
-     * so a Docker Desktop VM is read as a Linux runner is. Null when it cannot be read.
-     */
     private fun readHostStat(via: GenericContainer<*>): String? =
         runCatching { via.execInContainer("cat", "/proc/stat").stdout }.getOrNull()
 
-    /** USER_HZ ticks a second, from `getconf CLK_TCK` on the host, or [ProcStat.DEFAULT_CLOCK_TICK] when that cannot be read. */
     private val clockTick: Int by lazy {
         runCatching {
             val p = ProcessBuilder("getconf", "CLK_TCK").redirectErrorStream(true).start()
@@ -488,11 +444,6 @@ class Harness(
         }.getOrDefault(ProcStat.DEFAULT_CLOCK_TICK)
     }
 
-    /**
-     * The CPU the PetClinic container used since it started, from its cgroup, and the steal time of
-     * its pinned cores over the same interval, from two readings of `/proc/stat`. Steal is left out
-     * when either reading failed.
-     */
     private fun startupCpuAndSteal(
         petclinic: Box,
         via: GenericContainer<*>,
@@ -509,10 +460,6 @@ class Harness(
         return out
     }
 
-    /**
-     * [e] as the run's failure, with the window's drift added when the window ran and its drift lay
-     * past [MAX_WINDOW_DRIFT].
-     */
     private fun failed(
         e: Exception,
         metrics: MutableMap<String, Double>,
@@ -522,7 +469,6 @@ class Harness(
         return if (e is EnvironmentalRunException) EnvironmentalRunException(full) else InvalidRunException(full)
     }
 
-    /** What a failed run's window drift adds to its failure, when the window ran and its drift lay past [MAX_WINDOW_DRIFT]. */
     private fun driftNote(metrics: MutableMap<String, Double>): String? {
         if (warmthProblem(metrics, settings.load) != null) return null
         return metrics["warmupDrift"]?.let(::driftBeyondBound)?.let { "its window's last third also drifted $it from its first" }
@@ -579,14 +525,7 @@ class Harness(
         throw InvalidRunException("PetClinic did not report healthy within 5 minutes")
     }
 
-    /**
-     * Warms the JIT with the same load as the measured window, in slices of `warmupSliceSeconds`,
-     * until throughput is steady (see [warmupVerdict]) or `warmupSeconds` is spent. A throwaway
-     * recording runs through it: leaving the recording out of the warmup makes the measured one pay
-     * for JFR's own first use (class loading and JIT of its event code) inside the window, and the
-     * variants then disagree for reasons unrelated to the agent. Reaching the cap is not a failure
-     * here; the variant's warmth rule judges its windows once the matrix has run.
-     */
+    // A throwaway recording through the warmup keeps JFR's first-use cost out of the measured window.
     private fun warmup(
         petclinic: Box,
         dir: Path,
@@ -620,12 +559,6 @@ class Harness(
         return WarmupOutcome(metrics, lastIterationsPerSec, verdict == WarmupVerdict.STEADY)
     }
 
-    /**
-     * Measures the closed loop's steady iteration rate on a `none` PetClinic, started as a full run
-     * starts it and warmed as a full run warms it, and returns [BenchSettings.openRateFraction] of
-     * the last warmup slice's rate. A warmup that reached its cap is recorded in the metadata and
-     * not refused: the rate only sets a load with headroom.
-     */
     private fun calibrateOpenRate(): OpenRate {
         println("Calibrating the open-loop rate on ${Variant.NONE.id}...")
         val dir = settings.configDir.resolve("calibration")
@@ -792,7 +725,6 @@ class Harness(
                 "agent.jar" to settings.agentJar.fileName.toString(),
                 "agent.jar.sha256" to sha256(settings.agentJar),
                 "agent.repo.commit" to git(settings.agentRepoDir, "rev-parse", "HEAD"),
-                // The jar may predate the commit: CI builds it fresh, a local run may not.
                 "agent.repo.dirty" to
                     git(
                         settings.agentRepoDir,

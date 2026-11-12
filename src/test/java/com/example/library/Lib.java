@@ -6,12 +6,6 @@ import java.lang.annotation.RetentionPolicy;
 import java.lang.annotation.Target;
 import java.util.function.Supplier;
 
-/**
- * Stand-in library types for the reference tests: a package outside every include rule the
- * reference fixtures are analysed with. Each nested type is named by exactly one construct in
- * {@code com.example.target.ReferenceTarget}, so a test can say which construct produced which
- * reference.
- */
 public final class Lib {
     private Lib() {}
 
@@ -43,7 +37,6 @@ public final class Lib {
         MethodNested nested();
     }
 
-    /** Class retention, so javac writes it to RuntimeInvisibleParameterAnnotations: not a reference. */
     @Retention(RetentionPolicy.CLASS)
     public @interface ParamAnno {}
 
@@ -54,10 +47,6 @@ public final class Lib {
 
     public static class ParamClassValue {}
 
-    /**
-     * Class retention, so it lands in a RuntimeInvisible*Annotations attribute on every element it
-     * is put on: neither it nor anything its values name is a reference.
-     */
     @Retention(RetentionPolicy.CLASS)
     public @interface Invisible {
         InvisibleMode mode();

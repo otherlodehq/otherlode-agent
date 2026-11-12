@@ -7,7 +7,6 @@ import io.temporal.workflow.UpdateValidatorMethod;
 import io.temporal.workflow.WorkflowInterface;
 import io.temporal.workflow.WorkflowMethod;
 
-/** A Temporal workflow interface whose methods carry the interface-only annotations. */
 @WorkflowInterface
 public interface WfApi {
     @WorkflowMethod

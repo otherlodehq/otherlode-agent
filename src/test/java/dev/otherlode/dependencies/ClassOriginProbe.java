@@ -3,7 +3,7 @@ package dev.otherlode.dependencies;
 import java.nio.file.Path;
 import java.security.CodeSource;
 
-// Java, not Kotlin, so the forked JVM that runs it needs no Kotlin standard library.
+// The forked JVM that runs this class has no Kotlin standard library.
 public final class ClassOriginProbe {
     public static final String ABSENT = "absent";
 

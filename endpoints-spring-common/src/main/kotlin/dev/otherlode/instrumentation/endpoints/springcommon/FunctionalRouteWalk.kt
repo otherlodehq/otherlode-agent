@@ -103,8 +103,6 @@ class FunctionalRouteWalk(
                     }
 
                     "attributes", "unknown" -> {
-                        // Nothing to declare: `attributes` carries no path, and an `unknown` subtree is not
-                        // entered.
                     }
 
                     "toString" -> {
@@ -323,11 +321,10 @@ private fun walkPredicate(
                 }
 
                 "startAnd", "and", "startOr", "or", "startNegate" -> {
-                    // Pure markers: the combination is resolved at the matching end* call.
                 }
 
-                // Operands are popped tolerantly: a predicate that describes nothing pushes nothing, and a
-                // strict pop would throw out of the visitor proxy and fail the whole module.
+                // A predicate that describes nothing pushes nothing, and a strict pop would throw out of the
+                // visitor proxy and fail the whole module.
                 "endAnd" -> {
                     val right = stack.removeLastOrNull() ?: NEUTRAL
                     val left = stack.removeLastOrNull() ?: NEUTRAL

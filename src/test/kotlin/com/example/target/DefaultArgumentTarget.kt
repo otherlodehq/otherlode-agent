@@ -1,6 +1,5 @@
 package com.example.target
 
-/** A final class whose `f` has three optional parameters, exercising a multi-bit mask. */
 class DefaultArgumentTarget {
     fun f(
         a: Int,
@@ -56,21 +55,13 @@ inline fun inlineWithDefault(
     b: Int = 1,
 ): Int = a + b
 
-/**
- * A member extension function with a default: the receiver is the target's first JVM parameter
- * (slot 1, named `$this$decorate` in the LocalVariableTable), but the compiler's mask counts value
- * parameters only, so bit 0 is `suffix`, not the receiver.
- */
 class MemberExtensionTarget {
     fun String.decorate(suffix: String = "!"): String = this + suffix
 
     fun call(): String = "hi".decorate()
 }
 
-/**
- * Sixteen optional parameters: bit 15's mask constant, 32768, no longer fits `SIPUSH`, so kotlinc
- * emits that test with `LDC`, the third of the three constant shapes the mask scan recognises.
- */
+// Bit 15's mask, 32768, is too large for SIPUSH.
 @Suppress("LongParameterList")
 fun sixteenDefaults(
     p0: Int = 0,
@@ -91,21 +82,11 @@ fun sixteenDefaults(
     p15: Int = 0,
 ): Int = p0 + p1 + p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9 + p10 + p11 + p12 + p13 + p14 + p15
 
-/**
- * `b`'s default expression itself does `a and 4`, on `a`, a real parameter rather than the
- * `$default` mask local. The analyser must not mistake this for a mask test just because it
- * shares the `ILOAD; ICONST_4; IAND` shape.
- */
 fun withNonMaskAnd(
     a: Int,
     b: Int = if (a and 4 != 0) 10 else 20,
 ): Int = a + b
 
-/**
- * Makes the real Kotlin calls this fixture's `$default` paths are woven for, so a test exercises
- * the woven bytecode from an actual call site rather than only reflectively invoking `$default`
- * directly.
- */
 object Caller {
     fun callF(target: DefaultArgumentTarget) {
         target.f(1)

@@ -1,6 +1,5 @@
 package com.example.target.inherit;
 
-/** Implements the workflow interface with no annotation on any method. */
 public class WfImpl implements WfApi {
     @Override
     public String run() {

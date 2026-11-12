@@ -6,11 +6,6 @@ import javax.ws.rs.Path
 import javax.ws.rs.PathParam
 import javax.ws.rs.Produces
 
-/**
- * An interface resource, carrying class-level `@Path` and every method annotation, proving
- * [dev.otherlode.instrumentation.endpoints.jaxrs.JaxRsModule] resolves an inherited
- * method's verb and path from the interface it declares them on.
- */
 @Path("/api/orders")
 interface ApiOrders {
     @GET
@@ -29,15 +24,6 @@ interface ApiOrders {
     ): String
 }
 
-/**
- * A bare implementation of [ApiOrders]. [get] and [create] carry no annotations of their own, so
- * both inherit their verb and path from the interface method they implement. [audit] carries its
- * own `@Produces`, which switches inheritance off for that method entirely under the
- * specification's all-or-nothing rule: it inherits nothing, is not an endpoint, and Jersey does
- * not serve it either, since Jersey follows the same rule. `JaxRsModuleTest` drives a request
- * against it and asserts a 404 to prove this module's declared endpoints match what Jersey
- * actually serves.
- */
 class ApiOrdersResource : ApiOrders {
     override fun get(id: String): String = "order-$id"
 

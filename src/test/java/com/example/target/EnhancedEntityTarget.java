@@ -1,11 +1,5 @@
 package com.example.target;
 
-/**
- * Declares the shapes Hibernate's bytecode enhancement adds to an entity: a reader and a
- * writer per persistent field and a fixed tracker method, each named with the {@code $$_hibernate_}
- * prefix, and the entity's own accessors calling them in place of the field. The writer calls the
- * other side of an association, as a bidirectional association's does.
- */
 public class EnhancedEntityTarget {
     private String name;
     private EnhancedAssociationTarget order;

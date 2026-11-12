@@ -22,7 +22,6 @@ sealed interface Token {
 
 class Eof : Token
 
-/** Constructs the subtype of a sealed class or interface before its supertype's companion has run. */
 fun main(args: Array<String>) {
     when (args.firstOrNull()) {
         "token" -> println("token " + Eof().text())

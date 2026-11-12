@@ -9,11 +9,6 @@ import java.time.Duration
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
 
-/**
- * Proves [OtherlodeExtension] against the real, `-javaagent`-attached shaded agent jar rather than
- * hand-built payloads. Runs first, before [AgentTargetSharedCollectorTest]: see this module's
- * own `junit-platform.properties`.
- */
 @ExtendWith(OtherlodeExtension::class)
 @Order(1)
 class AgentTargetExercisedTest {

@@ -10,11 +10,6 @@ import java.time.Duration
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-/**
- * Proves the dependency queries against the real shaded agent: the suite's runtime classpath
- * carries two fixture jars, one this test calls into through [DependencyUser] and one nothing
- * loads. Runs after the other classes in this suite; see `junit-platform.properties`.
- */
 @ExtendWith(OtherlodeExtension::class)
 @Order(3)
 class DependencyUsageAgentTest {
@@ -37,8 +32,7 @@ class DependencyUsageAgentTest {
         assertEquals(1L, used.loadedClassesTotal)
         assertEquals(1, used.classCount)
 
-        // The suite runs with staticBaselineEnabled=true, so once the scan's chunks arrive the split
-        // queries answer instead of throwing; neither fixture jar is unreferenced or unreached.
+        // The split queries throw until the scan's chunks arrive; this suite sets staticBaselineEnabled=true.
         val split = awaitSplit(Duration.ofSeconds(30)) { collector.unreferencedDependencies() + collector.unreachedDependencies() }
         val splitKeys = split.map { it.identityKey }
         assertTrue(":dep-unused" !in splitKeys && "com.example.fixture:dep-used" !in splitKeys, splitKeys.toString())

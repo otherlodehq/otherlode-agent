@@ -161,8 +161,6 @@ class DeflectedClassLoadTest {
 
     @Test
     fun `a sweep whose include prefixes cover the JDK does not name the JDK`() {
-        // ByteBuddy ignores the bootstrap and platform loaders and its own classes before any type matcher runs,
-        // so those classes reach no transformer by design and are not a blind spot.
         val registry = ProbeRegistry()
         val config = AgentConfig.parse("includePackages=java;jdk;sun;com.sun;net.bytebuddy;org.junit;org.gradle")
 
@@ -175,8 +173,7 @@ class DeflectedClassLoadTest {
                 ).unreportedClasses
                 .map { it.className }
 
-        // This JVM is shared with every other test and installs the agent part-way through, so classes on the
-        // application loader may have loaded unreported, jdk.attach and jdk.internal.jvmstat among them.
+        // The agent installs part-way through this shared JVM, so application-loader classes may load unreported.
         // java.base is always bootstrap, so it tests the gate.
         assertTrue(
             unreported.none { it.startsWith("java.lang.") || it.startsWith("java.util.") || it.startsWith("java.io.") },

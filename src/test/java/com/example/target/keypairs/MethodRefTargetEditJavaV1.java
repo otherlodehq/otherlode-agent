@@ -2,7 +2,6 @@ package com.example.target.keypairs;
 
 import java.util.List;
 
-/** The condition passes a reference to {@code isA}. */
 public class MethodRefTargetEditJavaV1 {
     static boolean isA(Integer x) {
         return x > 1;

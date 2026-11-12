@@ -841,8 +841,6 @@ class ExportSchedulerTest {
         scenario.probeRegistry.register("com.example.A", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "a", "()V", 1)))[0] = 2
         val baselines = StaticBaselineSender(scenario.exporter)
         baselines.offer(listOf(StaticBaseline(resource, emptyList(), scannedAt = 1L)))
-        // The delta send waits for the class chunk, so the dependency cannot ride on that chunk
-        // and goes out on the flush's second manifest call.
         val mainManifestSent = CountDownLatch(1)
         scenario.exporter.afterManifestSend = { mainManifestSent.countDown() }
         scenario.exporter.beforeDeltaSend = { assertTrue(mainManifestSent.await(5, TimeUnit.SECONDS)) }
@@ -1318,7 +1316,6 @@ class ExportSchedulerTest {
         val closing = AtomicReference<DeltaBatch>()
         val firstStamped = CountDownLatch(1)
         scenario.exporter.deltaOutcome = {
-            // The hit batch waits for the first chunk's stamp, so the clear cannot come before it.
             if (hasHits(it)) assertTrue(firstStamped.await(10, TimeUnit.SECONDS))
             if (it.countsPendingSince == 0L && !hasHits(it) && it.payloadSequence > 0) {
                 closing.set(it)
@@ -1328,7 +1325,6 @@ class ExportSchedulerTest {
         }
         val before = scenario.exporter.manifests.size
         scenario.exporter.beforeManifest = {
-            // The first chunk is stamped, then held until the delta thread has cleared and stamped its closing heartbeat.
             if (firstChunkBlocked.getAndIncrement() == 0) {
                 firstStamped.countDown()
                 assertTrue(closingSent.await(10, TimeUnit.SECONDS))
@@ -3389,8 +3385,6 @@ class ExportSchedulerTest {
     fun `the flush that delivers counts sends the released dependencies after its delta send is confirmed`() {
         val scenario = ListingScenario("a")
         scenario.probeRegistry.register("com.example.A", 1L, listOf(ProbeMeta(ProbeKind.METHOD, "a", "()V", 1)))
-        // The delta send waits until the main manifest send has gone out, so the dependency cannot
-        // ride on it and only a later manifest send of the same flush can carry it.
         val mainManifestSent = CountDownLatch(1)
         scenario.exporter.afterManifestSend = { mainManifestSent.countDown() }
         scenario.exporter.beforeDeltaSend = { assertTrue(mainManifestSent.await(5, TimeUnit.SECONDS)) }

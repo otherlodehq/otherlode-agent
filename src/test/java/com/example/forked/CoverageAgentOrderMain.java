@@ -6,13 +6,7 @@ import com.example.target.RoutineJavaTarget;
 import com.example.target.RoutineTarget;
 import com.example.target.SwitchTarget;
 
-/**
- * The program {@code CoverageAgentOrderTest} runs in a JVM of its own, with this agent and
- * JaCoCo's on the command line in each order. It drives the fixtures whose marks an earlier
- * transformer's probes would hide, and drives each Java conditional one way only, so a jump
- * JaCoCo inverts has one outcome hit and one not. It lives outside {@code com.example.target} so
- * the agent under test leaves it alone.
- */
+// Outside com.example.target, so the agent under test leaves it alone.
 public final class CoverageAgentOrderMain {
     private CoverageAgentOrderMain() {}
 

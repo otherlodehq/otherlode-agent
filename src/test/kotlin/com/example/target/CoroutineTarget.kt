@@ -9,51 +9,32 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.startCoroutine
 import kotlin.coroutines.suspendCoroutine
 
-/**
- * A suspension point that never actually suspends: [suspendCoroutineUninterceptedOrReturn]'s
- * block returns a value directly, so the caller's state machine never sees `COROUTINE_SUSPENDED`.
- */
 suspend fun pauseNow(): Int = suspendCoroutineUninterceptedOrReturn { 1 }
 
-/** The continuation [pauseLater] stashes, so a test can resume it from outside the coroutine. */
 private var savedContinuation: Continuation<Int>? = null
 
-/** A suspension point that really suspends, storing its continuation in [savedContinuation]. */
 suspend fun pauseLater(): Int =
     suspendCoroutineUninterceptedOrReturn { continuation ->
         savedContinuation = continuation
         COROUTINE_SUSPENDED
     }
 
-/** Resumes whatever [pauseLater] call is currently suspended, with [value] as its result. */
 fun resumePauseLater(value: Int) {
     val continuation = savedContinuation
     savedContinuation = null
     continuation?.resume(value)
 }
 
-/**
- * A suspension point built on [suspendCoroutine] that resumes at once, with one adopter
- * conditional. Two compares with the suspended marker straight off the stack, neither storing the
- * marker to a local: the inlined `suspendCoroutine`'s debug-probe hook, and the return of the
- * suspend call in tail position of a function returning `Unit`.
- */
 suspend fun handOff(x: Int) {
     val r = if (x > 0) x else -x // marker: handOff-if
     suspendCoroutine { it.resume(r) }
 }
 
-/**
- * A suspension point whose result is stored to a local and then compared by reference. The
- * inlined intrinsic calls `getCOROUTINE_SUSPENDED()` without storing it, so the `ASTORE` of [r]
- * that follows must not be taken for the marker's slot.
- */
 suspend fun compareAfterMarker(a: Any): Boolean {
     val r: Any = suspendCoroutineUninterceptedOrReturn { a }
     return r === a // marker: compareAfterMarker-compare
 }
 
-/** A top-level suspend function with two suspension points and one adopter conditional. */
 suspend fun twoPoints(x: Int): Int {
     val a = pauseNow()
     val r = if (x > 0) a + x else a - x // marker: twoPoints-if
@@ -61,7 +42,6 @@ suspend fun twoPoints(x: Int): Int {
     return r + b
 }
 
-/** Same shape as [twoPoints], but its suspension points really suspend. */
 suspend fun twoPointsSuspending(x: Int): Int {
     val a = pauseLater()
     val r = if (x > 0) a + x else a - x // marker: twoPointsSuspending-if
@@ -69,18 +49,15 @@ suspend fun twoPointsSuspending(x: Int): Int {
     return r + b
 }
 
-/** A suspend function with no suspension point at all: no coroutine state machine is generated for it. */
 suspend fun noPoint(x: Int): Int = if (x > 0) x else -x // marker: noPoint-if
 
 class Holder {
-    /** A member suspend function with one suspension point and one adopter conditional. */
     suspend fun member(x: Int): Int {
         val a = pauseNow()
         return if (x > a) x else a // marker: member-if
     }
 }
 
-/** Holds a field named `label`, the name of a continuation's state field, and switches on it inside a suspend function. */
 class SuspendLabelHolder {
     private var label = 0
 
@@ -98,7 +75,6 @@ class SuspendLabelHolder {
     }
 }
 
-/** A suspend function switching on the `label` field of a class nested in its own owner. */
 class NestedLabelOwner {
     class Config(
         @JvmField var label: Int,
@@ -118,7 +94,6 @@ class NestedLabelOwner {
     }
 }
 
-/** Starts [block] with [startCoroutine], ignoring its result: this fixture only needs the state machine to run. */
 private fun <T> runSuspend(block: suspend () -> T) {
     block.startCoroutine(
         object : Continuation<T> {
@@ -139,23 +114,16 @@ fun runHandOff(x: Int) = runSuspend { handOff(x) }
 
 fun runMember(x: Int) = runSuspend { Holder().member(x) }
 
-/** Builds a suspend lambda with one suspension point and one adopter conditional, and starts it. */
 fun runLambda(x: Int) =
     runSuspend {
         val a = pauseNow()
         if (x > 0) a + x else a - x // marker: lambda-if
     }
 
-/** A field named `label`, of type `Int`, on an ordinary non-suspend class: not a continuation. */
 class LabelHolder(
     @JvmField val label: Int,
 )
 
-/**
- * A plain, non-suspend function whose own switch is preceded by a `GETFIELD` of a field named
- * `label`, the same shape shape (i) matches inside a suspend-shaped method. Not suspend-shaped, so
- * the coroutine recogniser must never run against it at all.
- */
 fun plainSwitchOnLabel(holder: LabelHolder): String =
     when (holder.label) { // marker: plainSwitchOnLabel-switch
         0 -> "zero"
@@ -167,33 +135,15 @@ fun plainSwitchOnLabel(holder: LabelHolder): String =
         else -> "other"
     }
 
-/**
- * A plain, non-suspend function comparing two object references, the same instruction shape (ii)
- * matches. Not suspend-shaped, so it must never be mistaken for a suspended-marker compare.
- */
 fun plainReferenceCompare(
     a: Any,
     b: Any,
 ): Boolean = a === b // marker: plainReferenceCompare-compare
 
-/**
- * A plain, non-suspend function comparing a value with the suspended marker straight off the
- * stack, the shape the stack form of (ii) matches. Not suspend-shaped, so it is kept.
- */
 fun plainMarkerCompare(x: Any): Boolean = x === COROUTINE_SUSPENDED // marker: plainMarkerCompare-compare
 
-/**
- * A suspend-shaped function comparing a value with the suspended marker itself: the adopter's
- * compare loads the value rather than duplicating a call result, so it is kept.
- */
 suspend fun adopterMarkerCompare(x: Any): Boolean = x === COROUTINE_SUSPENDED // marker: adopterMarkerCompare-compare
 
-/**
- * A `Unit` function whose only suspension point is a tail call on one path, so kotlinc builds no
- * state machine and returns the call's result through a stack-form compare. The other path stores
- * a local and compares it by reference with no call in between, so only the jump ends the wait for
- * a marker store.
- */
 suspend fun earlyHandOff(
     flag: Boolean,
     a: Any,
@@ -205,10 +155,6 @@ suspend fun earlyHandOff(
     handOff(2)
 }
 
-/**
- * A suspend-shaped function whose own reference comparison, on its own locals, must not be
- * mistaken for the suspended-marker compare shape (ii) finds.
- */
 suspend fun compareRefs(
     a: Any,
     b: Any,

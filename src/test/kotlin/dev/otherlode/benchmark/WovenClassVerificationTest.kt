@@ -235,8 +235,7 @@ class WovenClassVerificationTest {
     @Test
     fun `spring-core's ReactorDelegate without Reactor fails woven exactly as it does unwoven`() {
         // PropagationContextElement$ReactorDelegate types a local as Reactor's ContextView, and Reactor is not on
-        // the classpath, so the JVM's frame check fails unwoven with NoClassDefFoundError. Woven, it must weave and
-        // fail the same way, since the woven method keeps the class file's frame.
+        // the classpath, so the JVM's frame check fails unwoven with NoClassDefFoundError.
         val classpath =
             checkNotNull(System.getProperty("${CorpusWeaving.CLASSPATH_PROPERTY}demo-spring.main")) { "no classpath for demo-spring" }
         val entries = classpath.split(File.pathSeparator).filter { it.isNotEmpty() }

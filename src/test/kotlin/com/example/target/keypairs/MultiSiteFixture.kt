@@ -1,10 +1,5 @@
 package com.example.target.keypairs
 
-/**
- * Several methods and site shapes in one class, used to check that branch keys stay unique
- * within a class under JaCoCo instrumentation and that analysing the same bytes twice gives the
- * same keys.
- */
 class MultiSiteFixture {
     fun first(x: Int): String = if (x > 0) "pos" else "non-pos"
 

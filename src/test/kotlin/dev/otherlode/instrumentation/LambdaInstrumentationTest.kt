@@ -226,9 +226,8 @@ class LambdaInstrumentationTest {
                     module,
                 )
                 for ((creator, body) in listOf("bump", "show").zip(bodies)) {
-                    // Scala 3's show reaches its body through the lifted boxing bridge on the
-                    // top-level class, a cross-class pass-through, and calling one is a use of its
-                    // owner, so that owner's <clinit> joins as well.
+                    // Scala 3's show reaches its body through the lifted boxing bridge on the top-level class, and
+                    // calling the bridge is a use of its owner, so that owner's <clinit> joins as well.
                     val throughBridge = module == "scala3" && creator == "show"
                     assertEquals(
                         listOf(bodyClass to body) + if (throughBridge) listOf(bodyClass to "<clinit>") else emptyList(),

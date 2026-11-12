@@ -1,6 +1,5 @@
 package com.example.target.javac;
 
-/** A switch an adopter writes on a string's hash, the idiom from before switches on strings. */
 public final class OwnHashSwitch {
     private OwnHashSwitch() {
     }

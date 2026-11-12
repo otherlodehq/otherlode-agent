@@ -4,14 +4,6 @@ import com.example.library.Lib;
 import com.example.other.OtherTarget;
 import java.util.List;
 
-/**
- * One method per kind of reference the analyser records, each naming its own {@link Lib} type, so a test
- * can pin which construct produced which reference. The class itself carries the class-level
- * kinds: a superclass, an interface, a class annotation with enum, class and nested-annotation
- * values, and fields with a type, a generic signature, an annotation and a type-use annotation.
- * Every {@code Lib.Invisible*} type is named only from class-retention annotations, on the class, a
- * field, a method, a parameter and in type-use positions, so none of them is a reference.
- */
 @Lib.Marker(mode = Lib.Mode.ON, type = Lib.ClassValue.class, nested = @Lib.Nested)
 @Lib.Invisible(mode = Lib.InvisibleMode.ON, type = Lib.InvisibleClassValue.class, nested = @Lib.InvisibleNested)
 public class ReferenceTarget extends Lib.Base implements Lib.Iface {
@@ -75,7 +67,6 @@ public class ReferenceTarget extends Lib.Base implements Lib.Iface {
         try {
             Lib.StaticOwner.compute();
         } catch (Lib.Caught e) {
-            // The handler's type is the reference under test; there is nothing to do with it.
         }
     }
 

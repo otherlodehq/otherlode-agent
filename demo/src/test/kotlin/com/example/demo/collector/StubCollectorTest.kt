@@ -425,10 +425,8 @@ class StubCollectorTest {
         assertEquals("com.acme.naming.Unknown#greet", methodText("com.acme.naming.Unknown", "greet", "()V"))
     }
 
-    /** What [printNeverHitReport] prints, captured from standard output. */
     private fun neverHitReport(): List<String> = report(::printNeverHitReport)
 
-    /** What [print] prints, captured from standard output. */
     private fun report(print: () -> Unit): List<String> {
         val captured = ByteArrayOutputStream()
         val original = System.out
@@ -441,7 +439,6 @@ class StubCollectorTest {
         return captured.toString().lines()
     }
 
-    /** The number on the report's line that starts with [label]. */
     private fun countOn(
         report: List<String>,
         label: String,
@@ -515,8 +512,6 @@ class StubCollectorTest {
                 .newBuilder()
                 .setVerifierRejectionsWatched(true)
                 .setResource(resource("run-fold"))
-                // ran() ran and took outcome 0. Outcome 1 never ran and guards site 1, whose null side
-                // is routine. Site 1 folds into outcome 1's row.
                 .addProbes(
                     method(
                         0,
@@ -529,7 +524,6 @@ class StubCollectorTest {
                 .addProbes(branch(2, "ran", 2, 0, 1))
                 .addProbes(branch(3, "ran", 3, 1, 2))
                 .addProbes(branch(4, "ran", 3, 1, 3))
-                // dead() never ran, so its one site, routine null side included, folds into its row.
                 .addProbes(
                     method(
                         5,
@@ -570,10 +564,6 @@ class StubCollectorTest {
         assertEquals(4, countOn(report, label) - before, "sites 1 and 2 fold, two outcomes each")
     }
 
-    /**
-     * A site folds into any never-hit method, not only a row: a lone constructor of a class with no
-     * finding is not listed, and neither is its code.
-     */
     @Test
     fun `a site in a never-run constructor that is not a row leaves NEVER HIT and is counted apart`() {
         val className = "com.acme.fold.Lone"

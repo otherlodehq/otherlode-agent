@@ -151,8 +151,7 @@ class BranchKeyPairsTest {
 
     @Test
     fun `a Java switch over int compiles to a real TABLESWITCH, and adding a case keeps every existing key`() {
-        // javac packs a two-case dense switch into a LOOKUPSWITCH, so this fixture starts from three cases
-        // to get a TABLESWITCH.
+        // javac packs a two-case dense switch into a LOOKUPSWITCH, so this fixture starts from three cases.
         val (v1, v2) =
             keyedBuildsOf(
                 "SwitchCaseAddedJavaV1",

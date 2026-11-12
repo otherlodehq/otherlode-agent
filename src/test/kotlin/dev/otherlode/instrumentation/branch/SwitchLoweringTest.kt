@@ -37,7 +37,7 @@ class SwitchLoweringTest {
         assertEquals(listOf("RED", "BLUE", "default"), outcomes(site))
         assertEquals(listOf(code("color")), site.site.condition)
         assertTrue(site.outcomes.all { it.caseKey == null })
-        assertEquals(listOf(9, 11, 13), guardedLines(site), "each case guards its own body")
+        assertEquals(listOf(8, 10, 12), guardedLines(site), "each case guards its own body")
     }
 
     @Test
@@ -45,7 +45,7 @@ class SwitchLoweringTest {
         val site = kept(java, "enumNoDefault").single()
 
         assertEquals(listOf("RED", "GREEN", "default"), outcomes(site), "GREEN is map value 3, after enumStatement's RED and BLUE")
-        assertEquals(listOf(24, 22), site.outcomes.take(2).map { it.guardedLines.single().lastLine })
+        assertEquals(listOf(23, 21), site.outcomes.take(2).map { it.guardedLines.single().lastLine })
     }
 
     @Test
@@ -53,7 +53,7 @@ class SwitchLoweringTest {
         val site = kept(java, "enumExpression").single()
 
         assertEquals(listOf("RED", "BLUE", "GREEN"), outcomes(site))
-        assertEquals(listOf(32, 34, 33), guardedLines(site))
+        assertEquals(listOf(31, 33, 32), guardedLines(site))
         assertTrue(site.site.throwingDefault)
         val first = site.outcomes.first().branchIndex
         assertEquals(listOf(first, first + 1, first + 2), site.outcomes.map { it.branchIndex })
@@ -72,7 +72,7 @@ class SwitchLoweringTest {
 
         assertEquals(listOf("\"open\"", "\"closed\"", "\"done\"", "\"Aa\"", "\"BB\"", "default"), outcomes(site))
         assertEquals(listOf(code("status")), site.site.condition)
-        assertEquals(listOf(41, null, null, 46, 48, 50), guardedLines(site), "two labels on one body each guard nothing alone")
+        assertEquals(listOf(40, null, null, 45, 47, 49), guardedLines(site), "two labels on one body each guard nothing alone")
         val lowering = dropped(java, "stringStatement")
         assertEquals(6, lowering.size, "the hash switch and five equals checks")
         assertTrue(lowering.all { it.dropReason == BranchDropReason.SWITCH_LOWERING })
@@ -91,7 +91,7 @@ class SwitchLoweringTest {
 
         assertEquals(listOf("String", "Integer", "default"), outcomes(site))
         assertEquals(listOf(code("value")), site.site.condition)
-        assertEquals(listOf(56, 57, 58), guardedLines(site))
+        assertEquals(listOf(55, 56, 57), guardedLines(site))
     }
 
     @Test
@@ -118,7 +118,7 @@ class SwitchLoweringTest {
         val site = kept(java, "sealedPattern").single()
 
         assertEquals(listOf("Circle", "Square"), outcomes(site))
-        assertEquals(listOf(89, 90), guardedLines(site))
+        assertEquals(listOf(85, 86), guardedLines(site))
     }
 
     @Test
@@ -135,7 +135,7 @@ class SwitchLoweringTest {
 
         assertEquals(listOf("RED", "BLUE", "default"), outcomes(site))
         assertEquals(listOf(code("tint")), site.site.condition)
-        assertEquals(listOf(10, 11, 12), guardedLines(site))
+        assertEquals(listOf(8, 9, 10), guardedLines(site))
     }
 
     @Test
@@ -144,7 +144,7 @@ class SwitchLoweringTest {
         val statement = kept(kotlin, "enumStatement").single()
 
         assertEquals(listOf("RED", "BLUE", "GREEN"), outcomes(expression))
-        assertEquals(listOf(27, 29, 28), guardedLines(expression))
+        assertEquals(listOf(25, 27, 26), guardedLines(expression))
         assertEquals(listOf("RED", "BLUE", "GREEN"), outcomes(statement))
         assertTrue(expression.site.throwingDefault && statement.site.throwingDefault)
     }
@@ -158,7 +158,7 @@ class SwitchLoweringTest {
         assertEquals(listOf(code("tint")), nullable.site.condition)
         assertEquals(listOf(BranchDropReason.SWITCH_LOWERING), dropped(kotlin, "enumNullable").map { it.dropReason })
         assertEquals(listOf("null", "RED", "default"), outcomes(nullBranch))
-        assertEquals(listOf(78, 79, 80), guardedLines(nullBranch))
+        assertEquals(listOf(76, 77, 78), guardedLines(nullBranch))
     }
 
     @Test
@@ -183,7 +183,7 @@ class SwitchLoweringTest {
         assertTrue(sites.all { it.site.caseLabels == null })
         assertEquals(listOf(BranchDropReason.SWITCH_LOWERING), dropped(kotlin, "stringWhen").map { it.dropReason })
         assertEquals(
-            41,
+            39,
             sites
                 .last()
                 .outcomes

@@ -99,8 +99,7 @@ class JaxRsModuleAnnotationInheritanceTest {
             assertEquals(emptyList(), calls, "without Jersey the class has no @Path of its own, so it is no resource")
         }
         // The INFO line is not asserted: System.Logger reaches java.util.logging only once the JUL LogManager is
-        // initialised, which this test does not control. The behaviour the line describes, nothing declared, is
-        // asserted instead.
+        // initialised, which this test does not control.
     }
 
     @Test

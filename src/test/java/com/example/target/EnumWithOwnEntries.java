@@ -2,7 +2,6 @@ package com.example.target;
 
 import java.util.List;
 
-/** A Java enum that declares its own instance `getEntries` returning a string. */
 enum EnumWithStringEntries {
     ONE;
 
@@ -11,7 +10,6 @@ enum EnumWithStringEntries {
     }
 }
 
-/** A Java enum that declares its own instance `getEntries` returning a list. */
 enum EnumWithListEntries {
     ONE;
 
@@ -20,7 +18,6 @@ enum EnumWithListEntries {
     }
 }
 
-/** A Java enum that declares a static `getEntries` that takes a parameter. */
 enum EnumWithParameterEntries {
     ONE;
 
@@ -29,7 +26,6 @@ enum EnumWithParameterEntries {
     }
 }
 
-/** A Java enum with an instance `getEntries` that returns an `EnumEntries`. */
 enum EnumWithInstanceEnumEntries {
     ONE;
 
@@ -38,7 +34,6 @@ enum EnumWithInstanceEnumEntries {
     }
 }
 
-/** A Java enum with a static `getEntries` that takes a parameter and returns an `EnumEntries`. */
 enum EnumWithParameterEnumEntries {
     ONE;
 

@@ -24,9 +24,8 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
-// EndpointInstrumentation.install must run before sun.net.httpserver loads in this JVM, since advice is only woven as
-// a class loads. OtherlodeTestCollector is itself a JDK HttpServer, so install must run before any collector starts.
-// The class-level Order and junit-platform.properties run this class first.
+// Install must run before sun.net.httpserver loads, so before any OtherlodeTestCollector starts: advice weaves only
+// at class load. The Order and junit-platform.properties run this class first.
 @Order(Int.MIN_VALUE)
 class EndpointEndToEndTest {
     private var installedTransformer: ResettableClassFileTransformer? = null

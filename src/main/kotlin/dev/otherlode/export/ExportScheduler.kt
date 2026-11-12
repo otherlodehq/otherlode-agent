@@ -37,68 +37,32 @@ import kotlin.random.Random
  */
 class ExportScheduler(
     private val config: AgentConfig,
-    /**
-     * Stamped on every delta batch and manifest this scheduler sends. Pass the same value to the
-     * static baseline, so all three payloads carry one run id.
-     */
+    // Stamped on every delta batch and manifest; the static baseline must get the same value.
     private val resource: ResourceAttributes,
     private val registry: ProbeRegistry,
-    /** Endpoint hit and manifest state. */
     private val endpointRegistry: EndpointRegistry,
     exporter: Exporter,
-    /** Source of the first-flush jitter. */
     private val random: Random = Random.Default,
-    /** Upper bound on changed probes per delta POST; see [ProbeRegistry.computeDeltaBatches]. */
     private val maxDeltasPerBatch: Int = DEFAULT_MAX_DELTAS_PER_BATCH,
-    /** Upper bound on manifest entries per POST, each weighed as [ProbeRegistry.computeManifestDeltas] weighs it. */
     private val maxManifestEntriesPerChunk: Int = DEFAULT_MAX_MANIFEST_ENTRIES_PER_CHUNK,
-    /** Dropped branch site totals, logged once by the first flush that finds any. */
     private val branchDropCounts: BranchDropCounts = BranchDropCounts(),
-    /** Unread shape totals, logged once by the first flush that finds any. */
     private val unreadShapeCounts: UnreadShapeCounts = UnreadShapeCounts(),
-    /** The adopter's named callback annotations and which were seen. */
     private val callbackAnnotations: ConfiguredCallbackAnnotations = ConfiguredCallbackAnnotations(config.callbackAnnotations),
-    /**
-     * Confirms classes the registry withholds and finds classes that loaded but reached no
-     * transformer. Null when there is none.
-     */
     private val loadedClassSweep: LoadedClassSweep? = null,
-    /** Dependencies found on the startup classpath, delivered on the manifest. */
     private val dependencyRegistry: DependencyRegistry = DependencyRegistry(),
-    /** Referenced out-of-scope classes, resolved to dependencies and delivered on the manifest. */
     private val externalClassRegistry: ExternalClassRegistry = ExternalClassRegistry(),
-    /** Framework markers the sweep saw, delivered on the manifest. */
     private val frameworkMarkers: FrameworkMarkerRegistry = FrameworkMarkerRegistry(),
-    /**
-     * Resends the static baseline chunks the receiver has not confirmed, one per scheduled flush
-     * whose own sends were all confirmed. Null when the static baseline is off.
-     */
     private val staticBaselineSender: StaticBaselineSender? = null,
-    /** Resends class listing chunks the same way. Null when the class listing is off. */
     private val classListingSender: ClassListingSender? = null,
-    /** The startup dependency listing, run at the top of the first flush. */
     private val dependencyListing: DependencyListingRun = DependencyListingRun {},
-    /** Removes leftover files from earlier processes, run at the top of the first scheduled flush. */
     private val startupCleanup: () -> Unit = {},
-    /** Releases transform-time caches of loaders that went quiet, called once per scheduled flush after its sends. */
     private val releaseQuietCaches: () -> Unit = {},
-    /** What the run can see of the verifier's rejections, drained after the sweep on every flush. */
     private val verifierWatch: VerifierRejectionWatch = VerifierRejectionWatch.NOT_WATCHED,
-    /**
-     * Whether the run's class listing missed a root, stamped on every manifest. Once it
-     * returns true it must keep returning true.
-     */
+    // Once it returns true it must keep returning true.
     private val classListingBlind: () -> Boolean = { false },
-    /**
-     * Run before each manifest's disabled endpoint modules and endpoints are read, with the flush
-     * interval and whether this is the final flush.
-     */
     private val beforeManifest: (graceMillis: Long, finalFlush: Boolean) -> Unit = { _, _ -> },
-    /** Milliseconds since the epoch, for the times a flush stamps. */
     private val clock: () -> Long = System::currentTimeMillis,
-    /** Whether the run counts as starting until its class loading settles. */
     private val hasStartingPhase: Boolean = false,
-    /** Milliseconds on a clock that only moves forward, for how long the run has been starting. */
     private val monotonicMillis: () -> Long = { System.nanoTime() / 1_000_000 },
 ) {
     private val log by agentLogger(ExportScheduler::class.java.name)

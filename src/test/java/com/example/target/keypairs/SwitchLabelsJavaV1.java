@@ -2,7 +2,6 @@ package com.example.target.keypairs;
 
 import com.example.target.SwitchColor;
 
-/** A switch over an enum, a string and a type, before a case is added to each. */
 public class SwitchLabelsJavaV1 {
 
     public int enumSwitch(SwitchColor color) {

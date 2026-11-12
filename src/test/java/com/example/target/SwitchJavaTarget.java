@@ -1,6 +1,5 @@
 package com.example.target;
 
-/** Each javac lowering of a switch over an enum, a string and a pattern. */
 public class SwitchJavaTarget {
 
     public int enumStatement(SwitchColor color) {
@@ -75,13 +74,10 @@ public class SwitchJavaTarget {
         };
     }
 
-    /** The sealed hierarchy {@link #sealedPattern} matches exhaustively. */
     public sealed interface Shape permits Circle, Square {}
 
-    /** One {@link Shape}. */
     public record Circle(int radius) implements Shape {}
 
-    /** The other {@link Shape}. */
     public record Square(int side) implements Shape {}
 
     public int sealedPattern(Shape shape) {
@@ -99,7 +95,6 @@ public class SwitchJavaTarget {
         };
     }
 
-    /** A switch the source writes on a string's hash code. No lowering is read from it. */
     public int handWrittenHashSwitch(String status) {
         switch (status.hashCode()) {
             case 3417674: // "open".hashCode()

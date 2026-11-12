@@ -1,6 +1,5 @@
 package com.example.target;
 
-/** A plain-Java fixture with a single conditional, used to test branch-level probe tracking. */
 public class BranchTarget {
 
     public String classify(int value) {
@@ -10,7 +9,6 @@ public class BranchTarget {
         return "non-positive";
     }
 
-    /** Contiguous case values compile to a `TABLESWITCH`. */
     public int classifyDense(int value) {
         switch (value) {
             case 0:
@@ -24,7 +22,6 @@ public class BranchTarget {
         }
     }
 
-    /** Widely-spaced case values compile to a `LOOKUPSWITCH`. */
     public int classifySparse(int value) {
         switch (value) {
             case 1:

@@ -2,12 +2,9 @@ package com.example.target.keypairs;
 
 import com.example.target.SwitchColor;
 
-/**
- * {@link SwitchLabelsJavaV1} with a case added first in each switch, and an anonymous class
- * declared ahead of them, which moves javac's switch map class from {@code $1} to {@code $2}.
- */
 public class SwitchLabelsJavaV2 {
 
+    // Moves javac's switch map class from $1 to $2.
     private final Runnable first =
             new Runnable() {
                 @Override

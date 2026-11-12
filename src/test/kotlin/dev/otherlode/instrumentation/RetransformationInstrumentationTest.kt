@@ -311,7 +311,7 @@ class RetransformationInstrumentationTest {
 
         fun loader(parent: ClassLoader): ClassLoader =
             object : FixtureClassLoader(arrayOf(dir.toURI().toURL()), parent) {
-                // The parent's classpath has the original class file, so this name never falls back to the parent.
+                // The parent's classpath has the original class file.
                 override fun getResource(name: String): java.net.URL? = if (name == path) findResource(name) else super.getResource(name)
             }
     }

@@ -58,8 +58,7 @@ class OtherlodeVerifierMessagesTest {
     @Test
     fun `a slot is cleared once it is read, so a drained message is not held`() = RingChecks.readSlotIsCleared()
 
-    // The checks live in this object so they load only after the bootstrap holder is installed.
-    // JUnit loads the test class for discovery before any test runs.
+    // This object loads only after the bootstrap holder is installed; JUnit loads the test class before any test runs.
     private object RingChecks {
         fun readSlotIsCleared() {
             val ring = OtherlodeVerifierMessages.Ring(4)

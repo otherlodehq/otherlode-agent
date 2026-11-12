@@ -27,53 +27,34 @@ import java.net.InetSocketAddress
 import java.util.Collections
 import java.util.concurrent.ConcurrentHashMap
 
-/**
- * One run of one instance: the pair every payload's resource names. Class ids, endpoint ids and
- * dependency ids are assigned by each process in its own order, and a restart under a pinned
- * instance id starts a new process, so every key below is scoped to a run, not to an instance
- * alone. Report lines still show [serviceInstanceId], the name a person knows.
- */
+// Class, endpoint and dependency ids are assigned per process, and a restart under a pinned
+// instance id is a new process, so every key below is scoped to a run.
 private data class Run(
     val serviceInstanceId: String,
     val runId: String,
 )
 
-/**
- * [classId] is assigned independently by each process's own registry, in that process's own
- * class-loading order, so the same [classId] can mean a different class in two different runs.
- * Every probe key used by this stub collector is scoped to a [Run] for that reason.
- */
 private data class InstanceProbeKey(
     val run: Run,
     val classId: Int,
     val probeIndex: Int,
 )
 
-/** Scopes a skipped class's name to the run that reported it, for the same reason as [InstanceProbeKey]. */
 private data class InstanceClassKey(
     val run: Run,
     val className: String,
 )
 
-/** Scopes an endpoint id to the run that reported it, for the same reason as [InstanceProbeKey]. */
 private data class InstanceEndpointKey(
     val run: Run,
     val endpointId: Int,
 )
 
-/** Scopes a disabled endpoint module's name to the run that reported it. */
 private data class InstanceModuleKey(
     val run: Run,
     val module: String,
 )
 
-/**
- * Groups every omission probe naming one optional parameter, within one run: the target
- * class (`targetClassName ?: className`), method, descriptor, and parameter index. A group can
- * hold more than one probe: a Scala constructor default gets both a module getter, resolved
- * across the class boundary, and that class's own static forwarder for the same getter name,
- * resolved in class, both landing on the same target.
- */
 private data class OmissionTargetKey(
     val run: Run,
     val targetClassName: String,
@@ -106,7 +87,6 @@ private data class ProbeInfo(
     val outsideCaller: OutsideCaller? = null,
 )
 
-/** One method of one run: where a METHOD probe's branch sites are kept, for its BRANCH probes to find. */
 private data class InstanceMethodKey(
     val run: Run,
     val classId: Int,
@@ -114,13 +94,6 @@ private data class InstanceMethodKey(
     val methodDescriptor: String,
 )
 
-/**
- * One call edge read from a METHOD probe's own bytecode. [guard] is the branch index, in the
- * caller's class, of the innermost outcome that must run before the call, or null when none does.
- * [creates] is true for a CREATES edge, which hands the callee to someone else to run.
- * [implementedInterface] is the dotted interface a CREATES edge from an invokedynamic implements,
- * or null.
- */
 private data class CallEdgeInfo(
     val className: String,
     val methodName: String,
@@ -131,22 +104,16 @@ private data class CallEdgeInfo(
     val implementedInterface: String? = null,
 )
 
-/**
- * What a report needs to name a class the way a person knows it: its source file and the kind
- * kotlinc gives it.
- */
 private data class ClassNaming(
     val sourceFile: String?,
     val kotlinKind: KotlinKind,
 )
 
-/** A class's superclass and direct interfaces, as reported by one instance. */
 private data class SupertypesInfo(
     val superClassName: String?,
     val interfaceNames: List<String>,
 )
 
-/** Scopes a class_id's class location record to the run that reported it, for the same reason as [InstanceProbeKey]. */
 private data class InstanceClassIdKey(
     val run: Run,
     val classId: Int,
@@ -171,26 +138,17 @@ private data class DeclaredMethodInfo(
     val unreadShape: UnreadShape = UnreadShape.UNREAD_SHAPE_UNSPECIFIED,
 )
 
-/** Whether this probe's method is generated or an unread shape: no node, no finding, but looked through. */
 private fun ProbeInfo.isLookedThrough(): Boolean =
     generatedBy != GeneratedBy.GENERATED_BY_UNSPECIFIED || unreadShape != UnreadShape.UNREAD_SHAPE_UNSPECIFIED
 
-/** Whether this declared method is generated or an unread shape: no node, no finding, but looked through. */
 private fun DeclaredMethodInfo.isLookedThrough(): Boolean =
     generatedBy != GeneratedBy.GENERATED_BY_UNSPECIFIED || unreadShape != UnreadShape.UNREAD_SHAPE_UNSPECIFIED
 
-/** Scopes a dependency id to the run that reported it, for the same reason as [InstanceProbeKey]. */
 private data class InstanceDependencyKey(
     val run: Run,
     val dependencyId: Int,
 )
 
-/**
- * One instance's static-baseline references for one declared class: the class-level list and each
- * declared method's. Kept per instance, unlike [staticallyDeclaredClasses], since
- * [computeDependencyReport] splits unreferenced from unreached only with a complete baseline from
- * each instance.
- */
 private data class BaselineReferences(
     val classReferences: List<String>,
     val methods: List<DeclaredMethodInfo>,
@@ -212,63 +170,41 @@ private val manifestBranchSites = ConcurrentHashMap<InstanceMethodKey, List<Bran
 private val everHit = Collections.newSetFromMap(ConcurrentHashMap<InstanceProbeKey, Boolean>())
 private val skippedClasses = ConcurrentHashMap<InstanceClassKey, SkippedInfo>()
 
-// Call edges, stored per METHOD probe rather than only counted at receipt, since the cluster logic
-// needs the actual callees, not just how many arrived.
 private val manifestCallEdges = ConcurrentHashMap<InstanceProbeKey, List<CallEdgeInfo>>()
 private val supertypesByClassId = ConcurrentHashMap<InstanceClassIdKey, SupertypesInfo>()
 
-// Each class's naming, by name, from any manifest's class locations or any baseline's declared
-// classes. A class's source file and kind are the same in every run of one build.
 private val classNamingByClassName = ConcurrentHashMap<String, ClassNaming>()
 
-// hits_total is cumulative from process start, not the count since the last flush. Merging with
-// max() is what makes this safe against a re-delivered or reordered batch: applying the same or
-// an older value again is a no-op instead of double-counting.
+// hits_total is cumulative from process start. Merging with max() keeps a re-delivered or
+// reordered batch from counting twice.
 private val latestHitsTotal = ConcurrentHashMap<InstanceProbeKey, Long>()
 
-// An endpoint record can be re-sent after its first delivery (a discovery-source upgrade, a
-// handler join learned later), unlike a class's probe locations, so this upserts rather than
-// only ever inserting once.
 private val manifestEndpoints = ConcurrentHashMap<InstanceEndpointKey, EndpointInfo>()
 private val disabledEndpointModules = ConcurrentHashMap<InstanceModuleKey, String>()
 
-// Same cumulative, max()-merged semantics as latestHitsTotal, for endpoint hit counts.
 private val latestEndpointHitsTotal = ConcurrentHashMap<InstanceEndpointKey, Long>()
 
-// Any class name the reactive manifest has ever mentioned, whether it got probes or was skipped.
-// Either way, it was loaded and reached the transform stage - the opposite of what the static
-// baseline's declared-classes set is for.
 private val dynamicallyKnownClassNames = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
 
-/** Every class name any manifest listed as failed to load. */
 private val failedToLoadClassNames = Collections.newSetFromMap(ConcurrentHashMap<String, Boolean>())
 
-/** The class names each run listed in `classes_failed_to_initialize`, with the reasons it gave. */
 private val failedToInitializeByRun = ConcurrentHashMap<Run, MutableMap<String, MutableSet<InitializationFailure>>>()
 
-/** Runs any of whose manifests said the agent's hook on `VerifyError` was not installed. */
 private val unwatchedRuns = Collections.newSetFromMap(ConcurrentHashMap<Run, Boolean>())
 
-/** The highest `unplaced_verification_failures` each run reported. */
 private val unplacedVerificationFailuresByRun = ConcurrentHashMap<Run, Long>()
 
-/** Every run any delta batch has ever arrived from, heartbeat included. */
 private val allRuns = Collections.newSetFromMap(ConcurrentHashMap<Run, Boolean>())
 
-/** The agent version each run's flushes named; empty when the agent did not know its own. */
 private val agentVersionByRun = ConcurrentHashMap<Run, String>()
 
-/** Runs whose shutdown hook has sent a delta batch with `final_flush` set. */
 private val runsThatEndedCleanly = Collections.newSetFromMap(ConcurrentHashMap<Run, Boolean>())
 private val staticallyDeclaredClasses = ConcurrentHashMap<String, List<DeclaredMethodInfo>>()
 
-// A declared class's superclass and interfaces, read the same way as a loaded class's
-// ClassLocation record.
 private val staticallyDeclaredSupertypes = ConcurrentHashMap<String, SupertypesInfo>()
 private val staticallyUnreadableClasses = ConcurrentHashMap<String, String>()
 private val staticallyUnprobedClasses = ConcurrentHashMap<String, String>()
 
-/** One static scan, identified by (run, scanned_at), arrives as chunk_count chunks; only a complete scan may be diffed. */
 private data class ScanKey(
     val run: Run,
     val scannedAt: Long,
@@ -283,11 +219,8 @@ private data class ScanProgress(
 
 private val scans = ConcurrentHashMap<ScanKey, ScanProgress>()
 
-// Dependency usage, all per run: dependency_id and class_id are assigned by each
-// process's own registry.
 private val dependencyLocations = ConcurrentHashMap<InstanceDependencyKey, DependencyView>()
 
-// Cumulative distinct class names, max()-merged like latestHitsTotal.
 private val latestLoadedClassesTotal = ConcurrentHashMap<InstanceDependencyKey, Long>()
 private val firstLoadedAt = ConcurrentHashMap<InstanceDependencyKey, Long>()
 private val externalClasses = ConcurrentHashMap<InstanceClassKey, ExternalClassView>()
@@ -295,25 +228,17 @@ private val probeReferencedClasses = ConcurrentHashMap<InstanceProbeKey, List<St
 private val classLevelReferences = ConcurrentHashMap<InstanceClassIdKey, List<String>>()
 private val baselineReferences = ConcurrentHashMap<InstanceClassKey, BaselineReferences>()
 
-/** Runs any manifest arrived from with `references_recorded` set. */
 private val runsRecordingReferences = Collections.newSetFromMap(ConcurrentHashMap<Run, Boolean>())
 
-/** Runs any manifest arrived from with `dependencies_listed` set. */
 private val runsWithDependenciesListed = Collections.newSetFromMap(ConcurrentHashMap<Run, Boolean>())
 private val manifestRuns = Collections.newSetFromMap(ConcurrentHashMap<Run, Boolean>())
 
-/** One node of the call graph [computeUnreachedClusters] resolves: a probed method, by identity alone. */
 private data class NodeKey(
     val className: String,
     val methodName: String,
     val methodDescriptor: String,
 )
 
-/**
- * A [NodeKey]'s reporting fields and raw, unresolved outgoing call edges. [neverLoaded] marks a
- * node that exists only because a complete static baseline declared it, never a manifest: its
- * [hits] is fixed at zero, since the dynamic tier never registered its class at all.
- */
 private data class NodeInfo(
     val line: Int,
     val neverLoaded: Boolean,
@@ -322,35 +247,25 @@ private data class NodeInfo(
     val outsideCaller: OutsideCaller? = null,
 )
 
-/** One resolved call out of a method: the callee node and the guard the raw [CallEdgeInfo] carried. */
 private data class ResolvedCall(
     val callee: NodeKey,
     val guard: Int?,
 )
 
-/** The resolved call graph: every node and its resolved outgoing calls. */
 private class CallGraph(
     val nodes: Map<NodeKey, NodeInfo>,
     val calls: Map<NodeKey, Set<ResolvedCall>>,
-    /** Each generated method with hits: no node, but a caller that ran, whose calls are in [calls]. */
     val hitGeneratedCallers: Map<NodeKey, NodeInfo> = emptyMap(),
 )
 
-/**
- * One node of the cluster graph: a method, or, when [branchIndex] is set, an outcome node in that
- * method. When [isClass] is true it is a class node, and [method] holds only the class name. See
- * [classNode].
- */
 private data class ClusterNode(
     val method: NodeKey,
     val branchIndex: Int? = null,
     val isClass: Boolean = false,
 )
 
-/** The class node for [className]. */
 private fun classNode(className: String) = ClusterNode(NodeKey(className, "", ""), isClass = true)
 
-/** A class finding, as a class node and a report name it. */
 private enum class ClassFinding(
     val text: String,
 ) {
@@ -359,22 +274,11 @@ private enum class ClassFinding(
     NEVER_INSTANTIATED("never instantiated"),
 }
 
-/**
- * A class node: a class that holds a class finding, standing for the never-hit [methods] the
- * finding covers. Those methods are never nodes of their own.
- */
 private class ClassNodeInfo(
     val finding: ClassFinding,
     val methods: List<NodeKey>,
 )
 
-/**
- * What [judgeClasses] says about the loaded classes. [findings] holds each class that is never
- * initialised or never instantiated. [covered] names the never-hit methods a finding covers, which
- * can only run through it, lambda bodies that fold into it included. [inNeverHitCode] names the
- * lambda bodies that fold into never-hit methods that are rows of their own. [constructed] holds
- * each class one of whose constructors ran, so a never-hit constructor of it is an unused overload.
- */
 private class ClassJudgement(
     val findings: Map<String, ClassFinding>,
     val covered: Map<String, List<NodeKey>>,
@@ -384,39 +288,28 @@ private class ClassJudgement(
     val coveredMethods: Set<NodeKey> = covered.values.flatten().toSet()
 }
 
-/** One judgeable method merged across runs: [hits] summed, [static] and [lambdaBody] true when any run's probe said so. */
 private data class MethodFacts(
     val hits: Long,
     val static: Boolean,
     val lambdaBody: Boolean,
 )
 
-/** A class's static initialiser, a class state and never a method row. */
 private const val CLASS_INIT = "<clinit>"
 
-/** A constructor's method name. */
 private const val CONSTRUCTOR = "<init>"
 
-/**
- * An outcome node: a judgeable outcome with no hits in a method with hits. [line] is its BRANCH
- * probe's line. [site] is the site that lists it on its method's METHOD probe, or null when no
- * manifest listed one.
- */
 private data class OutcomeNode(
     val line: Int,
     val site: BranchSite?,
 )
 
-/** The cluster graph: each node's callers and callees, over methods and outcome nodes alike. */
 private class ClusterGraph(
     val callersOf: Map<ClusterNode, Set<ClusterNode>>,
     val calleesOf: Map<ClusterNode, Set<ClusterNode>>,
 )
 
-/** Which of the five root shapes an [UnreachedClusterInfo] has. */
 private enum class ClusterRootKind { REACHED_FROM_HIT, UNCALLED, CALLED_FROM_OUTSIDE_SCOPE, UNTAKEN_OUTCOME, CLASS_FINDING }
 
-/** One member of an unreached cluster, printed by [printUnreachedClusterReport]. */
 private data class ClusterMember(
     val className: String,
     val methodName: String,
@@ -425,15 +318,6 @@ private data class ClusterMember(
     val outsideCaller: OutsideCaller? = null,
 )
 
-/**
- * A root plus every never-hit method reachable from it whose every in-scope caller is itself in the
- * cluster. [root] is the root method, or for an untaken outcome root the method that holds it, or
- * for a class root the class alone, with an empty method name and descriptor. [rootOutcome] is set
- * only for an untaken outcome root, and [rootFinding] only for a class root. [reachedFrom] lists the
- * methods with hits that call a root reached from hit or a class root. [wholeClasses] lists each
- * class the cluster holds whole, and [members] every other method. Neither lists `<clinit>`, or a
- * never-run constructor of a loaded class that nothing constructed and no class finding covers.
- */
 private data class UnreachedClusterInfo(
     val root: ClusterMember,
     val rootKind: ClusterRootKind,
@@ -444,21 +328,15 @@ private data class UnreachedClusterInfo(
     val rootFinding: ClassFinding? = null,
     val wholeClasses: List<WholeClassInfo> = emptyList(),
 ) {
-    /** How many methods the cluster lists, never counting `<clinit>` or such a constructor. */
     val membersTotal: Int get() = members.size + wholeClasses.sumOf { it.methodsTotal }
 }
 
-/**
- * One class a cluster holds whole: every method node of it, a never-run constructor of a
- * never-constructed class with no finding aside. [finding] is null when it holds none.
- */
 private data class WholeClassInfo(
     val className: String,
     val finding: ClassFinding?,
     val methodsTotal: Int,
 )
 
-/** The untaken outcome that roots a cluster: its branch index, its BRANCH probe's line, and its site if a manifest listed one. */
 private data class RootOutcome(
     val branchIndex: Int,
     val line: Int,
@@ -504,10 +382,6 @@ fun main(args: Array<String>) {
     )
 }
 
-/**
- * Binds [port] and serves the three payload routes and `/__shutdown`. `internal` so a test can
- * post payloads to it without the shutdown-hook reports [main] adds.
- */
 internal fun startStubCollector(port: Int): HttpServer {
     val server = HttpServer.create(InetSocketAddress(port), 0)
     server.createContext("/v1/otherlode/deltas", ::handleDeltaBatch)
@@ -518,14 +392,10 @@ internal fun startStubCollector(port: Int): HttpServer {
     return server
 }
 
-/**
- * The [Run] [resource] names, or null when its run id is empty. A consumer rejects such a
- * payload, since nothing it carries can be kept apart from another run's data.
- */
 private fun runOf(resource: ResourceAttributes): Run? =
     resource.runId.takeIf { it.isNotEmpty() }?.let { Run(resource.serviceInstanceId, it) }
 
-/** Exits in-process, instead of relying on SIGTERM. SIGTERM can drop the shutdown-hook report mid-write. */
+// SIGTERM can drop the shutdown-hook report mid-write.
 private fun handleShutdown(exchange: HttpExchange) {
     respondOk(exchange)
     Thread { System.exit(0) }.start()
@@ -633,8 +503,6 @@ private fun handleManifest(exchange: HttpExchange) {
         skippedClasses[InstanceClassKey(run, skipped.className)] = SkippedInfo(skipped.reason, skipped.skippedAt)
         dynamicallyKnownClassNames += skipped.className
     }
-    // A class the sweep found loaded that no transformer saw. It has no probes, but it loaded, so
-    // a baseline that declares it must not report it as never loaded.
     for (unreported in manifest.unreportedClassesList) {
         dynamicallyKnownClassNames += unreported.className
     }
@@ -646,7 +514,6 @@ private fun handleManifest(exchange: HttpExchange) {
     }
     if (!manifest.verifierRejectionsWatched) unwatchedRuns += run
     unplacedVerificationFailuresByRun.merge(run, manifest.unplacedVerificationFailures, ::maxOf)
-    // A class's location record is committed with its probes, so this manifest names its class.
     val classNamesById = manifest.probesList.associate { it.classId to it.className }
     for (classLocation in manifest.classLocationsList) {
         supertypesByClassId[InstanceClassIdKey(run, classLocation.classId)] =
@@ -757,14 +624,9 @@ private fun respondOk(exchange: HttpExchange) {
     exchange.close()
 }
 
-/** A ` namespace=` field for a log line when [resource] names a namespace, else nothing. */
 private fun namespaceField(resource: ResourceAttributes): String =
     if (resource.hasServiceNamespace() && resource.serviceNamespace.isNotBlank()) " namespace=${resource.serviceNamespace}" else ""
 
-/**
- * Answers 202 to a [payload] from a test run, logs it, and keeps nothing from it. The stub does not
- * name the tests that call production code, so a test run has nothing to add.
- */
 private fun ignoreTestRun(
     exchange: HttpExchange,
     payload: String,
@@ -776,7 +638,6 @@ private fun ignoreTestRun(
     respondOk(exchange)
 }
 
-/** Skips a [payload] a collector forwarded after stripping fields it did not know, and keeps nothing from it. */
 private fun ignoreStripped(
     exchange: HttpExchange,
     payload: String,
@@ -789,7 +650,6 @@ private fun ignoreStripped(
     respondOk(exchange)
 }
 
-/** Answers 400 to a [payload] whose resource has no run id, and keeps nothing from it. */
 private fun respondBadRequest(
     exchange: HttpExchange,
     payload: String,
@@ -801,42 +661,7 @@ private fun respondBadRequest(
     exchange.responseBody.use { it.write(body) }
 }
 
-/**
- * Prints every judgeable probe with no hits that is a never-hit row. A `<clinit>` is a class state
- * and never a row. A constructor is a row only as an unused overload, when another constructor of
- * its class ran. A method a class finding covers, and a branch in one, is not a row:
- * [printClassFindingReport] reports the class instead. A lambda body that folds into never-hit
- * methods listed here is not a row either, and neither is a branch in it. The report counts each
- * kind of folded probe apart.
- *
- * A branch site inside code that never ran folds into that code, and its BRANCH probes are counted
- * apart as branches in never-hit code. A site folds when its method was never hit, a lone
- * constructor that is not a row included, or when its guard is a never-hit outcome that is not
- * routine and would be a row but for this fold, so a site two levels under a never-taken outcome
- * folds too. A routine guard folds nothing, and neither does a guard that ran. The dead percentage
- * keeps folded probes in its denominator, as it does for probes a class finding covers.
- *
- * A routine outcome is not a row and is not in the headline. The fold rules above run first, so a
- * routine outcome inside folded code counts with that code. The rest are counted apart and listed
- * with their kind under ROUTINE OUTCOMES.
- *
- * An unread shape is not a row and is not in the headline: a METHOD probe the agent marked unread,
- * a BRANCH probe in such a method, or a BRANCH probe whose own outcome is unread. They are listed
- * with their family under UNREAD SHAPES. A site in an unread method does not fold, since that
- * method is not among the never-hit methods that fold sites. An unread outcome inside folded code
- * counts with that code.
- *
- * A class that failed to initialise, and its subtypes, are not rows: [printFailedToInitialiseReport]
- * reports them. A run whose zero counts are not evidence, because the agent's hook on `VerifyError`
- * was not installed or it counted a `VerifyError` message in no read format, contributes only its
- * hits, and the report says so.
- *
- * `internal` so a test can capture what it prints.
- */
 internal fun printNeverHitReport() {
-    // An optional-argument probe reading zero means its parameter is never omitted, which is
-    // ALWAYS SUPPLIED, not dead code, so it is excluded here entirely and reported by
-    // printOmissionReport instead.
     val failedToInitialize = failedToInitializeClassNames() + classesWithInitializerRunning()
     val judgeableKeys =
         manifestProbes.keys.filter {
@@ -846,11 +671,8 @@ internal fun printNeverHitReport() {
         }
     val neverHitKeys = judgeableKeys.filter { it !in everHit }
     val (inlineNeverHit, notInlineNeverHit) = neverHitKeys.partition { manifestProbes[it]?.inline == true }
-    // A generated probe, such as a data class's copy or an enum's values, is kept and counted but never a finding.
     val (generatedNeverHit, notGeneratedNeverHit) =
         notInlineNeverHit.partition { manifestProbes[it]?.generatedBy != GeneratedBy.GENERATED_BY_UNSPECIFIED }
-    // An unread shape is compiler output the agent could not read, in a method or a branch probe
-    // of one. It is kept and listed apart under its family, never a finding.
     val (unreadProbeNeverHit, judgeableNeverHit) =
         notGeneratedNeverHit.partition { manifestProbes[it]?.unreadShape != UnreadShape.UNREAD_SHAPE_UNSPECIFIED }
     val judgement = judgeClasses()
@@ -898,8 +720,6 @@ internal fun printNeverHitReport() {
             println("  NEVER HIT: ${branchRow(key, info, branchIndex)}$inlinedFromSuffix $where [${info.kind} branch#$branchIndex]")
         }
     }
-    // Kotlin inline functions copy their body into the caller, so their own probe reads near
-    // zero however often they run: no "never hit" claim is made about them.
     println("inline (not judged): ${inlineNeverHit.size}")
     println("generated (not judged): ${generatedNeverHit.size}")
     println("in class findings (reported by class): ${inClassFindings.size}")
@@ -934,14 +754,6 @@ internal fun printNeverHitReport() {
     println("=====================================")
 }
 
-/**
- * The BRANCH probes among [candidates] whose site folds into code that never ran. [candidates] are
- * every probe that is a never-hit row or a routine outcome by every other rule of
- * [printNeverHitReport]; [neverHit] is every judgeable probe with no hits. A site folds when its
- * method's METHOD probe in the same run is in [neverHit], whether or not that probe is a row itself
- * (a lone constructor is not, and its code never ran either), or when the outcome its site names as
- * guard is a BRANCH probe among [candidates] that is neither routine nor an unread shape.
- */
 private fun foldedSiteProbes(
     candidates: List<InstanceProbeKey>,
     neverHit: List<InstanceProbeKey>,
@@ -972,13 +784,11 @@ private fun foldedSiteProbes(
         }.toSet()
 }
 
-/** [keys] with their probes, in the order the never-hit report lists them. */
 private fun sortedForReport(keys: List<InstanceProbeKey>): List<Pair<InstanceProbeKey, ProbeInfo>> =
     keys
         .mapNotNull { key -> manifestProbes[key]?.let { key to it } }
         .sortedWith(compareBy({ it.second.className }, { it.second.methodName }, { it.second.line }, { it.second.branchIndex ?: -1 }))
 
-/** The site [info], a BRANCH probe of [key]'s run, belongs to, from its run's METHOD probe. */
 private fun siteOf(
     key: InstanceProbeKey,
     info: ProbeInfo,
@@ -988,7 +798,6 @@ private fun siteOf(
             ?.firstOrNull { it.siteIndex == siteIndex }
     }
 
-/** A BRANCH probe as a report row names it: its method, then its outcome as [describeNeverHitOutcome] reads it. */
 private fun branchRow(
     key: InstanceProbeKey,
     info: ProbeInfo,
@@ -998,22 +807,12 @@ private fun branchRow(
     return "${methodText(info.className, info.methodName, info.methodDescriptor, info.line)} $description"
 }
 
-/**
- * The routine kind the agent gave the outcome of [key], a BRANCH probe, in its site on its run's
- * METHOD probe. [RoutineKind.ROUTINE_KIND_UNSPECIFIED] for any other probe, and for an outcome no site
- * lists.
- */
 private fun routineOf(key: InstanceProbeKey): RoutineKind {
     val info = manifestProbes[key] ?: return RoutineKind.ROUTINE_KIND_UNSPECIFIED
     val branchIndex = info.branchIndex ?: return RoutineKind.ROUTINE_KIND_UNSPECIFIED
     return siteOf(key, info)?.outcomesList?.firstOrNull { it.branchIndex == branchIndex }?.routine ?: RoutineKind.ROUTINE_KIND_UNSPECIFIED
 }
 
-/**
- * The unread shape of [key]: its own, which a BRANCH probe inherits from its method and an
- * omission probe from its target, or else the one its outcome carries in its site.
- * [UnreadShape.UNREAD_SHAPE_UNSPECIFIED] when neither is set.
- */
 private fun unreadOf(key: InstanceProbeKey): UnreadShape {
     val info = manifestProbes[key] ?: return UnreadShape.UNREAD_SHAPE_UNSPECIFIED
     if (info.unreadShape != UnreadShape.UNREAD_SHAPE_UNSPECIFIED) return info.unreadShape
@@ -1022,7 +821,6 @@ private fun unreadOf(key: InstanceProbeKey): UnreadShape {
         ?: UnreadShape.UNREAD_SHAPE_UNSPECIFIED
 }
 
-/** An unread-shape family as the report names it. */
 private fun unreadText(shape: UnreadShape): String =
     when (shape) {
         UnreadShape.UNREAD_SHAPE_CASE_CLASS -> "case class"
@@ -1038,7 +836,6 @@ private fun unreadText(shape: UnreadShape): String =
         else -> shape.name
     }
 
-/** A routine kind as the report names it, the way the server's web UI reads it. */
 private fun routineText(kind: RoutineKind): String =
     when (kind) {
         RoutineKind.NULL_DEFAULT -> "default never used"
@@ -1047,36 +844,18 @@ private fun routineText(kind: RoutineKind): String =
         else -> kind.name
     }
 
-/**
- * The source file a report names [className] by: set for a file facade or a multi-file part that
- * has one, and null for every other class.
- */
 private fun sourceFileNaming(className: String): String? {
     val naming = classNamingByClassName[className] ?: return null
     val isFileKind = naming.kotlinKind == KotlinKind.FILE_FACADE || naming.kotlinKind == KotlinKind.MULTIFILE_CLASS_PART
     return naming.sourceFile.takeIf { isFileKind }
 }
 
-/** Whether [className] is a multi-file facade, which a report tags. */
 private fun isMultifileFacade(className: String): Boolean =
     classNamingByClassName[className]?.kotlinKind == KotlinKind.MULTIFILE_CLASS_FACADE
 
-/**
- * A class as the reports print it. A file facade or a multi-file part prints as its source file,
- * such as `DemoServerMain.kt`. A multi-file facade prints by its JVM name with a
- * `(multi-file facade)` tag. Any other class, or a class whose kind no payload named, prints by its
- * JVM name.
- */
 internal fun classText(className: String): String =
     sourceFileNaming(className) ?: if (isMultifileFacade(className)) "$className (multi-file facade)" else className
 
-/**
- * A method as the reports print it: `Class#name`, or `Class#constructor(int, String)` for a
- * constructor. A member of a file facade or a multi-file part prints as a top-level function with
- * its file, such as `handleCheckout (DemoServerMain.kt)`, and [line], when given, joins the file:
- * `handleCheckout (DemoServerMain.kt:121)`. A member of a multi-file facade carries the facade's
- * tag.
- */
 internal fun methodText(
     className: String,
     methodName: String,
@@ -1090,7 +869,6 @@ internal fun methodText(
     return "$className#$shown$lineSuffix$tag"
 }
 
-/** A constructor's name as source reads it: `constructor(...)` with its parameters' simple type names. */
 private fun constructorText(methodDescriptor: String): String {
     val types = mutableListOf<String>()
     var i = methodDescriptor.indexOf('(') + 1
@@ -1116,19 +894,6 @@ private fun constructorText(methodDescriptor: String): String {
 private val PRIMITIVE_NAMES =
     mapOf('Z' to "boolean", 'B' to "byte", 'C' to "char", 'S' to "short", 'I' to "int", 'J' to "long", 'F' to "float", 'D' to "double")
 
-/**
- * Judges every loaded class by its judgeable METHOD probes merged across runs with hits summed.
- * A class with such a probe loaded, so none of these is never loaded.
- *
- * A class is never initialised when it has a `<clinit>` and that never ran. Otherwise it is never
- * instantiated when it has a `<init>`, none ran, it has a method that is neither static nor a
- * constructor, and no such method ran, marked or not. A never-initialised class covers every never-hit method. A never-instantiated class
- * covers each never-hit constructor and each never-hit method that is not static. A never-hit
- * lambda body then folds with its creators; see [foldLambdaBodies]. Same rules as
- * `OtherlodeTestCollector.judgeClasses`. A class that failed to initialise, or whose initialiser is
- * still running in every run that loaded it, gets no finding, and a run whose zero counts are not
- * evidence contributes only its hits.
- */
 private fun judgeClasses(): ClassJudgement {
     val withheld = failedToInitializeClassNames() + classesWithInitializerRunning()
     val methods =
@@ -1195,11 +960,6 @@ private fun judgeClasses(): ClassJudgement {
     return ClassJudgement(findings, covered, inNeverHitCode, constructed)
 }
 
-/**
- * Every method some CREATES call edge names, with the methods whose edges name it: its creators.
- * Reads the edges of every METHOD probe and of every static-baseline declaration. A method never
- * counts as its own creator.
- */
 private fun creatorsOf(): Map<NodeKey, Set<NodeKey>> {
     val creators = mutableMapOf<NodeKey, MutableSet<NodeKey>>()
 
@@ -1223,17 +983,6 @@ private fun creatorsOf(): Map<NodeKey, Set<NodeKey>> {
     return creators
 }
 
-/**
- * Folds each judgeable never-hit lambda body whose every creator is judgeable and never hit, and is
- * itself covered by a class finding or a row of the never-hit report: a method other than
- * `<clinit>` and a lone constructor. A lambda body some method created is one or the other, so
- * nested lambda bodies fold with the outermost one. A lambda body with no known creator, or with a
- * creator that ran, never folds.
- *
- * Returns the folded lambda bodies in two sets. The first fold into their own class's finding:
- * every creator is covered by a class finding or is in that first set. The rest fold into never-hit
- * methods that are rows of their own.
- */
 private fun foldLambdaBodies(
     methods: Map<NodeKey, MethodFacts>,
     findings: Map<String, ClassFinding>,
@@ -1271,12 +1020,6 @@ private fun foldLambdaBodies(
     return intoClassFindings to (folded - intoClassFindings)
 }
 
-/**
- * Reports each class loaded and never initialised, and each class loaded and never instantiated,
- * as [judgeClasses] finds them. A class's methods are its METHOD probes other than `<clinit>`, one
- * entry per name, inline and generated ones included. Instances loading counts the instances that
- * sent a probe for the class.
- */
 internal fun printClassFindingReport() {
     println()
     println("=== otherlode demo: class findings ===")
@@ -1313,11 +1056,6 @@ internal fun printClassFindingReport() {
     println("==================================")
 }
 
-/**
- * A never-hit outcome as a person reads it: its site's condition, the result that never happened,
- * and the code that runs only through the outcome. A site with no condition is named by its line.
- * A case of a switch read back to its source cases is named by its label.
- */
 private fun describeNeverHitOutcome(
     site: BranchSite,
     branchIndex: Int,
@@ -1372,7 +1110,6 @@ private fun describeNeverHitOutcome(
     return "$result, $guarded"
 }
 
-/** A condition as source text: code as it is, a string literal quoted and escaped, and a placeholder as `…`. */
 private fun renderCondition(parts: List<ConditionPart>): String =
     parts.joinToString("") { part ->
         when (part.kind) {
@@ -1404,18 +1141,6 @@ private fun renderRanges(ranges: List<LineRange>): String =
         if (range.sourceFile.isEmpty()) "line $lines" else "${range.sourceFile}:$lines"
     }
 
-/**
- * Reports every optional parameter found never supplied (every caller took the default, so the
- * parameter can go) or always supplied (the default value is dead). Every omission probe naming
- * the same parameter is summed before either rule is judged: a Scala constructor default carries
- * two, a module getter resolved across the class boundary and that class's own static forwarder
- * resolved in class, and judging them apart can call one never supplied while the other reads as
- * always supplied for the same parameter. Both rules require the target's own summed hit total to
- * be above zero, and skip a target with no method probe at all (an abstract interface method) or an
- * inline target, the same reasons [printNeverHitReport] excludes those. "Never supplied" is claimed
- * only for a non-overridable target, since an overridable target's omissions are spread across
- * whichever override actually ran.
- */
 internal fun printOmissionReport() {
     println()
     println("=== otherlode demo: optional argument report ===")
@@ -1470,12 +1195,6 @@ internal fun printOmissionReport() {
     println("==============================================")
 }
 
-/**
- * Reports every declared endpoint, called or not. An endpoint's own hit count, not the method
- * tier's, is what says "called": a handler can back an endpoint the method tier never sees on its
- * own (a lambda invoked through a hidden class, a handler in an excluded package), so this report
- * is the only one able to say `/promo` was never called.
- */
 internal fun printEndpointReport() {
     println()
     println("=== otherlode demo: endpoint report ===")
@@ -1512,15 +1231,6 @@ internal fun printEndpointReport() {
     println("====================================")
 }
 
-/**
- * A class is "never loaded" only if the static scan declared it AND the reactive manifest never
- * once mentioned it, by name, for any reason - not even as a skipped class. A class already
- * counted as unreadable or unprobed is excluded: the static scanner could not
- * classify it as probe-eligible either way, so it is reported under its own heading instead.
- *
- * The diff only runs once every chunk of every scan has arrived. A partial scan can say
- * "declared" for the classes it carries, but never "never loaded" for the ones it is missing.
- */
 internal fun printNeverLoadedReport() {
     println()
     println("=== otherlode demo: never-loaded report (static baseline) ===")
@@ -1550,10 +1260,6 @@ internal fun printNeverLoadedReport() {
             val methodNames = methods.joinToString(", ") { it.methodName }
             println("  NEVER LOADED: ${classText(className)} (methods: $methodNames)")
         }
-    // A class made only of inline functions is never loaded by a Kotlin caller at all, and the
-    // compiler emits a generated method again regardless of what the adopter does, so a class
-    // whose every method is one or the other, or an unread shape, never loading is not evidence it
-    // is dead. See ADRs 0022, 0026 and 0054.
     if (allInlineOrGenerated.isNotEmpty()) {
         println("all inline or generated (not judged): ${allInlineOrGenerated.size}")
         allInlineOrGenerated.sortedBy { it.key }.forEach { (className, _) -> println("  ALL INLINE OR GENERATED: ${classText(className)}") }
@@ -1573,10 +1279,6 @@ internal fun printNeverLoadedReport() {
     println("===========================================================")
 }
 
-/**
- * Lists every class a manifest named as failed to load that no instance loaded. Such a class is a
- * deployment to fix, so it is never in [printNeverLoadedReport].
- */
 internal fun printFailedToLoadReport() {
     println()
     println("=== otherlode demo: failed to load ===")
@@ -1586,10 +1288,8 @@ internal fun printFailedToLoadReport() {
     println("======================================")
 }
 
-/** Whether [run]'s zero counts are evidence: its verifier hook was installed and it has no unplaced verification failure. */
 private fun hasZeroCountEvidence(run: Run): Boolean = run !in unwatchedRuns && (unplacedVerificationFailuresByRun[run] ?: 0L) <= 0L
 
-/** Prints, for each run whose zero counts are not evidence, that they are left out and why. */
 private fun printRunsWithoutZeroCountEvidence() {
     (unwatchedRuns + unplacedVerificationFailuresByRun.filterValues { it > 0L }.keys)
         .sortedWith(compareBy({ it.serviceInstanceId }, { it.runId }))
@@ -1614,12 +1314,6 @@ private fun printRunsWithoutZeroCountEvidence() {
         }
 }
 
-/**
- * Every class that failed to initialise: one some run named, or a loaded class whose supertypes in
- * a run's class records reach a class that run named, that no run initialised. A class initialised in
- * a run when its returned slot counted, if that run sent the class's slots, and otherwise when any
- * probe of it was hit. Only a class some manifest confirmed is listed.
- */
 private fun failedToInitializeClassNames(): Set<String> {
     if (failedToInitializeByRun.isEmpty()) return emptySet()
     val initialized = initializedClassNames()
@@ -1689,10 +1383,6 @@ private fun initializedClassNames(): Set<String> {
     return evidence.filterValues { if (it.hasSlots) it.returned else it.anyHit }.keys.mapTo(HashSet()) { it.second }
 }
 
-/**
- * Every class whose initialiser is still running in each run that loaded it: a `<clinit>` whose
- * entry counted and whose returned and threw slots both exist and neither counted.
- */
 private fun classesWithInitializerRunning(): Set<String> {
     class Initializer {
         var entered = false
@@ -1732,11 +1422,6 @@ private fun classesWithInitializerRunning(): Set<String> {
         }.keys
 }
 
-/**
- * Lists every class that failed to initialise (see [failedToInitializeClassNames]). Such a class is a
- * deployment to fix, so it is never in [printNeverHitReport] or [printClassFindingReport]. A class a
- * run named prints with its reasons, and a class that only inherits the failure says so.
- */
 internal fun printFailedToInitialiseReport() {
     println()
     println("=== otherlode demo: failed to initialise ===")
@@ -1755,19 +1440,8 @@ internal fun printFailedToInitialiseReport() {
     println("============================================")
 }
 
-/** Orders a [ClusterMember] the way [printNeverHitReport] orders a probe: by class, then method, then descriptor. */
 private val clusterMemberComparator: Comparator<ClusterMember> = compareBy({ it.className }, { it.methodName }, { it.methodDescriptor })
 
-/**
- * Reports every unreached cluster: a root plus every never-hit method reachable from it whose
- * every in-scope caller is itself already in the cluster. Applies the same rule
- * `OtherlodeTestCollector.unreachedClusters` applies within a test JVM, over the manifest call edges,
- * class supertypes, and complete-baseline declarations this stub already stores. An untaken
- * outcome root prints as [printNeverHitReport] prints its outcome, then the method that holds it.
- * A root reached from hit names the methods with hits that call it, and so does a class root that
- * one calls. A class the cluster holds whole prints once, with its finding and method count, in
- * place of its methods.
- */
 internal fun printUnreachedClusterReport() {
     println()
     println("=== otherlode demo: unreached clusters ===")
@@ -1823,7 +1497,6 @@ internal fun printUnreachedClusterReport() {
     println("=======================================")
 }
 
-/** What an [OutsideCaller] reads as in a root's label: `overrides Type` or `@Annotation`, with the package dropped. */
 private fun outsideCallerReason(outsideCaller: OutsideCaller?): String {
     val simpleName = outsideCaller?.typeName.orEmpty().substringAfterLast('.')
     return when (outsideCaller?.kind) {
@@ -1833,13 +1506,6 @@ private fun outsideCallerReason(outsideCaller: OutsideCaller?): String {
     }
 }
 
-/**
- * The endpoints whose handler join names each method, as `verb template` strings, merged across
- * instances the way the call graph itself is. This is the stub's version of the `routes` the real
- * server puts on a never-hit row and on an unreached cluster's root: a never-called endpoint and
- * the never-hit method behind it are one finding, and printing the route on the root makes that
- * visible without a second lookup. A handler in a hidden class has no join and so no entry here.
- */
 private fun routesByHandler(): Map<NodeKey, List<String>> =
     manifestEndpoints.values
         .filter { it.handlerClass != null && it.handlerMethod != null && it.handlerDescriptor != null }
@@ -1848,30 +1514,6 @@ private fun routesByHandler(): Map<NodeKey, List<String>> =
             { "${it.verb} ${it.routeTemplate}" },
         ).mapValues { (_, routes) -> routes.distinct().sorted() }
 
-/**
- * Every unreached cluster in the call graph, sorted by member count descending, then by root.
- *
- * The graph holds method nodes, outcome nodes and class nodes. An outcome node is a judgeable
- * BRANCH probe with no hits, merged across runs by its method and branch index, in a method with
- * hits. A class node is a class that holds a class finding, standing for the never-hit methods the
- * finding covers, which are never method nodes of their own; a never-loaded class stands for every
- * method node it has. A call edge whose guard names an outcome node counts as a call from that
- * outcome node, and any other edge as a call from its method or the class node standing for it.
- * An edge into a covered method goes into its class node. An outcome node has one caller: the
- * outcome node its site's guard names, or else its method. This stub hears from one build of the
- * demo, so a guard's branch index names one outcome of the caller's class and is looked up there
- * directly.
- *
- * A root is a never-hit node with no caller or with a caller that is a method with hits. A method
- * root is [ClusterRootKind.UNCALLED], [ClusterRootKind.CALLED_FROM_OUTSIDE_SCOPE] when it has an
- * outside caller, or [ClusterRootKind.REACHED_FROM_HIT], an outcome root
- * [ClusterRootKind.UNTAKEN_OUTCOME], and a class root [ClusterRootKind.CLASS_FINDING]. A `<clinit>`
- * is never a root, and neither is an unjudged constructor: a never-hit `<init>` of a loaded class
- * nothing constructed that no class finding covers, such as a utility class's private constructor. Like
- * `<clinit>`, it is reached through but never listed or counted, and a class is listed whole
- * without it. An outcome or class root whose cluster holds nothing but itself and outcome nodes
- * gives no cluster.
- */
 private fun computeUnreachedClusters(): List<UnreachedClusterInfo> {
     val graph = computeCallGraph()
 
@@ -1945,12 +1587,6 @@ private fun computeUnreachedClusters(): List<UnreachedClusterInfo> {
         )
 }
 
-/**
- * Every class node, keyed by its [ClusterNode]. A never-initialised or never-instantiated class
- * stands for the methods [judgement], from [judgeClasses], says it covers. A class whose method
- * nodes all come from a complete baseline, since no manifest mentioned it, is never loaded and
- * stands for all of them. A class with no such method has no class node.
- */
 private fun buildClassNodes(
     graph: CallGraph,
     judgement: ClassJudgement,
@@ -1968,14 +1604,6 @@ private fun buildClassNodes(
     return classNodes
 }
 
-/**
- * Grows [root]'s cluster by fixpoint: repeatedly add a never-hit node reachable from a current
- * member, once every one of that node's callers is itself already in the cluster. A node whose
- * callers sit outside the cluster, or a cycle of never-hit nodes with no outside caller, is never
- * added. Returns null for an outcome or class root when nothing it would list joined it: an
- * outcome node, a `<clinit>` or a member in [unjudged] is never listed, and class sizes leave out a
- * member in [unjudged].
- */
 private fun buildUnreachedCluster(
     graph: CallGraph,
     clusterGraph: ClusterGraph,
@@ -2070,13 +1698,6 @@ private fun toClusterMember(
     key: NodeKey,
 ): ClusterMember = ClusterMember(key.className, key.methodName, key.methodDescriptor, info.neverLoaded, info.outsideCaller)
 
-/**
- * Every outcome node, keyed by its [ClusterNode]: a BRANCH probe that is none of inline, generated
- * or in an unread shape, whose hits summed across runs are zero, in a method [isHit] says has hits. Its site is
- * the one its run's METHOD probe lists with that branch index.
- *
- * A routine outcome and an unread-shape outcome are never nodes, so a call one guards starts at its method.
- */
 private fun buildOutcomeNodes(isHit: (NodeKey) -> Boolean): Map<ClusterNode, OutcomeNode> {
     val unjudgeable = failedToInitializeClassNames() + classesWithInitializerRunning()
     return manifestProbes.entries
@@ -2101,13 +1722,6 @@ private fun buildOutcomeNodes(isHit: (NodeKey) -> Boolean): Map<ClusterNode, Out
         }
 }
 
-/**
- * Links every resolved call and every outcome node into the cluster graph. A call whose guard
- * names an outcome node in the caller's method starts at that outcome node, and any other call
- * starts at its method. A method [coveredBy] names is replaced by its class node at either end, and
- * a call that then starts and ends at the same node is dropped. An outcome node's one caller is the
- * outcome node its site's guard names, when that is another outcome node, and otherwise its method.
- */
 private fun buildClusterGraph(
     graph: CallGraph,
     outcomes: Map<ClusterNode, OutcomeNode>,
@@ -2141,21 +1755,6 @@ private fun buildClusterGraph(
     return ClusterGraph(callersOf, calleesOf)
 }
 
-/**
- * Builds every node and resolves its edges against the known supertype graph. An edge resolves to
- * the union of two lookups, either of which may find nothing: the first node up the owner's
- * supertype chain, which is an inherited concrete declaration, and, for a virtual call, every node
- * with the same name and descriptor on a transitive subtype of the owner. Widening starts at the
- * owner, not at the declaring type: an abstract interface method has no node anywhere, so
- * requiring the up-walk to succeed would drop every edge into a pure interface, and a receiver
- * typed as the owner can only be the owner or one of its subtypes, never a sibling under some
- * ancestor. Each resolved call keeps its raw edge's guard. Declared classes and their supertypes
- * are consulted only from scans where every chunk has arrived; see [printNeverLoadedReport] for why
- * a partial scan cannot be diffed. A lookup that lands on a generated method, which is no node,
- * continues along that method's own edges, so a call reaches what the generated code runs, and a
- * generated method with hits is a caller in its own right, as in
- * OtherlodeTestCollector.computeCallGraph. An unread-shape method is treated the same way.
- */
 private fun computeCallGraph(): CallGraph {
     val scansComplete = scans.values.all { it.complete }
     val declaredClasses = if (scansComplete) staticallyDeclaredClasses else emptyMap()
@@ -2179,8 +1778,7 @@ private fun computeCallGraph(): CallGraph {
             candidates += widenToSubtypes(known, reverseSubtypes, edge.className, edge.methodName, edge.methodDescriptor)
         }
         for (candidate in candidates) {
-            // A resolved call into a class is its first active use, which is what runs <clinit>;
-            // no bytecode ever calls it directly. Same rule as OtherlodeTestCollector.computeCallGraph.
+            // No bytecode calls <clinit>: a resolved call into a class is its first active use, which runs it.
             val typeInitializer = NodeKey(candidate.className, "<clinit>", "()V")
             if (typeInitializer in nodes) into += typeInitializer
             if (candidate in nodes) {
@@ -2207,7 +1805,6 @@ private fun computeCallGraph(): CallGraph {
         .filter { (_, probe) -> probe.kind == ProbeKind.METHOD && !probe.inline && probe.isLookedThrough() }
         .groupBy { (_, probe) -> NodeKey(probe.className, probe.methodName, probe.methodDescriptor) }
         .forEach { (key, entries) ->
-            // A key some instance reports unmarked is a node, with its own resolved calls.
             if (key in nodes) return@forEach
             val hits = entries.sumOf { (probeKey, _) -> latestHitsTotal[probeKey] ?: 0L }
             if (hits == 0L) return@forEach
@@ -2219,7 +1816,6 @@ private fun computeCallGraph(): CallGraph {
     return CallGraph(nodes, calls, hitGeneratedCallers)
 }
 
-/** Every generated or unread-shape method that is not inline, from manifests and [declaredClasses], with its edges. */
 private fun buildTransparentMethods(declaredClasses: Map<String, List<DeclaredMethodInfo>>): Map<NodeKey, Set<CallEdgeInfo>> {
     val transparent = mutableMapOf<NodeKey, MutableSet<CallEdgeInfo>>()
     for ((key, probe) in manifestProbes) {
@@ -2236,14 +1832,6 @@ private fun buildTransparentMethods(declaredClasses: Map<String, List<DeclaredMe
     return transparent
 }
 
-/**
- * Every node: a manifest METHOD probe, non-inline, non-generated and not an unread shape, merged across instances by
- * (class, method, descriptor) with hits summed and edges unioned with any matching declaration
- * from [declaredClasses]; plus, for a class [declaredClasses] names that no manifest ever
- * mentioned, each of its non-inline, non-generated, read declared methods, with zero hits. A
- * generated method is never a node: the compiler emits it again regardless of what the adopter does,
- * so it can neither root nor extend an unreached cluster. Neither is an unread-shape method.
- */
 private fun buildClusterNodes(declaredClasses: Map<String, List<DeclaredMethodInfo>>): Map<NodeKey, NodeInfo> {
     val nodes = mutableMapOf<NodeKey, NodeInfo>()
     val manifestGroups =
@@ -2278,7 +1866,6 @@ private fun buildClusterNodes(declaredClasses: Map<String, List<DeclaredMethodIn
     return nodes
 }
 
-/** A class's supertypes, by name: from any instance's manifest record, or a declared-class record. */
 private fun buildSupertypesByClassName(declaredSupertypes: Map<String, SupertypesInfo>): Map<String, SupertypesInfo> {
     val result = mutableMapOf<String, SupertypesInfo>()
     for ((key, info) in manifestProbes) {
@@ -2291,7 +1878,6 @@ private fun buildSupertypesByClassName(declaredSupertypes: Map<String, Supertype
     return result
 }
 
-/** Every known class name's direct subtypes, for widening a virtual call edge down. */
 private fun buildReverseSubtypes(supertypesByClassName: Map<String, SupertypesInfo>): Map<String, List<String>> {
     val reverse = mutableMapOf<String, MutableList<String>>()
     for ((className, info) in supertypesByClassName) {
@@ -2301,11 +1887,6 @@ private fun buildReverseSubtypes(supertypesByClassName: Map<String, SupertypesIn
     return reverse
 }
 
-/**
- * Breadth-first walk from [owner] up through its supertypes to the first type with a key in [nodes] named
- * ([name], [desc]), [owner] itself included. Null if the whole chain, as far as it is known, never
- * reaches one.
- */
 private fun findDeclaringType(
     nodes: Set<NodeKey>,
     supertypesByClassName: Map<String, SupertypesInfo>,
@@ -2327,7 +1908,6 @@ private fun findDeclaringType(
     return null
 }
 
-/** Every transitive subtype of [declaringType], excluding itself, that has a matching ([name], [desc]) node. */
 private fun widenToSubtypes(
     nodes: Set<NodeKey>,
     reverseSubtypes: Map<String, List<String>>,
@@ -2349,21 +1929,11 @@ private fun widenToSubtypes(
     return result
 }
 
-/**
- * Reports each dependency as unloaded, unreferenced, unreached, with no live reference, failed to
- * load, or used, merged across instances by identity, plus every referenced class no loader could
- * find. The rules live in [computeDependencyReport]; this only gathers what each instance sent
- * into the shape that function reads.
- */
 internal fun printDependencyReport() {
     val failed = failedToLoadClassNames.filter { it !in dynamicallyKnownClassNames }.toSet()
     formatDependencyReport(computeDependencyReport(dependencyViews(), failed, failedToInitializeClassNames())).forEach(::println)
 }
 
-/**
- * One [InstanceDependencyView] per run heard from, built from the maps the handlers fill. A run is
- * judged on its own, since its dependency ids and class ids mean nothing in another run.
- */
 private fun dependencyViews(): List<InstanceDependencyView> {
     val runs = allRuns + manifestRuns + dependencyLocations.keys.map { it.run }
     return runs.sortedWith(compareBy({ it.serviceInstanceId }, { it.runId })).map { run ->

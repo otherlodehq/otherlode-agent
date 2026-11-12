@@ -1,9 +1,5 @@
 package com.example.target;
 
-/**
- * Overloads written by hand in Java, each passing fixed values on to the full constructor or
- * method. None calls a {@code $default} twin, so none is marked {@code JVM_OVERLOADS}.
- */
 public class JavaOverloads {
 
     private final int amount;

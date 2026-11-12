@@ -1,6 +1,5 @@
 package com.example.target;
 
-/** Its static initializer and one ordinary method each hold a conditional. */
 public class StaticInitBranchTarget {
 
     public static final int CHOSEN = Boolean.getBoolean("otherlode.test.flag") ? 1 : 2;

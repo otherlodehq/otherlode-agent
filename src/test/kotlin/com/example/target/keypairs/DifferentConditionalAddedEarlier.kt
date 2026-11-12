@@ -1,6 +1,5 @@
 package com.example.target.keypairs
 
-/** One condition on `x`, nothing before it in the method. */
 class DifferentConditionalAddedEarlierV1 {
     fun check(
         x: Int,
@@ -8,7 +7,6 @@ class DifferentConditionalAddedEarlierV1 {
     ): String = if (x > 0) "pos" else "non-pos"
 }
 
-/** A different, unrelated condition on `y` is added earlier in the same method; `x`'s condition is unchanged. */
 class DifferentConditionalAddedEarlierV2 {
     fun check(
         x: Int,

@@ -1,9 +1,5 @@
 package com.example.target;
 
-/**
- * A static method with a conditional, an instance method, a constructor and a static initializer.
- * Only the static method's METHOD probe is marked static.
- */
 public class StaticFlagTarget {
 
     static final long STARTED = System.nanoTime();

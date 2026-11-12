@@ -16,9 +16,6 @@ import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 
-// Fixtures for the kotlinx.serialization plugin's output. The plugin fills in each
-// $serializer class, each companion's serializer() and the lazy cached serializer.
-
 @Serializable
 class SerPlain(
     val a: Int,
@@ -168,11 +165,9 @@ sealed class SerSealedGeneric<T> {
     ) : SerSealedGeneric<T>()
 }
 
-/** A serializable abstract class with a type parameter, whose `serializer()` builds a polymorphic serializer. */
 @Serializable
 abstract class SerAbstractGeneric<T>
 
-/** A serializer the generic class below names in `with`, built from its type argument's serializer. */
 class SerBoxSerializer<T>(
     private val inner: KSerializer<T>,
 ) : KSerializer<SerCustomBox<T>> {
@@ -191,7 +186,6 @@ class SerCustomBox<T>(
     val t: T,
 )
 
-/** An annotation that makes the classes it marks serializable. */
 @MetaSerializable
 @Target(AnnotationTarget.CLASS)
 annotation class SerMeta
@@ -201,7 +195,6 @@ class SerMetaUser(
     val a: Int,
 )
 
-/** A companion property that holds a nested object whose own `serializer()` the adopter wrote. */
 @Serializable
 class SerNestedHelper(
     val a: Int,
@@ -215,7 +208,6 @@ class SerNestedHelper(
     }
 }
 
-/** A class with child serializers whose companion keeps an array of the adopter's own lazy values. */
 @Serializable
 class SerLazies(
     val c: SerColor,
@@ -226,19 +218,16 @@ class SerLazies(
     }
 }
 
-/** A class that is not serializable, with a `serializer()` the plugin's descriptor matches. */
 class SerNotWithSerializer {
     companion object {
         fun serializer(): KSerializer<SerPlain> = SerPlain.serializer()
     }
 }
 
-/** An object that is not serializable, with a `serializer()` the plugin's descriptor matches. */
 object SerNotObject {
     fun serializer(): KSerializer<SerPlain> = SerPlain.serializer()
 }
 
-/** A serializable class whose companion has the adopter's own `generatedSerializer()`, with no `@KeepGeneratedSerializer`. */
 @Serializable
 class SerFakeKept(
     val a: Int,
@@ -248,7 +237,6 @@ class SerFakeKept(
     }
 }
 
-/** A serializable class whose companion has the adopter's `serializer` with a parameter the plugin's does not take. */
 @Serializable
 class SerOneParameter(
     val a: Int,
@@ -258,7 +246,6 @@ class SerOneParameter(
     }
 }
 
-/** A nested class held in a companion property of its own name, with the adopter's own `serializer()`. */
 @Serializable
 class SerHelperNamed(
     val a: Int,
@@ -272,11 +259,9 @@ class SerHelperNamed(
     }
 }
 
-/** A plain annotation, which does not make a class serializable. */
 @Target(AnnotationTarget.CLASS)
 annotation class SerMarker
 
-/** A class with an annotation of this build that is not serializable, with a `serializer()` the plugin's descriptor matches. */
 @SerMarker
 class SerAnnotatedNot {
     companion object {
@@ -284,13 +269,11 @@ class SerAnnotatedNot {
     }
 }
 
-/** A class that is not serializable whose companion is. */
 class SerHost {
     @Serializable
     companion object
 }
 
-/** A nested class held in a `@JvmField` companion property of its own name, whose backing field is public. */
 @Serializable
 class SerJvmFieldHelper(
     val a: Int,
@@ -305,7 +288,6 @@ class SerJvmFieldHelper(
     }
 }
 
-/** The same through a `lateinit` companion property, whose backing field is public. */
 @Serializable
 class SerLateinitHelper(
     val a: Int,
@@ -320,7 +302,6 @@ class SerLateinitHelper(
     }
 }
 
-/** A constant of the same name as a nested class, whose field is an `int`. */
 @Serializable
 class SerConstHelper(
     val a: Int,
@@ -335,7 +316,6 @@ class SerConstHelper(
     }
 }
 
-/** A serializable class with a private companion. */
 @Serializable
 class SerPrivateCompanion(
     val a: Int,
@@ -343,7 +323,6 @@ class SerPrivateCompanion(
     private companion object
 }
 
-/** An enum held in a companion property of its own name, with the adopter's own `serializer()`. */
 @Serializable
 class SerEnumHelper(
     val a: Int,
@@ -360,7 +339,6 @@ class SerEnumHelper(
     }
 }
 
-/** An interface held in a `@JvmField` companion property of its own name. */
 @Serializable
 class SerInterfaceHelper(
     val a: Int,
@@ -377,7 +355,6 @@ class SerInterfaceHelper(
     }
 }
 
-/** A sealed class held in a companion property of its own name. */
 @Serializable
 class SerSealedHelper(
     val a: Int,
@@ -393,13 +370,11 @@ class SerSealedHelper(
     }
 }
 
-/** A generic class that is not serializable whose companion is: the companion's `serializer()` takes no type serializers. */
 class SerGenericHost<T> {
     @Serializable
     companion object
 }
 
-/** A class with a private constructor and a hidden one, held in a companion property of its own name. */
 @Serializable
 class SerHiddenHelper(
     val a: Int,
@@ -420,7 +395,6 @@ class SerHiddenHelper(
     }
 }
 
-/** A data class with only private constructors, held in a companion property of its own name. */
 @Serializable
 class SerDataHelper(
     val a: Int,
@@ -442,7 +416,6 @@ class SerDataHelper(
     }
 }
 
-/** A serializable class with only private constructors, held in a companion property of its own name. */
 @Serializable
 class SerSerializableHelper(
     val a: Int,

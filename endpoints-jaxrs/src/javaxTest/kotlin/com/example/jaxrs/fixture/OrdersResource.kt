@@ -7,18 +7,11 @@ import javax.ws.rs.POST
 import javax.ws.rs.Path
 import javax.ws.rs.PathParam
 
-/** A custom verb annotation, resolved through its own `@HttpMethod` meta-annotation, not by name. */
 @Target(AnnotationTarget.FUNCTION)
 @Retention(AnnotationRetention.RUNTIME)
 @HttpMethod("PURGE")
 annotation class PURGE
 
-/**
- * A `javax.ws.rs` resource fixture proving
- * [dev.otherlode.instrumentation.endpoints.jaxrs.JaxRsModule] end to end: an ordinary
- * verb-and-path method, a method carrying only a verb, two methods this module's own test never
- * calls, a sub-resource locator, and a custom verb built on `@HttpMethod`.
- */
 @Path("/orders")
 class OrdersResource {
     @GET

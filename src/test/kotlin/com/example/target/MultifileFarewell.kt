@@ -3,11 +3,6 @@
 
 package com.example.target
 
-/**
- * The second file of `MultifileText`. Its default argument gives the facade a synthetic
- * `multifileFarewell$default` that forwards to the part's own, and its property gives the facade a
- * getter forwarder.
- */
 fun multifileFarewell(
     name: String,
     times: Int = 1,

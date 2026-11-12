@@ -216,8 +216,7 @@ class AgentTest {
         }
     }
 
-    // Other test classes in the same Gradle worker can leave otherlode-* threads running, so the tests
-    // compare the threads alive before and after a call.
+    // Other test classes in the same Gradle worker can leave otherlode-* threads running.
     private fun currentThreads(): Set<Thread> = Thread.getAllStackTraces().keys.toSet()
 
     private fun threadsStartedSince(before: Set<Thread>): List<String> = (currentThreads() - before).map { it.name }
@@ -398,9 +397,6 @@ class AgentTest {
         val instrumentation = ByteBuddyAgent.install()
         val before = currentThreads()
 
-        // A package nothing in this JVM loads keeps the transformer off real classes. The first flush falls at a
-        // random point in the one-hour interval, so it rarely comes before stop() stops the scheduler and removes
-        // the shutdown hook.
         val running =
             Agent.start(
                 "includePackages=dev.otherlode.neverloaded.fixture,flushIntervalSeconds=3600",

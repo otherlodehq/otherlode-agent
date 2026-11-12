@@ -180,7 +180,7 @@ class BranchSiteAnalyzerTest {
         val site = analysis.defaultSites.singleOrNull { it.defaultName == "f\$default" }
         assertEquals(plain.optionalBits, site?.optionalBits, "the same optional parameters must be found in JaCoCo's output")
         assertEquals(plain.parameterNames, site?.parameterNames)
-        assertEquals(mapOf(1 to 7, 2 to 8, 3 to 9), plain.defaultLines)
+        assertEquals(mapOf(1 to 6, 2 to 7, 3 to 8), plain.defaultLines)
         assertEquals(
             plain.defaultLines,
             site?.defaultLines,

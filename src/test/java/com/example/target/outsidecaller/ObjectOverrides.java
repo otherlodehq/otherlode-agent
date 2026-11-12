@@ -1,6 +1,5 @@
 package com.example.target.outsidecaller;
 
-/** Overrides the three {@code Object} methods a collector sees most. */
 public class ObjectOverrides {
     @Override
     public String toString() {

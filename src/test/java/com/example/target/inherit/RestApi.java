@@ -3,7 +3,6 @@ package com.example.target.inherit;
 import jakarta.ws.rs.GET;
 import jakarta.ws.rs.Path;
 
-/** A JAX-RS resource interface. */
 public interface RestApi {
     @GET
     @Path("hello")

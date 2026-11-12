@@ -1,9 +1,5 @@
 package com.example.target.keypairs
 
-/**
- * Two conditions in one method, each on its own `Int` local. With a `LocalVariableTable`, `x` and
- * `y` fingerprint distinctly; stripped of one, both read as a bare `ILOAD` and collide.
- */
 class TwoLocalsSameType {
     fun check(
         x: Int,

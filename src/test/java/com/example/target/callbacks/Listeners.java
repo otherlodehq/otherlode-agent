@@ -9,7 +9,6 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.ModelAttribute;
 
-/** Methods that carry callback annotations in each place and order the agent reads. */
 public class Listeners implements Runnable {
     @Inject
     public Listeners() {}

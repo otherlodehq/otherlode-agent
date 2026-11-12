@@ -2,15 +2,6 @@ package com.example.target
 
 import java.util.function.IntUnaryOperator
 
-/**
- * Each shape of creation edge kotlinc emits. kotlinc compiles each lambda here to a
- * private static `<method>$lambda$N` body, reached through an `invokedynamic` whose bootstrap is
- * `LambdaMetafactory`. The one in [nested] creates a second lambda inside its own body. The one in
- * [capturing] takes `offset` as a leading parameter, and the one in [capturingThis] takes the
- * receiver the same way. [samReference] hands a named method to a Java functional interface, and
- * [makesBodyClass] creates an object expression. [callsDefault] reaches a lambda through the
- * `$default` method that fills in [withDefault]'s default, a pass-through the call goes through.
- */
 class CreationEdgeTarget {
     private val base = 10
 

@@ -2,13 +2,6 @@ package com.example.target
 
 import com.example.library.Lib
 
-/**
- * Pass-throughs and bodies for reference attribution, which follows the same rules as
- * call edges: `Inner` reaches the private [secret] through the `access$secret` accessor kotlinc
- * generates on this class, [callsDefault] reaches [withDefault] through `withDefault$default`, whose
- * body evaluates the default, and [makesLambda] and [makesObject] create a lambda body and a body
- * class that each keep their own references.
- */
 class ReferenceAttributionTarget {
     private fun secret(): Lib.Secret? = null
 
@@ -34,7 +27,6 @@ class ReferenceAttributionTarget {
         }
 }
 
-/** Calls [ReferenceAttributionTarget.withDefault] from another class, through its cross-class `withDefault$default`. */
 class ReferenceDefaultCaller {
     fun call(target: ReferenceAttributionTarget): Any? = target.withDefault()
 }

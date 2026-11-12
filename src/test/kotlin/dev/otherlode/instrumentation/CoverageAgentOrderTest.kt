@@ -35,7 +35,6 @@ class CoverageAgentOrderTest {
         const val PROCESS_TIMEOUT_SECONDS = 120L
     }
 
-    // Outlives each test: every run is launched once and its files are read by several tests.
     private val tempDir: Path = Files.createTempDirectory("otherlode-coverage-agent-order")
 
     @AfterAll

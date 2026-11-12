@@ -891,8 +891,7 @@ private class DeclaringModule(
     private val failRewrite: Boolean = false,
     private val throwAfterDeclaring: Boolean = false,
     private val throwOnlyAfterFirst: Boolean = false,
-    // The name is unique per instance: a module disabled through `moduleFailed` stays disabled for the life
-    // of the shared test JVM.
+    // Unique per instance: a module disabled through `moduleFailed` stays disabled for the life of the shared test JVM.
     private val moduleName: String = "declaring-${System.nanoTime()}",
     private val template: String = "/declared-in-transform",
     private val failure: Throwable = IllegalStateException("module gave up after declaring"),

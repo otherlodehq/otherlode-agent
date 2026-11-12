@@ -131,7 +131,7 @@ class GuardedCodeInstrumentationTest {
 
     @Test
     fun `an elvis with return on one line leaves that line partly guarded by the null outcome`() {
-        // kotlinc tests `ifnonnull`, so the fall-through is the null side that returns.
+        // kotlinc tests `ifnonnull`, so the fall-through is the null side.
         val site = sites("elvis").single()
         val nullSide = site.outcome(BranchRole.FALL_THROUGH)
         val nonNullSide = site.outcome(BranchRole.TAKEN)

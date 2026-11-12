@@ -2,7 +2,6 @@ package com.example.target
 
 import java.io.Closeable
 
-/** Branch outcomes of each routine shape, and of the shapes that stay findings. */
 class RoutineTarget {
     private lateinit var name: String
 
@@ -16,7 +15,6 @@ class RoutineTarget {
 
     fun elvisConstant(value: String?): String = value ?: "none"
 
-    /** A finally body reading a local of its own, which sits in a different slot in each copy. */
     fun finallyWithLocal(
         resource: java.io.Closeable?,
         body: () -> Unit,
@@ -29,7 +27,6 @@ class RoutineTarget {
         }
     }
 
-    /** A finally body with a loop of its own. */
     fun finallyWithLoop(
         xs: IntArray,
         body: () -> Unit,
@@ -43,7 +40,6 @@ class RoutineTarget {
         return count
     }
 
-    /** A try expression whose catch recovers with a value. */
     fun caughtGuardExpression(
         value: String?,
         retryable: Boolean,
@@ -55,7 +51,7 @@ class RoutineTarget {
             if (retryable) -1 else throw e
         }
 
-    /** The try block never completes normally, so kotlinc emits the finally body only on the exception path. */
+    // The try block never completes normally, so kotlinc emits the finally body only on the exception path.
     fun loopForeverFinally(
         queue: java.util.concurrent.BlockingQueue<String>,
         running: Boolean,
@@ -67,7 +63,6 @@ class RoutineTarget {
         }
     }
 
-    /** The null side counts, which is the adopter's own logic, not a default. */
     fun countMissing(values: Array<String?>): Int {
         var missing = 0
         for (value in values) {

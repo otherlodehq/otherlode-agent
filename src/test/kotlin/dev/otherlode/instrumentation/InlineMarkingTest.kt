@@ -45,7 +45,6 @@ class InlineMarkingTest {
         val target = Class.forName("com.example.target.InlineTarget", true, fixtureLoader())
         target.getDeclaredConstructor().newInstance()
 
-        // member has an optional parameter, so it also owns an OPTIONAL_ARGUMENT probe with the same methodName.
         val probes =
             registry
                 .manifest(ResourceAttributes("test", null, "instance-1", null, "run-1"))

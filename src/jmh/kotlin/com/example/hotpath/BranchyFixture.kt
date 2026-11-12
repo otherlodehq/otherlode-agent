@@ -2,7 +2,6 @@ package com.example.hotpath
 
 import dev.otherlode.benchmark.HotPathShape
 
-/** A loop over a `when` on an int, then an `if`, so it gets probes on its jumps and on each switch case. */
 class BranchyFixture : HotPathShape {
     override fun call(x: Int): Int {
         var total = 0

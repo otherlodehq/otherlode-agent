@@ -3,7 +3,6 @@ package com.example.target.inherit;
 import jakarta.ws.rs.PathParam;
 import jakarta.ws.rs.Produces;
 
-/** Implements a JAX-RS interface with and without JAX-RS annotations of its own. */
 public class RestImpl implements RestApi, Events {
     @Override
     public String hello() {

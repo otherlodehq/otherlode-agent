@@ -9,21 +9,13 @@ import net.bytebuddy.jar.asm.commons.ClassRemapper
 import net.bytebuddy.jar.asm.commons.SimpleRemapper
 import java.io.File
 
-/** Reads a compiled test fixture's bytes by internal name from Gradle's Kotlin or Java test output, or null. */
 fun fixtureLookup(internalName: String): ByteArray? =
     listOf("kotlin", "java")
         .map { File("build/classes/$it/test/$internalName.class") }
         .firstOrNull { it.isFile }
         ?.readBytes()
 
-/**
- * One fixture build's analysed sites and branch keys, named [name] for readable test failures.
- *
- * The key of one method's site is looked up by the site's position among its own method's
- * entries, not by [BranchSite.siteIndex]: a test states which site it means the same way a
- * reader would, "method `m`'s first site", without needing to know the class-wide index an
- * earlier edit may have shifted.
- */
+// A method ordinal counts sites within that method, not the class-wide BranchSite.siteIndex.
 class KeyedBuild(
     val name: String,
     val sites: List<BranchSite>,
@@ -35,34 +27,24 @@ class KeyedBuild(
         methodOrdinal: Int,
     ): BranchSite = sites.filter { it.methodName == methodName }[methodOrdinal]
 
-    /** The branch key of [methodName]'s [methodOrdinal]-th tracked site, outcome [outcome]; null when unnamed. */
     fun keyOf(
         methodName: String,
         methodOrdinal: Int = 0,
         outcome: Int = 0,
     ): String? = keys[siteAt(methodName, methodOrdinal).siteIndex to outcome]
 
-    /**
-     * The branch key of each case of [methodName]'s one kept rebuilt switch, by the text of its
-     * label, and its default's key under `default`.
-     */
     fun keysByLabel(methodName: String): Map<String, String?> {
         val site = sites.single { it.methodName == methodName && it.dropReason == null && it.caseLabels != null }
         val labels = site.caseLabels!!.map { it.text } + "default"
         return labels.withIndex().associate { (offset, label) -> label to keys[site.siteIndex to offset] }
     }
 
-    /** The site key of [methodName]'s one kept rebuilt switch. */
     fun siteKeyOf(methodName: String): String? {
         val site = sites.single { it.methodName == methodName && it.dropReason == null && it.caseLabels != null }
         return siteKeys[site.siteIndex]
     }
 
-    /**
-     * The class-wide branch index [methodName]'s [methodOrdinal]-th site's [outcome] would get:
-     * the outcome slots of every earlier site in the class, dropped or kept, plus [outcome]
-     * itself. Mirrors the running total `KeptBranchSite.of` keeps while it numbers outcomes.
-     */
+    // Must match the running total KeptBranchSite.of keeps while it numbers outcomes.
     fun branchIndexOf(
         methodName: String,
         methodOrdinal: Int = 0,
@@ -73,19 +55,12 @@ class KeyedBuild(
     }
 }
 
-/** Reads a compiled Kotlin test fixture's own bytes from Gradle's test class output. */
 fun kotlinFixtureBytes(simpleName: String): ByteArray =
     File("build/classes/kotlin/test/com/example/target/keypairs/$simpleName.class").readBytes()
 
-/** Reads a compiled Java test fixture's own bytes from Gradle's test class output. */
 fun javaFixtureBytes(simpleName: String): ByteArray =
     File("build/classes/java/test/com/example/target/keypairs/$simpleName.class").readBytes()
 
-/**
- * Renames [bytes]'s own class from [fromInternal] to [toInternal] with ByteBuddy's shaded ASM
- * `ClassRemapper`, carrying every self-reference (a field of its own type, a call to its own
- * method, its own constructor descriptor) along with it.
- */
 fun renamedTo(
     bytes: ByteArray,
     fromInternal: String,
@@ -96,14 +71,6 @@ fun renamedTo(
     return writer.toByteArray()
 }
 
-/**
- * Renames [v1SimpleName] and [v2SimpleName]'s compiled classes to one common name and analyses
- * each under it, so [BranchKeys.compute] sees the same class name for both builds, the same way a
- * service's own class name never changes across a release. [bytesOf] chooses which language's test
- * output to read from; [includePackages] controls in-scope inline resolution the same way
- * `InlinedCopyAnalysisTest` does. [lookup] reads another class's bytes, such as an enum switch's
- * map class, by internal name.
- */
 fun keyedBuildsOf(
     v1SimpleName: String,
     v2SimpleName: String,

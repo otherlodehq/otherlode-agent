@@ -7,10 +7,6 @@ import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
-/**
- * This suite runs against the testkit's shadow jar, as an adopter's test classpath does. The wire
- * module and protobuf-java are inside it only under the testkit's own prefix.
- */
 class TestkitJarTest {
     @Test
     fun `the testkit loads from its shadow jar, with the wire module and protobuf relocated`() {

@@ -1,6 +1,6 @@
 package com.example.probewindow;
 
-/** An interface with a default method, so initializing an implementation initializes it, and a constant holding an implementation. */
+// The default method makes initializing an implementation initialize this interface.
 public interface Filter {
     Filter PLAIN = new Filter() {
         @Override
