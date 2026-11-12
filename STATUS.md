@@ -19,7 +19,11 @@ multi-tenant backend.
    38944648115 on `1332f3f` (2026-10-16). Run the whole
    `benchmark-overhead` workflow by hand on the commit to tag, `f74924b4`
    or later, since the direct-path code changed the export path, and take
-   every figure on both pages from that one run. The scheduled
+   every figure on both pages from that one run. That run is done: workflow
+   run 43093569832 on `ab8be2c8` (2026-11-11; startup and headline from
+   attempt 2 after GitHub infrastructure failures, ceiling from attempt 1),
+   all three jobs green with artifacts. Left: copy its figures into both
+   pages. The scheduled
    run on `98d076e6` (2026-11-11) gave startup +23.7% and +28.1% with the
    static baseline. Its ceiling job failed because the `none` variant
    used 0.88 of its core, under the 90% floor, which is runner noise. The
