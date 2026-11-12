@@ -85,7 +85,7 @@ class ExportScheduler(
     /** What the run can see of the verifier's rejections, drained after the sweep on every flush. */
     private val verifierWatch: VerifierRejectionWatch = VerifierRejectionWatch.NOT_WATCHED,
     /**
-     * Whether the run's class listing missed a root (ADR 0085), stamped on every manifest. Once it
+     * Whether the run's class listing missed a root, stamped on every manifest. Once it
      * returns true it must keep returning true.
      */
     private val classListingBlind: () -> Boolean = { false },
@@ -96,9 +96,9 @@ class ExportScheduler(
     private val beforeManifest: (graceMillis: Long, finalFlush: Boolean) -> Unit = { _, _ -> },
     /** Milliseconds since the epoch, for the times a flush stamps. */
     private val clock: () -> Long = System::currentTimeMillis,
-    /** Whether the run counts as starting until its class loading settles (ADR 0086). */
+    /** Whether the run counts as starting until its class loading settles. */
     private val hasStartingPhase: Boolean = false,
-    /** Milliseconds on a clock that only moves forward, for how long the run has been starting (ADR 0086). */
+    /** Milliseconds on a clock that only moves forward, for how long the run has been starting. */
     private val monotonicMillis: () -> Long = { System.nanoTime() / 1_000_000 },
 ) {
     private val log by agentLogger(ExportScheduler::class.java.name)
@@ -1165,7 +1165,7 @@ class ExportScheduler(
         // Built at run time, since `shadowJar` rewrites a constant that starts with `kotlin`.
         private val KOTLINX_PACKAGE = listOf("kot", "linx").joinToString("")
 
-        /** Flush intervals after the agent's start at which a run stops counting as starting (ADR 0086). */
+        /** Flush intervals after the agent's start at which a run stops counting as starting. */
         const val STARTING_CAP_INTERVALS: Long = 10
 
         /** How long after start the unseen callback annotations are first judged. */

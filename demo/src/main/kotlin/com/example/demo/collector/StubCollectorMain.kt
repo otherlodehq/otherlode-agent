@@ -836,7 +836,7 @@ private fun respondBadRequest(
 internal fun printNeverHitReport() {
     // An optional-argument probe reading zero means its parameter is never omitted, which is
     // ALWAYS SUPPLIED, not dead code, so it is excluded here entirely and reported by
-    // printOmissionReport instead. See ADR 0021.
+    // printOmissionReport instead.
     val failedToInitialize = failedToInitializeClassNames() + classesWithInitializerRunning()
     val judgeableKeys =
         manifestProbes.keys.filter {
@@ -848,11 +848,11 @@ internal fun printNeverHitReport() {
     val (inlineNeverHit, notInlineNeverHit) = neverHitKeys.partition { manifestProbes[it]?.inline == true }
     // A generated probe, such as a data class's copy or an enum's values, is kept and counted,
     // but the compiler will emit it again regardless of what the adopter does, so a zero hit
-    // total is not a finding the adopter can act on. See ADR 0026.
+    // total is not a finding the adopter can act on.
     val (generatedNeverHit, notGeneratedNeverHit) =
         notInlineNeverHit.partition { manifestProbes[it]?.generatedBy != GeneratedBy.GENERATED_BY_UNSPECIFIED }
     // An unread shape is compiler output the agent could not read, in a method or a branch probe
-    // of one. It is kept and listed apart under its family, never a finding. See ADR 0054.
+    // of one. It is kept and listed apart under its family, never a finding.
     val (unreadProbeNeverHit, judgeableNeverHit) =
         notGeneratedNeverHit.partition { manifestProbes[it]?.unreadShape != UnreadShape.UNREAD_SHAPE_UNSPECIFIED }
     val judgement = judgeClasses()
@@ -901,7 +901,7 @@ internal fun printNeverHitReport() {
         }
     }
     // Kotlin inline functions copy their body into the caller, so their own probe reads near
-    // zero however often they run: no "never hit" claim is made about them. See ADR 0022.
+    // zero however often they run: no "never hit" claim is made about them.
     println("inline (not judged): ${inlineNeverHit.size}")
     println("generated (not judged): ${generatedNeverHit.size}")
     println("in class findings (reported by class): ${inClassFindings.size}")

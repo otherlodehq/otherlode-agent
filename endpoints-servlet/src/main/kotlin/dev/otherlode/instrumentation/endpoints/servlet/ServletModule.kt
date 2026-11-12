@@ -103,7 +103,7 @@ private class ServletApiGate : ElementMatcher<ClassLoader?> {
 
 /**
  * Endpoint module for plain servlets, covering the `javax.servlet` and `jakarta.servlet`
- * namespaces with one module compiled against Servlet 4.0. See ADR 0074.
+ * namespaces with one module compiled against Servlet 4.0.
  *
  * A request counts at the entry of the servlet's public `service(ServletRequest,
  * ServletResponse)`, against the mapping the container matched. Exactly one of the frames a

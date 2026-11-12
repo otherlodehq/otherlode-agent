@@ -16,7 +16,7 @@ import kotlinx.serialization.descriptors.SerialDescriptor
 import kotlinx.serialization.encoding.Decoder
 import kotlinx.serialization.encoding.Encoder
 
-// Fixtures for the kotlinx.serialization plugin's output (ADR 0078). The plugin fills in each
+// Fixtures for the kotlinx.serialization plugin's output. The plugin fills in each
 // $serializer class, each companion's serializer() and the lazy cached serializer.
 
 @Serializable

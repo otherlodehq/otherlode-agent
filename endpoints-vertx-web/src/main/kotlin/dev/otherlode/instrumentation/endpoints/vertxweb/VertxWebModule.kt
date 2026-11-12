@@ -28,7 +28,7 @@ private const val ADVICE_PACKAGE = "dev.otherlode.endpoints.vertxweb"
  *
  * An endpoint is a route with a context handler that is not a sub-router mount. The exit of
  * `RouteState.matches` counts a route that matched, so a request that passes through several routes
- * counts each, and a `reroute` counts again. A removed route is not retracted. See ADR 0073.
+ * counts each, and a `reroute` counts again. A removed route is not retracted.
  */
 class VertxWebModule : EndpointModule {
     override val name: String = MODULE_NAME

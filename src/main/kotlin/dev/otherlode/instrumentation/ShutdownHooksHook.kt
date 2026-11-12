@@ -20,7 +20,7 @@ import java.lang.instrument.Instrumentation
 
 /**
  * Weaves the entry of `java.lang.ApplicationShutdownHooks.runHooks` so each run hands the class's
- * `hooks` field to the bootstrap seam in [OtherlodeShutdownHooks] (ADR 0084). Install it after the
+ * `hooks` field to the bootstrap seam in [OtherlodeShutdownHooks]. Install it after the
  * bootstrap holder. When anything fails, it logs a WARNING, tries to undo the weave and [install] returns false.
  *
  * [targetClass] and [loader] name the class to weave and the loader that defines it.

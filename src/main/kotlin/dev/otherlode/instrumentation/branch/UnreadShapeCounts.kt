@@ -4,7 +4,7 @@ import dev.otherlode.export.UnreadShape
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicLong
 
-/** Why a class's plumbing-shaped methods are reported as unread shapes; see ADR 0054. */
+/** Why a class's plumbing-shaped methods are reported as unread shapes. */
 enum class UnreadCause {
     /** The class names a Scala 3 release the agent has not read. */
     UNREAD_RELEASE,
@@ -15,7 +15,7 @@ enum class UnreadCause {
     /** The class can hold no hand-written plumbing, such as an enum's companion, so its unmatched plumbing is unread whatever the release. */
     UNREAD_STRUCTURE,
 
-    /** The class holds compiler-plugin members beside hand-written ones that the bytecode does not tell apart (ADR 0078). */
+    /** The class holds compiler-plugin members beside hand-written ones that the bytecode does not tell apart. */
     PLUGIN_FILLED,
 }
 

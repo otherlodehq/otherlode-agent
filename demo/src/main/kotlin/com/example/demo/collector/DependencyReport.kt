@@ -10,7 +10,7 @@ internal data class DependencyIdentityView(
 ) {
     /**
      * `group:artifact`, the cross-instance name, with `\`, `:` and `,` in either id escaped by a
-     * backslash as the server escapes them (its ADR 0086). The group is empty for a filename-derived
+     * backslash as the server escapes them. The group is empty for a filename-derived
      * identity.
      */
     val key: String get() = "${escape(groupId)}:${escape(artifactId)}"

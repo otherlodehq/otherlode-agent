@@ -32,7 +32,7 @@ import java.util.jar.Manifest
  * It lists what [ClasspathWalker] reaches from [classPath], including Spring Boot fat jars and
  * exploded applications. A class counts by [isClassEntry], or as a multi-release entry by its path
  * after `META-INF/versions/N/`, and is listed when [TypeMatchPolicy.isIncluded] admits it. A
- * complete listing hands the keys of the roots it read and the listed names to [onRoots] (ADR 0085).
+ * complete listing hands the keys of the roots it read and the listed names to [onRoots].
  */
 class ClassLister(
     private val includes: List<String>,
