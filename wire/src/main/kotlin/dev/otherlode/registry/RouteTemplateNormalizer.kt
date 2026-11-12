@@ -4,18 +4,19 @@ package dev.otherlode.registry
  * Turns a framework's own route spelling into one identity template, so the same endpoint
  * compares equal across frameworks and across differently spelled path parameters.
  *
- * The grammar strips regex constraints, collapses wildcards, spells an optional parameter one way
- * and keeps everything else as written.
+ * The grammar strips regex constraints, collapses wildcards and runs of slashes, and spells an
+ * optional parameter one way. [normalize] gives the full set of rules.
  */
 object RouteTemplateNormalizer {
     /**
      * Produces the identity route template for [verbatim], optionally prefixed with
      * [contextPath] before the rest of the grammar runs.
      *
-     * The result always starts with a slash and never ends with one, except the root template
-     * `/`, which is also what an empty or blank [verbatim] normalises to. Runs of slashes
-     * collapse to one, and a slash inside a parameter's braces belongs to its regex, not to the
-     * path. A path parameter keeps its name and the literal text around it, so `{id:\d+}.{ext}`
+     * The result always starts with a slash. It never ends with one, except the root template `/`
+     * and a result with an unclosed brace. An empty or blank [verbatim] gives the normalised
+     * [contextPath], which is `/` when [contextPath] is null or blank. Runs of slashes collapse to
+     * one, except after an unclosed brace, and a slash inside a parameter's braces belongs to its
+     * regex, not to the path. A path parameter keeps its name and the literal text around it, so `{id:\d+}.{ext}`
      * becomes `{id}.{ext}`. A regex constraint inside the braces is dropped, and whitespace around the
      * name is trimmed. Ktor's `{name?}` optional marker is kept.
      * A whole-segment wildcard or tail collapses to one `*` segment: `*`, `**`, `{...}`,
@@ -24,7 +25,8 @@ object RouteTemplateNormalizer {
      * becomes a segment of its own, `{name?}`, so `/books{/id}` is `/books/{id?}`. A form whose
      * meaning would be a guess, such as `{.name}`, `{;name}`, `{name*}`, `{a,b}`, `{?q}`, `{&q}`,
      * `{#f}`, `{/a,b}`, a `<name>` sharing its segment with other text, or an unclosed brace, is
-     * kept as written.
+     * kept as written, except that the wildcard rules above apply, any text after a `:` in its
+     * braces is dropped and the rest is trimmed.
      */
     fun normalize(
         verbatim: String,

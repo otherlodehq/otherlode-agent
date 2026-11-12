@@ -22,8 +22,9 @@ import dev.otherlode.export.UnreadShape as WireUnreadShape
 public enum class ProbeKind { METHOD, BRANCH, OPTIONAL_ARGUMENT, INITIALIZER_RETURNED, INITIALIZER_THREW }
 
 /**
- * What compiled a method into existence rather than the adopter writing its body. A [ProbeRef]
- * whose method is not generated holds null instead of a value of this enum. Values may be added in a minor release, so a `when` over this enum needs an `else` branch.
+ * What compiled a method into existence rather than the adopter writing its body. Every [ProbeRef]
+ * the collector returns holds null instead of a value of this enum. Values may be added in a minor
+ * release, so a `when` over this enum needs an `else` branch.
  */
 public enum class GeneratedBy {
     /**
@@ -32,10 +33,16 @@ public enum class GeneratedBy {
      */
     ENUM,
 
-    /** A data class's `componentN` and `copy`, and whichever of `equals`, `hashCode` and `toString` the adopter did not write. */
+    /**
+     * A data class's `componentN` and `copy`, and whichever of `equals`, `hashCode` and `toString` the
+     * adopter did not write, or a data object's compiler-written `equals`, `hashCode` and `toString`.
+     */
     DATA_CLASS,
 
-    /** A `$DefaultImpls` method that only forwards to the interface's own default method, or a class's stub that only forwards to `$DefaultImpls`. */
+    /**
+     * A `$DefaultImpls` method that only forwards to the interface's own default method or to a
+     * superinterface's `$DefaultImpls`, or a class's stub that only forwards to `$DefaultImpls`.
+     */
     DEFAULT_IMPLS,
 
     /** A Java record's `equals`, `hashCode` or `toString`. */
@@ -65,7 +72,11 @@ public enum class GeneratedBy {
      */
     VALUE_CLASS,
 
-    /** What the kotlinx.serialization compiler plugin generates: a `$serializer` class's members and a companion's `serializer()`. */
+    /**
+     * What the kotlinx.serialization compiler plugin generates: a `$serializer` class's members, the
+     * `serializer()` or `generatedSerializer()` of a companion or a serializable object, and the lambda
+     * that builds a lazy serializer.
+     */
     KOTLINX_SERIALIZATION,
 
     /** A trait's concrete method scalac mixes into a class as a forwarder, or the trait's static entry for it. */
@@ -81,7 +92,10 @@ public enum class GeneratedBy {
  * minor release, so a `when` over this enum needs an `else` branch.
  */
 public enum class RoutineKind {
-    /** The null side of a null check whose path calls nothing before it rejoins the other side or leaves the method. */
+    /**
+     * The null side of a null check whose path only loads constants or locals, stores locals, pops,
+     * duplicates or swaps stack values, casts or jumps before it rejoins the other side or returns.
+     */
     NULL_DEFAULT,
 
     /** The path only builds an exception and throws it. */
@@ -156,8 +170,8 @@ public enum class EndpointDiscoverySource { REGISTRATION, DISPATCH }
  */
 public enum class DependencyDiscoverySource {
     /**
-     * Listed from the startup classpath, including every jar under a Spring Boot jar's `BOOT-INF/lib` or a
-     * war's `WEB-INF/lib` or `WEB-INF/lib-provided`.
+     * Listed from the startup classpath, including every jar under an executable Spring Boot jar's
+     * `BOOT-INF/lib` or an executable war's `WEB-INF/lib` and `WEB-INF/lib-provided`.
      */
     STARTUP_CLASSPATH,
 
@@ -186,15 +200,18 @@ public data class DisabledEndpointModule internal constructor(
  */
 public enum class DisabledEndpointModuleKind {
     /**
-     * A `LinkageError`, wherever it was caught, or another sign that the framework release differs from
-     * the one the module was built for.
+     * A `LinkageError`, or another sign that the framework release differs from the one the module was
+     * built for. A `LinkageError` from the servlet module's route walk reads [ROUTE_WALK_FAILED].
      */
     LINKAGE_ERROR,
 
     /** Any other throw from the module's advice, or a request the advice could not read. */
     ADVICE_FAILED,
 
-    /** The module's own `transform` threw, or a framework class it hooks failed to weave. */
+    /**
+     * The module's matcher or its own `transform` threw, a framework class it hooks failed to weave, or
+     * that class's loader cannot see the agent's bootstrap package.
+     */
     TRANSFORM_FAILED,
 
     /** Walking a framework's route objects threw. */

@@ -37,9 +37,10 @@ import java.util.concurrent.TimeoutException
  *
  * The collector binds to the port named by the `otherlode.testkit.port` system property, defaulting
  * to 4319, the port of the agent's default `exportUrl`. The agent always needs `includePackages`:
- * without it the agent refuses to start and sends nothing. [beforeAll] waits once per test JVM for
- * a delta batch that arrives after it begins, for the number of seconds in the
- * `otherlode.testkit.startup.timeout.seconds` system property, defaulting to 15.
+ * without it the agent refuses to start and sends nothing. [beforeAll] waits for a delta batch that
+ * arrives after it begins, for the number of seconds in the `otherlode.testkit.startup.timeout.seconds`
+ * system property, defaulting to 15. Once one wait has succeeded, later test classes in the test JVM
+ * skip it.
  */
 public class OtherlodeExtension :
     BeforeAllCallback,
@@ -105,10 +106,10 @@ public class OtherlodeExtension :
         private var sharedCollector: OtherlodeTestCollector? = null
 
         /**
-         * The collector [beforeAll] started for this test JVM.
+         * The collector [OtherlodeExtension] started for this test JVM.
          *
-         * Throws [IllegalStateException] if no test class has run with [OtherlodeExtension]
-         * registered yet.
+         * Throws [IllegalStateException] if no test class with [OtherlodeExtension] registered has
+         * started the collector yet, as when binding its port failed.
          */
         @JvmStatic
         public fun collector(): OtherlodeTestCollector =

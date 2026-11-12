@@ -21,9 +21,9 @@ enum class ProbeKind { METHOD, BRANCH, OPTIONAL_ARGUMENT, INITIALIZER_RETURNED, 
  *
  * - [ENUM]: an enum's `values`, `valueOf` and `getEntries`, and a Scala 3 enum's plumbing.
  * - [DATA_CLASS]: a data class's `componentN` and `copy`, and the `equals`, `hashCode` and
- *   `toString` the adopter did not override.
- * - [DEFAULT_IMPLS]: a `$DefaultImpls` method that only forwards to the interface's default method,
- *   or a class's stub that only forwards to `$DefaultImpls`.
+ *   `toString` of a data class or data object that the adopter did not override.
+ * - [DEFAULT_IMPLS]: a `$DefaultImpls` method that only forwards to the interface's default method
+ *   or to another interface's `$DefaultImpls`, or a class's stub that only forwards to `$DefaultImpls`.
  * - [RECORD]: a Java record's `equals`, `hashCode` and `toString`.
  * - [JVM_OVERLOADS]: an overload `@JvmOverloads` adds, which only forwards to its `$default` twin.
  * - [MULTIFILE_FACADE]: a multi-file facade function that only forwards to a part class.
@@ -173,10 +173,12 @@ data class ProbeDelta(
 )
 
 /**
- * [finalFlush] is set only on the empty batch that ends the final flush of a graceful exit, after
- * every other send of that flush.
- * [dependencyDeltas] holds one entry per dependency whose loaded-class total changed since the last
- * delivered batch. [payloadSequence], [countsPendingSince] and [starting] are the run's delivery
+ * [finalFlush] is set only on the empty batch that ends the final flush of a graceful exit. It is
+ * sent once every other send of that flush has finished or run out of time, and a send that ran out
+ * of time can still deliver after it.
+ * [dependencyDeltas] holds entries for dependencies whose loaded-class total changed since it was
+ * last delivered, at most one per dependency. A flush can spread them over several batches.
+ * [payloadSequence], [countsPendingSince] and [starting] are the run's delivery
  * state when the batch was stamped, as [ProbeManifest] documents them: 0 and false until stamped.
  *
  * [flushComplete] is set on at most one batch of a flush, and only when the flush read its counts
@@ -270,7 +272,7 @@ data class ProbeLocation(
 }
 
 /**
- * Why code outside scope may call a method that no in-scope code calls. A method has at most one:
+ * Why code outside scope may call a method. A method has at most one:
  * an annotation wins over an override, and the first annotation in class-file order wins.
  * [typeName] is dotted, and what it names depends on [kind].
  */
@@ -289,10 +291,13 @@ enum class OutsideCallerKind {
     OVERRIDES_METHOD,
 
     /**
-     * The method, or one of its parameters, carries an annotation from the agent's list of callback
-     * annotations, directly or through meta-annotations, or the method takes one from a method it
-     * overrides. The type name is the annotation as written on the method that carries it, so a
-     * composed annotation is named, not the one it carries.
+     * The method carries an annotation from the agent's list of callback annotations, directly or
+     * through meta-annotations, or takes one from a method it overrides, or one of its parameters
+     * carries `@Observes` or `@ObservesAsync`. The type name is the annotation as written where the
+     * agent found it, so a composed annotation is named, not the one it carries. A method of an
+     * interface annotated `io.temporal.activity.ActivityInterface`, or one that implements such a
+     * method or holds its `$DefaultImpls` body, also has this kind, with that annotation as the type
+     * name.
      */
     CALLBACK_ANNOTATION,
 }
@@ -357,8 +362,9 @@ data class LineRange(
  * inlined copy is named at its origin, and a line copied from out-of-scope code is left out.
  *
  * [caseLabel] is set only for a [BranchRole.CASE] of a switch read back from a string or enum
- * lowering: the label the source names, as one [ConditionPartKind.CODE] part for an enum constant,
- * class pattern, integer or `null`, or one [ConditionPartKind.STRING_LITERAL] part for a string.
+ * lowering or from a `SwitchBootstraps` pattern switch: the label the source names, as one
+ * [ConditionPartKind.CODE] part for an enum constant, class pattern, integer or `null`, or one
+ * [ConditionPartKind.STRING_LITERAL] part for a string.
  * Such a case has no [caseKey].
  *
  * [routine] and [unreadShape] are exclusive. [routine] is [RoutineKind.NONE] when the outcome is not
@@ -391,7 +397,9 @@ data class BranchOutcome(
  *
  * [outcomes] lists a conditional's [BranchRole.TAKEN] then [BranchRole.FALL_THROUGH], or a switch's
  * [BranchRole.CASE] outcomes in instruction order then [BranchRole.DEFAULT]. A switch read back
- * from a lowering lists no default when its default only throws an exception the compiler added.
+ * from a lowering lists no default when its default only throws an exception the compiler added,
+ * and a case check of a string switch lowering lists one outcome when only a hash collision reaches
+ * the other.
  *
  * [guard] is the [BranchOutcome.branchIndex] of the innermost kept outcome that dominates this site,
  * or null when nothing in the method stands between its entry and the site.
@@ -440,9 +448,9 @@ data class ConditionPart(
 )
 
 /**
- * A class the JVM has loaded that reached no manifest, neither as a probed class nor as a skipped
- * one. The sweep finds it, so it carries no reason. [firstSeenUnreportedAt] is when a sweep first
- * found it.
+ * A class the include rules admit that the JVM loaded and the agent neither probed, skipped nor
+ * found nothing to probe in. The sweep finds it, so it carries no reason. [firstSeenUnreportedAt] is
+ * when a sweep first found it.
  */
 data class UnreportedClass(
     val className: String,
@@ -499,9 +507,10 @@ enum class CallEdgeKind {
      * The caller hands a body to someone else to run, so the body can only run after the caller
      * ran. It is the edge to the implementation method of a `LambdaMetafactory` `invokedynamic`,
      * whether a lambda body or a named method passed by reference. It is also the edge to each
-     * probed method of a body class the caller creates with `new` or reads with `getstatic
-     * INSTANCE`. The constructor edge of that `new`, and the initializer edge of that `getstatic`,
-     * stay [CALL] edges, since the caller runs them itself.
+     * probed method of a body class the caller creates with `new`, or whose static initializer a
+     * static field use of the caller runs, such as `getstatic INSTANCE`. The constructor edge of that
+     * `new`, and the initializer edge of that field use, stay [CALL] edges, since the caller runs them
+     * itself.
      */
     CREATES,
 }
@@ -510,11 +519,13 @@ enum class CallEdgeKind {
  * One caller method's static reference to one callee method, read from the caller's bytecode.
  *
  * [className], [methodName] and [methodDescriptor] name the callee as the caller's bytecode names
- * it; the agent never resolves a virtual call. [virtual] is true for `invokevirtual` and
+ * it, and the agent resolves no virtual call, with one exception: a virtual call to an abstract
+ * method of an in-scope interface also gives a non-virtual edge to the matching static body of that
+ * interface's `$DefaultImpls` class, when one exists. [virtual] is true for `invokevirtual` and
  * `invokeinterface`, false for `invokestatic` and `invokespecial`, except that a call to an in-scope
  * target its class declares private, static or final is non-virtual even when the instruction is
- * `invokevirtual`. A [CallEdgeKind.CREATES] edge takes it from the implementation handle's kind, or
- * from a body class method's access.
+ * `invokevirtual` or `invokeinterface`. A [CallEdgeKind.CREATES] edge takes it from the
+ * implementation handle's kind, or from a body class method's access.
  *
  * [kind] says whether the caller runs the callee or hands it off. An edge that takes the place of a
  * pass-through is [CallEdgeKind.CREATES] when either the edge to the pass-through or the
@@ -533,7 +544,7 @@ enum class CallEdgeKind {
  *
  * [implementedInterface] is set only on a [CallEdgeKind.CREATES] edge from an `invokedynamic`: the
  * dotted name of the interface the call site returns, such as `java.lang.Runnable`. Null on a
- * [CallEdgeKind.CALL] edge and on a creation edge from a body class's `new` or `getstatic INSTANCE`.
+ * [CallEdgeKind.CALL] edge and on a creation edge from a body class's `new` or static field use.
  * One body created for two interfaces gives two edges.
  */
 data class CallEdge(
@@ -550,9 +561,10 @@ data class CallEdge(
 /**
  * What a loaded class's own header says about it, sent once per class alongside its probes.
  *
- * [superClassName] is null only for `java.lang.Object`, which this agent never instruments. An
- * interface's [superClassName] is `java.lang.Object`. [sourceFile] is the class file's `SourceFile`
- * attribute as it appears, a file name and never a path, null when absent. [bodyKind] is
+ * [superClassName] is null for `java.lang.Object`, which this agent never instruments, and when the
+ * agent could not read the class's bytecode; [interfaceNames] is then empty. An interface's
+ * [superClassName] is `java.lang.Object`. [sourceFile] is the class file's `SourceFile` attribute
+ * exactly as it appears, null when absent. [bodyKind] is
  * [BodyKind.NONE] for a class that is not a body class, and [sourceName] is the name the source gave
  * a [BodyKind.LOCAL_CLASS], such as `Local` for `Foo$1Local`, null for every other kind.
  * [kotlinKind] is [KotlinKind.NONE] when the class carries no `kotlin.Metadata`.
@@ -570,8 +582,8 @@ data class ClassLocation(
 /**
  * What kind of body class a class is, read from its own class file. A body class exists only to
  * carry a body its creator hands to someone else, and has an `EnclosingMethod` attribute. A Kotlin
- * function or property reference class has no kind here: kotlinc marks it synthetic, so it never
- * reaches the wire.
+ * function or property reference class has no kind here: kotlinc marks it synthetic, so no
+ * [ClassLocation] or [DeclaredClass] describes it.
  */
 enum class BodyKind {
     /** The class has no `EnclosingMethod` attribute, so it is not a body class. */
@@ -599,7 +611,7 @@ enum class BodyKind {
  * two instances of the same (service, version), or in two runs of one pinned instance.
  *
  * [dependencies], [classReferences], [externalClasses] and [failedClasses] are delivered
- * incrementally, each entry sent once per instance.
+ * incrementally, each entry sent once per run.
  *
  * [referencesRecorded] is true when the instance records references at all, which it does only when
  * its include rules are set. [dependenciesListed] is true once every dependency from the startup
@@ -609,9 +621,9 @@ enum class BodyKind {
  *
  * [payloadSequence] numbers the delta batches and manifests a run sends, from 1. The payload with
  * the highest number says the run's current delivery state, whatever order they arrive in. 0 until
- * stamped. [countsPendingSince], in milliseconds since the epoch, is 0 when every hit the run has
- * sent in a delta batch was confirmed, otherwise the start of the flush in which its unconfirmed hits
- * began.
+ * stamped. [countsPendingSince], in milliseconds since the epoch, is 0 when the run has no
+ * unconfirmed hits or manifest content, otherwise the start of the flush in which that unconfirmed
+ * content began.
  *
  * [starting] is true on every payload the run sends before its application's class loading has
  * settled (agent ADR 0086 and ADR 0087), then false and never true again.
@@ -714,7 +726,8 @@ data class UnreadableClass(
 
 /**
  * An in-scope class with no concrete method to put a probe in, such as an interface with only
- * abstract methods or an annotation type. It never appears in a [ProbeManifest].
+ * abstract methods or an annotation type. A manifest never gives it probes, though it can list it as
+ * a [SkippedClass] or an [UnreportedClass].
  */
 data class UnprobedClass(
     val className: String,
@@ -722,15 +735,16 @@ data class UnprobedClass(
 )
 
 /**
- * Sent once per process, independent of [ProbeManifest]: an inventory of what exists on the
- * classpath under `includePackages`, built by reading bytecode directly rather than waiting for the
- * JVM to load it.
+ * Sent at most once per process, and only when `staticBaselineEnabled` is set, independent of
+ * [ProbeManifest]: an inventory of what exists on the classpath under `includePackages`, built by
+ * reading bytecode directly rather than waiting for the JVM to load it. A scan that fails, or that
+ * holds a class too large for one chunk, sends none.
  *
  * One scan may be delivered as several of these. Every chunk of a scan carries the same [resource]
  * and [scannedAt]; [chunkIndex] (0-based) and [chunkCount] say which part this is and how many to
  * expect. [externalClasses] maps the class names this chunk's declared classes reference to their
- * dependency, or to absent, in the chunk of the first class that references each name. [includeRules]
- * is null when the sender did not say.
+ * dependency, or to absent, in the chunk of the first class that references each name. A referenced
+ * name the agent has not mapped has no entry. [includeRules] is null when the sender did not say.
  */
 data class StaticBaseline(
     val resource: ResourceAttributes,
@@ -747,7 +761,8 @@ data class StaticBaseline(
 /**
  * The include and exclude rules the agent applied: dotted package or class name prefixes, as
  * configuration parsing leaves them. A prefix covers a name that equals it or continues it with `.`
- * or `$`. A class is in scope when some include prefix covers it and no exclude prefix does.
+ * or `$`. A class is in scope when some include prefix covers it and no exclude prefix does, and
+ * its name does not start with `dev.otherlode.`.
  */
 data class IncludeRules(
     val includePackages: List<String>,
@@ -755,9 +770,10 @@ data class IncludeRules(
 )
 
 /**
- * The names of the classes a run's build holds under [includeRules], sent once per process (agent
- * ADR 0070). They are read from jar central directories and class folders without reading a class
- * file. [classNames] are dotted, distinct and in ascending order.
+ * The names of the classes a run's build holds under [includeRules], sent at most once per process
+ * (agent ADR 0070): none when `classListingEnabled` is off or the listing would be partial. They are
+ * read from jar central directories and class folders without reading a class file. [classNames]
+ * are dotted, distinct and in ascending order.
  *
  * One listing may be delivered as several of these. Every chunk carries the same [resource],
  * [includeRules] and [listedAt]; [chunkIndex] (0-based) and [chunkCount] say which part this is and
@@ -787,12 +803,14 @@ enum class EndpointDiscoverySource { REGISTRATION, DISPATCH }
 enum class EndpointTemplateKind { PATH, REGEX, SERVLET_PATTERN }
 
 /**
- * One endpoint the framework serves. [endpointId] is per instance, like `classId`; cross-instance
- * identity is ([verb], [routeTemplate], [templateKind]). For a [EndpointTemplateKind.REGEX] or
+ * One endpoint the framework serves. [endpointId] is per run, like `classId`; cross-run identity
+ * is ([verb], [routeTemplate], [templateKind]). For a [EndpointTemplateKind.REGEX] or
  * [EndpointTemplateKind.SERVLET_PATTERN] endpoint, [routeTemplate] and [verbatimTemplate] are the
  * same text, never normalised.
  *
- * A record may be re-sent with the same [endpointId] when the handler fields are learned or change.
+ * A record may be re-sent with the same [endpointId] when the handler fields are learned or change,
+ * or when an endpoint first found at dispatch is registered, which turns [discoverySource] to
+ * [EndpointDiscoverySource.REGISTRATION].
  * [handlerClass] alone is set when only the handler object's class is known; all three handler fields
  * are set when the framework hands over a method.
  */
@@ -844,16 +862,25 @@ data class FrameworkMarker(
 
 /** What switched an endpoint module off. */
 enum class DisabledEndpointModuleKind {
-    /** Sent by an agent that predates the kind. */
+    /**
+     * No kind: sent by an agent that predates the kind, for a module disabled because the endpoint
+     * record buffer filled, and for a disable that fits none of the other kinds.
+     */
     UNSPECIFIED,
 
-    /** A `LinkageError`, wherever it was caught: the framework release differs from the one the module was built for. */
+    /**
+     * A `LinkageError`, or a framework that lacks an API the module needs: the framework release
+     * differs from the one the module was built for.
+     */
     LINKAGE_ERROR,
 
-    /** Any other throw from the module's advice. */
+    /** Any other throw from the module's advice, or a framework value the advice cannot use. */
     ADVICE_FAILED,
 
-    /** The module's own `transform` threw, or a framework class it hooks failed to weave. */
+    /**
+     * The module's matcher or its own `transform` threw, a framework class it hooks failed to weave,
+     * or the loader of that class cannot see the agent's bootstrap package.
+     */
     TRANSFORM_FAILED,
 
     /** Walking a framework's route objects threw. */
@@ -871,7 +898,11 @@ enum class DisabledEndpointModuleKind {
 
 /** How the agent learned of a dependency. */
 enum class DependencyDiscoverySource {
-    /** Listed from the startup classpath: `java.class.path`, or every jar under a fat jar's `BOOT-INF/lib`, `WEB-INF/lib` or `lib-provided`. */
+    /**
+     * Listed from the startup classpath: each `java.class.path` entry, the jars a manifest
+     * `Class-Path` reaches from one, and the library jars of a Spring Boot fat jar, executable war or
+     * exploded application.
+     */
     STARTUP_CLASSPATH,
 
     /**
@@ -887,8 +918,7 @@ enum class DependencyIdentitySource {
     POM_PROPERTIES,
 
     /**
-     * Never produced: a manifest's `Implementation-Title` is a display name, not an artifact ID.
-     * Kept so the wire number is not reused.
+     * Never produced. Its wire number stays reserved.
      */
     JAR_MANIFEST,
 
@@ -910,15 +940,17 @@ data class DependencyIdentity(
 )
 
 /**
- * One dependency this instance has seen: a jar that is not the adopter's own code.
+ * One dependency this run has seen: the jars that are not the adopter's own code and carry one set
+ * of `groupId:artifactId` pairs.
  *
- * [dependencyId] is per instance. Cross-instance identity is the sorted set of `groupId:artifactId`
+ * [dependencyId] is per run. Cross-run identity is the sorted set of `groupId:artifactId`
  * pairs in [identities], never [dependencyId]. A shaded jar that bundles several libraries carries
  * one identity per library.
  *
  * Sent once: a dependency discovered by load arrives on the flush after it was first seen.
- * [location] is for display only. [classCount] is the jar's total class count, when the listing
- * knows it.
+ * [location] is for display only. [location], the versions in [identities] and [classCount] come
+ * from the first such jar the agent found; [classCount] is that jar's total class count, when the
+ * listing knows it.
  */
 data class DependencyLocation(
     val dependencyId: Int,
@@ -956,8 +988,10 @@ data class ClassReferences(
 )
 
 /**
- * Where one referenced class name lives, sent once per class name per instance. [dependencyId]
- * refers to that instance's [DependencyLocation] records, whichever payload carries the mapping.
+ * Where one referenced class name lives. Manifests send each name once per run, and the static
+ * baseline chunk of the first declared class that references it carries the same mapping.
+ * [dependencyId] refers to that run's [DependencyLocation] records, whichever payload carries the
+ * mapping.
  * Exactly one of two things holds: the class maps to a dependency, so [dependencyId] is set, or no
  * loader could find it, so [absent] is true.
  */

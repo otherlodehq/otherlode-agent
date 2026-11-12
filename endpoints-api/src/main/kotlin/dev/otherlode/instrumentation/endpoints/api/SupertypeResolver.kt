@@ -34,7 +34,10 @@ open class SupertypeCache {
     /** Whether an earlier read has already shown [name] to be described, so its description needs no further check. */
     open fun isKnown(name: String): Boolean = isDefinable(name)
 
-    /** The class named [name] as [loader] defines it, or null when [loader] cannot load it. */
+    /**
+     * The class named [name] as [loader] loads it, or null when [loader] cannot load it. Answers are
+     * kept by [name] alone, so every call on one cache must pass the same loader.
+     */
     fun loadedClass(
         name: String,
         loader: ClassLoader?,
@@ -67,8 +70,8 @@ open class SupertypeCache {
 }
 
 /**
- * One cache per class loader, built by [create] and held weakly so a retired loader stays
- * collectible. A `null` loader gets a fresh cache on every call, which is the same as no cache.
+ * One cache per class loader, built by [create] and keyed weakly by the loader, so a retired
+ * loader stays collectible. A `null` loader gets a fresh cache on every call, which is the same as no cache.
  */
 class SupertypeCaches<C : SupertypeCache>(
     private val create: () -> C,
@@ -96,16 +99,16 @@ class SupertypeResolver(
     private val loader: WeakReference<ClassLoader>? = loader?.let { WeakReference(it) }
     private val isBootstrap = loader == null
 
-    /** [type]'s superclass, erased and readable, or null when there is none or it is [skipped]. */
+    /** [type]'s superclass, erased, or null when there is none or it is [skipped]. */
     fun superErasure(type: TypeDescription): TypeDescription? = locate { type.superClass }?.let(::describe)
 
-    /** [type]'s own declared interfaces, erased and readable, without those [skipped]. */
+    /** [type]'s own declared interfaces, erased, without those [skipped]. */
     fun interfaceErasures(type: TypeDescription): List<TypeDescription> = locateInterfaces(type).mapNotNull(::describe)
 
     /**
-     * Whether every supertype above [type] can be described or loaded, so the class can be defined.
-     * A supertype found to be definable is remembered for the loader, with everything above it.
-     * Throws [UndefinableTypeException] when one cannot.
+     * Returns true when every supertype above [type] can be described or loaded, so the class can be
+     * defined, and throws [UndefinableTypeException] when one cannot. It never returns false. A
+     * supertype found to be definable is remembered for the loader, with everything above it.
      */
     fun canBeDefined(type: TypeDescription): Boolean {
         val seen = mutableSetOf<String>()

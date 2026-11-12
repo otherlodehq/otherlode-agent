@@ -1,16 +1,23 @@
 package dev.otherlode.testkit
 
 /**
- * What the collector's rules say about one dependency. Findings sort in this order. Values may be added in a minor release, so a `when` over this enum needs an `else` branch.
+ * What the collector's rules say about one dependency. Values may be added in a minor release, so a
+ * `when` over this enum needs an `else` branch.
  */
 public enum class DependencyUsage {
-    /** Listed from an instance's startup classpath, and no instance loaded a class from it. */
+    /**
+     * Listed from an instance's startup classpath, and no instance loaded a class from it, unless every
+     * listing counted no class in it ([RESOURCES_ONLY]).
+     */
     UNLOADED,
 
     /** A class from it loaded, and nothing in the adopter's code references it, per a complete baseline. */
     UNREFERENCED,
 
-    /** Referenced only from methods never hit or classes never loaded, per a complete baseline. */
+    /**
+     * Referenced only from methods never hit, classes never loaded, or loaded classes the agent did not
+     * instrument, per a complete baseline.
+     */
     UNREACHED,
 
     /**
@@ -25,7 +32,7 @@ public enum class DependencyUsage {
      */
     FAILED_TO_LOAD,
 
-    /** Referenced from a method with hits, or at class level by a class that loaded and can run. */
+    /** Loaded, and referenced from a method with hits, or at class level by a class that loaded and can run. */
     USED,
 
     /** Loaded, and no instance listing it records references (its include rules are unset), so nothing further is claimed. */
@@ -46,7 +53,8 @@ public enum class DependencyUsage {
 
 /**
  * One `groupId:artifactId` a dependency carries, with every non-empty version any instance listed
- * it at. [groupId] is empty for an identity read from the jar's filename, which carries no group.
+ * it at, or no versions when either id contains `\`, `:` or `,`. [groupId] is empty for an identity
+ * read from the jar's filename, which carries no group.
  */
 @ConsistentCopyVisibility
 public data class DependencyIdentityRef internal constructor(

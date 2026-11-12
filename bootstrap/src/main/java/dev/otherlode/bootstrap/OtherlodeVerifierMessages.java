@@ -14,8 +14,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * array store, log or throw. {@link #warm()} runs every path once at install for that reason.
  *
  * <p>The ring holds up to {@link #CAPACITY} messages between two drains. A call that finds it
- * full counts one overflow and stores nothing. A message equal to one stored recently is skipped,
- * since the JVM builds the same message each time it verifies a rejected class again.
+ * full counts one overflow and stores nothing. A message equal to one stored recently is skipped.
  */
 public final class OtherlodeVerifierMessages {
     /** How many messages the ring holds between two drains. */
@@ -29,14 +28,19 @@ public final class OtherlodeVerifierMessages {
     private OtherlodeVerifierMessages() {}
 
     /**
-     * Stores {@code message}, the argument a {@code VerifyError} constructor received, or does
-     * nothing when it is null. Never blocks and never throws.
+     * Stores {@code message}, the argument a {@code VerifyError} constructor received. Does nothing
+     * when it is null or equal to a message stored recently, and counts one overflow when the ring
+     * is full. Never blocks and never throws.
      */
     public static void record(String message) {
         RING.record(message);
     }
 
-    /** Returns the messages recorded since the last drain, and removes them. */
+    /**
+     * Returns the messages recorded since the last drain, and removes them. A message behind a slot
+     * still being written waits for a later drain, and counts as overflow if that slot is still
+     * empty two drains later.
+     */
     public static String[] drain() {
         return RING.drain();
     }
@@ -98,7 +102,10 @@ public final class OtherlodeVerifierMessages {
             }
         }
 
-        /** The slots a write claims from. {@link #record} is this, then {@link #claim}, then {@link #store}. */
+        /**
+         * The slots a write claims from. {@link #record} skips a null or recently stored message, then calls this,
+         * {@link #claim} and {@link #store}.
+         */
         public Object writeTarget() {
             return current;
         }
@@ -120,7 +127,10 @@ public final class OtherlodeVerifierMessages {
             slots.published.getAndIncrement();
         }
 
-        /** Removes and returns the messages recorded since the last drain. */
+        /**
+         * Removes and returns the messages recorded since the last drain. A message behind a slot still being
+         * written waits for a later drain, and counts as overflow if that slot is still empty two drains later.
+         */
         public synchronized String[] drain() {
             List<String> out = new ArrayList<>();
             for (Iterator<Slots> it = retired.iterator(); it.hasNext(); ) {

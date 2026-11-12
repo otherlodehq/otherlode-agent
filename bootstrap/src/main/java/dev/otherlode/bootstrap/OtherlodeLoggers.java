@@ -13,9 +13,10 @@ import java.util.function.Supplier;
  * once.
  *
  * <p>While a {@code System.LoggerFinder} bridge such as {@code log4j-jpl} is present, a logger
- * from {@link #get} writes through the fallback set by {@link #setFallback} until the gate opens.
- * The gate opens by itself {@link #GATE_SECONDS} seconds after the first request, or at once
- * through {@link #openGate}.
+ * from {@link #get} writes through the fallback set by {@link #setFallback} until the gate opens,
+ * or through the JDK's logger when no fallback is set. The gate opens by itself {@link
+ * #GATE_SECONDS} seconds after this class first checks for a bridge, or at once through {@link
+ * #openGate}.
  */
 public final class OtherlodeLoggers {
     /** How long the gate stays closed at most. */
@@ -56,17 +57,25 @@ public final class OtherlodeLoggers {
         return Bridge.PRESENT ? new GatedLogger(name) : System.getLogger(name);
     }
 
-    /** True when a class-path jar or a boot-layer module provides {@code System.LoggerFinder}. Loads no class. */
+    /**
+     * True when a class-path jar or a boot-layer module provides {@code System.LoggerFinder}. Loads no provider class.
+     */
     public static boolean bridgePresent() {
         return Bridge.PRESENT;
     }
 
-    /** Sets how a gated logger is made while the gate is closed. Each logger it returns writes to standard error. */
+    /**
+     * Sets the factory a gated logger uses for its stand-in while the gate is closed. A logger keeps the stand-in it
+     * already made.
+     */
     public static void setFallback(Function<String, System.Logger> factory) {
         fallback = factory;
     }
 
-    /** True once the gate is open, by {@link #openGate} or by time. A volatile read once it is. */
+    /**
+     * True once the gate is open, by {@link #openGate} or by time, and always with no bridge. A volatile read once it
+     * is.
+     */
     public static boolean isGateOpen() {
         if (gateOpen) {
             return true;

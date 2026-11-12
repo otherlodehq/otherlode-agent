@@ -41,10 +41,11 @@ class AdviceBinder private constructor(
     fun recordedHooks(): List<RecordedHook> = record.toList()
 
     /**
-     * Binds [adviceClassName] to every declared method [methodMatcher] accepts, and records the
-     * pair so the pipeline can tell a hook that matched nothing. Every internal-name reference in
-     * the advice class whose prefix matches a key in [remapPrefixes] is rewritten to that key's
-     * value, so one advice class can weave onto a relocated copy of a library.
+     * Binds [adviceClassName] to every declared method with a body that [methodMatcher] accepts, and
+     * records the pair so the pipeline can tell a hook that matched nothing. In every internal-name
+     * reference in the advice class that starts with a key in [remapPrefixes], that prefix is
+     * replaced by the key's value, and the longest matching key wins. So one advice class can weave
+     * onto a relocated copy of a library.
      */
     fun hook(
         adviceClassName: String,

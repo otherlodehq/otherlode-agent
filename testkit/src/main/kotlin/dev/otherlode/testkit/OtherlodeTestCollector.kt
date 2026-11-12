@@ -55,11 +55,11 @@ import dev.otherlode.export.UnreadShape as WireUnreadShape
  *
  * Probes, endpoints and dependencies are keyed on the instance id alone, not on the run id each
  * payload carries. This collector answers 400 to a delta batch, manifest or static baseline that
- * has an empty run id, a second run id under a known instance id, an agent version that differs
- * from the testkit's when both are known, or fields a collector stripped. It does the same for a
- * payload that does not decode or fails when applied. It keeps nothing from such a payload and
- * records the reason in [rejectedPayloads]. After that, every other query and wait throws
- * [IllegalStateException].
+ * has an empty run id, a second run id under a known instance id, a second instance id when the
+ * collector serves one test JVM as the JUnit extension's does, an agent version that differs from
+ * the testkit's when both are known, or fields a collector stripped. It does the same for a payload
+ * that does not decode or fails when applied. It records the reason in [rejectedPayloads]. After
+ * that, every other query and wait throws [IllegalStateException].
  *
  * Close this with [close], typically from a `.use { }` block.
  */
@@ -400,8 +400,9 @@ public class OtherlodeTestCollector internal constructor(
      * Blocks until every hit made before this call has reached the collector. At least one instance
      * must have been heard from. Each instance heard from, including one first heard from after the
      * call began, must have sent two complete flushes since the call began, or ended with a
-     * complete final flush. A complete flush is one whose delta batches before the last were all
-     * confirmed and whose last batch carries `flush_complete`. A retried batch counts once.
+     * complete final flush. A complete flush is one with a delta batch that carries
+     * `flush_complete`, which the agent sets only when every earlier batch of that flush was
+     * confirmed. A retried batch counts once.
      *
      * An instance that went silent, or whose final flush was not complete, never settles. Throws
      * [TimeoutException] if [timeout] elapses first, naming each instance that has not settled and
@@ -604,7 +605,8 @@ public class OtherlodeTestCollector internal constructor(
      *
      * Claimed only when no probe naming the parameter is overridable. A target with no hits, no
      * method probe, or one marked inline, generated or unread, is skipped. The row's line is the
-     * highest line among its omission probes, ignoring `-1`, or `-1` when every one is.
+     * highest among its omission probes' lines, each taken from the newest instance that reported
+     * that probe, ignoring `-1`, or `-1` when every one is.
      */
     public fun neverSupplied(): List<OptionalParameterRef> =
         checked {
@@ -735,12 +737,13 @@ public class OtherlodeTestCollector internal constructor(
      * - a `<clinit>`, and a constructor unless it is an unused overload, which is listed when
      *   another constructor of its class ran
      * - a method that can run only through a class finding ([neverInitialized],
-     *   [neverInstantiated]), a never-hit lambda body whose every creator is such a method or is
-     *   listed here, and a BRANCH probe in a method left out this way
+     *   [neverInstantiated]), a never-hit lambda body that has a creator and whose every creator is
+     *   such a method, is listed here or is another lambda body left out this way, and a BRANCH
+     *   probe in a method left out this way
      * - routine outcomes, which [neverHitRoutineOutcomes] lists
      * - unread shapes, which [neverHitUnreadShapes] lists
-     * - a class that failed to initialise ([failedToInitialize]) and its subtypes, and a class whose
-     *   static initialiser has started in every instance that loaded it but not yet returned or thrown
+     * - a class that [failedToInitialize] lists, and a class whose static initialiser has started in
+     *   every instance that loaded it but not yet returned or thrown
      *
      * A branch site inside code that never ran folds into the row for that code, and every BRANCH
      * probe of the site is left out. A site folds when its method was never hit, even a method that
@@ -763,10 +766,11 @@ public class OtherlodeTestCollector internal constructor(
         checkedZeroCounts { neverHitRows().filter { it.routine != null && it.unreadShape == null } }
 
     /**
-     * Every never-hit METHOD or BRANCH probe that [neverHit] leaves out only because it is an
-     * unread shape, each with its [ProbeRef.unreadShape] family, sorted as [neverHit] sorts. A
-     * probe is unread when its method is, or when its own outcome is. An unread outcome of a site
-     * that folds into a method that never ran, by the rule [neverHit] gives, is not listed.
+     * Every never-hit METHOD or BRANCH probe that [neverHit] leaves out because it is an unread
+     * shape, each with its [ProbeRef.unreadShape] family, sorted as [neverHit] sorts. A probe is
+     * unread when its method is, or when its own outcome is. No class finding covers an unread
+     * method, and a site in one never folds. Any other unread outcome of a site that folds into code
+     * that never ran, by the rule [neverHit] gives, is not listed.
      */
     public fun neverHitUnreadShapes(): List<ProbeRef> = checkedZeroCounts { neverHitRows().filter { it.unreadShape != null } }
 
@@ -991,8 +995,9 @@ public class OtherlodeTestCollector internal constructor(
      * is an interface.
      *
      * [neverHit] and [unreachedClusters] fold the constructors and instance methods of such a class
-     * into it. Its static methods stay rows of their own. Excludes and throws as [neverInitialized]
-     * does.
+     * into it, and with them a never-hit lambda body of the class that has a creator and whose every
+     * creator they fold. Its other static methods stay rows of their own. Excludes and throws as
+     * [neverInitialized] does.
      */
     public fun neverInstantiated(): List<ClassFindingRef> = checkedZeroCounts { classFindingRefs(ClassFinding.NEVER_INSTANTIATED) }
 
@@ -1173,14 +1178,14 @@ public class OtherlodeTestCollector internal constructor(
     public fun failedToLoad(): List<String> = checked { failedClassNames.filter { it !in dynamicallyKnownClassNames }.sorted() }
 
     /**
-     * Class names that failed to initialise, sorted: a class some instance named in
-     * `classes_failed_to_initialize`, because its static initialiser threw or the JVM's verifier
-     * rejected it, and every confirmed class whose supertypes in an instance's class records reach
-     * a class that instance named, and that no instance initialised. An interface named only because
-     * its static initialiser threw counts as such a supertype only when it has a probed instance
-     * method. A class is initialised in an instance when its returned slot counted, if that instance
-     * sent the class's returned and threw slots. When the instance sent no slots for the class, any
-     * hit on a probe of it means it initialised.
+     * Class names that failed to initialise and that no instance initialised, sorted: a class some
+     * instance named in `classes_failed_to_initialize`, because its static initialiser threw or the
+     * JVM's verifier rejected it, and every confirmed class whose supertypes in an instance's class
+     * records reach a class that instance named. An interface named only because its static
+     * initialiser threw counts as such a supertype only when it has a probed instance method. A
+     * class is initialised in an instance when its returned slot counted, if that instance sent the
+     * class's returned and threw slots. When the instance sent no slots for the class, any hit on a
+     * probe of it means it initialised.
      *
      * A class that failed to initialise is a deployment to fix, never dead code, so [neverHit] and
      * the class findings leave it out. Unlike a class in [failedToLoad], the JVM defined it. A name
@@ -1344,11 +1349,12 @@ public class OtherlodeTestCollector internal constructor(
      * one test JVM. Sorted by [UnreachedCluster.membersTotal] descending, then by root.
      *
      * The graph holds three kinds of node. A method node is a METHOD probe merged across instances,
-     * or a declared method of a class a complete static baseline declared but no manifest
-     * mentioned; the latter carries [ProbeRef.neverLoaded] `true` and line `-1`. An inline,
-     * generated or unread method is never a method node. An outcome node is a never-hit BRANCH
-     * probe, merged across instances, in a method node with hits; an inline, generated, routine or
-     * unread BRANCH probe is never one. A class node is a class that holds a
+     * or a declared method of a class a complete static baseline declared but no manifest named as a
+     * probe's class, a skipped class or an unreported class, a class in [failedToLoad] included; the
+     * latter carries [ProbeRef.neverLoaded] `true` and line `-1`. An inline, generated or unread
+     * method is never a method node. An outcome node is a never-hit BRANCH probe, merged across
+     * instances, in a method node with hits; an inline, generated, routine or unread BRANCH probe is
+     * never one. A class node is a class that holds a
      * class finding: never loaded, [neverInitialized] or [neverInstantiated]. It stands for the
      * never-hit methods that finding covers, which are not method nodes of their own.
      *
@@ -1366,9 +1372,10 @@ public class OtherlodeTestCollector internal constructor(
      * cluster. An outcome or class root whose cluster holds no other class node, and no other
      * method node but a `<clinit>` or such an `<init>`, gives no cluster.
      *
-     * A class that failed to initialise ([failedToInitialize]) is never a root or a member, though
-     * a method of it still counts as a caller. Throws [IllegalStateException] as [neverInitialized]
-     * does.
+     * A class that failed to initialise ([failedToInitialize]), or whose static initialiser has
+     * started in every instance that loaded it but not yet returned or thrown, is never a root or a
+     * member, though a method of it still counts as a caller. Throws [IllegalStateException] as
+     * [neverInitialized] does.
      */
     public fun unreachedClusters(): List<UnreachedCluster> {
         return checkedZeroCounts {
@@ -1957,7 +1964,7 @@ public class OtherlodeTestCollector internal constructor(
         checked { disabledEndpointModulesByName.values.sortedBy { it.module } }
 
     /**
-     * Blocks until some manifest, from any instance, has mentioned the endpoint identified by
+     * Blocks until some manifest, from any instance, has mentioned the path endpoint identified by
      * [verb] and [routeTemplate], normalised the same way [wasCalled] normalises its arguments.
      * Throws [java.util.concurrent.TimeoutException] if [timeout] elapses first.
      */
@@ -2064,9 +2071,10 @@ public class OtherlodeTestCollector internal constructor(
      * `dependencies_listed`. The agent sets that flag once its startup listing, and every reference
      * mapping recorded before the listing ended, has reached this collector.
      * [unloadedDependencies], [unreferencedDependencies], [unreachedDependencies],
-     * [failedToLoadDependencies] and [absentReferences] answer only after this point. Throws
-     * [TimeoutException] if [timeout] elapses first, naming the instances still waiting. An agent
-     * whose listing failed never sends the flag, so this times out for it.
+     * [failedToLoadDependencies], [failedToInitializeDependencies] and [absentReferences] answer
+     * only after this point. Throws [TimeoutException] if [timeout] elapses first, naming the
+     * instances still waiting. An agent whose listing failed never sends the flag, so this times out
+     * for it.
      */
     @Throws(TimeoutException::class)
     public fun awaitDependenciesListed(timeout: Duration) {
@@ -2102,17 +2110,19 @@ public class OtherlodeTestCollector internal constructor(
      *
      * Throws [IllegalStateException] unless every loaded dependency could be split into
      * unreferenced or unreached: that needs `references_recorded`, which the agent sends only with
-     * `includePackages` set, and a complete static baseline (`staticBaselineEnabled=true`) from
-     * every instance that lists it. An empty list without them would read as "none" when the
-     * real answer is "unknown". Throws the same way as [unloadedDependencies] until every instance
-     * heard from has sent `dependencies_listed`, and checks that first.
+     * `includePackages` set, from some instance that lists it, and a complete static baseline
+     * (`staticBaselineEnabled=true`) from every instance that lists it and sent
+     * `references_recorded`. An empty list without them would read as "none" when the real answer
+     * is "unknown". Throws the same way as [unloadedDependencies] until every instance heard from
+     * has sent `dependencies_listed`, and checks that first.
      */
     public fun unreferencedDependencies(): List<DependencyStatus> =
         checked { dependenciesWithStatus(DependencyUsage.UNREFERENCED, needsSplit = true) }
 
     /**
-     * Every dependency the adopter's code references only from methods never hit or classes never
-     * loaded, sorted by [DependencyStatus.identityKey], each with those sites in
+     * Every dependency the adopter's code references only from methods never hit, classes never
+     * loaded, or loaded classes the agent did not instrument (skipped or unreported), sorted by
+     * [DependencyStatus.identityKey], each with those sites in
      * [DependencyStatus.sites]. Throws [IllegalStateException] under the same conditions as
      * [unreferencedDependencies], and while an instance's zero counts are not evidence, as
      * [neverHit] does.
@@ -2781,10 +2791,9 @@ public class OtherlodeTestCollector internal constructor(
  * One probe's identity and location, merged across every instance that reported it. See
  * [OtherlodeTestCollector] for the class name format and how instances merge.
  *
- * - [inline] marks a Kotlin inline function, or a branch inside one. A zero count is no evidence
- *   the code never ran.
- * - [parameterIndex], [parameterName], [overridable] and [targetClassName] are set only when [kind]
- *   is [ProbeKind.OPTIONAL_ARGUMENT].
+ * - [inline] is false in every ref the collector returns.
+ * - [parameterIndex], [parameterName] and [targetClassName] are null, and [overridable] is false,
+ *   in every ref the collector returns.
  * - [neverLoaded] is true for an [OtherlodeTestCollector.unreachedClusters] method that exists
  *   solely because a complete static baseline declared it, whose [line] is `-1` since the static
  *   scan records no line, and for the class root of a never-loaded class.
@@ -2795,10 +2804,9 @@ public class OtherlodeTestCollector internal constructor(
  * - [branchKey] is set only for a [ProbeKind.BRANCH] probe: an opaque lowercase hex token naming
  *   this outcome across builds and instances. It is null when the agent could not name it safely.
  * - [routine] is set only for a [ProbeKind.BRANCH] probe whose outcome the agent marked routine.
- * - [unreadShape] is set for a probe whose method has the outline of compiler output but a body the
- *   agent has not read, for a [ProbeKind.BRANCH] probe in such a method, for an
- *   [ProbeKind.OPTIONAL_ARGUMENT] probe whose target is one, and for a [ProbeKind.BRANCH] probe
- *   whose own outcome the agent marked unread.
+ * - [unreadShape] is set for a [ProbeKind.METHOD] probe whose method has the outline of compiler
+ *   output but a body the agent has not read, for a [ProbeKind.BRANCH] probe in such a method, and
+ *   for a [ProbeKind.BRANCH] probe whose own outcome the agent marked unread.
  * - [outsideCaller] is set only for a [ProbeKind.METHOD] ref whose method has an outside caller.
  *   When instances disagree, it comes from the newest instance's copy.
  */
@@ -2837,9 +2845,8 @@ public data class OutsideCaller internal constructor(
 )
 
 /**
- * Which of the five root shapes an [UnreachedCluster] has. They call for different fixes, so they
- * are reported apart. Values may be added in a minor release, so a `when` over this enum needs an
- * `else` branch.
+ * Which of the five root shapes an [UnreachedCluster] has. Values may be added in a minor release,
+ * so a `when` over this enum needs an `else` branch.
  */
 public enum class RootKind {
     /**
@@ -2879,7 +2886,11 @@ public enum class RootKind {
  * over this enum needs an `else` branch.
  */
 public enum class ClassFinding {
-    /** A complete static baseline declared the class and no manifest ever mentioned it. See [OtherlodeTestCollector.neverLoaded]. */
+    /**
+     * A complete static baseline declared the class and no manifest named it as a probe's class, a
+     * skipped class or an unreported class. Unlike [OtherlodeTestCollector.neverLoaded], this
+     * includes a class in [OtherlodeTestCollector.failedToLoad].
+     */
     NEVER_LOADED,
 
     /** The class loaded and its static initialiser never ran. See [OtherlodeTestCollector.neverInitialized]. */
@@ -2993,12 +3004,13 @@ public data class OptionalParameterRef internal constructor(
  *    reported as skipped.
  * 2. The class loaded, but no transformer was offered it, so it has no probes; a sweep of the
  *    loaded classes reported it.
- * 3. The class was declared by a complete static baseline scan, but no manifest from any instance
- *    ever mentioned it: it never loaded during the observation window.
- * 4. The class is instrumented and has manifest probes, but none match the requested method name
- *    or descriptor.
- * 5. The class was never mentioned anywhere at all: not matched by `includePackages`, misspelled,
- *    or not loaded yet.
+ * 3. The class was declared by a complete static baseline scan, but no manifest named it as
+ *    probed, skipped or unreported: it never loaded during the observation window, or it failed to
+ *    load ([OtherlodeTestCollector.failedToLoad]).
+ * 4. The class is instrumented and has manifest probes, but none match the requested method name,
+ *    descriptor or, for an omission query, parameter.
+ * 5. No manifest named the class as probed, skipped or unreported, and no complete static baseline
+ *    declared it: not matched by `includePackages`, misspelled, not loaded yet, or failed to load.
  */
 public class UnknownProbeException internal constructor(
     message: String,
@@ -3013,18 +3025,21 @@ private val NON_PATH_KINDS =
 /**
  * One endpoint's identity and display fields, as reported by a manifest. [verb] and
  * [routeTemplate] are the normalised identity; [verbatimTemplate] keeps the framework's own
- * spelling for display. [handlerClass], [handlerMethod], and [handlerDescriptor] are null until a
- * framework hook joins a handler to the endpoint: the method the framework invokes for it where
- * the framework exposes one, or the handler object's class where only the object is known.
+ * spelling for display. [handlerClass], [handlerMethod], and [handlerDescriptor] come from the
+ * manifest entry for the endpoint this collector received last, from any instance, and are null
+ * while that entry names no handler. A framework hook names one: the method the framework invokes
+ * for it where the framework exposes one, or the handler object's class where only the object is
+ * known.
  *
  * [isRegexTemplate] is true for an endpoint a framework matches by a regular expression with no
  * path. Its [routeTemplate] and [verbatimTemplate] are that expression exactly as written, and it
  * is a different endpoint from a path endpoint whose template reads the same.
  *
  * [isServletPatternTemplate] is true for an endpoint whose template is a servlet mapping no path
- * can express: an extension mapping such as `*.do`, or the default mapping `/`. The pattern is
- * kept exactly as written, and the endpoint is different from a path endpoint or a regex endpoint
- * whose template reads the same.
+ * can express: an extension mapping such as `*.do`, the default mapping `/`, or another mapping
+ * starting with `/` that normalisation would change or that holds a star or a brace outside a
+ * final star segment, such as `/orders/` or `/api*`. The pattern is kept exactly as written, and
+ * the endpoint is different from a path endpoint or a regex endpoint whose template reads the same.
  *
  * The `(verb, route template)` queries ([OtherlodeTestCollector.wasCalled],
  * [OtherlodeTestCollector.callCount], [OtherlodeTestCollector.awaitEndpoint]) address path
@@ -3051,7 +3066,9 @@ public data class EndpointRef internal constructor(
  *
  * 1. At least one endpoint module is disabled. The message names every disabled
  *    module and its reason, since the unmentioned endpoint may belong to one of them.
- * 2. A regex or servlet pattern endpoint has this template, and the query addresses path endpoints only.
+ * 2. A regex or servlet pattern endpoint has this template once normalised as a path, and the query
+ *    addresses path endpoints only. A non-path template not already in that form, such as `*.do` or
+ *    `/orders/`, never reaches this case.
  * 3. No manifest, from any instance, ever mentioned this endpoint.
  */
 public class UnknownEndpointException internal constructor(

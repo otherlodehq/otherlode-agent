@@ -8,9 +8,9 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Hands each instrumented class its probe-count array.
  *
- * <p>Lives in the bootstrap classloader, so a class defined by any loader can call {@link
- * #resolve} from its woven code without a {@code NoClassDefFoundError}. The agent plugs its
- * registry in through {@link #install(Resolver)} at premain.
+ * <p>Lives in the bootstrap classloader, so woven code can call {@link #resolve} without a {@code
+ * NoClassDefFoundError} from any class whose loader delegates {@code dev.otherlode.bootstrap} to
+ * the boot loader. The agent plugs its registry in through {@link #install(Resolver)} at premain.
  *
  * <p>A miss (no resolver installed, or no array of the requested size for the class) returns a
  * fresh array of that size and logs once per class name.

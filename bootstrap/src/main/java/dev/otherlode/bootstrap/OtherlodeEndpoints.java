@@ -21,14 +21,16 @@ import java.util.function.Consumer;
  * it. The agent plugs its endpoint registry in through {@link #install(Resolver)} at premain.
  *
  * <p>Every method is safe to call from any thread, before or after {@link #install}, and never
- * throws. Before {@link #install}, {@link #register}, {@link #recordDispatch}, {@link
+ * throws. Before {@link #install}, calls to {@link #register}, {@link #recordDispatch}, {@link
  * #recordDispatchIfUnowned}, {@link #declare}, {@link #moduleFailed} and {@link #moduleDisabled}
- * are buffered and replayed in order once a resolver is installed. A call other than {@link
- * #moduleFailed} or {@link #moduleDisabled} that finds the buffer full is dropped and disables its
- * module.
+ * for a module not yet disabled are buffered and replayed in order once a resolver is installed. A
+ * call other than {@link #moduleFailed} or {@link #moduleDisabled} that finds the buffer full is
+ * dropped and disables its module.
  *
- * <p>A resolver failure is logged once per method and module. A method that returns an entry
- * returns null when the call is buffered or dropped, its module is disabled or the resolver throws.
+ * <p>A resolver failure is logged once per method and module. A {@link #hit} failure is logged once
+ * in all, and the failures of replayed calls once per module. A method that returns an entry returns
+ * null when the call is buffered or dropped, its module is disabled, or the resolver throws or
+ * returns null.
  */
 public final class OtherlodeEndpoints {
     /** The template is a path: normalised, with any context path folded in. */
@@ -43,7 +45,10 @@ public final class OtherlodeEndpoints {
      */
     public static final int TEMPLATE_SERVLET_PATTERN = 2;
 
-    /** Implemented by the agent; backs the entry points that look up, record, count and disable endpoints. */
+    /**
+     * Implemented by the agent; backs the entry points that look up, record and count endpoints and
+     * record disabled modules.
+     */
     public interface Resolver {
         Object lookup(Object key);
 
@@ -352,7 +357,11 @@ public final class OtherlodeEndpoints {
         }
     }
 
-    /** Records an endpoint the moment a request dispatches to it. Buffers before a resolver is installed. */
+    /**
+     * Records an endpoint the moment a request dispatches to it and returns its entry, which the
+     * caller passes to {@link #hit}. Before a resolver is installed it buffers the call and returns
+     * null, and the replay counts the hit.
+     */
     public static Object recordDispatch(
             String module, Object key, String verb, String verbatimTemplate, String contextPath, String handlerClass) {
         return recordDispatch(module, key, verb, verbatimTemplate, contextPath, handlerClass, TEMPLATE_PATH);
@@ -388,8 +397,10 @@ public final class OtherlodeEndpoints {
 
     /**
      * Like {@link #recordDispatch}, for a route bridge module reading an identity another
-     * instrumentation layer already resolved. Returns null and binds nothing when the identity
-     * already belongs to an endpoint a framework module owns.
+     * instrumentation layer already resolved. Returns null and binds nothing when another module
+     * owns the identity, the same template under verb {@code *}, or for a {@code HEAD} request the
+     * same template under {@code GET}. A path template that falls under the servlet pattern {@code
+     * /} or {@code *.ext} is checked against that pattern the same way.
      */
     public static Object recordDispatchIfUnowned(
             String module, Object key, String verb, String verbatimTemplate, String contextPath, String handlerClass) {
@@ -490,7 +501,8 @@ public final class OtherlodeEndpoints {
 
         /**
          * Follows {@code route} back through every prefixer that built it. A route the table does
-         * not hold, an ambiguous step or a chain that does not end returns {@code route} as given.
+         * not hold, an ambiguous step or a chain of eight or more steps returns {@code route} as
+         * given.
          */
         public String resolve(String route) {
             if (route == null) return null;
@@ -506,8 +518,9 @@ public final class OtherlodeEndpoints {
     }
 
     /**
-     * The most endpoints a module may create at dispatch, and the most request keys it may bind to
-     * endpoints it holds. An endpoint the module declared at registration does not count.
+     * The most endpoints a module may create at dispatch, and the most keys of plain values, such as
+     * strings or lists of them, it may bind at dispatch. Other keys are not limited. An endpoint
+     * declared at registration does not count.
      */
     public static final int DISPATCH_LIMIT = 8192;
 
@@ -554,7 +567,10 @@ public final class OtherlodeEndpoints {
         }
     }
 
-    /** Increments an endpoint's hit count. A null entry is a no-op. */
+    /**
+     * Increments an endpoint's hit count without synchronisation, so a concurrent hit can be lost. A
+     * null entry is a no-op.
+     */
     public static void hit(Object entry) {
         if (entry == null) return;
         Resolver current = resolver;
@@ -695,7 +711,10 @@ public final class OtherlodeEndpoints {
         return scopes == null ? null : scopes.peek();
     }
 
-    /** Attaches a handler class/method/descriptor to an already-resolved entry. A no-op for a null entry or a disabled module. */
+    /**
+     * Attaches a handler class/method/descriptor to an already-resolved entry whose handler names no
+     * method yet. A no-op for a null entry, a null {@code handlerClass} or a disabled module.
+     */
     public static void attachHandler(String module, Object entry, String handlerClass, String handlerMethod, String handlerDescriptor) {
         if (entry == null || isDisabledFast(module)) return;
         Resolver current = resolver;
@@ -707,13 +726,16 @@ public final class OtherlodeEndpoints {
         }
     }
 
-    /** No kind: what a buffered record that disables nothing carries, and a disable that fits none of the kinds below. */
+    /** No kind: a disable that fits none of the kinds below, such as a full replay buffer. */
     public static final int KIND_UNSPECIFIED = 0;
 
-    /** A {@link LinkageError}, wherever it was caught: the framework release differs from the one the module was built for. */
+    /**
+     * A {@link LinkageError}, wherever it was caught, or a framework that lacks the API release the
+     * module was built for.
+     */
     public static final int KIND_LINKAGE_ERROR = 1;
 
-    /** Any other throw from the module's advice. */
+    /** Any other throw from the module's advice or its {@code beforeManifest}, or a value its advice cannot use. */
     public static final int KIND_ADVICE_FAILED = 2;
 
     /**
@@ -725,15 +747,18 @@ public final class OtherlodeEndpoints {
     /** Walking a framework's route objects threw. */
     public static final int KIND_ROUTE_WALK_FAILED = 4;
 
-    /** A hook matched no method on the framework class it hooks. */
+    /** A hook matched no method that is neither abstract nor native on the framework class it hooks. */
     public static final int KIND_HOOK_UNMATCHED = 5;
 
-    /** A module built a router on a runtime where it has no dispatch point to count its routes at, so it declares none. */
+    /**
+     * A router was built but no dispatch point the module counts its routes at was constructed in
+     * time, so the module declares none of its routes.
+     */
     public static final int KIND_ROUTES_NOT_COUNTED = 7;
 
     /**
      * Disables a module after its advice threw: {@link #KIND_LINKAGE_ERROR} for a {@link
-     * LinkageError}, else {@link #KIND_ADVICE_FAILED}. This is the form every advice class calls.
+     * LinkageError}, else {@link #KIND_ADVICE_FAILED}.
      */
     public static void moduleFailed(String module, Throwable failure) {
         moduleFailed(module, KIND_ADVICE_FAILED, failure);
@@ -742,9 +767,8 @@ public final class OtherlodeEndpoints {
     /**
      * Disables a module after {@code failure} was caught at the site {@code siteKind} names. A
      * {@link LinkageError} is {@link #KIND_LINKAGE_ERROR} whichever site caught it; any other
-     * throwable keeps {@code siteKind}. The reason of a {@link LinkageError} is the error with its
-     * message, which names a framework class or member. Any other reason is the exception's class
-     * name alone, since its message can hold request text.
+     * throwable keeps {@code siteKind}. The reason is a {@link LinkageError}'s {@code toString()}, or
+     * any other throwable's class name alone.
      */
     public static void moduleFailed(String module, int siteKind, Throwable failure) {
         int kind = failure instanceof LinkageError ? KIND_LINKAGE_ERROR : siteKind;

@@ -23,19 +23,19 @@ interface EndpointModule {
 
     /**
      * Functional interfaces, by `Class.getName()`, that this framework takes a handler as, for
-     * example `"com.sun.net.httpserver.HttpHandler"`. When any module names one, the agent records
-     * which method each lambda class for it calls, and the module's advice reads it through
-     * `OtherlodeEndpoints.lambdaImplementation`. A lambda for a subinterface is recorded only when
-     * the subinterface is named too.
+     * example `"com.sun.net.httpserver.HttpHandler"`. When any module names one and the agent can
+     * hook the JDK's lambda factory, the agent records which method each lambda class for it calls,
+     * and the module's advice reads it through `OtherlodeEndpoints.lambdaImplementation`. A lambda
+     * for a subinterface is recorded only when the subinterface is named too.
      */
     val handlerInterfaces: Set<String> get() = emptySet()
 
     /**
      * Whether a failed first weave of a class this module matched leaves the module on. The default
      * is false: the pipeline switches off every module whose matcher accepted a class that failed to
-     * weave. A failed re-weave of a class whose first weave succeeded switches the module off either
-     * way. A module overrides this to true only when a failed weave takes the module's own
-     * staged declarations with it, so nothing partial is left.
+     * weave. A [transform] that throws, or a failed re-weave of a class whose first weave succeeded,
+     * switches the module off either way. A module overrides this to true only when a failed weave
+     * takes the module's own staged declarations with it, so nothing partial is left.
      */
     val weaveFailureLeavesNothingPartial: Boolean get() = false
 
