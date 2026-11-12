@@ -105,6 +105,8 @@ A change that breaks one of these needs an ADR first.
   complete: the code and its tests hold the full rules. A code comment
   may still name a value another component requires, as a hard
   constraint.
+- **No comment or doc comment cites an ADR.** It says what the code
+  does or must do. The reasons stay in the ADR.
 - Run the `unslop` skill over any comment before treating it as
   finished: no em dashes, no stock AI phrasing ("crucial," "seamless,"
   "robust," "leverage"), no sentence that restates the code.
