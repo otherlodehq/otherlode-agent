@@ -14,21 +14,21 @@ Almost all of it scales with one number: how many classes `includePackages` matc
 
 The numbers below come from the project's overhead benchmark, which runs `spring-petclinic-rest` against Postgres under k6, with and without the agent. The agent exports to a real collector, so encoding and sending are in the numbers.
 
-The run used GitHub's `ubuntu-latest` runner (4 vCPU) with PetClinic pinned to one core, 6 repeats per variant, and the JVM heap fixed at 1 GiB, on commit `1332f3f`. The agent skipped no class in either configuration. Each figure is the median of the agent variant against the median of the variant with no agent. A change marked "noise" lies inside the no-agent variant's own spread.
+The run used GitHub's `ubuntu-latest` runner (4 vCPU) with PetClinic pinned to one core, 6 repeats per variant, and the JVM heap fixed at 1 GiB, on commit `ab8be2c8`. GitHub gave the narrow run an AMD EPYC 7763 and the broad run an AMD EPYC 9V74, so each column compares the agent with no agent on its own runner. The agent skipped no class in either configuration. Each figure is the median of the agent variant against the median of the variant with no agent. A change marked "noise" lies inside the no-agent variant's own spread.
 
 | | Narrow rules (`org.springframework.samples.petclinic`) | Broad rules (`org.springframework`) |
 |---|---|---|
-| Probes | 1,489 | 99,685 |
-| Throughput | -0.8% (noise) | -7.1% |
-| CPU per request | +1.0% (noise) | +8.3% |
-| p95 / p99 latency | +0.8% / +0.5% (noise) | +6.5% / +7.4% |
-| GC pause per 1000 requests | +6.5% | +30.9% |
-| Resident set size | +76 MiB (+7.4%) | +303 MiB (+29.5%) |
-| Minimum heap used | +10 MiB | +122 MiB |
-| Metaspace | +19 MiB | +23 MiB |
-| Startup, time to first 200 | 16.8 s to 21.0 s (+24.6%) | 13.5 s to 36.0 s (+166%) |
+| Probes | 1,491 | 101,459 |
+| Throughput | -0.1% (noise) | -3.9% |
+| CPU per request | +0.2% (noise) | +4.3% |
+| p95 / p99 latency | 0.0% / +0.1% (noise) | +4.1% / +5.8% |
+| GC pause per 1000 requests | +5.2% | +27.1% |
+| Resident set size | +83 MiB (+8.1%) | +300 MiB (+29.3%) |
+| Minimum heap used | +10 MiB | +90 MiB |
+| Metaspace | +22 MiB | +27 MiB |
+| Startup, time to first 200 | 19.7 s to 24.5 s (+24.4%) | 18.2 s to 48.6 s (+168%) |
 
-The narrow startup figure comes from the benchmark's startup-only job, which measures startup alone with 21 repeats per variant, on commit `9b1f44bb` on an AMD EPYC 9V74 runner. Every other figure comes from the run above.
+The narrow startup figure comes from the benchmark's startup-only job, which measures startup alone with 21 repeats per variant, on the same commit on an AMD EPYC 7763 runner. Every other figure comes from the run above.
 
 Read the table as a bound, not a prediction. PetClinic is one application on one core. The narrow column matches how you should configure the agent, with rules that cover your own code. The broad column shows what you pay for a package like `org.springframework`, which instruments a framework's classes, not only yours.
 
@@ -76,15 +76,15 @@ When the JVM loads a class that matches `includePackages`, the agent reads its b
 
 Three things drive that cost up:
 
-- **More matched classes.** The cost is roughly linear in matched classes. The broad run above wove about 4,200 classes and 99,685 probes. The narrow run wove about 100 classes and 1,489 probes.
+- **More matched classes.** The cost is roughly linear in matched classes. The broad run above wove about 4,300 classes and 101,459 probes. The narrow run wove about 70 classes and 1,491 probes.
 - **Locating class files.** The agent reads each class's own file from the jar or folder it came from, or from its loader when it cannot. It reads the supertypes it needs through the loader, which inside a Spring Boot fat jar is the nested-jar loader. The agent caches the supertype reads (up to 16 MB, evicting the least recently used) and releases per-loader caches when a loader goes quiet.
-- **One core.** On one core, class loading, the JIT, and the weave share a CPU. The broad rules took startup from 13.5 s to 36.0 s on the one-core runner, a larger relative cost than any throughput, CPU or latency row of the table.
+- **One core.** On one core, class loading, the JIT, and the weave share a CPU. The broad rules took startup from 18.2 s to 48.6 s on the one-core runner, a larger relative cost than any throughput, CPU or latency row of the table.
 
-Heap follows the same shape. The broad run's minimum heap used was +122 MiB, and its resident set size +303 MiB. Once a class's manifest is delivered, the agent releases that class's locations and keeps only what the next flush needs.
+Heap follows the same shape. The broad run's minimum heap used was +90 MiB, and its resident set size +300 MiB. Once a class's manifest is delivered, the agent releases that class's locations and keeps only what the next flush needs.
 
 ## Startup
 
-Startup is the cost to watch. In the startup-only run, the narrow rules added 4.1 s to a 16.8 s startup on one core (+24.6%), the median of 21 runs per variant. With more cores the cost shrinks, since class loading, the JIT and the weave no longer share one CPU. Startup grows with how many classes your application loads, because the agent checks each loaded class against its rules.
+Startup is the cost to watch. In the startup-only run, the narrow rules added 4.8 s to a 19.7 s startup on one core (+24.4%), the median of 21 runs per variant. With more cores the cost shrinks, since class loading, the JIT and the weave no longer share one CPU. Startup grows with how many classes your application loads, because the agent checks each loaded class against its rules.
 
 Three pieces of work that would otherwise be startup cost run later:
 
@@ -127,7 +127,7 @@ With the trim, resident set size held level through a 24-hour test. With it off,
 
 Two features are off by default and cost something when on.
 
-The static baseline (`staticBaselineEnabled=true`) walks the classpath's bytecode for every class under `includePackages`, on a background thread named `otherlode-static-baseline-scan`. It does not run in `premain`, so it does not add to the time before `main`. It does compete with your application for CPU while it runs, and the cost scales with classpath size, not with traffic. In the startup-only run, the narrow rules with the static baseline on took startup from 16.8 s to 21.9 s on one core (+30.1%), against +24.6% with it off. It runs once per process. See [classes](classes) for what it reports and what it cannot see.
+The static baseline (`staticBaselineEnabled=true`) walks the classpath's bytecode for every class under `includePackages`, on a background thread named `otherlode-static-baseline-scan`. It does not run in `premain`, so it does not add to the time before `main`. It does compete with your application for CPU while it runs, and the cost scales with classpath size, not with traffic. In the startup-only run, the narrow rules with the static baseline on took startup from 19.7 s to 25.4 s on one core (+29.0%), against +24.4% with it off. It runs once per process. See [classes](classes) for what it reports and what it cannot see.
 
 The route bridge for OpenTelemetry (`otelBridgeEnabled=true`) runs on every HTTP server request that OpenTelemetry records, to count the request's route. See [route bridge for OpenTelemetry](endpoints#route-bridge-for-opentelemetry).
 

@@ -13,23 +13,7 @@ the collector as open source. `otherlode-server` stays closed source and
 hosted (server ADR 0001), so every adopter's collector forwards to one
 multi-tenant backend.
 
-1. **The overhead figures.** `docs/site/overhead.md` and
-   `benchmark-overhead/README.md` quote two runs: startup from run
-   42622687684 on `9b1f44bb` (2026-11-09), and every other row from run
-   38944648115 on `1332f3f` (2026-10-16). Run the whole
-   `benchmark-overhead` workflow by hand on the commit to tag, `f74924b4`
-   or later, since the direct-path code changed the export path, and take
-   every figure on both pages from that one run. That run is done: workflow
-   run 43093569832 on `ab8be2c8` (2026-11-11; startup and headline from
-   attempt 2 after GitHub infrastructure failures, ceiling from attempt 1),
-   all three jobs green with artifacts. Left: copy its figures into both
-   pages. The scheduled
-   run on `98d076e6` (2026-11-11) gave startup +23.7% and +28.1% with the
-   static baseline. Its ceiling job failed because the `none` variant
-   used 0.88 of its core, under the 90% floor, which is runner noise. The
-   run of 2026-11-10 (42806055835) put the ceiling's throughput at -1.9%
-   (noise), where the pages say -7.1%.
-2. **Cut the releases** (ADRs 0062 and 0063, collector ADR 0006). Cutting
+1. **Cut the releases** (ADRs 0062 and 0063, collector ADR 0006). Cutting
    is Luke's call. Collector `v0.1.0` goes first, since the agent's
    `release.sh` refuses a release until it exists. Both `## [0.1.0]`
    changelog sections are written, dated 2026-11-01; change the date if
@@ -37,7 +21,7 @@ multi-tenant backend.
    make the collector's GHCR package public. Still unknown: whether a
    dropped Portal deployment frees its version. A `rehearsal/1-again` tag
    answers it.
-3. **Run the quickstart's release-only steps.** The quickstart sends
+2. **Run the quickstart's release-only steps.** The quickstart sends
    straight to ingest (server ADR 0096). Every other step ran on the dev
    stack on 2026-11-11. These need the releases or the front door: the
    Maven Central download, `https://app.otherlode.dev` and
@@ -45,13 +29,13 @@ multi-tenant backend.
    collector** needs the `ghcr.io/otherlodehq/otherlode-collector` image.
    Its links to the agent's and collector's pages resolve once their first
    releases sync.
-4. **Neither release workflow has run in full.** The collector's
+3. **Neither release workflow has run in full.** The collector's
    `release.yml` has never run, so its GHCR multi-arch push, the
    attestation `deploy.md` tells users to verify, its GitHub release and
    its docs sync first run at v0.1.0. The agent's `rehearsal/1` covered
    the Portal upload only; `release.yml`'s `github-release` and `docs`
    jobs have never run.
-5. **Before the first customer:** the server STATUS's "Go-live
+4. **Before the first customer:** the server STATUS's "Go-live
    checklist" (the company, the privacy policy, the site, the front door,
    the database tier). No collector can be given
    an ingest URL until the front door exists. None of it blocks publishing

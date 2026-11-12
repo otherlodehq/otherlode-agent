@@ -395,34 +395,36 @@ Under `benchmark-overhead/build/results/<config>/` (`<config>-startup/` for a st
 
 ## Latest numbers
 
-Workflow run 38944648115 on 2026-10-16, agent at `1332f3f`, GitHub's `ubuntu-latest` (4 vCPU), so
-PetClinic on one pinned core with four k6 users. Six repeats per variant, every run valid, 35
-of 36 warmups judged steady (the other reached its cap with a steady window), no class skipped in
-either config. Medians, agent against `none`; a change marked "noise"
-lies inside `none`'s own spread.
+Workflow run 43093569832 on 2026-11-11, agent at `ab8be2c8`, GitHub's `ubuntu-latest` (4 vCPU), so
+PetClinic on one pinned core with four k6 users. The headline ran on an AMD EPYC 7763 and the ceiling
+on an AMD EPYC 9V74, so compare each column only with its own `none`. Six repeats per variant, every
+run valid, 36 of 36 warmups judged steady, no class skipped in either config. The headline and the
+startup-only job are from the run's second attempt, after GitHub stopped the first attempt's runner
+and failed its artifact upload; the ceiling is from the first. Medians, agent against `none`; a change
+marked "noise" lies inside `none`'s own spread.
 
 | | headline (`org.springframework.samples.petclinic`) | ceiling (`org.springframework`) |
 |---|---|---|
-| probes | 1,489 | 99,685 |
-| throughput | -0.8% (noise) | -7.1% |
-| CPU per request | +1.0% (noise) | +8.3% |
-| p95 / p99 latency | +0.8% / +0.5% (noise) | +6.5% / +7.4% |
-| GC pause per 1000 requests | +6.5% | +30.9% |
-| RSS | +76 MiB (+7.4%) | +303 MiB (+29.5%) |
-| minimum heap used | +10 MiB | +122 MiB |
-| metaspace | +19 MiB | +23 MiB |
-| startup | 16.8 s to 21.0 s (+24.6%) | 13.5 s to 36.0 s (+166%) |
+| probes | 1,491 | 101,459 |
+| throughput | -0.1% (noise) | -3.9% |
+| CPU per request | +0.2% (noise) | +4.3% |
+| p95 / p99 latency | 0.0% / +0.1% (noise) | +4.1% / +5.8% |
+| GC pause per 1000 requests | +5.2% | +27.1% |
+| RSS | +83 MiB (+8.1%) | +300 MiB (+29.3%) |
+| minimum heap used | +10 MiB | +90 MiB |
+| metaspace | +22 MiB | +27 MiB |
+| startup | 19.7 s to 24.5 s (+24.4%) | 18.2 s to 48.6 s (+168%) |
 
-The headline's startup comes from the startup-only job, workflow run 42622687684 on 2026-11-09,
-agent at `9b1f44bb`, on an AMD EPYC 9V74 (4 vCPU) with PetClinic on one pinned core. 21 repeats
-per variant, steal 0. Medians, with the interquartile range:
+The headline's startup comes from the same run's startup-only job, on an AMD EPYC 7763 (4 vCPU) with
+PetClinic on one pinned core. 21 repeats per variant, steal 0. Medians, with the interquartile range:
 
 | | `none` | `agent` | `agent-baseline` |
 |---|---|---|---|
-| time to first 200 | 16.8 s (16.3 to 17.3) | 21.0 s (19.8 to 21.5), +24.6% | 21.9 s (21.3 to 22.5), +30.1% |
-| startup CPU | 16.3 s (15.7 to 16.8) | 20.3 s (19.0 to 21.1), +24.7% | 21.3 s (20.8 to 22.0), +30.4% |
+| time to first 200 | 19.7 s (19.5 to 20.1) | 24.5 s (24.2 to 25.2), +24.4% | 25.4 s (25.1 to 26.0), +29.0% |
+| startup CPU | 19.3 s (19.1 to 19.8) | 24.1 s (23.8 to 24.8), +24.9% | 25.0 s (24.7 to 25.6), +29.4% |
 
-Every other row of the first table, and the ceiling's startup, come from run 38944648115.
+Every other row of the first table, and the ceiling's startup, come from the benchmark jobs of the
+same run.
 
 The startup target is the headline's time to first 200 within 25% of `none` on this runner; it is a
 target to watch, not a gate. The ceiling has none. Startup on one core is where the agent's
