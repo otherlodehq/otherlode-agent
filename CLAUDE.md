@@ -99,6 +99,12 @@ A change that breaks one of these needs an ADR first.
   returns, what the caller must supply, and any edge a caller would get
   wrong. Most fit in one to three lines. Leave out design history,
   rejected options, how the body works and who calls it.
+- **A doc comment describes its own declaration.** It makes no claim
+  about what another component does (the agent, collector, server or a
+  framework), and it does not list rules or cases as if the list were
+  complete: the code and its tests hold the full rules. A code comment
+  may still name a value another component requires, as a hard
+  constraint.
 - Run the `unslop` skill over any comment before treating it as
   finished: no em dashes, no stock AI phrasing ("crucial," "seamless,"
   "robust," "leverage"), no sentence that restates the code.
