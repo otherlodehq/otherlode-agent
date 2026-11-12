@@ -64,7 +64,7 @@ internal data class InstanceDependencyView(
 internal data class DependencyFinding(
     val identityKey: String,
     val status: DependencyUsage,
-    val versionsByIdentity: Map<String, Set<String>>,
+    val versionsByIdentity: Map<Pair<String, String>, Set<String>>,
     val identities: List<Pair<String, String>>,
     val loadedClassesTotal: Long,
     val classCount: Int?,
@@ -190,7 +190,7 @@ internal fun computeDependencyReport(
                     status = status,
                     versionsByIdentity =
                         identities
-                            .groupBy({ it.key }, { it.version })
+                            .groupBy({ it.groupId to it.artifactId }, { it.version })
                             .mapValues { (_, versions) -> versions.filter { it.isNotEmpty() }.toSortedSet() },
                     identities =
                         identities

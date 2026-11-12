@@ -125,7 +125,7 @@ If the agent cannot read the stack that shows when a definition attempt started 
 otherlode: the definition attempt of a woven class could not be read from its thread's stack; such classes are never reported as failed to load
 ```
 
-A class that failed to load is a deployment to fix, never dead code, even where a complete baseline declared it. If some instance loaded the class, the class is loaded, whatever another instance says. `failedToLoad()` lists the classes some manifest named as failed to load and no manifest named as probed, skipped or unreported, and `neverLoaded()` leaves them out.
+A class that failed to load is a deployment to fix, never dead code, even where a complete baseline declared it. If some instance loaded the class, the class is loaded, whatever another instance says. `failedToLoad()` lists the classes some manifest named as failed to load and no manifest named as probed, skipped or unreported, and `neverLoaded()` leaves them out. `unreachedClusters()` lists none of their methods as a root or member, and their methods still count as callers.
 
 ## Failed to initialise
 

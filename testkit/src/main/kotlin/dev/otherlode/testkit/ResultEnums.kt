@@ -164,12 +164,15 @@ public data class SkippedClass internal constructor(
     val reason: String,
 )
 
-/** An endpoint module that is switched off, with the [reason] given and the [kind] of cause. */
+/**
+ * An endpoint module that is switched off, with the [reason] given and the [kind] of cause. [kind] is
+ * null when the manifest names no kind.
+ */
 @ConsistentCopyVisibility
 public data class DisabledEndpointModule internal constructor(
     val module: String,
     val reason: String,
-    val kind: DisabledEndpointModuleKind,
+    val kind: DisabledEndpointModuleKind?,
 )
 
 /**
@@ -343,10 +346,10 @@ internal fun DependencyDiscoverySource.toWire(): WireDependencyDiscoverySource =
         DependencyDiscoverySource.LOAD -> WireDependencyDiscoverySource.LOAD
     }
 
-internal fun WireDisabledEndpointModuleKind.toTestkit(): DisabledEndpointModuleKind =
+internal fun WireDisabledEndpointModuleKind.toTestkit(): DisabledEndpointModuleKind? =
     when (this) {
         WireDisabledEndpointModuleKind.UNSPECIFIED -> {
-            throw IllegalArgumentException("a disabled endpoint module carries no kind")
+            null
         }
 
         WireDisabledEndpointModuleKind.LINKAGE_ERROR -> {

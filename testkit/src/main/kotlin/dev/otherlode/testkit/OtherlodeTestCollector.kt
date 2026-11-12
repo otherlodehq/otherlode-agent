@@ -1130,7 +1130,9 @@ public class OtherlodeTestCollector internal constructor(
      * Class names a manifest reported as failed to load and no manifest named as probed, skipped or
      * unreported, sorted. [neverLoaded] leaves these out.
      */
-    public fun failedToLoad(): List<String> = checked { failedClassNames.filter { it !in dynamicallyKnownClassNames }.sorted() }
+    public fun failedToLoad(): List<String> = checked { failedToLoadNames().sorted() }
+
+    private fun failedToLoadNames(): Set<String> = failedClassNames.filterTo(mutableSetOf()) { it !in dynamicallyKnownClassNames }
 
     /**
      * Class names that failed to initialise in some instance and initialised in none, sorted. A
@@ -1305,8 +1307,9 @@ public class OtherlodeTestCollector internal constructor(
      * cluster is the root plus each never-hit node reachable from it whose callers are all in the
      * cluster. A class or outcome root gives a cluster only when the cluster also holds another class
      * node or a method node it lists. Inline, generated and unread methods are not roots or members. Nor
-     * is a method of a class in [failedToInitialize], or of a class whose static initialiser has
-     * started but not finished in each instance that loaded it, though it still counts as a caller.
+     * is a method of a class in [failedToLoad] or [failedToInitialize], or of a class whose static
+     * initialiser has started but not finished in each instance that loaded it, though it still
+     * counts as a caller.
      * Throws [IllegalStateException] as [neverInitialized] does.
      */
     public fun unreachedClusters(): List<UnreachedCluster> {
@@ -1326,13 +1329,13 @@ public class OtherlodeTestCollector internal constructor(
             val outcomes = buildOutcomeNodes(::isHit)
             val clusterGraph = buildClusterGraph(graph, outcomes, coveredBy)
 
-            val failedToInitialize = failedToInitializeNames() + classesWithInitializerRunning()
+            val withheld = failedToInitializeNames() + classesWithInitializerRunning() + failedToLoadNames()
 
             fun isNeverHit(node: ClusterNode) =
                 when {
                     node.isClass -> node in classNodes
                     node.outcome != null -> node in outcomes
-                    else -> !isHit(node.method) && node.method !in coveredBy && node.method.className !in failedToInitialize
+                    else -> !isHit(node.method) && node.method !in coveredBy && node.method.className !in withheld
                 }
 
             val neverHitNodes =
@@ -1342,7 +1345,7 @@ public class OtherlodeTestCollector internal constructor(
                             it !in coveredBy &&
                             it.methodName != CLASS_INIT &&
                             it !in unjudged &&
-                            it.className !in failedToInitialize
+                            it.className !in withheld
                     }.map { ClusterNode(it) } + outcomes.keys + classNodes.keys
             return neverHitNodes
                 .mapNotNull { node ->
@@ -1483,12 +1486,13 @@ public class OtherlodeTestCollector internal constructor(
         judgement: ClassJudgement,
     ): Map<ClusterNode, ClassNode> {
         val classNodes = mutableMapOf<ClusterNode, ClassNode>()
+        val failedToLoad = failedToLoadNames()
         for ((className, finding) in judgement.findings) {
             val methods = judgement.covered[className].orEmpty().filter { (graph.nodes[it]?.hits ?: -1L) == 0L }
             if (methods.isNotEmpty()) classNodes[classNode(className)] = ClassNode(finding, methods)
         }
         graph.nodes
-            .filter { (key, info) -> info.neverLoaded && key.className !in judgement.findings }
+            .filter { (key, info) -> info.neverLoaded && key.className !in judgement.findings && key.className !in failedToLoad }
             .keys
             .groupBy { it.className }
             .forEach { (className, methods) -> classNodes[classNode(className)] = ClassNode(ClassFinding.NEVER_LOADED, methods) }
@@ -2138,7 +2142,7 @@ public class OtherlodeTestCollector internal constructor(
             status = finding.status,
             identities =
                 finding.identities.map { (groupId, artifactId) ->
-                    DependencyIdentityRef(groupId, artifactId, finding.versionsByIdentity["$groupId:$artifactId"].orEmpty())
+                    DependencyIdentityRef(groupId, artifactId, finding.versionsByIdentity[groupId to artifactId].orEmpty())
                 },
             loadedClassesTotal = finding.loadedClassesTotal,
             classCount = finding.classCount,
@@ -2769,7 +2773,7 @@ public enum class RootKind {
 public enum class ClassFinding {
     /**
      * A complete static baseline declared the class and no manifest named it as probed, skipped or
-     * unreported. Unlike [OtherlodeTestCollector.neverLoaded], this includes a class in
+     * unreported. Like [OtherlodeTestCollector.neverLoaded], this leaves out a class in
      * [OtherlodeTestCollector.failedToLoad].
      */
     NEVER_LOADED,

@@ -45,8 +45,7 @@ public enum class DependencyUsage {
 
 /**
  * One `groupId:artifactId` a dependency carries, with the non-empty versions it was listed at, sorted.
- * [versions] is empty when either id contains `\`, `:` or `,`. [groupId] is empty for an identity
- * read from a jar's file name.
+ * [groupId] is empty for an identity read from a jar's file name.
  */
 @ConsistentCopyVisibility
 public data class DependencyIdentityRef internal constructor(

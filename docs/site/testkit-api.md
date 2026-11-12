@@ -141,7 +141,7 @@ A query that reads no zero count keeps answering: `wasHit`, `hitCount`, `omissio
 | `callCount(verb, routeTemplate): Long` | The count summed over instances, each instance's highest delivered total. |
 | `neverCalled(): List<EndpointRef>` | Every endpoint with a summed count of zero, sorted by route template, then verb, then path, regex and servlet pattern in that order, leaving out one whose handler class failed to initialise and one whose endpoint module every reporting instance switched off. Refuses while an instance's zero counts are not evidence. |
 | `endpoints(): List<EndpointRef>` | Every endpoint any instance reported, sorted the same way. |
-| `disabledEndpointModules(): List<DisabledEndpointModule>` | The endpoint modules an instance reported as switched off, each with its kind: those that switched themselves off, such as on a framework version the agent does not support, and those the agent's configuration kept off. Sorted by module name. A module switched off with no kind is never listed, because the collector rejects the manifest that names it (see [rejected payloads](#rejected-payloads)). |
+| `disabledEndpointModules(): List<DisabledEndpointModule>` | The endpoint modules an instance reported as switched off, each with its kind: those that switched themselves off, such as on a framework version the agent does not support, and those the agent's configuration kept off. Sorted by module name. |
 
 `wasCalled` and `callCount` throw `UnknownEndpointException` for an endpoint no manifest has named.
 
@@ -181,7 +181,7 @@ A payload is rejected when:
 - It carries an agent version that differs from the testkit's version. The reason names both versions. An empty version on either side skips the check.
 - A collector between the agent and the testkit stripped fields it did not know.
 - It does not decode, which happens when the agent is newer than the testkit or something other than the agent posted to the port.
-- Applying it failed. A manifest that names an endpoint module switched off with no kind fails this way. The agent switches a module off with no kind when its endpoint replay buffer fills, and logs `otherlode: endpoint module <module> disabled itself: endpoint replay buffer overflow: records were dropped before a resolver was installed`.
+- Applying it failed. The reason carries the exception.
 - The collector serves one test JVM, as the extension's does, and the payload comes from a second instance. The reason names `maxParallelForks` above 1 and a child JVM that has the agent.
 
 ## OtherlodeExtension
@@ -370,8 +370,10 @@ One endpoint, merged across instances. Every field except `verb`, `routeTemplate
 
 | Type | Fields |
 |---|---|
-| `DisabledEndpointModule` | `module: String`, `reason: String`, `kind: DisabledEndpointModuleKind` |
+| `DisabledEndpointModule` | `module: String`, `reason: String`, `kind: DisabledEndpointModuleKind?` |
 | `SkippedClass` | `className: String`, `reason: String` |
+
+`kind` is null when the agent gave none, such as for a module that dropped endpoint records before the agent finished installing.
 
 ### DependencyStatus
 
@@ -391,7 +393,7 @@ One endpoint, merged across instances. Every field except `verb`, `routeTemplate
 |---|---|---|---|
 | `DependencyIdentityRef` | `groupId` | `String` | Empty for an identity read from a file name. |
 | | `artifactId` | `String` | The artifact id. |
-| | `versions` | `Set<String>` | Every non-empty version any instance listed, sorted. Empty when the group or artifact id contains `\`, `:` or `,`. |
+| | `versions` | `Set<String>` | Every non-empty version any instance listed, sorted. |
 | `DependencyReferenceSite` | `className` | `String` | The class that references the dependency. |
 | | `methodName` | `String?` | The method, or null for a reference at class level. |
 | | `neverLoaded` | `Boolean` | `true` when the site comes from the static baseline of an instance that did not load its class, and `failedToLoad` is `false`. |
@@ -492,7 +494,7 @@ A finding about a whole class. A class holds at most one, the first that applies
 
 | Value | Meaning |
 |---|---|
-| `NEVER_LOADED` | A complete static baseline declared the class and no instance ever loaded it. Unlike `neverLoaded()`, this includes a class in `failedToLoad()`. |
+| `NEVER_LOADED` | A complete static baseline declared the class and no instance ever loaded it. Like `neverLoaded()`, this leaves out a class in `failedToLoad()`. |
 | `NEVER_INITIALIZED` | The class loaded and its static initialiser never ran. |
 | `NEVER_INSTANTIATED` | The class loaded, has instance methods, and none of its constructors or instance methods ran. |
 
