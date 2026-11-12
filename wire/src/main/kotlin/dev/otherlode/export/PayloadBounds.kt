@@ -35,7 +35,7 @@ object ChunkLimits {
 
 /**
  * Splits [items], in order, into chunks of at most [maxPerChunk] items. [kind] admits each chunk's
- * weight plus [allowance], except a chunk whose single item alone breaks a bound.
+ * weight plus [allowance], except a chunk of one item that breaks a bound once [allowance] is added.
  */
 fun <T> chunkedByWeight(
     items: List<T>,

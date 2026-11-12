@@ -846,9 +846,7 @@ internal fun printNeverHitReport() {
         }
     val neverHitKeys = judgeableKeys.filter { it !in everHit }
     val (inlineNeverHit, notInlineNeverHit) = neverHitKeys.partition { manifestProbes[it]?.inline == true }
-    // A generated probe, such as a data class's copy or an enum's values, is kept and counted,
-    // but the compiler will emit it again regardless of what the adopter does, so a zero hit
-    // total is not a finding the adopter can act on.
+    // A generated probe, such as a data class's copy or an enum's values, is kept and counted but never a finding.
     val (generatedNeverHit, notGeneratedNeverHit) =
         notInlineNeverHit.partition { manifestProbes[it]?.generatedBy != GeneratedBy.GENERATED_BY_UNSPECIFIED }
     // An unread shape is compiler output the agent could not read, in a method or a branch probe

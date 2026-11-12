@@ -49,7 +49,7 @@ The agent tells a compiler's generated code, such as a data class's `copy`, a ca
 | Kotlin | kotlinc 1.9.25, 2.1.21, 2.2.21 and 2.4.21, standing for 1.9 to 2.4. 2.1.21 stands for the releases that default to `-jvm-default=disable`. The kotlinx.serialization plugin's output is checked with each release's own plugin, and with 2.1.21 and 2.2.21 also under `-language-version 1.9`, which compiles with the K1 frontend. |
 | Java | javac 17, 21 and 25 |
 | Scala 2 | scalac 2.12.20, 2.13.15, 2.13.16 and 2.13.18. A Scala 2 class does not name its compiler, so the rules accept every body shape found in a survey of 2.12.18 to 2.12.21 and 2.13.14 to 2.13.18. |
-| Scala 3 | Each release from 3.3.3 to 3.10.0. A Scala 3 class names the release that wrote it. The releases the agent reads are listed in `scala3-read-releases.txt` inside the agent jar. |
+| Scala 3 | Each release from 3.3.3 to 3.10.0. A Scala 3 class's `.tasty` file names the release that wrote it, and a class whose `.tasty` file its class loader does not serve is read as Scala 2 is. The releases the agent reads are listed in `scala3-read-releases.txt` inside the agent jar. |
 
 Code from any other compiler, or from a release that changed a shape, is probed and counted like any other code. If its outline looks like compiler output but its body is not one the agent has read, the agent reports it as an unread shape, which is never called dead code. On the first flush that finds one, the agent logs a WARNING that counts them by family and names each Scala 3 release it has not read. See [Unread shapes](methods-and-branches#unread-shapes).
 

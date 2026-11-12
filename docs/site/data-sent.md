@@ -125,7 +125,7 @@ The ids refer to the manifest of the same run. They mean nothing without it.
 Every delta batch and manifest carries three fields that tell Otherlode whether the run's counts are behind. Static baseline and class listing chunks carry none of them.
 
 - `payload_sequence` numbers the run's delta batches and manifests from 1, one higher each time. The payload with the highest number is the run's latest word, whatever order the payloads arrived in. A gap in the numbers means nothing.
-- `counts_pending_since` is 0 when, as of the moment the payload was stamped, no count the run sent and no class it reported in a manifest has been refused or gone unanswered. Otherwise it is the time, in milliseconds since the epoch, of the flush in which that first happened. It says nothing about the run starting.
+- `counts_pending_since` is 0 when, as of the moment the payload was stamped, nothing from a delta batch or manifest is waiting to be sent again after a send that failed or did not complete. Otherwise it is the time, in milliseconds since the epoch, of the flush from which delta counts or manifest entries have waited without a break, whichever began first. It says nothing about the run starting.
 - `starting` is true while the run is starting, and false after.
 
 A run is starting from the agent's start. Every payload carries `starting = true` until a flush finds all of these:
@@ -161,7 +161,7 @@ The manifest says what each id in a delta batch names. It carries the resource a
 | `verifier_rejections_watched` | True when the agent's hook on `VerifyError` is installed. Every manifest of a run agrees |
 | `unreported_classes` | Name of a class the agent found loaded that no transformer was offered, and the time |
 | `endpoints` | Per endpoint: `endpoint_id`, verb, route template, the framework's own spelling of the template, framework name, how it was discovered, whether the template is a path, a regex or a servlet pattern, and the handler class, method and descriptor when known |
-| `disabled_endpoint_modules` | Module name, the reason (the error's text for a linkage error, the exception's class name for any other exception, the setting for a module your configuration kept off), the time, and a kind naming why: a linkage error, an advice failure, a transform failure, a route walk failure, a hook that matched no method, a module your configuration kept off, or routes the module has no point to count at |
+| `disabled_endpoint_modules` | Module name, the reason, the time, and a kind naming why: a linkage error, an advice failure, a transform failure, a route walk failure, a hook that matched no method, a module your configuration kept off, or routes the module has no point to count at. The kind is unset for a module that dropped endpoint records before the agent finished installing. The reason is the error's text for a linkage error and the exception's class name for any other exception. Otherwise it is a sentence from the agent, such as the setting that kept the module off |
 | `framework_markers` | Per marker: its id, the class set that matched as fully qualified names, and the time of the sweep that saw it. Each is delivered once per run. See [frameworks with no module](endpoints#frameworks-with-no-module) |
 | `dependencies` | Per dependency: `dependency_id`, identities (`group_id`, `artifact_id`, `version`), how the identity was read, the location, how it was discovered, and class count |
 | `external_classes` | Name of a class outside scope that your code refers to, the `dependency_id` that provides it, and whether nothing provides it |
@@ -181,7 +181,7 @@ The condition fingerprint includes the string constants in the condition, so the
 
 #### Names and paths
 
-Class, method and parameter names, source file names and line numbers come from your class files. A class compiled without debug information sends no lines or parameter names.
+Class, method and parameter names, source file names and line numbers come from your class files. A class compiled without debug information sends no lines. It sends parameter names only when its class file keeps them in a `MethodParameters` attribute, as `javac -parameters` writes.
 
 A dependency's `location` is the jar's path or its entry inside a fat jar, such as `~/.m2/repository/org/x/x-1.0.jar` or `BOOT-INF/lib/x-1.0.jar`. A path that starts with the JVM's `user.home` folder is written with `~` in its place, so the payload does not name the account that ran the agent. Only a whole leading folder matches: `/home/al` does not rewrite `/home/alice/x.jar`. When the home folder is reached through a symbolic link, a path under its real path, with every link followed, is written with `~` too. A path under another user's home folder is sent as it is.
 
@@ -197,7 +197,7 @@ The agent sends a static baseline only when you set `staticBaselineEnabled`. A b
 
 | Field | Content |
 |---|---|
-| `declared_classes` | Per class: name, super class and interface names, source file name, body kind, and per method the name, descriptor, parameter names, generic signature, call edges, branch sites (with conditions and site keys) and referenced classes |
+| `declared_classes` | Per class: name, super class and interface names, source file name, body kind, source name, Kotlin class kind, names of classes it refers to outside any probed method, and per method the name, descriptor, parameter names, generic signature, the compiler construct that generated it or the unread shape it has, flags for inline, static, lambda body and extension receiver, call edges, branch sites (with conditions and site keys) and referenced classes |
 | `unreadable_classes` | Name of a class file the scanner could not read, and the reason |
 | `unprobed_classes` | Name of a class with no method to count, and the reason |
 | `external_classes` | The same mapping as in the manifest |
@@ -216,7 +216,7 @@ The agent sends a class listing unless you set `classListingEnabled=false`. A ba
 | `listed_at` | When the listing was made, in milliseconds since the epoch. Every chunk of one listing carries the same value |
 | `chunk_index`, `chunk_count` | Which part this chunk is, counting from 0, and how many parts the listing has |
 
-A listing that matches no class is one chunk with no names. A process sends no listing when it cannot read a directory, jar or nested jar it lists, since a listing with a gap would read as complete. Otherlode uses a listing only when it holds every chunk. See [classes](classes#the-class-listing).
+A listing that matches no class is one chunk with no names. A process sends no listing when it cannot read a directory, jar or nested jar it lists. Otherlode uses a listing only when it holds every chunk. See [classes](classes#the-class-listing).
 
 ## What the agent never sends
 
@@ -243,15 +243,15 @@ One send makes up to 5 attempts, waiting 200 ms after the first failure and doub
 - A `5xx` status.
 - A `408` or `429` status.
 
-Every other status, including a `401`, `403`, `404` and a redirect, fails the send at once, because the same bytes would meet the same answer. Only a `202` confirms.
+Every other status, including a `401`, `403`, `404` and a redirect, fails the send at once. Only a `202` confirms.
 
 When a retried answer carries a `Retry-After` header, in seconds or as an HTTP date, the agent waits that long before the next attempt instead, if it is 2 seconds or less. A longer `Retry-After` ends the send at once, and the next flush sends the payload again. A receiver that answers with a `Retry-After` over 2 seconds during an outage therefore gets one request per payload a flush, not five. See [forwarding](/docs/collector/forwarding) for what a collector answers while it cannot reach Otherlode.
 
 ### After a failed send
 
-- **Delta batch.** The counts are not marked as delivered. The next flush reports the live cumulative count again, which is how a lost acknowledgement or a late batch heals. A refused request, meaning a `4xx` status the agent does not retry, does not stop the flush: the later delta requests still go, and the refused one is built again on the next flush. Any other failure stops the flush's delta requests at that one. The manifest, sent alongside, is not affected. The requests the flush did confirm stay confirmed either way. Counts the receiver has not stored are pending. The next flush leads with an empty delta batch that says so, sent on its own so the news arrives even when the batch with the counts is refused for its size. A flush that then confirms every batch with counts ends with another empty batch that says the counts are no longer pending.
-- **Manifest.** A chunk the receiver did not store stays pending and is built again on the next flush. The agent builds, sends and confirms one chunk at a time and stops at the first failure. A disabled endpoint module goes first, on a manifest of its own, before any class chunk, since its record tells Otherlode the endpoints sent earlier are no longer counted.
-- **Static baseline.** Chunks go out in order and the first failure stops the send. The chunks left are sent again, one per flush, after a flush whose own sends the receiver stored. A `400` or `422` answer means the receiver refused the content, so the agent drops every chunk left and logs a warning. Any other failure keeps the chunks, such as a `401` while a token rotates, or a `413`, since a proxy's size limit can be raised while the process runs. The scan is never repeated in a process.
+- **Delta batch.** The counts are not marked as delivered. The next flush reports the live cumulative count again, which is how a lost acknowledgement or a late batch heals. A refused request, meaning a `4xx` status the agent does not retry, does not stop the flush: the later delta requests still go, and the refused one is built again on the next flush. Any other failure stops the flush's delta requests at that one. The manifest, sent alongside, is not affected. The requests the flush did confirm stay confirmed either way. Counts the receiver has not stored are pending. The next flush leads with an empty delta batch that says so, sent on its own so the news arrives even when the batch with the counts is refused for its size. A flush that then confirms every batch with counts ends with another empty batch, whose `counts_pending_since` is 0 unless a manifest is still pending.
+- **Manifest.** A chunk the receiver did not store stays pending and is built again on the next flush. The agent builds, sends and confirms one chunk at a time and stops at the first failure. A disabled endpoint module goes first, on a manifest of its own, before any class chunk.
+- **Static baseline.** Chunks go out in order and the first failure stops the send. The chunks left are sent again, one per flush, after a flush whose own sends the receiver stored. A `400` or `422` answer means the receiver refused the content, so the agent drops every chunk left and logs a warning. Any other failure keeps the chunks, such as a `401` while a token rotates, or a `413`. The scan is never repeated in a process.
 - **Class listing.** Sent and resent as the static baseline is, with the same rules for each status. A `400` or `422` answer drops the listing for the process. Any other failure keeps the chunks, including a `404` from a collector that does not serve the route.
 - **Resending a delivered payload.** If the receiver stored a payload but the agent never saw the answer, the agent sends the same payload again. Cumulative counts and chunk indexes make the repeat harmless.
 

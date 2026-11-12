@@ -11,14 +11,15 @@ import net.bytebuddy.matcher.ElementMatchers.any
  */
 interface EndpointModule {
     /**
-     * The module's framework id. Calls to `OtherlodeEndpoints` such as `declare` and `moduleDisabled`
-     * name the module by this string.
+     * The module's framework id, carried on the wire. Calls to `OtherlodeEndpoints` such as `declare`
+     * and `moduleDisabled` name the module by this string.
      */
     val name: String
 
     /**
      * Names of boot-layer modules, such as `"jdk.httpserver"`, whose classes this module instruments
-     * and that need to read the endpoint seam's module. Empty by default.
+     * and that need to read the endpoint seam's module. A name the boot layer lacks is skipped. Empty
+     * by default.
      */
     val bootModulesNeedingSeamRead: Set<String> get() = emptySet()
 
@@ -33,7 +34,7 @@ interface EndpointModule {
     /**
      * Whether a failed first weave of a class this module matched leaves the module on. Set it to true
      * when such a failure takes the module's staged declarations with it, so nothing partial is left.
-     * False by default.
+     * A [transform] that throws switches the module off whatever this returns. False by default.
      */
     val weaveFailureLeavesNothingPartial: Boolean get() = false
 

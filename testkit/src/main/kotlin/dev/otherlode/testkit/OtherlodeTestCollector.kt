@@ -705,11 +705,13 @@ public class OtherlodeTestCollector internal constructor(
      * row. Where copies disagree, [ProbeRef.line] comes from the newest instance.
      *
      * Leaves out probes that cannot be judged or that another result covers, such as inline,
-     * generated and optional-argument probes, static initialisers, methods a class finding covers
-     * ([neverInitialized], [neverInstantiated]), routine outcomes ([neverHitRoutineOutcomes]),
+     * generated and optional-argument probes, the METHOD probe of a static initialiser, methods a
+     * class finding covers ([neverInitialized], [neverInstantiated]), a never-hit lambda body folded
+     * into the never-hit methods that create it, routine outcomes ([neverHitRoutineOutcomes]),
      * unread shapes ([neverHitUnreadShapes]) and classes in [failedToInitialize]. A constructor is
      * a row only when another constructor of its class ran. Leaves out a BRANCH probe whose site lies
-     * in code that never ran, such as a never-hit method, even when that code is not a row itself.
+     * in a never-hit method that is not an unread shape, even one that is not a row itself, or whose
+     * guard is an outcome this list would hold but for this rule.
      *
      * Throws [IllegalStateException] while an instance's zero counts are not evidence; see
      * [neverInitialized].
@@ -719,7 +721,7 @@ public class OtherlodeTestCollector internal constructor(
     /**
      * Each never-hit BRANCH probe that [neverHit] leaves out because its outcome is routine, with
      * its [ProbeRef.routine] kind, sorted as [neverHit] sorts. Leaves out an outcome whose site
-     * folds into code that never ran. Throws as [neverHit] does.
+     * [neverHit] leaves out. Throws as [neverHit] does.
      */
     public fun neverHitRoutineOutcomes(): List<ProbeRef> =
         checkedZeroCounts { neverHitRows().filter { it.routine != null && it.unreadShape == null } }
@@ -727,8 +729,8 @@ public class OtherlodeTestCollector internal constructor(
     /**
      * Each never-hit METHOD or BRANCH probe that [neverHit] leaves out because it is an unread
      * shape, with its [ProbeRef.unreadShape] family, sorted as [neverHit] sorts. A probe is unread
-     * when its method is or its own outcome is. Leaves out an outcome whose site folds into code
-     * that never ran. Throws as [neverHit] does.
+     * when its method is or its own outcome is. Leaves out an outcome whose site [neverHit] leaves
+     * out, which no site in an unread method is. Throws as [neverHit] does.
      */
     public fun neverHitUnreadShapes(): List<ProbeRef> = checkedZeroCounts { neverHitRows().filter { it.unreadShape != null } }
 
@@ -947,7 +949,8 @@ public class OtherlodeTestCollector internal constructor(
      * whose static initialiser has started but not finished in each instance that loaded it.
      *
      * [neverHit] and [unreachedClusters] fold the class's never-hit constructors and instance
-     * methods into this finding. Throws as [neverInitialized] does.
+     * methods into this finding, and a never-hit lambda body of the class whose creators all fold
+     * into a class finding. Throws as [neverInitialized] does.
      */
     public fun neverInstantiated(): List<ClassFindingRef> = checkedZeroCounts { classFindingRefs(ClassFinding.NEVER_INSTANTIATED) }
 
@@ -1292,14 +1295,19 @@ public class OtherlodeTestCollector internal constructor(
      * hits, and classes that hold a [ClassFinding]. Some outcomes, such as routine and unread ones,
      * are not nodes. A method only a complete static baseline declared is marked
      * [ProbeRef.neverLoaded]. A class node stands for the never-hit methods its finding covers. The
-     * edges are the call edges of manifests and complete baselines. A call guarded by an outcome node
-     * counts as a call from that outcome.
+     * edges are the call edges of manifests and complete baselines. A call goes to its owner or the
+     * nearest supertype that has the method, and a virtual call other than to a constructor also goes
+     * to each known subtype that has it. A call guarded by an outcome node counts as a call from that
+     * outcome.
      *
      * A root is a never-hit node with no caller, or with a caller that is a method with hits.
      * [RootKind] names its shape. Some nodes, such as static initialisers, are never roots. The
      * cluster is the root plus each never-hit node reachable from it whose callers are all in the
-     * cluster. Inline, generated and unread methods, and classes in [failedToInitialize], are not
-     * roots or members. Throws [IllegalStateException] as [neverInitialized] does.
+     * cluster. A class or outcome root gives a cluster only when the cluster also holds another class
+     * node or a method node it lists. Inline, generated and unread methods are not roots or members. Nor
+     * is a method of a class in [failedToInitialize], or of a class whose static initialiser has
+     * started but not finished in each instance that loaded it, though it still counts as a caller.
+     * Throws [IllegalStateException] as [neverInitialized] does.
      */
     public fun unreachedClusters(): List<UnreachedCluster> {
         return checkedZeroCounts {
@@ -2819,8 +2827,9 @@ public data class WholeClass internal constructor(
  * [wholeClasses] lists the classes the cluster holds whole, sorted by class name. [members] lists
  * its other methods, sorted as [OtherlodeTestCollector.neverHit] sorts. Neither lists `<clinit>`, or
  * a never-run constructor of a loaded class when no constructor of that class ran and no class
- * finding covers it. A method root is in its own cluster; an outcome root is not. [neverLoadedClasses] counts the
- * classes with a method in the cluster marked [ProbeRef.neverLoaded].
+ * finding covers it. A method root is in its own cluster, and so are the methods a class root stands
+ * for; an outcome root is not. [neverLoadedClasses] counts the classes with a method in the cluster
+ * marked [ProbeRef.neverLoaded].
  *
  * [reachedFrom] lists the methods with hits that call a [RootKind.REACHED_FROM_HIT] or
  * [RootKind.CLASS_FINDING] root, sorted as [members]. It is empty for other roots.

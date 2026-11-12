@@ -197,8 +197,9 @@ data class DeltaBatch(
  * initializer's probe:
  * - [calls]: the in-scope call edges from the method's bytecode, with a pass-through's callees in
  *   place of the pass-through.
- * - [referencedClasses]: the dotted out-of-scope classes the method's bytecode references. Leaves out
- *   bootstrap and platform classes and classes from a classpath directory.
+ * - [referencedClasses]: the dotted out-of-scope classes the method's bytecode references, and those
+ *   of each pass-through it reaches. Leaves out bootstrap and platform classes and classes from a
+ *   classpath directory. A listed name can have no [ExternalClass] entry.
  * - [lambdaBody]: the method is a lambda body under a name a compiler gives such a body, such as the
  *   implementation method a `LambdaMetafactory` `invokedynamic` in its own class names.
  * - [branchSites]: the kept branch sites, in [BranchSite.siteIndex] order.
@@ -251,7 +252,11 @@ data class ProbeLocation(
     }
 }
 
-/** Why code outside scope may call a method. [typeName] is dotted, and what it names depends on [kind]. */
+/**
+ * Why code outside scope may call a method. A method with a callback annotation that also overrides an
+ * out-of-scope method gets [OutsideCallerKind.CALLBACK_ANNOTATION]. [typeName] is dotted, and what it
+ * names depends on [kind].
+ */
 data class OutsideCaller(
     val kind: OutsideCallerKind,
     val typeName: String,
@@ -361,7 +366,8 @@ data class BranchOutcome(
  *
  * [outcomes] lists a conditional's [BranchRole.TAKEN] then [BranchRole.FALL_THROUGH], or a switch's
  * [BranchRole.CASE] outcomes in instruction order then [BranchRole.DEFAULT]. A switch read back from
- * a lowering can leave out an outcome.
+ * a lowering can leave out an outcome. A case check of a string switch lowering lists one outcome when
+ * only a hash collision reaches the other.
  *
  * [guard] is the [BranchOutcome.branchIndex] of the innermost kept outcome that dominates this site,
  * or null when none does.
@@ -548,8 +554,7 @@ enum class BodyKind {
  * What a run loaded and probed. A `classId` names a class within one run, and another run can use it
  * for a different class.
  *
- * [dependencies], [classReferences], [externalClasses], [failedClasses] and [frameworkMarkers] hold entries
- * that no earlier confirmed manifest of the run carried.
+ * Each list but [endpoints] holds entries that no earlier confirmed manifest of the run carried.
  *
  * [referencesRecorded] is true when the run records class references. [dependenciesListed] is true
  * once the startup dependency listing, and the reference mappings recorded before it ended, went out
@@ -663,8 +668,8 @@ data class UnprobedClass(
  * One scan can arrive as several chunks. Each chunk of a scan carries the same [resource] and
  * [scannedAt], and [chunkIndex] (0-based) and [chunkCount] say which part this is and how many to
  * expect. [externalClasses] maps class names this chunk's declared classes reference to their
- * dependency, or to absent, in the chunk of the first class that references each name.
- * [includeRules] is null when the sender did not say.
+ * dependency, or to absent, in the chunk of the first class that references each name. A referenced
+ * name with no mapping has no entry. [includeRules] is null when the sender did not say.
  */
 data class StaticBaseline(
     val resource: ResourceAttributes,

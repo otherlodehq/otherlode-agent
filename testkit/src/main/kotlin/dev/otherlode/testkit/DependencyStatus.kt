@@ -16,12 +16,12 @@ public enum class DependencyUsage {
     UNREACHED,
 
     /**
-     * No live site references it, and a static baseline is incomplete, so [UNREFERENCED] and
-     * [UNREACHED] cannot be told apart.
+     * No live site references it, and an instance that listed it and records references sent no complete
+     * static baseline, so [UNREFERENCED] and [UNREACHED] cannot be told apart.
      */
     NO_LIVE_REFERENCE,
 
-    /** No live site references it, and a class that failed to load does. */
+    /** No live site references it, and a class that failed to load does, per a complete static baseline. */
     FAILED_TO_LOAD,
 
     /** Referenced from a live site, such as a method with hits. */

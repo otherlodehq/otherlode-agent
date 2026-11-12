@@ -133,7 +133,7 @@ To disable the agent without rebuilding anything, set the `OTHERLODE_ENABLED` en
 OTHERLODE_ENABLED=false java -javaagent:/opt/otherlode/otherlode-agent-0.1.0.jar=includePackages=com.acme.shop -jar shop.jar
 ```
 
-The agent logs one line at INFO and does nothing else. It instruments no class and sends nothing:
+The agent logs this line at INFO, instruments no class and sends nothing. A warning about another option's value, such as an unknown option name, can still appear before it:
 
 ```text
 otherlode: disabled by configuration, nothing will be instrumented or exported

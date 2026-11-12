@@ -189,7 +189,7 @@ The template is the path Micronaut matches, without any query variables. `{id:?}
 
 `micronaut-3` declares and names routes as `micronaut` does. It counts a request when the server hands the matched route on, after the route is matched and before the filters and the handler: at Netty's `RoutingInBoundHandler`, at micronaut-servlet's `ServletHttpHandler` on servlet containers, and at micronaut-aws's `MicronautLambdaContainerHandler` on Lambda. Its routes are declared once one of those three has been constructed, and a runtime that constructs none is reported with the kind `ROUTES_NOT_COUNTED`, as for `micronaut`.
 
-A 404, a 405, a 415, a 406, an `@Error` or status route and a CORS preflight count nothing. A `@Get` on a `default` method of an interface is not declared. The servlet support is tested on Jetty, and the Lambda support by driving `MicronautLambdaHandler`.
+A 404, a 405, a 415, a 406, an `@Error` or status route and a CORS preflight count nothing. Micronaut 3 does not serve a `@Get` on a `default` method of an interface, so the agent declares nothing for it. The servlet support is tested on Jetty, and the Lambda support by driving `MicronautLambdaHandler`.
 
 ## Vert.x Web
 
@@ -201,7 +201,7 @@ The template is the mount path of each sub-router the route sits in, followed by
 
 A route matched by a regular expression, through `routeWithRegex`, `pathRegex` or a verb form such as `getWithRegex`, is declared and counted under its regex source exactly as written, as a regex endpoint. Under a mount, the template is the mount's path followed by the regex source. A route's name is never its template.
 
-A router used in more than one place, as a root or mounted, declares one endpoint for each place, and a request counts against the place it came through. Under a parameterised mount, the routes take the matched values as their mount point. A router with two parameterised mounts switches the module off with the kind `ROUTE_WALK_FAILED`, since the agent cannot tell them apart. A route that is being mounted is not declared until the mount is complete. A router mounted both at a literal path and at a parameterised path that match the same request, such as `/u/1/*` and `/u/:id/*`, counts that request against the literal one.
+A router used in more than one place, as a root or mounted, declares one endpoint for each place, and a request counts against the place it came through. A request through a parameterised mount counts against the endpoint declared under that mount, whose template keeps the parameter: a route `/orders` under a mount `/u/:id/*` is `/u/{id}/orders`. A router with two parameterised mounts switches the module off with the kind `ROUTE_WALK_FAILED`, since the agent cannot tell them apart. A route that is being mounted is not declared until the mount is complete. A router mounted both at a literal path and at a parameterised path that match the same request, such as `/u/1/*` and `/u/:id/*`, counts that request against the literal one.
 
 A request is counted each time a route matches it, before the handler runs, so a request that passes through several routes counts each of them. A handler that calls `next()` sends the request on to the next matching route, which counts too, and a `reroute()` counts the routes it passes through again. A route with no path, such as a body handler or a logger, is an endpoint `* /*` that every request reaches. Several routes with one verb and template are one endpoint, whose count is the number of times a request matched any of them. These count nothing:
 
@@ -399,8 +399,8 @@ The agent sends the module's name, the reason and a kind to Otherlode with the n
 
 | Kind | Cause |
 |---|---|
-| `LINKAGE_ERROR` | A linkage error, wherever it was caught. |
-| `ADVICE_FAILED` | Any other throw from the module's advice. |
+| `LINKAGE_ERROR` | A linkage error, wherever it was caught, or a servlet container that does not implement Servlet 4.0. |
+| `ADVICE_FAILED` | Any other throw from the module's advice, or a value it cannot use, such as a servlet mapping with no match type. |
 | `TRANSFORM_FAILED` | The module's own transform threw, a framework class it hooks failed to weave, or that class's loader cannot see `dev.otherlode.bootstrap`. |
 | `ROUTE_WALK_FAILED` | Reading a framework's routes failed. |
 | `HOOK_UNMATCHED` | A hook matched no method. |

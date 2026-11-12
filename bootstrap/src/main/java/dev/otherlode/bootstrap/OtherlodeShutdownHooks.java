@@ -20,7 +20,8 @@ public final class OtherlodeShutdownHooks {
 
     /**
      * Returns the keys of the kept table, or null when {@link #offer} has kept none since start or the
-     * last {@link #forget}. Reads the table without a lock, so call it once nothing else changes it.
+     * last {@link #forget}. Reads the table without a lock, so call it from a thread started after the
+     * table last changed, such as a shutdown hook.
      */
     public static Thread[] hooks() {
         Map<Thread, Thread> kept = table;

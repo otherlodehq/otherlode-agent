@@ -21,7 +21,7 @@ This page covers the whole class. For what the agent records inside a class that
 | Failed to initialise | The JVM defined the class and either its static initialiser threw or the JVM's verifier rejected it, so the class can never run in that JVM. | The manifest, and `failedToInitialize()`. |
 | Never loaded | A complete static baseline declared the class and no manifest ever mentioned it. | `neverLoaded()`, and Otherlode's class findings. |
 | Nothing to probe | The class loaded and has no method, optional parameter or static initialiser the agent probes. | Nothing, except in the static baseline's unprobed list. |
-| Left out | The class is synthetic, or a framework generated it at runtime. | Nothing. |
+| Left out | The class is synthetic or a coroutine continuation class, or a framework generated it at runtime. | Nothing. |
 
 A class holds at most one of never loaded, never initialised and never instantiated: the first that applies, in that order. Otherlode judges these findings, and the agent sends the facts they rest on.
 
@@ -29,7 +29,7 @@ A class holds at most one of never loaded, never initialised and never instantia
 
 When a class in scope loads, the agent weaves probes into it and registers it. The class appears in the manifest with one entry per probe, and its delta batches carry the probe counts. The agent holds a class's entries back until it has evidence the JVM defined the class. See [Failed to load](#failed-to-load).
 
-A class has nothing to probe when it has no concrete method the agent probes (see [methods and branches](methods-and-branches)), no optional parameter, and no static initialiser of its own. A marker interface and an interface that holds only constants are typical. The agent sends nothing about such a class. A testkit query for one of its methods throws `UnknownProbeException`, and `neverLoaded()` does not list it.
+A class has nothing to probe when it has no concrete method the agent probes (see [methods and branches](methods-and-branches)), no optional parameter, and no static initialiser of its own. A marker interface and an interface that holds only constants are typical. The live tier sends nothing about such a class. Only the static baseline's unprobed list and the class listing name it. A testkit query for one of its methods throws `UnknownProbeException`, and `neverLoaded()` does not list it.
 
 ## Never initialised and never instantiated
 
@@ -141,7 +141,7 @@ A class that failed to initialise is a deployment to fix, never dead code. If so
 
 The JVM verifies a class when it links it, after it has defined it. A class the verifier rejects stays defined, throws a `VerifyError` on every later use, and fires no probe.
 
-The agent weaves the two constructors of `java.lang.VerifyError`. Each construction hands its message to a fixed-size queue and does nothing else. On each flush, the export thread reads the class name out of every message. It knows the message formats of JDK 17, 21 and 25, and of the older verifier, which checks classes below version 50 and version 50 classes the newer one rejects. The agent names the class in `classes_failed_to_initialize` with the reason `VERIFIER_REJECTED`, once per class. It sends every name it reads, whether or not the class is under your include rules, since a rejected supertype outside them stops your classes that extend it from linking. It leaves out a name when its own retransformation of that class failed.
+The agent weaves the two constructors of `java.lang.VerifyError`. Each construction hands its message to a fixed-size queue and does nothing else. On each flush, the export thread reads the class name out of every message. It knows the message formats of JDK 17, 21 and 25, and of the older verifier, which checks classes below version 50 and version 50 classes the newer one rejects. The agent names the class in `classes_failed_to_initialize` with the reason `VERIFIER_REJECTED`, once per class. It sends every name it reads, whether or not the class is under your include rules. It leaves out a name when its own retransformation of that class failed.
 
 The agent counts a message it cannot read and never guesses at it. `unplaced_verification_failures`, in every manifest, is the run's count of them. The JVM builds the same message again each time something uses a rejected class, so the agent skips a message equal to one it kept recently. It holds 8,192 messages between flushes, and each message it had no room for counts as unplaced too. Once that count is above zero, the run makes no claim from a zero count.
 
@@ -173,7 +173,7 @@ The scan leaves a file out, with a warning in the log, when the JVM would not lo
 
 The scan asks the JVM it runs on in these cases, so a rule that differs between Java versions follows the version you run. On Java 17, a jar that holds `META-INF/INDEX.LIST` is kept, and the JVM then loads classes from the jars its index names, which the scan does not read.
 
-A jar whose manifest cannot be read and that the JVM keeps is read as the JVM reads it. The JVM defines only its classes in the unnamed package, so the scan declares those and no others from it, and none under `BOOT-INF/classes/` or `WEB-INF/classes/`. A class of a named package in that jar still takes its name from a later copy.
+A jar whose manifest cannot be read and that the JVM keeps is read as the JVM reads it. The JVM defines only its classes in the unnamed package, so the scan declares those and no others from it, and none under `BOOT-INF/classes/` or `WEB-INF/classes/`. For a class of a named package in that jar, the scan declares neither that copy nor a later one, since the JVM loads neither.
 
 When two entries hold a class of the same name, the baseline keeps the copy the JVM would load, the first in the classpath's search order. The jars a `Class-Path` names are searched right after the jar that names them. The `BOOT-INF/classes/` and `WEB-INF/classes/` folders are searched after every other entry. In a multi-release jar, the scan declares the copy the JVM loads: the one under the highest `META-INF/versions/N/` at or below the Java version the application runs on, else the copy at the root of the jar. A class that such a jar holds only under `META-INF/versions/` is declared from there.
 
@@ -186,7 +186,7 @@ A directory that holds an unpacked Spring Boot application or WAR is read the sa
 
 The scan does not open jars nested under `BOOT-INF/lib/` or `WEB-INF/lib/`, or the jars in an unpacked application's library folders. If `includePackages` covers a library that you ship as a nested jar, its classes are instrumented when they load but never declared, so they can never be reported as never loaded. [Dependencies](dependencies) covers nested jars.
 
-The scan applies the same rules as the live tier to each class: `includePackages`, `excludePackages`, and the left-out classes below. A class the live tier would skip is not declared.
+The scan applies the same rules as the live tier to each class: `includePackages`, `excludePackages`, and the left-out classes below.
 
 ### What the scan reports
 
@@ -252,13 +252,14 @@ The agent also sends no listing when:
 
 - `java.class.path` is empty or has an empty element, which the JVM reads as the working directory.
 - The JVM runs from a module path, launches a linked image's main module, or upgrades or patches modules.
+- The JVM has no `java.management` module, which the agent needs to see `--patch-module`.
 - An unpacked Spring Boot application's classpath index is malformed.
 
 The agent sends the listing in chunks of at most 20,000 names, in order, and each chunk says its position out of the total. It sends chunks again like the baseline's: after a flush whose payloads are stored, one per flush, and a `400` or `422` answer drops the rest. Set `classListingEnabled=false` to switch it off. See [configuration options](configuration) and [what the agent sends](data-sent#class-listing-chunk).
 
 ## Classes the agent leaves out
 
-The agent never instruments, declares or reports these classes, and the sweep ignores them too:
+The agent never instruments or declares these classes, and the sweep ignores them too:
 
 - **Spring CGLIB classes.** A name containing `$$SpringCGLIB$$` (Spring 6 and 7) or `BySpringCGLIB$$` (Spring 5.3), including the `FastClass` helpers.
 - **Hibernate classes.** A name with a `$`-separated part that is `HibernateProxy`, `HibernateBasicProxy`, `HibernateInstantiator`, or an access optimiser (`HibernateAccessOptimizer`, with its bridge). The match is on a whole part, so a class you wrote called `Util$HibernateProxyUnwrapper` is kept.
@@ -267,6 +268,8 @@ The agent never instruments, declares or reports these classes, and the sweep ig
 - **JDK dynamic proxies** in your packages. The simple name is `$Proxy` and a number.
 - **Coroutine continuation classes.** The class kotlinc writes for each suspend function, whose direct superclass is `ContinuationImpl` or `RestrictedContinuationImpl`. A suspend lambda extends `SuspendLambda` instead and holds your code, so it is kept.
 - **Synthetic classes.** Any class with the JVM's synthetic flag, such as the class kotlinc writes for a function reference. One exception: a part of a Kotlin multi-file facade is synthetic, holds your code, and is kept.
+
+The [class listing](#the-class-listing) applies none of these rules, so it names any of these classes that has a class file.
 
 The agent recognises a generated class only by the rules above, so a proxy that its generator names another way, and that has no synthetic flag, is instrumented. A proxy reaches the method it overrides by calling `super`, so the class it proxies carries the counts.
 

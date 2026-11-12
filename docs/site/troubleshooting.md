@@ -94,7 +94,7 @@ otherlode: could not install the bootstrap holder; the agent is disabled for thi
 The exception under it names the cause:
 
 - `otherlode: could not write the bootstrap holder jar to a temp file`: the agent writes a small helper jar to `java.io.tmpdir` at startup, and that directory is read-only, full, or not writable by the user that runs the JVM. Point the JVM at a writable directory with `-Djava.io.tmpdir=/path/to/dir`, or free space.
-- `otherlode: appended the bootstrap holder jar but dev.otherlode.bootstrap.OtherlodeProbeArrays is still not loadable`
+- `otherlode: appended the bootstrap holder jar but dev.otherlode.bootstrap.OtherlodeProbeArrays is still not loadable`: the agent added its helper jar to the boot class path, and the JVM still could not load the jar's classes. Report it with the trace, the agent version and your JDK.
 - `otherlode: bootstrap holder jar not found on the agent classpath at META-INF/otherlode/bootstrap-jar.bin`: the agent jar is damaged or is not the published jar. Download it again.
 
 ### Another startup failure
@@ -179,10 +179,10 @@ The exception message is `otherlode: unexpected status <code> from <exportUrl>/v
 | `404` | The URL does not reach Otherlode's ingest or a collector. The agent appends `/v1/otherlode/deltas`, `/v1/otherlode/manifest`, `/v1/otherlode/static-baseline` and `/v1/otherlode/class-listing` to `exportUrl`, so a proxy must forward those paths. For Otherlode, set `exportUrl` to `https://ingest.otherlode.dev` with no path. For a collector, drop any path it does not expect. |
 | `301`, `302`, `307`, `308` | The agent does not follow redirects. A proxy that redirects `http` to `https` causes this. Put the final `https://` URL in `exportUrl`. |
 | `400`, `422` | The receiver rejected the content. With the testkit's collector, see [A test fails with a version mismatch](#a-test-fails-with-a-version-mismatch). With another receiver, its log gives the reason. |
-| `413` | A reverse proxy or gateway in front of the receiver refused the request body as too large. The agent keeps each payload under 8 MiB and under 90% of the ingest element limit ([chunk caps](data-sent#chunk-caps)), so raise the limit in front of the receiver. The agent keeps the static baseline and the class listing after a `413` and sends them once the limit is raised, with no restart. Once a count has been refused, each later payload of the run marks its counts as pending (`counts_pending_since`), so Otherlode does not read its zero hits as never hit. Payloads stamped before the first refusal in that flush do not carry the mark. |
+| `413` | A reverse proxy or gateway in front of the receiver refused the request body as too large. The agent keeps each payload under 8 MiB and under 90% of the ingest element limit ([chunk caps](data-sent#chunk-caps)), so raise the limit in front of the receiver. The agent keeps the static baseline and the class listing after a `413` and sends them once the limit is raised, with no restart. Once a count has been refused, each later payload marks its counts as pending (`counts_pending_since`) until a flush's counts are all stored, so Otherlode does not read its zero hits as never hit. Payloads stamped before the first refusal in that flush do not carry the mark. |
 | `408`, `429`, `5xx` | The agent retries within the send and honours a `Retry-After` of up to 2 seconds. A longer `Retry-After` ends the send, and the next flush sends again. If these persist across flushes, Otherlode or the collector is overloaded or down, or the collector reports that Otherlode is. |
 
-The agent resends the same payload on the next flush for every status above, so a repeated warning means the answer has not changed. The static baseline and the class listing are the exception. After a `400` or `422`, each logs a warning and is not sent again in this process:
+The agent sends again on the next flush for every status above, so a repeated warning means the answer has not changed. The static baseline and the class listing are the exception. After a `400` or `422`, each logs a warning and is not sent again in this process:
 
 ```text
 otherlode: static baseline chunk 3 of 7 was refused with status 400, which resending the same bytes cannot change; the scan is not sent again
@@ -251,7 +251,7 @@ Each line means a class loaded that the class listing may not cover:
 
 - The first is a class from a jar or folder the listing did not read, such as a plugin folder, a WAR an application server deployed, an OSGi bundle or a `loader.path` folder.
 - The second is a class whose loader gave it no code source, as many plugin loaders and some code generators do, and whose name the listing lacks.
-- The third is a JVM that, before the listing finished, loaded such classes from more than 4096 places, or more than 4096 of them with no code source, so the agent could not check them all.
+- The third is a JVM that, before the listing finished, loaded classes in scope from more than 4096 places, or more than 4096 such classes with no code source, so the agent could not check them all.
 - The last two are a class the agent could not name, or could not tell where it loaded from.
 
 The agent logs one such line per run, at INFO, and marks every manifest the run sends from then on with `class_listing_blind`. While the run is live, Otherlode claims no class removed in its environment. To get removal claims, put that code on the class path the listing reads. The mark belongs to the run, so a restarted process starts without it.
@@ -277,7 +277,7 @@ Otherlode stored the payload, but no finding counts it. [Scope and environments]
 
 ## The flush at shutdown is late, missing or not waiting
 
-On a graceful exit the agent's shutdown hook has 28 seconds in all. It flushes at once for up to 5 seconds, waits until 18 seconds in for your application's own shutdown hooks, then runs the final flush with the time left, at least 10 seconds. [What the agent sends](data-sent#when-payloads-are-sent) describes each step. These lines mean a step did not go as planned.
+On a graceful exit the agent's shutdown hook has 28 seconds in all. It flushes at once for up to 5 seconds, waits until 18 seconds in for your application's own shutdown hooks, then runs the final flush with the time left, at least 10 seconds. With `testRun`, it skips the early flush and the wait, and gives the final flush 10 seconds. [What the agent sends](data-sent#when-payloads-are-sent) describes each step. These lines mean a step did not go as planned.
 
 ```text
 otherlode: an in-flight flush used up the early shutdown flush's budget; skipping it
@@ -367,7 +367,7 @@ otherlode: com.acme.shop.Plugin was woven and registered but the JVM never defin
 
 At shutdown the agent adds `otherlode: 3 classes were woven and registered but never confirmed defined`.
 
-The agent rewrote the class, and then two sweeps in a row found it not defined. Most often the JVM refused to define the class for a reason in your application, such as a supertype it cannot load. A transformer that runs after the agent and replaces the bytes also causes it. A class the verifier rejects is defined, so it does not cause this line; see [failed to initialise](classes#failed-to-initialise). Run the application without the agent. If the class loads there, report the class and its loader.
+The agent rewrote the class, and then two sweeps in a row found it not defined. Most often the JVM refused to define the class for a reason in your application, such as a supertype it cannot load. A class the verifier rejects is defined, so it does not cause this line; see [failed to initialise](classes#failed-to-initialise). Run the application without the agent. If the class loads there, report the class and its loader.
 
 The agent withholds the class's probes, so the report does not list it as dead code.
 
@@ -381,7 +381,7 @@ At shutdown the agent adds `otherlode: 1 classes declared endpoints while being 
 
 ## A method has no branch probes
 
-A method keeps its entry probe and loses its branch probes in three situations, each with its own message.
+A method keeps its entry probe and loses its branch probes in the situations below, each with its own message.
 
 ```text
 otherlode: com.acme.shop.Parser#parse(Ljava/lang/String;)V would not fit a class file with branch probes: it is 65000 bytes of code and could grow to 70100 bytes, over the 65535 byte limit; its branch probes are left out and its entry probe is kept
@@ -394,6 +394,8 @@ otherlode: com.acme.shop.Cart reached this agent rewritten by an earlier transfo
 ```
 
 At INFO. Another agent, such as an aspect weaver, changed the methods' bodies, so the branches in the bytes the agent received do not match the class file. See [other agents in the same JVM](compatibility#other-agents-in-the-same-jvm).
+
+When another agent retransforms a class the agent already wove, the lines `was transformed again with bytes whose branches no longer line up` (INFO) and `was transformed again with bytes whose branch probes would not fit` (WARNING) name the methods that keep their entry probe. Their branch counts stay where they were.
 
 ```text
 otherlode: could not read com.acme.shop.Cart's bytecode; any method of it that is probed at all gets an entry probe with no line number, and the class gets no branch probes, no call edges, no supertypes, and no inline or generated mark
@@ -427,7 +429,7 @@ Something removed the debug information from the class, such as an obfuscator or
 otherlode: 12 methods in 3 classes look like compiler output this agent has not read, and are reported as unread shapes rather than dead code (...). Scala 3 releases this agent has not read: 3.11.0. A newer agent may read them.
 ```
 
-Your classes use a compiler version whose generated code the agent does not recognise, so it reports those methods as unread shapes, not as never hit. The message names the families and, for Scala 3, the releases. Nothing in your code needs fixing. Upgrade to an agent release that reads your compiler, or ignore the rows marked unread. A second line, `otherlode: <class> was compiled by Scala <version>, which this agent has not read; ...`, names the class. [Methods and branches](methods-and-branches) lists the shapes.
+Some methods are compiler output in a shape this agent does not read, such as code from a compiler release newer than the agent. The agent reports them as unread shapes, not as never hit. The message names the families and, for Scala 3, the releases. Nothing in your code needs fixing. When the line ends `A newer agent may read them.`, a newer agent release may read them. Otherwise, ignore the rows marked unread. A second line, `otherlode: <class> was compiled by Scala <version>, which this agent has not read; ...`, names the class. [Methods and branches](methods-and-branches) lists the shapes.
 
 ## The static baseline warns about a blind spot
 
@@ -449,7 +451,7 @@ otherlode: the class file of com.acme.shop.Cart differs from the one it was wove
 
 Restart the JVM to run the new code, or debug without the agent. Another reason can take the place of the first clause, such as `the bytes for com.acme.shop.Cart arrive at class-file version 61, where it was woven at 52, and its probes' form cannot follow`, with the same ending. See [HotSwap and IDE redefinition](compatibility#hotswap-and-ide-redefinition).
 
-A different line, `otherlode: could not weave com.acme.shop.Cart again for a redefinition or retransformation; ...`, means another agent retransformed the class and the second weave failed. The rest of the line says whether the class keeps counting or runs unwoven from then on.
+A different line, `otherlode: could not weave com.acme.shop.Cart again for a redefinition or retransformation; ...`, means a debugger or another agent redefined or retransformed the class, and the second weave failed. The rest of the line says whether the class keeps counting or runs unwoven from then on.
 
 ## The JVM prints a CDS warning at startup
 

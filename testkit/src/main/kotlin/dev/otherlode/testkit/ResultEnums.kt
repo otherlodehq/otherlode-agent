@@ -14,8 +14,8 @@ import dev.otherlode.export.UnreadShape as WireUnreadShape
  * What one probe counts. [METHOD] counts entries to a method, [BRANCH] one outcome of a
  * conditional or a switch, and [OPTIONAL_ARGUMENT] calls that leave out one optional parameter's
  * argument. [INITIALIZER_RETURNED] counts normal returns from a class's static initialiser, and
- * [INITIALIZER_THREW] throws out of it. Values may be added in a minor release, so a `when` over
- * this enum needs an `else` branch.
+ * [INITIALIZER_THREW] throws out of it. No [ProbeRef] the collector returns has either of these two
+ * kinds. Values may be added in a minor release, so a `when` over this enum needs an `else` branch.
  */
 public enum class ProbeKind { METHOD, BRANCH, OPTIONAL_ARGUMENT, INITIALIZER_RETURNED, INITIALIZER_THREW }
 
@@ -177,10 +177,16 @@ public data class DisabledEndpointModule internal constructor(
  * this enum needs an `else` branch.
  */
 public enum class DisabledEndpointModuleKind {
-    /** A sign of a framework release the module was not built for, such as a `LinkageError`. */
+    /**
+     * A sign of a framework release the module was not built for, such as a `LinkageError`. A
+     * `LinkageError` from the servlet module's route walk reads [ROUTE_WALK_FAILED].
+     */
     LINKAGE_ERROR,
 
-    /** A throw from the module's advice that is not a [LINKAGE_ERROR], or a request the advice could not read. */
+    /**
+     * A throw that is not a [LINKAGE_ERROR], from the module's advice or from its work before a manifest
+     * is built, or a request the advice could not read.
+     */
     ADVICE_FAILED,
 
     /**

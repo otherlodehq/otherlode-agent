@@ -77,7 +77,7 @@ When the JVM loads a class that matches `includePackages`, the agent reads its b
 Three things drive that cost up:
 
 - **More matched classes.** The cost is roughly linear in matched classes. The broad run above wove about 4,200 classes and 99,685 probes. The narrow run wove about 100 classes and 1,489 probes.
-- **Locating class files.** The agent reads each class's file from its own loader, and the supertypes it needs. Inside a Spring Boot fat jar that goes through the nested-jar loader. The agent caches these reads (up to 16 MB, evicting the least recently used) and releases per-loader caches when a loader goes quiet.
+- **Locating class files.** The agent reads each class's own file from the jar or folder it came from, or from its loader when it cannot. It reads the supertypes it needs through the loader, which inside a Spring Boot fat jar is the nested-jar loader. The agent caches the supertype reads (up to 16 MB, evicting the least recently used) and releases per-loader caches when a loader goes quiet.
 - **One core.** On one core, class loading, the JIT, and the weave share a CPU. The broad rules took startup from 13.5 s to 36.0 s on the one-core runner, a larger relative cost than any throughput, CPU or latency row of the table.
 
 Heap follows the same shape. The broad run's minimum heap used was +122 MiB, and its resident set size +303 MiB. Once a class's manifest is delivered, the agent releases that class's locations and keeps only what the next flush needs.
@@ -98,7 +98,7 @@ The agent runs one scheduled thread named `otherlode-export`, two send threads n
 
 On each flush (every 60 seconds by default, with a random offset for the first one so a fleet does not flush at the same instant), the thread:
 
-- copies each changed class's count array,
+- copies every class's count array,
 - encodes a delta batch, and sends it (a flush with unconfirmed counts sends an empty batch first, and one that catches up ends with another),
 - sends any manifest chunks that are not stored yet,
 - walks the loaded classes. Once the dependency listing has completed, it does so on every flush, to count each dependency's loaded classes and to find classes no transformer saw. Until then, it looks for classes no transformer saw on the first flush and then every tenth, about every ten minutes at the default interval. On the flushes between, it walks the loaded classes while a woven class awaits confirmation that the JVM defined it, or while a [framework marker](endpoints#frameworks-with-no-module) is still unseen.
@@ -125,9 +125,11 @@ With the trim, resident set size held level through a 24-hour test. With it off,
 
 ## Opt-in costs
 
-One feature is off by default and costs something when on.
+Two features are off by default and cost something when on.
 
 The static baseline (`staticBaselineEnabled=true`) walks the classpath's bytecode for every class under `includePackages`, on a background thread named `otherlode-static-baseline-scan`. It does not run in `premain`, so it does not add to the time before `main`. It does compete with your application for CPU while it runs, and the cost scales with classpath size, not with traffic. In the startup-only run, the narrow rules with the static baseline on took startup from 16.8 s to 21.9 s on one core (+30.1%), against +24.6% with it off. It runs once per process. See [classes](classes) for what it reports and what it cannot see.
+
+The route bridge for OpenTelemetry (`otelBridgeEnabled=true`) runs on every HTTP server request that OpenTelemetry records, to count the request's route. See [route bridge for OpenTelemetry](endpoints#route-bridge-for-opentelemetry).
 
 ## What to do about it
 

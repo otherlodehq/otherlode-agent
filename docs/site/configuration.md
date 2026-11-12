@@ -105,7 +105,7 @@ otherlode: staticBaselineEnabled must be 'true' or 'false', ignoring 'yes' and u
 
 | Option | When it is on |
 |---|---|
-| `enabled` | The agent runs. When it is `false`, the agent logs one INFO line and does nothing else: it installs no transformer, starts no thread and sends nothing. The agent acts on it before it checks `includePackages`, `exportUrl` or `authToken`. Set `OTHERLODE_ENABLED=false` to switch off an agent that an image already attaches, without rebuilding the image. See [Turn the agent off](attach#turn-the-agent-off). |
+| `enabled` | The agent runs. When it is `false`, the agent installs no transformer, starts no thread, sends nothing and logs one INFO line. A warning about another option's value can still appear. The agent acts on it before it refuses any value of `includePackages`, `exportUrl` or `authToken`. Set `OTHERLODE_ENABLED=false` to switch off an agent that an image already attaches, without rebuilding the image. See [Turn the agent off](attach#turn-the-agent-off). |
 | `endpointsEnabled` | The agent installs its framework endpoint modules. A module counts only when its framework is on the application's classpath, and it ignores `includePackages` and `excludePackages`. [disabledEndpointModules](#disabledendpointmodules) keeps single modules off. With the option off, the agent logs one INFO line and reports no endpoints. It reports each module it would have installed as disabled, with the kind `CONFIGURED_OFF`, and includes `otel` only when `otelBridgeEnabled` is on. See [endpoints](endpoints). |
 | `otelBridgeEnabled` | The agent also counts the route that OpenTelemetry's own HTTP server instrumentation resolved, for a framework no endpoint module covers. It needs `endpointsEnabled`. See [endpoints](endpoints). |
 | `staticBaselineEnabled` | The agent scans the classpath once, on a background thread, for classes under `includePackages` that never load. The scan's cost grows with the size of the classpath. See [classes](classes). |
@@ -151,7 +151,7 @@ With `enabled=false`, the agent logs its one INFO line and not this ERROR.
 
 ## callbackAnnotations
 
-`callbackAnnotations` names annotations that a framework calls methods by, for a framework the agent's built-in list does not cover. A never-hit method that carries one reads `CALLED_FROM_OUTSIDE_SCOPE` instead of `UNCALLED`. The label changes no count. See [outside callers](call-graph#outside-callers) for what the label means and what the built-in list covers.
+`callbackAnnotations` names annotations that a framework calls methods by, for a framework the agent's built-in list does not cover. A never-hit method that carries one and has no in-scope caller reads `CALLED_FROM_OUTSIDE_SCOPE` instead of `UNCALLED`. The label changes no count. See [outside callers](call-graph#outside-callers) for what the label means and what the built-in list covers.
 
 ```text
 callbackAnnotations=com.acme.bus.Handles;com.acme.jobs.OnJob
@@ -251,7 +251,7 @@ otherlode: authToken is set but exportUrl is not, so the token goes to the defau
 
 The agent starts the first flush at a random point within the first interval. The flushes after it follow every interval at a fixed rate. Every payload carries the interval as `flush_interval_seconds`.
 
-A running instance says `starting` on every payload for at least one interval after the agent starts, and for at most 10. [Pending counts](data-sent#pending-counts) says when it stops.
+A running instance marks every delta batch and manifest `starting` for at least one interval after the agent starts, and for at most 10. [Pending counts](data-sent#pending-counts) says when it stops.
 
 ## trimNativeHeapIntervalMinutes
 

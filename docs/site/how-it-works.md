@@ -70,7 +70,7 @@ A woven class loads, fails and reflects as the same class does without the agent
 
 When the agent cannot instrument a class, it skips the class, logs why, and reports it as skipped with the reason. A class whose superclass or interface cannot be found is skipped, since the JVM cannot define it either. See [skipped classes](classes#skipped-classes).
 
-A class can be woven and then fail to load, for example when a dependency is missing. The agent holds that class's probes back from its reports until it sees that the class exists: a count above zero, or the JVM listing the class as loaded. A class that never shows either is reported as failed to load, not as code that never ran. The routes a JAX-RS resource class declares are held back in the same way. See [failed to load](classes#failed-to-load).
+A class can be woven and then fail to load, for example when a dependency is missing. The agent holds that class's probes back from its reports until it confirms that the class exists, for example by a count above zero or by the JVM listing the class as loaded. A class it gives up on is reported as failed to load, not as code that never ran. The routes a JAX-RS resource class declares are held back in the same way. See [failed to load](classes#failed-to-load).
 
 If the agent cannot start safely, it turns itself off and sends nothing, so the instance is missing from Otherlode instead of reporting zero everywhere. It does this, for example, when no include rules are set, when `exportUrl` or `authToken` holds a value it cannot use, or when it cannot install the class it needs in the bootstrap class loader. Each case logs an ERROR, such as:
 
@@ -78,7 +78,7 @@ If the agent cannot start safely, it turns itself off and sends nothing, so the 
 otherlode: could not install the bootstrap holder; the agent is disabled for this JVM
 ```
 
-When a tool such as an IDE redefines a woven class, the agent refuses if the class file differs from the one it wove. The JVM then rejects the redefinition, and the class keeps running with its probes. With the class file unchanged, the agent weaves the new bytes with the probes of the first weave. See [HotSwap and IDE redefinition](compatibility#hotswap-and-ide-redefinition).
+When a tool such as an IDE redefines a woven class, the agent refuses if the class file differs from the one it wove, or if the new bytes arrive at a class-file version that needs another probe form. The JVM then rejects the redefinition, and the class keeps running with its probes. Otherwise the agent weaves the new bytes with the probes of the first weave. See [HotSwap and IDE redefinition](compatibility#hotswap-and-ide-redefinition).
 
 ## What this costs you
 

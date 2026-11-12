@@ -4,7 +4,7 @@ description: How the agent reports which of your service's libraries are unloade
 order: 60
 ---
 
-The agent reports on libraries without instrumenting them. It sends three observations: which jars are on the classpath, which of their classes the JVM loaded, and which library classes your own code names. Otherlode, and the testkit in a test, turn those into a status for each dependency. A status is an observation that tells you where to look. None of them says a library can be removed.
+The agent reports on libraries without instrumenting them. It sends three observations: which jars are on the classpath, how many of each jar's classes the JVM loaded, and which library classes your own code names. Otherlode, and the testkit in a test, turn those into a status for each dependency. A status is an observation that tells you where to look. None of them says a library can be removed.
 
 ## What counts as a dependency
 
@@ -47,14 +47,14 @@ The agent lists the startup classpath once per process, off the application's ma
 | Source | What the agent reads |
 |---|---|
 | `java.class.path` | Each entry, read through its real path. A file is read as a jar, whatever its extension. A directory is not a dependency itself. |
-| Manifest `Class-Path` | Each `file:` entry a jar names, searched right after the jar that names it. An entry ending in `/` is a directory, never a dependency. A jar with a `Class-Path` token that is not a valid URL is skipped with a warning. |
+| Manifest `Class-Path` | Each `file:` entry a jar names, searched right after the jar that names it. An entry ending in `/` is a directory, never a dependency. A jar with a `Class-Path` token that is not a valid URL is skipped with a warning, except on Java 17 when the jar also holds `META-INF/INDEX.LIST`. The jars that `Class-Path` names are not read. |
 | Unpacked Spring Boot application on the classpath | Every file under `BOOT-INF/lib/`, or `WEB-INF/lib/` and `WEB-INF/lib-provided/`, plus every jar its classpath index names. Each is a dependency unless it holds your own classes, even a jar whose manifest names an agent. These are searched after every `java.class.path` entry. |
 | Spring Boot executable jar | Every file under `BOOT-INF/lib/`, each read from its own central directory inside the fat jar, with nothing extracted to disk. |
 | Executable WAR | Every file under `WEB-INF/lib/` and `WEB-INF/lib-provided/`. |
 
 The agent reads Spring Boot's classpath index only for an unpacked application. For a packaged jar it lists every file under the library folders, whatever the index says.
 
-A jar the agent cannot read is skipped with one `WARNING`, and the listing continues. If the whole listing fails, the agent logs a `WARNING` and reports no dependencies from that instance, and Otherlode reads the instance as having none listed, not as having a partial list.
+A jar the agent cannot read is skipped with one `WARNING`, and the listing continues. If the whole listing fails, the agent logs `the startup dependency listing failed; no dependencies will be reported` as a `WARNING`. It reports no dependencies from that instance and never sets the "dependencies listed" flag.
 
 ### Dependencies discovered at load
 
@@ -117,7 +117,7 @@ The agent records references per method, and per class for references outside an
 A reference is live when either holds:
 
 - A method with hits holds it, on any instance.
-- A class holds it at class level (an annotation, a supertype, a field type) and that class loaded.
+- A class holds it at class level (an annotation, a supertype, a field type), that class loaded, and it did not fail to initialise.
 
 An inline method's own references never count, because its callers carry copies of the body. Read [methods and branches](methods-and-branches) for inline methods.
 
@@ -146,7 +146,7 @@ Every Kotlin class carries the runtime-visible `kotlin.Metadata` annotation, so 
 
 ## When a dependency is listed
 
-The agent sends a dependency's entry only after a send that carried its first loaded-class count was confirmed. On the manifest, the agent holds back the mapping from a referenced class to that dependency under the same condition. An absent reference names no dependency, so nothing holds it back. A static baseline chunk carries the mappings of the names its classes reference, held back or not.
+The agent sends a dependency's entry only after the sends of the first flush that counted its loaded classes were confirmed, even when that count is zero and no count goes out for it. On the manifest, the agent holds back the mapping from a referenced class to that dependency under the same condition. An absent reference names no dependency, so nothing holds it back. A static baseline chunk carries the mappings of the names its classes reference, held back or not.
 
 The manifest of each instance also carries a flag that means "dependencies listed". The agent sets it once the startup listing finished, every startup dependency has been delivered, and every reference mapping recorded before the listing ended has been delivered. Before that point, an empty list of dependencies or absent references means "not listed yet", not "none".
 
@@ -166,7 +166,7 @@ The entry usually arrives in the same flush as the first count, and at the earli
 | `failedToInitializeDependencies()` | Every dependency with status failed to initialise. |
 | `absentReferences()` | Every absent reference, with its sites. |
 | `awaitDependency(groupId, artifactId, timeout)` | Waits until a manifest lists the dependency. |
-| `awaitDependenciesListed(timeout)` | Waits until every instance heard from has sent the "dependencies listed" flag. |
+| `awaitDependenciesListed(timeout)` | Waits until at least one instance has been heard from and every instance heard from has sent the "dependencies listed" flag. |
 
 The result of a query is a `DependencyStatus` with a `DependencyUsage` value. `DependencyUsage` has the values `UNLOADED`, `UNREFERENCED`, `UNREACHED`, `NO_LIVE_REFERENCE`, `FAILED_TO_LOAD`, `USED`, `LOADED`, `RESOURCES_ONLY`, and `FAILED_TO_INITIALIZE`. A later release can add values, so a `when` over it needs an `else` branch. Each referencing site prints as `Class#method`, with `(class level)`, `(never loaded)`, `(failed to load)`, or `(failed to initialise)` where they apply.
 
@@ -174,7 +174,7 @@ These rules apply to the queries:
 
 - `dependency` throws `UnknownDependencyException` when no manifest listed the dependency. The message names the identities the collector knows.
 - When several dependencies carry the identity you asked for, as when a plain jar and a shaded jar both bundle it, `dependency` returns the one whose only identity it is. It throws `IllegalStateException` when none of them has it as its only identity, and the message names each candidate.
-- The five list queries and `absentReferences()` throw `IllegalStateException` until every instance heard from has sent the "dependencies listed" flag. Call `awaitDependenciesListed` first.
+- The five list queries and `absentReferences()` throw `IllegalStateException` while no instance has been heard from, and until every instance heard from has sent the "dependencies listed" flag. Call `awaitDependenciesListed` first.
 - `unreachedDependencies()`, `failedToLoadDependencies()` and `failedToInitializeDependencies()` throw `IllegalStateException` while an instance's zero counts are not evidence, as `neverHit` does. `dependency` throws then too, but only when the status it would return is unreached, no live reference, failed to load or failed to initialise, and the dependency has referencing sites.
-- `unreferencedDependencies()`, `unreachedDependencies()`, `failedToLoadDependencies()` and `failedToInitializeDependencies()` also throw `IllegalStateException` while any dependency reads no live reference or loaded, or no instance recorded references. A dependency reads no live reference when no complete baseline arrived, so run with `staticBaselineEnabled=true`. `absentReferences()` throws when no instance recorded references.
+- `unreferencedDependencies()`, `unreachedDependencies()`, `failedToLoadDependencies()` and `failedToInitializeDependencies()` also throw `IllegalStateException` while any dependency reads no live reference or loaded, or no instance recorded references. A dependency reads no live reference only while some instance that lists it has sent no complete baseline, so run every instance with `staticBaselineEnabled=true`. `absentReferences()` throws when no instance recorded references.
 - Hits and reference sites that separate used from unreached arrive like any probe data. Wait for them with `awaitSettled`.

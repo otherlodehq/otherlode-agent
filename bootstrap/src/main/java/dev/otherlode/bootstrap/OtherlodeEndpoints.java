@@ -723,7 +723,10 @@ public final class OtherlodeEndpoints {
     /** Disable kind for a {@link LinkageError}, or a framework without the API the module was built for. */
     public static final int KIND_LINKAGE_ERROR = 1;
 
-    /** Disable kind for a throw from a module's advice other than a {@link LinkageError}, or a value it cannot use. */
+    /**
+     * Disable kind for a throw other than a {@link LinkageError} from a module's advice or its
+     * {@code beforeManifest}, or a value its advice cannot use.
+     */
     public static final int KIND_ADVICE_FAILED = 2;
 
     /**

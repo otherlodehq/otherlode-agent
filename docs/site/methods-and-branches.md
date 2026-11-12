@@ -89,7 +89,7 @@ The branch index of an outcome counts every outcome of every site in the class, 
 
 ### Sites that get no probe
 
-The agent leaves a site without a probe when it is not code you wrote. The site keeps its place in the numbering.
+The agent leaves a site without a probe when it is not code you wrote, or when the site's method is too large for branch probes. The site keeps its place in the numbering.
 
 | Dropped site | What it is |
 |---|---|
@@ -259,13 +259,13 @@ A generated method is one the compiler writes from a declaration rather than fro
 | `CLASS_DELEGATION` | Kotlin | A method kotlinc writes for interface delegation (`class C(d: I) : I by d`) for each member the class does not override. |
 | `TRAIT_FORWARDER` | Scala | A class's method that only calls a trait's static `m$`, and the trait's `m$` that only calls `m`. A class's method that only calls the same method's default in a Java interface the class implements directly. A specialised method such as `apply(int)` that only calls its `apply$mcII$sp` twin. |
 
-The agent reads each mark from the method's bytecode. It never takes a data class, value class or case class from the Kotlin or Scala metadata. The rules aim to leave every method you wrote unmarked. These cases tell you how one reads:
+The agent reads most marks from the shape of the method's body. It never takes a data class, value class or case class from the Kotlin or Scala metadata. The rules aim to leave every method you wrote unmarked. These cases tell you how one reads:
 
 - **Members kotlinc writes without a line-number table.** A data class's `componentN`, `copy`, `equals`, `hashCode` and `toString`, a data object's `equals`, `hashCode` and `toString`, a value class's `equals-impl`, `equals-impl0`, `hashCode-impl` and `toString-impl`, and a delegation forwarder are marked only when they have no line-number table. One you wrote has line numbers and stays ordinary. A data object's three are marked only together: if you write its `toString`, its `equals` and `hashCode` stay unmarked too. In a class compiled without line numbers, a data class's members are all marked.
-- **Your method compiles to the compiler's bytes.** It is marked. A Scala override that only calls `super.m` and a Kotlin secondary constructor that matches a `@JvmOverloads` overload are two examples. The agent tells a Kotlin override that only calls `super` from kotlinc's `DEFAULT_IMPLS` stub by its line, so in a class written on one line or compiled without line numbers the override can be marked.
+- **Your method compiles to the compiler's bytes.** It is marked. A Scala override that only calls `super.m` and a Kotlin secondary constructor that matches a `@JvmOverloads` overload are two examples. The agent tells a Kotlin override that only calls `super` from kotlinc's `DEFAULT_IMPLS` stub by its line. So the override can be marked in a class written on one line, in a class compiled without line numbers, and in a class with no primary constructor and no stub of its own when no other method starts before it.
 - **Your method has a body of its own.** It is ordinary code. A `$DefaultImpls` method that holds the interface method's real body, as under `-jvm-default=disable`, is ordinary.
 - **A Scala body.** It is marked only when it matches, instruction for instruction, the body scalac writes for that member of that class. Otherwise it can be an unread shape, as [Unread shapes](#unread-shapes) says.
-- **Kotlin property accessors.** They are never marked, so a never-called setter stays a finding.
+- **Kotlin property accessors.** An accessor that holds your property's own code is never marked, so a never-called setter stays a finding.
 - **Delegation through a generic interface.** A forwarder for a delegated interface with a type argument, such as `Source<String>`, is not marked and reads as ordinary code.
 - **kotlinx.serialization.** A `$serializer` class is the plugin's when it carries the plugin's markers, such as `GeneratedSerializer` and `@Deprecated` at level `HIDDEN`. A class named `$serializer` that you declared lacks them and stays ordinary. A `serializer()` that takes one `KSerializer` per type parameter, in the companion of a serializable class or in a serializable object, is marked whatever its body. A `@Serializable` class built without the plugin can therefore have a `serializer()` of yours marked. kotlinc's K2 frontend marks the plugin's `$serializer` class synthetic, and the agent does not probe a synthetic class.
 
@@ -290,7 +290,7 @@ Every family but the last covers a method or outcome in that outline whose body 
 
 Whether a body counts as unread depends on whether the class names its compiler:
 
-- **Scala 3.** A class names the release that compiled it. On a release the agent has read, a plumbing-named method that fails its rule is hand-written and ordinary, except for methods scalac does not let you write, such as the methods of an enum case's class, which stay unread shapes. On a release the agent has not read, the method is an unread shape. A method with a forwarder's call shape whose rule needs a class the agent cannot load, such as scala-library's `Function1` when the class's loader does not serve it, is an unread shape on any release. [Compatibility](compatibility#compilers) lists the releases the agent has read.
+- **Scala 3.** The class's `.tasty` file names the release that compiled it. On a release the agent has read, a plumbing-named method that fails its rule is hand-written and ordinary, except for methods scalac does not let you write, such as the methods of an enum case's class, which stay unread shapes. On a release the agent has not read, the method is an unread shape. A method with a forwarder's call shape whose rule needs a class the agent cannot load, such as scala-library's `Function1` when the class's loader does not serve it, is an unread shape on any release. A Scala 3 class whose `.tasty` file its class loader does not serve is read as Scala 2 is. [Compatibility](compatibility#compilers) lists the releases the agent has read.
 - **Scala 2.** A class does not name its compiler. A method in the outline that matches no read shape is an unread shape, and that includes a hand-written override of case-class plumbing, such as your own `toString` in a case class.
 - **Coroutine and string-switch outlines.** They hold only shapes no source produces, so the result does not depend on a compiler release.
 - **`@Serializer(forClass = ...)` objects.** Their `serialize`, `deserialize` and `getDescriptor` are unread shapes whatever the compiler.

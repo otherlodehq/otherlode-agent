@@ -1165,7 +1165,7 @@ class ExportScheduler(
         // Built at run time, since `shadowJar` rewrites a constant that starts with `kotlin`.
         private val KOTLINX_PACKAGE = listOf("kot", "linx").joinToString("")
 
-        /** Flush intervals after the agent's start at which a run stops counting as starting. */
+        /** The most flush intervals after start that a run counts as starting. */
         const val STARTING_CAP_INTERVALS: Long = 10
 
         /** How long after start the unseen callback annotations are first judged. */

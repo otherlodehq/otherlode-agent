@@ -20,7 +20,7 @@ import net.bytebuddy.asm.Advice;
  * recorded prefixer built is used as it is.
  *
  * <p>In a route that holds {@code /:}, a segment that is {@code :name} or {@code :name::type}, with
- * each name made of letters, digits and {@code _}, becomes {@code {name}}. Any other segment stays.
+ * each name made of ASCII letters, digits and {@code _}, becomes {@code {name}}. Any other segment stays.
  * With the system property {@code io.vertx.web.route.param.extended-pattern} set to {@code true}, a
  * name may also hold {@code $} and {@code -}.
  *

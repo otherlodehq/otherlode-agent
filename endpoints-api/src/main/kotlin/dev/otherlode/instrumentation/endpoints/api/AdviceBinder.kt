@@ -35,8 +35,8 @@ class AdviceBinder private constructor(
     fun recordedHooks(): List<RecordedHook> = record.toList()
 
     /**
-     * Returns a wrapper that applies [adviceClassName] to the declared methods [methodMatcher] accepts,
-     * and records the pair in [recordedHooks]. In the advice class, an internal name that starts with a
+     * Returns a wrapper that applies [adviceClassName] to the declared methods with a body that [methodMatcher]
+     * accepts, and records the pair in [recordedHooks]. In the advice class, an internal name that starts with a
      * key of [remapPrefixes] has that prefix replaced by the key's value. The longest matching key wins.
      */
     fun hook(

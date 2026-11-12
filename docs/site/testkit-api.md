@@ -76,8 +76,8 @@ A finding method takes no arguments and returns a list. It judges the merged hit
 | `neverHitRoutineOutcomes(): List<ProbeRef>` | The branch outcomes `neverHit` leaves out because they are routine, each with its `routine` kind. |
 | `neverHitUnreadShapes(): List<ProbeRef>` | The probes `neverHit` leaves out because their code has the outline of compiler output the agent cannot read, each with its `unreadShape` family. |
 | `neverInitialized(): List<ClassFindingRef>` | Classes some instance loaded whose static initialiser ran in no instance. A class with no static initialiser is never listed. |
-| `neverInstantiated(): List<ClassFindingRef>` | Classes some instance loaded, that are not never initialised, with a constructor and an instance method, and none of whose constructors or instance methods ran, generated and inline ones included. A class with only static methods and an interface are never listed. |
-| `neverLoaded(): List<String>` | Class names a complete static baseline declared that no instance ever loaded. Throws `IllegalStateException` until a complete baseline has arrived, which needs the agent option `staticBaselineEnabled=true`. |
+| `neverInstantiated(): List<ClassFindingRef>` | Classes some instance loaded, that are not never initialised, with a constructor and an instance method that are neither inline, generated nor an unread shape, and none of whose constructors or instance methods ran, generated and inline instance methods included. A class with only static methods and an interface are never listed. |
+| `neverLoaded(): List<String>` | Class names a complete static baseline declared that no instance ever loaded. Leaves out a class in `failedToLoad()` and a class whose every method is inline, generated or an unread shape. Throws `IllegalStateException` until a complete baseline has arrived, which needs the agent option `staticBaselineEnabled=true`. |
 | `failedToLoad(): List<String>` | Class names the agent wove that the JVM never defined in any instance. Each is a deployment problem to fix and never dead code. |
 | `failedToInitialize(): List<String>` | Class names that failed to initialise, sorted. See [Classes that failed to initialise](#classes-that-failed-to-initialise). Each is a deployment problem to fix and never dead code. |
 | `skippedClasses(): List<SkippedClass>` | Classes the include rules matched that the agent could not instrument, each with a reason. Sorted by class name. |
@@ -110,9 +110,9 @@ A class is initialised in an instance when its static initialiser's returned slo
 
 A name that no instance loaded, such as a library class the verifier rejected, is not listed, but its loaded subtypes are. A class one instance failed and another initialised is not listed.
 
-A listed class is left out of `neverHit`, `neverHitRoutineOutcomes`, `neverHitUnreadShapes`, `neverInitialized`, `neverInstantiated` and `unreachedClusters`. A method that only such a class calls is the root of a cluster only when a calling method of that class has hits. The static initialiser of a class whose initialiser threw has hits, so a never-hit method that only it calls is a `REACHED_FROM_HIT` root. `neverCalled` leaves out an endpoint whose handler class failed to initialise.
+A listed class is left out of `neverHit`, `neverHitRoutineOutcomes`, `neverHitUnreadShapes`, `neverInitialized`, `neverInstantiated` and `unreachedClusters`. A method that only such a class calls is the root of a cluster only when a calling method of that class has hits. The static initialiser of a class whose initialiser threw has hits, so a never-hit method of another class that only it calls is a `REACHED_FROM_HIT` root. `neverCalled` leaves out an endpoint whose handler class failed to initialise.
 
-A class whose static initialiser is still running is left out of the same queries, apart from `neverCalled`, and `failedToInitialize()` does not list it. Its initialiser is still running when, in every instance that loaded it, the initialiser's entry probe counted, the instance sent its returned and threw slots, and neither slot counted. A never-hit method that only its static initialiser calls is a `REACHED_FROM_HIT` root.
+A class whose static initialiser is still running is left out of the same queries, apart from `neverCalled`, and `failedToInitialize()` does not list it. Its initialiser is still running when, in every instance that loaded it, the initialiser's entry probe counted, the instance sent its returned and threw slots, and neither slot counted. A never-hit method of another class that only its static initialiser calls is a `REACHED_FROM_HIT` root.
 
 #### Queries that refuse
 
@@ -129,7 +129,7 @@ this query rests on zero counts, and a class the verifier rejects fires no probe
   i-3: 2 VerifyError messages in no read format
 ```
 
-A query that reads no zero count keeps answering: `wasHit`, `hitCount`, `omissionCount`, `failedToLoad`, `failedToInitialize`, `neverLoaded`, `skippedClasses`, `neverSupplied`, `wasCalled`, `callCount`, `endpoints`, `disabledEndpointModules`, `unloadedDependencies`, `unreferencedDependencies`, `absentReferences`, and `dependency` for any other status.
+A query that reads no zero count keeps answering: `wasHit`, `hitCount`, `omissionCount`, `failedToLoad`, `failedToInitialize`, `neverLoaded`, `skippedClasses`, `neverSupplied`, `wasCalled`, `callCount`, `endpoints`, `disabledEndpointModules`, `unloadedDependencies`, `unreferencedDependencies`, `absentReferences`, and `dependency` when it does not refuse as above.
 
 ### Endpoint queries
 
@@ -193,11 +193,11 @@ Register it with `@ExtendWith(OtherlodeExtension::class)`. It starts one collect
 | Member | Description |
 |---|---|
 | `beforeAll` | Waits with `awaitNextFlush` for a delta batch that arrives after it begins. Throws `IllegalStateException` if none arrives within the startup timeout, with a message that gives the `-javaagent` flag to add. Once one wait has succeeded in the JVM, later test classes skip it. |
-| `OtherlodeExtension.collector()` | A static accessor for the collector the extension started. Throws `IllegalStateException` until a test class with the extension has run. |
+| `OtherlodeExtension.collector()` | A static accessor for the collector the extension started. Throws `IllegalStateException` until the extension has started a collector, and keeps throwing if binding its port failed. |
 
 The extension's collector accepts payloads from one agent instance only. It is not stopped when JUnit closes its store, so the agent's shutdown flush still reaches it.
 
-The extension throws `IllegalStateException` when the collector cannot bind its port, when a system property below is malformed, when `beforeAll` gets no delta batch in time, and when `collector()` is called before the extension has started a collector.
+The extension throws `IllegalStateException` when the collector cannot bind its port, when a system property below is malformed, when the collector has rejected a payload before or during `beforeAll`'s wait, when `beforeAll` gets no delta batch in time, and when `collector()` is called before the extension has started a collector.
 
 ## System properties
 
@@ -220,7 +220,7 @@ The agent's default flush interval is 60 seconds, longer than the default timeou
 | `IllegalStateException` | Queries, waits, the extension | The collector cannot give a trustworthy answer. See below. |
 | `java.util.concurrent.TimeoutException` | Every `await` method | The condition did not hold within the timeout. |
 
-These three exception classes extend `RuntimeException`.
+`UnknownProbeException`, `UnknownEndpointException` and `UnknownDependencyException` extend `RuntimeException`.
 
 ### UnknownProbeException
 
@@ -254,7 +254,7 @@ The message names the dependency and every dependency the collector knows. When 
 | An instance's hook on `VerifyError` was not installed, or it counted a `VerifyError` message in no read format. | The queries listed in [Queries that refuse](#queries-that-refuse) |
 | Dependency listing is incomplete, references are not recorded, or a dependency cannot be split into unreferenced and unreached. | The dependency list queries, `absentReferences` |
 | Several dependencies carry the identity. | `dependency` |
-| The extension could not start its collector, a system property is malformed, `beforeAll` got no delta batch in time, or `collector()` was called before the extension started one. | `OtherlodeExtension` |
+| The extension could not start its collector, a system property is malformed, the collector rejected a payload before or during `beforeAll`'s wait, `beforeAll` got no delta batch in time, or `collector()` was called before the extension started one. | `OtherlodeExtension` |
 
 ## Result types
 
