@@ -1,102 +1,91 @@
 ---
 title: How the agent works
-description: Why the agent counts in the class it instruments, pushes cumulative totals to Otherlode, and never changes how your classes load, so you can judge whether to run it in production.
+description: How the agent counts in the class it instruments, pushes cumulative totals to Otherlode, and leaves your classes loading as they would without it, so you can judge whether to run it in production.
 order: 140
 ---
 
-## What it can find that static analysis cannot
+## What the agent records
 
-A compiler and a static analyser can prove a method unreachable. They cannot tell you that a method is reachable but nobody calls it, that an `if` has only ever gone one way, or that a route your framework serves has never received a request. Nothing in that code is wrong, so nothing flags it. The only evidence is what happened in a running process.
+The agent counts how often each method runs, which way each conditional goes, and how often each endpoint is matched. It reports what it observes, such as these counts and the classes it could not count. It carries no threshold, no "dead" flag and no confidence score.
 
-The agent collects that evidence. It counts how often each method runs, which way each conditional goes, and how often each endpoint is matched. It does not decide anything from the counts.
+A count of zero means the code did not run in the processes the agent watched, over the time it watched them. Otherlode puts every run of every instance together and judges which code no run reached. See [how findings are judged](/docs/server/how-it-works).
 
-## A zero is an observation, not a proof
-
-A count of zero means the code did not run in the processes the agent watched, over the time it watched them. It does not mean the code cannot run. A quarterly job, a failover path and an error handler for a rare outage all read zero until the day they matter.
-
-So the agent reports raw counts and nothing more. It carries no threshold, no "dead" flag and no confidence score. A collector, if you run one, forwards what the agents send and stores none of it. Otherlode stores every run of every instance over weeks and deploys, and judges which code no run reached. Its finding is a lead to check, not a verdict, so you decide how long a path must stay at zero before you act on it. See [how findings are judged](/docs/server/how-it-works). This split is the right one because the agent cannot know any of that. One instance sees one slice of traffic, and a rule baked into the agent would be wrong for half of its adopters. Putting the judgement in Otherlode also lets it change without redeploying the agent into your services.
-
-The same line decides what the agent is careful about. The agent is built so that missing data never reads as a confident zero. Wherever it cannot count something, it says so. The sections below return to this.
+Where the agent cannot count something, it reports that it did not count it, so missing data never reads as a zero. The sections below show where.
 
 ## Probes are woven in when a class loads
 
-The agent runs as a Java agent, so the JVM hands it each class's bytes just before the class is defined. For each class that matches your include rules, the agent adds small counters, called probes, at the entry of each method and on each outcome of each conditional. Then the JVM defines the changed class, and your code runs as usual.
+The JVM hands the agent each class's bytes just before it defines the class. For each class that matches your include rules, the agent adds counters, called probes, such as one at the entry of each method and one on each outcome of each conditional. The JVM then defines the changed class, and your code runs as usual.
 
-Include rules are required. With none set, the agent logs an error and turns itself off, because instrumenting everything would spend production CPU on library code that you cannot delete. See [configuration options](configuration) for `includePackages`.
+Include rules are required. With none set, the agent logs an ERROR and sends nothing. See [configuration options](configuration) for `includePackages`.
 
-The agent starts only with `-javaagent`. It does not attach to a running JVM. That is a deliberate limit. Attaching later would mean rewriting classes that already loaded, which cannot add the storage a counter needs, cannot see what ran before the attach, and fails on some classes. Attaching late would also miss the wiring and branching your app runs while it boots. Adding one flag to your normal startup is a small, one-time cost for seeing all of it. See [attach the agent](attach).
+The agent starts only with the `-javaagent` flag at JVM startup. It does not attach to a JVM that is already running. See [attach the agent](attach).
 
 ## Each class owns an array of counts
 
-Every instrumented class gets one array of 64-bit counters, with one slot per probe. A probe hit is a single increment of its slot. There is no hash, no lookup and no lock on the path your code takes.
+Every instrumented class gets one array of 64-bit counters, with one slot per probe. Once a probe has its class's array, each hit is one increment of its slot, with no lock, lookup or allocation.
 
-The increment is not atomic, and that is a choice. Under heavy concurrency two threads can race and one increment is lost, so counts are approximate and can even step backwards between two flushes. What no race can do is take a probe that ran back to zero, because the lowest value an increment writes is one. That is the only property a never-hit claim needs. It holds on 64-bit HotSpot, which makes aligned 64-bit reads and writes atomic, and the agent relies on that and not on the Java memory model. Exact counts would need an atomic operation on every hit, a cost you would pay on your hottest methods to improve a number nobody uses to the last digit.
+The increment is not atomic. When two threads hit one probe at once, one increment can be lost, so counts are approximate and can step backwards between two flushes. No race can return a probe that ran to zero, because the lowest value an increment writes is one. That holds on 64-bit HotSpot, which reads and writes an aligned 64-bit value in one step.
 
-Slots hold counts, not flags, because a count costs the same to write and says more. "Never hit across 50 instances and ten million requests" is a stronger finding than "not hit yet".
+How a probe finds its class's array depends on the class-file version:
 
-How a probe finds its class's array depends on the class-file version. From Java 11 (class-file version 55) the class gets nothing added except the probe instructions, and each probe fetches the array when it first runs. Below that, the class gets a static field and a small accessor. Both routes exist for one reason. A superclass's initializer can run your class's code before your class has finished initializing, and a probe that read an unfilled field there would throw a `NullPointerException` inside your application. Neither route can.
+- From class-file version 55 (Java 11), the agent adds only the probe instructions. Each probe loads the array through a constant that the JVM resolves when the probe first runs.
+- Below 55, the agent adds a static field and small accessor methods to the class.
 
-## Results are pushed, not scraped
+Neither route throws a `NullPointerException` when a superclass's initialiser runs your class's code before your class has finished initialising. If the agent cannot find a class's array, the probe counts into a spare array, and the agent logs a warning once for that class:
 
-The agent pushes its data on a fixed interval, 60 seconds by default, to Otherlode's ingest or to your collector. It does not open a port for a metrics system to pull from.
+```text
+otherlode: no registered probe array for com.acme.OrderService; its hits will not be counted (resolver installed: true)
+```
 
-A single instance can only say "not hit here yet". A claim that code is dead needs every instance and every deploy over time, and only a central store holds that. Pushing also survives restarts, where a scraped counter would reset with the process.
+## Results are pushed on a fixed interval
 
-Prometheus's model was the obvious alternative, and it fits badly. A scrape records a rate you average. This data is set membership, whether each of tens of thousands of method and branch identifiers has ever fired, and that is a high-cardinality problem for a time-series database.
+The agent pushes its data to `exportUrl`, which is Otherlode's ingest or your collector, every `flushIntervalSeconds`, 60 seconds by default. It opens no port of its own. Each instance waits a random offset before its first flush, then flushes at a fixed rate, so a fleet that starts together does not send on the same tick.
 
-Each instance picks a random offset for its first flush, then flushes at a fixed rate, so a fleet does not send on the same tick. The interval is fixed, not adaptive, because the goal is a picture over time rather than freshness.
+Every flush sends a delta batch, even when no count changed, so Otherlode can tell an idle instance from one that has stopped. A flush also describes each newly loaded class: which class, method and line each probe is. The agent sends each description once.
 
-Every flush sends an update of the counts that changed, even when nothing changed. The empty update is a heartbeat. Without it Otherlode cannot tell an instance that is up but idle from one that has crashed or lost its network. A flush also sends descriptions of newly loaded classes (which class, method and line each probe is), only once per class. A class that loads late is described on the flush after it loads. See [what the agent sends](data-sent) for the contents and what happens when the collector is down.
+The transport is HTTP/1.1 with a protobuf body, through the JDK's own HTTP client. See [what the agent sends](data-sent) for each payload and what happens when the receiver is down.
 
-The transport is plain HTTP with a protobuf body, through the JDK's own client. gRPC would add a networking library to every JVM you run it in, with its own risk of version clashes against an app that already uses gRPC, to gain streaming that a request every 60 seconds does not need.
+## Totals are cumulative, and each process is a run
 
-## Cumulative totals make retries and restarts harmless
+Each update carries a probe's total since the process started, not the growth since the last flush. A payload sent twice carries the same totals both times, so the agent keeps no queue of payloads. It moves its record of what was delivered forward only after the receiver confirms a send, and after a failed send the next flush reports the live totals again. The memory this takes depends on the size of your code, not your traffic, so an unreachable receiver does not make it grow. A process that dies during an outage loses the counts since its last confirmed flush.
 
-Each update carries a probe's total since the process started, not the amount it grew by. Otherlode keeps the larger of the value it holds and the value it receives.
+One send makes up to 5 attempts. [Retries inside one send](data-sent#retries-inside-one-send) lists which failures it retries and how it reads `Retry-After`.
 
-This is the design's central choice. A sender that retries has a hazard: the receiver may store a payload while the reply is lost, and the agent then sends the same bytes again. If the payload were an increment, Otherlode would add it twice. A larger-of merge is the same whether a value arrives once, twice or out of order, so Otherlode needs no deduplication cache and the agent needs no retry queue. The agent only advances its record of what was delivered after the collector confirms a send, so a failed send leaves the record where it was and the next flush reports the live total again.
+A restarted process counts from zero again. The agent makes a random run ID at every start and stamps it on every payload, and Otherlode keeps each run's data apart. The instance ID is a fresh random value per process unless you pin it, for example to a pod name. A restart under a pinned instance ID is a new run.
 
-That also bounds memory. The data is a set of arrays sized by your code, not your traffic, so an unreachable receiver cannot make the agent's buffers grow. If the process dies during an outage, the cost is the counts since the last confirmed flush, which covers the whole outage. Each send makes up to 5 attempts with a growing delay for failures a retry could fix (a connection error, a 5xx, a 408 or a 429), and fails at once on any other 4xx, since the collector has already read the request and refused it. When the answer carries a `Retry-After`, the agent waits that long instead, up to 2 seconds; a longer one ends the send, and the next flush sends again. A flush on shutdown, marked as the last one, lets Otherlode tell an instance that exited cleanly from one that vanished. The agent runs it after your application's own shutdown hooks have ended, or 18 seconds after shutdown starts if they have not, so code those hooks run is counted. A first flush at the start of shutdown sends the counts so far. The whole shutdown takes up to 28 seconds, and [what the agent sends](data-sent#when-payloads-are-sent) lists the steps.
-
-Cumulative totals bring one problem, which is a restart. A process that restarts counts from zero, and a larger-of merge would sit at the old, higher total. The agent stops that with a run id, a random value made once at startup and stamped on every payload. Otherlode keeps each run's data apart and merges within a run only. The instance id defaults to a fresh random value per process, so unless you pin it, a restart is a new instance anyway. The run id is what keeps results correct when you pin the instance id to something stable, such as a pod name. A restart under a pinned id is then still a new run, and a late update from the old process names the old run and cannot overwrite the new one.
+Outside a [test run](test-runs), on a graceful exit the agent flushes at once, waits for your application's own shutdown hooks to end, up to 18 seconds into shutdown, then sends a final flush marked as the last one. The whole shutdown takes up to 28 seconds. `kill -9` and a crash send no final flush. [When payloads are sent](data-sent#when-payloads-are-sent) lists the steps.
 
 ## Shape comes from the class file, probes go in last
 
-Other agents often run in the same JVM. Coverage tools such as JaCoCo and weavers such as AspectJ rewrite classes too, and that causes two problems.
+The agent works out what a method is by reading its bytecode: which conditions are code you wrote, which jumps are compiler plumbing, and which methods a compiler generated. It reads this shape from the class file, the bytes the compiler wrote, through the class's own loader. Another agent that rewrote the class first, such as JaCoCo, does not change the result.
 
-The agent works out what a method is by reading its bytecode: which conditions are the code you wrote, which jumps are compiler plumbing, which methods a compiler generated. If it read the bytecode after JaCoCo had added its own jumps, JaCoCo's output would look like never-hit code you wrote, and the same app would report different results with and without JaCoCo. So the agent reads each class's shape from the class file itself, the bytes the compiler wrote, read through the class's own loader. The result is the same with other agents present as without.
-
-The other problem is the reverse. If this agent wove first, JaCoCo would receive the changed bytes, its checksum of the class would no longer match the class file its report uses, and your coverage report would lose every woven class. Gradle puts a test task's own JVM arguments ahead of the `jacoco` plugin's, so this is the order you would get by default.
-
-The agent solves this by registering its transformers so that the JVM runs them after every transformer that is not marked retransformation-capable. JaCoCo's, AspectJ's and Spring's load-time weaver are not, so the agent always runs after them, whatever order the flags appear in. Its probes are added to the bytes it receives, so another agent's changes survive. Where the received bytes no longer match the class file closely enough to line a method's conditionals up, the agent keeps the method's entry probe and drops that method's branch probes, so you lose a finding and never gain a wrong one. See [compatibility](compatibility) for the supported agents and what to expect from each.
+Every transformer of the agent that changes a class is retransformation-capable, so the JVM runs them after every transformer that is not, whatever order the `-javaagent` flags come in. JaCoCo's agent, AspectJ's weaver and Spring's load-time weaver are not retransformation-capable, so the agent always runs after them. It adds its probes to the bytes it receives, so their changes stay. Where the received bytes no longer line up with the class file for a method's conditionals, the method keeps its entry probe and gets no branch probes. See [other agents in the same JVM](compatibility#other-agents-in-the-same-jvm).
 
 ## A woven class behaves like the original
 
-The rule the agent holds itself to is that an instrumented class loads, fails and reflects exactly as the same class would without the agent, apart from counting. A defect in your app does not become the agent's defect, and the agent adds no failures of its own.
+A woven class loads, fails and reflects as the same class does without the agent, apart from counting.
 
-Four things follow from the rule.
+- The agent keeps the class's own verification frames and writes new ones only where it inserts code.
+- From class-file version 55, the agent adds no field or method, so reflection over your classes returns what it does without the agent.
 
-- The agent keeps the class's original verification frames and writes new ones only at the places it inserts. It does not recompute them. A recomputed frame can load a class the original did not, or skip a load the original needed, and a framework that probes for an optional library by catching the resulting error would see a different answer.
-- The agent adds no field or method to classes from Java 11 on, so reflection over your classes returns what it did before.
-- A probe never throws into your code. If the agent cannot find a class's array, the probe gets a spare array, a warning is logged once, and that class goes uncounted.
-- Tests define and run every woven class from the benchmark code bases and a matrix of class-file versions 45 to 69, beside its unwoven twin, and require that the woven class fail only where the twin fails.
+When the agent cannot instrument a class, it skips the class, logs why, and reports it as skipped with the reason. A class whose superclass or interface cannot be found is skipped, since the JVM cannot define it either. See [skipped classes](classes#skipped-classes).
 
-When the agent cannot instrument a class, it skips the class and says so. It logs the skip and sends the class in a list of skipped classes with a reason. A class it did not manage to instrument is not left to look like code that was never called. A class whose superclass or interface cannot be found is skipped on purpose, because the JVM could not define it either.
+A class can be woven and then fail to load, for example when a dependency is missing. The agent holds that class's probes back from its reports until it sees that the class exists: a count above zero, or the JVM listing the class as loaded. A class that never shows either is reported as failed to load, not as code that never ran. The routes a JAX-RS resource class declares are held back in the same way. See [failed to load](classes#failed-to-load).
 
-The same rule covers a class that was woven but never defined, for example because a dependency was missing at load. The agent holds that class's probes back from the first report until it has evidence the class exists: a count above zero, or the JVM listing it as loaded. A class that never gets that evidence is named as failed to load. That is a deployment problem, not dead code. The routes a JAX-RS resource class declares while it is woven are held back the same way, so a resource class that never loads leaves no route that reads as never called. [Classes](classes) lists these states.
+If the agent cannot start safely, it turns itself off and sends nothing, so the instance is missing from Otherlode instead of reporting zero everywhere. It does this, for example, when no include rules are set, when `exportUrl` or `authToken` holds a value it cannot use, or when it cannot install the class it needs in the bootstrap class loader. Each case logs an ERROR, such as:
 
-If the agent cannot start safely, it turns itself off completely and sends nothing. It does this when the support class it needs in the bootstrap loader cannot be installed, when no include rules are set, and when `exportUrl` or `authToken` holds a value it cannot use. A missing instance is something you can see in Otherlode's list of instances. An instance that runs but reports zero everywhere would look like a service with no live code.
+```text
+otherlode: could not install the bootstrap holder; the agent is disabled for this JVM
+```
 
-If a tool such as an IDE swaps a woven class for a changed one, the agent refuses when the class file on disk differs from the one it wove, and the JVM rejects that swap. The class keeps running with its probes. With the class file unchanged, the agent weaves the new bytes against the plan from the first weave and renumbers nothing.
+When a tool such as an IDE redefines a woven class, the agent refuses if the class file differs from the one it wove. The JVM then rejects the redefinition, and the class keeps running with its probes. With the class file unchanged, the agent weaves the new bytes with the probes of the first weave. See [HotSwap and IDE redefinition](compatibility#hotswap-and-ide-redefinition).
 
 ## What this costs you
 
-Each of these choices has a price, and you pay it knowingly.
-
-- The restart. Static attach means a new startup flag and one restart.
-- Approximate counts. Use them to ask whether code ran, not how many times it ran, to the last digit.
-- Memory outside the Java heap. Because the agent runs after other agents, the JVM keeps a copy of each woven class's received bytes.
-- The counts since the last confirmed flush, lost if a process dies during an outage.
-- Descriptions sent once. After Otherlode or the collector stores a class's description, the agent frees it from memory. If the description is lost after that, Otherlode gets it again only when the instance restarts.
+- One restart, to add the `-javaagent` flag.
+- Approximate counts. Use them to ask whether code ran, not exactly how many times.
+- Memory outside the Java heap. Because the transformers that weave your classes are retransformation-capable, the JVM keeps a copy of each woven class's received bytes.
+- The counts since the last confirmed flush, if a process dies during an outage.
+- Descriptions sent once. After the receiver stores a class's description, the agent frees it from memory. If the description is lost after that, Otherlode gets it again only from a new run.
 
 See [overhead](overhead) for measured costs.

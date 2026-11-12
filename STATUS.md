@@ -81,6 +81,22 @@ deferrals, gzip, a collector config file, and agent-level redaction
   nothing". A clean full run passes. Make the capture install what it
   needs, or capture standard error too.
 
+- **Testkit gaps the docs review found: to fix in code.** The 2026-11-12
+  docs pass found three places where the testkit's code, not its docs, is
+  wrong. `testkit-api.md` states the behaviour as it is until each is fixed.
+  1. A manifest naming an endpoint module the agent switched off with no
+     kind (the endpoint replay buffer overflowed) makes
+     `ResultEnums.kt` `toTestkit()` throw, so the testkit rejects the
+     whole manifest and every query throws. The testkit's
+     `DisabledEndpointModuleKind` has no value for it; adding one grows
+     the public API.
+  2. `unreachedClusters()` makes a class in `failedToLoad()` a
+     `NEVER_LOADED` root, while `neverLoaded()` and `testkit-api.md` treat
+     a class that failed to load as never dead code.
+  3. `DependencyIdentityRef.versions` is empty when a group or artifact id
+     holds a backslash, colon or comma: `toDependencyStatus` looks the
+     versions up by the unescaped key, the map holds the escaped one.
+
 ### Tooling: code principles and a refactoring playbook
 
 From the comparison with pstack's poteto-mode (`cursor/plugins`, `190d287`).

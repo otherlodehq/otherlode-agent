@@ -57,18 +57,18 @@ The same benchmark also runs the OpenTelemetry Java agent 2.32.0 as a third vari
 
 The fixed-rate row comes from a second run, on commit `9955112`, that held the load at a quarter of the rate PetClinic reached with no agent. PetClinic then had spare CPU, so the latency is the time an agent adds to a request, not time spent in a queue. Startup comes from the startup-only job, with 21 repeats per variant.
 
-Per request, Otherlode's cost lies inside the no-agent variant's own spread, apart from 3.5% more GC pause. What it adds does not grow with traffic: memory, seven or eight threads, and startup. OpenTelemetry costs more on every row. On its defaults it builds and exports a trace for every request, which allocates about 27 KiB more per request and shows in CPU, GC pause and p99. The two agents do different work: OpenTelemetry records each request's trace, and Otherlode counts which of your code ran. The table gives each one's cost as first installed. The [benchmark's write-up](https://github.com/otherlodehq/otherlode-agent/blob/master/benchmark-overhead/OTEL-COMPARISON.md) has the method and every figure with its spread.
+Per request, Otherlode's cost lies inside the no-agent variant's own spread, apart from 3.5% more GC pause. What it adds does not grow with traffic: memory, six or seven threads, and startup. The [benchmark's write-up](https://github.com/otherlodehq/otherlode-agent/blob/master/benchmark-overhead/OTEL-COMPARISON.md) has the method and every figure with its spread.
 
 ## What a probe costs per call
 
-A method probe is one array increment at the method's first instruction: load the class's `long[]`, add one to a slot. A branch probe is the same increment at a branch target. The increment is not atomic and takes no lock, so two threads can lose a count. The agent accepts that, since a count goes out only once per flush interval and the data answers "has this run, and roughly how often".
+A method probe is one array increment at the method's first instruction: load the class's `long[]` and add one to a slot. A branch probe is the same increment at a branch target. The increment is not atomic and takes no lock, so two threads that hit the same probe at once can lose a count. A count is exact enough to tell whether code ran and roughly how often.
 
 The probe allocates nothing. The agent's build fails if a woven call allocates more than the same call without the agent.
 
 Two things can still make a probe cost more than its instructions suggest:
 
 - **Sharing a cache line.** Every thread that runs a method writes the same array element. On a many-core host, a very hot method or endpoint makes every core write one cache line, and each write waits for the others. The benchmark above runs on one core, so it cannot show this cost.
-- **Method size.** A branch probe adds about 13 bytes of bytecode, and an entry probe slightly less. HotSpot never JIT-compiles a method over 8000 bytes and stops inlining a hot method over 325 bytes. The agent drops a method's branch probes, keeps its entry probe, and logs a warning when the branch probes would push the method past the 8000-byte limit. A method that does not cross 325 bytes before weaving but does after can lose inlining, and the agent does not guard against that.
+- **Method size.** A branch probe adds about 13 bytes of bytecode, and an entry probe slightly less. HotSpot never JIT-compiles a method over 8000 bytes and stops inlining a hot method over 325 bytes. When the branch probes would push a method past 8000 bytes, the agent drops them, keeps its entry probe, and logs a warning. A method that crosses 325 bytes only after weaving can lose inlining, and the agent does not guard against that.
 
 ## What a class costs at load
 
@@ -94,14 +94,14 @@ Three pieces of work that would otherwise be startup cost run later:
 
 ## The flush thread and the network
 
-The agent runs one scheduled thread named `otherlode-export` and two send threads named `otherlode-export-send`, all daemon threads. They do not keep your JVM alive. On Linux, one more daemon thread, `otherlode-trim`, trims the native heap once an hour. The class listing runs on one more thread for a short time at startup, and with the static baseline on, another thread scans the classpath. A graceful shutdown starts a short-lived thread for the early flush, two send threads named `otherlode-export-early-send` for its sends, and a thread for the final flush, all daemon threads.
+The agent runs one scheduled thread named `otherlode-export`, two send threads named `otherlode-export-send`, and the selector and worker threads of the JDK HTTP client it sends with. On Linux, one more thread, `otherlode-trim`, trims the native heap once an hour. While classes load, short-lived `otherlode-code-source-warmup` threads open each kind of jar location before the agent reads class files from it, one thread per attempt and at most 16 attempts per kind. The class listing runs on `otherlode-class-listing` for a short time at startup, and with the static baseline on, `otherlode-static-baseline-scan` scans the classpath. A graceful shutdown runs the hook thread `otherlode-shutdown-hook`, a thread for the early flush named `otherlode-shutdown-early-flush` with two send threads named `otherlode-export-early-send`, and a thread for the final flush named `otherlode-shutdown-flush`. Every thread except `otherlode-shutdown-hook` is a daemon thread, so none of them keeps your JVM alive. The JVM starts `otherlode-shutdown-hook` only once it is already exiting.
 
 On each flush (every 60 seconds by default, with a random offset for the first one so a fleet does not flush at the same instant), the thread:
 
 - copies each changed class's count array,
 - encodes a delta batch, and sends it (a flush with unconfirmed counts sends an empty batch first, and one that catches up ends with another),
 - sends any manifest chunks that are not stored yet,
-- walks the loaded classes to count each dependency's loaded classes, and checks for classes no transformer saw. Once the dependency listing has completed, this runs on every flush. When the listing did not complete, the check for classes that never reached a transformer runs on the first flush and then every tenth, about every ten minutes at the default interval.
+- walks the loaded classes. Once the dependency listing has completed, it does so on every flush, to count each dependency's loaded classes and to find classes no transformer saw. Until then, it looks for classes no transformer saw on the first flush and then every tenth, about every ten minutes at the default interval. On the flushes between, it walks the loaded classes while a woven class awaits confirmation that the JVM defined it, or while a [framework marker](endpoints#frameworks-with-no-module) is still unseen.
 
 A timed run of the flush code on a laptop, over 1,488 classes and 26,380 probes, encoding without sending, gave:
 
@@ -113,7 +113,7 @@ A timed run of the flush code on a laptop, over 1,488 classes and 26,380 probes,
 
 A heartbeat's allocation is mostly copying the count arrays, about 9 bytes a probe a flush. The loaded-class walk took 0.5 ms against a JVM holding 4,800 classes. The first flush grows with the probe count, and happens once.
 
-On the network, a flush sends each payload as one or more POST requests, once per interval. Payload size follows the number of probes whose counts changed, not total traffic or total probes, because the agent sends deltas. An empty batch still goes out as a heartbeat. Each send makes up to five attempts, waiting 200 ms after the first failure and doubling the wait up to 30 seconds, and when the collector is down the counts stay in memory and are sent again on the next flush, so memory does not grow while it is unreachable. [What the agent sends](data-sent) lists each payload.
+On the network, a flush sends each payload as one or more POST requests, once per interval. Payload size follows the number of probes whose counts changed, not total traffic or total probes, because the agent sends deltas. An empty batch still goes out as a heartbeat. Each send makes up to five attempts, waiting 200 ms after the first failure and doubling the wait up to 30 seconds. A static baseline or class listing chunk resent at a later flush gets one attempt. When the receiver is down, the counts stay in memory and the next flush sends them again, so memory does not grow while it is unreachable. [What the agent sends](data-sent) lists each payload.
 
 ## Memory over days
 

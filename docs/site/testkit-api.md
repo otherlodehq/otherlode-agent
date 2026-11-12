@@ -36,13 +36,13 @@ The agent under test must run with `includePackages` set and `exportUrl` pointin
 |---|---|
 | `OtherlodeTestCollector.start(port: Int = 0)` | Starts a collector bound to `localhost`. Port `0` picks a free port. The server threads are daemon threads, so a collector never keeps the JVM alive. Throws an `IOException` if the port cannot be bound. The method does not declare it, so Java code cannot name `IOException` in a `catch` clause around the call. |
 | `exportUrl: String` | The base URL for the agent's `exportUrl` option, such as `http://localhost:54321`. |
-| `close()` | Stops the server. A wait that is running, or begins later, throws `IllegalStateException`. |
+| `close()` | Stops the server. A wait that is running, or begins later, throws `IllegalStateException` unless its condition already holds. |
 
-The collector serves the agent's four payload types: delta batches, probe manifests, static baselines and class listings. It keeps what the agent reports for each instance, and each query merges instances by name, as described below. It answers a class listing and keeps nothing from it, since no query reads one.
+The collector serves the agent's four payload types: delta batches, probe manifests, static baselines and class listings. It keeps what the agent reports for each instance, and each query merges instances by name, as described below. It keeps nothing from a class listing, and rejects one only when it does not decode. The other reasons under [rejected payloads](#rejected-payloads) apply to delta batches, probe manifests and static baselines.
 
 ### Waits
 
-A wait blocks the calling thread until its condition holds. Each takes a `java.time.Duration` and throws `TimeoutException` when the duration elapses first. Each also throws `IllegalStateException` at once when the collector has rejected a payload (see [rejected payloads](#rejected-payloads)) or when the collector closes during the wait.
+A wait blocks the calling thread until its condition holds. Each takes a `java.time.Duration` and throws `TimeoutException` when the duration elapses first. Each throws `IllegalStateException` when the collector has rejected a payload (see [rejected payloads](#rejected-payloads)), or when the collector is closed and the condition does not hold.
 
 | Wait | Returns when |
 |---|---|
@@ -68,7 +68,7 @@ For `omissionCount`, `className` is the class that declares the function. For a 
 
 ### Findings
 
-A finding method takes no arguments and returns a list. It judges the merged hits of every instance heard from, by name. A probe, class, or call edge that one instance reports is the same one in another instance, whatever number each instance gave it. A branch outcome is the same outcome by its branch key when it has one, and by its branch index when it has none. A finding names no instance. Otherlode merges instances the same way, so a finding here previews Otherlode's.
+A finding method takes no arguments and returns a list. It judges the merged hits of every instance heard from, by name. A probe, class, or call edge that one instance reports is the same one in another instance, whatever number each instance gave it. A branch outcome is the same outcome by its branch key when it has one, and by its branch index when it has none. A finding names no instance.
 
 | Query | Returns |
 |---|---|
@@ -100,20 +100,25 @@ A finding method takes no arguments and returns a list. It judges the merged hit
 
 #### Classes that failed to initialise
 
-A class the JVM defined can still never run in that JVM, because its static initialiser threw or the JVM's verifier rejected it. The agent names such a class in the manifest with the reason. `failedToInitialize()` lists a class when:
+A class the JVM defined can still never run in that JVM, because its static initialiser threw or the JVM's verifier rejected it. The agent names such a class in the manifest with the reason. `failedToInitialize()` lists a class that no instance initialised and that either some instance named, or some instance loaded and it fails with a class that instance named. A class fails with one that instance named when its superclasses or interfaces, followed through the class records that instance sent, reach:
 
-- some instance named it, or it is a class some instance loaded whose superclass or interfaces, followed transitively through the class records that instance sent, reach a class that instance named; and
-- no instance initialised it. A class is initialised in an instance when its static initialiser's returned slot counted, if that instance sent the class's returned and threw slots. The entry probe and every method the initialiser calls count before it throws, so they are no evidence. When the instance sent no slots for the class, because it declares no static initialiser, any hit on a probe of it means it initialised.
+- a class the verifier rejected, as a superclass or an interface;
+- a class whose static initialiser threw, as a superclass;
+- an interface whose static initialiser threw and that declares a default or private instance method.
 
-A name that no instance loaded, such as a library class the verifier rejected, is not listed, but its loaded subtypes are. A class one instance failed and another initialised is not listed: the run where it worked is the evidence about its methods.
+A class is initialised in an instance when its static initialiser's returned slot counted, if that instance sent the class's returned and threw slots. The entry probe and every method the initialiser calls count before it throws, so they are no evidence. When the instance sent no slots for the class, because it declares no static initialiser, any hit on a probe of the class means it initialised.
 
-A subtype fails with it as the JVM decides: a class the verifier rejected stops every class that extends or implements it from linking, and a static initialiser that threw stops its subclasses, and the classes implementing it when it is an interface that declares a default or private instance method, from initialising. Such a class and those subtypes are left out of `neverHit`, `neverHitRoutineOutcomes`, `neverHitUnreadShapes`, `neverInitialized`, `neverInstantiated` and `unreachedClusters`. A method that only such a class calls is not a root of a cluster either. A class whose static initialiser has entered, with its returned and threw slots both present and neither counted, is still running. It gets no class finding from that instance, and its methods are not `neverHit` rows or cluster members. `neverCalled` leaves out an endpoint whose handler class failed to initialise, since nothing could dispatch to it.
+A name that no instance loaded, such as a library class the verifier rejected, is not listed, but its loaded subtypes are. A class one instance failed and another initialised is not listed.
+
+A listed class is left out of `neverHit`, `neverHitRoutineOutcomes`, `neverHitUnreadShapes`, `neverInitialized`, `neverInstantiated` and `unreachedClusters`. A method that only such a class calls is the root of a cluster only when a calling method of that class has hits. The static initialiser of a class whose initialiser threw has hits, so a never-hit method that only it calls is a `REACHED_FROM_HIT` root. `neverCalled` leaves out an endpoint whose handler class failed to initialise.
+
+A class whose static initialiser is still running is left out of the same queries, apart from `neverCalled`, and `failedToInitialize()` does not list it. Its initialiser is still running when, in every instance that loaded it, the initialiser's entry probe counted, the instance sent its returned and threw slots, and neither slot counted. A never-hit method that only its static initialiser calls is a `REACHED_FROM_HIT` root.
 
 #### Queries that refuse
 
-A class the verifier rejects fires no probe, so while the agent could not see every rejection, a zero count says nothing. `neverHit`, `neverHitRoutineOutcomes`, `neverHitUnreadShapes`, `neverInitialized`, `neverInstantiated`, `neverCalled`, `alwaysSupplied`, `unreachedClusters`, `unreachedDependencies`, `failedToLoadDependencies` and `failedToInitializeDependencies` throw `IllegalStateException` while any instance heard from is in either of these states, and so does `dependency` when the status it would return rests on a zero count (`UNREACHED`, `NO_LIVE_REFERENCE`, `FAILED_TO_LOAD` or `FAILED_TO_INITIALIZE`):
+A class the verifier rejects fires no probe, so while the agent could not see every rejection, a zero count says nothing. `neverHit`, `neverHitRoutineOutcomes`, `neverHitUnreadShapes`, `neverInitialized`, `neverInstantiated`, `neverCalled`, `alwaysSupplied`, `unreachedClusters`, `unreachedDependencies`, `failedToLoadDependencies` and `failedToInitializeDependencies` throw `IllegalStateException` while any instance heard from is in either of these states. So does `dependency` when the status it would return is `UNREACHED`, `NO_LIVE_REFERENCE`, `FAILED_TO_LOAD` or `FAILED_TO_INITIALIZE` and the dependency has at least one reference site:
 
-- Some manifest of the instance said the agent's hook on `VerifyError` was not installed. The collector rejects an agent of another version, so this means the hook failed to install, and the agent logged a `WARNING`.
+- The instance's agent could not install its hook on `VerifyError`. That agent logged a `WARNING` that starts `otherlode: classes the JVM's verifier rejects will not be named on this JVM`.
 - The instance counted `VerifyError` messages in no format the agent reads.
 
 The message names each such instance and why:
@@ -124,7 +129,7 @@ this query rests on zero counts, and a class the verifier rejects fires no probe
   i-3: 2 VerifyError messages in no read format
 ```
 
-A query that reads no zero count keeps answering: `wasHit`, `hitCount`, `omissionCount`, `failedToLoad`, `failedToInitialize`, `neverLoaded`, `neverSupplied`, `unloadedDependencies`, `unreferencedDependencies` and `absentReferences`.
+A query that reads no zero count keeps answering: `wasHit`, `hitCount`, `omissionCount`, `failedToLoad`, `failedToInitialize`, `neverLoaded`, `skippedClasses`, `neverSupplied`, `wasCalled`, `callCount`, `endpoints`, `disabledEndpointModules`, `unloadedDependencies`, `unreferencedDependencies`, `absentReferences`, and `dependency` for any other status.
 
 ### Endpoint queries
 
@@ -136,13 +141,13 @@ A query that reads no zero count keeps answering: `wasHit`, `hitCount`, `omissio
 | `callCount(verb, routeTemplate): Long` | The count summed over instances, each instance's highest delivered total. |
 | `neverCalled(): List<EndpointRef>` | Every endpoint with a summed count of zero, sorted by route template, then verb, then path, regex and servlet pattern in that order, leaving out one whose handler class failed to initialise and one whose endpoint module every reporting instance switched off. Refuses while an instance's zero counts are not evidence. |
 | `endpoints(): List<EndpointRef>` | Every endpoint any instance reported, sorted the same way. |
-| `disabledEndpointModules(): List<DisabledEndpointModule>` | The endpoint modules that are not instrumenting: those that switched themselves off, such as on a framework version the agent does not support, and those the agent's configuration kept off. Sorted by module name. |
+| `disabledEndpointModules(): List<DisabledEndpointModule>` | The endpoint modules an instance reported as switched off, each with its kind: those that switched themselves off, such as on a framework version the agent does not support, and those the agent's configuration kept off. Sorted by module name. A module switched off with no kind is never listed, because the collector rejects the manifest that names it (see [rejected payloads](#rejected-payloads)). |
 
 `wasCalled` and `callCount` throw `UnknownEndpointException` for an endpoint no manifest has named.
 
 ### Dependency queries
 
-Dependency queries apply the dependency rules within the one test JVM. See [dependencies](dependencies) for what the statuses mean. Where the data cannot answer yet, a query throws `IllegalStateException` instead of returning an empty list, because an empty list would read as "none".
+Dependency queries apply the dependency rules within the one test JVM. See [dependencies](dependencies) for what the statuses mean. Where the data cannot answer yet, a query throws `IllegalStateException` instead of returning an empty list.
 
 | Query | Returns |
 |---|---|
@@ -157,17 +162,17 @@ Dependency queries apply the dependency rules within the one test JVM. See [depe
 The six list queries sort by `DependencyStatus.identityKey`, except `absentReferences`, which sorts by class name. They throw `IllegalStateException` in these cases:
 
 - No instance has been heard from yet, or an instance has not finished listing its dependencies. Call `awaitDependenciesListed` first.
-- For `unreferencedDependencies`, `unreachedDependencies`, `failedToLoadDependencies` and `failedToInitializeDependencies`: no instance records references, which needs `includePackages`, or a loaded dependency cannot be split into unreferenced and unreached because an instance sent no complete static baseline (`staticBaselineEnabled=true`).
+- For `unreferencedDependencies`, `unreachedDependencies`, `failedToLoadDependencies` and `failedToInitializeDependencies`: no instance records references, which needs `includePackages`, or some dependency cannot be split into unreferenced and unreached. A dependency cannot be split when it reads `LOADED`, because no instance that lists it records references, or `NO_LIVE_REFERENCE`, because an instance that lists it and records references sent no complete static baseline (`staticBaselineEnabled=true`). The message names each such dependency.
 - For `absentReferences`: no instance records references.
-- For `unreachedDependencies`, `failedToLoadDependencies` and `failedToInitializeDependencies`, and for `dependency` when its status rests on a zero count: an instance is unwatched or has an unplaced verification failure. See [Queries that refuse](#queries-that-refuse).
+- For `unreachedDependencies`, `failedToLoadDependencies` and `failedToInitializeDependencies`, and for `dependency` in the cases [Queries that refuse](#queries-that-refuse) names: an instance's zero counts are not evidence.
 
 `dependency` throws `IllegalStateException` when more than one dependency carries the identity and none has it alone. The message names each candidate's `identityKey`. It does not wait for the listing to finish. Call `awaitDependency`, and `awaitDependenciesListed` when a shaded jar may carry the identity. The hits and reference sites that separate used from unreached arrive like any probe data, so call `awaitSettled` before asking.
 
 ### Rejected payloads
 
-`rejectedPayloads(): List<String>` lists the reason for each payload the collector answered with HTTP 400, oldest first. The collector keeps nothing from a rejected payload. The agent does not retry a 400 within a send. It sends its counts and manifest entries again on the next flush. It drops a static baseline or class listing after a 400.
+`rejectedPayloads(): List<String>` lists the reason for each payload the collector answered with HTTP 400, oldest first.
 
-Once the list is not empty, every other query and wait throws `IllegalStateException` that lists the reasons. Only `rejectedPayloads` and `close` keep working. A test fails even if it never reads the list.
+Once the list is not empty, every other query and wait throws `IllegalStateException`. The message starts `this collector rejected` and lists the reasons. Only `rejectedPayloads` and `close` keep working, so a test that calls any other query or wait fails even if it never reads the list.
 
 A payload is rejected when:
 
@@ -176,7 +181,7 @@ A payload is rejected when:
 - It carries an agent version that differs from the testkit's version. The reason names both versions. An empty version on either side skips the check.
 - A collector between the agent and the testkit stripped fields it did not know.
 - It does not decode, which happens when the agent is newer than the testkit or something other than the agent posted to the port.
-- Applying it failed.
+- Applying it failed. A manifest that names an endpoint module switched off with no kind fails this way. The agent switches a module off with no kind when its endpoint replay buffer fills, and logs `otherlode: endpoint module <module> disabled itself: endpoint replay buffer overflow: records were dropped before a resolver was installed`.
 - The collector serves one test JVM, as the extension's does, and the payload comes from a second instance. The reason names `maxParallelForks` above 1 and a child JVM that has the agent.
 
 ## OtherlodeExtension
@@ -187,12 +192,12 @@ Register it with `@ExtendWith(OtherlodeExtension::class)`. It starts one collect
 
 | Member | Description |
 |---|---|
-| `beforeAll` | On the first test class in the JVM, waits for the agent's first delta batch with `awaitNextFlush`. Throws `IllegalStateException` if none arrives within the startup timeout. The message gives the `-javaagent` flag to add. |
+| `beforeAll` | Waits with `awaitNextFlush` for a delta batch that arrives after it begins. Throws `IllegalStateException` if none arrives within the startup timeout, with a message that gives the `-javaagent` flag to add. Once one wait has succeeded in the JVM, later test classes skip it. |
 | `OtherlodeExtension.collector()` | A static accessor for the collector the extension started. Throws `IllegalStateException` until a test class with the extension has run. |
 
 The extension's collector accepts payloads from one agent instance only. It is not stopped when JUnit closes its store, so the agent's shutdown flush still reaches it.
 
-The extension throws `IllegalStateException` when the collector cannot bind its port, when a system property below is malformed, and when the first delta batch does not arrive in time.
+The extension throws `IllegalStateException` when the collector cannot bind its port, when a system property below is malformed, when `beforeAll` gets no delta batch in time, and when `collector()` is called before the extension has started a collector.
 
 ## System properties
 
@@ -201,7 +206,7 @@ The testkit reads two system properties, both in the test JVM and both read by t
 | Property | Default | Meaning |
 |---|---|---|
 | `otherlode.testkit.port` | `4319` | The port the extension's collector binds. 4319 is the agent's default export port, so a `-javaagent` flag with no `exportUrl` works. A value that is not an integer throws `IllegalStateException`. A blank value counts as unset. |
-| `otherlode.testkit.startup.timeout.seconds` | `15` | How long `beforeAll` waits for the first delta batch. A value that is not a positive integer throws `IllegalStateException`. A blank value counts as unset. |
+| `otherlode.testkit.startup.timeout.seconds` | `15` | How long `beforeAll` waits for a delta batch. A value that is not a positive integer throws `IllegalStateException`. A blank value counts as unset. |
 
 The agent's default flush interval is 60 seconds, longer than the default timeout. Set the agent's `flushIntervalSeconds` to 1 in a test.
 
@@ -215,7 +220,7 @@ The agent's default flush interval is 60 seconds, longer than the default timeou
 | `IllegalStateException` | Queries, waits, the extension | The collector cannot give a trustworthy answer. See below. |
 | `java.util.concurrent.TimeoutException` | Every `await` method | The condition did not hold within the timeout. |
 
-These three exception classes extend `RuntimeException`. Each exists so that "no idea" never looks like "confirmed never hit".
+These three exception classes extend `RuntimeException`.
 
 ### UnknownProbeException
 
@@ -244,12 +249,12 @@ The message names the dependency and every dependency the collector knows. When 
 | Cause | Where |
 |---|---|
 | The collector rejected a payload. | Every query and wait. |
-| The collector closed during a wait. | Every wait. |
+| The collector is closed and the condition does not hold. | Every wait. |
 | No complete static baseline has arrived. | `neverLoaded` |
-| An instance's hook on `VerifyError` was not installed, or it counted a `VerifyError` message in no read format. | `neverHit`, `neverHitRoutineOutcomes`, `neverHitUnreadShapes`, `neverInitialized`, `neverInstantiated`, `neverCalled`, `alwaysSupplied`, `unreachedClusters`, `unreachedDependencies`, `failedToLoadDependencies`, `failedToInitializeDependencies`, and `dependency` for a status that rests on a zero count |
-| Dependency listing is incomplete, references are not recorded, or no complete baseline exists. | The dependency list queries, `absentReferences` |
+| An instance's hook on `VerifyError` was not installed, or it counted a `VerifyError` message in no read format. | The queries listed in [Queries that refuse](#queries-that-refuse) |
+| Dependency listing is incomplete, references are not recorded, or a dependency cannot be split into unreferenced and unreached. | The dependency list queries, `absentReferences` |
 | Several dependencies carry the identity. | `dependency` |
-| The extension could not start or the agent's first batch did not arrive. | `OtherlodeExtension` |
+| The extension could not start its collector, a system property is malformed, `beforeAll` got no delta batch in time, or `collector()` was called before the extension started one. | `OtherlodeExtension` |
 
 ## Result types
 
@@ -259,7 +264,7 @@ Where a field below is null, the fact does not apply. No enum has a `NONE` value
 
 ### ProbeRef
 
-One probe, merged across instances. A single flat type serves every probe kind, so some fields apply to some kinds only.
+One method probe or branch outcome, merged across instances. Some fields apply to one kind only.
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -270,19 +275,21 @@ One probe, merged across instances. A single flat type serves every probe kind, 
 | `kind` | `ProbeKind` | What the probe counts. |
 | `branchIndex` | `Int?` | The outcome's ordinal within its class for one build. Null for a method probe. When copies of the class disagree, the lowest. |
 | `branchKey` | `String?` | A lowercase hex token that names the outcome across builds and instances. Null for a method probe, and for a branch outcome the agent could not name safely. |
-| `inline` | `Boolean` | `true` for a Kotlin inline function or a branch inside one. |
+| `inline` | `Boolean` | Always `false`, since no query returns a probe of a Kotlin inline function. |
 | `inlinedFromClassName` | `String?` | For a branch copied from an inline function, the class that function came from. |
-| `generatedBy` | `GeneratedBy?` | What generated the method. For a branch, the mark of the method it sits in. For an optional-argument probe, the mark of its target. |
+| `generatedBy` | `GeneratedBy?` | Always null, also for a generated method that `UnreachedCluster.reachedFrom` lists. |
 | `routine` | `RoutineKind?` | Why a branch outcome is not worth a person's time. Only on branch probes. |
 | `unreadShape` | `UnreadShape?` | The family of compiler output whose body the agent could not read. Exclusive with `routine`. |
 | `outsideCaller` | `OutsideCaller?` | Why code outside your scope may call the method. Only on method probes. |
-| `parameterIndex` | `Int?` | The optional parameter's zero-based index. Only on optional-argument probes. |
-| `parameterName` | `String?` | The parameter's name, when known. Only on optional-argument probes. |
-| `overridable` | `Boolean` | `true` when the function an optional-argument probe belongs to can be overridden. |
-| `targetClassName` | `String?` | For an optional-argument probe, the class of the function when it differs from the class that holds the probe. |
-| `neverLoaded` | `Boolean` | `true` for a cluster member that exists only because a complete static baseline declared it. |
+| `parameterIndex` | `Int?` | Always null. |
+| `parameterName` | `String?` | Always null. |
+| `overridable` | `Boolean` | Always `false`. |
+| `targetClassName` | `String?` | Always null. |
+| `neverLoaded` | `Boolean` | `true` for a cluster member that exists only because a complete static baseline declared it, and for the class root of a never-loaded class. |
 
-Where instances disagree about a row, the collector applies Otherlode's choice. The newest instance's line wins. A row is inline when any copy is. `generatedBy` and `inlinedFromClassName` take the greatest value. A row is routine or an unread shape when any copy is.
+No query returns an optional-argument probe. `neverSupplied` and `alwaysSupplied` report optional parameters as `OptionalParameterRef`.
+
+Where instances disagree about a row, the newest instance wins for `line` and `outsideCaller`. The newest instance is the one the collector first heard from last. `inlinedFromClassName` takes the greatest value, and a row is routine or an unread shape when any copy is.
 
 ### OutsideCaller
 
@@ -344,6 +351,8 @@ Returned by `neverSupplied` and `alwaysSupplied`. It names the function the para
 
 ### EndpointRef
 
+One endpoint, merged across instances. Every field except `verb`, `routeTemplate`, `isRegexTemplate` and `isServletPatternTemplate` comes from the last manifest entry the collector received for the endpoint, from any instance.
+
 | Field | Type | Meaning |
 |---|---|---|
 | `verb` | `String` | The normalised verb, uppercase, or `*` when the endpoint is not limited to one. |
@@ -351,7 +360,7 @@ Returned by `neverSupplied` and `alwaysSupplied`. It names the function the para
 | `verbatimTemplate` | `String` | The framework's own spelling. |
 | `framework` | `String` | The framework or module that reported it. |
 | `discoverySource` | `EndpointDiscoverySource` | How the agent learned of it. |
-| `handlerClass` | `String?` | The handler's class, once a framework hook has joined one. |
+| `handlerClass` | `String?` | The handler's class, or null when the entry names none. |
 | `handlerMethod` | `String?` | The handler's method, where the framework exposes one. |
 | `handlerDescriptor` | `String?` | The handler method's descriptor. |
 | `isRegexTemplate` | `Boolean` | `true` when the framework matches the route by a regular expression. `routeTemplate` and `verbatimTemplate` are then that expression exactly as written, and the endpoint is not the path endpoint whose template reads the same. |
@@ -368,11 +377,11 @@ Returned by `neverSupplied` and `alwaysSupplied`. It names the function the para
 
 | Field | Type | Meaning |
 |---|---|---|
-| `identityKey` | `String` | The identities of the dependency joined with commas, such as `com.fasterxml.jackson.core:jackson-databind`. An identity read from a file name has no group and reads `:commons-lang3`. A `\`, `:` or `,` inside a group or artifact id is escaped with a backslash, as Otherlode escapes it. |
+| `identityKey` | `String` | The identities of the dependency joined with commas, such as `com.fasterxml.jackson.core:jackson-databind`. An identity read from a file name has no group and reads `:commons-lang3`. A `\`, `:` or `,` inside a group or artifact id is escaped with a backslash. |
 | `status` | `DependencyUsage` | What the dependency rules say. |
 | `identities` | `List<DependencyIdentityRef>` | Every `groupId:artifactId` the dependency carries. A shaded jar carries several. |
 | `loadedClassesTotal` | `Long` | The largest count of distinct loaded classes any one instance reported. |
-| `classCount` | `Int?` | The jar's class count, when the listing knew it. |
+| `classCount` | `Int?` | The largest class count a listing gave, or null when none gave one. |
 | `discoverySources` | `Set<DependencyDiscoverySource>` | How instances learned of it. |
 | `sites` | `List<DependencyReferenceSite>` | Every place in your code that references it, live or not. Empty for `UNREFERENCED`. |
 
@@ -382,16 +391,16 @@ Returned by `neverSupplied` and `alwaysSupplied`. It names the function the para
 |---|---|---|---|
 | `DependencyIdentityRef` | `groupId` | `String` | Empty for an identity read from a file name. |
 | | `artifactId` | `String` | The artifact id. |
-| | `versions` | `Set<String>` | Every non-empty version any instance listed. |
+| | `versions` | `Set<String>` | Every non-empty version any instance listed, sorted. Empty when the group or artifact id contains `\`, `:` or `,`. |
 | `DependencyReferenceSite` | `className` | `String` | The class that references the dependency. |
 | | `methodName` | `String?` | The method, or null for a reference at class level. |
-| | `neverLoaded` | `Boolean` | `true` when the static baseline declared the site and its class never loaded. |
+| | `neverLoaded` | `Boolean` | `true` when the site comes from the static baseline of an instance that did not load its class, and `failedToLoad` is `false`. |
 | | `failedToLoad` | `Boolean` | `true` when the site's class failed to load in some instance and loaded in none. |
 | | `failedToInitialize` | `Boolean` | `true` when the site's class failed to initialise and no reference of the site is live. |
 | `AbsentReference` | `className` | `String` | The referenced class no loader could find. |
 | | `sites` | `List<DependencyReferenceSite>` | Every site that references it, sorted. |
 
-`DependencyReferenceSite.toString()` reads `Class#method`, `Class (class level)`, and appends `(never loaded)`, `(failed to load)` or `(failed to initialise)` where those flags are set.
+`DependencyReferenceSite.toString()` reads `Class#method` or `Class (class level)`. It appends one of `(failed to load)`, `(failed to initialise)` or `(never loaded)`, for the first of those flags that is set, in that order.
 
 ## Enums
 
@@ -405,7 +414,7 @@ What one probe counts.
 |---|---|
 | `METHOD` | Entries to a method. |
 | `BRANCH` | One outcome of a conditional or a switch. |
-| `OPTIONAL_ARGUMENT` | Calls that leave out one optional parameter's argument. |
+| `OPTIONAL_ARGUMENT` | Calls that leave out one optional parameter's argument. No query returns one. |
 | `INITIALIZER_RETURNED` | Normal returns of a static initialiser the class file declares. A slot of that initialiser, not a probe: no query returns it and no finding lists it. |
 | `INITIALIZER_THREW` | Exceptions that left a static initialiser the class file declares. A slot of that initialiser, not a probe: no query returns it and no finding lists it. |
 
@@ -483,7 +492,7 @@ A finding about a whole class. A class holds at most one, the first that applies
 
 | Value | Meaning |
 |---|---|
-| `NEVER_LOADED` | A complete static baseline declared the class and no instance ever loaded it. See `neverLoaded`. |
+| `NEVER_LOADED` | A complete static baseline declared the class and no instance ever loaded it. Unlike `neverLoaded()`, this includes a class in `failedToLoad()`. |
 | `NEVER_INITIALIZED` | The class loaded and its static initialiser never ran. |
 | `NEVER_INSTANTIATED` | The class loaded, has instance methods, and none of its constructors or instance methods ran. |
 
@@ -543,6 +552,6 @@ Result types and enums only grow in a minor release:
 
 A `when` over any enum in this API needs an `else` branch. The enums are `ProbeKind`, `GeneratedBy`, `RoutineKind`, `UnreadShape`, `OutsideCallerKind`, `RootKind`, `ClassFinding`, `EndpointDiscoverySource`, `DisabledEndpointModuleKind`, `DependencyDiscoverySource` and `DependencyUsage`. A new value breaks a `when` without `else` at compile time, when you upgrade the testkit.
 
-Because `GeneratedBy`, `RoutineKind` and `UnreadShape` have no "none" value, the matching `ProbeRef` field is null when the probe has no mark.
+`ProbeRef.routine` and `ProbeRef.unreadShape` are null when the probe has no mark, since `RoutineKind` and `UnreadShape` have no "none" value.
 
 The testkit's jar bundles its own protobuf and wire classes under `dev.otherlode.testkit.shaded`. No type in this API comes from them.

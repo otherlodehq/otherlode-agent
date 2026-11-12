@@ -4,9 +4,9 @@ description: What the agent counts in your methods and conditionals, what it lea
 order: 30
 ---
 
-The agent counts two things inside the classes that `includePackages` selects: how often each method is entered, and how often each outcome of each conditional is taken. This page lists what gets a counter, what does not, and what the agent records about each one so that Otherlode can describe it in your source's terms. Endpoints are on [endpoints](endpoints), whole classes on [classes](classes), and call edges on the [call graph](call-graph) page.
+The agent counts two things in the classes that `includePackages` selects: how often each method is entered, and how often each outcome of each conditional is taken. Each count is a cumulative total since the process started. The agent reports counts, marks and descriptions, and Otherlode decides what is dead.
 
-Every count is a cumulative total since the process started. The agent decides nothing about whether code is dead. It reports counts, marks and descriptions, and Otherlode judges.
+Endpoints are on [endpoints](endpoints), whole classes on [classes](classes), and call edges on the [call graph](call-graph) page.
 
 ## Methods
 
@@ -14,12 +14,12 @@ Every count is a cumulative total since the process started. The agent decides n
 
 Each of these gets one counter, incremented when the method is entered:
 
-- Instance and static methods with a body, in classes and interfaces. An interface default method counts.
+- Instance and static methods with a body, in classes and interfaces, interface default methods included.
 - Constructors.
 - Property accessors generated for Kotlin properties.
-- Lambda bodies: Kotlin's `main$lambda$0`, javac's `lambda$main$0`, Scala 2's `$anonfun$f$1`, and Scala 3's `f$$anonfun$1`. The agent also checks that an `invokedynamic` in the same class creates the lambda from the method, except for a Scala 3 lambda lifted out of a nested class. A method you wrote with a similar name does not qualify, and a named method passed by reference is an ordinary method.
+- Lambda bodies: Kotlin's `main$lambda$0`, javac's `lambda$main$0`, Scala 2's `$anonfun$f$1` and Scala 3's `f$$anonfun$1`. The agent also checks that an `invokedynamic` in the same class creates the lambda from the method, except for a Scala 3 lambda lifted out of a nested class. A method you wrote with a similar name does not qualify, and a named method passed by reference is an ordinary method.
 - A suspend lambda's `invokeSuspend`, which holds the body.
-- The static initialiser, but only for a class that declares one. A class with no static initialiser, such as a marker interface, gets no such counter. The static initialiser is a state of its class and never a row of its own. See [classes](classes).
+- The static initialiser of a class that declares one. It is a state of its class and never a row of its own. See [classes](classes).
 
 ### Methods left out
 
@@ -27,53 +27,51 @@ These get no entry probe:
 
 | Method | Reason |
 |---|---|
-| Abstract and native methods | There is no body to count in. |
-| Bridge methods | A call with the exact signature never enters the bridge, so it would read zero forever. |
+| Abstract and native methods | They have no body. |
+| Bridge methods | A call with the exact signature never enters the bridge. |
 | Other synthetic methods, such as `access$` accessors, enum `$values` and Kotlin's `$default` | They hold no code of yours. A `$default` method gets omission probes instead. See [Optional arguments](#optional-arguments). |
-| Methods a JPA enhancer adds to an entity | Hibernate, Ebean, EclipseLink and OpenJPA add them to the class you wrote. They stand for nothing in your source. See [Methods a JPA enhancer adds](#methods-a-jpa-enhancer-adds). |
-| A suspend lambda's `create` and `invoke` | Which of the two runs depends on how a coroutine library starts the lambda, not on your code. `invokeSuspend` carries the count. |
-| A suspend function's continuation class, a framework-generated proxy and similar classes | They have no probes at all. See [classes](classes). |
+| Methods a JPA enhancer adds to an entity | See [Methods a JPA enhancer adds](#methods-a-jpa-enhancer-adds). |
+| A suspend lambda's `create` and `invoke` | `invokeSuspend` carries the count. |
+| Methods of a suspend function's continuation class, a framework-generated proxy and similar classes | These classes get no probes at all. See [classes](classes). |
 
 A call into a method that is left out counts toward the method it forwards to. See the [call graph](call-graph).
 
 ### Methods a JPA enhancer adds
 
-A JPA enhancer rewrites your entity class, at build time or when the class loads. The agent leaves out what the enhancer added, so those methods never read as code you could delete. It recognises Hibernate by the method name, and Ebean, EclipseLink and OpenJPA by the enhancer's marker among the class's direct interfaces:
+A JPA enhancer rewrites your entity class at build time or as the class loads. The agent leaves out the methods the enhancer added. It recognises Hibernate by the method name, and Ebean, EclipseLink and OpenJPA by the enhancer's marker among the class's direct interfaces:
 
 | Library | Marker interface | What the agent leaves out |
 |---|---|---|
-| Hibernate | none; the name is enough | Methods named `$$_hibernate_...`. |
+| Hibernate | none | Methods named `$$_hibernate_...`. |
 | Ebean | `io.ebean.bean.EntityBean` | Methods named `_ebean_...`, the constructor that takes an `EntityBean`, `toString(ToStringBuilder)`, and the `toString()`, `equals()` and `hashCode()` Ebean adds. A `toString()`, `equals()` or `hashCode()` you wrote keeps its probe. |
 | EclipseLink | `org.eclipse.persistence.internal.weaving.PersistenceWeaved` | Methods named `_persistence_...` that have no line-number table, and the constructor that takes a `PersistenceObject`. A `_persistence_` method you wrote has line numbers and keeps its probe. |
-| OpenJPA | `org.apache.openjpa.enhance.PersistenceCapable` | The fixed set of methods OpenJPA 4.1 adds without a line-number table, such as `pcReplaceField`, `pcProvideField` and, on a serializable entity, `writeObject` and `readObject`. A static `pcGet<field>` or `pcSet<field>` for a field the class declares. A method of yours called `pcRate()` keeps its probe. |
+| OpenJPA | `org.apache.openjpa.enhance.PersistenceCapable` | The fixed set of methods OpenJPA 4.1 adds without a line-number table, such as `pcReplaceField`, `pcProvideField` and, on a serializable entity, `writeObject` and `readObject`, and a static `pcGet<field>` or `pcSet<field>` for a field the class declares. A method of yours called `pcRate()` keeps its probe. |
 
-A call from your code to one of these methods counts toward what the method calls, like any left-out method.
-
-With property access, EclipseLink also puts a check into your getter or setter before its first line, such as a test of `_persistence_listener`. When the weaving ran at build time, that check gets no branch probe, and every branch you wrote in the method is probed as usual. When EclipseLink weaves at load time, a getter or setter it changed keeps its entry probe and gets no branch probes.
-
-With property access, OpenJPA moves your getter or setter `getId` to `pcgetId` and puts a wrapper named `getId` in its place. When the enhancer ran at build time, the wrapper gets no probe, and the moved method reports under the name you wrote, so a probe, a call edge and the static baseline all say `getId`. When OpenJPA enhances the class as it loads, a wrapper keeps its entry probe and gets no branch probes, as EclipseLink's woven methods do. Enhance OpenJPA entities that use property access at build time to keep the branches you wrote; see [compatibility](compatibility#jpa-enhancers).
-
-On a serializable OpenJPA entity where you wrote `writeObject`, OpenJPA adds a call to `pcSerializing()` to the start of your method and a test of its result before each return. The test clears the detached state, and an unmanaged instance never takes it. When the enhancer ran at build time, that test gets no branch probe. The method keeps its entry probe, and every branch you wrote in it is probed as usual.
+A call from your code to one of these methods counts toward what the method calls.
 
 The agent probes the methods the class file declares. A method an enhancer adds as the class loads is not in that file, so it gets no probe.
 
-### What the agent records about a method
+The enhancers also change methods you wrote:
 
-Each probed method carries these facts to Otherlode.
+- **EclipseLink with property access** puts a check, such as a test of `_persistence_listener`, before the first line of your getter or setter. When the weaving ran at build time, that check gets no branch probe and every branch you wrote is probed. When EclipseLink weaves as the class loads, a getter or setter it changed keeps its entry probe and gets no branch probes.
+- **OpenJPA with property access** moves your getter `getId` to `pcgetId` and puts a wrapper named `getId` in its place. When the enhancer ran at build time, the wrapper gets no probe, and the moved method reports as `getId` in its probe, its call edges and the static baseline. When OpenJPA enhances the class as it loads, the wrapper keeps its entry probe and gets no branch probes. See [compatibility](compatibility#jpa-enhancers).
+- **OpenJPA on a serializable entity** adds a call to `pcSerializing()` at the start of a `writeObject` you wrote, and a test of its result before each return. When the enhancer ran at build time, that test gets no branch probe, and the method keeps its entry probe and the branch probes of your own code.
+
+### What the agent records about a method
 
 | Fact | Meaning |
 |---|---|
 | Name, descriptor, first line | The line is -1 when the class has no line-number table. |
-| Static | Whether the method is `static`. Otherlode uses it to tell a class meant to have instances from a holder of static functions. |
-| Parameter names | Read from the class file's `MethodParameters` attribute, or else from the local variable table. Empty when the class was compiled without either, and never partial. Compiler names such as `$this$shout` are sent as written. |
+| Static | Whether the method is `static`. |
+| Parameter names | From the class file's `MethodParameters` attribute, or else from the local variable table. Empty when the class has neither, and never partial. Compiler names such as `$this$shout` are sent as written. |
 | Generic signature | The method's `Signature` attribute, which keeps the generic types the descriptor erases. |
 | Extension receiver | Whether the first parameter is a Kotlin extension receiver. |
 | Lambda body | Whether the method is a lambda body by the rule above. |
-| Inline | Whether the method is a Kotlin `inline` function. See [Inline functions](#inline-functions). |
+| Inline | See [Inline functions](#inline-functions). |
 | Generated, unread shape | See [Generated methods](#generated-methods) and [Unread shapes](#unread-shapes). |
 | Outside caller | Whether code outside the include rules may call the method. See the [call graph](call-graph). |
 
-The agent reads a Kotlin top-level function's file from the class's Kotlin kind, never from a `Kt` suffix, so a function in a file that `@file:JvmName` renames is still named by its source file.
+The agent names a Kotlin top-level function's file from the class's Kotlin kind, not from a `Kt` suffix, so a function in a file that `@file:JvmName` renames is still named by its source file.
 
 ## Branches
 
@@ -81,13 +79,13 @@ The agent reads a Kotlin top-level function's file from the class's Kotlin kind,
 
 A branch site is one conditional jump or switch in a method's bytecode. Each outcome of a kept site gets its own counter.
 
-- A two-outcome conditional has two outcomes: the jump taken and the fall-through. This covers `if`, `while`, `for`, `&&`, `||`, `?:`, `?.` and the like, after the compiler has lowered them to jumps.
-- A `switch`, `when` or `match` that compiles to a table or lookup switch has one outcome per case entry plus the default. Two case labels that share a body are still two outcomes. The gap entries javac adds to a sparse switch belong to the default and are not separate cases.
-- An unconditional `goto` has one successor and no counter.
+- A conditional jump has two outcomes: the jump taken and the fall-through. This covers `if`, `while`, `for`, `&&`, `||`, `?:`, `?.` and the like, once the compiler has lowered them to jumps.
+- A table or lookup switch, from a `switch`, `when` or `match`, has one outcome per case entry plus the default. Two case labels that share a body are two outcomes. The gap entries javac adds to a sparse switch belong to the default.
+- An unconditional `goto` gets no counter.
 
-The agent counts an outcome with a private edge of its own, so an outcome never shares a counter with the merge point after an `if` or with another case that falls into the same code.
+Each outcome has a counter of its own, so it never shares one with the merge point after an `if` or with another case that falls into the same code.
 
-A site gets a position in the class's numbering whether or not it is kept. The branch index of an outcome counts every outcome of every site in the class, in bytecode order. It names the outcome within one build only. One new conditional early in a class renumbers every later outcome, so the branch index never identifies an outcome across builds. Use the branch key, described under [Describing an outcome](#describing-an-outcome), for that.
+The branch index of an outcome counts every outcome of every site in the class, in bytecode order, kept or not. It names the outcome within one build only, since a new conditional early in a class renumbers every later outcome. The branch key, under [Describing an outcome](#describing-an-outcome), names an outcome across builds.
 
 ### Sites that get no probe
 
@@ -95,15 +93,15 @@ The agent leaves a site without a probe when it is not code you wrote. The site 
 
 | Dropped site | What it is |
 |---|---|
-| Inlined copy from out-of-scope code | kotlinc copies the body of an `inline` function into each caller. A copy of `map`, `firstOrNull` or a library's `respond` brings that library's jumps into your method. When the inline function's class is outside the include rules, the copies get no probe. |
-| Coroutine machinery | The state machine kotlinc adds to a suspend function or suspend lambda: the switch on the continuation's label, the compare against the suspended marker, and the re-entry tests at the start of the function. Your own `if` in the same function is kept. |
-| String and enum switch lowering | The `hashCode` switch, the `equals` checks that pick a case index, and the null check on the subject. The agent reads your cases from the lowering instead. See [Switches](#switches). |
-| A switch's added throwing default | The default that only throws `MatchException`, `IncompatibleClassChangeError` or `NoWhenBranchMatchedException` for an exhaustive `when`. Your source has no such default. |
-| The collision side of a string `when` | In a Kotlin `when` or Scala `match` over strings, the not-equal side of the last `equals` check in a hash bucket. Only a different string with the same hash code reaches it. |
+| Inlined copy from out-of-scope code | kotlinc copies the body of an `inline` function, such as `map`, `firstOrNull` or a library's `respond`, into each caller. When the inline function's class is outside the include rules, the copied jumps get no probe. |
+| Coroutine machinery | The state machine kotlinc adds to a suspend function or suspend lambda: the switch on the continuation's label, the compare against the suspended marker and the re-entry tests at the start. Your own `if` in the same function is kept. |
+| String and enum switch lowering | The `hashCode` switch, the `equals` checks that pick a case index, and the null check on the subject. See [Switches](#switches). |
+| A switch's added throwing default | The default that only throws `MatchException`, `IncompatibleClassChangeError` or `NoWhenBranchMatchedException` for an exhaustive switch. |
+| The collision side of a string `when` | In a Kotlin `when` or Scala `match` over strings, the not-equal side of the last `equals` check in a hash bucket. |
 | A method too large to weave | See [Large methods](#large-methods). |
-| A check a JPA enhancer adds | A test of EclipseLink's `_persistence_` state before the first line of your getter or setter, and OpenJPA's test of its serialization flag in a `writeObject` you wrote. See [Methods a JPA enhancer adds](#methods-a-jpa-enhancer-adds). |
+| A check a JPA enhancer adds | See [Methods a JPA enhancer adds](#methods-a-jpa-enhancer-adds). |
 
-An inlined copy whose inline function is in scope is kept. Its line is the line in the inline function's own file, and the outcome carries the name of the class it was copied from. The testkit shows that class as `ProbeRef.inlinedFromClassName`. A copy from the same class counts too.
+An inlined copy whose inline function is in scope is kept, and so is a copy from the same class. Its line is the line in the inline function's own file, and the outcome carries the class it was copied from, which the testkit shows as `ProbeRef.inlinedFromClassName`.
 
 The agent logs one INFO line on the first flush that finds any dropped site:
 
@@ -111,214 +109,206 @@ The agent logs one INFO line on the first flush that finds any dropped site:
 otherlode: left 41 branch sites in 12 classes without a probe: 30 inlined from out-of-scope code, 6 coroutine machinery, 4 switch lowering, 1 in methods whose branch probes would cross a code-size limit, 0 added by a JPA enhancer
 ```
 
-A class compiled without debug information has no source mapping, so the agent cannot recognise an inlined copy, and a copy reads as the caller's own code. A Kotlin class with no line-number table also gets one WARNING. Stripped debug information usually removes the local variable table too, and the agent then cannot recognise the class's inline functions either. Coroutine recognition does not need debug information.
+The agent finds an inlined copy through the class's source mapping, which a class compiled without debug information lacks. There, a copy reads as the caller's own code. In a class without a local variable table, the agent cannot recognise the class's own inline functions either. A Kotlin class with no line-number table gets one WARNING:
+
+```text
+otherlode: com.example.Orders is a Kotlin class with no line-number table; its probes carry no line numbers, and its inlined copies cannot be traced
+```
+
+Coroutine recognition does not need debug information.
 
 ### Large methods
 
-A probe adds bytes. HotSpot never compiles a method over 8000 bytes of bytecode (`HugeMethodLimit`), and a class file cannot hold more than 65535 bytes of code in one method. For each method, the agent computes the largest size the probes could take it to. In two cases it drops the method's branch probes and keeps its entry probe:
+HotSpot never compiles a method over 8000 bytes of bytecode (`HugeMethodLimit`), and a class file holds at most 65535 bytes of code per method. For each method, the agent computes the largest size its probes could take it to, and drops its branch probes, keeping the entry probe, when:
 
-- The method is 8000 bytes or smaller and the probes could take it past 8000.
-- The probes could take it past 65535.
+- the method is 8000 bytes or smaller and the probes could take it past 8000, or
+- the probes could take it past 65535.
 
-The agent logs one WARNING per such method, naming the class and method, and says its branch probes are left out. The method then reads as hit or not hit, but none of its outcomes is reported.
+The agent logs one WARNING per such method, naming the class and method. The method then reads as hit or not hit, and none of its outcomes is reported.
 
-If the entry probe alone could take a method of 8000 bytes or fewer past 8000, the agent keeps all its probes and logs a WARNING that HotSpot may not compile it. A method already over 8000 bytes keeps its branch probes, since HotSpot does not compile it either way.
+If the entry probe alone could take a method of 8000 bytes or fewer past 8000, the agent keeps all its probes and logs a WARNING that HotSpot may not compile it. A method already over 8000 bytes keeps its branch probes.
 
 ### Describing an outcome
 
-The agent sends each kept site as a unit, with the facts a person needs to find the code. The testkit shows them on `ProbeRef`.
+The agent sends each kept site with the facts a person needs to find the code. Of these, the testkit shows only the branch key, as `ProbeRef.branchKey`.
 
-**Condition.** The expression the site tests, written in the class's source language: Kotlin, Java, Scala 2 or Scala 3. It is written the way the fall-through side reads it, which is the jump's own test negated. The compilers lower `if (c) A` to "jump past `A` when not `c`", so for a plain `if` the condition is the one you wrote. The condition reads as source, not as bytecode:
-
-- Kotlin `==` for a null-safe equality call, a property for a getter call, `is` and `!is` for type tests, and a `+` concatenation for a string template.
-- Java `equals` calls, `instanceof`, array reads and casts.
-- Scala `==`, `eq`, `ne` and `isInstanceOf[...]`.
+**Condition.** The expression the site tests, written in the class's source language: Kotlin, Java, Scala 2 or Scala 3. It reads the way the fall-through side reads it, so for a plain `if (c) A` the condition is the `c` you wrote. It reads as source, not bytecode: Kotlin `==`, property reads, `is` and `!is`, and a string template written as a `+` concatenation; Java `equals` calls, `instanceof`, array reads and casts; Scala `==`, `eq`, `ne` and `isInstanceOf[...]`.
 
 A string literal in a condition is sent in clear text. See [data sent](data-sent).
 
-A part the agent cannot write in source terms, such as a call to an unrelated method or a local with no name, becomes a placeholder, printed as `…`. A site whose whole condition would be a placeholder has no condition, and is named by its line, as "the branch at line 120". Local variable names come from the local variable table, which javac writes only with `-g`, so a Java class compiled without it shows `…` for locals.
+A part the agent cannot write in source terms, such as a call to an unrelated method or a local with no name, becomes a placeholder. A site whose whole condition would be a placeholder has no condition. Local variable names come from the local variable table, which javac writes only with `-g`, so a Java class compiled without it has a placeholder for each local.
 
-**Role.** Which outcome of the site this is: taken, fall-through, a case, or the default. A taken outcome reads "was never false" and a fall-through reads "was never true", for the condition above.
+**Role.** Which outcome of the site this is: taken, fall-through, a case, or the default.
 
-**Guarded lines.** The lines that run only through this outcome, with no other path from the method's entry. Whole lines are listed as "only path to", and lines that also hold code reached another way as "partly". An outcome can guard nothing, as the skip side of an `if` with no `else` does, and such an outcome reads "the code after it also runs the other way". A guarded line inside an in-scope inlined copy is named at its origin line in the inline function's file.
+**Guarded lines.** The lines that run only through this outcome, sent as two lists: whole lines, and lines that also hold code reached another way. An outcome can guard nothing, as the skip side of an `if` with no `else` does. A guarded line inside an in-scope inlined copy is named at its line in the inline function's file. See [what a row shows](/docs/server/findings#what-a-row-shows).
 
-**Guard.** The innermost kept outcome that a site, or a call, sits behind. A site behind a never-taken outcome is part of that outcome's code, not a separate finding. The testkit's `neverHit()` folds such a site into the outcome that guards it. A dropped site is looked through to the next kept outcome.
+**Guard.** The innermost kept outcome that a site, or a call, sits behind. A dropped site is looked through to the next kept outcome. The testkit's `neverHit()` folds a site behind a never-taken outcome into that outcome.
 
-**Branch key.** An opaque token that names an outcome across builds and instances, compared only for equality. It is derived from the class, method, descriptor, the instructions that compute the condition, and the outcome. The names of local variables count and their slot numbers do not, so adding a local elsewhere in the method leaves the key alone. These change an outcome's key:
+**Branch key.** An opaque token that names an outcome across builds and instances, compared only for equality. The agent derives it from the class, method, descriptor, the instructions that compute the condition, and the outcome. Local variable names count and slot numbers do not, so a local added elsewhere in the method leaves the key alone. These change an outcome's key:
 
-- Editing the condition itself.
+- Editing the condition.
 - Renaming a local variable the condition reads.
 - Renaming the method or changing its signature.
 - A compiler upgrade that changes the bytecode.
 
-A key is absent, and Otherlode treats the outcome as new, when two sites in one method share the same condition instructions, or when the agent cannot fingerprint the condition with confidence. A class compiled without a local variable table loses keys for conditions on same-typed locals. The site has a key made the same way without the outcome. The testkit shows an outcome's key as `ProbeRef.branchKey`.
+An outcome has no key when two sites in one method share the same condition instructions, or when the agent cannot fingerprint the condition with confidence. A class compiled without a local variable table loses keys for conditions on same-typed locals. The site has a key made the same way without the outcome.
 
 ### Switches
 
-A `when` or `switch` over a string or an enum does not reach bytecode as one switch over the values you wrote. The agent reads these shapes back to your cases, so that each case is one outcome named by its label:
+A `when` or `switch` over a string or an enum does not reach bytecode as one switch over your values. The agent reads these shapes back, so each case is one outcome named by its label:
 
 | Source | What the agent reads |
 |---|---|
-| Java `switch` on a string | One site, with each case named by its string literal. |
-| Java and Kotlin enum `switch` or `when` | One site, with each case named by its constant. A `null` case is named `null`. |
-| Java pattern `switch` | One site, with each case named by its type or constant. |
-| Kotlin `when` and Scala `match` on a string | No switch. Each `equals` check stays an ordinary site with the condition `subject == "literal"` or `subject != "literal"`. |
-| Scala enums, `Enumeration` values and sealed objects | They compile to chains of equality checks and are ordinary sites already. |
+| Java `switch` on a string | One site, each case named by its string literal. |
+| Java and Kotlin enum `switch` or `when` | One site, each case named by its constant. A `null` case is named `null`. |
+| Java pattern `switch` | One site, each case named by its type or constant. |
+| Kotlin `when` and Scala `match` on a string | No switch. Each `equals` check is an ordinary site with the condition `subject == "literal"` or `subject != "literal"`. |
+| Scala enums, `Enumeration` values and sealed objects | Ordinary sites, since they compile to chains of equality checks. |
 
-A rebuilt case label is part of the condition, so a string label is a literal and an enum label is code. A never-hit case reads as the subject, then "never took" and the label: "`mode` never took `FAST`". A rebuilt case keeps its key when you add, remove or reorder other cases, because the key digests the label and not the case's position.
+A rebuilt case label is part of the condition: a string label is a literal and an enum label is code. A rebuilt case keeps its key when you add, remove or reorder other cases, because the key digests the label and not the position.
 
-A switch the agent does not read exactly keeps its plain numeric case values. In a Kotlin string `when` or Scala string `match` whose lowering the agent does not read, only the collision side of each hash bucket's last check is affected, and the agent reports it as an unread shape. Every other site of that lowering stays an ordinary site.
+A switch the agent does not read keeps its plain numeric case values. In a Kotlin string `when` or Scala string `match` whose lowering the agent does not read, the collision side of each hash bucket's last check is an unread shape, and every other site stays ordinary.
 
 ### Routine outcomes
 
-Some outcomes are real but not worth a person's time when they never run. The agent reads each outcome's path in the bytecode and marks it with a routine kind. A routine outcome is probed and counted, but it is no finding. The testkit's `neverHit()` leaves it out, and `neverHitRoutineOutcomes()` lists it.
+A routine outcome is probed and counted, but it is no finding. The agent reads each outcome's path in the bytecode and marks it with a routine kind. The testkit's `neverHit()` leaves routine outcomes out, and `neverHitRoutineOutcomes()` lists them.
 
-| Kind | Reads as | What it is |
-|---|---|---|
-| `NULL_DEFAULT` | `default never used` | The null side of a null check whose path does nothing but yield null, a constant, a local, or return early. `value?.toDoubleOrNull()` and `?: 0.0` on their null side are routine. |
-| `THROW_ONLY` | `only throws` | A path that only builds an exception and throws it, and leaves the method. A `lateinit` check, the throwing branch of an exhaustive `when`, `?: error("...")`, and `if (amount < 0) throw BadRequest()` all qualify. |
-| `FINALLY_COPY` | `finally copy` | An outcome of a site in the exception-path copy of a `finally` body. |
+| Kind | What it is |
+|---|---|
+| `NULL_DEFAULT` | The null side of a null check whose path only yields null, a constant or a local, or returns early. The null side of `value?.toDoubleOrNull()` and of `?: 0.0` is routine. |
+| `THROW_ONLY` | A path that only builds an exception, throws it and leaves the method. A `lateinit` check, `?: error("...")` and `if (amount < 0) throw BadRequest()` qualify. |
+| `FINALLY_COPY` | An outcome of a site in the exception-path copy of a `finally` body. |
 
-Each kind has limits, so that the rule does not hide a real lead:
+Each kind has limits:
 
-- `NULL_DEFAULT` applies to null checks only, and only when the path calls nothing. `cache[key] ?: loadFromDb(key)` calls a method on the null side, so it is an ordinary outcome. A null side that counts something is also ordinary. The non-null side is never routine.
-- `THROW_ONLY` allows calls only to build the exception or its message: the exception's constructor, `StringBuilder`, `String.valueOf`, `toString` and string concatenation. A log call on the path makes it ordinary. A throw that a handler in the same method catches is ordinary when the handler lets the method carry on.
-- `FINALLY_COPY` needs a normal-path twin of the same condition outside the `finally` handler. A `try` that can leave only by an exception has no twin, and its copy is ordinary. A site in an ordinary `catch` block is never routine, because error handling that never ran can be a real lead.
-- Kotlin's `!!` compiles to a call to `Intrinsics.checkNotNull`, so it has no site of its own.
+- `NULL_DEFAULT` needs a null check whose null side calls nothing and counts nothing. `cache[key] ?: loadFromDb(key)` is ordinary. The non-null side is never routine.
+- `THROW_ONLY` allows calls only to build the exception or its message: the exception's constructor, `StringBuilder`, `String.valueOf`, `toString` and string concatenation. A log call on the path makes it ordinary, and so does a handler in the same method that catches the throw and lets the method carry on.
+- `FINALLY_COPY` needs a normal-path twin of the same condition outside the `finally` handler. A `try` that can leave only by an exception has no twin, so its copy is ordinary. A site in an ordinary `catch` block is never routine.
+- Kotlin's `!!` compiles to a call to `Intrinsics.checkNotNull`, so it has no site.
 
-An outcome is routine, or an unread shape, or neither. It is never both.
+An outcome in a method that is an [unread shape](#unread-shapes) carries that shape and can carry a routine kind too. `neverHitUnreadShapes()` lists it, and `neverHitRoutineOutcomes()` does not. An outcome that is an unread shape on its own carries no routine kind.
 
 ## Optional arguments
 
-An optional parameter is a value parameter with a default, so a caller can leave it out. The agent counts omissions per parameter. There is nothing to count for Java, which has no default arguments.
+An optional parameter is a value parameter with a default, so a caller can leave it out. The agent counts omissions per parameter. Java has no default arguments, so nothing is counted for it.
 
 ### Kotlin
 
-kotlinc compiles a function with defaults to the function itself plus a synthetic `f$default`. The `$default` method takes a bitmask of the omitted parameters, fills in each default, and calls `f`. A constructor with defaults gets the same shape, with a `DefaultConstructorMarker` parameter. A caller that omits nothing calls `f` directly.
+kotlinc compiles a function with defaults to the function `f` and a synthetic `f$default`, which takes a bitmask of the omitted parameters, fills in each default and calls `f`. A constructor with defaults gets the same shape, with a `DefaultConstructorMarker` parameter. A caller that omits nothing calls `f` directly.
 
-The agent puts one omission probe per optional parameter at the entry of `f$default`, and increments it for each parameter whose bit is set in the mask. It reports the probe on `f`, not on `f$default`, so Otherlode joins it to `f`'s entry probe by the identity it has. An omission probe carries:
+The agent puts one omission probe per optional parameter at the entry of `f$default`, and increments it when that parameter's bit is set. It reports the probe on `f`, not on `f$default`. An omission probe carries:
 
 - The parameter's zero-based index among the value parameters. Receivers are not counted.
-- The parameter's name, read from `f`'s local variable table, empty when the class has none.
-- Whether `f` can be overridden. This is false for a constructor, a static, private or final method, and a method on a final class. It is true for an interface method.
-- The line of the parameter's default value, so the probe points at the default and not at the function's first line. The line is -1 when the method has no line-number table.
+- The parameter's name from `f`'s local variable table, empty when the class has none.
+- Whether `f` can be overridden. This is false for a constructor, a static, private or final method, and a method on a final class, and true for an interface method.
+- The line of the parameter's default value, or -1 when the method has no line-number table.
 
-The agent recognises `$default` from its body, never from an annotation. `@JvmOverloads` overloads call `$default` with a mask, so they count too. Two situations each log one INFO line. A `$default` whose target the agent cannot resolve uniquely, or whose body has no mask test, leaves the function without omission probes. A function with more than 32 optional parameters keeps probes for the first 32 only.
+The agent recognises `$default` from its body, never from an annotation. `@JvmOverloads` overloads call `$default` with a mask, so their calls count too. Two cases each log one INFO line:
+
+- A `$default` whose target the agent cannot resolve uniquely, or whose body has no mask test, leaves the function without omission probes:
+
+  ```text
+  otherlode: com.example.Orders#place$default(Lcom/example/Orders;IIILjava/lang/Object;)V looks like a Kotlin default-argument method but its target could not be uniquely resolved, or no mask test was found; no omission probes woven
+  ```
+
+- A function with more than 32 optional parameters keeps probes for the first 32 only:
+
+  ```text
+  otherlode: com.example.Orders#place$default tests a mask int past the first; only the first 32 optional parameters are counted
+  ```
 
 ### Scala
 
-scalac writes a public default getter `f$default$N` for each optional parameter, and the compiler calls it for every call that omits parameter N. The getter's own entry slot is reported as an omission of parameter N on the target `f`, with index N - 1 (a Scala extension receiver counts, since it is a JVM parameter), and the getter gets no ordinary method probe. The getter must resolve to exactly one method in the same class, whose Nth parameter has the getter's return type or is a by-name `Function0`. If it resolves to none or several, the agent logs one INFO line and reports the getter as an ordinary method named `f$default$N`.
+scalac writes a public default getter `f$default$N` for each optional parameter, and a call that omits parameter N calls it. The agent reports the getter's entry as an omission of parameter N on `f`, with index N - 1, and the getter gets no method probe. A Scala extension receiver counts in N, since it is a JVM parameter. The getter must resolve to exactly one method in the same class whose Nth parameter has the getter's return type or is a by-name `Function0`. If it does not, the agent reports the getter as an ordinary method named `f$default$N` and logs one INFO line:
 
-A constructor default is declared on the companion's module class and also appears as a static forwarder on the class itself. Both resolve to the same constructor, so one parameter can carry two omission probes. Otherlode sums them before it judges. The line of a re-kinded getter is the getter's own first line, and -1 for the static forwarder, which has no line-number table.
+```text
+otherlode: com.example.Orders#place$default$2()I looks like a Scala default getter but its target could not be uniquely resolved; reported as an ordinary method probe
+```
+
+A constructor default is declared on the companion's module class and also as a static forwarder on the class itself. Both resolve to the same constructor, so one parameter can carry two omission probes, and its omissions are their sum. A getter's line is its own first line, and -1 for the static forwarder, which has no line-number table.
 
 ### Findings
 
-Otherlode judges two things from an optional parameter's omission total and its function's hit total:
-
-| Finding | Rule | Meaning |
-|---|---|---|
-| Never supplied | The omission total equals the function's hit total | Every caller took the default, so the parameter can go. Otherlode claims it only for a function that cannot be overridden, because an override's calls spread the counts. |
-| Always supplied | The omission total is zero and the function was hit at least once | The default value is dead. |
-
-Neither is claimed when the target is an inline function, a generated method such as a data class's `copy` (`copy(x = 1)` is how `copy` is meant to be used), or an unread shape.
-
-The testkit offers `neverSupplied()`, `alwaysSupplied()` and `omissionCount(className, methodName, parameterIndexOrName)`. See [the testkit API](testkit-api). The never-hit report leaves omission probes out, since a zero there is "always supplied" and not dead code.
+The testkit offers `neverSupplied()`, `alwaysSupplied()` and `omissionCount(className, methodName, parameterIndexOrName)`. See [the testkit API](testkit-api). `neverHit()` leaves omission probes out, since a zero there means the caller always supplied the value. Otherlode's own rules are under [Never supplied](/docs/server/findings#never-supplied).
 
 ## Inline functions
 
-kotlinc copies a Kotlin `inline` function's body into each Kotlin caller. The function's own probe then counts only calls from Java and calls through a function reference, so a zero says nothing about whether the code ran. The agent keeps the probe and marks the method inline. It recognises the method from a local variable the compiler writes at the start of its own body, so a class without debug information loses the mark and reads as ordinary code.
+kotlinc copies a Kotlin `inline` function's body into each Kotlin caller. The function's own probe then counts only calls from Java and calls through a function reference, so its zero says nothing about whether the code ran. The agent keeps the probe and marks the method inline. It recognises the method from a local variable the compiler writes at the start of its body, so in a class without debug information the method loses the mark and reads as ordinary code.
 
-The mark has these effects:
+Otherlode makes no never-hit claim about an inline method or a branch inside it. See [Never hit](/docs/server/findings#never-hit). The testkit's `neverHit()` lists no inline method, while `wasHit` and `hitCount` stay raw.
 
-- Otherlode makes no never-hit claim about an inline method, and none about a branch inside it.
-- A class whose declared methods are all inline gets no never-loaded claim.
-- The testkit's `neverHit()` lists no inline method. `wasHit` and `hitCount` stay raw.
-
-The copies of an inline function in a caller are separate branch sites. See [Sites that get no probe](#sites-that-get-no-probe) for when they are kept.
+The copies of an inline function in a caller are separate branch sites. See [Sites that get no probe](#sites-that-get-no-probe).
 
 ## Generated methods
 
-A generated method is one the compiler writes from a declaration rather than from a body you wrote. The agent keeps its entry probe, and the branch probes inside it, and marks it with what generated it. Otherlode leaves a generated probe out of every never-hit finding and out of the call graph, because the compiler would write the method again whatever you do. The count is still reported, since a `copy` that is called is a `copy` in use. The testkit's `neverHit()` leaves generated methods out.
-
-The agent reads most marks from the shape of the method's body. It never takes a data class, value class or case class from the Kotlin or Scala metadata. The Kotlin metadata gives only the class's kind, which the `MULTIFILE_FACADE` mark needs. The testkit exposes the mark as `ProbeRef.generatedBy`, which is null for ordinary code.
+A generated method is one the compiler writes from a declaration rather than from a body you wrote. The agent keeps its entry probe and its branch probes, reports its count, and marks it with what generated it. Otherlode makes no never-hit claim about a generated method, and the testkit's `neverHit()` leaves it out. A generated method is no node in the [call graph](call-graph), and a call to a generated forwarder counts toward the method it forwards to.
 
 | Mark | Language | Methods |
 |---|---|---|
 | `ENUM` | Kotlin, Java, Scala 3 | An enum's `values`, `valueOf` and kotlinc's static `getEntries`, and Scala 3 enum plumbing. A `getEntries` you wrote stays unmarked. |
 | `DATA_CLASS` | Kotlin | A data class's `componentN` and `copy`, and whichever of `equals`, `hashCode` and `toString` you did not write. A data object's `equals`, `hashCode` and `toString`. |
 | `VALUE_CLASS` | Kotlin, Scala | Kotlin: a value class's `equals-impl`, `equals-impl0`, `hashCode-impl` and `toString-impl`, the boxed methods that only forward to a static `-impl` method, and the static that calls an interface default the class inherits. Scala: a value class's boxed methods that only call the companion's `$extension` method, and the companion's `hashCode$extension` and `equals$extension`. |
-| `KOTLINX_SERIALIZATION` | Kotlin | The kotlinx.serialization compiler plugin's output: the members of a `$serializer` class, the `serializer()` of a companion or object, the `generatedSerializer()` beside `@KeepGeneratedSerializer`, and the lambda class that builds the cached serializer. |
-| `RECORD` | Java | A record's `equals`, `hashCode` and `toString`, only when the body is javac's own `invokedynamic`. Accessors are your declarations and stay unmarked. |
-| `DEFAULT_IMPLS` | Kotlin | A `$DefaultImpls` method that only forwards to the interface's own default method, and a class's stub that only forwards to `$DefaultImpls`. The forwarder or stub may carry kotlinc's hash in its name, box a value-class argument and unbox the result, with a null check when the value class wraps a reference, cast an argument to the type the interface method takes, drop a `Unit` result, or, for a suspend function, return `Unit` after comparing the result with the suspended marker. Each parameter and the result must be the type the interface method takes and returns once the class's type arguments are put in. A stub whose `$DefaultImpls` method does not exist is marked too: a build that mixes a library compiled with `-jvm-default=disable` and a consumer compiled with `all` or `all-compatibility` can get one, and calling it throws `NoSuchMethodError`. A call to such a stub is an edge to the stub, since it has nothing to pass through to. The stub stays unmarked when the agent cannot read the `$DefaultImpls` class. A class's stub is marked only when it is open and starts on the line where its class is declared, as kotlinc writes it, and a forwarder to a super-interface's `$DefaultImpls` only when the sub-interface does not declare the method. So an overload you wrote that only calls `super` is ordinary code, final or open, and so is an override that only calls `super`. Such a method of yours is still marked in three cases: in a class written on one line, in a class compiled without line numbers, and in a class that has no primary constructor and no stub of its own, when no other method starts before it. |
+| `KOTLINX_SERIALIZATION` | Kotlin | The kotlinx.serialization plugin's output: the members of a `$serializer` class, the `serializer()` of a companion or object, the `generatedSerializer()` beside `@KeepGeneratedSerializer`, and the lambda class that builds the cached serializer. |
+| `RECORD` | Java | A record's `equals`, `hashCode` and `toString` when the body is javac's own `invokedynamic`. Accessors stay unmarked. |
+| `DEFAULT_IMPLS` | Kotlin | A `$DefaultImpls` method that only forwards to the interface's default method, and a class's stub that only forwards to `$DefaultImpls`, including a stub whose `$DefaultImpls` method does not exist. |
 | `JVM_OVERLOADS` | Kotlin | An overload that `@JvmOverloads` adds, whose body only forwards to its own class's `$default`. |
 | `MULTIFILE_FACADE` | Kotlin | A function of a `@file:JvmMultifileClass` facade whose body only forwards to the same function on a part class. |
-| `CASE_CLASS` | Scala | A case class's plumbing (`canEqual`, `copy`, `equals`, `hashCode`, `toString`, `productArity`, `productElement`, `productPrefix` and the rest), and its companion's `apply`, `unapply`, `toString` and `fromProduct`. A case value class's plumbing, both its boxed methods and the `$extension` methods of its companion. |
-| `STATIC_FORWARDER` | Scala, Kotlin | Scala: a static method on an object's class that only calls the same method on the object. Kotlin: the static method kotlinc adds for a `@JvmStatic` function or property accessor in a companion object, which only calls the companion's method of the same name. |
-| `SCALA_OBJECT` | Scala | An object's `writeReplace`. |
-| `CLASS_DELEGATION` | Kotlin | A method kotlinc writes for interface delegation (`class C(d: I) : I by d`), for each member of the interface the class does not override. Its body only forwards to the delegate's method of the same name. |
-| `TRAIT_FORWARDER` | Scala | A class's method that only calls a trait's static `m$` method, and the trait's static `m$` that only calls its default method `m`. A class's method that only calls the same method's default in a Java interface the class implements directly. A specialised method such as `apply(int)` that only calls its `apply$mcII$sp` twin in the same class. |
+| `CASE_CLASS` | Scala | A case class's plumbing, such as `canEqual`, `copy`, `equals`, `hashCode`, `toString`, `productArity`, `productElement` and `productPrefix`, and its companion's `apply`, `unapply`, `toString` and `fromProduct`. A case value class's plumbing, in the class and in its companion. |
+| `STATIC_FORWARDER` | Scala, Kotlin | Scala: a static method on an object's class that only calls the same method on the object. Kotlin: the static method kotlinc adds for a `@JvmStatic` function or property accessor in a companion object. |
+| `SCALA_OBJECT` | Scala | An object's `writeReplace`. In a Scala 2 object with no `writeReplace` of scalac's, its `readResolve`. |
+| `CLASS_DELEGATION` | Kotlin | A method kotlinc writes for interface delegation (`class C(d: I) : I by d`) for each member the class does not override. |
+| `TRAIT_FORWARDER` | Scala | A class's method that only calls a trait's static `m$`, and the trait's `m$` that only calls `m`. A class's method that only calls the same method's default in a Java interface the class implements directly. A specialised method such as `apply(int)` that only calls its `apply$mcII$sp` twin. |
 
-The rules are exact so that a method you wrote is never hidden:
+The agent reads each mark from the method's bytecode. It never takes a data class, value class or case class from the Kotlin or Scala metadata. The rules aim to leave every method you wrote unmarked. These cases tell you how one reads:
 
-- A data class is recognised only when `component1` through `componentN`, a matching `copy`, and `equals`, `hashCode` and `toString` are all present with the shapes the compiler writes. A class that writes some of them by hand and not the rest is not marked at all.
-- A data object's `toString`, `hashCode` and `equals` are marked only when all three are present, public, without a line-number table, and have the bodies kotlinc writes: `toString` returns the object's simple name, `hashCode` returns a constant, and `equals` compares the reference, then the class. The class must also have a static `INSTANCE` of its own type. kotlinc rejects a hand-written `equals` or `hashCode` on a data object, so only `toString` can be yours. If you write `toString`, kotlinc still writes `equals` and `hashCode`, and none of the three is marked. A plain `object` has none of these methods and is not marked.
-- A data class's `componentN`, `copy`, `equals`, `hashCode` and `toString` are marked only when the method has no line-number table, which is how kotlinc writes the generated ones. One you wrote is ordinary code, so a plain class with its own `component1` and `copy` is not marked. In a class compiled without line numbers the two cannot be told apart, so all of them are marked.
-- A data class with a value-class property is recognised. kotlinc adds a hash to the name of each `componentN` and of `copy` whose signature holds the value class, such as `component1-sYCTz3k`, and the rule accepts a `-` and seven characters after either name. It does not check the hash.
-- A value class is recognised by the `box-impl` and `unbox-impl` methods kotlinc adds with the synthetic flag, which source cannot set. Its `equals-impl`, `equals-impl0`, `hashCode-impl` and `toString-impl` are marked only when they have no line-number table, so a `toString` you wrote stays ordinary code. A boxed method is marked when its body only reads the class's one field, passes it and its arguments to the static method with its own name plus `-impl` (or its own name when kotlinc already mangled it), and returns. That covers `equals`, `hashCode`, `toString` and an interface method the class overrides. A boxed `equals`, `hashCode` or `toString` that forwards to a `-impl` method you wrote is ordinary code. A value class that inherits an interface's default method without overriding it gets a static `-impl` method that boxes the value and calls the default. That static is marked when its body is only that call, with the null checks, casts and boxing kotlinc writes around it, and its name may carry kotlinc's hash in place of `-impl`. The static of a method you declared is never marked. `constructor-impl`, the property getter and a member you declared are never marked.
-- A Scala value class is a final class with one field whose companion declares `$extension` methods. scalac moves each method's body to `m$extension` in the companion and keeps a boxed `m` in the class. The boxed method is marked when its body only reads the field, passes it and its arguments to `m$extension`, and returns. A call that never boxes the value runs `m$extension` and leaves the boxed method at zero. Your own `m$extension` holds your code and is never marked. The companion's `hashCode$extension` and `equals$extension` are marked when their bodies are scalac's. A case value class's `canEqual`, `copy`, `equals`, `hashCode`, `productElement` and the rest are `CASE_CLASS` in the class and in the companion, with the companion's `apply` and `unapply`. A `toString` you wrote in a case value class keeps its `toString$extension` as ordinary code in a Scala 3 class from a release the agent has read. In Scala 2 it is an unread shape, as the Scala 2 rule under [Unread shapes](#unread-shapes) says.
-- A trait's concrete method `m` gets two forwarders from scalac. Each class that mixes the trait in gets a method `m` that only calls the trait's static `m$` with `this` and its arguments, and the trait's `m$` only calls `m`. Both are marked, and `m` in the trait holds the code. When the class never runs `m`, the class's `m` is not a finding. An override that only calls `super.m` compiles to the same bytes as the forwarder and is marked. An override with a body of its own is ordinary code. An override that calls `super.m` and does more is an unread shape where [Unread shapes](#unread-shapes) says a body counts as unread. A `m$default$N` getter is not a forwarder in this sense.
-- A class that implements a Java interface with default methods, such as `java.util.Comparator`, gets methods from scalac, such as `reversed`, that only call the interface's default. Each is marked. Scala 3 releases before 3.8 write them as bridges, which the agent never probes. An override that only calls `super.reversed` compiles to the same bytes and is marked. An override that calls it and does more is an unread shape where [Unread shapes](#unread-shapes) says a body counts as unread.
-- A class that extends a function type specialised on primitives, such as `Int => Int`, keeps its `apply` body in `apply$mcII$sp`, and scalac writes `apply(int)` to call it. A call through the function type goes straight to `apply$mcII$sp`, so `apply(int)` is marked, and a call to it counts toward `apply$mcII$sp`.
-- A suspend forwarder in a sub-interface is marked only when it casts its receiver to the super-interface. An `override suspend fun run() = super.run()` you wrote compiles to the same tail without the cast and stays ordinary code.
-- A `$DefaultImpls` method that holds the interface method's real body is ordinary code. This is the layout under `-jvm-default=disable`, the default up to Kotlin language version 2.1. Under `-jvm-default=enable`, the default from 2.2, only the leftover forwarder is marked.
-- A delegation forwarder is marked only when it is public, not static, synthetic or a bridge, has no line-number table, and has the body kotlinc writes. The body null-checks its non-null reference parameters, reads one field of its class, loads its parameters in order, calls the method of the same name and descriptor on the type of that field, and returns. The field is `$$delegate_0` or its next number. Or it is the private final field of the constructor property the class delegates through, such as `inner` in `class C(private val inner: I) : I by inner`. Then the class must also have line numbers, and the field's type must be an interface the class implements directly. A class that delegates through a property typed as a sub-interface is not marked. This covers members with primitive, `long`, `double`, nullable, non-null, `Unit` and generic parameters, property getters and setters, and `suspend` members, and it covers members of the interface that have a default body. The delegate's own method holds the code and is not marked. A member you override is not a forwarder. `override fun describe() = inner.describe()` has a line-number table and is ordinary code, while the forwarders for the members you did not override stay marked. In a class compiled without line numbers, a forwarder that reads a constructor property's field is not marked, because it cannot be told from a method you wrote.
-- A forwarder for a delegated interface with a type argument, such as `Source<String>`, casts the result or boxes an argument, so its body is not the one above. It is not marked, nor are the bridge methods beside it, and it stays ordinary code.
-- The static method for a `@JvmStatic` companion function is marked only when it is public, static and not synthetic, and its body reads the class's static field for the companion (`Companion`, or the name of a named companion), loads its parameters in order, calls the companion's method of the same name and descriptor, and returns. It has no null checks. Some kotlinc releases give it one line-number entry at its return, and others give it none. A line-number entry at any other instruction means you wrote the method, and it is ordinary code. The companion's method holds the code and is not marked. A `@JvmStatic` function in a plain `object` has its body in the static method itself, so it is ordinary code.
-- A hand-written secondary constructor that calls the full constructor with named arguments and leaves some out compiles to the same bytecode as a `@JvmOverloads` overload, and it is marked too.
-- A Scala method is marked only when its body is instruction for instruction the one scalac writes for that member of that class. Bodies change between compiler releases, so see [Unread shapes](#unread-shapes).
-- Kotlin property accessors are not generated in this sense. A never-called setter is real dead code and stays unmarked.
-- A `$serializer` class is the plugin's when its enclosing class is serializable, it implements `GeneratedSerializer`, it has a static `INSTANCE` of its own type (or, in a generic class, a `typeSerial0` field) and it carries `@Deprecated` at level `HIDDEN`. Its `serialize`, `deserialize` (a value class's carry kotlinc's hash), `childSerializers`, `getDescriptor`, `typeParametersSerializers`, its constructors and `getTypeSerialN` are marked. A method with another name stays ordinary code, and so does every method of a class named `$serializer` that you declared, since it lacks the markers. kotlinc's K2 frontend marks the plugin's `$serializer` synthetic, and the agent does not probe a synthetic class. K1 does not, and it is the frontend of Kotlin 1.9 and of any release under `-language-version 1.9`.
-- The `serializer()` of the companion of a serializable class, or of a serializable object, is marked when it takes one `KSerializer` per type parameter, whatever its body. The plugin fails the compile when you declare a `serializer()` of that signature there, so none of yours can match. A class is serializable when it carries `@Serializable`, or an annotation that carries `@MetaSerializable`. A companion method you wrote, such as `make()`, a `serializer(flag: Boolean)`, a `serializer()` of another class nested in the class, and a `serializer()` in a class that is not serializable stay ordinary code. The rule rests on the plugin having compiled the class: a `@Serializable` class built without the plugin can hold a `serializer()` you wrote, and it is marked. So is the `serializer()` of a final nested class whose only constructor is private and takes no arguments, held in a companion property of its own name. An annotation with `SOURCE` retention is not in the class file, so a class it makes serializable reads as not serializable. A `generatedSerializer()` in the companion of a class that carries `@KeepGeneratedSerializer` is marked when it only reads the `$serializer` class's `INSTANCE`.
-- A lambda class that builds the cached serializer is marked, with its `invoke`, constructor and type initialiser. kotlinc writes it as a class under K1, and under K2 with `-Xlambdas=class`. It is marked only when the type initialiser of the serializable class, of its companion, or of the class that holds a serializable companion passes the lambda's `INSTANCE` to `lazy` with `PUBLICATION` and stores the result in `$cachedSerializer$delegate`, or in an array the same type initialiser then stores in `$childSerializers`. If the agent cannot read the outer class, the lambda stays ordinary code.
-
-A generated method is no node in the [call graph](call-graph). A call to a generated forwarder counts toward the method it forwards to.
+- **Members kotlinc writes without a line-number table.** A data class's `componentN`, `copy`, `equals`, `hashCode` and `toString`, a data object's `equals`, `hashCode` and `toString`, a value class's `equals-impl`, `equals-impl0`, `hashCode-impl` and `toString-impl`, and a delegation forwarder are marked only when they have no line-number table. One you wrote has line numbers and stays ordinary. A data object's three are marked only together: if you write its `toString`, its `equals` and `hashCode` stay unmarked too. In a class compiled without line numbers, a data class's members are all marked.
+- **Your method compiles to the compiler's bytes.** It is marked. A Scala override that only calls `super.m` and a Kotlin secondary constructor that matches a `@JvmOverloads` overload are two examples. The agent tells a Kotlin override that only calls `super` from kotlinc's `DEFAULT_IMPLS` stub by its line, so in a class written on one line or compiled without line numbers the override can be marked.
+- **Your method has a body of its own.** It is ordinary code. A `$DefaultImpls` method that holds the interface method's real body, as under `-jvm-default=disable`, is ordinary.
+- **A Scala body.** It is marked only when it matches, instruction for instruction, the body scalac writes for that member of that class. Otherwise it can be an unread shape, as [Unread shapes](#unread-shapes) says.
+- **Kotlin property accessors.** They are never marked, so a never-called setter stays a finding.
+- **Delegation through a generic interface.** A forwarder for a delegated interface with a type argument, such as `Source<String>`, is not marked and reads as ordinary code.
+- **kotlinx.serialization.** A `$serializer` class is the plugin's when it carries the plugin's markers, such as `GeneratedSerializer` and `@Deprecated` at level `HIDDEN`. A class named `$serializer` that you declared lacks them and stays ordinary. A `serializer()` that takes one `KSerializer` per type parameter, in the companion of a serializable class or in a serializable object, is marked whatever its body. A `@Serializable` class built without the plugin can therefore have a `serializer()` of yours marked. kotlinc's K2 frontend marks the plugin's `$serializer` class synthetic, and the agent does not probe a synthetic class.
 
 ## Unread shapes
 
-An unread shape is a probe whose code has the outline of compiler output but whose body matches no shape the agent has read for that compiler. It is a statement about the agent, not about who wrote the code. The agent counts the probe and reports its hits, but Otherlode makes no finding from it, includes it in no unreached cluster, and lists it apart with its family. The testkit's `neverHit()` leaves unread shapes out and `neverHitUnreadShapes()` lists them.
+An unread shape is a probe whose code has the outline of compiler output but whose body matches no shape the agent has read for that compiler. It says the agent cannot tell who wrote the code. The agent counts the probe and reports its hits, and Otherlode makes no finding from it and lists it apart with its family. The testkit's `neverHit()` leaves unread shapes out, and `neverHitUnreadShapes()` lists them.
 
-| Family | Reads as | Outline |
+| Family | In the WARNING | Outline |
 |---|---|---|
-| `CASE_CLASS` | Scala case-class plumbing | A case class's or its companion's plumbing-named method whose body is not read. |
-| `STATIC_FORWARDER` | Scala static forwarder | A static method with a `$` twin of the same name and descriptor, whose body is not read. |
-| `SCALA_OBJECT` | Scala object serialisation | An object's `writeReplace` or `readResolve` whose body is not read. |
-| `SCALA_ENUM` | Scala enum plumbing | Scala 3 enum plumbing whose body is not read. |
-| `MULTIFILE_FACADE` | Kotlin multi-file facade method | A method of a Kotlin multi-file facade that is not a recognised forwarder. A facade holds no code of yours. |
+| `CASE_CLASS` | Scala case-class plumbing | A plumbing-named method of a case class or its companion. |
+| `STATIC_FORWARDER` | Scala static forwarders | A static method with a `$` twin of the same name and descriptor. |
+| `SCALA_OBJECT` | Scala object serialization | An object's `writeReplace` or `readResolve`. |
+| `SCALA_ENUM` | Scala enum plumbing | Scala 3 enum plumbing. |
+| `MULTIFILE_FACADE` | Kotlin multi-file facade methods | A method of a Kotlin multi-file facade that is not a recognised forwarder. |
 | `COROUTINE_MACHINERY` | coroutine machinery | A jump or switch in a suspend method's state machine that matches none of the shapes the agent reads. |
 | `STRING_SWITCH` | string switch lowering | The collision side of a string switch's hash bucket, when the agent cannot read the lowering. |
-| `VALUE_CLASS` | Scala value-class plumbing | A Scala value class's boxed method, or its companion's `hashCode$extension` or `equals$extension`, whose body is not read. |
-| `TRAIT_FORWARDER` | Scala trait forwarder | A class's method that calls its trait's static `m$` twin, the same method's default in a Java interface, or its own `$mc...$sp` twin, or a trait's static `m$`, whose body is not read. |
-| `KOTLINX_SERIALIZER_OBJECT` | kotlinx.serialization serializer object | The `serialize`, `deserialize` and `getDescriptor` of an object annotated `@Serializer(forClass = ...)`. The plugin fills in the ones you did not write, and nothing in the bytecode tells which those are. |
+| `VALUE_CLASS` | Scala value class forwarders | A Scala value class's boxed method, or its companion's `hashCode$extension` or `equals$extension`. |
+| `TRAIT_FORWARDER` | Scala trait forwarders | A class's method that calls its trait's static `m$` twin, the same method's default in a Java interface, or its own `$mc...$sp` twin, or a trait's static `m$`. |
+| `KOTLINX_SERIALIZER_OBJECT` | kotlinx.serialization serializer objects | The `serialize`, `deserialize` and `getDescriptor` of an object annotated `@Serializer(forClass = ...)`. The plugin fills in the ones you did not write, and the bytecode does not say which those are. |
 
-A branch probe inherits the unread shape of its method. A branch outcome can also be unread on its own, for `COROUTINE_MACHINERY` and `STRING_SWITCH`. An omission probe inherits its target's.
+Every family but the last covers a method or outcome in that outline whose body the agent has not read. A branch probe inherits its method's unread shape, and an omission probe inherits its target's. A branch outcome can also be an unread shape on its own, as `COROUTINE_MACHINERY` or `STRING_SWITCH`.
 
-How a body counts as unread depends on whether the class names its compiler:
+Whether a body counts as unread depends on whether the class names its compiler:
 
-- A Scala 3 class names the exact release that compiled it. When the release is one the agent has read, a plumbing-named method that fails its rule is hand-written and ordinary, unless scalac does not let you write it: any method of an enum case's class; an enum companion's `fromOrdinal` and `ordinal(Object)`, its `values` when every case is a singleton, and its `$new` when one is; its `valueOf` when every case is a singleton, together with any method of yours the JVM knows as `valueOf(String)` when the agent cannot read scalac's; and, in the companion of an enum declared inside a class or a method, the method that returns each case. Those stay unread shapes. When the release is not on the list, the method is an unread shape. A method with a forwarder's call shape whose rule needs a class the agent cannot read, such as scala-library's `Function1` when the class's loader does not serve it, is an unread shape on every release, a read one included. See [compatibility](compatibility) for the compilers the agent has read.
-- A Scala 2 class does not name its compiler. A method in the outline that matches no read shape is an unread shape, and that includes a hand-written override of case-class plumbing, such as your own `toString` in a case class. Since the compiler is unknown, such an override is listed as an unread shape and never as a finding.
-- The coroutine and string-switch outlines contain only shapes no source produces, so the answer does not depend on a compiler release.
-- A `@Serializer(forClass = ...)` object is an unread shape whatever the compiler, since an override you wrote and the plugin's fill-in compile to the same outline. Its `serialize`, `deserialize` and `getDescriptor` are listed apart and are never called dead code. The log line counts them as members of a class where a compiler plugin fills in what you did not write.
+- **Scala 3.** A class names the release that compiled it. On a release the agent has read, a plumbing-named method that fails its rule is hand-written and ordinary, except for methods scalac does not let you write, such as the methods of an enum case's class, which stay unread shapes. On a release the agent has not read, the method is an unread shape. A method with a forwarder's call shape whose rule needs a class the agent cannot load, such as scala-library's `Function1` when the class's loader does not serve it, is an unread shape on any release. [Compatibility](compatibility#compilers) lists the releases the agent has read.
+- **Scala 2.** A class does not name its compiler. A method in the outline that matches no read shape is an unread shape, and that includes a hand-written override of case-class plumbing, such as your own `toString` in a case class.
+- **Coroutine and string-switch outlines.** They hold only shapes no source produces, so the result does not depend on a compiler release.
+- **`@Serializer(forClass = ...)` objects.** Their `serialize`, `deserialize` and `getDescriptor` are unread shapes whatever the compiler.
 
-The agent logs one WARNING on the first flush that finds any unread shape. It counts them per family, names each Scala 3 release the agent has not read, and says a newer agent may read them. It names the Scala 2 case separately when one applies:
+The agent logs one WARNING on the first flush that finds any unread shape. It counts them per family, names each Scala 3 release the agent has not read, and names the Scala 2 case apart when one applies:
 
 ```text
 otherlode: 12 methods in 3 classes look like compiler output this agent has not read, and are reported as unread shapes rather than dead code (9 Scala case-class plumbing, 3 Scala object serialization). Scala 3 releases this agent has not read: 3.11.0. A newer agent may read them.
 ```
 
-A Scala 3 class with an unread release also gets one WARNING of its own that names the release.
+A Scala 3 class from a release the agent has not read also gets one WARNING of its own:
+
+```text
+otherlode: com.example.Order was compiled by Scala 3.11.0, which this agent has not read; 9 methods that look like compiler output are reported as unread shapes
+```
 
 ## Where you see these marks
 
-The testkit's queries cover every mark on this page: `neverHit()` for findings, `neverHitRoutineOutcomes()` for routine outcomes, `neverHitUnreadShapes()` for unread shapes, and `neverSupplied()`, `alwaysSupplied()` and `omissionCount(...)` for optional parameters. A `ProbeRef` carries `inline`, `generatedBy`, `routine`, `unreadShape`, `branchKey` and `inlinedFromClassName`.
+The testkit's queries cover the routine, unread-shape and optional-parameter marks: `neverHit()` for findings, `neverHitRoutineOutcomes()` for routine outcomes, `neverHitUnreadShapes()` for unread shapes, and `neverSupplied()`, `alwaysSupplied()` and `omissionCount(...)` for optional parameters. On every `ProbeRef` a query returns, `inline` is false and `generatedBy` is null, including a generated caller that `unreachedClusters()` lists in `reachedFrom`. A `ProbeRef` also carries `routine`, `unreadShape`, `branchKey` and `inlinedFromClassName`, and `routine` and `unreadShape` are null when the mark does not apply.
 
-The testkit's enums `ProbeKind`, `GeneratedBy`, `RoutineKind` and `UnreadShape` can gain values in a minor release, so a `when` over one needs an `else` branch. A `ProbeRef`'s `generatedBy`, `routine` and `unreadShape` hold null when the mark does not apply. See [the testkit API](testkit-api).
+The testkit's enums `ProbeKind`, `GeneratedBy`, `RoutineKind` and `UnreadShape` can gain values in a minor release, so a `when` over one needs an `else` branch. See [the testkit API](testkit-api).

@@ -4,26 +4,26 @@ description: Run the agent in your test JVM with testRun so Otherlode can name t
 order: 100
 ---
 
-Production holds no test classes. A method that only your tests call therefore reads as uncalled in production, the same as a method that nothing calls. To have Otherlode name those tests, run the agent in your test JVM as well, sending to the same tenant, and mark that run as a test run.
-
-This page covers the agent's side. How Otherlode shows a test run in its findings is under [test callers](/docs/server/unreached-clusters#test-callers).
+Production holds no test classes, so a method that only your tests call reads as uncalled in production. To have Otherlode name those tests, run the agent in your test JVM too, send to the same tenant as production, and mark the run as a test run. [Test callers](/docs/server/unreached-clusters#test-callers) shows how Otherlode uses it.
 
 ## What the agent does with `testRun`
 
-A test run is a run whose agent has `testRun=true`. The agent probes, records call edges and scans as it does anywhere else. It differs in three ways:
+A test run is a run whose agent has `testRun=true`. The agent probes, records call edges and scans as it does anywhere else, with three differences:
 
-- Every payload of the run carries a flag saying it is a test run. Otherlode uses that flag to leave the run out of every finding about production and to read only its call edges.
-- If no source sets an environment, the environment is `test`. Any environment you set, through an option or through OpenTelemetry's settings, wins over it.
-- At shutdown, the agent sends its final flush, then waits up to 15 seconds for the static baseline scan to end. It logs a warning if the scan has not ended by then. The wait happens only when `staticBaselineEnabled` is on. A test run does not flush early or wait for the application's own shutdown hooks.
+- Every payload of the run carries a flag that marks it as a test run. Otherlode keeps a test run out of every finding about production and reads only its call edges.
+- If no source sets an environment, the environment is `test`. An environment you set, through an option or through OpenTelemetry's settings, wins over it.
+- At shutdown the agent sends its final flush straight away, with up to 10 seconds for it. It does not flush early or wait for your application's own shutdown hooks. With `staticBaselineEnabled` on, it then waits up to 15 seconds for the static baseline scan to end.
 
 ## Set up the test JVM
 
-1. Point the test JVM at the same tenant as production, with the same `exportUrl` and an ingest key of that tenant, or through the same collector, and with the same `serviceName` and `serviceNamespace`. A different name makes the test run a different service.
+1. Send to the same tenant as production, with the same `serviceName` and `serviceNamespace`. Use the same `exportUrl` and an ingest key of that tenant, or the same collector. A different name makes the test run a different service.
 2. Set `testRun=true`.
-3. Set `includePackages` so it covers your test classes as well as your production code. The two usually share packages, so production's value works.
-4. Set `staticBaselineEnabled=true`. The scan then reads call edges from every test class on the classpath, not only from the tests that ran.
-5. Pin `serviceInstanceId` to one fixed value per test task, such as `my-service-unit-tests`.
-6. Leave the environment unset. That includes `OTEL_RESOURCE_ATTRIBUTES` and `OTHERLODE_ENVIRONMENT`, which CI may pass down to the test JVM.
+3. Set `includePackages` so it covers your test classes as well as your production code. When they share packages, production's value works.
+4. Set `staticBaselineEnabled=true`. The scan reads call edges from every test class on the classpath, so a test class that never loaded still names its calls. Set it in production too. Without a complete production scan, Otherlode names the tests that call a method but does not call the method "called only by tests".
+5. Pin `serviceInstanceId` to one fixed value per test task, such as `my-service-unit-tests`. Otherwise every test JVM gets a random ID and becomes an instance of its own. Each process still gets its own run ID, so a pinned ID does not merge counts across restarts. [What Otherlode deletes on a schedule](/docs/server/data-kept#the-retention-period) says which test runs of an instance Otherlode reads and keeps.
+6. Leave the environment unset, so the run reports `test`. That includes `OTEL_RESOURCE_ATTRIBUTES` and `OTHERLODE_ENVIRONMENT`, which CI may pass down to the test JVM.
+
+Every option also has a system property and an environment variable. See [configuration options](configuration) for their names.
 
 ### Gradle
 
@@ -40,6 +40,8 @@ tasks.test {
 
 The `jacoco` plugin can stay applied. The order of the two agents changes neither tool's results.
 
+With `maxParallelForks` above 1, the forks of one task share the pinned ID, and each fork is a run of its own. Otherlode reads manifest edges from the newest of those runs only. The scan still covers every test class, whichever fork sends it.
+
 ### Maven
 
 Pass the same `-javaagent` argument to the forked test JVM through Surefire's `argLine`:
@@ -55,34 +57,24 @@ Pass the same `-javaagent` argument to the forked test JVM through Surefire's `a
 
 If another plugin, such as JaCoCo's `prepare-agent`, also sets `argLine`, put `@{argLine}` at the start of this value so both survive.
 
-Every option also has a system property and an environment variable. See the [configuration options](configuration) for their names.
-
-## Why each setting matters
-
-**Matching service name.** Otherlode keys findings by service. A test run under another name never meets production's methods.
-
-**`staticBaselineEnabled` in the test JVM.** Without the scan, the agent reports edges only from test classes that loaded. A test class that never loaded has its edges missing.
-
-**`staticBaselineEnabled` in production.** Set it there too. Without a complete production scan, Otherlode cannot rule out a caller in a production class that never loaded. It then names the tests that call a method but does not call the method "called only by tests".
-
-**A pinned `serviceInstanceId`.** The agent makes a fresh random instance ID for each JVM unless you set one. Every test JVM then becomes its own instance, and Otherlode reads each one's edges until its run passes your tenant's retention period. A fixed ID per test task gives Otherlode one current picture per task, since it reads the newest test run of each instance. A pinned ID does not merge counts across restarts, because each process also gets its own run ID.
-
-With `maxParallelForks` above 1, the forks of one task share the pinned ID. Otherlode reads the manifest edges of only the newest test run of each instance, so the newest fork's manifest hides the others'. The scan still covers every test class, whichever fork sends it.
-
-**An unset environment.** The `test` default keeps a test run's data in an environment of its own, apart from production's, as a second guard beside the flag.
-
-## Environment-stamping collectors
-
-A collector with an environment of its own and `insert` keeps the agent's `test`, and counts each of the run's payloads as an environment mismatch. A collector with `upsert` counts the same mismatch and writes its own environment over `test`, so the run shares that environment and only the test-run flag keeps it apart from production.
-
 ## Expect a longer shutdown
 
-The wait for the scan can add up to 15 seconds to a test task's exit, and more when Otherlode or the collector is slow or unreachable. A test JVM often exits before the scan ends, and the scan is the only source of edges from test classes that never loaded. The agent flushes first, so a runner that halts a slow JVM still delivers the final manifest.
+A test run can add up to 25 seconds to a test task's exit: up to 10 seconds for the final flush and up to 15 for the scan. The agent flushes before it waits for the scan, so a runner that halts a slow JVM still delivers the final manifest.
 
-If the scan does not end in time, the agent logs a warning that the run may send no complete scan. Otherlode then reads the run's manifest edges, and the newest complete scan of the same pinned instance if an earlier run sent one. That older scan can name test classes you have since deleted.
+If the scan has not ended after 15 seconds, the agent stops waiting and logs this warning:
+
+```text
+otherlode: the static baseline scan did not end within 15s of shutdown, so this test run may send no complete scan
+```
+
+Otherlode then reads the run's manifest edges, and the newest complete scan of the same pinned instance if an earlier run sent one. That older scan can name test classes you have since deleted.
+
+## Through a collector with an environment
+
+A collector that stamps its own environment counts each payload of a test run as an environment mismatch. Under `upsert` it also replaces `test` with its own environment, and only the test-run flag keeps the run apart from production. See [handle test runs](/docs/collector/environment-and-namespace#handle-test-runs).
 
 ## Related pages
 
-- [Test your app against the agent](testkit) uses the testkit's collector, which ignores the flag.
+- [Test your app against the agent](testkit) uses the testkit's collector, which ignores the test-run flag.
 - [Configuration options](configuration) lists every option and the OpenTelemetry settings the agent reads.
 - [Classes](classes) explains the static baseline.

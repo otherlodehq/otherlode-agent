@@ -6,9 +6,9 @@ order: 130
 
 ## Summary
 
-The agent pushes four kinds of payload to the address you set with `exportUrl`: Otherlode's ingest at `https://ingest.otherlode.dev`, or your collector. This page calls either one the receiver. Every payload is a protobuf message, and a payload names code (classes, methods, source files, lines, conditions, routes, jars) and counts. It carries no request data and no argument or return value, with one exception you turn on yourself: the [route bridge for OpenTelemetry](#endpoint-routes) can send a request's path.
+The agent pushes four kinds of payload to the address you set with `exportUrl`: Otherlode's ingest at `https://ingest.otherlode.dev`, or your collector. This page calls either one the receiver. Every payload is a protobuf message that names code (classes, methods, source files, lines, conditions, routes, jars) and carries counts. It holds no request data and no argument or return value, with one exception you turn on yourself: the [route bridge for OpenTelemetry](#endpoint-routes) can send a request's path.
 
-The agent has no redaction setting. It sends what this page lists. A collector with redaction switched on replaces the text of [string literal parts](#condition-text-and-string-literals) with `…` before it forwards a payload, either every such part or those that match a pattern you set. It replaces each branch key and site key with a key made under a secret you set, and clears the case keys that can give a literal away. It keeps every other field it knows. It drops any field it does not know, which happens when the agent is newer than the collector, and marks that payload with `fields_stripped`. A deployment that needs redaction sends through a collector with redaction switched on. An agent that posts straight to a backend sends everything in clear.
+The agent has no redaction setting, and it sends everything this page lists in clear. To blank string literals and re-key branch and site keys before a payload leaves your network, send through a collector with redaction on. See [redaction](/docs/collector/redaction).
 
 ## Requests
 
@@ -28,9 +28,17 @@ Each request has these headers:
 | `Content-Type` | `application/x-protobuf` |
 | `Authorization` | `Bearer <authToken>`, only when you set `authToken` |
 
-The JDK's `java.net.http.HttpClient` adds its own headers (`Host`, `Content-Length`, `User-Agent`). Requests use HTTP/1.1, and the agent offers no upgrade to HTTP/2. It sends the token on every request and logs one warning at startup when `exportUrl` is plain `http://` and its host is not `localhost`, an address in `127.0.0.0/8` or `[::1]`, since the token then travels unencrypted. Set the token with the `OTHERLODE_AUTH_TOKEN` environment variable, because a `-javaagent` argument is visible to every user on the host through `ps`. See [configuration options](configuration).
+The JDK's `java.net.http.HttpClient` adds its own headers (`Host`, `Content-Length`, `User-Agent`). Requests use HTTP/1.1, and the agent offers no upgrade to HTTP/2. The agent sends the token on every request. With a token set, it stays off when `exportUrl` is plain `http://` to an `otherlode.dev` host. For any other plain `http://` host that is not `localhost`, an address in `127.0.0.0/8` or `[::1]`, it logs this warning once at startup:
 
-The agent reads no response body. Only a `202` status counts as stored. Any other `2xx` status fails the send at once, without a retry, and the agent sends the payload again at the next flush. On a `202` the agent reads the `Otherlode-Notice` header and logs a `WARNING` for each notice, at most once an hour per notice. A notice that is not lowercase letters and hyphens, or longer than 64 characters, is logged as `unknown`, and so is a new notice the agent does not know once it has kept 32 different ones. Each request times out after 10 seconds, and so does the connection attempt.
+```text
+otherlode: exportUrl uses plain http, so the auth token is sent unencrypted
+```
+
+Set the token with the `OTHERLODE_AUTH_TOKEN` environment variable, because every user on the host can read a `-javaagent` argument through `ps`. See [configuration options](configuration).
+
+The agent reads no response body. Only a `202` status counts as stored. Any other `2xx` status fails the send at once, without a retry, and the agent sends the payload again at the next flush. Each request times out after 10 seconds, and so does the connection attempt.
+
+On a `202` the agent reads the `Otherlode-Notice` header and logs a `WARNING` for each notice, at most once an hour per notice. A notice that is not lowercase letters and hyphens, or longer than 64 characters, is logged as `unknown`. So is a new notice once the agent has kept 32 different ones.
 
 ```text
 otherlode: Otherlode stores this service's payloads but does not track the service, because the tenant's plan tracks no more services
@@ -40,17 +48,17 @@ otherlode: Otherlode sent a notice this agent does not know: <notice>
 
 ## When payloads are sent
 
-The agent flushes on a fixed interval, `flushIntervalSeconds`, 60 seconds by default and between 1 and 86400. The first flush comes at a random offset between 0 and one interval after startup, so a fleet that starts together does not flush on the same tick. The flushes after it keep the fixed rate from that offset.
+The agent flushes on a fixed interval, `flushIntervalSeconds`, 60 seconds by default and between 1 and 86400. The first flush comes at a random offset between 0 and one interval after startup, so a fleet that starts together does not flush on the same tick. Later flushes keep the fixed rate from that offset.
 
-Each flush sends the delta batch and, if something is waiting, the manifest, at the same time. A flush that finds a dependency whose counts were just delivered sends one more manifest for it, and once the dependency listing is complete, the first flush whose sends were all confirmed sends one more, empty, manifest that says so.
+Each flush sends the delta batch and, if something is waiting, the manifest, at the same time. A flush that finds a dependency whose counts were just delivered sends one more manifest for it. Once the dependency listing is complete, the first flush whose sends were all confirmed sends one more, empty, manifest that says so.
 
 On a graceful JVM exit the agent's shutdown hook works to one deadline, 28 seconds from the moment it starts, under Kubernetes' default grace period of 30 seconds. It takes three steps:
 
-1. It flushes at once, for up to 5 seconds, so the counts so far are on their way while your application's own shutdown hooks run. The JVM starts those hooks at the same time as the agent's. A send of this flush that is still going at 5 seconds is no longer waited for, and the flush sends no further hit batch or manifest chunk after that.
-2. It waits for your application's own shutdown hooks to end, until 18 seconds in, so that code they run, such as a framework closing its context, is counted. A hook that has not started within 1 second is not waited for.
+1. It flushes at once, for up to 5 seconds, so the counts so far are on their way while your application's own shutdown hooks run. The JVM starts those hooks at the same time as the agent's. At 5 seconds the agent stops waiting for this flush's sends, and the flush starts no further hit batch or manifest chunk.
+2. It waits for your application's own shutdown hooks to end, until 18 seconds in, so that code they run, such as a framework closing its context, is counted. It does not wait for a hook that has not started within 1 second.
 3. It runs one last flush with the time left, at least 10 seconds. The last flush ends with an empty delta batch that carries `final_flush`. Its sends do not wait for a send of the early flush that is still going.
 
-Neither the early flush nor the last flush sends a static baseline or class listing retry. A flush that was already running when shutdown began, and is stuck on an unreachable receiver, holds both flushes back: the early flush gives up after 5 seconds, and the last flush gives up when the 28 seconds end. If the agent cannot read the list of your application's shutdown hooks, it logs why at startup, then flushes at once and runs the last flush straight after, without the wait. A test run (`testRun`) neither flushes early nor waits for your hooks. `kill -9`, an out-of-memory kill and a crash send no final flush.
+Neither the early flush nor the last flush sends a static baseline or class listing retry. A flush that was already running when shutdown began, and is stuck on an unreachable receiver, holds both flushes back: the early flush gives up after 5 seconds, and the last flush gives up when the 28 seconds end. If the agent cannot read the list of your application's shutdown hooks, it logs why at startup. At exit it then flushes at once and runs the last flush straight after, without the wait. A test run (`testRun`) neither flushes early nor waits for your hooks. `kill -9`, an out-of-memory kill and a crash send no final flush.
 
 ### Chunk caps
 
@@ -59,19 +67,19 @@ A payload that would be larger than its cap is split into several requests, sent
 | Payload | Entry cap | Element bound |
 |---|---|---|
 | Delta batch | 20,000 entries (probe, endpoint and dependency deltas together) | 450,000 |
-| Probe manifest | 5,000 entries, where call edges, referenced classes and branch sites inside a probe each count as an entry | 90,000 |
+| Probe manifest | 5,000 entries. A class counts as one, plus one for each probe, call edge and referenced class. A branch site counts as one, plus one for each condition part, outcome, guarded line range and case label part | 90,000 |
 | Static baseline | About 20,000 entries, where a declared class weighs its methods plus their call edges, branch sites and references | 180,000 |
 | Class listing | 20,000 class names | 90,000 |
 
 A class is never split across requests. A class with more entries than its entry cap goes out in a request of its own. A class can also break the byte or element bound on its own, and what the agent does then depends on the payload:
 
-- **Manifest.** The class goes out as a skipped class with the reason `too large to report: its manifest entries exceed the ingest limits`, in place of its probes. Otherlode counts it as loaded and claims nothing about its methods. The agent leaves the class's probe deltas out of every delta batch, and logs a `WARNING` that names the class. The classes behind it go out as usual.
-- **Static baseline.** The agent sends no chunk of the scan and logs one `WARNING` that names the class and the bound. A scan without the class would read as complete, and Otherlode would then drop the class's call edges and creations from the baseline. The run has no complete scan, so Otherlode makes no never-loaded claim for it.
+- **Manifest.** The class goes out as a skipped class with the reason `too large to report: its manifest entries exceed the ingest limits`, in place of its probes. Otherlode counts it as loaded and claims nothing about its methods. The agent leaves the class's probe deltas out of every delta batch and logs a `WARNING` that names the class. The classes behind it go out as usual.
+- **Static baseline.** The agent sends no chunk of the scan and logs one `WARNING` that names the class and the bound. The run has no complete scan, so Otherlode makes no never-loaded claim for it.
 - **Class listing and delta batch.** A class name is at most 65,535 bytes, and a class never has more deltas than probe locations in its manifest, so neither can break a bound on its own.
 
 ## Payloads
 
-Every payload carries the same resource attributes, except `manifest_confirmed`, which changes once during a run.
+Every payload carries the same resource attributes. `manifest_confirmed` is the one that changes during a run, and it changes once.
 
 ### Resource attributes
 
@@ -85,32 +93,30 @@ Every payload carries the same resource attributes, except `manifest_confirmed`,
 | `run_id` | A random `UUID` made once per process. It differs on every start, even under a pinned `service_instance_id` |
 | `test_run` | True when you started the agent with `testRun` |
 | `agent_version` | The agent jar's version, empty when unknown |
-| `flush_interval_seconds` | The value of `flushIntervalSeconds`, in whole seconds. Otherlode reads it to tell a run that stopped without its final flush from one that is quiet between flushes |
-| `fields_stripped` | Never set by the agent. A collector sets it only while its redaction is switched on, when it dropped a field it does not know before forwarding |
-| `manifest_confirmed` | False until the receiver stores a probe manifest of this run that held at least one class, then true on every payload after. The agent sets it from the deliveries it saw confirmed, so a manifest whose answer was lost does not count, and it never goes back to false |
+| `flush_interval_seconds` | The value of `flushIntervalSeconds`, in whole seconds |
+| `fields_stripped` | Never set by the agent. A collector with redaction on sets it on a payload it dropped a field from |
+| `manifest_confirmed` | False until the receiver stores a probe manifest of this run that held at least one class, then true on every payload after. The agent sets it only from deliveries it saw confirmed, so a manifest whose answer was lost does not count. It never goes back to false |
 
 The agent adds no host name, address, user name, environment variable or system property. Resource attributes come from your configuration, from OpenTelemetry's `service.*` and `deployment.environment*` settings (see [configuration options](configuration)), and from service name detection when you set none.
 
-The run id lets Otherlode keep one process's data apart from the next when an instance id is pinned. A consumer needs it because class ids and every total only mean something within one run.
-
 ### Delta batch
 
-A delta batch carries the resource attributes plus these lists. Each entry is a number pair or triple, with no names.
+A delta batch carries the resource attributes plus these lists. Each entry is a set of ids and numbers, with no names.
 
 | Field | Content |
 |---|---|
 | `deltas` | For each probe whose count changed: `class_id`, `probe_index`, `kind` (method, branch, optional argument, initializer returned or initializer threw), `first_seen_at` and `hits_total` |
 | `endpoint_deltas` | For each endpoint whose count changed: `endpoint_id`, `first_seen_at`, `hits_total` |
-| `dependency_deltas` | For each dependency: `dependency_id`, `first_loaded_at`, `loaded_classes_total` |
+| `dependency_deltas` | For each dependency whose loaded-class count changed: `dependency_id`, `first_loaded_at`, `loaded_classes_total` |
 | `final_flush` | True only on the last, empty delta batch of the shutdown flush |
-| `flush_complete` | True only on the last delta batch of a flush, when the receiver stored every delta batch the flush sent before it |
-| `payload_sequence`, `counts_pending_since`, `starting` | Where the run stands in delivering its counts, and whether it is still starting; see [Pending counts](#pending-counts) |
+| `flush_complete` | True on at most one delta batch of a flush, when the receiver stored every delta batch the flush sent before it. See below for which batch that is |
+| `payload_sequence`, `counts_pending_since`, `starting` | Where the run stands in delivering its counts, and whether it is still starting. See [Pending counts](#pending-counts) |
 
-`hits_total` is the cumulative count since the process started, not the amount since the last flush. Otherlode merges it with `max()`, so a batch that arrives twice or out of order changes nothing. `first_seen_at` is the time of the flush that first saw a non-zero count, so it is accurate to one interval.
+`hits_total` and `loaded_classes_total` are cumulative since the process started, not the amount since the last flush, so a batch that arrives twice or out of order changes nothing. `first_seen_at` is the time of the flush that first saw a non-zero count, so it is accurate to one interval.
 
-The agent sends the batch even when no count changed. An empty batch is a heartbeat: it tells Otherlode the instance is alive and idle, not crashed or cut off.
+The agent sends the batch even when no count changed. An empty batch is a heartbeat. It tells Otherlode the instance is alive and idle, not crashed or cut off.
 
-One flush can send several delta batches. The chunk caps split a large batch, and a flush that starts with pending counts sends a heartbeat first and, once the receiver has stored the rest, another at the end. The flush's last delta batch carries `flush_complete` when the receiver stored every delta batch the flush sent before it. When the receiver refuses an earlier batch, or an earlier send gets no answer, no batch of that flush carries it, and neither does a shutdown flush that could not read its counts.
+One flush can send several delta batches. The chunk caps split a large batch. A flush that starts with anything pending sends a heartbeat first. When hit counts were pending and the receiver stores every hit batch, the flush sends another heartbeat at the end. One batch of the flush carries `flush_complete` when the receiver stored every delta batch the flush sent before it. On the shutdown flush that is the `final_flush` batch. On any other flush it is the closing heartbeat when hit counts were pending, and otherwise the flush's last batch, which is its heartbeat when no count changed. When the receiver refuses an earlier batch, or an earlier send gets no answer, no batch of that flush carries it, and neither does a shutdown flush that could not read its counts. The extra empty batch described in [Pending counts](#pending-counts) never carries it.
 
 The ids refer to the manifest of the same run. They mean nothing without it.
 
@@ -122,18 +128,29 @@ Every delta batch and manifest carries three fields that tell Otherlode whether 
 - `counts_pending_since` is 0 when, as of the moment the payload was stamped, no count the run sent and no class it reported in a manifest has been refused or gone unanswered. Otherwise it is the time, in milliseconds since the epoch, of the flush in which that first happened. It says nothing about the run starting.
 - `starting` is true while the run is starting, and false after.
 
-A run is starting from the agent's start. Every payload carries `starting = true` until a flush finds that the run is at least one `flushIntervalSeconds` old, that classes in scope have loaded, that none has been registered, skipped, found unreported or found with nothing to probe for at least one `flushIntervalSeconds`, and that none awaits confirmation that the JVM defined it. That flush and the ones after it carry `starting = false`. A run that keeps loading classes in scope stops starting after 10 intervals. The final flush ends it too when no class in scope loaded after shutdown began and none awaits confirmation, as when a batch job's work is done. A JVM stopped while its application was still starting keeps loading during shutdown, so its closing batch still says `starting`. Once it has stopped, it does not start again, so a class that first loads later is reported on the next flush. A flush sends one extra empty delta batch when the run stops starting, or its pending state changes, after that flush's payloads were stamped.
+A run is starting from the agent's start. Every payload carries `starting = true` until a flush finds all of these:
 
-While the latest payload of a run says `starting`, its zero hit totals are not evidence that code never ran, since the application may not have loaded its classes yet. Once the run has ended, with a crash or a kill, a starting run has delivered everything it counted up to its last flush. While the latest payload carries a `counts_pending_since` other than 0, some of the run's counts have not reached the receiver, so its zero hit totals are not evidence that code never ran, even after the run has ended. Nor are they before any delta batch from the run has arrived. The manifest and the delta batches go out side by side, so the receiver can store one and refuse the other; the manifest then arrives at zero hits for code that did run. One gap remains: payloads stamped in the flush where refusals begin, before the first refusal, carry 0. If the receiver stores nothing after that, up to one flush interval of hits is missing while the run's newest payload says 0, and the run reads like one that stopped without a final flush.
+- The run is at least one `flushIntervalSeconds` old.
+- Classes in scope have loaded.
+- No class in scope has been registered, skipped, found unreported or found with nothing to probe for at least one `flushIntervalSeconds`.
+- No class awaits confirmation that the JVM defined it.
+
+That flush and the ones after it carry `starting = false`. A run that keeps loading classes in scope stops starting after 10 intervals. The final flush also ends it when no class in scope loaded after the early shutdown flush and none awaits confirmation, as when a batch job's work is done. That needs the early shutdown flush, so it does not happen in a test run (`testRun`), or when a stuck flush made the early flush give up. A test JVM that ends within its first interval ends with a batch that still says `starting`. So does a JVM stopped while its application was still starting, when a class in scope loads after the early shutdown flush or one still awaits confirmation. Once a run stops starting, it does not start again, and a class that first loads later is reported on the next flush.
+
+A flush sends one extra empty delta batch when the run stops starting, or its pending state changes, after that flush's payloads were stamped. It carries the new state.
+
+While the latest payload of a run says `starting`, its zero hit totals are not evidence that code never ran, since the application may not have loaded its classes yet. While the latest payload carries a `counts_pending_since` other than 0, some of the run's counts have not reached the receiver, so its zero hit totals are not evidence either, even after the run has ended. Nor are they before any delta batch from the run has arrived. The manifest and the delta batches go out side by side, so the receiver can store one and refuse the other, and the manifest then shows zero hits for code that did run.
+
+One gap remains. Payloads stamped in the flush where refusals begin, before the first refusal, carry 0. If the receiver stores nothing after that, up to one flush interval of hits is missing while the run's newest payload says 0, and the run reads like one that stopped without a final flush.
 
 ### Probe manifest
 
-The manifest says what each id in a delta batch names. It carries the resource attributes plus the lists below. Class entries go out once. After a manifest carrying a class is confirmed, the agent drops that class's names and keeps only each probe's kind, so if the manifest is lost after that, Otherlode gets it back only when the instance restarts.
+The manifest says what each id in a delta batch names. It carries the resource attributes plus the lists below. Class entries go out once. After a manifest carrying a class is confirmed, the agent drops that class's names and keeps only each probe's kind. If that manifest is then lost, Otherlode gets it back only when the instance restarts.
 
 | Field | Content |
 |---|---|
 | `probes` | One per probe: `class_id`, `probe_index`, `kind`, class name, method name, method descriptor, source line, parameter names, generic signature, the compiler construct that generated the method or the unread shape it has, its outside caller (the annotation or supertype that calls it), and flags for inline, static, lambda body and extension receiver. A branch probe also carries its `branch_key` and the class an inlined copy came from. An optional-argument probe carries the parameter's index and name, whether its target can be overridden, and the target's class when it differs |
-| `probes[].branch_sites` | For a branch probe: the site's `site_key`, line, condition, outcomes with their roles, guarded line ranges (source file name plus first and last line), case keys and case labels. `string_hash_code_switch` marks a switch on `String.hashCode()`. Each case key of such a switch is the hash code of a string, often one of your literals, so a collector can clear them. See [methods and branches](methods-and-branches) |
+| `probes[].branch_sites` | For a branch probe: the site's `site_key`, line, condition, outcomes with their roles, guarded line ranges (source file name plus first and last line), case keys and case labels. `string_hash_code_switch` marks a switch on `String.hashCode()`. Each case key of such a switch is the hash code of a string, often one of your literals. See [methods and branches](methods-and-branches) |
 | `probes[].calls`, `probes[].referenced_classes` | Call edges to other classes in scope, and names of classes outside it that the method refers to |
 | `class_locations` | Per class: super class name, interface names, source file name, body kind, source name, and Kotlin class kind |
 | `class_references` | Per class: names of classes it refers to outside any probed method |
@@ -148,9 +165,9 @@ The manifest says what each id in a delta batch names. It carries the resource a
 | `framework_markers` | Per marker: its id, the class set that matched as fully qualified names, and the time of the sweep that saw it. Each is delivered once per run. See [frameworks with no module](endpoints#frameworks-with-no-module) |
 | `dependencies` | Per dependency: `dependency_id`, identities (`group_id`, `artifact_id`, `version`), how the identity was read, the location, how it was discovered, and class count |
 | `external_classes` | Name of a class outside scope that your code refers to, the `dependency_id` that provides it, and whether nothing provides it |
-| `references_recorded`, `dependencies_listed` | Flags Otherlode uses to know when references and the startup dependency listing are complete |
+| `references_recorded`, `dependencies_listed` | Flags that say when references and the startup dependency listing are complete |
 | `class_listing_blind` | `true` once a class under `includePackages` loaded from a jar or folder the run's class listing did not read, or with no code source and a name the listing lacks. It is set on every manifest after that and never goes back to `false`. See [the class listing](classes#the-class-listing) |
-| `payload_sequence`, `counts_pending_since`, `starting` | Where the run stands in delivering its counts, and whether it is still starting; see [Pending counts](#pending-counts) |
+| `payload_sequence`, `counts_pending_since`, `starting` | Where the run stands in delivering its counts, and whether it is still starting. See [Pending counts](#pending-counts) |
 
 #### Branch and site keys
 
@@ -158,7 +175,7 @@ A `branch_key` names one outcome of a branch site across builds and instances, a
 
 #### Condition text and string literals
 
-A branch site's condition is source-like text rebuilt from bytecode, in parts. A part is code, a placeholder, or a string literal. A string literal part holds the string constant from your class file as the compiler stored it, such as `"ENABLE_LEGACY_DISCOUNT"` in `if (System.getenv("ENABLE_LEGACY_DISCOUNT") != null)`. It also holds the labels of a `when` or `switch` on a string. Nothing is read at run time: the text is a constant in your bytecode, never a value your program computed or received. A constant that holds a secret, such as a hard-coded password or a key compared against input, is sent as it is. A collector can replace string literal parts, because they are marked as such.
+A branch site's condition is source-like text rebuilt from bytecode, in parts. A part is code, a placeholder, or a string literal. A string literal part holds the string constant from your class file as the compiler stored it, such as `"ENABLE_LEGACY_DISCOUNT"` in `if (System.getenv("ENABLE_LEGACY_DISCOUNT") != null)`. It also holds the labels of a `when` or `switch` on a string. Nothing is read at run time. The text is a constant in your bytecode, never a value your program computed or received. A constant that holds a secret, such as a hard-coded password or a key compared against input, is sent as it is. Each string literal part is marked as one, so a collector can blank it.
 
 The condition fingerprint includes the string constants in the condition, so the [keys](#branch-and-site-keys) of a condition that holds a string literal depend on its text. A branch key for a case of a `when` or `switch` on a string also covers the case's label.
 
@@ -172,7 +189,7 @@ A dependency's `location` is the jar's path or its entry inside a fat jar, such 
 
 An endpoint carries its route template, such as `GET /orders/{id}`, not the URL of any request. The agent reads the pattern the framework matched. It sends no path, query string, header, parameter or body of a request. An endpoint that no request has reached still appears if the framework registered it. See [endpoints](endpoints).
 
-The route bridge for OpenTelemetry is the exception. It is off unless you set `otelBridgeEnabled=true`. With it on, a bridge endpoint carries OpenTelemetry's `http.route` exactly as OpenTelemetry reports it, and OpenTelemetry does not always report a template. It reports a Vert.x Web router mounted at a parameterised path, such as `/u/:id/*`, with the matched value. Each value then becomes an endpoint of its own, such as `GET /u/42/orders`, so a value from a request path is sent. The same holds for any instrumentation that sets `http.route` to a concrete path. A module records at most 8,192 endpoints that it finds only at dispatch, so the bridge sends at most 8,192 such routes in a run. See [route bridge for OpenTelemetry](endpoints#route-bridge-for-opentelemetry).
+The route bridge for OpenTelemetry is the exception. It is off unless you set `otelBridgeEnabled=true`. With it on, a bridge endpoint carries OpenTelemetry's `http.route` exactly as OpenTelemetry reports it, and that is not always a template. For a Vert.x Web router mounted at a parameterised path, such as `/u/:id/*`, it holds the matched value. Each value then becomes an endpoint of its own, such as `GET /u/42/orders`, so a value from a request path is sent. The same holds for any instrumentation that sets `http.route` to a concrete path. A module records at most 8,192 endpoints that it finds only at dispatch, so the bridge sends at most 8,192 such routes in a run. See [route bridge for OpenTelemetry](endpoints#route-bridge-for-opentelemetry).
 
 ### Static baseline chunk
 
@@ -195,11 +212,11 @@ The agent sends a class listing unless you set `classListingEnabled=false`. A ba
 | Field | Content |
 |---|---|
 | `class_names` | The dotted names of the listed classes, distinct across the listing and sent in ascending order. A chunk holds at most 20,000 |
-| `include_rules` | The include and exclude rules the listing applied, as the agent parsed them. A prefix covers a name that equals it, or continues it with `.` or `$`. Otherlode uses them to tell a class outside the rules from a class the build lacks |
+| `include_rules` | The include and exclude rules the listing applied, as the agent parsed them. A prefix covers a name that equals it, or continues it with `.` or `$` |
 | `listed_at` | When the listing was made, in milliseconds since the epoch. Every chunk of one listing carries the same value |
 | `chunk_index`, `chunk_count` | Which part this chunk is, counting from 0, and how many parts the listing has |
 
-A listing that matches no class is one chunk with no names. A process sends no listing when a directory, jar or nested jar it reads cannot be read, because Otherlode reads a class's absence from a complete listing as proof that the build lacks it. Otherlode uses a listing only when it holds every chunk. See [classes](classes#the-class-listing).
+A listing that matches no class is one chunk with no names. A process sends no listing when it cannot read a directory, jar or nested jar it lists, since a listing with a gap would read as complete. Otherlode uses a listing only when it holds every chunk. See [classes](classes#the-class-listing).
 
 ## What the agent never sends
 
@@ -212,7 +229,7 @@ A listing that matches no class is one chunk with no names. A process sends no l
 
 A probe only increments a counter in an array. It reads no value.
 
-The free text in `skipped_classes`, `unreadable_classes`, `unprobed_classes` and `disabled_endpoint_modules` is a reason from the JVM or the agent, such as a linkage error message. For `disabled_endpoint_modules`, when the module failed on an exception other than a linkage error, it is the exception's class name, never its message. It names classes and does not hold application data.
+The free text in `skipped_classes`, `unreadable_classes`, `unprobed_classes` and `disabled_endpoint_modules` is a reason from the JVM or the agent, such as a linkage error message. For `disabled_endpoint_modules`, when the module failed on an exception other than a linkage error, it is the exception's class name, never its message. It names classes and holds no application data.
 
 ## When the receiver is down or refuses a payload
 
@@ -220,7 +237,7 @@ The agent keeps no queue of payloads. After a failed send, the state that the se
 
 ### Retries inside one send
 
-One send makes up to 5 attempts, waiting 200 ms after the first failure and doubling the wait up to a cap of 30 seconds. It retries only when a retry can help:
+One send makes up to 5 attempts, waiting 200 ms after the first failure and doubling the wait up to a cap of 30 seconds. A static baseline or class listing chunk resent at a later flush gets a single attempt. The agent retries only when a retry can help:
 
 - A connection error or a timeout.
 - A `5xx` status.
@@ -228,17 +245,30 @@ One send makes up to 5 attempts, waiting 200 ms after the first failure and doub
 
 Every other status, including a `401`, `403`, `404` and a redirect, fails the send at once, because the same bytes would meet the same answer. Only a `202` confirms.
 
-When a retried answer carries a `Retry-After` header, in seconds or as an HTTP date, the agent waits that long before the next attempt instead, if it is 2 seconds or less. A longer `Retry-After` ends the send at once, and the next flush sends the payload again. A collector sends `Retry-After: 5` when Otherlode is down or busy, so through a collector an outage costs one request per payload a flush, not five. Otherlode's ingest sends `Retry-After: 5` when it cannot check the key or store the payload, and `Retry-After: 1` when it is busy, so the agent tries a busy ingest again within the send.
+When a retried answer carries a `Retry-After` header, in seconds or as an HTTP date, the agent waits that long before the next attempt instead, if it is 2 seconds or less. A longer `Retry-After` ends the send at once, and the next flush sends the payload again. A receiver that answers with a `Retry-After` over 2 seconds during an outage therefore gets one request per payload a flush, not five. See [forwarding](/docs/collector/forwarding) for what a collector answers while it cannot reach Otherlode.
 
 ### After a failed send
 
-- **Delta batch.** The counts are not marked as delivered. The next flush reports the live cumulative count again, which is how a lost acknowledgement or a late batch heals. A refused request, meaning a `4xx` status the agent does not retry, does not stop the flush: the later delta requests still go, and the refused one is built again on the next flush. Any other failure stops the flush's delta requests at that one; the manifest, sent alongside, is not affected. The requests it did confirm stay confirmed either way. Counts the receiver has not stored are pending: the next flush leads with an empty delta batch that says so, sent on its own so the news arrives even when the batch with the counts is refused for its size. A flush that then confirms every batch with counts ends with another empty batch saying nothing is pending.
-- **Manifest.** A chunk the receiver did not store stays pending and is built again on the next flush. The agent builds, sends and confirms one chunk at a time and stops at the first failure. A disabled endpoint module goes first, on a manifest of its own, before any class chunk, since its record is what tells Otherlode the endpoints sent earlier are no longer counted.
-- **Static baseline.** Chunks go out in order and the first failure stops the send. The chunks left are sent again, one per flush, after a flush whose own sends the receiver stored. A `400` or `422` answer means the receiver refused the content, and the agent drops every chunk left and logs a warning. Any other failure keeps the chunks, such as a `401` while a token rotates or a `413`, since a proxy's size limit can be raised while the process runs. The scan is never repeated in a process.
-- **Class listing.** Sent and resent as the static baseline is, with the same rules for each status. A `400` or `422` answer drops the listing for the process. Any other failure keeps the chunks, including a `404` from a collector that does not serve the route yet.
+- **Delta batch.** The counts are not marked as delivered. The next flush reports the live cumulative count again, which is how a lost acknowledgement or a late batch heals. A refused request, meaning a `4xx` status the agent does not retry, does not stop the flush: the later delta requests still go, and the refused one is built again on the next flush. Any other failure stops the flush's delta requests at that one. The manifest, sent alongside, is not affected. The requests the flush did confirm stay confirmed either way. Counts the receiver has not stored are pending. The next flush leads with an empty delta batch that says so, sent on its own so the news arrives even when the batch with the counts is refused for its size. A flush that then confirms every batch with counts ends with another empty batch that says the counts are no longer pending.
+- **Manifest.** A chunk the receiver did not store stays pending and is built again on the next flush. The agent builds, sends and confirms one chunk at a time and stops at the first failure. A disabled endpoint module goes first, on a manifest of its own, before any class chunk, since its record tells Otherlode the endpoints sent earlier are no longer counted.
+- **Static baseline.** Chunks go out in order and the first failure stops the send. The chunks left are sent again, one per flush, after a flush whose own sends the receiver stored. A `400` or `422` answer means the receiver refused the content, so the agent drops every chunk left and logs a warning. Any other failure keeps the chunks, such as a `401` while a token rotates, or a `413`, since a proxy's size limit can be raised while the process runs. The scan is never repeated in a process.
+- **Class listing.** Sent and resent as the static baseline is, with the same rules for each status. A `400` or `422` answer drops the listing for the process. Any other failure keeps the chunks, including a `404` from a collector that does not serve the route.
 - **Resending a delivered payload.** If the receiver stored a payload but the agent never saw the answer, the agent sends the same payload again. Cumulative counts and chunk indexes make the repeat harmless.
 
-Each failure logs a warning that names the payload and says the agent will retry on the next flush. A flush that fails never stops the schedule.
+Each failed delta batch or manifest send logs a `WARNING`, such as these:
+
+```text
+otherlode: delta export failed, will retry next flush
+otherlode: manifest export failed, will retry next flush
+```
+
+A static baseline or class listing logs only its first failed send in the process, where `<payload>` is `static baseline` or `class listing`:
+
+```text
+otherlode: failed to send <payload> chunk <n> of <count>; it and the chunks after it are sent again after a flush whose payloads are stored
+```
+
+When its chunks are later stored, it logs `otherlode: the <payload> was stored after a retry` at `INFO`. A flush that fails never stops the schedule.
 
 ### What a crash loses
 
@@ -246,4 +276,4 @@ Counts and manifest state live only in the process. A crash during an outage los
 
 ## Where the schema lives
 
-The wire schema is one file, `src/main/proto/otherlode/v1/otherlode.proto`, package `otherlode.v1`. Its comments are the authoritative description of each field. The schema is published to the Buf Schema Registry as `buf.build/otherlode/otherlode`, and the collector and server build their bindings from it.
+The wire schema is one file, `src/main/proto/otherlode/v1/otherlode.proto`, package `otherlode.v1`. Its comments describe each field. It is published to the Buf Schema Registry as `buf.build/otherlode/otherlode`.

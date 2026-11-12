@@ -4,13 +4,11 @@ description: Which web frameworks the agent counts endpoints for, how it names a
 order: 40
 ---
 
-The agent counts each HTTP endpoint your service serves and lists the endpoints a framework registered, so an endpoint that no request ever reached shows up as never called. A method probe cannot say that. One handler can back two endpoints, a handler can be a lambda with no stable class name, and a handler can sit outside `includePackages`.
-
-Endpoint tracking is separate from the [method and branch probes](methods-and-branches). It does not use `includePackages`, so the endpoints of a framework are reported wherever your handler classes live. It is on by default and needs no setting beyond the agent itself.
+The agent lists the HTTP endpoints each framework in your service registers and counts the requests each one receives, so an endpoint that no request reached reads as never called. Endpoint tracking is on by default. It is separate from the [method and branch probes](methods-and-branches) and ignores `includePackages`, so it reports a framework's endpoints wherever your handler classes live.
 
 ## Supported frameworks
 
-Each framework has its own module. A module does nothing on a JVM where its framework is absent. The versions below are the ones the project's tests run against. A version between two tested ones is expected to work and is not tested.
+Each framework has its own module, and a module does nothing on a JVM where its framework is absent. The tested versions are the ones the project's tests run against. A version between two tested ones is expected to work and is not tested.
 
 | Framework | Module name | Tested versions | Counted at |
 |---|---|---|---|
@@ -34,9 +32,12 @@ Each framework has its own module. A module does nothing on a JVM where its fram
 
 The module name is what the agent logs, what Otherlode shows as the endpoint's framework, and what appears in the list of [disabled modules](#modules-that-switch-themselves-off). It is also the name [`disabledEndpointModules`](configuration#disabledendpointmodules) takes to keep a module off.
 
-One Spring MVC module covers Spring Framework 5.3 through 7 and both the `javax` and `jakarta` servlet namespaces. The project's demo runs it inside a Spring Boot 4.1.1 fat jar. Spring WebFlux has a module of its own, so a failure in one never switches off the other, and it covers Spring Framework 5.3 through 7 too. The Ktor modules are separate because Ktor 3 replaced `Route` with `RoutingNode`. The Javalin modules are separate because Javalin 7 changed how `ParsedEndpoint` exposes its endpoint, and each module only acts on its own release. One Micronaut module covers Micronaut 4.0 through 5.x, and Micronaut 3 has a module of its own, because its router lists `UriRoute` where Micronaut 4 lists `UriRouteInfo`. Each only acts on its own release, so an application of either is counted by exactly one of them. Micronaut 5 needs JDK 25 or later. One Vert.x Web module covers 4.5 through 5.x, since the classes it hooks are the same in all of them. Vert.x Web 4.0 to 4.4 are not tested. The JAX-RS module reads annotations from either namespace. One servlet module covers `javax.servlet` and `jakarta.servlet`, from Servlet 4.0, and counts the servlets no framework module owns.
-
-Javalin 5 has no module. See [what is not covered](#what-is-not-covered).
+- `spring-webmvc` covers Spring Framework 5.3 through 7, in both the `javax` and `jakarta` servlet namespaces. The project's demo runs it inside a Spring Boot 4.1.1 fat jar. `spring-webflux` covers Spring Framework 5.3 through 7. A failure in one never switches off the other.
+- `micronaut` covers Micronaut 4.0 through 5.x, and `micronaut-3` covers Micronaut 3. Micronaut 5 needs JDK 25 or later.
+- Each Javalin, Micronaut and Ktor module acts only on the major releases it covers, so an application is counted by exactly one of them. Javalin 5 has no module.
+- `vertx-web` covers Vert.x Web 4.5 through 5.x. Vert.x Web 4.0 to 4.4 are not tested.
+- `jaxrs` reads annotations from either namespace.
+- `servlet` covers `javax.servlet` and `jakarta.servlet` from Servlet 4.0, and counts the servlets no framework module owns.
 
 ## How an endpoint is named
 
@@ -59,47 +60,57 @@ The agent rewrites the framework's own spelling of the template into one form, s
 | A `*` inside a segment stays | `/files/*.txt` | `/files/*.txt` |
 | Case is kept | `/Orders` | `/Orders` |
 
-A form whose meaning would be a guess stays as written: `{.x}`, `{;x}`, `{x*}`, `{a,b}`, `{?q}`, `{&q}`, `{#f}`, `{/a,b}`, a `{+x}` or `<x>` that shares its segment with other text.
+A brace form the agent does not read keeps its braces and drops any text after a `:` inside them. Examples are `{.x}`, `{;x}`, `{x*}`, `{a,b}`, `{?q}`, `{&q}`, `{#f}`, `{/a,b}`, and a `{+x}` that shares its segment with other text. A `<x>` that shares its segment with other text stays as written.
 
 The verb is upper case. An endpoint with no verb constraint has the verb `*`. The framework's own spelling travels beside the template for display. The testkit calls it `verbatimTemplate`.
 
-The servlet context path is not part of the template. Spring reports the application-relative template, so a Spring Boot application with `server.servlet.context-path=/shop` still reports `/orders`. Spring WebFlux's `spring.webflux.base-path` is left out the same way. JAX-RS leaves out `@ApplicationPath`, and the servlet module leaves out the context path of the web application. The JDK `HttpServer` is an exception, because a context path is its whole template. Micronaut is the other: [`micronaut.server.context-path`](#micronaut) stays in the template of an annotated route.
+The servlet context path is not part of the template. A Spring Boot application with `server.servlet.context-path=/shop` reports `/orders`, not `/shop/orders`. Spring WebFlux's `spring.webflux.base-path`, JAX-RS's `@ApplicationPath` and the web application's context path in the servlet module are left out the same way. Two exceptions keep it: the JDK `HttpServer`, whose template is the context path, and [`micronaut.server.context-path`](#micronaut) on an annotated route.
 
 A framework mapping that lists several paths or verbs gives one endpoint per combination. `@RequestMapping(path = ["/a", "/b"], method = [GET, POST])` is four endpoints.
 
-Two registrations that name the same verb and template are one endpoint with one count, even from two servers in the same JVM or from two frameworks. The numeric endpoint id the agent assigns is only meaningful inside one run, so Otherlode identifies an endpoint across instances by its verb, its template and its template kind: path, regex or servlet pattern. The framework recorded for the endpoint is the one that registered it first. Two routes that differ only in a part the agent does not read merge for the same reason. Each module below says what it does not read.
+Two registrations with the same verb, template and template kind are one endpoint with one count, even from two servers in the same JVM or from two frameworks. The endpoint keeps the framework that registered it first. Two routes that differ only in a part the agent does not read merge the same way, and each module below says what it does not read. The numeric endpoint id the agent assigns holds only within one run.
 
-A framework can match a route by a regular expression, with no path to read a template from. The agent keeps that expression exactly as written, with no normalisation, as both the template and its display spelling, and marks the endpoint as a regex. A regex endpoint never merges with a path endpoint whose template reads the same, so its identity is the verb, the template and whether the template is a regex.
+There are three template kinds:
 
-A servlet mapping that no path can express is a third kind, the servlet pattern: an extension mapping such as `*.do`, which matches at any depth, the default mapping `/`, which matches only what nothing else did, and an exact mapping the naming rules would change or that holds a star or a brace, such as `/orders/` or `/api*`, which a container matches literally. The agent keeps the pattern exactly as written, as the template and its display spelling, and marks the endpoint as a servlet pattern. It never merges with a path or regex endpoint whose template reads the same, so a default mapping `/` and a path endpoint `/` are two endpoints.
+- **Path.** The template follows the naming rules above. Most endpoints are paths.
+- **Regex.** A route the framework matches by a regular expression keeps that expression exactly as written, as the template and as its display spelling.
+- **Servlet pattern.** A servlet mapping that no path template can express keeps the pattern exactly as written. These are an extension mapping such as `*.do`, the default mapping `/`, and an exact mapping the naming rules would change or that holds a star or a brace, such as `/orders/` or `/api*`.
+
+Endpoints of different kinds never merge, even when their templates read the same. A servlet default mapping `/` and a path endpoint `/` are two endpoints.
 
 ## Declared and discovered
 
 The agent learns of an endpoint in one of two ways, and the manifest records which.
 
-An endpoint is declared when the framework registers it. This is what makes "never called" computable: the endpoint exists, a framework would serve it, and no request matched it.
+An endpoint is declared when the framework registers it. A declared endpoint that no request matched is never called.
 
-An endpoint is discovered by dispatch when a request matches one that no registration hook reported. The agent creates it on the spot and counts the request, so no hit is dropped. A discovered endpoint has been called by definition. If a registration for the same verb and template arrives later, the endpoint changes to declared.
+An endpoint is discovered by dispatch when a request matches one that no registration reported. The agent creates it then and counts the request, so a discovered endpoint has always been called. If a registration for the same verb and template arrives later, the endpoint becomes declared.
 
-A module records at most 8,192 endpoints that it finds only at dispatch. Past that, a request for an endpoint the agent does not hold yet records nothing, and the module logs one WARNING that names it and the limit. Requests for endpoints the agent already holds keep counting. Declared endpoints never count toward the limit and are never refused, and a discovered endpoint that is declared later stops counting toward it.
+A module records at most 8,192 endpoints that it finds only at dispatch. Past that, a request for an endpoint the agent does not hold yet records nothing, and the module logs this WARNING once:
 
-Declared endpoints include the ones your framework registers for itself. Spring's static-resource mappings and Spring Boot Actuator's operations appear in the list, with their handler classes where the agent can name them. Dropping an endpoint because its handler cannot be named would hide it, so the agent reports it unjoined instead.
+```text
+otherlode: endpoint module <name> found 8192 endpoints at dispatch, its limit; it records no new ones, and the endpoints it holds keep counting
+```
 
-The route bridge only ever discovers. OpenTelemetry learns a route when a request ends on it, so there is nothing to declare from.
+Requests for endpoints the agent already holds keep counting. Declared endpoints never count toward the limit and are never refused, and a discovered endpoint that is declared later stops counting toward it. A module also holds at most 8,192 request keys it bound at dispatch. Past that it logs `otherlode: endpoint module <name> bound 8192 request keys at dispatch, its limit; a request with a new key still counts, and the agent resolves its endpoint again each time`, and every request still counts.
+
+Declared endpoints include the ones your framework registers for itself, such as Spring's static-resource mappings and Spring Boot Actuator's operations. An endpoint whose handler the agent cannot name is still reported, with no handler.
+
+The [route bridge](#route-bridge-for-opentelemetry) only ever discovers.
 
 ## Spring MVC
 
-Annotated controllers are declared when Spring builds its handler-method table, and when code registers a mapping directly with `registerMapping`. Actuator registers every operation that way. A request is counted against the pattern and verb Spring matched, using its best match when more than one pattern fits. A mapping with no verb is `*`.
+Annotated controllers are declared when Spring builds its handler-method table, and when code registers a mapping directly with `registerMapping`, as Actuator does for every operation. A request is counted against the pattern and verb Spring matched, using its best match when more than one pattern fits. A mapping with no verb is `*`.
 
-A request counts once. These are no call, on every route kind below:
+A request counts once. On every route kind, these count nothing:
 
-- A lookup Spring makes for itself through `HandlerMappingIntrospector`, which Spring Security and CORS handling use to match the request.
-- A lookup made before `DispatcherServlet` has taken the request. The OpenTelemetry Spring MVC instrumentation asks the handler mappings for the route from its filter after the chain returns, so when a filter such as Spring Security answered the request first, that lookup is the first one, and the request is not counted.
-- A second lookup of an annotated controller's mapping on a request that already matched one, as the OpenTelemetry Spring MVC library instrumentation makes after the request to learn its route. A forward or an include still counts.
-- The second dispatch of a request that completes asynchronously, such as a `Callable` or `DeferredResult` result.
-- A CORS preflight, an `OPTIONS` request that carries both `Origin` and `Access-Control-Request-Method`. An `OPTIONS` request without them to a route that maps `OPTIONS` counts.
+- A lookup Spring makes for itself through `HandlerMappingIntrospector`, as Spring Security and CORS handling do.
+- A lookup made before `DispatcherServlet` has taken the request. OpenTelemetry's Spring MVC instrumentation makes one from its filter after the chain returns, so when a filter such as Spring Security answered the request first, the request is not counted.
+- A second lookup of an annotated controller's mapping on a request that already matched one, such as the lookup OpenTelemetry's Spring MVC library instrumentation makes to learn the route. A forward or an include still counts.
+- The second dispatch of a request that completes asynchronously, such as one returning a `Callable` or `DeferredResult`.
+- A CORS preflight: an `OPTIONS` request that carries both `Origin` and `Access-Control-Request-Method`. An `OPTIONS` request without them to a route that maps `OPTIONS` counts.
 
-URL-mapped handlers are `SimpleUrlHandlerMapping`, `BeanNameUrlHandlerMapping` and Spring Boot's static-resource and webjars mappings. Their endpoints always have the verb `*`. Spring falls back to the root handler or a `/*` handler when no registered path matches, and the agent counts that fallback against `/` or `/*`. It does not create an endpoint per requested URL. A root handler a mapping sets itself, as Spring Boot's welcome page mapping does, is declared as `/`. A URL-mapped request that Spring answers before its interceptors run is not counted: a `304 Not Modified` from a `Last-Modified` handler on Spring 5.3 and 6, and a CORS request Spring refuses.
+URL-mapped handlers are `SimpleUrlHandlerMapping`, `BeanNameUrlHandlerMapping` and Spring Boot's static-resource and webjars mappings. Their endpoints always have the verb `*`. When Spring falls back to the root handler or a `/*` handler because no registered path matches, the agent counts the request against `/` or `/*`, never against the requested URL. A root handler that a mapping sets itself, as Spring Boot's welcome page mapping does, is declared as `/`. A URL-mapped request that Spring answers before its interceptors run counts nothing: a `304 Not Modified` from a `Last-Modified` handler on Spring 5.3 and 6, and a CORS request Spring refuses.
 
 Functional routes are declared by walking the router function once, when the `RouterFunctionMapping` is initialised. That covers `RouterFunction` beans and a mapping built with a router function. The walk reads these predicates:
 
@@ -109,98 +120,102 @@ Functional routes are declared by walking the router function once, when the `Ro
 - `or` declares each alternative.
 - A nest's path is a prefix for every route inside it.
 
-Header, parameter, path-extension and `version` predicates narrow nothing, and neither does a negated predicate, so routes that differ only by those merge into one endpoint. A route the walk cannot resolve to a path is not declared, and the agent logs this once at INFO: `a spring-webmvc functional route had no path predicate this walk could resolve; it is counted only if a path predicate matched on the way to it`. Such a route is counted at dispatch when a path predicate matched on the way to it. A route with no path predicate anywhere is not tracked at all.
+Header, parameter, path-extension and `version` predicates narrow nothing, and neither does a negated predicate, so routes that differ only by those merge into one endpoint. A route the walk cannot resolve to a path is not declared, and the agent logs this once at INFO:
 
-A functional route the walk did not declare is counted under the request's method when it is `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS` or `TRACE`. Any other method counts under `*`.
+```text
+otherlode: a spring-webmvc functional route had no path predicate this walk could resolve; it is counted only if a path predicate matched on the way to it
+```
 
-A top-level or nested `RouterFunctions.resources(pattern, location)` route is declared with the verbs its handler answers, `GET`, `HEAD` and `OPTIONS`, under each prefix its nests give it. It is counted under the prefix the request came through, when the request finds a resource it serves. A request for a resource that does not exist counts nothing, and neither does a verb the handler refuses. A `resources(predicate, resource)` route (Spring 6.1.4 and later) is declared from its predicate's paths and verbs, under its nest's prefix. One whose predicate has no path the walk can resolve is not declared or counted, and the agent logs this once at INFO. A `resources` route over a lookup function of your own is not read, so it is not declared, and the agent logs this once at INFO: `a spring-webmvc resources route had a lookup function this walk could not read; it is not declared, and is counted only when it delegates to Spring's own path lookup`.
+Such a route is counted at dispatch when a path predicate matched on the way to it, under the request's method when that is `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS` or `TRACE`, and under `*` otherwise. A route with no path predicate anywhere is not tracked.
+
+A top-level or nested `RouterFunctions.resources(pattern, location)` route is declared as `GET`, `HEAD` and `OPTIONS` under each prefix its nests give it. A request counts under the prefix it came through, and only when it finds a resource. A request for a resource that does not exist counts nothing, and neither does a verb the handler refuses. A `resources(predicate, resource)` route (Spring 6.1.4 and later) is declared from its predicate's paths and verbs, under its nest's prefix. One whose predicate has no path the walk can resolve is neither declared nor counted, and the agent logs this once at INFO. A `resources` route over a lookup function of your own is not declared, and the agent logs this once at INFO:
+
+```text
+otherlode: a spring-webmvc resources route had a lookup function this walk could not read; it is not declared, and is counted only when it delegates to Spring's own path lookup
+```
 
 ## Spring WebFlux
 
-Annotated controllers are declared when Spring builds its handler-method table, and when code registers a mapping directly with `registerMapping`. Actuator registers every operation that way. A request is counted against the pattern and verb Spring matched, using its best match when more than one pattern fits. A mapping with no verb is `*`, and a mapping with no path is `/`.
+Annotated controllers are declared and counted as in [Spring MVC](#spring-mvc). A mapping with no verb is `*`, and a mapping with no path is `/`. A request counts once. The only request that counts nothing on every route kind is a CORS preflight, an `OPTIONS` request that carries both `Origin` and `Access-Control-Request-Method`. An `OPTIONS` request without them to a route that maps `OPTIONS` counts.
 
-A request counts once. A CORS preflight is no call, on every route kind: an `OPTIONS` request that carries both `Origin` and `Access-Control-Request-Method`. An `OPTIONS` request without them to a route that maps `OPTIONS` counts. WebFlux has no lookup made on Spring Security's behalf and no second dispatch for an asynchronous result, so neither needs a rule.
+URL-mapped handlers are `SimpleUrlHandlerMapping` and Spring Boot's static-resource and webjars mappings. Their endpoints always have the verb `*`, and a request counts against the registered pattern that matched it. A request that no registered pattern matches counts nothing. A WebSocket handler mapped by URL is declared like any other and counted when a request upgrades to it.
 
-URL-mapped handlers are `SimpleUrlHandlerMapping` and Spring Boot's static-resource and webjars mappings. Their endpoints always have the verb `*`. A request is counted against the registered pattern that matched it. WebFlux has no root handler and no default handler, so a request that no registered pattern matches counts nothing. A WebSocket handler mapped by URL is declared like any other and counted when a request upgrades to it.
+Functional routes are declared by the same walk as Spring MVC's, with the same predicates and the same merging. A mapping built with a router function, such as Spring Boot's welcome page mapping, is declared too. A route the walk cannot resolve is counted as in Spring MVC, and the agent logs `otherlode: a spring-webflux functional route had no path predicate this walk could resolve; it is counted only if a path predicate matched on the way to it` once at INFO.
 
-Functional routes are declared by walking the router function once, when the `RouterFunctionMapping` is initialised, and the walk reads the same predicates as Spring MVC's: `method(...)`, `path(...)`, `and`, `or` and a nest's prefix. Header, `queryParam`, path-extension and `version` predicates narrow nothing, and neither does a negated predicate, so routes that differ only by those merge into one endpoint. A route the walk cannot resolve to a path is not declared, and the agent logs this once at INFO: `a spring-webflux functional route had no path predicate this walk could resolve; it is counted only if a path predicate matched on the way to it`. A mapping built with a router function, as Spring Boot's welcome page mapping is, is declared too. A route the walk did not declare is counted under the request's method when it is `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, `OPTIONS` or `TRACE`. Any other method counts under `*`.
-
-A top-level or nested `RouterFunctions.resources(pattern, location)` route is declared with the verbs its handler answers, `GET`, `HEAD` and `OPTIONS`, under each prefix its nests give it. It is counted under the prefix the request came through, when the lookup finds a resource and so emits it. A request for a resource that does not exist counts nothing, and neither does a verb the handler refuses. A `resources(predicate, resource)` route (Spring 6.1.4 and later) is declared from its predicate's paths and verbs. A `resources` route over a lookup function of your own is not read, so it is not declared, and the agent logs this once at INFO: `a spring-webflux resources route had a lookup function this walk could not read; it is not declared, and is counted only when it delegates to Spring's own path lookup`.
+`resources` routes are declared and counted as in Spring MVC. A `resources` route over a lookup function of your own is not declared, and the agent logs `otherlode: a spring-webflux resources route had a lookup function this walk could not read; it is not declared, and is counted only when it delegates to Spring's own path lookup` once at INFO.
 
 ## Ktor
 
 Ktor routes are declared when the routing tree is built. Each `get`, `post` or `handle` call that attaches a handler registers its route. A route node with no handler is not an endpoint. A request is counted once, when Ktor has chosen the winning route and before that route's handlers run. A request that matches no route counts nothing.
 
-The agent builds the template by walking from the route up to the root. Constant segments, parameters (with any prefix or suffix text), optional parameters, tailcards and wildcards each add a segment. The verb comes from the nearest HTTP method selector, or is `*` when the route has none. Other selectors add nothing to the template, such as headers, content type, query parameters and host. Routes that differ only by those selectors merge into one endpoint.
+The template comes from the route's path up to the root. Constant segments, parameters with any prefix or suffix text, optional parameters, tailcards and wildcards each add a segment. The verb comes from the nearest HTTP method selector, or is `*` when there is none. Other selectors, such as headers, content type, query parameters and host, add nothing, so routes that differ only by those merge into one endpoint.
 
 ## Javalin
 
-Javalin routes are declared when Javalin registers them. That covers every verb method on the app or its config, `ApiBuilder` routes with their prefixes, `CrudHandler` routes, and the routes Javalin and its plugins add for themselves. `HttpAllowedMethodsPlugin`'s `OPTIONS` routes are declared and counted like any other. Only HTTP routes are endpoints. `before`, `after`, `beforeMatched` and `afterMatched` handlers are not, and neither are `ws` routes, whose upgrade never reaches the point where the agent counts.
+Javalin routes are declared when Javalin registers them. That covers every verb method on the app or its config, `ApiBuilder` routes with their prefixes, `CrudHandler` routes, and the routes Javalin and its plugins add for themselves, `HttpAllowedMethodsPlugin`'s `OPTIONS` routes included. Only HTTP routes are endpoints. `before`, `after`, `beforeMatched` and `afterMatched` handlers are not, and neither are `ws` routes.
 
-A request is counted once it reached the handler of the route Javalin matched, after the before-handlers ran. Javalin's own match is compiled into its request lifecycle and cannot be hooked, so the count comes from the call into the matched route. These requests count nothing:
+A request is counted once it reaches the handler of the route Javalin matched, after the before-handlers ran. These requests count nothing:
 
-- A request a before-handler rejects by throwing, redirects, or ends with `skipRemainingHandlers()`. A Javalin hit means the request reached its handler.
+- A request a before-handler rejects by throwing, redirects, or ends with `skipRemainingHandlers()`.
 - A request no route matches, such as the 404 for an unknown path.
-- A `HEAD` request to a path that has a `GET` route and no `HEAD` route. Javalin answers it without running the `GET` handler. An explicit `head()` route is its own endpoint and counts as `HEAD`.
-- A CORS preflight to a path with no `OPTIONS` route. `CorsPlugin` writes its headers in a before-handler and turns the 404 that follows into a 200. A preflight to a path that has an `OPTIONS` route, such as one `HttpAllowedMethodsPlugin` adds, reaches that route and counts as `OPTIONS`, never as the verb it asks about.
+- A `HEAD` request to a path that has a `GET` route and no `HEAD` route. An explicit `head()` route is its own endpoint and counts as `HEAD`.
+- A CORS preflight to a path with no `OPTIONS` route. A preflight to a path that has one, such as one `HttpAllowedMethodsPlugin` adds, counts as `OPTIONS`, never as the verb it asks about.
 
-The template is the path as registered, after `ApiBuilder` composed its prefixes. A `{id}` parameter keeps its name, a segment that is only `<path>` becomes `*`, and a trailing slash is dropped. Javalin's context path is not part of the template.
+The template is the path as registered, after `ApiBuilder` added its prefixes. A `{id}` parameter keeps its name, a segment that is only `<path>` becomes `*`, and a trailing slash is dropped. Javalin's context path is not part of the template.
 
-`javalin-6` covers Javalin 6.1 and later. Javalin 6.0.0 and 6.0.1 keep a method the module reads internal, so on those releases the module switches itself off at the first registration, with the kind `LINKAGE_ERROR`. Each module accepts only its own release, so an application of either major is counted by exactly one of them. Javalin 5 has no module.
+`javalin-6` covers Javalin 6.1 and later. On Javalin 6.0.0 and 6.0.1 it switches itself off at the first registration, with the kind `LINKAGE_ERROR`.
 
 ## Micronaut
 
 Micronaut routes are declared once Micronaut has built its router and the runtime has constructed a dispatch point the module counts at, in either order. That covers annotated controller methods, routes a `RouteBuilder` adds, and the endpoints Micronaut adds for itself, such as its management endpoints. Only routes that serve a URI are endpoints. `@Error` and status routes and filters are not.
 
-The wait is what keeps the report honest. A router that no counted dispatch point is ever built for would declare endpoints nothing can count, and each would read as never called. Micronaut 4 and 5 count at `RouteExecutor`, which every runtime built on Micronaut's request lifecycle constructs: Netty, micronaut-servlet and the serverless runtimes on top of either. A router that has waited one flush interval with no counted dispatch point constructed, or that is still waiting at the agent's final flush, reports the module as disabled with the kind `ROUTES_NOT_COUNTED`, and the module declares nothing from then on. Every start-up builds the router a few milliseconds before its dispatch point, which the wait covers. The report cannot be taken back once sent, so the module stays off for the rest of the process even if a dispatch point is constructed later.
+`micronaut` counts at `RouteExecutor`, which Netty, micronaut-servlet and the serverless runtimes built on either construct. If a router waits one flush interval with no dispatch point constructed, or is still waiting at the agent's final flush, the module reports itself disabled with the kind `ROUTES_NOT_COUNTED` and declares nothing from then on. It stays off for the rest of the process, even if a dispatch point is constructed later.
 
-A request is counted once Micronaut matched it to a route, after the pre-matching filters and before argument binding. A hit means matched: a filter that rejects the request afterwards, as Micronaut Security does, still counts, and so does a handler that throws. These requests count nothing:
+A request is counted once Micronaut matched it to a route, after the pre-matching filters and before argument binding. A filter that rejects the request afterwards, as Micronaut Security does, does not undo the count, and neither does a handler that throws. These requests count nothing:
 
-- A CORS preflight that Micronaut's CORS filter answers (4.6 and later), and an `OPTIONS` request the server answers itself. Before 4.6 a preflight to a path with no `OPTIONS` route matches nothing.
+- A CORS preflight that Micronaut's CORS filter answers, and an `OPTIONS` request the server answers itself.
 - A request no route matches (404), one whose verb no route accepts (405), one the route's `@Consumes` or `@Produces` refuses (415, 406), and one that matches several routes equally.
 - A request that a pre-matching filter answers.
 
-Micronaut adds a `HEAD` route beside every `@Get` unless the annotation sets `headRoute = false`. That route is not declared, and a `HEAD` request that matches it counts against the `GET` endpoint of the same template. An explicit `@Head` method and a `HEAD` route a `RouteBuilder` adds are endpoints of their own, counted as `HEAD`.
+The `HEAD` route Micronaut adds beside a `@Get` is not declared, and a `HEAD` request that matches it counts against the `GET` endpoint of the same template. An explicit `@Head` method and a `HEAD` route a `RouteBuilder` adds are endpoints of their own, counted as `HEAD`.
 
-A `@ServerWebSocket` route is not an endpoint, because the upgrade never reaches the point where the agent counts. A plain `GET` to a WebSocket path counts nothing either.
+A `@ServerWebSocket` route is not an endpoint, and a plain `GET` to a WebSocket path counts nothing.
 
-`micronaut.server.context-path` is part of an annotated route's template, because Micronaut matches it as part of the path: with `/shop` set, a controller at `/orders` reports `/shop/orders`. A route a `RouteBuilder` registers does not carry the context path, so it reports the path it was given.
+`micronaut.server.context-path` is part of an annotated route's template: with `/shop` set, a controller at `/orders` reports `/shop/orders`. A route a `RouteBuilder` registers reports the path it was given, without the context path.
 
-The template is the path as Micronaut matches it, without any query variables. `{id:?}` and `{/id}` read as an optional parameter, and a segment that is only `{+path}` reads as `*`; the [naming rules](#how-an-endpoint-is-named) give the forms. Routes that differ only by what they produce or consume, an API version or a port merge into one endpoint, since the agent reads none of them.
+The template is the path Micronaut matches, without any query variables. `{id:?}` and `{/id}` read as an optional parameter, and a segment that is only `{+path}` reads as `*`. The [naming rules](#how-an-endpoint-is-named) give the forms. Routes that differ only by what they produce or consume, an API version or a port merge into one endpoint.
 
 ### Micronaut 3
 
-`micronaut-3` declares and names routes as `micronaut` does, and counts a request when the server hands the matched route on: Netty's `RoutingInBoundHandler` for a URI route, micronaut-servlet's `ServletHttpHandler` on the servlet containers, and micronaut-aws's `MicronautLambdaContainerHandler` on Lambda, which builds its own route executor and reaches neither. Each counts after the route is matched and before the filters and the handler, so a filter that rejects the request afterwards still counts. Its routes are declared once one of those three has been constructed, and a runtime that constructs none is reported with the kind `ROUTES_NOT_COUNTED` as `micronaut` is. A 404, a 405, a 415, a 406, an `@Error` or status route and a CORS preflight count nothing. A preflight to a path with no `OPTIONS` route reaches no route on Netty or Lambda. micronaut-servlet 3.3 and later dispatches it to a route of another verb, which the agent does not count, and earlier releases answer it with a 405.
+`micronaut-3` declares and names routes as `micronaut` does. It counts a request when the server hands the matched route on, after the route is matched and before the filters and the handler: at Netty's `RoutingInBoundHandler`, at micronaut-servlet's `ServletHttpHandler` on servlet containers, and at micronaut-aws's `MicronautLambdaContainerHandler` on Lambda. Its routes are declared once one of those three has been constructed, and a runtime that constructs none is reported with the kind `ROUTES_NOT_COUNTED`, as for `micronaut`.
 
-Micronaut 3 does not turn a `default` method of an interface into a route, so a `@Get` on one is neither declared nor served. The servlet support is tested on Jetty; Tomcat and Undertow run the same handler class. The Lambda support is tested by driving `MicronautLambdaHandler` for micronaut-aws 3.x.
+A 404, a 405, a 415, a 406, an `@Error` or status route and a CORS preflight count nothing. A `@Get` on a `default` method of an interface is not declared. The servlet support is tested on Jetty, and the Lambda support by driving `MicronautLambdaHandler`.
 
 ## Vert.x Web
 
-Vert.x Web routes are declared when a router receives its first request, not when a route is built. A route enters a router when its first handler is set, but its path, its verbs and its handlers can change afterwards, a sub-router mount looks like any other route until `subRouter` marks it, and Vert.x never says routing is complete. So the agent follows the routers as the application builds them. When a root router, the one handed to the server, receives its first request, the agent declares every route reachable from it through mounts, before the request is matched. When a router reachable from that root changes later, by a route added, removed or changed, or a router mounted, the root declares again at its next request. An instance whose routers never receive a request declares nothing.
+Vert.x Web routes are declared when a root router, the one handed to the server, receives its first request. The agent then declares every route reachable from that root through mounts, before the request is matched. When a router reachable from the root changes later, by a route added, removed or changed, or a router mounted, the root declares again at its next request. An instance whose routers never receive a request declares nothing.
 
 An endpoint is a route with a context handler that is not a sub-router mount. A route with only a failure handler is not an endpoint. A route with no path is declared as `/*` under its mount. A route with no verb has the verb `*`, and a route that lists several verbs is one endpoint for each.
 
-The template is the mount path of each sub-router the route sits in, followed by the route's path. `:name` becomes `{name}`, and Vert.x Web 5.2's `:name::type` becomes `{name}` too, in a route's path and in a mount's. The name pattern is the one Vert.x reads its own paths with, including the `io.vertx.web.route.param.extended-pattern` system property. A path that ends in `*` keeps it.
+The template is the mount path of each sub-router the route sits in, followed by the route's path. `:name` and Vert.x Web 5.2's `:name::type` become `{name}`, in a route's path and in a mount's. Parameter names are read with the pattern Vert.x uses, including the `io.vertx.web.route.param.extended-pattern` system property. A path that ends in `*` keeps it.
 
-A route matched by a regular expression (`routeWithRegex`, `pathRegex` and the verb forms such as `getWithRegex`) is declared and counted under its regex source exactly as written, and marked as a regex. Under a mount, the template is the mount's path followed by the regex source. The name a route is given is never the template, although vertx-web-openapi 4.x names a regex route after its OpenAPI path.
+A route matched by a regular expression, through `routeWithRegex`, `pathRegex` or a verb form such as `getWithRegex`, is declared and counted under its regex source exactly as written, as a regex endpoint. Under a mount, the template is the mount's path followed by the regex source. A route's name is never its template.
 
-A router used in more than one place, as a root or mounted, declares one endpoint for each place, and a request counts against the one it came through. A parameterised mount gives the routes under it its matched values as their mount point, so a request through it is told apart from the router's other places, but two parameterised mounts of one router cannot be told apart from each other. The agent does not guess: such a router switches the module off with the kind `ROUTE_WALK_FAILED`. A route that is being mounted is not declared until the mount is complete. One case is counted against the wrong place: a router mounted both at a literal path and at a parameterised path that matches the same request, such as `/u/1/*` and `/u/:id/*`, counts that request against the literal one.
+A router used in more than one place, as a root or mounted, declares one endpoint for each place, and a request counts against the place it came through. Under a parameterised mount, the routes take the matched values as their mount point. A router with two parameterised mounts switches the module off with the kind `ROUTE_WALK_FAILED`, since the agent cannot tell them apart. A route that is being mounted is not declared until the mount is complete. A router mounted both at a literal path and at a parameterised path that match the same request, such as `/u/1/*` and `/u/:id/*`, counts that request against the literal one.
 
-A request is counted each time a route matches it, before the handler runs, so a request that passes through several routes counts each of them. These count nothing:
+A request is counted each time a route matches it, before the handler runs, so a request that passes through several routes counts each of them. A handler that calls `next()` sends the request on to the next matching route, which counts too, and a `reroute()` counts the routes it passes through again. A route with no path, such as a body handler or a logger, is an endpoint `* /*` that every request reaches. Several routes with one verb and template are one endpoint, whose count is the number of times a request matched any of them. These count nothing:
 
 - A request that matches no route, or one a route rejects for its verb, its content type or its `Accept` header.
 - The failure pass after a handler calls `fail()`.
-- A sub-router mount, which is no endpoint.
+- A sub-router mount.
 
-A handler that calls `next()` sends the request on to the next matching route, and that route counts too. A `reroute()` restarts routing, so the routes it passes through count again. A route with no path, such as a body handler or a logger, is an endpoint with the verb `*` and the template `/*` that every request reaches. It is never a false "called", but it is noise. Several routes with one verb and template are one endpoint, and its count is the number of times a request matched any of them.
+Quarkus registers its REST deployment path, and that path with `/*`, as routes in front of its REST resources, so each REST request also counts against those two.
 
-Quarkus serves its REST resources through a Vert.x Web router, and registers its deployment path and that path with `/*` as routes in front of them. Each REST request therefore also counts against those two. They are routes the framework serves, and the collector can filter them by handler class.
-
-A route that is removed or cleared is not retracted. It stays declared and reads as never called, which is true.
+A route that is removed or cleared stays declared, with the calls it had.
 
 ## JAX-RS
 
-JAX-RS has no registration call, so the agent reads the annotations when a resource class loads and declares the routes then. It reports them once it has seen the class defined, or once one of them is called, so a resource class that fails to load reports no routes. A request is counted when the resource method is entered, which a JAX-RS server does after it matches the request. A call made directly from your own code also counts.
+The agent reads the JAX-RS annotations when a resource class loads, and declares the routes once the class is defined or once one of them is called. A resource class that fails to load reports no routes. A request is counted when the resource method is entered. A call made directly from your own code counts too.
 
 A class is read when all of these hold:
 
@@ -208,29 +223,36 @@ A class is read when all of these hold:
 - It, or a supertype, carries `@Path` or declares a method carrying `@Path` or a verb annotation (`@GET`, `@POST`, `@PUT`, `@DELETE`, `@HEAD`, `@OPTIONS`, `@PATCH`).
 - Its class loader can see `jakarta.ws.rs.Path` or `javax.ws.rs.Path`.
 
-A method becomes an endpoint when it has a verb or `@Path`, declared on itself or inherited as described below. A method with `@Path` and no verb is a sub-resource locator and is declared with the verb `*`. A custom annotation meta-annotated with `@HttpMethod` gives its value, upper-cased, as the verb. A class whose only routing annotation is such a custom verb, with no `@Path` anywhere, is not read.
+A method becomes an endpoint when it has a verb or `@Path`, on itself or inherited as described below. A method with `@Path` and no verb is a sub-resource locator, declared with the verb `*`. A custom annotation meta-annotated with `@HttpMethod` gives its value, upper-cased, as the verb. A class whose only routing annotation is such a custom verb, with no `@Path` anywhere, is not read.
 
-The template is the class-level `@Path` joined to the method's `@Path`. A class with no class-level `@Path` in effect is not a root resource, so the agent declares nothing for it. That includes a sub-resource class a locator returns. Calls to it count on the locator's endpoint.
+The template is the class-level `@Path` joined to the method's `@Path`. A class with no class-level `@Path` in effect declares nothing. That includes a sub-resource class a locator returns, whose calls count on the locator's endpoint.
 
 ### Inheritance
 
-The agent follows the JAX-RS annotation-inheritance rules for methods and adds one behaviour for classes, which Jersey and Quarkus REST share.
-
 - A method with no JAX-RS annotation of its own inherits the annotations of the method it overrides or implements. The search tries the superclass chain first, then the interfaces in declaration order. Any JAX-RS annotation on the method itself, even `@Produces`, turns inheritance off for that method.
 - Only methods the concrete class declares are read. A method body inherited from a superclass without an override is not declared on the subclass.
-- A class-level `@Path` on a superclass or interface is used only when Jersey or Quarkus REST (RESTEasy Reactive) is on the resource class's class loader. The specification does not inherit it and classic RESTEasy does not either. Without either, the class declares nothing, and the agent logs at INFO, once for each such class and for at most 16 classes: `class-level @Path on a supertype of <class> is ignored, so it declares no endpoints`. The agent detects Jersey by the presence of `org/glassfish/jersey/server/model/Resource.class` on that loader, and Quarkus REST by `org/jboss/resteasy/reactive/server/core/ResteasyReactiveRequestContext.class`, a class of its server artifact and not of its client. With Jersey present, the agent follows Jersey: a superclass's `@Path` wins over an interface's. With Quarkus REST alone, it follows Quarkus: a direct abstract superclass's `@Path`, else an interface's, and never a concrete superclass's.
-- Quarkus REST serves a class that implements an interface carrying the class-level `@Path`. It serves a concrete subclass of an abstract `@Path` class only when the abstract class has exactly one subclass of any kind, abstract ones and subclasses of subclasses included. The agent sees one class at a time and cannot count subclasses, so it declares each direct concrete subclass anyway. Quarkus serves none of them when there are two or more, and Quarkus 3.0 to 3.7 serve no subclass of an abstract class at all, so on those the endpoints read as never called. An interface that inherits its `@Path` from another interface is not followed.
 - When two interfaces give a method different verbs or paths, the first in declaration order wins and the agent logs a WARNING once.
 
-Only Jersey is tested for serving. Quarkus REST's server classes are tested only as the marker that lets the agent inherit a class-level `@Path`. A resource served by RESTEasy, Apache CXF or another runtime is declared by the same annotation rules, which the specification defines. No test runs it.
+A class-level `@Path` on a superclass or interface is used only when Jersey or Quarkus REST (RESTEasy Reactive) is on the resource class's class loader. The agent detects Jersey by `org/glassfish/jersey/server/model/Resource.class` and Quarkus REST by `org/jboss/resteasy/reactive/server/core/ResteasyReactiveRequestContext.class`.
+
+- With Jersey present, a superclass's `@Path` wins over an interface's.
+- With Quarkus REST alone, the agent uses a direct abstract superclass's `@Path`, else an interface's, and never a concrete superclass's. It declares each direct concrete subclass of an abstract `@Path` class. Quarkus serves such a subclass only when the abstract class has exactly one subclass, and Quarkus 3.0 to 3.7 serve none, so in those cases the endpoints read as never called.
+- An interface that inherits its `@Path` from another interface is not followed.
+- With neither present, the class declares nothing, and the agent logs this at INFO, once per class and for at most 16 classes:
+
+```text
+otherlode: jaxrs: class-level @Path on a supertype of <class> is ignored, so it declares no endpoints: classic RESTEasy and the JAX-RS specification do not inherit it
+```
+
+Serving is tested only on Jersey. A resource served by RESTEasy, Apache CXF or another runtime is declared by the same annotation rules.
 
 A generated proxy of a resource class, such as a Spring CGLIB proxy or the subclass and client proxy Quarkus ArC generates, is skipped. The proxy calls the real method, so the real class counts.
 
 ## Servlet
 
-A plain servlet is counted at its own entry. The agent hooks the public `service(ServletRequest, ServletResponse)` of every servlet class, `HttpServlet` included, and counts a request there against the mapping the container matched for it, which it reads from `HttpServletRequest.getHttpServletMapping()`. One module covers `javax.servlet` and `jakarta.servlet`. It needs a container that implements Servlet 4.0 or later, since `getHttpServletMapping` is new in 4.0.
+A plain servlet is counted at its own entry. The agent hooks the public `service(ServletRequest, ServletResponse)` of every servlet class, `HttpServlet` included, and counts a request there against the mapping the container matched, read from `HttpServletRequest.getHttpServletMapping()`. The module needs a container that implements Servlet 4.0 or later.
 
-A servlet context is declared at the first request it receives, whichever servlet that request reaches, a servlet that is left out included. A forward, an include, an error page dispatch or an asynchronous dispatch that reaches a servlet counts as a request here. The agent reads the context's servlet registrations then, and declares every mapping of every registration with the verbs described below, so a mapping that no request ever reaches reads as never called. A context that never receives a request declares nothing. The agent reads the registrations of every context it holds again before each manifest, so a mapping added after the first request is declared within one flush interval. A request that matches it before then counts nothing: a late mapping is counted from the flush after it was added. The servlet API says a mapping cannot be added once a context is initialised, and which containers accept one anyway differs. Through `ServletRegistration.addMapping`, Tomcat 9.0, 10.1 and 11.0 and Jetty 10 refuse it with an `IllegalStateException`, and Jetty 12 (`ee10`) and Undertow 2.3 accept it. A mapping a container adds by its own means, as Tomcat's `Context.addServletMappingDecoded` and Jetty's `ServletHandler.addServletWithMapping` do, is accepted by Tomcat and Jetty and declared the same way. When an application is undeployed or its server shuts down, the endpoints its context declared stay, and the module stays on. An application deployed again is declared at its first request.
+A servlet context is declared at its first dispatch of any type, whichever servlet it reaches, a [left-out](#servlets-that-are-left-out) servlet included. The agent then declares every mapping of every servlet registration in the context, so a mapping no request reaches reads as never called. A context that never receives a request declares nothing. Before each manifest the agent reads the registrations of every context again, so a mapping added after the first request is declared at the next flush, and requests to it before then count nothing. When an application is undeployed or its server shuts down, its endpoints stay declared and the module stays on. An application deployed again is declared at its first request.
 
 The template follows the mapping:
 
@@ -243,72 +265,76 @@ The template follows the mapping:
 | Default, `/` | `/` | Servlet pattern |
 | Exact that [the naming rules](#how-an-endpoint-is-named) would change or read as a wildcard or parameter, `/orders/`, `/api*`, `/a{b}`, `/a/**` | as written | Servlet pattern |
 
-An exact or path mapping is a path template only when the naming rules leave it as it is and no star or brace stands before a final `/*`. A container matches an exact mapping literally, so `/orders/` is not `/orders`, and `/api*` and `/a{b}` name one path each, with a star and braces in it. Reading them as path templates would merge `/orders/` with `/orders`, or show a literal path as a wildcard or a parameter. They are kept exactly as written, under the servlet pattern kind, as extension and default mappings are.
+An exact or path mapping is a path template only when the naming rules leave it unchanged and no star or brace stands before a final `/*`. The context path is not part of the template, so two web applications in one container that map the same pattern are one endpoint.
 
-The context path is not part of it. Two web applications in one container that map the same pattern are one endpoint.
-
-The verbs are those of the `do*` methods that the servlet's class and its superclasses below `HttpServlet` declare. The agent reads them from the class files, and loads and reflects on nothing. `HttpServlet.doOptions` reads `doGet`, `doPost`, `doPut` and `doDelete` the same way to build `Allow`. It always allows `OPTIONS` and `TRACE` and never reads `doHead`, which the agent treats as below.
+The verbs come from the `do*` methods that the servlet's class and its superclasses below `HttpServlet` declare, read from the class files:
 
 - `doGet` declares `GET`. A `HEAD` request counts against it, unless the class declares `doHead`, which makes `HEAD` a verb of its own.
 - `doPost`, `doPut` and `doDelete` declare their verbs.
-- `doPatch` declares `PATCH` only where the servlet API's own `HttpServlet` declares it, which is Servlet 6.1: Tomcat 11 counts it, and Tomcat 9.0 and 10.1 do not. Before 6.1, `HttpServlet.service` answers `PATCH` itself with a 501.
+- `doPatch` declares `PATCH` only where the servlet API's own `HttpServlet` declares it, which is Servlet 6.1. Tomcat 11 counts it, and Tomcat 9.0 and 10.1 do not.
 - `doOptions` and `doTrace` declare a verb only when the class declares them.
 - A class that overrides `service`, with either signature, below `HttpServlet`, and a servlet that is not an `HttpServlet`, have the verb `*`.
 
-A request whose verb the servlet does not declare counts nothing, a 405 for example. A `do*` method that only calls `super` reads as served. The handler is the `do*` method that serves the verb, or `service` for a `*` servlet, as the class file that declares it has it.
+A request whose verb the servlet does not declare counts nothing, a 405 for example. A `do*` method that only calls `super` counts as declared. The handler is the `do*` method that serves the verb, or `service` for a `*` servlet.
 
-These count nothing:
+A request a filter answers before it reaches a servlet counts nothing, and neither does a request to a left-out servlet.
 
-- A request a filter answers before it reaches the servlet.
-- A request to a servlet that is left out, as listed next.
+### Forwards, includes and other dispatches
 
-A forward, an include, an error page dispatch and an asynchronous dispatch count at the servlet they reach, so a servlet that only one of them reaches reads as called. That covers a servlet behind a filter that starts the asynchronous cycle and dispatches later. An error page servlet counts with the verb the container gives the error dispatch: the verb of the request that failed on most containers, and `GET` on Tomcat 11. Each is tested on each container listed above, Undertow included. A request that a servlet forwards counts at that servlet and at its target, which are two endpoints. A forward, an include or an asynchronous dispatch to the endpoint the request already reached counts that endpoint again, as `startAsync` and then `dispatch()` with no path does. A dispatch made with `getNamedDispatcher` counts nothing, since no container gives it a mapping.
+A forward, an include, an error page dispatch and an asynchronous dispatch count at the servlet they reach, so a servlet that only one of them reaches reads as called. A request that a servlet forwards counts at that servlet and at its target, two endpoints. A dispatch to the endpoint the request already reached counts it again, as `startAsync` and then `dispatch()` with no path does. An error page servlet counts with the verb the container gives the error dispatch: the verb of the failed request on most containers, and `GET` on Tomcat 11. A dispatch made with `getNamedDispatcher` counts nothing.
 
-On a forward, an error page dispatch and an asynchronous dispatch the agent reads the target's mapping from `getHttpServletMapping()`. On an include it reads the request attribute `javax.servlet.include.mapping`, or `jakarta.servlet.include.mapping`, which Servlet 4.0 and Servlet 5.0 define for their namespaces. Undertow 2.3 sets that attribute to the including servlet's mapping. When the attribute names another servlet than the one counted, the agent reads the counted servlet's own registration and picks the mapping by the include's servlet path and path info. With no path info it is the mapping equal to the servlet path, then the servlet path followed by `/*`. With path info it is the mapping equal to the servlet path followed by `/*`. When none is equal, the include counts nothing. On Undertow this means an included servlet mapped by extension, as the default servlet or at the context root counts nothing. A servlet called directly during an include, through another servlet's `service`, counts nothing either, unless its own mapping is the one the include's path picks.
+On an include the agent reads the target's mapping from the request attribute `javax.servlet.include.mapping` or `jakarta.servlet.include.mapping`. When that attribute names another servlet than the one counted, as on Undertow 2.3, the agent picks a mapping from the counted servlet's own registration by the include's servlet path and path info. With no path info it is the mapping equal to the servlet path, then the servlet path followed by `/*`. With path info it is the servlet path followed by `/*`. When none matches, the include counts nothing. So on Undertow an included servlet mapped by extension, as the default servlet or at the context root counts nothing.
 
-A context is declared at its first dispatch of any type, so a forward, an include or an error page that a filter makes on the first request still counts.
+A servlet whose `service` calls `super.service`, or whose class overrides the protected `service`, counts a request once. A servlet that calls another initialised servlet's public `service` directly counts once too, since the agent counts only in the servlet whose configured name the mapping matched. A servlet with no `ServletConfig`, or whose config names no servlet, always counts, so one called directly before the container initialised it counts the request a second time. A servlet called directly during an include counts nothing, unless its own mapping is the one the include's path picks.
 
-A servlet whose `service` calls `super.service`, or whose class overrides the protected `service`, still counts a request once. So does a servlet that calls another servlet's public `service` directly, as long as the container initialised the other one, since the call enters the other servlet's hook with the first servlet's mapping and the agent counts only in the servlet whose configured name is the matched one. A servlet that has no `ServletConfig`, or whose config names no servlet, always counts. A servlet called directly before the container initialised it therefore counts the request a second time.
+### Servlets that are left out
 
-Some servlets are left out, whatever the state of the module that counts behind them:
+These servlets are never counted, whatever the state of any other module:
 
-- Servlets another module counts behind: Spring MVC's `DispatcherServlet` and every subclass of it, Jersey's `ServletContainer`, RESTEasy's `HttpServletDispatcher` and `HttpServlet30Dispatcher`, CXF's `CXFServlet` and `CXFNonSpringJaxrsServlet`, Micronaut's `DefaultMicronautServlet`, Ktor's `ServletApplicationEngine` and Javalin's `JavalinServlet`. The agent matches them by class hierarchy, read from the class files. Ktor's and Javalin's servlets are left out only in a class loader that has the release a module covers: `io/ktor/server/routing/Route.class`, which Ktor 2 and 3 ship and Ktor 1 does not, and `io/javalin/router/ParsedEndpoint.class`, which Javalin 6 and 7 ship and Javalin 5 does not. Javalin 5 and Ktor 1 have no module, so their servlet is counted as a plain servlet, a `*` endpoint on its mapping that takes every hit. Without this a Spring application would report one `* /` endpoint that takes every hit.
-- The container's own servlets, matched by exact class name, so an adopter's subclass is counted: Tomcat's `DefaultServlet` and `JspServlet`, Jetty's `DefaultServlet`, `NoJspServlet`, `JettyJspServlet` and `ServletHandler$Default404Servlet` in each of its packages, Undertow's `DefaultServlet` and Quarkus's `QuarkusErrorServlet`. A container not in this list has its default servlet counted as a servlet at `/`, which is noise and never absence.
+- Servlets another module counts behind, matched by class hierarchy read from the class files: Spring MVC's `DispatcherServlet` and its subclasses, Jersey's `ServletContainer`, RESTEasy's `HttpServletDispatcher` and `HttpServlet30Dispatcher`, CXF's `CXFServlet` and `CXFNonSpringJaxrsServlet`, Micronaut's `DefaultMicronautServlet`, Ktor's `ServletApplicationEngine` and Javalin's `JavalinServlet`. Ktor's and Javalin's are left out only in a class loader that has `io/ktor/server/routing/Route.class` (Ktor 2 and 3) or `io/javalin/router/ParsedEndpoint.class` (Javalin 6 and 7). The servlet of Ktor 1 or Javalin 5 is counted as a plain servlet, a `*` endpoint on its mapping.
+- The container's own servlets, matched by exact class name, so a subclass of yours is counted: Tomcat's `DefaultServlet` and `JspServlet`, Jetty's `DefaultServlet`, `NoJspServlet`, `JettyJspServlet` and `ServletHandler$Default404Servlet` in each of its packages, Undertow's `DefaultServlet` and Quarkus's `QuarkusErrorServlet`. Another container's default servlet is counted as a servlet at `/`.
 
-A framework servlet no module counts behind, such as Vaadin's, JSF's `FacesServlet` or the H2 console, is a plain servlet and is counted as one. The H2 console Spring Boot registers with `spring.h2.console.enabled` is declared as `GET` and `POST` on `/h2-console/*`, and a request to it counts once, in the servlet module only.
+A framework servlet no module counts behind, such as Vaadin's, JSF's `FacesServlet` or the H2 console, is counted as a plain servlet. The H2 console Spring Boot registers with `spring.h2.console.enabled` is declared as `GET` and `POST` on `/h2-console/*`.
 
-The module switches itself off in these cases (see [below](#modules-that-switch-themselves-off)):
+### When the servlet module switches off
 
-- The container implements a servlet API older than 4.0. With a 3.1 API jar `getHttpServletMapping` does not link. With a 4.0 jar over a container that does not implement it, as Spring Boot 2.7 on Jetty 9.4 has, the call answers with the API's default, which has no match type. The first request switches the module off before it declares anything, and the kind is `LINKAGE_ERROR` in both.
-- A servlet registration holds a mapping that is none of the five forms above: one that does not start with `/` or `*.`, and is not the empty string. Jetty's own `ServletHandler` refuses a regular expression or URI template spec as a servlet mapping, so only a handler that overrides its `asPathSpec` puts one there. The agent declares nothing from that read, and the kind is `ROUTE_WALK_FAILED`.
-- A servlet class's class file cannot be read, so its verbs cannot be known. The kind is `ROUTE_WALK_FAILED`.
-- A request reaches a servlet with a mapping that has no match type, though the container implements Servlet 4.0, because a filter hands the servlet a request object that hides the real mapping. The agent declares nothing, and the kind is `ADVICE_FAILED`.
+The module switches itself off (see [below](#modules-that-switch-themselves-off)) when:
+
+- The container implements a servlet API older than 4.0, with either a 3.1 API jar or a 4.0 API jar over it, as Spring Boot 2.7 on Jetty 9.4 has. The first request switches the module off before it declares anything, with the kind `LINKAGE_ERROR`.
+- A servlet registration holds a mapping that is none of the forms above: one that does not start with `/` or `*.` and is not the empty string. The agent declares nothing from that read, and the kind is `ROUTE_WALK_FAILED`.
+- A servlet class's class file cannot be read. The kind is `ROUTE_WALK_FAILED`.
+- A request reaches a servlet with a mapping that has no match type on a Servlet 4.0 container, because a filter wraps the request and hides the real mapping. The agent declares nothing, and the kind is `ADVICE_FAILED`.
 
 ## JDK HttpServer
 
-Every `createContext` call registers an endpoint, with or without a handler. A later `setHandler` attaches the handler to the context. A context is a prefix match with no verb constraint, so the verb is `*` and the template is the context path exactly as registered. A request is counted when the server finds its context, before the handler runs. A request no context matches (the server's own 404) counts nothing.
+Every `createContext` call registers an endpoint, with or without a handler, and a later `setHandler` attaches the handler. A context is a prefix match with no verb constraint, so the verb is `*` and the template is the context path under the [naming rules](#how-an-endpoint-is-named): `createContext("/static/")` reports `/static`, and the path as registered travels beside it for display. Contexts `/api` and `/api/` are one endpoint. A request is counted when the server finds its context, before the handler runs. A request no context matches counts nothing.
 
-The module hooks the JDK's internal `sun.net.httpserver` classes, which are not a supported API. On a JDK that changes a method the module hooks, the module switches itself off with the kind `HOOK_UNMATCHED` (see [below](#modules-that-switch-themselves-off)). Only a renamed class goes unseen, since the module then matches nothing.
+The module hooks the JDK's internal `sun.net.httpserver` classes. On a JDK that changes a method the module hooks, the module switches itself off with the kind `HOOK_UNMATCHED`. A JDK that renames a hooked class goes unseen, since the module then matches nothing.
 
 ## Route bridge for OpenTelemetry
 
-Set `otelBridgeEnabled=true` to also count the route OpenTelemetry's HTTP server instrumentation resolved. Use it for a framework the modules above do not cover. It is off by default because it hooks OpenTelemetry's internal classes, so its correctness depends on the OpenTelemetry version and not on your framework.
+Set `otelBridgeEnabled=true` to also count the route OpenTelemetry's HTTP server instrumentation resolved, for a framework the modules above do not cover. The bridge hooks OpenTelemetry's internal classes, so whether it works depends on the OpenTelemetry version, not on your framework. The [table](#supported-frameworks) lists the tested versions. It works with the OpenTelemetry Java agent and with the `opentelemetry-instrumentation-api` library in your application.
 
-The bridge works with the OpenTelemetry Java agent and with the `opentelemetry-instrumentation-api` library in your application. It counts at span end, because OpenTelemetry settles a request's route only then. So it counts after the handler ran, and a request that threw still counts. The route is OpenTelemetry's `http.route`, and the verb is the request method. A span with no route counts nothing.
+The bridge counts at span end, after the handler ran, so a request that threw still counts. The template is OpenTelemetry's `http.route`, and the verb is the request method. A span with no route counts nothing. Every bridge endpoint is discovered at dispatch, so the bridge never shows an endpoint as never called.
 
-A route OpenTelemetry reports in Vert.x's spelling, `/users/:id`, is read as `/users/{id}` first, where a segment is only `:name` or `:name::type`. Any other colon stays. A request the `vertx-web` module counted under the same template is therefore not counted again. That holds for a route at a static path. OpenTelemetry drops a trailing `/`, so `/files/*` reaches the bridge as `/files`; it reports a parameterised mount with its matched values, so each value becomes a bridge endpoint of its own; and a colon inside a segment, `/:from-:to`, stays. Each of those is counted by both. A matched value in a bridge endpoint's route is sent to Otherlode as part of that route, so a value from a request path leaves the process. See [what the agent sends](data-sent#endpoint-routes).
+The bridge skips a route when a framework module already holds the same identity, holds the same template with the verb `*`, or holds the `GET` endpoint of a template a `HEAD` request names. If that module is switched off, those requests go uncounted. To match the modules' templates, the bridge reads OpenTelemetry's route as follows:
 
-The bridge never discovers an endpoint another module owns. It skips a route when a framework module already holds the same identity, when a framework holds the same template with the verb `*`, and when a `HEAD` request names a template whose `GET` endpoint a framework holds. Otherwise a request that a framework module counted would count twice. If the owning module is switched off, those requests go uncounted.
+- A Vert.x spelling, where a segment is only `:name` or `:name::type`, reads as `{name}`. Any other colon stays.
+- OpenTelemetry's `/*.do` reads as the `servlet` module's extension pattern `*.do`, and its `/*` and `/` read as the default mapping `/`. A real path mapping `/*` is a path template, which the `servlet` module declares as `/*`, and matches as one.
+- The application root, and for JAX-RS the servlet path, that OpenTelemetry put in front of the route is removed. A Spring application under the context path `/shop` reads as `/orders`, and a Jersey resource at `/users` behind a servlet at `/api/*` reads as `/users`. This covers OpenTelemetry's servlet instrumentation, its JAX-RS instrumentation for Jersey, CXF and RESTEasy, and its Spring MVC library instrumentation.
 
-OpenTelemetry spells a servlet's extension mapping `*.do` as `/*.do`, and the default mapping `/` as `/*`, or as `/` for a request on the context root. The bridge reads `/*.do` as the `servlet` module's pattern `*.do`, and `/*` and `/` as its pattern `/`, so a request the `servlet` module counted at one of those mappings is not counted again. A real path mapping `/*` is a path template, which the `servlet` module declares as `/*`, and the ordinary identity match covers it.
+These routes are counted by both the bridge and a framework module, under two endpoints:
 
-OpenTelemetry puts the application root in front of a route, as its HTTP conventions ask, and for JAX-RS the servlet path too. A Spring application under the context path `/shop` reaches the bridge as `/shop/orders`, and a Jersey resource at `/users` behind a servlet mapped at `/api/*` as `/shop/api/users`. The bridge removes the prefix OpenTelemetry added, so the routes read as the framework modules declare them, `/orders` and `/users`, and a servlet mapping as `/api/*`. It does this for the servlet instrumentation, for JAX-RS (Jersey, CXF and RESTEasy) and for the Spring MVC library instrumentation, by watching the prefixers OpenTelemetry itself calls. A request the framework module or the `servlet` module counted is not counted again. A deployment that uses none of those prefixers is unaffected, and a prefixer the bridge does not know leaves the route as OpenTelemetry reported it, so the route can read as a second endpoint.
+- A route whose prefix the bridge does not remove, including the base path the Spring WebFlux library instrumentation adds.
+- A Vert.x Web route at `/files/*`, which OpenTelemetry reports as `/files`.
+- A Vert.x Web route under a parameterised mount, which OpenTelemetry reports with the matched values, so each value becomes a bridge endpoint of its own.
+- A Vert.x Web route with a colon inside a segment, such as `/:from-:to`.
 
-The prefix of the Spring WebFlux library instrumentation is not removed. It adds the base path inside the code that picks the route, where the route without it is never available, so a WebFlux application with a base path can report the route with the base path beside the `spring-webflux` module's route without it. The OpenTelemetry Java agent's WebFlux instrumentation adds no base path.
+A matched value in a bridge route is sent to Otherlode as part of that route. See [what the agent sends](data-sent#endpoint-routes).
 
 ## The handler
 
-An endpoint names the method that serves it where the framework lets the agent find one. Otherlode, and the testkit, join the endpoint to that method's probe, so a method that never ran can list the endpoints it would serve. The join is a label on the endpoint. Counting does not depend on it.
+An endpoint names the method that serves it where the agent can find one. Otherlode and the testkit join the endpoint to that method's probe, so a method that never ran lists the endpoints it would serve. Counting does not depend on the join.
 
 | Module | What the endpoint names |
 |---|---|
@@ -318,7 +344,7 @@ An endpoint names the method that serves it where the framework lets the agent f
 | Javalin, named handler class | `handle` and the class that declares it. |
 | Javalin, lambda or method reference | The method the lambda calls, or the method the reference names. |
 | Javalin, `CrudHandler` | The handler's method for the route: `getOne`, `getAll`, `create`, `update` or `delete`, with the class that declares it. |
-| Javalin, `SseHandler`, `VueComponent` and any `VueHandler` that does not override `handle` | Nothing. Javalin's own wrapper runs the handler. |
+| Javalin, `SseHandler`, `VueComponent` and any `VueHandler` that does not override `handle` | Nothing. |
 | Micronaut 3, 4 and 5 | The class that declares the method Micronaut runs, the method and its descriptor, as the class file has them. A method a controller inherits from a base class or an interface names that base class or interface, a controller with AOP advice names the controller and not Micronaut's generated subclass, and a Kotlin `suspend` function has the continuation as its last parameter and `Object` as its return type. |
 | Vert.x Web | The route's last context handler that is not one of Vert.x Web's priority handlers (platform, security policy, body, multi-tenant, authentication, input trust and authorization): `handle` and the class that declares it, or the method a lambda or method reference calls. A `blockingHandler` names the handler it wraps. Nothing for a `respond(...)` route, for a handler that is a class of Vert.x Web's own, such as `StaticHandler`, or for one a library wraps before Vert.x sees it: the RxJava and Mutiny APIs, and the OpenTelemetry Java agent when it is attached after this agent. |
 | Ktor | The handler body's class and `invokeSuspend`. A handler class with no `invokeSuspend` names the class alone. |
@@ -326,98 +352,107 @@ An endpoint names the method that serves it where the framework lets the agent f
 | JDK `HttpServer` | `handle` and the class that declares it. |
 | OpenTelemetry bridge | Nothing. |
 
-The agent skips the join rather than guess. A Spring mapping registered under a bean name whose type cannot be resolved is still an endpoint, with no handler. The same holds for any endpoint the agent finds at dispatch with no registration to read.
+A Spring mapping registered under a bean name whose type cannot be resolved is an endpoint with no handler, and so is any endpoint the agent finds at dispatch with no registration to read. A functional route written in Spring's Kotlin DSL, `router { ... }` or `coRouter { ... }`, names no handler, and is still declared and counted.
 
 Once an endpoint names a method, a later registration for the same identity does not replace it. If two handlers register the same verb and template, the first one with a method wins. An endpoint that names only a class gains a method when one is learned.
 
-A functional route written in Spring's Kotlin DSL, `router { ... }` or `coRouter { ... }`, names no handler. Kotlin compiles its handler into one of Spring's own classes, and a name inside Spring joins to nothing your code wrote. The route is still declared and counted.
-
 ### Lambdas and method references
 
-A Java or Kotlin lambda or method reference passed as a handler becomes a hidden class with no stable name, so its class name joins to nothing. For the handler types the modules take, the agent instead names the method the lambda calls. These are `HttpHandler` for the JDK `HttpServer`, `HandlerFunction` for Spring functional routes, `Handler` for Javalin and `Handler` for Vert.x Web. It does this by watching the JDK's lambda factory as it creates each such class, then reading the answer back when the framework hands the lambda over.
+A Java or Kotlin lambda or method reference passed as a handler is a hidden class with no stable name. For the handler types the modules take, the agent names the method the lambda calls instead: `HttpHandler` for the JDK `HttpServer`, `HandlerFunction` for Spring functional routes, `Handler` for Javalin and `Handler` for Vert.x Web. The agent learns that method from the JDK's lambda factory as it creates each lambda class. The reported descriptor is the method's real one, with the values the lambda captured first.
 
-The reported method is the one the lambda calls, with its real descriptor. Values the lambda captured come first in that descriptor.
+A lambda gets no join in these cases:
 
-A hidden class gets no join in these cases:
+- Its class was created before the agent started watching the lambda factory.
+- The agent could not hook the lambda factory on this JVM. It logs one WARNING that starts `otherlode: handler lambdas and method references will not be named on this JVM`, and nothing else is affected.
+- The lambda is for a subinterface of the handler type.
+- The lambda is a reference to an abstract method, because which method runs depends on the receiver.
+- The method's own class is hidden.
 
-- The lambda class was created before the agent started watching.
-- The agent could not install the watcher on this JVM. It checks the lambda factory's internals against the running JDK and, if they do not match, logs one WARNING that starts `handler lambdas and method references will not be named on this JVM`. Nothing else breaks.
-- The lambda is for a subinterface of the handler type, which the agent does not watch.
-- The lambda is a reference to an abstract or interface method, because which method runs depends on the receiver.
-- The method's own class is itself hidden.
+Ktor handlers compile to named classes, so they need none of this.
 
-Ktor handlers are suspend lambdas, which compile to named classes, so Ktor needs none of this.
-
-When a compiler generates a pass-through between the framework and your function, the agent follows it to the one function it forwards to. This covers a Kotlin function reference compiled with class-based SAM conversion and a Scala `$adapted` forwarder. The join then names your function, which has a method probe, and not the generated class. It applies only to the handler types named above.
+When a compiler generates a pass-through between the framework and your function, the agent follows it to the one function it forwards to. This covers a Kotlin function reference compiled with class-based SAM conversion and a Scala `$adapted` forwarder, for the handler types above. The join then names your function, which has a method probe.
 
 ## Modules that switch themselves off
 
-Each module is built against one version of its framework and does not check the version when it installs. A module switches itself off for the rest of the process when:
+A module does not check its framework's version when it installs. It switches itself off for the rest of the process when:
 
 - its advice throws for any reason, including a linkage error against a framework version it does not match;
-- one of its hooks matches no method on the framework class it hooks, because a framework release renamed or changed the method;
+- one of its hooks matches no method on the framework class it hooks;
 - a framework class it hooks fails to weave, including when another agent retransforms a class the module already wove, or a debugger redefines it, and the module cannot weave it again;
-- the endpoint modules together reported 4,096 registrations, calls and route reads before the agent finished installing, and this module reported one more, which the agent could not keep. The reason is `endpoint replay buffer overflow: records were dropped before a resolver was installed`.
+- the endpoint modules together reported 4,096 registrations, calls and route reads before the agent finished installing, and this module reported one more. The reason is `endpoint replay buffer overflow: records were dropped before a resolver was installed`.
 
-A lost registration hook would leave endpoints undeclared. A lost dispatch hook is worse: the module still declares every route but never counts a call, so every endpoint of that framework would read as never called. Switching the module off turns that silence into a report. It logs one WARNING:
+It logs one WARNING:
 
 ```text
-otherlode: endpoint module ktor-3 disabled itself: <reason>
+otherlode: endpoint module <name> disabled itself: <reason>
 ```
 
-When the cause is a linkage error, the reason is the error with its message, which names the framework class or member that changed, such as `java.lang.NoSuchMethodError: ...getHandler...`. For any other exception the reason in the disabled line and in the report is its class name alone, since a message can hold request text. A servlet mapping outside the forms the servlet specification defines is reported with the mapping.
+When the replay buffer fills, the agent also logs this WARNING once:
 
-The agent sends the module's name, the reason and a kind naming why to Otherlode with the next manifest. The kind separates a linkage error, any other advice failure, a transform failure (the module's own transform threw, a framework class it hooks failed to weave, or that class's loader cannot see `dev.otherlode.bootstrap`), a route walk failure, a hook that matched no method (`HOOK_UNMATCHED`), a module your configuration kept off (`CONFIGURED_OFF`), and a Micronaut module whose runtime constructs no dispatch point it counts at (`ROUTES_NOT_COUNTED`). A module that lost records before the agent finished installing has no kind (`DISABLED_ENDPOINT_MODULE_KIND_UNSPECIFIED`); its reason says so. Otherlode can then tell "this service has no endpoints" from "this service's endpoints were not instrumented". The testkit exposes it as `disabledEndpointModules()`, and its endpoint queries mention a disabled module in the error they throw for an unknown endpoint.
+```text
+otherlode: endpoint replay buffer is full (4096); dropping new endpoint records until a resolver is installed
+```
 
-A module that [`disabledEndpointModules`](configuration#disabledendpointmodules) or `endpointsEnabled=false` keeps from installing is reported the same way, with the kind `CONFIGURED_OFF`, whether or not its framework is present. It is a choice, not a fault, and it logs no WARNING.
+For a linkage error the reason is the error with its message, which names the framework class or member that changed, such as `java.lang.NoSuchMethodError: ...getHandler...`. For any other exception it is the exception's class name alone. A servlet mapping outside the forms the servlet specification defines is reported with the mapping.
 
-A Micronaut module with the kind `ROUTES_NOT_COUNTED` has declared no endpoint, so the service's Micronaut routes are absent rather than read as never called. It is reported once a router has waited one flush interval with no dispatch point, or at the final flush, and logs the WARNING above.
+The agent sends the module's name, the reason and a kind to Otherlode with the next manifest:
 
-A module that switches off stops counting but does not retract. The endpoints it already declared stay in the list, and their counts stop. Otherlode reads such an endpoint as **Module disabled**, never as never called, when every run in scope that knows the endpoint disabled the module. The testkit's `neverCalled()` leaves it out on the same terms. An instance whose module kept working counted every call, so its zero still counts.
+| Kind | Cause |
+|---|---|
+| `LINKAGE_ERROR` | A linkage error, wherever it was caught. |
+| `ADVICE_FAILED` | Any other throw from the module's advice. |
+| `TRANSFORM_FAILED` | The module's own transform threw, a framework class it hooks failed to weave, or that class's loader cannot see `dev.otherlode.bootstrap`. |
+| `ROUTE_WALK_FAILED` | Reading a framework's routes failed. |
+| `HOOK_UNMATCHED` | A hook matched no method. |
+| `CONFIGURED_OFF` | Your configuration kept the module from installing. |
+| `ROUTES_NOT_COUNTED` | A Micronaut runtime constructs no dispatch point the module counts at. |
+| `DISABLED_ENDPOINT_MODULE_KIND_UNSPECIFIED` | The module lost records before the agent finished installing. Its reason says so. |
 
-A class that fails to weave runs from its original bytes and the agent logs a WARNING naming it. The JAX-RS module is the exception to the switch-off: it hooks your own resource classes, and a class that fails to weave takes its own routes with it, so the module stays on for the rest. If another agent retransforms a class the module already wove, or a debugger redefines it, and the module cannot weave it again, the class loses the advice from the first weave. The JAX-RS module switches off then too, since that class's routes stay declared. It stays on when the class's first weave failed as well, since that class declared no routes.
+A module that [`disabledEndpointModules`](configuration#disabledendpointmodules) or `endpointsEnabled=false` keeps from installing is reported with the kind `CONFIGURED_OFF`, whether or not its framework is present, and logs no WARNING. A Micronaut module with the kind `ROUTES_NOT_COUNTED` has declared no endpoint and logs the WARNING above.
+
+A module that switches off stops counting and retracts nothing. The endpoints it already declared stay in the list, and their counts stop. [Never called](/docs/server/findings#never-called) says how Otherlode reads them. The testkit's `disabledEndpointModules()` lists the disabled modules, `neverCalled()` leaves out an endpoint when every instance that knows it disabled its module, and its endpoint queries name a disabled module in the error they throw for an unknown endpoint.
+
+The JAX-RS module is an exception: it hooks your own resource classes, so a class that fails to weave runs from its original bytes, the agent logs a WARNING naming it, and the module stays on for the other classes. It does switch off when another agent retransforms a class it already wove, or a debugger redefines it, and it cannot weave the class again, unless that class's first weave failed as well.
 
 A framework class that was renamed is not caught. The module never matches it, which reads as the framework being absent. See [troubleshooting](troubleshooting).
 
 ## Frameworks with no module
 
-A service whose web framework has no module above reports no endpoints. Without a signal, that reads the same as a service that serves none. So the agent keeps a fixed list of framework markers: a class, or a set of classes, that is defined in the JVM only once a framework's own routing is set up. When it sees every class of a marker loaded, the agent reports the marker's id and the classes that matched on the next manifest, delivered once per run. It never loads a class to look; it reads the names of the classes the JVM has already defined, so a marker is reported only after the class is defined. It looks on every flush, so a marker is reported on the first manifest after its classes load, and on the final flush.
+A service whose web framework has no module reports no endpoints. So that you can tell this from a service that serves none, the agent keeps a fixed list of framework markers: a class, or a set of classes, that the JVM defines only once a framework's own routing is set up. When every class of a marker has been defined, the agent reports the marker's id and the classes that matched on the next manifest, once per run. It reads the names of classes the JVM has already defined and never loads one to look. It looks on every flush, and on the final flush.
 
-A marker is an observation. It does not say that a framework is uncovered, since a module may count some of its routes, and Otherlode words what it means for the agent version and the modules installed. Markers are reported whatever else runs: a service with a Spring MVC module and a gRPC server reports both the endpoints and the gRPC marker, and a test run reports markers too.
-
-Each claim is narrow. It names the routing the class proves, and says whether the class loads when routing is configured or only when the server starts.
+A marker is an observation, not a claim that the framework is uncovered, since a module may count some of its routes. Markers are reported whatever else runs: a service with Spring MVC and a gRPC server reports both the endpoints and the gRPC marker, and a test run reports markers too.
 
 | Marker id | Class that loads | Claim |
 |---|---|---|
 | `grpc-server` | `io.grpc.internal.ServerImpl$ServerListenerImpl` | A grpc-java server started, an in-process server included. A client alone does not load it. Armeria serving gRPC does not use it |
 | `armeria-server` | `com.linecorp.armeria.server.HttpServerPipelineConfigurator` | An Armeria server started. A client alone does not load it |
-| `undertow-routing-handler` | `io.undertow.server.RoutingHandler` | Undertow's own `RoutingHandler` configured, whether or not the server started. A server answering through another handler does not load it. WildFly 42 loads it at boot: its naming subsystem builds a `RoutingHandler` for JNDI over HTTP, which the Undertow subsystem's `http-invoker` serves under `/wildfly-services` by default. So every WildFly service reports this marker, for WildFly's own routes. The naming subsystem builds the handler with the `http-invoker` removed too, so the marker stays |
+| `undertow-routing-handler` | `io.undertow.server.RoutingHandler` | Undertow's own `RoutingHandler` configured, whether or not the server started. A server answering through another handler does not load it. WildFly 42 loads it at boot for JNDI over HTTP, served under `/wildfly-services` by default, so every WildFly service reports this marker, even with the `http-invoker` removed |
 | `javalin-5` | `io.javalin.jetty.JettyServer$start$wsAndHttpHandler$1` and `io.javalin.http.servlet.JavalinServlet` | Javalin 5's own Jetty server started. Javalin 4 loads the first class but not the second, and no Javalin release a module covers has the first. A Javalin 5 application deployed as a servlet in another container loads no marker |
-| `play-server` | `play.core.server.PekkoHttpServer` (Play 3), `play.core.server.AkkaHttpServer` (Play 2.8 and 2.9) or `play.core.server.NettyServer` (Play 2.8 to 3.0, with the Netty backend) | A Play server started. Each class is created only when the server is, and binds its port in its constructor. Play's other classes, a router built without a server and the server provider alone do not load it. A marker is reported when any one of the three loads |
-| `helidon-webserver` | `io.helidon.webserver.LoomServer$ListenerFuture` | A Helidon 4 `WebServer` started; Helidon 3 and earlier have no marker. A Helidon client in a process with the web server on its classpath does not load it, and neither does a server that was built and not started. Helidon MP starts the same server, so it loads this too; its JAX-RS resources are counted by the JAX-RS module, and the marker says only that Helidon's own `HttpRouting` is serving |
-| `struts2-dispatcher` | `org.apache.struts2.dispatcher.ExecuteOperations` (Struts 2.5 and later) or `org.apache.struts2.dispatcher.ng.ExecuteOperations` (Struts 2.3) | A Struts 2 dispatcher filter or servlet started in a servlet container. Only `StrutsPrepareAndExecuteFilter`, `StrutsExecuteFilter` and `StrutsServlet` create it, in their `init`. Struts classes used without one of them, and a filter that is created but not started, do not load it. Struts 2.3's deprecated `FilterDispatcher` creates neither, so an application served through it reports no marker |
-| `grails-url-mappings` | `org.grails.web.servlet.mvc.GrailsDispatcherServlet` and Spring Boot's `ServletWebServerApplicationContext` (in `org.springframework.boot.web.servlet.context`, or `org.springframework.boot.web.server.servlet.context` on Spring Boot 4), or, for a Spring Boot 4 application deployed as a WAR, `SpringBootServletInitializer$WarDeploymentApplicationContextFactory` | Grails created the dispatcher servlet that serves its URL-mapped controllers, in a servlet web server context, whether or not the server accepts requests. A Grails process with no web server context, such as a command or a unit test, does not complete the set, though Grails can create the servlet there too. Grails' `@RequestMapping` controllers are counted by the Spring MVC module |
-| `webflux-router-without-dispatcher` | `org.springframework.web.reactive.function.server.RouterFunctions$RouterFunctionWebHandler` | A Spring WebFlux router turned into a handler by `RouterFunctions.toHttpHandler` or `toWebHandler`, configured whether or not it was served. A router served by a `DispatcherHandler` does not load it. A test that binds `WebTestClient` to a router function loads it, so that test run reports the marker |
+| `play-server` | `play.core.server.PekkoHttpServer` (Play 3), `play.core.server.AkkaHttpServer` (Play 2.8 and 2.9) or `play.core.server.NettyServer` (Play 2.8 to 3.0, with the Netty backend) | A Play server started. Play's other classes, a router built without a server and the server provider alone do not load it. Any one of the three classes completes the marker |
+| `helidon-webserver` | `io.helidon.webserver.LoomServer$ListenerFuture` | A Helidon 4 `WebServer` started. Helidon 3 and earlier have no marker. A Helidon client, and a server that was built and not started, do not load it. Helidon MP starts the same server, so it loads this too, and its JAX-RS resources are counted by the JAX-RS module |
+| `struts2-dispatcher` | `org.apache.struts2.dispatcher.ExecuteOperations` (Struts 2.5 and later) or `org.apache.struts2.dispatcher.ng.ExecuteOperations` (Struts 2.3) | A Struts 2 dispatcher filter or servlet started in a servlet container. Only `StrutsPrepareAndExecuteFilter`, `StrutsExecuteFilter` and `StrutsServlet` create it, in their `init`. Struts 2.3's deprecated `FilterDispatcher` creates neither, so an application served through it reports no marker |
+| `grails-url-mappings` | `org.grails.web.servlet.mvc.GrailsDispatcherServlet` and Spring Boot's `ServletWebServerApplicationContext` (in `org.springframework.boot.web.servlet.context`, or `org.springframework.boot.web.server.servlet.context` on Spring Boot 4), or, for a Spring Boot 4 application deployed as a WAR, `SpringBootServletInitializer$WarDeploymentApplicationContextFactory` | Grails created the dispatcher servlet for its URL-mapped controllers in a servlet web server context, whether or not the server accepts requests. A Grails process with no web server context, such as a command or a unit test, does not complete the set. Grails' `@RequestMapping` controllers are counted by the Spring MVC module |
+| `webflux-router-without-dispatcher` | `org.springframework.web.reactive.function.server.RouterFunctions$RouterFunctionWebHandler` | A Spring WebFlux router turned into a handler by `RouterFunctions.toHttpHandler` or `toWebHandler`, whether or not it was served. A router served by a `DispatcherHandler` does not load it. A test that binds `WebTestClient` to a router function loads it |
 
-The project's tests run each marker in at least three JVMs with `-Xlog:class+load`: one that uses only the framework's client side, or the framework without its routing, one that configures routing without starting it, and one that serves a request. They run against these releases: grpc-java 1.30.2 to 1.85.0 (five releases), Armeria 1.0.0 to 1.42.0 (five releases), Undertow 2.2.37, 2.3.26 and 2.4.1, Javalin 5.0.0, 5.3.2 and 5.6.5 (and 4.6.8, which must not complete the marker), Spring Framework 5.3.39, 6.2.19 and 7.0.9, Play 3.0.0 and 3.0.12 with Pekko HTTP, Play 2.8.0, 2.8.22, 2.9.0 and 2.9.12 with Akka HTTP, Play 2.8.22, 2.9.12 and 3.0.12 with Netty, Helidon 4.0.0, 4.2.7 and 4.5.5, Struts 2.3.37, 2.5.33, 6.0.0, 6.12.0, 7.0.0 and 7.4.0 in embedded Tomcat, and Grails 6.2.3, 7.0.0, 7.2.4 and 8.0.0 (7.0.0, 7.2.4 and 8.0.0 also deployed as a WAR in Tomcat, and each also run with no web server, which must not complete the marker). A release between two tested ones is expected to behave the same and is not tested.
+The project's tests run each marker in at least three JVMs with `-Xlog:class+load`: one that uses only the framework's client side, or the framework without its routing, one that configures routing without starting it, and one that serves a request. They run against these releases: grpc-java 1.30.2 to 1.85.0 (five releases), Armeria 1.0.0 to 1.42.0 (five releases), Undertow 2.2.37, 2.3.26 and 2.4.1, Javalin 5.0.0, 5.3.2 and 5.6.5 (and 4.6.8, which must not complete the marker), Spring Framework 5.3.39, 6.2.19 and 7.0.9, Play 3.0.0 and 3.0.12 with Pekko HTTP, Play 2.8.0, 2.8.22, 2.9.0 and 2.9.12 with Akka HTTP, Play 2.8.22, 2.9.12 and 3.0.12 with Netty, Helidon 4.0.0, 4.2.7 and 4.5.5, Struts 2.3.37, 2.5.33, 6.0.0, 6.12.0, 7.0.0 and 7.4.0 in embedded Tomcat, and Grails 6.2.3, 7.0.0, 7.2.4 and 8.0.0 (7.0.0, 7.2.4 and 8.0.0 also deployed as a WAR in Tomcat, and each also run with no web server, which must not complete the marker).
 
 ## Settings
 
 | Option | Default | Effect |
 |---|---|---|
-| `endpointsEnabled` | `true` | Turns every framework module, and the route bridge with them, off at once when `false`. The agent logs `endpointsEnabled=false, no framework's endpoints will be instrumented` at INFO, and reports each module it would have installed as disabled with the kind `CONFIGURED_OFF`. The method and branch probes are unaffected. |
-| `disabledEndpointModules` | None | Module names, separated by `;`. The agent installs none of them and reports each as disabled with the kind `CONFIGURED_OFF`, except `otel` while `otelBridgeEnabled` is off, which was not going to install. |
+| `endpointsEnabled` | `true` | Turns every framework module, and the route bridge with them, off at once when `false`. The agent logs `otherlode: endpointsEnabled=false, no framework's endpoints will be instrumented` at INFO, and reports each module it would have installed as disabled with the kind `CONFIGURED_OFF`. The method and branch probes are unaffected. |
+| `disabledEndpointModules` | None | Module names, separated by `;`. The agent installs none of them and reports each as disabled with the kind `CONFIGURED_OFF`, except `otel` while `otelBridgeEnabled` is off. |
 | `otelBridgeEnabled` | `false` | Turns the OpenTelemetry route bridge on. |
 
 The [configuration options](configuration) page gives the system property and environment variable names for all three.
 
 ## What is not covered
 
-- Javalin 5 has no module. Counting its endpoints needs one. For it, `otelBridgeEnabled` counts what OpenTelemetry resolves, discovered at dispatch only, so "never called" cannot be computed. The agent reports the `javalin-5` [marker](#frameworks-with-no-module). A Javalin 5 application deployed as a WAR loads no marker, and its `JavalinServlet` is counted by the `servlet` module as one `*` endpoint on its mapping. The same holds for a Ktor 1 `ServletApplicationEngine`.
+- Javalin 5 has no module. With `otelBridgeEnabled`, its routes are counted as OpenTelemetry resolves them, discovered at dispatch only, so none reads as never called. The agent reports the `javalin-5` [marker](#frameworks-with-no-module). A Javalin 5 application deployed as a WAR loads no marker, and its `JavalinServlet` is counted by the `servlet` module as one `*` endpoint on its mapping. The same holds for a Ktor 1 `ServletApplicationEngine`.
 - A Spring WebFlux router run through `RouterFunctions.toHttpHandler` or `toWebHandler`, with no `DispatcherHandler`, is not declared, and only its `resources(pattern, location)` routes are counted, found at dispatch. The agent reports the `webflux-router-without-dispatcher` [marker](#frameworks-with-no-module).
-- JSP pages are not counted. Each page runs inside the container's one JSP servlet, which the servlet module leaves out.
-- The SOAP traffic of Apache CXF's `CXFServlet` is not counted. The servlet is left out, since its JAX-RS requests are counted by the JAX-RS module, and no module counts the rest.
-- A container that implements a servlet API older than 4.0, such as Tomcat 8.5 or Jetty 9.4, has no servlet counting. The `servlet` module is reported as disabled with the kind `LINKAGE_ERROR` at the first request, and the application is served as it was. This is tested on Jetty 9.4.58, with its own Servlet 3.1 API jar and with the Servlet 4.0 API jar (`javax.servlet-api` 4.0.1) Spring Boot 2.7 puts beside it.
+- JSP pages are not counted. They run inside the container's JSP servlet, which the servlet module leaves out.
+- The SOAP traffic of Apache CXF's `CXFServlet` is not counted. Its JAX-RS requests are counted by the JAX-RS module.
+- A container that implements a servlet API older than 4.0, such as Tomcat 8.5 or Jetty 9.4, has no servlet counting. The `servlet` module is reported as disabled with the kind `LINKAGE_ERROR` at the first request, and the application is served as before.
 - Requests that never reach the hooked framework are not counted. A servlet, filter or Tomcat valve that answers first is invisible to the Spring module, for example.
 - The agent reads no OpenAPI document and does no static analysis of call sites to find endpoints.
 - A route that a router builds at runtime by any means other than the registration points above is found only when a request reaches it.
