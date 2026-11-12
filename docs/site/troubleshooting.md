@@ -335,7 +335,7 @@ Use the testkit dependency and the `-javaagent` jar of the same version. The tes
 Two more testkit messages point at the agent:
 
 - The JUnit extension fails with `otherlode-testkit: no delta batch arrived from the agent within <n>s`. The test JVM has no `-javaagent` flag, the agent refused to start for a missing `includePackages`, or the flush interval is longer than the timeout. Add `flushIntervalSeconds=1` to the agent arguments.
-- A refusal that reads `... but this collector serves one test JVM and already heard from instance ...` means more than one test JVM posts to one collector, such as Gradle forks with `maxParallelForks` above 1. Run the tests that use the testkit with `maxParallelForks = 1`.
+- A refusal that reads `... but this collector serves one test JVM and already heard from instance ...` comes from the collector `OtherlodeExtension` starts, when more than one test JVM posts to it, such as Gradle forks with `maxParallelForks` above 1. The other fork's extension fails with `otherlode-testkit: could not bind the collector to port 4319`, since the first fork holds the port. Run the tests that use the testkit with `maxParallelForks = 1`. A collector from `OtherlodeTestCollector.start()` accepts several instances.
 
 ## A class is skipped
 
