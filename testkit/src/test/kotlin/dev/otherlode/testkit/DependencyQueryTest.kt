@@ -128,6 +128,22 @@ class DependencyQueryTest {
     }
 
     @Test
+    fun `an identity whose id holds a colon, a backslash or a comma still lists its version`() {
+        manifest(
+            dependencies =
+                listOf(
+                    dependency(0, "org.example", "odd:artifact", "1.2"),
+                    dependency(1, "org.example", "back\\slash", "2.0"),
+                    dependency(2, "org,example", "comma,artifact", "3.0"),
+                ),
+        )
+
+        assertEquals(setOf("1.2"), collector.dependency("org.example", "odd:artifact").identities.single().versions)
+        assertEquals(setOf("2.0"), collector.dependency("org.example", "back\\slash").identities.single().versions)
+        assertEquals(setOf("3.0"), collector.dependency("org,example", "comma,artifact").identities.single().versions)
+    }
+
+    @Test
     fun `dependency matches by group and artifact, and a null or empty group matches a filename identity`() {
         manifest(
             dependencies =

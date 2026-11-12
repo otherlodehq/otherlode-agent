@@ -288,6 +288,52 @@ class FailedToInitializeTest {
     }
 
     @Test
+    fun `a class that failed to load is no root or member of a cluster, and still counts as a caller`() {
+        manifest(
+            "i-1",
+            listOf(probe(1, 0, "com.acme.B", "m")),
+            locations = listOf(lookup(1)),
+            failedToLoad = listOf(FailedClass("com.acme.A", 1L)),
+        )
+        exporter.exportStaticBaseline(
+            StaticBaseline(
+                resource = resource("i-1"),
+                declaredClasses =
+                    listOf(
+                        DeclaredClass(
+                            "com.acme.A",
+                            listOf(DeclaredMethod("go", "()V", calls = listOf(CallEdge("com.acme.B", "m", "()V", false)))),
+                        ),
+                        DeclaredClass("com.acme.B", listOf(DeclaredMethod("m", "()V"))),
+                    ),
+                scannedAt = 1000L,
+            ),
+        )
+
+        assertEquals(listOf("com.acme.A"), collector.failedToLoad())
+        assertEquals(emptyList(), collector.neverLoaded())
+        val clusters = collector.unreachedClusters()
+        assertTrue(clusters.none { it.root.className == "com.acme.A" }, clusters.toString())
+        assertTrue(clusters.none { it.rootKind == RootKind.CLASS_FINDING }, clusters.toString())
+        assertTrue(clusters.none { cluster -> cluster.methods.any { it.className == "com.acme.A" } }, clusters.toString())
+        assertTrue(clusters.none { cluster -> cluster.wholeClasses.any { it.className == "com.acme.A" } }, clusters.toString())
+        assertTrue(
+            clusters.none { cluster -> cluster.root.className == "com.acme.B" || cluster.methods.any { it.className == "com.acme.B" } },
+            clusters.toString(),
+        )
+    }
+
+    @Test
+    fun `a class that failed to load in one instance and loaded in another is judged as loaded`() {
+        manifest("i-1", emptyList(), failedToLoad = listOf(FailedClass("com.acme.A", 1L)))
+        manifest("i-2", listOf(probe(1, 0, "com.acme.A", "go")), locations = listOf(lookup(1)))
+
+        assertEquals(emptyList(), collector.failedToLoad())
+        val clusters = collector.unreachedClusters()
+        assertTrue(clusters.any { it.root.className == "com.acme.A" && it.rootKind == RootKind.UNCALLED }, clusters.toString())
+    }
+
+    @Test
     fun `an interface's own static initialiser is not a default method, so a failure in it does not carry to implementers`() {
         manifest(
             "i-1",

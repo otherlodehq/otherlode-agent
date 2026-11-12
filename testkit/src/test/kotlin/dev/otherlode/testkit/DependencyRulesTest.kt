@@ -267,7 +267,7 @@ class DependencyRulesTest {
 
         val finding = report.findings.single()
         assertEquals(DependencyUsage.USED, finding.status)
-        assertEquals(mapOf("tools.jackson.core:jackson-databind" to setOf("3.0.2", "3.0.3")), finding.versionsByIdentity)
+        assertEquals(mapOf(("tools.jackson.core" to "jackson-databind") to setOf("3.0.2", "3.0.3")), finding.versionsByIdentity)
         assertEquals(listOf("tools.jackson.core" to "jackson-databind"), finding.identities)
         assertEquals(378L, finding.loadedClassesTotal)
     }

@@ -51,6 +51,7 @@ import kotlin.concurrent.thread
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertTrue
@@ -1912,7 +1913,7 @@ class OtherlodeTestCollectorTest {
     }
 
     @Test
-    fun `a disabled module with no kind is answered 400, since an agent of this testkit's version always sends one`() {
+    fun `a disabled module with no kind is accepted and listed with a null kind`() {
         val target = startCollector()
         val manifest =
             watchedManifest(
@@ -1921,8 +1922,11 @@ class OtherlodeTestCollectorTest {
                 disabledEndpointModules = listOf(DisabledEndpointModule("jax-rs", "r2", 2L, DisabledEndpointModuleKind.UNSPECIFIED)),
             )
 
-        assertEquals(400, postStatus(target, "manifest", ProtoPayloadCodec.encode(manifest)))
-        assertTrue(target.rejectedPayloads().single().contains("could not be applied"), "${target.rejectedPayloads()}")
+        assertEquals(202, postStatus(target, "manifest", ProtoPayloadCodec.encode(manifest)))
+        assertTrue(target.rejectedPayloads().isEmpty(), "${target.rejectedPayloads()}")
+        val module = target.disabledEndpointModules().single()
+        assertEquals("jax-rs", module.module)
+        assertNull(module.kind)
     }
 
     @Test
