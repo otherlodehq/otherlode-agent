@@ -300,6 +300,7 @@ public class OtherlodeTestCollector internal constructor(
     private val instancesWithCompleteFinalFlush: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     private val instancesWithDeltaBatch: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val instancesWithManifest: MutableSet<String> = ConcurrentHashMap.newKeySet()
     private val startingByInstance = ConcurrentHashMap<String, Boolean>()
     private val countsPendingByInstance = ConcurrentHashMap<String, Boolean>()
     private val newestPayloadSequenceByInstance = ConcurrentHashMap<String, Long>()
@@ -1464,11 +1465,13 @@ public class OtherlodeTestCollector internal constructor(
      * instance that loaded it, though each still counts as a caller. A method of a loaded class that a
      * complete static baseline declares and no method probe covers is likewise a caller and never a
      * root or member.
-     * Throws [IllegalStateException] as [neverInitialized] does.
+     * Throws [IllegalStateException] as [neverInitialized] does. It also throws while a class would
+     * read never loaded and a live instance is starting, has sent no delta batch or has pending counts.
      */
     public fun unreachedClusters(): List<UnreachedCluster> {
         return checkedZeroCounts {
             val graph = computeCallGraph()
+            if (graph.nodes.values.any { it.neverLoaded }) checkNoLiveInstanceBehind()
 
             fun isHit(key: NodeKey) = ((graph.nodes[key] ?: graph.generatedCallers[key])?.hits ?: 0L) > 0L
 
@@ -2625,6 +2628,7 @@ public class OtherlodeTestCollector internal constructor(
     private fun storeDependencyData(manifest: ProbeManifest) {
         val instanceId = manifest.resource.serviceInstanceId
         instanceIds += instanceId
+        instancesWithManifest += instanceId
         if (manifest.referencesRecorded) instancesRecordingReferences += instanceId
         val loaded = loadedClassNamesByInstance.computeIfAbsent(instanceId) { ConcurrentHashMap.newKeySet() }
         for (location in manifest.probes) {
@@ -2790,6 +2794,7 @@ public class OtherlodeTestCollector internal constructor(
     private fun checkZeroCountsAreEvidence() {
         val reasons =
             (unwatchedInstances + unplacedVerificationFailures.keys + instanceIds).sorted().mapNotNull { instance ->
+                if (instance !in instancesWithManifest && instance !in instancesWithDeltaBatch) return@mapNotNull null
                 val why =
                     holdReasons(instance, evenIfNotLive = true) +
                         listOfNotNull(

@@ -129,7 +129,7 @@ A zero count says nothing about an instance that is still starting or has sent n
 - The instance counted `VerifyError` messages in no format the agent reads.
 - The instance's latest payload says `starting`, and the instance is live. An instance is live until it ends with a final flush or goes silent for three of its flush intervals, or for an hour when it reported no flush interval. Call `awaitSettled` first.
 - The instance's latest payload says its counts are pending, even after its JVM has exited.
-- The instance has sent a manifest or a baseline but no delta batch, even after its JVM has exited.
+- The instance has sent a manifest but no delta batch, even after its JVM has exited. These queries do not refuse for an instance heard from only through a baseline or a class listing, since it has no counts. `unreachedClusters` still refuses for one known only from a baseline when a class would read never loaded.
 
 The message names each such instance and why:
 
@@ -144,7 +144,7 @@ this query rests on zero counts, and the zero counts of these instances are not 
 
 A query that reads no zero count keeps answering: `wasHit`, `hitCount`, `omissionCount`, `failedToLoad`, `failedToInitialize`, `skippedClasses`, `neverSupplied`, `wasCalled`, `callCount`, `endpoints`, `disabledEndpointModules`, `unreferencedDependencies`, and `dependency` and `absentReferences` when they do not refuse as above or below.
 
-`neverLoaded`, and a dependency query whose answer would hold a site with `neverLoaded` set, claim that a class never loaded. They throw while a live instance is starting, has sent no delta batch or has pending counts, since that instance may still load the class.
+`neverLoaded`, `unreachedClusters` when a class would read never loaded, and a dependency query whose answer would hold a site with `neverLoaded` set, claim that a class never loaded. They throw while a live instance is starting, has sent no delta batch or has pending counts, since that instance may still load the class.
 
 `unloadedDependencies`, and `dependency` when it would return `UNLOADED`, claim that no class of a dependency loaded. They throw while an instance that listed the dependency has sent no delta batch or has pending counts, even after its JVM has exited, or is starting and live. `unloadedDependencies` throws only when it would list a dependency.
 
@@ -273,6 +273,7 @@ The message names the dependency and every dependency the collector knows. When 
 | The collector rejected a payload. | Every query and wait. |
 | The collector is closed and the condition does not hold. | Every wait. |
 | No complete static baseline has arrived, or a live instance says it is starting, has sent no delta batch or has pending counts. | `neverLoaded` |
+| A live instance says it is starting, has sent no delta batch or has pending counts, and a class would read never loaded. | `unreachedClusters` |
 | A live instance says it is starting, has sent no delta batch or has pending counts, and a site would read never loaded. | `dependency`, the dependency list queries, `absentReferences` |
 | An instance that listed the dependency has sent no delta batch, has pending counts, or is starting and live. | `unloadedDependencies`, and `dependency` when it would return `UNLOADED` |
 | An instance's hook on `VerifyError` was not installed, it counted a `VerifyError` message in no read format, it says it is starting, it has sent no delta batch, or its counts are pending. | The queries listed in [Queries that refuse](#queries-that-refuse) |

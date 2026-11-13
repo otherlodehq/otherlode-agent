@@ -47,22 +47,14 @@ deferrals, gzip, a collector config file, and agent-level redaction
 
 ## TODO
 
-- **Testkit over-refusal for a baseline-only instance: known.** The
-  testkit applies the server's evidence rules (ADR 0093), with one
-  difference left: it holds every zero-count query for an instance with
-  no delta batch, even one known only from a static baseline, which has
-  no probes. The server holds only that run's probes. The testkit
-  refuses instead of answering wrongly, and a test session does not
+- **Testkit waits on a baseline-only instance: known.** An instance the
+  testkit has heard from only through a static baseline never lists its
+  dependencies or sends a flush, so `awaitDependenciesListed` and
+  `awaitSettled` time out on it and the dependency queries refuse. It
+  never goes silent, since only a delta batch sets its last-seen time,
+  so `neverLoaded` and a never-loaded `unreachedClusters` refuse for it
+  for good. The zero-count queries no longer refuse for it. A test session does not
   produce such an instance.
-
-- **`AgentConfigTest`'s log capture depends on test order.** Its
-  `recordsFrom` adds a handler to the `java.util.logging` logger of
-  `AgentConfig`, but the agent logs there only once some earlier test in
-  the JVM has installed the bootstrap holder; before that it writes to
-  standard error. Run alone, or first after a failed run (Gradle runs a
-  failed class first), 4 to 10 of its tests fail with "log capture saw
-  nothing". A clean full run passes. Make the capture install what it
-  needs, or capture standard error too.
 
 ### Tooling: code principles and a refactoring playbook
 

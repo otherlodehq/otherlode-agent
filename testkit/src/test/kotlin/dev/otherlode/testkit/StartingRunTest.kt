@@ -208,6 +208,27 @@ class StartingRunTest {
     }
 
     @Test
+    fun `a zero-count query ignores an instance known only from a static baseline`() {
+        manifest("i-1")
+        batch("i-1", 1, starting = false)
+        baseline("i-2", plain("demo.Z"))
+
+        assertEquals(listOf("m"), collector.neverHit().map { it.methodName })
+    }
+
+    @Test
+    fun `a zero-count query still refuses for an instance that sent a manifest after its baseline and no delta batch`() {
+        manifest("i-1")
+        batch("i-1", 1, starting = false)
+        baseline("i-2", plain("demo.Z"))
+        exporter.exportManifest(watchedManifest(resource("i-2"), emptyList()))
+
+        val message = assertFailsWith<IllegalStateException> { collector.neverHit() }.message.orEmpty()
+
+        assertTrue("i-2" in message && "no delta batch" in message, message)
+    }
+
+    @Test
     fun `a zero-count query refuses for a dead instance that never sent a delta batch`() {
         manifest("i-1")
         batch("i-2", 1, starting = false, finalFlush = true)
@@ -560,5 +581,15 @@ class StartingRunTest {
         exporter.exportManifest(watchedManifest(resource("i-2"), emptyList(), dependenciesListed = true, payloadSequence = 1))
 
         assertEquals(listOf("org.example:lib"), collector.unloadedDependencies().map { it.identityKey })
+    }
+
+    @Test
+    fun `unreachedClusters refuses while a live instance has sent only its baseline and a class would read never loaded`() {
+        hitManifest("i-1")
+        hitBatch("i-1", 2, starting = false, finalFlush = true)
+        declaresBAndC("i-2")
+
+        val message = assertFailsWith<IllegalStateException> { collector.unreachedClusters() }.message.orEmpty()
+        assertTrue("i-2" in message && "no delta batch" in message, message)
     }
 }
