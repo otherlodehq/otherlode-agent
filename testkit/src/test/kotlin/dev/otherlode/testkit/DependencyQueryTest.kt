@@ -97,6 +97,7 @@ class DependencyQueryTest {
                 dependenciesListed = dependenciesListed,
             ),
         )
+        exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("svc", null, instanceId, null, "run-1"), emptyList()))
     }
 
     private fun deltas(
@@ -602,5 +603,83 @@ class DependencyQueryTest {
 
         assertEquals(emptyList(), collector.failedToLoadDependencies())
         assertEquals(DependencyUsage.UNREACHED, collector.dependency("org.example", "lib").status)
+    }
+
+    @Test
+    fun `a site reads never loaded only once no live instance is starting`() {
+        manifest(
+            dependencies = listOf(dependency(0, "org.example", "lib")),
+            probes = listOf(methodProbe(1, 0, "demo.A", "get", listOf("org.example.Hit"))),
+            externalClasses = listOf(ExternalClass("org.example.Hit", 0)),
+        )
+        deltas(
+            dependencyDeltas = listOf(DependencyDelta(0, 1L, 1L)),
+            probeDeltas = listOf(ProbeDelta(1, 0, ProbeKind.METHOD, 1L, 4L)),
+        )
+        baseline(
+            declaredClasses =
+                listOf(DeclaredClass("demo.Legacy", listOf(DeclaredMethod("apply", "()V", referencedClasses = listOf("org.example.Hit"))))),
+            externalClasses = listOf(ExternalClass("org.example.Hit", 0)),
+        )
+        val starting = ResourceAttributes("svc", null, "i-2", null, "run-2")
+        exporter.exportManifest(watchedManifest(starting, emptyList(), payloadSequence = 1, starting = true))
+        exporter.exportDeltaBatch(DeltaBatch(starting, emptyList(), payloadSequence = 2, starting = true))
+
+        val message = assertFailsWith<IllegalStateException> { collector.dependency("org.example", "lib") }.message.orEmpty()
+        assertTrue("i-2" in message && "still starting" in message, message)
+
+        exporter.exportDeltaBatch(DeltaBatch(starting, emptyList(), payloadSequence = 3))
+        val status = collector.dependency("org.example", "lib")
+        assertEquals(DependencyUsage.USED, status.status)
+        assertEquals(
+            listOf(DependencyReferenceSite("demo.A", "get", neverLoaded = false), DependencyReferenceSite("demo.Legacy", "apply", neverLoaded = true)),
+            status.sites,
+        )
+    }
+
+    private fun startingInstance(): ResourceAttributes {
+        val starting = ResourceAttributes("svc", null, "i-2", null, "run-2")
+        exporter.exportManifest(watchedManifest(starting, emptyList(), dependenciesListed = true, payloadSequence = 1, starting = true))
+        exporter.exportDeltaBatch(DeltaBatch(starting, emptyList(), payloadSequence = 2, starting = true))
+        return starting
+    }
+
+    @Test
+    fun `an unloaded dependency with a never-loaded site refuses while a live instance is starting`() {
+        manifest(dependencies = listOf(dependency(0, "org.example", "lib")))
+        baseline(
+            declaredClasses =
+                listOf(DeclaredClass("demo.Legacy", listOf(DeclaredMethod("apply", "()V", referencedClasses = listOf("org.example.Old"))))),
+            externalClasses = listOf(ExternalClass("org.example.Old", 0)),
+        )
+        val starting = startingInstance()
+
+        val message = assertFailsWith<IllegalStateException> { collector.unloadedDependencies() }.message.orEmpty()
+        assertTrue("i-2" in message && "still starting" in message, message)
+
+        exporter.exportDeltaBatch(DeltaBatch(starting, emptyList(), payloadSequence = 3))
+        val unloaded = collector.unloadedDependencies()
+        assertEquals(listOf("org.example:lib"), unloaded.map { it.identityKey })
+        assertEquals(listOf(DependencyReferenceSite("demo.Legacy", "apply", neverLoaded = true)), unloaded.single().sites)
+    }
+
+    @Test
+    fun `an absent reference with a never-loaded site refuses while a live instance is starting`() {
+        manifest()
+        baseline(
+            declaredClasses =
+                listOf(DeclaredClass("demo.Optional", listOf(DeclaredMethod("probe", "()V", referencedClasses = listOf("org.example.Missing"))))),
+            externalClasses = listOf(ExternalClass("org.example.Missing", null, absent = true)),
+        )
+        val starting = startingInstance()
+
+        val message = assertFailsWith<IllegalStateException> { collector.absentReferences() }.message.orEmpty()
+        assertTrue("i-2" in message && "still starting" in message, message)
+
+        exporter.exportDeltaBatch(DeltaBatch(starting, emptyList(), payloadSequence = 3))
+        assertEquals(
+            listOf(AbsentReference("org.example.Missing", listOf(DependencyReferenceSite("demo.Optional", "probe", neverLoaded = true)))),
+            collector.absentReferences(),
+        )
     }
 }

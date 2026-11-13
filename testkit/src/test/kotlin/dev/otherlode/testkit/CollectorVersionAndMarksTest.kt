@@ -57,6 +57,7 @@ class CollectorVersionAndMarksTest {
         val target = startAs("1.2.3")
 
         assertEquals(202, post(target, "manifest", manifestBody("1.2.3")))
+        assertEquals(202, post(target, "deltas", ProtoPayloadCodec.encode(DeltaBatch(resource("1.2.3"), emptyList()))))
 
         assertEquals(emptyList(), target.rejectedPayloads())
         assertEquals(listOf("m"), target.neverHit().map { it.methodName })

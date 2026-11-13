@@ -19,7 +19,7 @@ The testkit reads the facts the way the server reads them, rule for rule:
 - **Dependency reference liveness spans instances** and counts a loaded class that has no probes, and references come only from complete scans.
 - **Every payload passes the same checks.** A class listing goes through the stripped, version and run checks, and a static baseline chunk must carry a valid index and the count of its scan.
 - **`neverLoaded()` judges a class when any complete scan declares a judgeable method of it**, and leaves out the scan of a run that stopped while starting (server ADR 0092).
-- **A run that is still starting is not settled.** `awaitSettled()` also waits until no live instance's payloads say `starting`, and a run with no delivered delta batch is not evidence. This follows server ADRs 0087 and 0092.
+- **A run that is still starting is not settled.** `awaitSettled()` also waits until no instance's counts are pending and no live instance's payloads say `starting`, and a run with no delivered delta batch is not evidence. A query asked before then refuses and names the instance, as it does for an unwatched instance, because the testkit's lists have no status that could mark a held row and a silent gap would read as no finding. A run is live until it ends cleanly or goes silent for three of its flush intervals, or for an hour when it sent none, as on the server. This follows server ADRs 0087 and 0092.
 - **Baselines union.** For each class, the testkit takes the union of each instance's latest complete scan, as the server does, so the answer does not depend on which arrived first.
 - **The server's orders and representatives.** The outside caller comes from the newest copy that has one, a lambda folds only into its own class's finding, and results sort as the server sorts them.
 
@@ -27,7 +27,7 @@ The testkit does not model removal (server ADRs 0066 and 0091). It needs two bui
 
 ## Considered options
 
-- **Refuse zero-count queries while an instance is starting**, in place of waiting. Rejected: a test that starts its JVM and asks at once would fail where the server would simply answer later, and `awaitSettled()` already exists to wait.
+- **Refuse zero-count queries while an instance is starting, with no wait.** Rejected: a test that starts its JVM would have no way to get the answer the server gives later. `awaitSettled()` waits, and the refusal covers only a query asked without it.
 - **Keep the testkit's own rules and document each difference.** Rejected: the testkit's value is that it predicts the server. A documented difference is still a wrong answer in a test.
 - **Model removal.** Rejected: the testkit would read and act on class listings for a case a test session never produces.
 - **Keep the first complete baseline per class.** Rejected: the answer would depend on arrival order.

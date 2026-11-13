@@ -217,7 +217,7 @@ The agent never splits a class across chunks. If one declared class is too large
 otherlode: the static baseline is not sent: com.acme.Huge alone exceeds the limit of 8 MiB on encoded bytes for one chunk, and a scan without it would read as complete
 ```
 
-In the testkit, `neverLoaded()` also leaves out a declared class whose methods are all inline, generated or unread shapes.
+In the testkit, `neverLoaded()` lists a class only when a complete scan declares a method of it that is neither inline, generated nor an unread shape, so a class with no such method is not listed. It leaves out the scan of a run that stopped while it was starting or before it sent any counts.
 
 ### What the scan cannot see
 

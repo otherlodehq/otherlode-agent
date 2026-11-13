@@ -94,6 +94,7 @@ class FailedToInitializeTest {
                 dependenciesListed = true,
             ),
         )
+        exporter.exportDeltaBatch(DeltaBatch(resource(instance), emptyList()))
     }
 
     private fun hits(

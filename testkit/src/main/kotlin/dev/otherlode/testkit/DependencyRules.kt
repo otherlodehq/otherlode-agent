@@ -70,6 +70,7 @@ internal data class DependencyFinding(
     val classCount: Int?,
     val discoverySources: Set<DependencyDiscoverySource>,
     val sites: List<DependencyReferenceSite>,
+    val listingInstances: Set<String> = emptySet(),
 )
 
 internal data class DependencyReport(
@@ -214,6 +215,7 @@ internal fun computeDependencyReport(
                     classCount = listings.mapNotNull { (_, dependency) -> dependency.classCount }.maxOrNull(),
                     discoverySources = listings.map { (_, dependency) -> dependency.discoverySource }.toSortedSet(),
                     sites = references.map { (site, _) -> site }.distinct().sortedBy { it.toString() },
+                    listingInstances = listings.map { (instance, _) -> instance.instanceId }.toSet(),
                 )
             }.sortedWith(compareBy({ it.status.ordinal }, { it.identityKey }))
 

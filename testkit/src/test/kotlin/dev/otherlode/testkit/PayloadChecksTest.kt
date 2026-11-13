@@ -3,6 +3,7 @@ package dev.otherlode.testkit
 import dev.otherlode.export.ClassFailedToInitialize
 import dev.otherlode.export.ClassListing
 import dev.otherlode.export.DeclaredClass
+import dev.otherlode.export.DeclaredMethod
 import dev.otherlode.export.DeltaBatch
 import dev.otherlode.export.DependencyDelta
 import dev.otherlode.export.DisabledEndpointModule
@@ -79,7 +80,7 @@ class PayloadChecksTest {
         scannedAt: Long = 1L,
         chunkIndex: Int = 0,
         chunkCount: Int = 1,
-        classes: List<DeclaredClass> = listOf(DeclaredClass("com.acme.Unloaded", emptyList())),
+        classes: List<DeclaredClass> = listOf(DeclaredClass("com.acme.Unloaded", listOf(DeclaredMethod("m", "()V")))),
     ) = ProtoPayloadCodec.encode(StaticBaseline(resource, classes, scannedAt = scannedAt, chunkIndex = chunkIndex, chunkCount = chunkCount))
 
     private fun deltas(
@@ -352,6 +353,7 @@ class PayloadChecksTest {
         target: OtherlodeTestCollector,
         vararg chunks: Pair<Int, Int>,
     ): Boolean {
+        assertEquals(202, post(target, "deltas", deltas()))
         for ((index, count) in chunks) {
             assertEquals(202, post(target, "static-baseline", baseline(chunkIndex = index, chunkCount = count)))
         }

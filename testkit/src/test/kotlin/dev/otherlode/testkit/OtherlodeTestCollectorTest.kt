@@ -692,6 +692,7 @@ class OtherlodeTestCollectorTest {
             ),
         )
 
+        exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("svc", null, "i-1", null, "run-1"), emptyList()))
         val neverHit = target.neverHit()
 
         assertEquals(2, neverHit.size)
@@ -713,6 +714,7 @@ class OtherlodeTestCollectorTest {
             ),
         )
 
+        exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("svc", null, "i-1", null, "run-1"), emptyList()))
         val neverHit = target.neverHit()
 
         assertEquals(listOf("a"), neverHit.map { it.methodName })
@@ -733,6 +735,7 @@ class OtherlodeTestCollectorTest {
             ),
         )
 
+        exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("svc", null, "i-1", null, "run-1"), emptyList()))
         val neverHit = target.neverHit()
 
         assertEquals(listOf("f"), neverHit.map { it.methodName })
@@ -763,6 +766,7 @@ class OtherlodeTestCollectorTest {
             ),
         )
 
+        exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("svc", null, "i-1", null, "run-1"), emptyList()))
         val neverHit = target.neverHit()
 
         assertEquals(listOf("getX"), neverHit.map { it.methodName })
@@ -1201,6 +1205,7 @@ class OtherlodeTestCollectorTest {
             ),
         )
 
+        exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("svc", null, "i-1", null, "run-1"), emptyList()))
         assertEquals(listOf("com.acme.Dead"), target.neverLoaded())
     }
 
@@ -1222,6 +1227,7 @@ class OtherlodeTestCollectorTest {
             ),
         )
 
+        exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("svc", null, "i-1", null, "run-1"), emptyList()))
         assertEquals(listOf("com.acme.Dead"), target.neverLoaded())
     }
 
@@ -1257,6 +1263,7 @@ class OtherlodeTestCollectorTest {
             ),
         )
 
+        exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("svc", null, "i-1", null, "run-1"), emptyList()))
         assertEquals(listOf("com.acme.Point"), target.neverLoaded())
     }
 
@@ -2066,6 +2073,7 @@ class OtherlodeTestCollectorTest {
             ),
         )
 
+        exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("svc", null, "i-1", null, "run-1"), emptyList()))
         val clusters = target.unreachedClusters()
         assertEquals(1, clusters.size)
         val cluster = clusters.single()
@@ -2532,6 +2540,7 @@ class OtherlodeTestCollectorTest {
             ),
         )
 
+        exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("svc", null, "i-1", null, "run-1"), emptyList()))
         assertTrue(target.unreachedClusters().isEmpty())
     }
 
@@ -2692,6 +2701,7 @@ class OtherlodeTestCollectorTest {
             ),
         )
 
+        exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("svc", null, "i-1", null, "run-1"), emptyList()))
         assertEquals(listOf("com.acme.Deflected"), target.unreportedClasses())
         assertEquals(listOf("com.acme.Dead"), target.neverLoaded())
     }
@@ -2804,6 +2814,7 @@ class OtherlodeTestCollectorTest {
             ),
         )
 
+        exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("svc", null, "i-1", null, "run-1"), emptyList()))
         assertEquals(listOf("price"), target.neverHit().map { it.methodName })
         val unread = target.neverHitUnreadShapes().single()
         assertEquals(listOf<Any?>("hashCode", RefUnreadShape.CASE_CLASS), listOf(unread.methodName, unread.unreadShape))
@@ -3066,6 +3077,7 @@ class OtherlodeTestCollectorTest {
             ),
         )
 
+        exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("svc", null, "i-1", null, "run-1"), emptyList()))
         assertEquals(listOf("com.acme.Dead", "com.acme.Item"), target.neverLoaded())
     }
 
@@ -3930,6 +3942,8 @@ class OtherlodeTestCollectorTest {
             ),
         )
 
+        exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("svc", null, "i-1", null, "run-1"), emptyList()))
+        exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("svc", null, "i-2", null, "run-2"), emptyList()))
         assertEquals(null, target.neverHit().single().outsideCaller)
     }
 
@@ -3956,6 +3970,7 @@ class OtherlodeTestCollectorTest {
             ),
         )
 
+        exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("svc", null, "i-1", null, "run-1"), emptyList()))
         assertEquals(listOf("com.acme.Broken", "com.acme.Zed"), target.failedToLoad())
         assertEquals(listOf("com.acme.Dead"), target.neverLoaded())
     }
@@ -3985,6 +4000,8 @@ class OtherlodeTestCollectorTest {
             ),
         )
 
+        exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("svc", null, "i-1", null, "run-1"), emptyList()))
+        exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("svc", null, "i-2", null, "run-2"), emptyList()))
         assertEquals(emptyList(), target.failedToLoad())
         assertEquals(emptyList(), target.neverLoaded())
     }

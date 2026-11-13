@@ -66,7 +66,7 @@ class CheckoutTest {
 		OrderService().checkout(order)
 
 		collector.awaitProbe("com.acme.OrderService", "checkout", Duration.ofSeconds(10))
-		collector.awaitSettled(Duration.ofSeconds(10))
+		collector.awaitSettled(Duration.ofSeconds(30))
 
 		assertTrue(collector.wasHit("com.acme.OrderService", "checkout"))
 		assertFalse(collector.wasHit("com.acme.OrderService", "applyLegacyPromo"))
@@ -93,7 +93,7 @@ The agent reports on a timer, so a hit that just happened has not reached the co
 
 Pick the wait by what you want to know:
 
-- `awaitSettled(timeout)` waits until every instance that has reported has sent two complete flushes since the call, or has exited with a complete shutdown flush. The first of the two can have read its counts before your last action, and the second carries them. Use it before asking about hit counts. An instance that stops without a complete shutdown flush, such as a child JVM you kill with `kill -9`, never settles, and the timeout message names it.
+- `awaitSettled(timeout)` waits until every instance that has reported has sent two complete flushes since the call, or has exited with a complete shutdown flush. It also waits while an instance says it is starting or its counts are pending. The agent says `starting` for up to ten flush intervals while the application loads its classes, so the examples on this page use `flushIntervalSeconds=1` and a 30-second timeout. The first of the two can have read its counts before your last action, and the second carries them. Use it before asking about hit counts. An instance that stops without a complete shutdown flush, such as a child JVM you kill with `kill -9`, never settles, and the timeout message names it.
 - `awaitProbe(className, methodName, timeout)` waits until the collector has seen the method at all. Use it before the first query about a class that loads late.
 - `awaitEndpoint(verb, route, timeout)` does the same for an endpoint.
 - `awaitNextFlush(timeout)` waits for one report. It is enough to know the agent is alive.
@@ -104,7 +104,7 @@ Class names are dotted binary names, such as `com.acme.Outer$Inner` for a nested
 
 Asking about a method the collector has no record of throws `UnknownProbeException`, not `false`. The message says why: the class could not be instrumented, loaded where no transformer saw it, was declared by the static baseline but never loaded, has no method by that name, or was never mentioned. A route that no manifest mentioned throws `UnknownEndpointException` in the same way. So a query never reads "the agent never saw it" as "it never ran".
 
-A query that rests on a zero count can also refuse. A class the JVM's verifier rejects fires no probe. While an instance's agent could not install its hook on `VerifyError`, or counted a `VerifyError` message it could not read, a zero count from that instance proves nothing. Queries that rest on one, such as `neverHit`, `neverCalled`, `alwaysSupplied`, `unreachedClusters`, `neverInitialized` and `neverInstantiated`, then throw `IllegalStateException` and name the instance and the reason. Queries that read no zero count, such as `wasHit` and `hitCount`, keep answering. [Queries that refuse](testkit-api#queries-that-refuse) lists both groups.
+A query that rests on a zero count can also refuse. A class the JVM's verifier rejects fires no probe. While an instance's agent could not install its hook on `VerifyError`, or counted a `VerifyError` message it could not read, a zero count from that instance proves nothing. Queries that rest on one, such as `neverHit`, `neverCalled`, `alwaysSupplied`, `unreachedClusters`, `neverInitialized` and `neverInstantiated`, then throw `IllegalStateException` and name the instance and the reason. An instance that has pending counts or has sent no delta batch makes them refuse the same way, even after its JVM has exited. An instance that is still starting makes them refuse until it ends or goes silent for three flush intervals. Call `awaitSettled` first. `neverLoaded`, and a dependency query that would mark a site never loaded, refuse in the same cases while the instance is live, since it may still load the class. `unloadedDependencies` refuses in the same cases for an instance that listed the dependency. Queries that read no zero count, such as `wasHit` and `hitCount`, keep answering. [Queries that refuse](testkit-api#queries-that-refuse) lists both groups.
 
 This Kotlin test checks a method, an endpoint and the list of never-hit methods:
 
@@ -113,7 +113,7 @@ This Kotlin test checks a method, an endpoint and the list of never-hit methods:
 class OrderFlowTest {
 	@Test
 	fun `the order flow reaches checkout and no more`(collector: OtherlodeTestCollector) {
-		val timeout = Duration.ofSeconds(10)
+		val timeout = Duration.ofSeconds(30)
 
 		client.post("/checkout", order)
 
@@ -146,7 +146,7 @@ class OrderFlowTest {
 		try (OtherlodeTestCollector collector = OtherlodeTestCollector.start()) {
 			// Launch the app with
 			// -javaagent:...=includePackages=com.acme,flushIntervalSeconds=1,exportUrl=<collector.getExportUrl()>
-			Duration timeout = Duration.ofSeconds(10);
+			Duration timeout = Duration.ofSeconds(30);
 
 			collector.awaitProbe("com.acme.OrderService", "checkout", timeout);
 			collector.awaitSettled(timeout);
@@ -188,7 +188,7 @@ OtherlodeTestCollector.start().use { collector ->
 
 	collector.awaitProbe("com.acme.OrderService", "checkout", Duration.ofSeconds(30))
 	// Drive the child, then:
-	collector.awaitSettled(Duration.ofSeconds(10))
+	collector.awaitSettled(Duration.ofSeconds(30))
 	assertTrue(collector.wasHit("com.acme.OrderService", "checkout"))
 	child.destroy()
 }

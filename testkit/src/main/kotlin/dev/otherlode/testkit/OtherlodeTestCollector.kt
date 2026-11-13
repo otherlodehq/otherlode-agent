@@ -18,6 +18,7 @@ import dev.otherlode.export.UnreportedClass
 import dev.otherlode.registry.RouteTemplateNormalizer
 import java.net.InetSocketAddress
 import java.time.Duration
+import java.time.Instant
 import java.util.Optional
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
@@ -293,6 +294,15 @@ public class OtherlodeTestCollector internal constructor(
 
     private val instancesWithCompleteFinalFlush: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
+    private val instancesWithDeltaBatch: MutableSet<String> = ConcurrentHashMap.newKeySet()
+    private val startingByInstance = ConcurrentHashMap<String, Boolean>()
+    private val countsPendingByInstance = ConcurrentHashMap<String, Boolean>()
+    private val newestPayloadSequenceByInstance = ConcurrentHashMap<String, Long>()
+    private val lastSeenByInstance = ConcurrentHashMap<String, Instant>()
+    private val flushIntervalSecondsByInstance = ConcurrentHashMap<String, Int>()
+
+    internal var clock: () -> Instant = { Instant.now() }
+
     private val probeRefComparator: Comparator<ProbeRef> =
         compareBy({ it.className }, { it.methodName }, { it.line }, {
             it.branchIndex
@@ -323,8 +333,6 @@ public class OtherlodeTestCollector internal constructor(
     private val scans = ConcurrentHashMap<ScanKey, ScanProgress>()
     private val completedScans: MutableSet<ScanKey> = ConcurrentHashMap.newKeySet()
     private val consultedDeclaredNames: MutableSet<String> = ConcurrentHashMap.newKeySet()
-
-    private val consultedAllInlineOrGeneratedNames: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     private val endpointRefsByIdentity = ConcurrentHashMap<EndpointIdentity, EndpointRef>()
 
@@ -387,9 +395,11 @@ public class OtherlodeTestCollector internal constructor(
     /**
      * Blocks until each instance heard from, including one first heard from after this call began,
      * has sent two complete flushes since the call began or has ended with a complete final flush.
-     * Once an instance has sent a final flush, it settles only if that final flush is complete. The
-     * collector must have heard from at least one instance. A complete flush is a delta batch that carries
-     * `flush_complete`. A batch retried under the same nonzero payload sequence counts once.
+     * Once an instance has sent a final flush, it settles only if that final flush is complete. A live
+     * instance whose newest payload says it is starting does not settle, and neither does an instance
+     * whose newest payload says its counts are pending. The collector must have heard from at least one
+     * instance. A complete flush is a delta batch that carries `flush_complete`. A batch retried under
+     * the same nonzero payload sequence counts once.
      *
      * Throws [TimeoutException] if [timeout] elapses first, naming each instance that has not
      * settled and why.
@@ -406,9 +416,17 @@ public class OtherlodeTestCollector internal constructor(
     private fun instancesNotSettled(completeFlushesAtStart: Map<String, Int>): Map<String, String> {
         val reasons = sortedMapOf<String, String>()
         for (instanceId in instanceIds) {
+            if (isCountsPending(instanceId)) {
+                reasons[instanceId] = "its counts are pending"
+                continue
+            }
             if (instanceId in instancesWithCompleteFinalFlush) continue
             if (instanceId in instancesThatEndedCleanly) {
                 reasons[instanceId] = "ended with a final flush that was not complete"
+                continue
+            }
+            if (isStarting(instanceId)) {
+                reasons[instanceId] = "is still starting"
                 continue
             }
             val sinceStart = (completeFlushCounts[instanceId]?.get() ?: 0) - (completeFlushesAtStart[instanceId] ?: 0)
@@ -417,6 +435,66 @@ public class OtherlodeTestCollector internal constructor(
             }
         }
         return reasons
+    }
+
+    private fun isLive(instanceId: String): Boolean {
+        if (instanceId in instancesThatEndedCleanly) return false
+        val lastSeen = lastSeenByInstance[instanceId] ?: return true
+        val interval = flushIntervalSecondsByInstance[instanceId] ?: 0
+        val silentFor = if (interval == 0) Duration.ofHours(1) else Duration.ofSeconds(LIVE_FLUSH_INTERVALS * interval.toLong())
+        return lastSeen.plus(silentFor).isAfter(clock())
+    }
+
+    private fun isStarting(instanceId: String): Boolean = startingByInstance[instanceId] == true && isLive(instanceId)
+
+    private fun isCountsPending(instanceId: String): Boolean = countsPendingByInstance[instanceId] == true
+
+    private fun recordNewestPayload(
+        instanceId: String,
+        payloadSequence: Long,
+        starting: Boolean,
+        countsPendingSince: Long,
+    ) {
+        val newest = newestPayloadSequenceByInstance[instanceId] ?: 0L
+        if (payloadSequence <= newest) return
+        newestPayloadSequenceByInstance[instanceId] = payloadSequence
+        startingByInstance[instanceId] = starting
+        countsPendingByInstance[instanceId] = countsPendingSince != 0L
+    }
+
+    private fun holdReasons(
+        instanceId: String,
+        evenIfNotLive: Boolean,
+    ): List<String> {
+        val applies = evenIfNotLive || isLive(instanceId)
+        return listOfNotNull(
+            "no delta batch has arrived".takeIf { applies && instanceId !in instancesWithDeltaBatch },
+            "its counts are pending".takeIf { applies && isCountsPending(instanceId) },
+            "its payloads say it is still starting".takeIf { isStarting(instanceId) },
+        )
+    }
+
+    private fun scansGivingEvidence(): Map<String, ScanProgress> =
+        latestCompleteScans().filter { (instanceId, _) ->
+            isLive(instanceId) || (instanceId in instancesWithDeltaBatch && startingByInstance[instanceId] != true)
+        }
+
+    private fun declaredClassesGivingEvidence(): Map<String, DeclaredClassInfo> = mergeScans(scansGivingEvidence().toSortedMap().values)
+
+    private fun mergeScans(scans: Collection<ScanProgress>): Map<String, DeclaredClassInfo> {
+        val byClass = sortedMapOf<String, MutableList<DeclaredClassInfo>>()
+        for (scan in scans) {
+            for ((className, info) in scan.declaredClasses) byClass.getOrPut(className) { mutableListOf() } += info
+        }
+        return byClass.mapValues { (_, infos) ->
+            DeclaredClassInfo(
+                methods = infos.flatMap { it.methods },
+                superClassName = infos.firstNotNullOfOrNull { it.superClassName },
+                interfaceNames = infos.flatMap { it.interfaceNames }.distinct(),
+                kotlinKind = infos.map { it.kotlinKind }.firstOrNull { it != KotlinKind.NONE } ?: KotlinKind.NONE,
+                classReferences = infos.flatMap { it.classReferences }.distinct(),
+            )
+        }
     }
 
     private fun settledTimeoutMessage(
@@ -1293,16 +1371,22 @@ public class OtherlodeTestCollector internal constructor(
 
     /**
      * Class names a complete static baseline declared and no manifest named as probed, skipped or
-     * unreported, sorted. Leaves out a class that declares methods, each of them inline, generated
-     * or unread, and a class in [failedToLoad]. Throws [IllegalStateException] if no static baseline
-     * scan has completed.
+     * unreported, sorted. Lists a class only when a complete scan declares a method of it that is not
+     * inline, generated or unread. Leaves out a class in [failedToLoad] and the scan of an instance that
+     * is not live and either sent no delta batch or ended while starting. Throws [IllegalStateException]
+     * if no static baseline scan has completed, or while a live instance is starting, has sent no delta
+     * batch or has pending counts.
      */
     public fun neverLoaded(): List<String> {
         return checked {
             check(completedScans.isNotEmpty()) { "no complete static baseline scan has been received yet" }
-            return consultedDeclaredNames
-                .filter { it !in dynamicallyKnownClassNames && it !in consultedAllInlineOrGeneratedNames && it !in failedClassNames }
-                .sorted()
+            checkNoLiveInstanceBehind()
+            return declaredClassesGivingEvidence()
+                .filter { (className, declared) ->
+                    className !in dynamicallyKnownClassNames && className !in failedClassNames &&
+                        declared.methods.any { !it.inline && !it.isLookedThrough() }
+                }.keys
+                .toList()
         }
     }
 
@@ -1786,7 +1870,7 @@ public class OtherlodeTestCollector internal constructor(
                     outsideCaller = location.outsideCaller,
                 )
         }
-        for ((className, declared) in consultedDeclaredClasses) {
+        for ((className, declared) in declaredClassesGivingEvidence()) {
             if (className in dynamicallyKnownClassNames) continue
             val unseen = declared.methods.filter { !it.inline && !it.isLookedThrough() }
             for ((method, overloads) in unseen.groupBy { it.methodName to it.methodDescriptor }) {
@@ -2050,7 +2134,10 @@ public class OtherlodeTestCollector internal constructor(
      * identity it is. When no single one is, it throws [IllegalStateException] naming each candidate's
      * [DependencyStatus.identityKey]. Throws [UnknownDependencyException] if no manifest listed the
      * dependency. Throws [IllegalStateException] when the status rests on a zero count and an
-     * instance's zero counts are not evidence; see [neverInitialized].
+     * instance's zero counts are not evidence; see [neverInitialized]. It throws when the status is
+     * [DependencyUsage.UNLOADED] while an instance that listed the dependency has sent no delta batch,
+     * has pending counts, or is live and starting. Whatever the status, it throws when a site would read
+     * never loaded while a live instance is starting, has sent no delta batch or has pending counts.
      */
     public fun dependency(
         groupId: String?,
@@ -2068,6 +2155,8 @@ public class OtherlodeTestCollector internal constructor(
                             candidates.joinToString(", ") { it.identityKey },
                     )
             if (finding.status in STATUSES_RESTING_ON_ZERO_COUNTS && finding.sites.isNotEmpty()) checkZeroCountsAreEvidence()
+            if (finding.status == DependencyUsage.UNLOADED) checkListingInstancesSettled(finding.listingInstances)
+            checkNeverLoadedSitesMayBeClaimed(finding.sites)
             return toDependencyStatus(finding)
         }
     }
@@ -2115,7 +2204,10 @@ public class OtherlodeTestCollector internal constructor(
      * nor a static baseline.
      *
      * Throws [IllegalStateException] while no instance has been heard from, and until each instance
-     * heard from has sent `dependencies_listed`. Call [awaitDependenciesListed] first.
+     * heard from has sent `dependencies_listed`. Call [awaitDependenciesListed] first. When a dependency
+     * would be listed, it also throws while an instance that listed it has sent no delta batch, has
+     * pending counts, or is live and starting, and as [dependency] does for a never-loaded site; call
+     * [awaitSettled] first.
      */
     public fun unloadedDependencies(): List<DependencyStatus> =
         checked { dependenciesWithStatus(DependencyUsage.UNLOADED, needsSplit = false) }
@@ -2124,9 +2216,10 @@ public class OtherlodeTestCollector internal constructor(
      * Each loaded dependency with status [DependencyUsage.UNREFERENCED], sorted by
      * [DependencyStatus.identityKey]. This is an observation, not a verdict that the jar can go.
      *
-     * Throws [IllegalStateException] as [unloadedDependencies] does. After that check, it throws
-     * when no instance sent `references_recorded`, or when a dependency reads
-     * [DependencyUsage.NO_LIVE_REFERENCE] or [DependencyUsage.LOADED].
+     * Throws [IllegalStateException] while no instance has been heard from, and until each instance
+     * heard from has sent `dependencies_listed`. After that check, it throws when no instance sent
+     * `references_recorded`, or when a dependency reads [DependencyUsage.NO_LIVE_REFERENCE] or
+     * [DependencyUsage.LOADED].
      */
     public fun unreferencedDependencies(): List<DependencyStatus> =
         checked { dependenciesWithStatus(DependencyUsage.UNREFERENCED, needsSplit = true) }
@@ -2135,8 +2228,9 @@ public class OtherlodeTestCollector internal constructor(
      * Each dependency with status [DependencyUsage.UNREACHED]: referenced, but from no live site,
      * such as a never-hit method or a never-loaded class. Sorted by [DependencyStatus.identityKey],
      * each with those sites in [DependencyStatus.sites]. Throws [IllegalStateException] as
-     * [unreferencedDependencies] does, and while an instance's zero counts are not evidence; see
-     * [neverInitialized].
+     * [unreferencedDependencies] does, while an instance's zero counts are not evidence (see
+     * [neverInitialized]), and when a site would read never loaded while a live instance is starting,
+     * has sent no delta batch or has pending counts.
      */
     public fun unreachedDependencies(): List<DependencyStatus> =
         checked {
@@ -2168,8 +2262,9 @@ public class OtherlodeTestCollector internal constructor(
 
     /**
      * Each referenced class no loader could find, sorted by class name, with the sites that
-     * reference it. Throws [IllegalStateException] as [unloadedDependencies] does. After that
-     * check, it throws when no instance sent `references_recorded`.
+     * reference it. Throws [IllegalStateException] until each instance heard from has sent
+     * `dependencies_listed`, when no instance sent `references_recorded`, and when a site would read
+     * never loaded while a live instance is starting, has sent no delta batch or has pending counts.
      */
     public fun absentReferences(): List<AbsentReference> {
         return checked {
@@ -2178,6 +2273,7 @@ public class OtherlodeTestCollector internal constructor(
             check(!report.referencesUnavailable) {
                 "no instance sent references_recorded, so absent references are unknown: run the agent with includePackages set"
             }
+            checkNeverLoadedSitesMayBeClaimed(report.absentReferences.flatMap { it.sites })
             return report.absentReferences
         }
     }
@@ -2212,10 +2308,10 @@ public class OtherlodeTestCollector internal constructor(
                     "baseline (staticBaselineEnabled=true) from every instance that lists the dependency; $which"
             }
         }
-        return report.findings
-            .filter { it.status == status }
-            .sortedBy { it.identityKey }
-            .map(::toDependencyStatus)
+        val matching = report.findings.filter { it.status == status }.sortedBy { it.identityKey }
+        if (status == DependencyUsage.UNLOADED) checkListingInstancesSettled(matching.flatMapTo(sortedSetOf()) { it.listingInstances })
+        checkNeverLoadedSitesMayBeClaimed(matching.flatMap { it.sites })
+        return matching.map(::toDependencyStatus)
     }
 
     private fun instancesWaitingForDependencyListing(): List<String> = (instanceIds - instancesWithDependenciesListed).sorted()
@@ -2264,7 +2360,7 @@ public class OtherlodeTestCollector internal constructor(
         )
 
     private fun dependencyViews(): List<InstanceDependencyView> {
-        val latestScans = latestCompleteScans()
+        val latestScans = scansGivingEvidence()
         return instanceIds.sorted().map { instanceId ->
             val probes = probesByKey.filterKeys { it.serviceInstanceId == instanceId }
             val methodReferences =
@@ -2361,6 +2457,9 @@ public class OtherlodeTestCollector internal constructor(
                     loadedClassesTotals.merge(InstanceKey(instanceId, delta.dependencyId), delta.loadedClassesTotal, ::maxOf)
                 }
                 if (batch.finalFlush) instancesThatEndedCleanly += instanceId
+                instancesWithDeltaBatch += instanceId
+                lastSeenByInstance[instanceId] = clock()
+                recordNewestPayload(instanceId, batch.payloadSequence, batch.starting, batch.countsPendingSince)
                 instanceIds += instanceId
                 if (batch.flushComplete) recordCompleteFlush(instanceId, batch.payloadSequence, batch.finalFlush)
                 deltaBatchSeq.incrementAndGet()
@@ -2383,6 +2482,7 @@ public class OtherlodeTestCollector internal constructor(
         val applied =
             applying(exchange, "manifest") {
                 val instanceId = manifest.resource.serviceInstanceId
+                recordNewestPayload(instanceId, manifest.payloadSequence, manifest.starting, manifest.countsPendingSince)
                 val classNamesByClassId = mutableMapOf<Int, String>()
                 for (location in manifest.probes) {
                     val key = ProbeKey(instanceId, location.classId, location.probeIndex)
@@ -2597,31 +2697,11 @@ public class OtherlodeTestCollector internal constructor(
             .mapValues { (_, keys) -> scans.getValue(keys.maxBy { it.scannedAt }) }
 
     private fun refreshBaselines() {
-        val byClass = sortedMapOf<String, MutableList<DeclaredClassInfo>>()
-        for ((_, scan) in latestCompleteScans().toSortedMap()) {
-            for ((className, info) in scan.declaredClasses) byClass.getOrPut(className) { mutableListOf() } += info
-        }
-        val merged =
-            byClass.mapValues { (_, infos) ->
-                DeclaredClassInfo(
-                    methods = infos.flatMap { it.methods },
-                    superClassName = infos.firstNotNullOfOrNull { it.superClassName },
-                    interfaceNames = infos.flatMap { it.interfaceNames }.distinct(),
-                    kotlinKind = infos.map { it.kotlinKind }.firstOrNull { it != KotlinKind.NONE } ?: KotlinKind.NONE,
-                    classReferences = infos.flatMap { it.classReferences }.distinct(),
-                )
-            }
+        val merged = mergeScans(latestCompleteScans().toSortedMap().values)
         consultedDeclaredClasses.clear()
         consultedDeclaredClasses.putAll(merged)
         consultedDeclaredNames.clear()
         consultedDeclaredNames += merged.keys
-        consultedAllInlineOrGeneratedNames.clear()
-        consultedAllInlineOrGeneratedNames +=
-            merged
-                .filterValues { declared ->
-                    declared.methods.isNotEmpty() &&
-                        declared.methods.all { it.inline || it.generatedBy != WireGeneratedBy.NONE || it.unreadShape != WireUnreadShape.NONE }
-                }.keys
     }
 
     private fun handleClassListing(exchange: HttpExchange) {
@@ -2646,11 +2726,40 @@ public class OtherlodeTestCollector internal constructor(
         }
     }
 
+    private fun checkNoLiveInstanceBehind() {
+        val reasons =
+            instanceIds.sorted().mapNotNull { instance ->
+                val why = holdReasons(instance, evenIfNotLive = false)
+                if (why.isEmpty()) null else "$instance: ${why.joinToString("; ")}"
+            }
+        check(reasons.isEmpty()) {
+            "this query rests on what every live instance has loaded, and a live instance that is starting, has sent no " +
+                "delta batch or has pending counts may still load classes:\n" + reasons.joinToString("\n") { "  $it" }
+        }
+    }
+
+    private fun checkNeverLoadedSitesMayBeClaimed(sites: List<DependencyReferenceSite>) {
+        if (sites.any { it.neverLoaded }) checkNoLiveInstanceBehind()
+    }
+
+    private fun checkListingInstancesSettled(listingInstances: Set<String>) {
+        val reasons =
+            listingInstances.sorted().mapNotNull { instance ->
+                val why = holdReasons(instance, evenIfNotLive = true)
+                if (why.isEmpty()) null else "$instance: ${why.joinToString("; ")}"
+            }
+        check(reasons.isEmpty()) {
+            "a dependency with no class loaded rests on the loaded-class counts of every instance that listed it, and " +
+                "these instances have not reported them:\n" + reasons.joinToString("\n") { "  $it" }
+        }
+    }
+
     private fun checkZeroCountsAreEvidence() {
         val reasons =
-            (unwatchedInstances + unplacedVerificationFailures.keys).sorted().mapNotNull { instance ->
+            (unwatchedInstances + unplacedVerificationFailures.keys + instanceIds).sorted().mapNotNull { instance ->
                 val why =
-                    listOfNotNull(
+                    holdReasons(instance, evenIfNotLive = true) +
+                        listOfNotNull(
                         "the agent's hook on VerifyError was not installed".takeIf { instance in unwatchedInstances },
                         unplacedVerificationFailures[instance]?.takeIf { it > 0L }?.let {
                             if (it ==
@@ -2665,8 +2774,9 @@ public class OtherlodeTestCollector internal constructor(
                 if (why.isEmpty()) null else "$instance: ${why.joinToString("; ")}"
             }
         check(reasons.isEmpty()) {
-            "this query rests on zero counts, and a class the verifier rejects fires no probe, so the zero counts of these " +
-                "instances are not evidence that code never ran:\n" + reasons.joinToString("\n") { "  $it" }
+            "this query rests on zero counts, and the zero counts of these instances are not evidence that code never ran " +
+                "(a class the verifier rejects fires no probe, and an instance that is starting, has sent no delta batch or has " +
+                "pending counts has not reported all its counts):\n" + reasons.joinToString("\n") { "  $it" }
         }
     }
 
@@ -2709,6 +2819,9 @@ public class OtherlodeTestCollector internal constructor(
         val accepted = runIdByInstance.putIfAbsent(instanceId, resource.runId)
         if (accepted == null || accepted == resource.runId) {
             agentVersionByInstance[instanceId] = resource.agentVersion
+            lastSeenByInstance.putIfAbsent(instanceId, clock())
+            val interval = resource.flushIntervalSeconds.takeIf { it in 1..MAX_FLUSH_INTERVAL_SECONDS } ?: 0
+            flushIntervalSecondsByInstance.merge(instanceId, interval) { kept, offered -> if (kept == 0) offered else kept }
             instanceRanks.computeIfAbsent(instanceId) { instanceRankSeq.incrementAndGet() }
             return null
         }
@@ -2860,6 +2973,10 @@ public class OtherlodeTestCollector internal constructor(
         private const val CLASS_INIT = "<clinit>"
 
         private const val CONSTRUCTOR = "<init>"
+
+        private const val LIVE_FLUSH_INTERVALS = 3L
+
+        private const val MAX_FLUSH_INTERVAL_SECONDS = 86_400
 
         private val STATUSES_RESTING_ON_ZERO_COUNTS =
             setOf(

@@ -74,6 +74,7 @@ class SkippedClassTest {
                 unreportedClasses = unreported.map { UnreportedClass(it, 1L) },
             ),
         )
+        exporter.exportDeltaBatch(DeltaBatch(resource(instance), emptyList()))
     }
 
     private fun hits(

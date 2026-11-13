@@ -47,7 +47,7 @@ A wait blocks the calling thread until its condition holds. Each takes a `java.t
 | Wait | Returns when |
 |---|---|
 | `awaitNextFlush(timeout)` | A delta batch has arrived since the call began. An empty batch counts, because the agent sends one on every flush as a liveness signal. |
-| `awaitSettled(timeout)` | Every instance heard from has completed two flushes since the call began, or has ended with a complete shutdown flush. A flush is complete when its last delta batch carries `flush_complete`. The first complete flush can have read its counts before your last action, so the second one holds every hit made before the call. With no instance heard from yet, it keeps waiting. An instance that went silent, or whose shutdown flush was not complete, never settles, and the timeout names it. A probe's manifest entry can still arrive after its count, so wait for it with `awaitProbe`. |
+| `awaitSettled(timeout)` | Every instance heard from has completed two flushes since the call began, or has ended with a complete shutdown flush. A flush is complete when its last delta batch carries `flush_complete`. The first complete flush can have read its counts before your last action, so the second one holds every hit made before the call. An instance whose latest payload says `starting` has not settled, unless it has ended with a complete shutdown flush. The agent keeps marking its payloads `starting` until the application has loaded its classes, so give the timeout room for that. An instance whose latest payload says its counts are pending has not settled either, even after it ended. At the timeout the message names the instance and why it has not settled. With no instance heard from yet, it keeps waiting. An instance that went silent, or whose shutdown flush was not complete, never settles, and the timeout names it. A probe's manifest entry can still arrive after its count, so wait for it with `awaitProbe`. |
 | `awaitProbe(className, methodName, timeout)` | Some manifest has named a probe in that class for that method. Use it when the test needs the manifest entry itself. |
 | `awaitEndpoint(verb, routeTemplate, timeout)` | Some manifest has named that endpoint. The wait normalises the verb and the route template as [endpoint queries](#endpoint-queries) describes. |
 | `awaitDependency(groupId, artifactId, timeout)` | Some manifest has listed the dependency. After it returns, `dependency` does not throw `UnknownDependencyException`. |
@@ -77,7 +77,7 @@ A finding method takes no arguments and returns a list. It judges the merged hit
 | `neverHitUnreadShapes(): List<ProbeRef>` | The probes `neverHit` leaves out because their code has the outline of compiler output the agent cannot read, each with its `unreadShape` family. |
 | `neverInitialized(): List<ClassFindingRef>` | Classes some instance loaded whose static initialiser ran in no instance. The query never lists a class with no static initialiser. |
 | `neverInstantiated(): List<ClassFindingRef>` | Classes some instance loaded, that `neverInitialized()` does not list, and none of whose constructors or instance methods ran, generated and inline instance methods included. A listed class has a constructor and an instance method that are neither inline, generated nor an unread shape. The query never lists a class with only static methods, or an interface. |
-| `neverLoaded(): List<String>` | Class names a complete static baseline declared that no instance ever loaded. Leaves out a class in `failedToLoad()` and a class whose every method is inline, generated or an unread shape. Throws `IllegalStateException` until a complete baseline has arrived, which needs the agent option `staticBaselineEnabled=true`. A baseline is complete when the collector holds every chunk of one scan. A chunk whose chunk count differs from the one its scan began with does not count, and neither does a chunk it already holds. For each instance the collector reads its latest complete scan, and it joins the classes, methods and call edges of every instance's latest scan, so the answer does not depend on which instance's scan arrived first. |
+| `neverLoaded(): List<String>` | Class names a complete static baseline declared that no instance ever loaded. Lists a class only when at least one complete scan declares a method of it that is not inline, generated or an unread shape. Leaves out a class in `failedToLoad()`. Leaves out the scan of an instance that has stopped and either sent no delta batch or stopped while its latest payload said `starting`. Throws `IllegalStateException` until a complete baseline has arrived, which needs the agent option `staticBaselineEnabled=true`, and while a live instance says it is starting, has sent no delta batch or has pending counts. A baseline is complete when the collector holds every chunk of one scan. A chunk whose chunk count differs from the one its scan began with does not count, and neither does a chunk it already holds. For each instance the collector reads its latest complete scan, and it joins the classes, methods and call edges of every instance's latest scan, so the answer does not depend on which instance's scan arrived first. |
 | `failedToLoad(): List<String>` | Class names the agent wove that the JVM never defined in any instance. Each is a deployment problem to fix and never dead code. |
 | `failedToInitialize(): List<String>` | Class names that failed to initialise, sorted. See [Classes that failed to initialise](#classes-that-failed-to-initialise). Each is a deployment problem to fix and never dead code. |
 | `skippedClasses(): List<SkippedClass>` | Classes the include rules matched that the agent could not instrument, each with a reason. Sorted by class name. |
@@ -123,20 +123,32 @@ All of these queries also leave out a class whose static initialiser is still ru
 
 #### Queries that refuse
 
-A class the verifier rejects fires no probe, so while the agent could not see every rejection, a zero count says nothing. `neverHit`, `neverHitRoutineOutcomes`, `neverHitUnreadShapes`, `neverInitialized`, `neverInstantiated`, `neverCalled`, `alwaysSupplied`, `unreachedClusters`, `unreachedDependencies`, `failedToLoadDependencies` and `failedToInitializeDependencies` throw `IllegalStateException` while any instance heard from is in either of these states. So does `dependency` when the status it would return is `UNREACHED`, `NO_LIVE_REFERENCE`, `FAILED_TO_LOAD` or `FAILED_TO_INITIALIZE` and the dependency has at least one reference site:
+A zero count says nothing about an instance that is still starting or has sent no delta batch yet, and a class the verifier rejects fires no probe, so while the agent could not see every rejection, a zero count says nothing either. `neverHit`, `neverHitRoutineOutcomes`, `neverHitUnreadShapes`, `neverInitialized`, `neverInstantiated`, `neverCalled`, `alwaysSupplied`, `unreachedClusters`, `unreachedDependencies`, `failedToLoadDependencies` and `failedToInitializeDependencies` throw `IllegalStateException` while any instance heard from is in one of these states. So does `dependency` when the status it would return is `UNREACHED`, `NO_LIVE_REFERENCE`, `FAILED_TO_LOAD` or `FAILED_TO_INITIALIZE` and the dependency has at least one reference site:
 
 - The instance's agent could not install its hook on `VerifyError`. That agent logged a `WARNING` that starts `otherlode: classes the JVM's verifier rejects will not be named on this JVM`.
 - The instance counted `VerifyError` messages in no format the agent reads.
+- The instance's latest payload says `starting`, and the instance is live. An instance is live until it ends with a final flush or goes silent for three of its flush intervals, or for an hour when it reported no flush interval. Call `awaitSettled` first.
+- The instance's latest payload says its counts are pending, even after its JVM has exited.
+- The instance has sent a manifest or a baseline but no delta batch, even after its JVM has exited.
 
 The message names each such instance and why:
 
 ```text
-this query rests on zero counts, and a class the verifier rejects fires no probe, so the zero counts of these instances are not evidence that code never ran:
+this query rests on zero counts, and the zero counts of these instances are not evidence that code never ran (a class the verifier rejects fires no probe, and an instance that is starting, has sent no delta batch or has pending counts has not reported all its counts):
+  i-1: its payloads say it is still starting
   i-2: the agent's hook on VerifyError was not installed
   i-3: 2 VerifyError messages in no read format
+  i-4: no delta batch has arrived
+  i-5: its counts are pending
 ```
 
-A query that reads no zero count keeps answering: `wasHit`, `hitCount`, `omissionCount`, `failedToLoad`, `failedToInitialize`, `neverLoaded`, `skippedClasses`, `neverSupplied`, `wasCalled`, `callCount`, `endpoints`, `disabledEndpointModules`, `unloadedDependencies`, `unreferencedDependencies`, `absentReferences`, and `dependency` when it does not refuse as above.
+A query that reads no zero count keeps answering: `wasHit`, `hitCount`, `omissionCount`, `failedToLoad`, `failedToInitialize`, `skippedClasses`, `neverSupplied`, `wasCalled`, `callCount`, `endpoints`, `disabledEndpointModules`, `unreferencedDependencies`, and `dependency` and `absentReferences` when they do not refuse as above or below.
+
+`neverLoaded`, and a dependency query whose answer would hold a site with `neverLoaded` set, claim that a class never loaded. They throw while a live instance is starting, has sent no delta batch or has pending counts, since that instance may still load the class.
+
+`unloadedDependencies`, and `dependency` when it would return `UNLOADED`, claim that no class of a dependency loaded. They throw while an instance that listed the dependency has sent no delta batch or has pending counts, even after its JVM has exited, or is starting and live. `unloadedDependencies` throws only when it would list a dependency.
+
+The message names each such instance and why.
 
 ### Endpoint queries
 
@@ -159,7 +171,7 @@ Dependency queries apply the dependency rules within the one test JVM. See [depe
 | Query | Returns |
 |---|---|
 | `dependency(groupId: String?, artifactId: String): DependencyStatus` | The status of one dependency, merged across instances. A null or empty `groupId` matches a dependency identified by its file name, which has no group. A shaded jar matches any identity it carries. |
-| `unloadedDependencies(): List<DependencyStatus>` | Dependencies listed from a startup classpath with no class loaded from them. |
+| `unloadedDependencies(): List<DependencyStatus>` | Dependencies listed from a startup classpath with no class loaded from them. Throws `IllegalStateException` instead of listing one while an instance that listed it has sent no delta batch, has pending counts, or is live and starting, or, when a site of one would read never loaded, while a live instance is starting, has sent no delta batch or has pending counts. |
 | `unreferencedDependencies(): List<DependencyStatus>` | Loaded dependencies that nothing in your code references. |
 | `unreachedDependencies(): List<DependencyStatus>` | Dependencies referenced only from methods never hit or classes never loaded. |
 | `failedToLoadDependencies(): List<DependencyStatus>` | Loaded dependencies with no live reference that a class which failed to load references. The status asks for a review and does not say the dependency can go. |
@@ -260,8 +272,10 @@ The message names the dependency and every dependency the collector knows. When 
 |---|---|
 | The collector rejected a payload. | Every query and wait. |
 | The collector is closed and the condition does not hold. | Every wait. |
-| No complete static baseline has arrived. | `neverLoaded` |
-| An instance's hook on `VerifyError` was not installed, or it counted a `VerifyError` message in no read format. | The queries listed in [Queries that refuse](#queries-that-refuse) |
+| No complete static baseline has arrived, or a live instance says it is starting, has sent no delta batch or has pending counts. | `neverLoaded` |
+| A live instance says it is starting, has sent no delta batch or has pending counts, and a site would read never loaded. | `dependency`, the dependency list queries, `absentReferences` |
+| An instance that listed the dependency has sent no delta batch, has pending counts, or is starting and live. | `unloadedDependencies`, and `dependency` when it would return `UNLOADED` |
+| An instance's hook on `VerifyError` was not installed, it counted a `VerifyError` message in no read format, it says it is starting, it has sent no delta batch, or its counts are pending. | The queries listed in [Queries that refuse](#queries-that-refuse) |
 | Dependency listing is incomplete, references are not recorded, or a dependency cannot be split into unreferenced and unreached. | The dependency list queries, `absentReferences` |
 | Several dependencies carry the identity. | `dependency` |
 | The extension could not start its collector, a system property is malformed, the collector rejected a payload before or during `beforeAll`'s wait, `beforeAll` got no delta batch in time, or `collector()` was called before the extension started one. | `OtherlodeExtension` |

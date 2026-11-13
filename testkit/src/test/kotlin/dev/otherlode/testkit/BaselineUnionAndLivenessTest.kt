@@ -70,7 +70,8 @@ class BaselineUnionAndLivenessTest {
                 dependenciesListed = true,
             ),
         )
-        if (withLib) exporter.exportDeltaBatch(DeltaBatch(resource(instanceId), emptyList(), dependencyDeltas = listOf(DependencyDelta(0, 1L, 1L))))
+        val dependencyDeltas = if (withLib) listOf(DependencyDelta(0, 1L, 1L)) else emptyList()
+        exporter.exportDeltaBatch(DeltaBatch(resource(instanceId), emptyList(), dependencyDeltas = dependencyDeltas))
     }
 
     private fun hit(
@@ -86,16 +87,19 @@ class BaselineUnionAndLivenessTest {
         chunkIndex: Int = 0,
         chunkCount: Int = 1,
         externals: List<ExternalClass> = listOf(ExternalClass("org.example.Lib", 0)),
-    ) = exporter.exportStaticBaseline(
-        StaticBaseline(
-            resource = resource(instanceId),
-            declaredClasses = classes,
-            scannedAt = scannedAt,
-            chunkIndex = chunkIndex,
-            chunkCount = chunkCount,
-            externalClasses = externals,
-        ),
-    )
+    ) {
+        exporter.exportDeltaBatch(DeltaBatch(resource(instanceId), emptyList()))
+        exporter.exportStaticBaseline(
+            StaticBaseline(
+                resource = resource(instanceId),
+                declaredClasses = classes,
+                scannedAt = scannedAt,
+                chunkIndex = chunkIndex,
+                chunkCount = chunkCount,
+                externalClasses = externals,
+            ),
+        )
+    }
 
     private val libReference = listOf("org.example.Lib")
 

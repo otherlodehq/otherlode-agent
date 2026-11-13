@@ -77,6 +77,12 @@ deferrals, gzip, a collector config file, and agent-level redaction
   7. The server's orders and representatives: outside caller, lambda
      folds, sort orders.
 
+  Known over-refusal after chunk 6: the testkit holds every zero-count
+  query for an instance with no delta batch, even one known only from a
+  static baseline, which has no probes. The server holds only that run's
+  probes. The testkit refuses instead of answering wrongly, and a test
+  session does not produce such an instance.
+
 - **Two JDK facts the direct path depends on: to check.** From the
   2026-11-11 security review (ADR 0092). Both matter only with a hostile
   or broken receiver, such as a man in the middle on plain `http`.

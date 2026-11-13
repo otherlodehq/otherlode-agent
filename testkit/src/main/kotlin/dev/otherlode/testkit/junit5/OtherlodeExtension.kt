@@ -29,7 +29,7 @@ import java.util.concurrent.TimeoutException
  *     @Test
  *     fun `checkout is called`(collector: OtherlodeTestCollector) {
  *         // exercise the app under test
- *         collector.awaitSettled(Duration.ofSeconds(10))
+ *         collector.awaitSettled(Duration.ofSeconds(30))
  *         assertTrue(collector.wasCalled("POST", "/checkout"))
  *     }
  * }

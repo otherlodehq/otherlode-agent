@@ -35,6 +35,7 @@ fun watchedManifest(
     classesFailedToInitialize: List<ClassFailedToInitialize> = emptyList(),
     unplacedVerificationFailures: Long = 0,
     verifierRejectionsWatched: Boolean = true,
+    starting: Boolean = false,
 ) = ProbeManifest(
     resource,
     probes,
@@ -54,6 +55,7 @@ fun watchedManifest(
     classesFailedToInitialize,
     unplacedVerificationFailures,
     verifierRejectionsWatched,
+    starting = starting,
 )
 
 fun watchedVerifier() = VerifierRejectionWatch(watched = true, drainMessages = { emptyArray() }, takeOverflow = { 0L })
