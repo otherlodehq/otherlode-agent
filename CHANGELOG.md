@@ -9,18 +9,14 @@ the section that the release tooling reads.
 
 ## [Unreleased]
 
-### Added
-
-- The agent marks the forwarders kotlinc writes for interface delegation `CLASS_DELEGATION`, wire value 13 of `GeneratedBy`, and the testkit's `GeneratedBy` gains the value. It marks the static method kotlinc adds for a `@JvmStatic` companion function `STATIC_FORWARDER`. A call into either passes through to the method it forwards to. The delegate's method and the companion's method are ordinary code. A method you wrote, such as `override fun describe() = inner.describe()`, has a line-number table and stays ordinary code. The agent does not mark a forwarder that casts a result or boxes an argument for a type argument.
-
-## [0.1.0] - 2026-11-01
+## [0.1.0] - 2026-11-13
 
 The first release of the Otherlode agent and its testkit. The agent counts which methods, branches and endpoints your JVM application runs and sends the counts to Otherlode, straight or through an Otherlode collector, so Otherlode can show the code your traffic never reaches. The docs are at https://otherlode.dev/docs.
 
 ### Added
 
 - **The agent**, `dev.otherlode:otherlode-agent` on Maven Central. It attaches with `-javaagent` on JDK 17 or later. `includePackages` is the one option you must set.
-- **Methods and branches.** It counts each method body you wrote and each outcome of your own conditionals, in Java, Kotlin and Scala. It marks code that a compiler or a JPA enhancer generated and does not count it as yours. It reports a shape it hasn't read as unread, never as dead.
+- **Methods and branches.** It counts each method body you wrote and each outcome of your own conditionals, in Java, Kotlin and Scala. It marks code that a compiler or a JPA enhancer generated, such as Kotlin's delegation and `@JvmStatic` forwarders, and does not count it as yours. It reports a shape it hasn't read as unread, never as dead.
 - **Endpoints** for Spring MVC, Spring WebFlux, Javalin, Micronaut, Vert.x Web, Ktor, JAX-RS, servlets and the JDK `HttpServer`.
 - **Classes, call graph and dependencies.** It reports which classes loaded or failed to, plus call edges and the jars each class references. From these, Otherlode groups never-hit code into clusters and names dependencies your code never uses. With `staticBaselineEnabled=true` the agent also sends a baseline, so Otherlode can name classes that never loaded.
 - **Test runs.** With `testRun=true` a run records which tests reached your code and stays out of every finding.
