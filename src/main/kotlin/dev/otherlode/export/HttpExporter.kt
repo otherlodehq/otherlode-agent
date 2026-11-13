@@ -2,6 +2,7 @@ package dev.otherlode.export
 
 import dev.otherlode.bootstrap.OtherlodeLoggers
 import dev.otherlode.instrumentation.BootstrapHolder
+import java.net.ProtocolException
 import java.net.URI
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
@@ -91,7 +92,7 @@ class HttpExporter(
                 } catch (e: HeaderRefusedException) {
                     throw ExportFailedException(e.message.orEmpty())
                 } catch (e: Exception) {
-                    lastError = e
+                    lastError = if (e is ProtocolException) printableFailure(uri, e) else e
                     null
                 }
             if (status != null) {
@@ -136,6 +137,14 @@ class HttpExporter(
         }
     }
 
+    private fun printableFailure(
+        uri: String,
+        e: ProtocolException,
+    ): ExportFailedException {
+        val printable = e.message.orEmpty().take(MAX_MESSAGE_CHARS).map { if (it in ' '..'~') it else '?' }.joinToString("")
+        return ExportFailedException("otherlode: malformed response from $uri, ${e.javaClass.name}: $printable")
+    }
+
     private fun isRetryable(status: Int): Boolean = isRetryableStatus(status)
 
     companion object {
@@ -151,6 +160,7 @@ class HttpExporter(
             }
 
         private val DEFAULT_TIMEOUT: Duration = Duration.ofSeconds(10)
+        private const val MAX_MESSAGE_CHARS = 200
 
         internal fun parseRetryAfter(value: String?): Duration? {
             val text = value?.trim()

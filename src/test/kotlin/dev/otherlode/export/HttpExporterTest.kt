@@ -400,6 +400,57 @@ class HttpExporterTest {
     }
 
     @Test
+    fun `a malformed status line fails the send with printable ASCII only and the exception class`() {
+        val socket = ServerSocket(0)
+        rawSocket = socket
+        val connections = AtomicInteger()
+        val statusLine = "HTTP/1.1 2\u001b[31mX\u0007\u007f\u009b OK\u0000" + "x".repeat(300) + "\r\n\r\n"
+        thread(isDaemon = true) {
+            try {
+                while (!socket.isClosed) {
+                    socket.accept().use { connection ->
+                        connections.incrementAndGet()
+                        val input = connection.getInputStream()
+                        val seen = StringBuilder()
+                        while (!seen.endsWith("\r\n\r\n")) {
+                            val next = input.read()
+                            if (next < 0) break
+                            seen.append(next.toChar())
+                        }
+                        val length = Regex("(?i)content-length: *(\\d+)").find(seen)?.groupValues?.get(1)?.toInt() ?: 0
+                        input.readNBytes(length)
+                        connection.getOutputStream().write(statusLine.toByteArray(Charsets.ISO_8859_1))
+                        connection.getOutputStream().flush()
+                    }
+                }
+            } catch (_: IOException) {
+            }
+        }
+        val exporter =
+            HttpExporter(
+                endpoint = "http://localhost:${socket.localPort}",
+                maxAttempts = 2,
+                initialBackoff = Duration.ofMillis(1),
+                maxBackoff = Duration.ofMillis(1),
+            )
+
+        val failure = assertFailsWith<ExportFailedException> { exporter.exportDeltaBatch(emptyBatch) }
+
+        assertTrue(failure.message.orEmpty().contains("ProtocolException"), "${failure.message}")
+        assertEquals(200, failure.message.orEmpty().substringAfter("ProtocolException: ").length, "${failure.message}")
+        assertEquals(false, failure.refused)
+        assertEquals(2, connections.get())
+        var cause: Throwable? = failure
+        while (cause != null) {
+            for (text in listOf(cause.message.orEmpty(), cause.toString())) {
+                assertTrue(text.all { it in ' '..'~' }, "non-printable char in $text")
+            }
+            cause = cause.cause
+        }
+        assertEquals(null, failure.cause)
+    }
+
+    @Test
     fun `no Authorization header is sent when no token is configured`() {
         val endpoint = startServer { 202 }
         val exporter = exporterFor(endpoint)

@@ -8,6 +8,8 @@ order: 110
 
 The agent and the testkit are compiled against the JDK 17 API and emit class-file version 61, so they run on JDK 17 and later.
 
+On JDK 17, use update 17.0.13 or later, and on JDK 21, update 21.0.5 or later. Any JDK 25 update works. Earlier updates of JDK 17 and 21 read the response headers of the [receiver](data-sent) without a size limit, for up to 10 seconds per request.
+
 The build runs the tests on JDK 17, 21 and 25 (Temurin), each as its own CI job. Micronaut 5's suite needs JDK 25 and runs there in every job, and the framework marker tests run on JDK 21. The build tests no other JDK version. The agent reads two fields of the JDK's lambda factory to name Java lambda handlers, and a JDK that renames them fails a test.
 
 The agent weaves the two constructors of `java.lang.VerifyError` at startup to learn which classes the JVM's verifier rejects. The weave works alongside JFR, which on JDK 17 and 21 also transforms `Error` and `Throwable` when it starts. See [classes](classes#rejected-by-the-verifier).
