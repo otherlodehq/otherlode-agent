@@ -52,42 +52,30 @@ deferrals, gzip, a collector config file, and agent-level redaction
   line numbers and a condition (`discounted > 100.0`) that the code no
   longer has. Run `./gradlew :demo:runDemo` and paste the real lines.
 
-- **Testkit / server parity: to fix, after one grill.** The 2026-11-12
-  audit compared each testkit query with the server's judgement. The
-  server departs from its own ADRs nowhere. The testkit misses rules the
-  server applies, so a test can see a dead-code claim the server
-  withholds. Agent ADR 0056 promises the server's answer.
-  - Fix in the testkit (false claims unless marked):
-    1. A class any run skipped supports no zero-count claim (server ADR
-       0079). `skippedByClassName` feeds no judgement.
-    2. A module any run disabled withholds its endpoints, and a failed
-       module that declared none withholds all (server ADR 0090).
-       `neverCalled` needs every instance. `endpoints.md` states the
-       testkit's rule and changes with it.
-    3. An init-gap class (server ADR 0070) is evidence for nothing:
-       `alwaysSupplied` ignores both kinds, `neverCalled` and the
-       dependency rules ignore a running initialiser, and in clusters its
-       hit methods count as hit callers while its outcomes and zero-hit
-       generated methods do not block. `testkit-api.md:113-115` states the
-       testkit's rule.
-    4. A declared method of a skipped or unreported class blocks its
-       callee as an unknown caller.
-    5. Dependency reference liveness spans instances and covers loaded
-       classes with no probes; references come from complete scans only.
-    6. A dispatch-only endpoint is never "never called" (server ADR 0067).
-    7. Class listings pass the stripped, version and run-id checks;
-       baseline chunks are validated as the collector handler does.
-    8. `neverLoaded`: a class is judgeable when any scan has a judgeable
-       method (the testkit misses a dead class), and the scan of a run
-       that stopped while starting is no evidence (server ADR 0092).
-    9. Cosmetic: outside caller from the newest non-empty copy, lambda
-       folds into their own class only, the server's sort orders.
-  - To grill first: the testkit reads no `starting`, `counts_pending_since`
-    or "no delta batch yet", so `awaitSettled` can return while the server
-    holds every zero-count claim. Recommended: `awaitSettled` waits until
-    no live instance says starting, as server ADRs 0087 and 0092 do. Also
-    decide whether to accept the lack of removal (server ADRs 0066, 0091)
-    in an ADR, and whether to union baselines across instances.
+- **Testkit / server parity: in progress (ADR 0093).** The 2026-11-12
+  audit found the testkit short of the server's evidence rules in about
+  twenty places. Luke settled the open calls on 2026-11-13: `awaitSettled`
+  waits until no live instance says starting, baselines union across
+  instances, and removal stays unmodelled. Landing order, one commit each:
+  1. Payload checks: class listings pass the stripped, version and run
+     checks; baseline chunks need a valid index and their scan's count.
+  2. Skipped and unreported classes: a class any run skipped supports no
+     zero-count claim (server ADR 0079), and a declared method of a
+     skipped or unreported class blocks its callee.
+  3. Init-gap classes (server ADR 0070) are evidence for nothing in
+     `alwaysSupplied`, `neverCalled`, the dependency rules and clusters.
+  4. Endpoints: a module any run disabled withholds its endpoints, a
+     failed module that declared none withholds all (server ADR 0090),
+     and a dispatch-only route is never "never called" (server ADR 0067).
+  5. Dependencies: reference liveness spans instances and covers loaded
+     classes with no probes, references come from complete scans only,
+     and baselines union across instances.
+  6. Starting runs and `neverLoaded`: `awaitSettled` waits out `starting`,
+     a run with no delta batch or that stopped while starting is no
+     evidence, and a class is judgeable when any scan has a judgeable
+     method.
+  7. The server's orders and representatives: outside caller, lambda
+     folds, sort orders.
 
 - **Two JDK facts the direct path depends on: to check.** From the
   2026-11-11 security review (ADR 0092). Both matter only with a hostile
