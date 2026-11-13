@@ -50,56 +50,9 @@ deferrals, gzip, a collector config file, and agent-level redaction
 - **Testkit waits on a baseline-only instance: known.** An instance the
   testkit has heard from only through a static baseline never lists its
   dependencies or sends a flush, so `awaitDependenciesListed` and
-  `awaitSettled` time out on it and the dependency queries refuse. It
-  never goes silent, since only a delta batch sets its last-seen time,
-  so `neverLoaded` and a never-loaded `unreachedClusters` refuse for it
-  for good. The zero-count queries no longer refuse for it. A test session does not
-  produce such an instance.
-
-### Tooling: code principles and a refactoring playbook
-
-From the comparison with pstack's poteto-mode (`cursor/plugins`, `190d287`).
-Each lands in every repo as a shared path.
-
-- Code-design principles as short leaf files under `power-mode`, cited in
-  the reply wherever one shaped a choice: model the domain, subtract before
-  you add, attack the premise (after two failed fixes, test the assumption
-  they shared), test behaviour not implementation, make operations
-  idempotent, encode lessons in structure. Leave out poteto's Laziness
-  Protocol and Never Block on the Human, which pull against "correct over
-  cheap" and the ask-first list.
-- A Refactoring playbook: pin current behaviour with a characterisation
-  test before moving anything, and revert a reshape that leaves the code no
-  easier to read.
-
-### The class listing's gaps
-
-Known gaps in what it lists, all rare, all listing less than the JVM loads:
-
-- JDK 17's `META-INF/INDEX.LIST`, which can name jars outside `Class-Path`
-  (JDK 18 dropped it). The static baseline does not read it either: on JDK
-  17 a jar with an index loads a class from the jar its index names, and
-  the scan can declare a later copy instead. Rare: an index is deprecated,
-  and the jar must also hold a copy-shadowing class.
-- Boot `PropertiesLauncher` `loader.path` folders, a WAR deployed on an
-  external Tomcat and plugin folders. The run marks its listing blind once
-  an included class loads from one (ADR 0085). A root whose classes never
-  load stays unseen: a jar of only dead classes in a folder where nothing
-  else loads can still read removed. Reading `loader.path` would close it
-  for Boot.
-
-### Reminders for expiring keys and credentials: to decide
-
-Raised 2026-10-05 by Luke while creating the release signing key. Nothing
-reminds anyone when a key, token or certificate the project depends on is
-about to expire, and an expired signing key stops releases cold (the Portal
-rejects a signature from an expired key). To decide: where the reminders
-live (a calendar, a scheduled job that opens an issue, the password
-manager's own reminders) and how far ahead they fire, then inventory every
-credential with an expiry or a rotation date across the three repos and the
-hosted stack, each with its owner and renewal steps.
-
-Known so far:
+  `awaitSettled` time out on it and the dependency queries refuse, as
+  for any JVM killed before its first flush. A test session produces one
+  only when a JVM dies between its baseline and its first manifest.
 
 - **Release signing key**, `Otherlode Releases <releases@otherlode.dev>`,
   created 2026-10-05: primary (certify only) `6ADE E1CA E6B2 E45E 563B
