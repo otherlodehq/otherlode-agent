@@ -91,7 +91,7 @@ A finding method takes no arguments and returns a list. It judges the merged hit
 - A generated method, such as an enum's `values` or a data class's `copy`.
 - Optional-argument probes, which `neverSupplied` and `alwaysSupplied` cover.
 - A `<clinit>`, which is a class state. A constructor appears only as an unused overload, when another constructor of its class ran.
-- A method that can run only through a class that `neverInitialized` or `neverInstantiated` lists, and a lambda body whose every creator is such a method or a never-hit method listed.
+- A method that can run only through a class that `neverInitialized` or `neverInstantiated` lists, and a lambda body whose every creator is such a method or a never-hit method listed. A lambda body folds into its own class's finding only when every chain of creators ends in a method that finding covers. Otherwise it stays a method of its own in the call graph. Lambda bodies that only create each other fold nowhere and are `neverHit` rows.
 - A method of a class that failed to initialise, and of its subtypes. See below.
 - A method of a class that some instance reported as skipped, even where another instance probed it. A skipped class's hits may never arrive, so a zero count says nothing about it.
 - A branch inside code that never ran. It folds into the row for that code.
@@ -103,7 +103,7 @@ A class that any instance lists in `skippedClasses()` supports no claim that res
 
 A method of a loaded class that a complete static baseline declares, and that has no method probe, is a caller the testkit cannot judge. That covers a method of a skipped class, of an unreported class, or of a loaded class with no probe for it. Such a caller is neither hit nor never hit, and a method it calls is not a root and joins no cluster through it.
 
-`neverHit` rows sort by class name, method name, line, then branch index. `neverInitialized`, `neverInstantiated` and `skippedClasses` sort by class name. `unreachedClusters` sorts by `membersTotal`, largest first, then by root as `neverHit` sorts.
+`neverHit` rows sort by class name, method name, descriptor, kind, line, then branch index. `neverInitialized`, `neverInstantiated` and `skippedClasses` sort by class name. `unreachedClusters` sorts by `membersTotal`, largest first, then by the root's class name, method name and descriptor. Where roots share a method, a method root comes before an outcome root. Outcome roots without a branch key come first, by branch index, then those with one, by branch key. A cluster's `reachedFrom`, `members` and `methods` sort by class name, method name, then descriptor.
 
 #### Classes that failed to initialise
 
@@ -158,9 +158,9 @@ The message names each such instance and why.
 |---|---|
 | `wasCalled(verb, routeTemplate): Boolean` | `true` if the summed call count is above zero. |
 | `callCount(verb, routeTemplate): Long` | The count summed over instances, each instance's highest delivered total. |
-| `neverCalled(): List<EndpointRef>` | Every endpoint with a summed count of zero, sorted by route template, then verb, then path, regex and servlet pattern in that order. Leaves out an endpoint whose handler class, in every instance that reports it and has a probe of the class, failed to initialise, is listed in `failedToInitialize()`, or has a static initialiser still running, and one whose endpoint module any instance switched off. Also leaves out an endpoint that every report found only at dispatch. Returns nothing while any instance switched a module off by failure and reported no endpoint of that module; a module switched off by configuration or for not counting routes is not a failure. Refuses while an instance's zero counts are not evidence. |
+| `neverCalled(): List<EndpointRef>` | Every endpoint with a summed count of zero, sorted by verb, then route template, then path, regex and servlet pattern in that order. Leaves out an endpoint whose handler class, in every instance that reports it and has a probe of the class, failed to initialise, is listed in `failedToInitialize()`, or has a static initialiser still running, and one whose endpoint module any instance switched off. Also leaves out an endpoint that every report found only at dispatch. Returns nothing while any instance switched a module off by failure and reported no endpoint of that module; a module switched off by configuration or for not counting routes is not a failure. Refuses while an instance's zero counts are not evidence. |
 | `endpoints(): List<EndpointRef>` | Every endpoint any instance reported, sorted the same way. |
-| `disabledEndpointModules(): List<DisabledEndpointModule>` | The endpoint modules an instance reported as switched off, each with its kind: those that switched themselves off, such as on a framework version the agent does not support, and those the agent's configuration kept off. Sorted by module name. |
+| `disabledEndpointModules(): List<DisabledEndpointModule>` | The endpoint modules an instance reported as switched off, each with its kind: those that switched themselves off, such as on a framework version the agent does not support, and those the agent's configuration kept off. Sorted by module name. A module's reason and kind come from the newest instance that reported it. |
 
 `wasCalled` and `callCount` throw `UnknownEndpointException` for an endpoint no manifest has named.
 
@@ -313,7 +313,7 @@ One method probe or branch outcome, merged across instances. Some fields apply t
 
 No query returns an optional-argument probe. `neverSupplied` and `alwaysSupplied` report optional parameters as `OptionalParameterRef`.
 
-Where instances disagree about a row, the newest instance wins for `line` and `outsideCaller`. The newest instance is the one the collector first heard from last. `inlinedFromClassName` takes the greatest value, and a row is routine or an unread shape when any copy is.
+Where instances disagree about a row, the newest instance wins for `line`, and the newest instance that has one wins for `outsideCaller`. The newest instance is the one the collector first heard from last. `inlinedFromClassName` takes the greatest value, and a row is routine or an unread shape when any copy is.
 
 ### OutsideCaller
 
@@ -347,7 +347,7 @@ A root plus every never-hit method that can be reached from it only through the 
 | `wholeClasses` | `List<WholeClass>` | The classes the cluster holds whole, sorted by class name. |
 | `neverLoadedClasses` | `Int` | The number of classes in the cluster that exist only because a static baseline declared them. |
 | `membersTotal` | `Int` | The number of methods the cluster holds. |
-| `methods` | `List<ProbeRef>` | All of those methods, sorted as `neverHit` sorts. |
+| `methods` | `List<ProbeRef>` | All of those methods, sorted by class name, method name, then descriptor. |
 
 Neither `members` nor `wholeClasses` lists a `<clinit>`.
 
@@ -357,7 +357,7 @@ Neither `members` nor `wholeClasses` lists a `<clinit>`.
 |---|---|---|
 | `className` | `String` | The class. |
 | `finding` | `ClassFinding?` | The class's finding, when it has one. |
-| `methods` | `List<ProbeRef>` | Its methods in the cluster, sorted as `neverHit` sorts. |
+| `methods` | `List<ProbeRef>` | Its methods in the cluster, sorted by class name, method name, then descriptor. |
 
 ### OptionalParameterRef
 

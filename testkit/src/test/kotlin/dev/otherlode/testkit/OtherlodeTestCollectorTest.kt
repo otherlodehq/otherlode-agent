@@ -3926,7 +3926,7 @@ class OtherlodeTestCollectorTest {
     }
 
     @Test
-    fun `an outside caller comes from the newest instance when instances disagree`() {
+    fun `an outside caller comes from the newest instance that has one when instances disagree`() {
         val target = startCollector()
         val exporter = exporterFor(target)
         exporter.exportManifest(
@@ -3944,7 +3944,7 @@ class OtherlodeTestCollectorTest {
 
         exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("svc", null, "i-1", null, "run-1"), emptyList()))
         exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("svc", null, "i-2", null, "run-2"), emptyList()))
-        assertEquals(null, target.neverHit().single().outsideCaller)
+        assertEquals(RefOutsideCaller(RefOutsideCallerKind.OVERRIDES_METHOD, "java.lang.Runnable"), target.neverHit().single().outsideCaller)
     }
 
     @Test

@@ -52,36 +52,13 @@ deferrals, gzip, a collector config file, and agent-level redaction
   line numbers and a condition (`discounted > 100.0`) that the code no
   longer has. Run `./gradlew :demo:runDemo` and paste the real lines.
 
-- **Testkit / server parity: in progress (ADR 0093).** The 2026-11-12
-  audit found the testkit short of the server's evidence rules in about
-  twenty places. Luke settled the open calls on 2026-11-13: `awaitSettled`
-  waits until no live instance says starting, baselines union across
-  instances, and removal stays unmodelled. Landing order, one commit each:
-  1. Payload checks: class listings pass the stripped, version and run
-     checks; baseline chunks need a valid index and their scan's count.
-  2. Skipped and unreported classes: a class any run skipped supports no
-     zero-count claim (server ADR 0079), and a declared method of a
-     skipped or unreported class blocks its callee.
-  3. Init-gap classes (server ADR 0070) are evidence for nothing in
-     `alwaysSupplied`, `neverCalled`, the dependency rules and clusters.
-  4. Endpoints: a module any run disabled withholds its endpoints, a
-     failed module that declared none withholds all (server ADR 0090),
-     and a dispatch-only route is never "never called" (server ADR 0067).
-  5. Dependencies: reference liveness spans instances and covers loaded
-     classes with no probes, references come from complete scans only,
-     and baselines union across instances.
-  6. Starting runs and `neverLoaded`: `awaitSettled` waits out `starting`,
-     a run with no delta batch or that stopped while starting is no
-     evidence, and a class is judgeable when any scan has a judgeable
-     method.
-  7. The server's orders and representatives: outside caller, lambda
-     folds, sort orders.
-
-  Known over-refusal after chunk 6: the testkit holds every zero-count
-  query for an instance with no delta batch, even one known only from a
-  static baseline, which has no probes. The server holds only that run's
-  probes. The testkit refuses instead of answering wrongly, and a test
-  session does not produce such an instance.
+- **Testkit over-refusal for a baseline-only instance: known.** The
+  testkit applies the server's evidence rules (ADR 0093), with one
+  difference left: it holds every zero-count query for an instance with
+  no delta batch, even one known only from a static baseline, which has
+  no probes. The server holds only that run's probes. The testkit
+  refuses instead of answering wrongly, and a test session does not
+  produce such an instance.
 
 - **Two JDK facts the direct path depends on: to check.** From the
   2026-11-11 security review (ADR 0092). Both matter only with a hostile

@@ -267,6 +267,11 @@ public class OtherlodeTestCollector internal constructor(
         val isLookedThrough: Boolean get() = generatedBy != WireGeneratedBy.NONE || unreadShape != WireUnreadShape.NONE
     }
 
+    private class RankedDisabledModule(
+        val rank: Long,
+        val module: DisabledEndpointModule,
+    )
+
     private data class InstanceKey<T>(
         val serviceInstanceId: String,
         val id: T,
@@ -303,11 +308,25 @@ public class OtherlodeTestCollector internal constructor(
 
     internal var clock: () -> Instant = { Instant.now() }
 
-    private val probeRefComparator: Comparator<ProbeRef> =
-        compareBy({ it.className }, { it.methodName }, { it.line }, {
-            it.branchIndex
-                ?: -1
-        })
+    private val endpointOrder: Comparator<EndpointRef> =
+        compareBy({ it.verb }, { it.routeTemplate }, { if (it.isRegexTemplate) 1 else if (it.isServletPatternTemplate) 2 else 0 })
+
+    private val methodOrder: Comparator<ProbeRef> =
+        compareBy({ it.className }, { it.methodName }, { it.methodDescriptor })
+
+    private val rootOrder: Comparator<ProbeRef> =
+        methodOrder
+            .thenComparing { it.kind == ProbeKind.BRANCH }
+            .thenComparing { it.branchKey != null }
+            .thenComparing { it.branchKey.orEmpty() }
+            .thenComparing { it.branchIndex ?: -1 }
+
+    private val neverHitOrder: Comparator<ProbeRef> =
+        methodOrder
+            .thenComparing { it.kind.ordinal }
+            .thenComparing { it.line }
+            .thenComparing { it.branchIndex ?: -1 }
+            .thenComparing(compareBy(nullsLast()) { it.branchKey })
 
     private val probesByKey = ConcurrentHashMap<ProbeKey, StoredProbe>()
     private val nameIndex = ConcurrentHashMap<String, MutableSet<ProbeKey>>()
@@ -342,7 +361,7 @@ public class OtherlodeTestCollector internal constructor(
     private val endpointDiscoverySourceByKey = ConcurrentHashMap<InstanceEndpointKey, EndpointDiscoverySource>()
     private val disabledModuleNamesByInstance = ConcurrentHashMap<String, MutableSet<String>>()
     private val disabledModuleKindsByInstance = ConcurrentHashMap<String, ConcurrentHashMap<String, Optional<DisabledEndpointModuleKind>>>()
-    private val disabledEndpointModulesByName = ConcurrentHashMap<String, DisabledEndpointModule>()
+    private val disabledEndpointModulesByName = ConcurrentHashMap<String, RankedDisabledModule>()
 
     private val dependencyLocations = ConcurrentHashMap<InstanceKey<Int>, DependencyView>()
 
@@ -785,7 +804,7 @@ public class OtherlodeTestCollector internal constructor(
 
     /**
      * Each METHOD or BRANCH probe that no instance reported a hit for, sorted by class name, method
-     * name, line, then branch index. Copies of a probe from several instances or class loaders
+     * name, descriptor, kind, line, then branch index. Copies of a probe from several instances or class loaders
      * merge into one row: a method by class, name and descriptor, and a branch outcome by its
      * [ProbeRef.branchKey], or by its branch index when it has none. A hit on any copy removes the
      * row. Where copies disagree, [ProbeRef.line] comes from the newest instance.
@@ -838,7 +857,7 @@ public class OtherlodeTestCollector internal constructor(
         return candidates
             .filter { it.key !in folded }
             .map(::neverHitRef)
-            .sortedWith(compareBy({ it.className }, { it.methodName }, { it.line }, { it.branchIndex ?: -1 }))
+            .sortedWith(neverHitOrder)
     }
 
     private fun foldedSites(
@@ -932,7 +951,7 @@ public class OtherlodeTestCollector internal constructor(
                             .firstOrNull { it != WireUnreadShape.NONE } ?: WireUnreadShape.NONE,
                     targetClassName = members.mapNotNull { it.value.targetClassName }.maxOrNull(),
                     parameterName = members.first().value.parameterName,
-                    outsideCaller = members.first().value.outsideCaller,
+                    outsideCaller = members.firstNotNullOfOrNull { it.value.outsideCaller },
                 )
             }
     }
@@ -1036,8 +1055,8 @@ public class OtherlodeTestCollector internal constructor(
      * whose static initialiser has started but not finished in each instance that loaded it.
      *
      * [neverHit] and [unreachedClusters] fold the class's never-hit constructors and instance
-     * methods into this finding, and a never-hit lambda body of the class whose creators all fold
-     * into a class finding. Throws as [neverInitialized] does.
+     * methods into this finding, and a never-hit lambda body of the class whose every creator chain
+     * ends in this finding. Throws as [neverInitialized] does.
      */
     public fun neverInstantiated(): List<ClassFindingRef> = checkedZeroCounts { classFindingRefs(ClassFinding.NEVER_INSTANTIATED) }
 
@@ -1170,18 +1189,27 @@ public class OtherlodeTestCollector internal constructor(
                 .map { it.key }
                 .filter { lambda -> creators[lambda].orEmpty().let { it.isNotEmpty() && it.all(::absorbs) } }
                 .toSet()
-        val intoClassFindings = mutableSetOf<NodeKey>()
+        val chainEndClass = mutableMapOf<NodeKey, String?>()
         var changed = true
         while (changed) {
             changed = false
-            for (lambda in folded - intoClassFindings) {
-                if (lambda.className in findings && creators.getValue(lambda).all { it in covered || it in intoClassFindings }) {
-                    intoClassFindings += lambda
-                    changed = true
-                }
+            for (lambda in folded - chainEndClass.keys) {
+                val lambdaCreators = creators.getValue(lambda)
+                if (lambdaCreators.any { it in folded && it !in chainEndClass }) continue
+                val ends =
+                    lambdaCreators.map { creator ->
+                        when {
+                            creator in folded -> chainEndClass[creator]
+                            creator in covered -> creator.className
+                            else -> null
+                        }
+                    }
+                chainEndClass[lambda] = ends.distinct().singleOrNull()
+                changed = true
             }
         }
-        return intoClassFindings to (folded - intoClassFindings)
+        val intoClassFindings = chainEndClass.keys.filterTo(mutableSetOf()) { it.className in findings && chainEndClass[it] == it.className }
+        return intoClassFindings to (chainEndClass.keys - intoClassFindings)
     }
 
     private fun neverHitRef(location: MergedLocation): ProbeRef =
@@ -1411,7 +1439,10 @@ public class OtherlodeTestCollector internal constructor(
 
     /**
      * Each unreached cluster in the call graph, sorted by [UnreachedCluster.membersTotal]
-     * descending, then by root.
+     * descending, then by root: class name, method name and descriptor, then an outcome root after a
+     * method root, keyless outcomes by branch index before keyed ones by branch key.
+     * [UnreachedCluster.reachedFrom], [UnreachedCluster.members] and
+     * the methods of a class sort by class name, method name, then descriptor.
      *
      * The nodes are methods merged across instances, never-hit branch outcomes in methods with hits,
      * and classes that hold a [ClassFinding]. Some outcomes, such as routine and unread ones, are not
@@ -1492,12 +1523,12 @@ public class OtherlodeTestCollector internal constructor(
                         }
                     val reachedFrom =
                         if (kind == RootKind.REACHED_FROM_HIT || kind == RootKind.CLASS_FINDING) {
-                            hitCallers.map { toProbeRef(graph.infoOf(it.method), it.method) }.sortedWith(probeRefComparator)
+                            hitCallers.map { toProbeRef(graph.infoOf(it.method), it.method) }.sortedWith(methodOrder)
                         } else {
                             emptyList()
                         }
                     buildCluster(graph, clusterGraph, outcomes, classNodes, unjudged, node, kind, reachedFrom, ::isNeverHit)
-                }.sortedWith(compareByDescending<UnreachedCluster> { it.membersTotal }.thenComparing({ it.root }, probeRefComparator))
+                }.sortedWith(compareByDescending<UnreachedCluster> { it.membersTotal }.thenComparing({ it.root }, rootOrder))
         }
     }
 
@@ -1565,7 +1596,7 @@ public class OtherlodeTestCollector internal constructor(
                 keys
                     .filter { it.methodName != CLASS_INIT }
                     .map { toProbeRef(graph.nodes.getValue(it), it) }
-                    .sortedWith(probeRefComparator)
+                    .sortedWith(methodOrder)
             if (keys.any { graph.nodes.getValue(it).neverLoaded }) neverLoadedClasses++
             if (keys.size == classSize[className]) {
                 wholeClasses += WholeClass(className, classNodes[classNode(className)]?.finding, refs)
@@ -1583,7 +1614,7 @@ public class OtherlodeTestCollector internal constructor(
         return UnreachedCluster(
             root = rootRef,
             rootKind = rootKind,
-            members = memberRefs.sortedWith(probeRefComparator),
+            members = memberRefs.sortedWith(methodOrder),
             neverLoadedClasses = neverLoadedClasses,
             rootSite = rootOutcome?.site,
             reachedFrom = reachedFrom,
@@ -2022,8 +2053,8 @@ public class OtherlodeTestCollector internal constructor(
     }
 
     /**
-     * Each endpoint any instance reported whose summed call count is zero, sorted by route
-     * template, verb, then path, regex and servlet pattern. Leaves out an endpoint when, in every
+     * Each endpoint any instance reported whose summed call count is zero, sorted by verb,
+     * route template, then path, regex and servlet pattern. Leaves out an endpoint when, in every
      * instance that reports it, the instance has a probe of the handler class and that class failed to
      * initialise there or is in [failedToInitialize], or its static initialiser has started but not
      * finished there. Also leaves out one whose framework module any instance disabled
@@ -2050,7 +2081,7 @@ public class OtherlodeTestCollector internal constructor(
                     val keys = endpointKeysByIdentity[identity].orEmpty()
                     keys.isEmpty() || keys.any { ref.handlerClass !in gapsByInstance[it.serviceInstanceId].orEmpty() }
                 }.values
-                .sortedWith(compareBy({ it.routeTemplate }, { it.verb }, { it.isServletPatternTemplate }, { it.isRegexTemplate }))
+                .sortedWith(endpointOrder)
         }
 
     private fun anyModuleFailedBeforeDeclaring(): Boolean {
@@ -2069,16 +2100,15 @@ public class OtherlodeTestCollector internal constructor(
     /** Each endpoint any instance reported, sorted as [neverCalled] sorts. */
     public fun endpoints(): List<EndpointRef> =
         checked {
-            endpointRefsByIdentity.values.sortedWith(
-                compareBy({
-                    it.routeTemplate
-                }, { it.verb }, { it.isServletPatternTemplate }, { it.isRegexTemplate }),
-            )
+            endpointRefsByIdentity.values.sortedWith(endpointOrder)
         }
 
-    /** Each endpoint module any instance reported as disabled, one per module name, sorted by module name. */
+    /**
+     * Each endpoint module any instance reported as disabled, one per module name, sorted by module
+     * name. A module's reason and kind come from the newest instance that reported it.
+     */
     public fun disabledEndpointModules(): List<DisabledEndpointModule> =
-        checked { disabledEndpointModulesByName.values.sortedBy { it.module } }
+        checked { disabledEndpointModulesByName.values.map { it.module }.sortedBy { it.module } }
 
     /**
      * Blocks until a manifest from any instance has mentioned the path endpoint [verb]
@@ -2104,7 +2134,7 @@ public class OtherlodeTestCollector internal constructor(
     ): EndpointIdentity = EndpointIdentity(RouteTemplateNormalizer.normalizeVerb(verb), RouteTemplateNormalizer.normalize(routeTemplate))
 
     private fun unknownEndpoint(identity: EndpointIdentity): UnknownEndpointException {
-        val disabled = disabledEndpointModulesByName.values.sortedBy { it.module }
+        val disabled = disabledEndpointModulesByName.values.map { it.module }.sortedBy { it.module }
         if (disabled.isNotEmpty()) {
             val listed = disabled.joinToString(", ") { "${it.module}: ${it.reason}" }
             return UnknownEndpointException(
@@ -2567,10 +2597,13 @@ public class OtherlodeTestCollector internal constructor(
                     disabledModuleKindsByInstance
                         .computeIfAbsent(instanceId) { ConcurrentHashMap() }
                         .putIfAbsent(module.module, Optional.ofNullable(module.kind.toTestkit()))
-                    disabledEndpointModulesByName.putIfAbsent(
+                    disabledEndpointModulesByName.merge(
                         module.module,
-                        DisabledEndpointModule(module.module, module.reason, module.kind.toTestkit()),
-                    )
+                        RankedDisabledModule(
+                            instanceRanks[instanceId] ?: 0L,
+                            DisabledEndpointModule(module.module, module.reason, module.kind.toTestkit()),
+                        ),
+                    ) { kept, offered -> if (offered.rank > kept.rank) offered else kept }
                 }
                 storeDependencyData(manifest)
                 storeVerifierFacts(manifest)
@@ -3052,7 +3085,7 @@ public class OtherlodeTestCollector internal constructor(
  * - [unreadShape] is the unread-shape family of a probe whose method or own outcome is an unread
  *   shape, or null.
  * - [outsideCaller] says why code outside scope may call the method, or is null. When copies
- *   disagree, it comes from the newest instance.
+ *   disagree, it comes from the newest instance that has one.
  */
 @ConsistentCopyVisibility
 public data class ProbeRef internal constructor(
@@ -3159,9 +3192,9 @@ public data class ClassFindingRef internal constructor(
 
 /**
  * One class an [UnreachedCluster] holds whole. [finding] is the class's finding, or null when it
- * holds none. [methods] lists its methods in the cluster, sorted as [OtherlodeTestCollector.neverHit]
- * sorts. It leaves out `<clinit>`, and a never-run constructor of a loaded class when no constructor
- * of that class ran and no class finding covers it.
+ * holds none. [methods] lists its methods in the cluster, sorted by class name, method name,
+ * then descriptor. It leaves out `<clinit>`, and a never-run constructor of a loaded class when
+ * no constructor of that class ran and no class finding covers it.
  */
 @ConsistentCopyVisibility
 public data class WholeClass internal constructor(
@@ -3180,7 +3213,7 @@ public data class WholeClass internal constructor(
  * and its line is `0`. [rootFinding] is that class's finding, and null for other kinds.
  *
  * [wholeClasses] lists the classes the cluster holds whole, sorted by class name. [members] lists
- * its other methods, sorted as [OtherlodeTestCollector.neverHit] sorts. Neither lists `<clinit>`, or
+ * its other methods, sorted by class name, method name, then descriptor. Neither lists `<clinit>`, or
  * a never-run constructor of a loaded class when no constructor of that class ran and no class
  * finding covers it. A method root is in its own cluster, and so are the methods a class root stands
  * for; an outcome root is not. [neverLoadedClasses] counts the classes with a method in the cluster
@@ -3207,7 +3240,7 @@ public data class UnreachedCluster internal constructor(
     public val methods: List<ProbeRef>
         get() =
             (members + wholeClasses.flatMap { it.methods }).sortedWith(
-                compareBy({ it.className }, { it.methodName }, { it.line }, { it.branchIndex ?: -1 }),
+                compareBy({ it.className }, { it.methodName }, { it.methodDescriptor }),
             )
 }
 
