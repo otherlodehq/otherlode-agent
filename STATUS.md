@@ -47,11 +47,6 @@ deferrals, gzip, a collector config file, and agent-level redaction
 
 ## TODO
 
-- **The README's demo sample output is stale: regenerate it.** The
-  sample report lines under "Try the demo" quote `DemoServerMain.kt`
-  line numbers and a condition (`discounted > 100.0`) that the code no
-  longer has. Run `./gradlew :demo:runDemo` and paste the real lines.
-
 - **Testkit over-refusal for a baseline-only instance: known.** The
   testkit applies the server's evidence rules (ADR 0093), with one
   difference left: it holds every zero-count query for an instance with

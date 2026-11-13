@@ -88,8 +88,8 @@ check. For a plain `if`, that is the condition the source wrote. The demo's
 two checkout conditions print like this:
 
 ```
-NEVER HIT: handleCheckout (DemoServerMain.kt:71) `System.getenv("ENABLE_LEGACY_DISCOUNT") == "true"` was never true, only path to DemoServerMain.kt:72 (instance 17e3afc3-76f1-435c-b30a-5e594350530f, class 0, probe 10) [BRANCH branch#1]
-NEVER HIT: handleCheckout (DemoServerMain.kt:78) `discounted > 100.0` was never true, only path to DemoServerMain.kt:79, partly to DemoServerMain.kt:92 (instance 17e3afc3-76f1-435c-b30a-5e594350530f, class 0, probe 12) [BRANCH branch#3]
+NEVER HIT: handleCheckout (DemoServerMain.kt:38) `System.getenv("ENABLE_LEGACY_DISCOUNT") == "true"` was never true, only path to DemoServerMain.kt:39 (instance e0bf4e18-eedc-4d44-b4df-577bf83ad593, class 0, probe 10) [BRANCH branch#1]
+NEVER HIT: handleCheckout (DemoServerMain.kt:45) `discounted > 100.0` was never true, only path to DemoServerMain.kt:46, partly to DemoServerMain.kt:54 (instance e0bf4e18-eedc-4d44-b4df-577bf83ad593, class 0, probe 12) [BRANCH branch#3]
 ```
 
 A condition carries the string literals the source compared against, such
@@ -110,7 +110,7 @@ and lists them apart under `ROUTINE OUTCOMES`. The demo client always sends
 a total, so the null checks in `totalParam` never see null and print there:
 
 ```
-ROUTINE [default never used]: totalParam (DemoServerMain.kt:136) `value != null` was never false, guards no code of its own (instance 4aef3090-5d33-4ab7-897e-f6170b0ab9a5, class 0, probe 17) [branch#14]
+ROUTINE [default never used]: totalParam (DemoServerMain.kt:81) `value != null` was never false, guards no code of its own (instance e0bf4e18-eedc-4d44-b4df-577bf83ad593, class 0, probe 17) [branch#14]
 ```
 
 A top-level function prints with its file, as `handleCheckout
