@@ -5,45 +5,28 @@ history covers that. `docs/adr/` holds one record per decision, `CONTEXT.md`
 the glossary, `docs/site/` the customer docs, and `CLAUDE.md` the rules a
 change follows.
 
-## Pre-release checklist
+## After the first release
 
-What stays open before the release, across all three repos, since a release
-ships them together. The release publishes the agent (with its testkit) and
-the collector as open source. `otherlode-server` stays closed source and
-hosted (server ADR 0001), so every adopter's collector forwards to one
-multi-tenant backend.
+Agent and testkit `0.1.0` and collector `v0.1.0` are released.
+`otherlode-server` stays closed source and hosted (server ADR 0001).
 
-1. **Cut the releases** (ADRs 0062 and 0063, collector ADR 0006). Cutting
-   is Luke's call. Collector `v0.1.0` goes first, since the agent's
-   `release.sh` refuses a release until it exists. Both `## [0.1.0]`
-   changelog sections are written, dated 2026-11-01; change the date if
-   the tag falls on another day. Before the first release of each,
-   make the collector's GHCR package public. Still unknown: whether a
-   dropped Portal deployment frees its version. A `rehearsal/1-again` tag
-   answers it.
-2. **Run the quickstart's release-only steps.** The quickstart sends
-   straight to ingest (server ADR 0096). Every other step ran on the dev
-   stack on 2026-11-11. These need the releases or the front door: the
-   Maven Central download, `https://app.otherlode.dev` and
-   `https://ingest.otherlode.dev`. The collector's page **Add a
-   collector** needs the `ghcr.io/otherlodehq/otherlode-collector` image.
-   Its links to the agent's and collector's pages resolve once their first
-   releases sync.
-3. **Neither release workflow has run in full.** The collector's
-   `release.yml` has never run, so its GHCR multi-arch push, the
-   attestation `deploy.md` tells users to verify, its GitHub release and
-   its docs sync first run at v0.1.0. The agent's `rehearsal/1` covered
-   the Portal upload only; `release.yml`'s `github-release` and `docs`
-   jobs have never run.
-4. **Before the first customer:** the server STATUS's "Go-live
-   checklist" (the company, the privacy policy, the site, the front door,
-   the database tier, data handling, and catching false claims in early
+1. **Run the quickstart's steps that need the front door:** creating an
+   ingest key at `https://app.otherlode.dev`, sending to
+   `https://ingest.otherlode.dev`, and the collector's page **Add a
+   collector**, which forwards there. The Maven Central download and an
+   agent start with the released jar ran on 2026-11-13.
+2. **Before the first customer:** the server STATUS's "Go-live
+   checklist" (the company, the privacy policy, the front door, the
+   database tier, data handling, and catching false claims in early
    access). No agent or collector can be given an ingest URL until the
-   front door exists. None of it blocks publishing
-   the agent.
-After release: what "Parked" lists, the server's performance-only
-deferrals, gzip, a collector config file, and agent-level redaction
-(the server STATUS's parked "Redaction in the agent", with its trigger).
+   front door exists.
+3. **Whether a dropped Portal deployment frees its version** is still
+   unknown. A `rehearsal/1-again` tag answers it. It matters when a
+   release's upload has to be dropped and the release cut again.
+
+Later: what "Parked" lists, the server's performance-only deferrals,
+gzip, a collector config file, and agent-level redaction (the server
+STATUS's parked "Redaction in the agent", with its trigger).
 
 ## TODO
 
@@ -322,7 +305,7 @@ Open before any of this is built:
   output.
 
 
-### A merge check for pull requests that only delete what production never runs: after release
+### A merge check for pull requests that only delete what production never runs
 
 Raised on 2026-10-26 by Luke, from Matt Pocock's idea of checking deterministically whether a PR can merge without review, under strict rules: it only reorganises code, leaves the module graph alone and does not lower test coverage. Those rules come from the diff and the build. Otherlode can add the one rule they cannot check: the PR changes or deletes no code that production ran.
 
@@ -360,7 +343,7 @@ The testkit stops at query primitives on purpose. Baking in a rule for when
 a count is low enough to fail a build is the confidence policy ADR 0015
 keeps out of the agent, so composing one is an adopter's own call.
 
-### An earlier first manifest: after release
+### An earlier first manifest
 
 Server ADR 0087 holds back every never-loaded claim a run's classes would
 make until the run delivers its first delta batch. The first flush waits a
@@ -371,7 +354,7 @@ about a second. Keep the jitter for every later flush, and spread the early
 one over a few seconds so a fleet started together does not reach the
 collector on one tick. Speed only: the hold-back is correct without it.
 
-### Small gaps the landed work left, after release
+### Small gaps the landed work left
 
 Each was recorded when its work landed and waits for a reason to touch the
 code.
@@ -502,7 +485,7 @@ Ideas nobody has asked for:
   code reads. It would come from the adopter's own field reads and be
   mostly the server's work.
 
-### Compiler shapes not yet read, after release
+### Compiler shapes not yet read
 
 What the compiler canary and the reviews found that the agent does not
 read. Each reads as an unread shape, never a finding, unless it says
