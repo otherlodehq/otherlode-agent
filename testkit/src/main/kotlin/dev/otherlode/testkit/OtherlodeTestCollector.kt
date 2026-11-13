@@ -18,6 +18,7 @@ import dev.otherlode.export.UnreportedClass
 import dev.otherlode.registry.RouteTemplateNormalizer
 import java.net.InetSocketAddress
 import java.time.Duration
+import java.util.Optional
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.ExecutorService
@@ -338,7 +339,9 @@ public class OtherlodeTestCollector internal constructor(
     private val endpointKeysByIdentity = ConcurrentHashMap<EndpointIdentity, MutableSet<InstanceEndpointKey>>()
     private val endpointHitsByKey = ConcurrentHashMap<InstanceEndpointKey, Long>()
     private val endpointFrameworkByKey = ConcurrentHashMap<InstanceEndpointKey, String>()
+    private val endpointDiscoverySourceByKey = ConcurrentHashMap<InstanceEndpointKey, EndpointDiscoverySource>()
     private val disabledModuleNamesByInstance = ConcurrentHashMap<String, MutableSet<String>>()
+    private val disabledModuleKindsByInstance = ConcurrentHashMap<String, ConcurrentHashMap<String, Optional<DisabledEndpointModuleKind>>>()
     private val disabledEndpointModulesByName = ConcurrentHashMap<String, DisabledEndpointModule>()
 
     private val dependencyLocations = ConcurrentHashMap<InstanceKey<Int>, DependencyView>()
@@ -1949,30 +1952,44 @@ public class OtherlodeTestCollector internal constructor(
      * template, verb, then path, regex and servlet pattern. Leaves out an endpoint when, in every
      * instance that reports it, the instance has a probe of the handler class and that class failed to
      * initialise there or is in [failedToInitialize], or its static initialiser has started but not
-     * finished there. Also
-     * leaves out one whose framework module each reporting instance disabled ([disabledEndpointModules]).
+     * finished there. Also leaves out one whose framework module any instance disabled
+     * ([disabledEndpointModules]), and one that every report found only at dispatch. Returns no
+     * endpoint while any instance disabled a module by failure, meaning any kind but
+     * [DisabledEndpointModuleKind.CONFIGURED_OFF] and [DisabledEndpointModuleKind.ROUTES_NOT_COUNTED],
+     * and reported no endpoint of it.
      * Throws [IllegalStateException] as [neverInitialized] does.
      */
     public fun neverCalled(): List<EndpointRef> =
         checkedZeroCounts {
             val gapsByInstance = initializerGapsByInstance()
+            val noEndpoints = anyModuleFailedBeforeDeclaring()
+            val disabledModules = disabledModuleNamesByInstance.values.flatten().toSet()
             endpointRefsByIdentity
+                .filterKeys { !noEndpoints }
                 .filterKeys { identity -> (endpointKeysByIdentity[identity]?.sumOf { endpointHitsByKey[it] ?: 0L } ?: 0L) <= 0L }
-                .filterKeys { identity -> !endpointModuleDisabledEverywhere(identity) }
-                .filter { (identity, ref) ->
+                .filterKeys { identity -> endpointKeysByIdentity[identity].orEmpty().none { endpointFrameworkByKey[it] in disabledModules } }
+                .filterKeys { identity ->
+                    endpointKeysByIdentity[identity].orEmpty().let { keys ->
+                        keys.isEmpty() || keys.any { endpointDiscoverySourceByKey[it] != EndpointDiscoverySource.DISPATCH }
+                    }
+                }.filter { (identity, ref) ->
                     val keys = endpointKeysByIdentity[identity].orEmpty()
                     keys.isEmpty() || keys.any { ref.handlerClass !in gapsByInstance[it.serviceInstanceId].orEmpty() }
                 }.values
                 .sortedWith(compareBy({ it.routeTemplate }, { it.verb }, { it.isServletPatternTemplate }, { it.isRegexTemplate }))
         }
 
-    private fun endpointModuleDisabledEverywhere(identity: EndpointIdentity): Boolean {
-        val keys = endpointKeysByIdentity[identity].orEmpty()
-        return keys.isNotEmpty() &&
-            keys.all { key ->
-                val framework = endpointFrameworkByKey[key]
-                framework != null && framework in disabledModuleNamesByInstance[key.serviceInstanceId].orEmpty()
+    private fun anyModuleFailedBeforeDeclaring(): Boolean {
+        val declaredByInstance = HashMap<String, MutableSet<String>>()
+        for ((key, framework) in endpointFrameworkByKey) declaredByInstance.getOrPut(key.serviceInstanceId) { HashSet() } += framework
+        return disabledModuleKindsByInstance.any { (instance, kinds) ->
+            kinds.any { (module, kind) ->
+                val value = kind.orElse(null)
+                value != DisabledEndpointModuleKind.CONFIGURED_OFF &&
+                    value != DisabledEndpointModuleKind.ROUTES_NOT_COUNTED &&
+                    module !in declaredByInstance[instance].orEmpty()
             }
+        }
     }
 
     /** Each endpoint any instance reported, sorted as [neverCalled] sorts. */
@@ -2432,6 +2449,7 @@ public class OtherlodeTestCollector internal constructor(
                     val key = InstanceEndpointKey(instanceId, endpointLocation.endpointId)
                     endpointKeysByIdentity.computeIfAbsent(identity) { ConcurrentHashMap.newKeySet() }.add(key)
                     endpointFrameworkByKey[key] = endpointLocation.framework
+                    endpointDiscoverySourceByKey[key] = endpointLocation.discoverySource.toTestkit()
                     endpointRefsByIdentity[identity] =
                         EndpointRef(
                             verb = endpointLocation.verb,
@@ -2448,6 +2466,9 @@ public class OtherlodeTestCollector internal constructor(
                 }
                 for (module in manifest.disabledEndpointModules) {
                     disabledModuleNamesByInstance.computeIfAbsent(instanceId) { ConcurrentHashMap.newKeySet() }.add(module.module)
+                    disabledModuleKindsByInstance
+                        .computeIfAbsent(instanceId) { ConcurrentHashMap() }
+                        .putIfAbsent(module.module, Optional.ofNullable(module.kind.toTestkit()))
                     disabledEndpointModulesByName.putIfAbsent(
                         module.module,
                         DisabledEndpointModule(module.module, module.reason, module.kind.toTestkit()),

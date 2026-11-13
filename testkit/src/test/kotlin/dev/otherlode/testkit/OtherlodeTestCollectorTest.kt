@@ -182,13 +182,14 @@ class OtherlodeTestCollectorTest {
         handlerMethod: String? = null,
         templateKind: EndpointTemplateKind = EndpointTemplateKind.PATH,
         framework: String = "jdk-httpserver",
+        source: EndpointDiscoverySource = EndpointDiscoverySource.REGISTRATION,
     ) = EndpointLocation(
         endpointId = endpointId,
         verb = verb,
         routeTemplate = routeTemplate,
         verbatimTemplate = routeTemplate,
         framework = framework,
-        discoverySource = EndpointDiscoverySource.REGISTRATION,
+        discoverySource = source,
         handlerClass = handlerClass,
         handlerMethod = handlerMethod,
         handlerDescriptor = if (handlerMethod != null) "()V" else null,
@@ -1802,27 +1803,92 @@ class OtherlodeTestCollectorTest {
         assertEquals(listOf("GET" to "/x"), target.endpoints().map { it.verb to it.routeTemplate })
     }
 
-    @Test
-    fun `neverCalled keeps an endpoint that an instance with the module on reported`() {
+    private fun neverCalledScenario(
+        instances: List<Triple<List<EndpointLocation>, List<DisabledEndpointModule>, String>>,
+    ): List<Pair<String, String>> {
         val target = startCollector()
         val exporter = exporterFor(target)
-        val endpoints = listOf(endpoint(0, "GET", "/x", framework = "spring-webmvc"))
-        exporter.exportManifest(
-            watchedManifest(
-                ResourceAttributes("svc", null, "i-1", null, "run-1"),
-                emptyList(),
-                endpoints = endpoints,
-                disabledEndpointModules =
-                    listOf(DisabledEndpointModule("spring-webmvc", "advice threw", 1L, DisabledEndpointModuleKind.ADVICE_FAILED)),
+        for ((endpoints, disabled, instance) in instances) {
+            val resource = ResourceAttributes("svc", null, instance, null, "run-1")
+            exporter.exportManifest(watchedManifest(resource, emptyList(), endpoints = endpoints, disabledEndpointModules = disabled))
+            exporter.exportDeltaBatch(DeltaBatch(resource, emptyList()))
+        }
+        return target.neverCalled().map { it.verb to it.routeTemplate }
+    }
+
+    private fun disabled(
+        module: String,
+        kind: DisabledEndpointModuleKind,
+    ) = listOf(DisabledEndpointModule(module, "r", 1L, kind))
+
+    @Test
+    fun `neverCalled leaves out an endpoint whose module another instance disabled`() {
+        for (kind in listOf(DisabledEndpointModuleKind.LINKAGE_ERROR, DisabledEndpointModuleKind.CONFIGURED_OFF)) {
+            val result =
+                neverCalledScenario(
+                    listOf(
+                        Triple(listOf(endpoint(0, "GET", "/a", framework = "spring-webmvc")), emptyList(), "i-1"),
+                        Triple(emptyList(), disabled("spring-webmvc", kind), "i-2"),
+                    ),
+                )
+            assertEquals(emptyList(), result, "kind $kind")
+        }
+    }
+
+    @Test
+    fun `neverCalled returns nothing when a module failed before declaring an endpoint`() {
+        val endpoints = listOf(endpoint(0, "GET", "/a", framework = "spring-webmvc"))
+        val failures = listOf(DisabledEndpointModuleKind.LINKAGE_ERROR, DisabledEndpointModuleKind.UNSPECIFIED)
+        for (kind in failures) {
+            val result = neverCalledScenario(listOf(Triple(endpoints, disabled("jaxrs", kind), "i-1")))
+            assertEquals(emptyList(), result, "kind $kind")
+        }
+        for (kind in listOf(DisabledEndpointModuleKind.CONFIGURED_OFF, DisabledEndpointModuleKind.ROUTES_NOT_COUNTED)) {
+            val result = neverCalledScenario(listOf(Triple(endpoints, disabled("jaxrs", kind), "i-1")))
+            assertEquals(listOf("GET" to "/a"), result, "kind $kind")
+        }
+    }
+
+    @Test
+    fun `neverCalled keeps a failed module's endpoints when that instance declared one of its endpoints`() {
+        val endpoints =
+            listOf(
+                endpoint(0, "GET", "/a", framework = "spring-webmvc"),
+                endpoint(1, "GET", "/j", framework = "jaxrs"),
+            )
+        val result =
+            neverCalledScenario(listOf(Triple(endpoints, disabled("jaxrs", DisabledEndpointModuleKind.LINKAGE_ERROR), "i-1")))
+        assertEquals(listOf("GET" to "/a"), result)
+    }
+
+    @Test
+    fun `neverCalled returns nothing when the instance that failed a module declared none of it, though another instance did`() {
+        val result =
+            neverCalledScenario(
+                listOf(
+                    Triple(
+                        listOf(endpoint(0, "GET", "/a", framework = "spring-webmvc"), endpoint(1, "GET", "/j", framework = "jaxrs")),
+                        emptyList(),
+                        "i-1",
+                    ),
+                    Triple(emptyList(), disabled("jaxrs", DisabledEndpointModuleKind.LINKAGE_ERROR), "i-2"),
+                ),
+            )
+        assertEquals(emptyList(), result)
+    }
+
+    @Test
+    fun `neverCalled leaves out an endpoint found only at dispatch`() {
+        val dispatch = endpoint(0, "GET", "/a", source = EndpointDiscoverySource.DISPATCH)
+        assertEquals(emptyList(), neverCalledScenario(listOf(Triple(listOf(dispatch), emptyList(), "i-1"))))
+        val registered = endpoint(0, "GET", "/a")
+        assertEquals(
+            listOf("GET" to "/a"),
+            neverCalledScenario(
+                listOf(Triple(listOf(dispatch), emptyList(), "i-1"), Triple(listOf(registered), emptyList(), "i-2")),
             ),
         )
-        exporter.exportManifest(
-            watchedManifest(ResourceAttributes("svc", null, "i-2", null, "run-1"), emptyList(), endpoints = endpoints),
-        )
-        exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("svc", null, "i-1", null, "run-1"), emptyList()))
-        exporter.exportDeltaBatch(DeltaBatch(ResourceAttributes("svc", null, "i-2", null, "run-1"), emptyList()))
-
-        assertEquals(listOf("GET" to "/x"), target.neverCalled().map { it.verb to it.routeTemplate })
+        assertEquals(listOf("GET" to "/a"), neverCalledScenario(listOf(Triple(listOf(registered), emptyList(), "i-1"))))
     }
 
     @Test
