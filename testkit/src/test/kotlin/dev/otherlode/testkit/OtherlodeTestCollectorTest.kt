@@ -1340,7 +1340,7 @@ class OtherlodeTestCollectorTest {
 
         assertEquals(listOf(400, 400, 400), statuses)
         assertEquals(3, target.rejectedPayloads().size)
-        assertTrue(target.rejectedPayloads().all { "empty run id" in it }, "${target.rejectedPayloads()}")
+        assertTrue(target.rejectedPayloads().all { "resource.run_id is empty" in it }, "${target.rejectedPayloads()}")
         val failure = assertFailsWith<IllegalStateException> { target.wasHit("com.acme.Foo", "bar") }
         assertTrue(target.rejectedPayloads().all { it in failure.message.orEmpty() }, "${failure.message}")
         assertFailsWith<IllegalStateException> { target.awaitSettled(Duration.ofMillis(150)) }

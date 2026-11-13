@@ -38,7 +38,7 @@ The agent under test must run with `includePackages` set and `exportUrl` pointin
 | `exportUrl: String` | The base URL for the agent's `exportUrl` option, such as `http://localhost:54321`. |
 | `close()` | Stops the server. A wait that is running, or begins later, throws `IllegalStateException` unless its condition already holds. |
 
-The collector serves the agent's four payload types: delta batches, probe manifests, static baselines and class listings. It keeps what the agent reports for each instance, and each query merges instances by name, as described below. It keeps nothing from a class listing, and rejects one only when it does not decode. The other reasons under [rejected payloads](#rejected-payloads) apply to delta batches, probe manifests and static baselines.
+The collector serves the agent's four payload types: delta batches, probe manifests, static baselines and class listings. It keeps what the agent reports for each instance, and each query merges instances by name, as described below. It keeps nothing from a class listing, but checks it as it checks every other payload. [Rejected payloads](#rejected-payloads) lists the checks.
 
 ### Waits
 
@@ -77,7 +77,7 @@ A finding method takes no arguments and returns a list. It judges the merged hit
 | `neverHitUnreadShapes(): List<ProbeRef>` | The probes `neverHit` leaves out because their code has the outline of compiler output the agent cannot read, each with its `unreadShape` family. |
 | `neverInitialized(): List<ClassFindingRef>` | Classes some instance loaded whose static initialiser ran in no instance. The query never lists a class with no static initialiser. |
 | `neverInstantiated(): List<ClassFindingRef>` | Classes some instance loaded, that `neverInitialized()` does not list, and none of whose constructors or instance methods ran, generated and inline instance methods included. A listed class has a constructor and an instance method that are neither inline, generated nor an unread shape. The query never lists a class with only static methods, or an interface. |
-| `neverLoaded(): List<String>` | Class names a complete static baseline declared that no instance ever loaded. Leaves out a class in `failedToLoad()` and a class whose every method is inline, generated or an unread shape. Throws `IllegalStateException` until a complete baseline has arrived, which needs the agent option `staticBaselineEnabled=true`. |
+| `neverLoaded(): List<String>` | Class names a complete static baseline declared that no instance ever loaded. Leaves out a class in `failedToLoad()` and a class whose every method is inline, generated or an unread shape. Throws `IllegalStateException` until a complete baseline has arrived, which needs the agent option `staticBaselineEnabled=true`. A baseline is complete when the collector holds every chunk of one scan. A chunk whose chunk count differs from the one its scan began with does not count. |
 | `failedToLoad(): List<String>` | Class names the agent wove that the JVM never defined in any instance. Each is a deployment problem to fix and never dead code. |
 | `failedToInitialize(): List<String>` | Class names that failed to initialise, sorted. See [Classes that failed to initialise](#classes-that-failed-to-initialise). Each is a deployment problem to fix and never dead code. |
 | `skippedClasses(): List<SkippedClass>` | Classes the include rules matched that the agent could not instrument, each with a reason. Sorted by class name. |
@@ -174,12 +174,15 @@ The six list queries sort by `DependencyStatus.identityKey`, except `absentRefer
 
 Once the list is not empty, every other query and wait throws `IllegalStateException`. The message starts `this collector rejected` and lists the reasons. Only `rejectedPayloads` and `close` keep working, so a test that calls any other query or wait fails even if it never reads the list.
 
-The collector rejects a payload when:
+The collector applies the same resource and run checks to all four payload types, class listings included. It rejects a payload when:
 
 - Its run ID is empty.
 - A second run ID arrives under an instance ID the collector already heard from. The collector keys on the instance ID alone and accepts the first run ID.
 - It carries an agent version that differs from the testkit's version. The reason names both versions. An empty version on either side skips the check.
 - A collector between the agent and the testkit stripped fields it did not know.
+- Its resource has a value over 1024 bytes or a NUL byte, an empty service name or instance ID, or a service name or namespace that is `.` or `..` once leading and trailing spaces are trimmed.
+- A timestamp is out of range, or a probe manifest has a class that failed to initialise with no reason or a dependency with no identities.
+- A static baseline or class listing has no scan or listing time, or a chunk count below 1 or a chunk index outside its chunk count.
 - It does not decode, which happens when the agent is newer than the testkit or something other than the agent posted to the port.
 - Applying it failed. The reason carries the exception.
 - The collector serves one test JVM, as the extension's does, and the payload comes from a second instance. The reason names `maxParallelForks` above 1 and a child JVM that has the agent.

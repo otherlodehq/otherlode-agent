@@ -7,6 +7,7 @@ import dev.otherlode.export.BranchSite
 import dev.otherlode.export.CallEdge
 import dev.otherlode.export.CallEdgeKind
 import dev.otherlode.export.ConditionPartKind
+import dev.otherlode.export.DeltaBatch
 import dev.otherlode.export.EndpointTemplateKind
 import dev.otherlode.export.InitializationFailure
 import dev.otherlode.export.KotlinKind
@@ -281,7 +282,7 @@ public class OtherlodeTestCollector internal constructor(
         val allInlineOrGeneratedNames: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
         val declaredClasses: MutableMap<String, DeclaredClassInfo> = ConcurrentHashMap()
-        val complete: Boolean get() = received.size >= chunkCount
+        val complete: Boolean get() = (0 until chunkCount).all { it in received }
     }
 
     private val lock = ReentrantLock()
@@ -2230,6 +2231,7 @@ public class OtherlodeTestCollector internal constructor(
             } catch (e: Exception) {
                 return reject(exchange, undecodable("delta batch", e))
             }
+        invalidDeltaBatch(batch)?.let { return reject(exchange, "delta batch from instance ${batch.resource.serviceInstanceId}: $it") }
         rejectionFor("delta batch", batch.resource)?.let { return reject(exchange, it) }
         val applied =
             applying(exchange, "delta batch") {
@@ -2263,6 +2265,7 @@ public class OtherlodeTestCollector internal constructor(
             } catch (e: Exception) {
                 return reject(exchange, undecodable("manifest", e))
             }
+        invalidManifest(manifest)?.let { return reject(exchange, "manifest from instance ${manifest.resource.serviceInstanceId}: $it") }
         rejectionFor("manifest", manifest.resource)?.let { return reject(exchange, it) }
         val applied =
             applying(exchange, "manifest") {
@@ -2414,12 +2417,16 @@ public class OtherlodeTestCollector internal constructor(
             } catch (e: Exception) {
                 return reject(exchange, undecodable("static baseline", e))
             }
+        invalidChunk(baseline.resource, baseline.scannedAt, "scanned_at", baseline.chunkIndex, baseline.chunkCount)?.let {
+            return reject(exchange, "static baseline from instance ${baseline.resource.serviceInstanceId}: $it")
+        }
         rejectionFor("static baseline", baseline.resource)?.let { return reject(exchange, it) }
         val applied =
             applying(exchange, "static baseline") {
                 val instanceId = baseline.resource.serviceInstanceId
                 val scanKey = ScanKey(instanceId, baseline.scannedAt)
                 val progress = scans.computeIfAbsent(scanKey) { ScanProgress(baseline.chunkCount) }
+                if (baseline.chunkCount != progress.chunkCount) return@applying
                 val wasComplete = progress.complete
                 progress.received += baseline.chunkIndex
                 progress.declaredNames += baseline.declaredClasses.map { it.className }
@@ -2485,11 +2492,16 @@ public class OtherlodeTestCollector internal constructor(
 
     private fun handleClassListing(exchange: HttpExchange) {
         val bytes = exchange.requestBody.readBytes()
-        try {
-            ProtoPayloadCodec.decodeClassListing(bytes)
-        } catch (e: Exception) {
-            return reject(exchange, undecodable("class listing", e))
+        val listing =
+            try {
+                ProtoPayloadCodec.decodeClassListing(bytes)
+            } catch (e: Exception) {
+                return reject(exchange, undecodable("class listing", e))
+            }
+        invalidChunk(listing.resource, listing.listedAt, "listed_at", listing.chunkIndex, listing.chunkCount)?.let {
+            return reject(exchange, "class listing from instance ${listing.resource.serviceInstanceId}: $it")
         }
+        rejectionFor("class listing", listing.resource)?.let { return reject(exchange, it) }
         respond(exchange, 202)
     }
 
@@ -2540,7 +2552,6 @@ public class OtherlodeTestCollector internal constructor(
         resource: ResourceAttributes,
     ): String? {
         val instanceId = resource.serviceInstanceId
-        if (resource.runId.isEmpty()) return "$payload from instance $instanceId has an empty run id"
         if (resource.fieldsStripped) {
             return "$payload from instance $instanceId was forwarded by a collector that stripped fields its bindings " +
                 "did not know, so it may be missing data. The testkit must receive the agent's payloads directly"
@@ -2569,6 +2580,91 @@ public class OtherlodeTestCollector internal constructor(
         }
         return "$payload from instance $instanceId has run id ${resource.runId}, but this collector already " +
             "accepted run id $accepted for that instance and keys on the instance alone"
+    }
+
+    private fun invalidResource(resource: ResourceAttributes): String? {
+        val values =
+            listOf(
+                "service_name" to resource.serviceName,
+                "service_version" to resource.serviceVersion.orEmpty(),
+                "service_instance_id" to resource.serviceInstanceId,
+                "environment" to resource.environment.orEmpty(),
+                "run_id" to resource.runId,
+                "service_namespace" to resource.serviceNamespace.orEmpty(),
+                "agent_version" to resource.agentVersion,
+            )
+        for ((name, value) in values) {
+            val size = value.toByteArray(Charsets.UTF_8).size
+            if (size > MAX_RESOURCE_VALUE_BYTES) return "resource.$name is $size bytes, over the $MAX_RESOURCE_VALUE_BYTES-byte limit"
+            if (value.indexOf('\u0000') >= 0) return "resource.$name holds a NUL byte"
+        }
+        val name = resource.serviceName.trim(::isGoSpace)
+        if (name.isEmpty()) return "resource.service_name is empty"
+        if (name == "." || name == "..") return "resource.service_name is \"$name\", which no URL path can name"
+        val namespace = resource.serviceNamespace.orEmpty().trim(::isGoSpace)
+        if (namespace == "." || namespace == "..") return "resource.service_namespace is \"$namespace\", which no URL path can name"
+        if (resource.serviceInstanceId.isEmpty()) return "resource.service_instance_id is empty"
+        if (resource.runId.isEmpty()) return "resource.run_id is empty"
+        return null
+    }
+
+    // Must match Go's unicode.IsSpace, which the collector's strings.TrimSpace uses.
+    private fun isGoSpace(c: Char): Boolean =
+        when (c) {
+            '\t', '\n', '\u000B', '\u000C', '\r', ' ', '\u0085', '\u00A0', '\u1680', '\u2028', '\u2029', '\u202F', '\u205F', '\u3000' -> true
+            else -> c in '\u2000'..'\u200A'
+        }
+
+    private fun inTimeRange(ms: Long): Boolean = ms in 0..MAX_TIMESTAMP_MILLIS
+
+    private fun outOfRange(
+        list: String,
+        index: Int,
+        field: String,
+    ): String = "$list[$index].$field is out of range"
+
+    private fun invalidDeltaBatch(batch: DeltaBatch): String? {
+        invalidResource(batch.resource)?.let { return it }
+        batch.deltas.forEachIndexed { i, d -> if (!inTimeRange(d.firstSeenAt)) return outOfRange("deltas", i, "first_seen_at") }
+        batch.endpointDeltas.forEachIndexed { i, d ->
+            if (!inTimeRange(d.firstSeenAt)) return outOfRange("endpoint_deltas", i, "first_seen_at")
+        }
+        batch.dependencyDeltas.forEachIndexed { i, d ->
+            if (!inTimeRange(d.firstLoadedAt)) return outOfRange("dependency_deltas", i, "first_loaded_at")
+        }
+        return null
+    }
+
+    private fun invalidManifest(manifest: ProbeManifest): String? {
+        invalidResource(manifest.resource)?.let { return it }
+        manifest.unreportedClasses.forEachIndexed { i, c ->
+            if (!inTimeRange(c.firstSeenUnreportedAt)) return outOfRange("unreported_classes", i, "first_seen_unreported_at")
+        }
+        manifest.failedClasses.forEachIndexed { i, c -> if (!inTimeRange(c.withheldAt)) return outOfRange("failed_classes", i, "withheld_at") }
+        manifest.classesFailedToInitialize.forEachIndexed { i, c ->
+            if (!inTimeRange(c.observedAt)) return outOfRange("classes_failed_to_initialize", i, "observed_at")
+        }
+        manifest.skippedClasses.forEachIndexed { i, c -> if (!inTimeRange(c.skippedAt)) return outOfRange("skipped_classes", i, "skipped_at") }
+        manifest.disabledEndpointModules.forEachIndexed { i, m ->
+            if (!inTimeRange(m.disabledAt)) return outOfRange("disabled_endpoint_modules", i, "disabled_at")
+        }
+        manifest.frameworkMarkers.forEachIndexed { i, m -> if (!inTimeRange(m.seenAt)) return outOfRange("framework_markers", i, "seen_at") }
+        return null
+    }
+
+    private fun invalidChunk(
+        resource: ResourceAttributes,
+        at: Long,
+        atField: String,
+        index: Int,
+        count: Int,
+    ): String? {
+        invalidResource(resource)?.let { return it }
+        if (at <= 0) return "$atField is not set"
+        if (count < 1) return "chunk_count must be at least 1"
+        if (index < 0) return "chunk_index is negative"
+        if (index >= count) return "chunk_index is out of range for chunk_count"
+        return null
     }
 
     private fun undecodable(
@@ -2622,6 +2718,10 @@ public class OtherlodeTestCollector internal constructor(
         private const val REDACTED_LITERAL = "…"
 
         private const val SETTLED_COMPLETE_FLUSHES = 2
+
+        private const val MAX_RESOURCE_VALUE_BYTES = 1024
+
+        private const val MAX_TIMESTAMP_MILLIS = 253402300799999L
 
         private const val CLASS_INIT = "<clinit>"
 
