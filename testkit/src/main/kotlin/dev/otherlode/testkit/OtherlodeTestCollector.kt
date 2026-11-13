@@ -116,16 +116,17 @@ public class OtherlodeTestCollector internal constructor(
         val extensionReceiver: Boolean = false,
         val unreadShape: WireUnreadShape = WireUnreadShape.NONE,
         val branchSites: List<BranchSite> = emptyList(),
+        val serviceInstanceId: String,
     ) {
         fun isLookedThrough(): Boolean = generatedBy != WireGeneratedBy.NONE || unreadShape != WireUnreadShape.NONE
     }
 
     private data class DeclaredClassInfo(
-        val serviceInstanceId: String,
         val methods: List<DeclaredMethodInfo>,
         val superClassName: String?,
         val interfaceNames: List<String>,
         val kotlinKind: KotlinKind = KotlinKind.NONE,
+        val classReferences: List<String> = emptyList(),
     )
 
     private data class NodeKey(
@@ -270,19 +271,10 @@ public class OtherlodeTestCollector internal constructor(
         val id: T,
     )
 
-    private data class BaselineReferences(
-        val classReferences: List<String>,
-        val methods: List<DeclaredMethodInfo>,
-    )
-
     private class ScanProgress(
         val chunkCount: Int,
     ) {
         val received: MutableSet<Int> = ConcurrentHashMap.newKeySet()
-        val declaredNames: MutableSet<String> = ConcurrentHashMap.newKeySet()
-
-        val allInlineOrGeneratedNames: MutableSet<String> = ConcurrentHashMap.newKeySet()
-
         val declaredClasses: MutableMap<String, DeclaredClassInfo> = ConcurrentHashMap()
         val complete: Boolean get() = (0 until chunkCount).all { it in received }
     }
@@ -350,7 +342,6 @@ public class OtherlodeTestCollector internal constructor(
     private val externalClassesByName = ConcurrentHashMap<InstanceKey<String>, ExternalClassView>()
     private val classLevelReferences = ConcurrentHashMap<InstanceKey<Int>, List<String>>()
     private val classNamesByClassId = ConcurrentHashMap<InstanceKey<Int>, String>()
-    private val baselineReferences = ConcurrentHashMap<InstanceKey<String>, BaselineReferences>()
     private val instancesRecordingReferences: MutableSet<String> = ConcurrentHashMap.newKeySet()
 
     private val initializationFailures = ConcurrentHashMap<InstanceKey<String>, Set<InitializationFailure>>()
@@ -1338,11 +1329,11 @@ public class OtherlodeTestCollector internal constructor(
      * Each unreached cluster in the call graph, sorted by [UnreachedCluster.membersTotal]
      * descending, then by root.
      *
-     * The nodes are methods merged across instances, never-hit branch outcomes in methods with
-     * hits, and classes that hold a [ClassFinding]. Some outcomes, such as routine and unread ones,
-     * are not nodes. A method that only a complete static baseline declared carries
-     * [ProbeRef.neverLoaded]. A class node stands for the never-hit methods its finding covers. The
-     * edges are the call edges of manifests and complete baselines. A call goes to its owner or the
+     * The nodes are methods merged across instances, never-hit branch outcomes in methods with hits,
+     * and classes that hold a [ClassFinding]. Some outcomes, such as routine and unread ones, are not
+     * nodes. A method that only a complete static baseline declared carries [ProbeRef.neverLoaded]. A
+     * class node stands for the never-hit methods its finding covers. The edges are the call edges of
+     * manifests and of each instance's latest complete baseline. A call goes to its owner or the
      * nearest supertype that has the method, and a virtual call other than to a constructor also goes
      * to each known subtype that has it. A call guarded by an outcome node counts as a call from that
      * outcome.
@@ -1736,7 +1727,7 @@ public class OtherlodeTestCollector internal constructor(
                 val targets = mutableSetOf<NodeKey>()
                 method.calls.forEach { resolve(it, mutableSetOf(caller), targets) }
                 targets -= caller
-                if (targets.isNotEmpty()) unknown[caller] = targets
+                if (targets.isNotEmpty()) unknown[caller] = unknown[caller].orEmpty() + targets
             }
         }
         return unknown
@@ -1781,7 +1772,7 @@ public class OtherlodeTestCollector internal constructor(
                         method.calls.mapTo(edges) { edge ->
                             GuardedEdge(
                                 edge.copy(guard = null),
-                                edge.guard?.let { declaredGuard(it, declared, method, location, branchIds) },
+                                edge.guard?.let { declaredGuard(it, method, location, branchIds) },
                             )
                         }
                     }
@@ -1797,16 +1788,16 @@ public class OtherlodeTestCollector internal constructor(
         }
         for ((className, declared) in consultedDeclaredClasses) {
             if (className in dynamicallyKnownClassNames) continue
-            for (method in declared.methods) {
-                if (method.inline || method.isLookedThrough()) continue
-                val nodeKey = NodeKey(className, method.methodName, method.methodDescriptor)
+            val unseen = declared.methods.filter { !it.inline && !it.isLookedThrough() }
+            for ((method, overloads) in unseen.groupBy { it.methodName to it.methodDescriptor }) {
+                val nodeKey = NodeKey(className, method.first, method.second)
                 if (nodeKey in nodes) continue
                 nodes[nodeKey] =
                     NodeInfo(
                         line = -1,
                         neverLoaded = true,
                         hits = 0L,
-                        edges = method.calls.mapTo(mutableSetOf()) { GuardedEdge(it.copy(guard = null), null) },
+                        edges = overloads.flatMapTo(mutableSetOf()) { declaredMethod -> declaredMethod.calls.map { GuardedEdge(it.copy(guard = null), null) } },
                     )
             }
         }
@@ -1815,13 +1806,12 @@ public class OtherlodeTestCollector internal constructor(
 
     private fun declaredGuard(
         guard: Int,
-        declared: DeclaredClassInfo,
         method: DeclaredMethodInfo,
         location: MergedLocation,
         branchIds: Map<OutcomeKey, OutcomeId>,
     ): OutcomeId? {
         val nodeKey = location.key.method
-        branchIds[OutcomeKey(declared.serviceInstanceId, nodeKey, guard)]?.let { return it }
+        branchIds[OutcomeKey(method.serviceInstanceId, nodeKey, guard)]?.let { return it }
         val site = method.branchSites.firstOrNull { site -> site.outcomes.any { it.branchIndex == guard } } ?: return null
         val siteKey = site.siteKey ?: return null
         val outcome = site.outcomes.first { it.branchIndex == guard }
@@ -2193,7 +2183,13 @@ public class OtherlodeTestCollector internal constructor(
     }
 
     private fun dependencyReport(): DependencyReport =
-        computeDependencyReport(dependencyViews(), failedToLoad().toSet(), failedToInitializeNames(), classesWithInitializerRunning())
+        computeDependencyReport(
+            dependencyViews(),
+            failedToLoad().toSet(),
+            failedToInitializeNames(),
+            skippedByClassName.keys.toSet(),
+            initializerGapsByInstance(),
+        )
 
     private fun dependenciesWithStatus(
         status: DependencyUsage,
@@ -2267,8 +2263,9 @@ public class OtherlodeTestCollector internal constructor(
             sites = finding.sites,
         )
 
-    private fun dependencyViews(): List<InstanceDependencyView> =
-        instanceIds.sorted().map { instanceId ->
+    private fun dependencyViews(): List<InstanceDependencyView> {
+        val latestScans = latestCompleteScans()
+        return instanceIds.sorted().map { instanceId ->
             val probes = probesByKey.filterKeys { it.serviceInstanceId == instanceId }
             val methodReferences =
                 probes
@@ -2292,13 +2289,14 @@ public class OtherlodeTestCollector internal constructor(
                         HeldReferences(className, null, null, ReferenceOrigin.MANIFEST_CLASS, referenced)
                     }
             val declaredReferences =
-                baselineReferences
-                    .filterKeys { it.serviceInstanceId == instanceId }
-                    .flatMap { (key, declared) ->
-                        listOf(HeldReferences(key.id, null, null, ReferenceOrigin.BASELINE, declared.classReferences)) +
+                latestScans[instanceId]
+                    ?.declaredClasses
+                    .orEmpty()
+                    .flatMap { (className, declared) ->
+                        listOf(HeldReferences(className, null, null, ReferenceOrigin.BASELINE, declared.classReferences)) +
                             declared.methods.map {
                                 HeldReferences(
-                                    key.id,
+                                    className,
                                     it.methodName,
                                     it.methodDescriptor,
                                     ReferenceOrigin.BASELINE,
@@ -2307,11 +2305,10 @@ public class OtherlodeTestCollector internal constructor(
                                 )
                             }
                     }
-            val instanceScans = scans.filterKeys { it.serviceInstanceId == instanceId }.values
             InstanceDependencyView(
                 instanceId = instanceId,
                 referencesRecorded = instanceId in instancesRecordingReferences,
-                baselineComplete = instanceScans.isNotEmpty() && instanceScans.all { it.complete },
+                baselineComplete = instanceId in latestScans,
                 dependencies = dependencyLocations.filterKeys { it.serviceInstanceId == instanceId }.values.toList(),
                 loadedClassesTotal = loadedClassesTotals.filterKeys { it.serviceInstanceId == instanceId }.mapKeys { it.key.id },
                 externalClasses = externalClassesByName.filterKeys { it.serviceInstanceId == instanceId }.mapKeys { it.key.id },
@@ -2319,6 +2316,7 @@ public class OtherlodeTestCollector internal constructor(
                 loadedClassNames = loadedClassNamesByInstance[instanceId].orEmpty().toSet(),
             )
         }
+    }
 
     /**
      * Why each payload this collector answered 400 was rejected, oldest first, such as an empty run
@@ -2546,23 +2544,12 @@ public class OtherlodeTestCollector internal constructor(
                 val scanKey = ScanKey(instanceId, baseline.scannedAt)
                 val progress = scans.computeIfAbsent(scanKey) { ScanProgress(baseline.chunkCount) }
                 if (baseline.chunkCount != progress.chunkCount) return@applying
+                if (baseline.chunkIndex in progress.received) return@applying
                 val wasComplete = progress.complete
                 progress.received += baseline.chunkIndex
-                progress.declaredNames += baseline.declaredClasses.map { it.className }
-                progress.allInlineOrGeneratedNames +=
-                    baseline.declaredClasses
-                        .filter {
-                            it.methods.isNotEmpty() &&
-                                it.methods.all { method ->
-                                    method.inline ||
-                                        method.generatedBy != WireGeneratedBy.NONE ||
-                                        method.unreadShape != WireUnreadShape.NONE
-                                }
-                        }.map { it.className }
                 for (declaredClass in baseline.declaredClasses) {
                     progress.declaredClasses[declaredClass.className] =
                         DeclaredClassInfo(
-                            serviceInstanceId = instanceId,
                             methods =
                                 declaredClass.methods.map {
                                     DeclaredMethodInfo(
@@ -2578,16 +2565,13 @@ public class OtherlodeTestCollector internal constructor(
                                         it.extensionReceiver,
                                         it.unreadShape,
                                         it.branchSites,
+                                        instanceId,
                                     )
                                 },
                             superClassName = declaredClass.superClassName,
                             interfaceNames = declaredClass.interfaceNames,
                             kotlinKind = declaredClass.kotlinKind,
-                        )
-                    baselineReferences[InstanceKey(instanceId, declaredClass.className)] =
-                        BaselineReferences(
-                            declaredClass.referencedClasses,
-                            progress.declaredClasses.getValue(declaredClass.className).methods,
+                            classReferences = declaredClass.referencedClasses,
                         )
                 }
                 for (external in baseline.externalClasses) {
@@ -2598,15 +2582,46 @@ public class OtherlodeTestCollector internal constructor(
                 }
                 instanceIds += instanceId
                 if (!wasComplete && progress.complete) {
-                    consultedDeclaredNames += progress.declaredNames
-                    consultedAllInlineOrGeneratedNames += progress.allInlineOrGeneratedNames
-                    for ((className, info) in progress.declaredClasses) consultedDeclaredClasses.putIfAbsent(className, info)
                     completedScans += scanKey
+                    refreshBaselines()
                 }
             }
         if (!applied) return
         respond(exchange, 202)
         signalAll()
+    }
+
+    private fun latestCompleteScans(): Map<String, ScanProgress> =
+        completedScans
+            .groupBy { it.serviceInstanceId }
+            .mapValues { (_, keys) -> scans.getValue(keys.maxBy { it.scannedAt }) }
+
+    private fun refreshBaselines() {
+        val byClass = sortedMapOf<String, MutableList<DeclaredClassInfo>>()
+        for ((_, scan) in latestCompleteScans().toSortedMap()) {
+            for ((className, info) in scan.declaredClasses) byClass.getOrPut(className) { mutableListOf() } += info
+        }
+        val merged =
+            byClass.mapValues { (_, infos) ->
+                DeclaredClassInfo(
+                    methods = infos.flatMap { it.methods },
+                    superClassName = infos.firstNotNullOfOrNull { it.superClassName },
+                    interfaceNames = infos.flatMap { it.interfaceNames }.distinct(),
+                    kotlinKind = infos.map { it.kotlinKind }.firstOrNull { it != KotlinKind.NONE } ?: KotlinKind.NONE,
+                    classReferences = infos.flatMap { it.classReferences }.distinct(),
+                )
+            }
+        consultedDeclaredClasses.clear()
+        consultedDeclaredClasses.putAll(merged)
+        consultedDeclaredNames.clear()
+        consultedDeclaredNames += merged.keys
+        consultedAllInlineOrGeneratedNames.clear()
+        consultedAllInlineOrGeneratedNames +=
+            merged
+                .filterValues { declared ->
+                    declared.methods.isNotEmpty() &&
+                        declared.methods.all { it.inline || it.generatedBy != WireGeneratedBy.NONE || it.unreadShape != WireUnreadShape.NONE }
+                }.keys
     }
 
     private fun handleClassListing(exchange: HttpExchange) {

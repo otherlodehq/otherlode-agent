@@ -77,7 +77,7 @@ A finding method takes no arguments and returns a list. It judges the merged hit
 | `neverHitUnreadShapes(): List<ProbeRef>` | The probes `neverHit` leaves out because their code has the outline of compiler output the agent cannot read, each with its `unreadShape` family. |
 | `neverInitialized(): List<ClassFindingRef>` | Classes some instance loaded whose static initialiser ran in no instance. The query never lists a class with no static initialiser. |
 | `neverInstantiated(): List<ClassFindingRef>` | Classes some instance loaded, that `neverInitialized()` does not list, and none of whose constructors or instance methods ran, generated and inline instance methods included. A listed class has a constructor and an instance method that are neither inline, generated nor an unread shape. The query never lists a class with only static methods, or an interface. |
-| `neverLoaded(): List<String>` | Class names a complete static baseline declared that no instance ever loaded. Leaves out a class in `failedToLoad()` and a class whose every method is inline, generated or an unread shape. Throws `IllegalStateException` until a complete baseline has arrived, which needs the agent option `staticBaselineEnabled=true`. A baseline is complete when the collector holds every chunk of one scan. A chunk whose chunk count differs from the one its scan began with does not count. |
+| `neverLoaded(): List<String>` | Class names a complete static baseline declared that no instance ever loaded. Leaves out a class in `failedToLoad()` and a class whose every method is inline, generated or an unread shape. Throws `IllegalStateException` until a complete baseline has arrived, which needs the agent option `staticBaselineEnabled=true`. A baseline is complete when the collector holds every chunk of one scan. A chunk whose chunk count differs from the one its scan began with does not count, and neither does a chunk it already holds. For each instance the collector reads its latest complete scan, and it joins the classes, methods and call edges of every instance's latest scan, so the answer does not depend on which instance's scan arrived first. |
 | `failedToLoad(): List<String>` | Class names the agent wove that the JVM never defined in any instance. Each is a deployment problem to fix and never dead code. |
 | `failedToInitialize(): List<String>` | Class names that failed to initialise, sorted. See [Classes that failed to initialise](#classes-that-failed-to-initialise). Each is a deployment problem to fix and never dead code. |
 | `skippedClasses(): List<SkippedClass>` | Classes the include rules matched that the agent could not instrument, each with a reason. Sorted by class name. |
@@ -119,7 +119,7 @@ A class is initialised in an instance when its static initialiser's returned slo
 
 `neverHit`, `neverHitRoutineOutcomes`, `neverHitUnreadShapes`, `neverInitialized`, `neverInstantiated` and `unreachedClusters` leave out a listed class. `neverCalled` leaves out an endpoint when, in every instance that reports it, that instance has a probe of the handler class and the class failed to initialise there, is listed, or has its initialiser still running there. `alwaysSupplied` leaves out a parameter when each of its omission probes is in such a class. A method of such a class that has hits is not a hit caller, so a never-hit method of another class that only it calls is in no cluster. That covers the static initialiser of a class whose initialiser threw, which has hits. A generated or unread-shape method of the class that has hits still counts as a hit caller. A never-hit method of the class, an untaken outcome of one of its hit methods and a generated method of it that has no hits each still count as a caller that blocks.
 
-All of these queries also leave out a class whose static initialiser is still running, and `failedToInitialize()` does not list it. Its initialiser is still running when, in every instance that loaded it, the initialiser's entry probe counted, the instance sent its returned and threw slots, and neither slot counted. Unlike a class that failed to initialise, a method of such a class that has hits still counts as a hit caller. A dependency that a method of such a class with no hits references reads `WITHOUT_EVIDENCE` until the initialiser returns or throws, unless a live site, or a class that failed to load or initialise, references it.
+All of these queries also leave out a class whose static initialiser is still running, and `failedToInitialize()` does not list it. Its initialiser is still running when, in every instance that loaded it, the initialiser's entry probe counted, the instance sent its returned and threw slots, and neither slot counted. Unlike a class that failed to initialise, a method of such a class that has hits still counts as a hit caller. A dependency that a method of such a class with no hits references reads `WITHOUT_EVIDENCE` until the initialiser returns or throws, unless a live site, or a class that failed to load or initialise, references it. So does a dependency referenced from a method that a complete baseline declares in such a class, and one referenced from a method that a complete baseline declares in a skipped class.
 
 #### Queries that refuse
 
@@ -406,7 +406,7 @@ One endpoint, merged across instances. Every field except `verb`, `routeTemplate
 | | `versions` | `Set<String>` | Every non-empty version any instance listed, sorted. |
 | `DependencyReferenceSite` | `className` | `String` | The class that references the dependency. |
 | | `methodName` | `String?` | The method, or null for a reference at class level. |
-| | `neverLoaded` | `Boolean` | `true` when the site comes from the static baseline of an instance that did not load its class, and `failedToLoad` is `false`. |
+| | `neverLoaded` | `Boolean` | `true` when the site comes from a static baseline and no instance loaded its class, and `failedToLoad` is `false`. |
 | | `failedToLoad` | `Boolean` | `true` when the site's class failed to load in some instance and loaded in none. |
 | | `failedToInitialize` | `Boolean` | `true` when the site's class failed to initialise and no reference of the site is live. |
 | `AbsentReference` | `className` | `String` | The referenced class no loader could find. |
@@ -544,14 +544,14 @@ What the dependency rules say about one dependency.
 |---|---|
 | `UNLOADED` | Listed from a startup classpath, and no instance loaded a class from it. |
 | `UNREFERENCED` | A class from it loaded, and a complete baseline shows nothing in your code references it. |
-| `UNREACHED` | Referenced only from methods never hit or classes never loaded, per a complete baseline. |
+| `UNREACHED` | Referenced only from methods no instance hit or classes no instance loaded, per a complete baseline. |
 | `NO_LIVE_REFERENCE` | Loaded, with no live reference, from an instance that sent no complete baseline. It is unreferenced or unreached, and the two cannot be told apart. |
 | `FAILED_TO_LOAD` | Loaded, with no live reference, and referenced from a class that failed to load. A prompt to review, not a claim that it can go. |
-| `USED` | Referenced from a method with hits, or at class level by a class that loaded and can run. |
+| `USED` | Referenced from a method that any instance hit, or at class level by a class that any instance loaded and that did not fail to initialise. |
 | `LOADED` | Loaded, and nothing further is claimed, because no instance that lists it records references. |
 | `RESOURCES_ONLY` | The listing counted no class in it, as with native libraries, web assets and message bundles. Nothing is claimed. |
 | `FAILED_TO_INITIALIZE` | Loaded, with no live reference, and referenced from a class that failed to initialise and from none that failed to load. A prompt to review, not a claim that it can go. A dependency referenced from both kinds of failed class reads as `FAILED_TO_LOAD`. |
-| `WITHOUT_EVIDENCE` | Loaded, with no live reference, and referenced from a method with no hits in a class whose static initialiser is still running, so its zero counts prove nothing. The split queries leave it out and keep answering. |
+| `WITHOUT_EVIDENCE` | Loaded, with no live reference, and referenced from a method with no hits whose class gives no evidence: its static initialiser is still running or failed in every instance that knows the method, or the class is skipped. Its zero counts prove nothing. The split queries leave it out and keep answering. |
 
 ## Compatibility
 

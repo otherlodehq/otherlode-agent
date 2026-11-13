@@ -43,8 +43,9 @@ public enum class DependencyUsage {
     FAILED_TO_INITIALIZE,
 
     /**
-     * No live site references it, and a method with no hits in a class whose static initialiser has started
-     * but not finished does, so its zero counts are no evidence.
+     * No live site references it, no class that failed to load or initialise references it, and a method
+     * with no hits references it whose zero count is no evidence: a method of a skipped class, or one whose
+     * class failed to initialise or has its initialiser still running in every instance that has a probe of it.
      */
     WITHOUT_EVIDENCE,
 }
@@ -64,8 +65,8 @@ public data class DependencyIdentityRef internal constructor(
  * One place in the adopter's code that references a dependency or an absent class. [methodName] is
  * null for a class-level reference.
  *
- * - [neverLoaded] marks a site from a static baseline in a class that its instance did not load. It
- *   is false when [failedToLoad] is true.
+ * - [neverLoaded] marks a site from a static baseline in a class that no instance loaded. It is false
+ *   when [failedToLoad] is true.
  * - [failedToLoad] marks a site from a complete static baseline in a class that some instance failed
  *   to load and none loaded.
  * - [failedToInitialize] marks a site that is not live, in a class that failed to initialise.

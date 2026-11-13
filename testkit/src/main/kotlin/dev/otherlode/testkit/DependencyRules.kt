@@ -82,16 +82,22 @@ internal fun computeDependencyReport(
     instances: List<InstanceDependencyView>,
     failedClassNames: Set<String> = emptySet(),
     failedToInitializeClassNames: Set<String> = emptySet(),
-    initializerRunningClassNames: Set<String> = emptySet(),
+    skippedClassNames: Set<String> = emptySet(),
+    initializerGaps: Map<String, Set<String>> = emptyMap(),
 ): DependencyReport {
-    val failed = failedClassNames - instances.flatMapTo(mutableSetOf()) { it.loadedClassNames }
+    val loadedAnywhere = instances.flatMapTo(mutableSetOf()) { it.loadedClassNames }
+    val failed = failedClassNames - loadedAnywhere
     val recording = instances.filter { it.referencesRecorded }
-    val methodHits =
+    val manifestMethods =
         instances
-            .flatMap { it.references }
-            .filter { it.origin == ReferenceOrigin.MANIFEST_METHOD }
-            .groupBy { Triple(it.className, it.methodName, it.methodDescriptor) }
-            .mapValues { (_, held) -> held.sumOf { it.hits } }
+            .flatMap { instance -> instance.references.filter { it.origin == ReferenceOrigin.MANIFEST_METHOD }.map { instance to it } }
+            .groupBy({ (_, held) -> Triple(held.className, held.methodName, held.methodDescriptor) }, { it })
+    val methodHits = manifestMethods.mapValues { (_, held) -> held.sumOf { (_, reference) -> reference.hits } }
+
+    fun noEvidenceAboutMethod(key: Triple<String, String?, String?>): Boolean {
+        val knowing = manifestMethods[key]?.map { (instance, _) -> instance.instanceId }?.toSet().orEmpty()
+        return knowing.isNotEmpty() && knowing.all { key.first in initializerGaps[it].orEmpty() }
+    }
 
     val referencesByDependency = mutableMapOf<String, MutableSet<Pair<DependencyReferenceSite, Boolean>>>()
     val withoutEvidence = mutableSetOf<String>()
@@ -100,32 +106,28 @@ internal fun computeDependencyReport(
         val identityKeys = instance.dependencies.associate { it.dependencyId to it.identityKey }
         for (held in instance.references) {
             if (held.inline) continue
+            val methodKey = Triple(held.className, held.methodName, held.methodDescriptor)
+            val classLevel = held.methodName == null
             val live =
-                when (held.origin) {
-                    ReferenceOrigin.MANIFEST_METHOD -> {
-                        (methodHits[Triple(held.className, held.methodName, held.methodDescriptor)] ?: 0L) > 0L
-                    }
-
-                    ReferenceOrigin.MANIFEST_CLASS -> {
-                        held.className in instance.loadedClassNames
-                    }
-
-                    ReferenceOrigin.BASELINE -> {
-                        false
-                    }
+                when {
+                    held.origin == ReferenceOrigin.MANIFEST_CLASS -> held.className in instance.loadedClassNames
+                    classLevel -> held.className in loadedAnywhere
+                    else -> (methodHits[methodKey] ?: 0L) > 0L
                 }
-            val failedSite = held.origin == ReferenceOrigin.BASELINE && instance.baselineComplete && held.className in failed
+            val failedSite = held.origin == ReferenceOrigin.BASELINE && held.className in failed
             val failedInitialization = held.className in failedToInitializeClassNames
-            val liveSite = live && !(failedInitialization && held.origin == ReferenceOrigin.MANIFEST_CLASS)
-            val unhitMethodOfRunningInitializer =
+            val liveSite = live && !(failedInitialization && classLevel)
+            val unhitMethodWithoutEvidence =
                 !live &&
-                    held.origin == ReferenceOrigin.MANIFEST_METHOD &&
-                    held.className in initializerRunningClassNames
+                    !classLevel &&
+                    (
+                        noEvidenceAboutMethod(methodKey) || held.className in skippedClassNames
+                    )
             val site =
                 DependencyReferenceSite(
                     held.className,
                     held.methodName,
-                    neverLoaded = held.origin == ReferenceOrigin.BASELINE && !failedSite && held.className !in instance.loadedClassNames,
+                    neverLoaded = held.origin == ReferenceOrigin.BASELINE && !failedSite && held.className !in loadedAnywhere,
                     failedToLoad = failedSite,
                     failedToInitialize = failedInitialization && !liveSite,
                 )
@@ -137,7 +139,7 @@ internal fun computeDependencyReport(
                 }
                 val identityKey = mapping.dependencyId?.let(identityKeys::get) ?: continue
                 referencesByDependency.getOrPut(identityKey) { mutableSetOf() } += site to liveSite
-                if (unhitMethodOfRunningInitializer) withoutEvidence += identityKey
+                if (unhitMethodWithoutEvidence) withoutEvidence += identityKey
             }
         }
     }

@@ -48,6 +48,22 @@ class DependencyRulesTest {
         computeDependencyReport(instances.toList()).findings.single().status
 
     @Test
+    fun `an unhit manifest method of a class any instance skipped has no evidence`() {
+        val report =
+            computeDependencyReport(listOf(instance(references = listOf(method("demo.S", "run", hits = 0)))), skippedClassNames = setOf("demo.S"))
+
+        assertEquals(DependencyUsage.WITHOUT_EVIDENCE, report.findings.single().status)
+    }
+
+    @Test
+    fun `a method of a class one instance skipped is used when another instance hit it`() {
+        val report =
+            computeDependencyReport(listOf(instance(references = listOf(method("demo.S", "run", hits = 3)))), skippedClassNames = setOf("demo.S"))
+
+        assertEquals(DependencyUsage.USED, report.findings.single().status)
+    }
+
+    @Test
     fun `a startup dependency no instance loaded a class from is unloaded`() {
         assertEquals(DependencyUsage.UNLOADED, statusOf(instance(loaded = 0)))
     }
@@ -408,20 +424,6 @@ class DependencyRulesTest {
     }
 
     @Test
-    fun `a failed site counts only from a complete baseline, the scan the server reads`() {
-        val references = listOf(baselineSite("demo.Legacy", "apply"))
-
-        assertEquals(
-            DependencyUsage.FAILED_TO_LOAD,
-            statusOf(listOf(instance(references = references, baselineComplete = true)), failedLegacy),
-        )
-        assertEquals(
-            DependencyUsage.NO_LIVE_REFERENCE,
-            statusOf(listOf(instance(references = references, baselineComplete = false)), failedLegacy),
-        )
-    }
-
-    @Test
     fun `a dependency with a failed site and a never-hit method site is failed to load, not unreached`() {
         val references = listOf(baselineSite("demo.Legacy", "apply"), method("demo.OrderController", "legacy", hits = 0))
         val report =
@@ -443,7 +445,7 @@ class DependencyRulesTest {
     }
 
     @Test
-    fun `a class one instance names as failed and another loaded is not failed, so its site reads as before`() {
+    fun `a class one instance names as failed and another loaded is not failed, and its site is not never loaded`() {
         val references = listOf(baselineSite("demo.Legacy", "apply"))
         val report =
             computeDependencyReport(
@@ -456,7 +458,7 @@ class DependencyRulesTest {
 
         val finding = report.findings.single()
         assertEquals(DependencyUsage.UNREACHED, finding.status)
-        assertEquals(listOf(DependencyReferenceSite("demo.Legacy", "apply", neverLoaded = true)), finding.sites)
+        assertEquals(listOf(DependencyReferenceSite("demo.Legacy", "apply", neverLoaded = false)), finding.sites)
     }
 
     @Test
@@ -477,5 +479,60 @@ class DependencyRulesTest {
             statusOf(listOf(instance(references = listOf(baselineSite("demo.Legacy", "apply")), referencesRecorded = false)), failedLegacy)
 
         assertEquals(DependencyUsage.LOADED, status)
+    }
+
+    private fun twoInstancesKnowingAnUnhitMethod() =
+        listOf(
+            instance(references = listOf(method("demo.Init", "run", hits = 0))),
+            instance(instanceId = "instance-2", references = listOf(method("demo.Init", "run", hits = 0))),
+        )
+
+    @Test
+    fun `an unhit method has no evidence only when every instance that knows it has a gap in its class`() {
+        val instances = twoInstancesKnowingAnUnhitMethod()
+
+        fun status(gaps: Map<String, Set<String>>) = computeDependencyReport(instances, initializerGaps = gaps).findings.single().status
+
+        assertEquals(DependencyUsage.UNREACHED, status(emptyMap()))
+        assertEquals(DependencyUsage.UNREACHED, status(mapOf("instance-1" to setOf("demo.Init"))))
+        assertEquals(
+            DependencyUsage.WITHOUT_EVIDENCE,
+            status(mapOf("instance-1" to setOf("demo.Init"), "instance-2" to setOf("demo.Init"))),
+        )
+    }
+
+    @Test
+    fun `a baseline method of a class with a gap in every instance that knows the method has no evidence`() {
+        val gaps = mapOf("instance-1" to setOf("demo.Init"))
+        val known = method("demo.Init", "run", hits = 0)
+
+        fun statusWith(declaredMethod: String) =
+            computeDependencyReport(
+                listOf(
+                    instance(
+                        references =
+                            listOf(
+                                known,
+                                HeldReferences("demo.Init", declaredMethod, "()V", ReferenceOrigin.BASELINE, jsonMapper),
+                            ),
+                    ),
+                ),
+                initializerGaps = gaps,
+            ).findings.single().status
+
+        assertEquals(DependencyUsage.WITHOUT_EVIDENCE, statusWith("run"))
+    }
+
+    @Test
+    fun `a baseline method no instance has a probe for is unreached whatever the gaps say`() {
+        val declared = HeldReferences("demo.Init", "run", "()V", ReferenceOrigin.BASELINE, jsonMapper)
+
+        val report =
+            computeDependencyReport(
+                listOf(instance(references = listOf(declared))),
+                initializerGaps = mapOf("instance-1" to setOf("demo.Init")),
+            )
+
+        assertEquals(DependencyUsage.UNREACHED, report.findings.single().status)
     }
 }

@@ -74,7 +74,7 @@ The testkit derives one status per dependency from the instances it heard from. 
 | Used | Your code holds a live reference to the jar. |
 | Failed to load | No live reference, and your code references the jar from a class that a complete baseline declares and that failed to load. |
 | Failed to initialise | No live reference, no reference from a class that failed to load, and your code references the jar from a class that failed to initialise. |
-| Without evidence | No live reference, and a method with no hits in a class whose static initialiser is still running references the jar, so its zero counts prove nothing. |
+| Without evidence | No live reference, and the jar is referenced from a method with no hits whose class gives no evidence: in every instance that has a probe of the method, its static initialiser failed or is still running. A method of a skipped class gives none either. Its zero counts prove nothing. |
 | No live reference | The jar has no live reference, and some instance that lists it sent no complete baseline, so the testkit cannot tell unreferenced from unreached. |
 | Unreferenced | A class from the jar loaded, and nothing in your code references the jar. |
 | Unreached | Your code references the jar, but only from methods that were never hit or classes that never loaded. |
@@ -117,12 +117,16 @@ The agent records references per method, and per class for references outside an
 
 A reference is live when either holds:
 
-- A method with hits holds it, on any instance.
-- A class holds it at class level (an annotation, a supertype, a field type), that class loaded, and it did not fail to initialise.
+- A method with hits holds it. The hit can come from any instance, including one that records no references, and it counts even when the instance whose baseline holds the reference never loaded the class.
+- A class holds it at class level (an annotation, a supertype, a field type), that class loaded in any instance, and it did not fail to initialise. A class loaded when an instance reported it as probed, skipped or unreported, so a skipped class's class-level reference is live.
 
 An inline method's own references never count, because its callers carry copies of the body. Read [methods and branches](methods-and-branches) for inline methods.
 
 A reference from a method that was never hit, or from a class that never loaded, is not live. A reference in a class that never loaded is visible only through the static baseline.
+
+A skipped copy of a class has no probes, so its methods count no hits. A reference from a method of a class that any instance skipped is live only when another instance hit that method, and otherwise reads as without evidence.
+
+The testkit reads references from each instance's latest complete baseline scan. Chunks of a scan that has not finished add none, and neither does an older scan the same instance replaced.
 
 ### Absent references
 
@@ -137,7 +141,7 @@ A reference to a class no loader can find is an absent reference. Typical causes
 | Failed to load | A complete static baseline from an instance whose scan declares the class that failed to load. |
 | Unreferenced, unreached | A complete [static baseline](classes#enable-the-baseline) from every instance that lists the dependency. Set `staticBaselineEnabled=true` to send it. |
 
-Without a complete baseline, the testkit cannot see a reference held in a class that never loaded, so a dependency that is unreached would read as unreferenced. The status is "no live reference" instead, which is true either way. A baseline is complete only when every chunk of one scan has arrived.
+Without a complete baseline, the testkit cannot see a reference held in a class that never loaded, so a dependency that is unreached would read as unreferenced. The status is "no live reference" instead, which is true either way. An instance has a complete baseline once every chunk of one of its scans has arrived. A later scan that is still arriving does not undo it.
 
 Failed to load asks for review and claims no removal. The class may fail because of the very classpath that jar is on. Read [classes](classes#failed-to-load) for how the agent names a class that failed to load.
 
