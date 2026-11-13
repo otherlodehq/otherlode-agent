@@ -160,6 +160,7 @@ public class OtherlodeTestCollector internal constructor(
         val nodes: Map<NodeKey, NodeInfo>,
         val calls: Map<NodeKey, Set<ResolvedCall>>,
         val hitGeneratedCallers: Map<NodeKey, NodeInfo> = emptyMap(),
+        val unknownCallers: Map<NodeKey, Set<NodeKey>> = emptyMap(),
     ) {
         fun infoOf(key: NodeKey): NodeInfo = nodes[key] ?: hitGeneratedCallers.getValue(key)
     }
@@ -584,9 +585,10 @@ public class OtherlodeTestCollector internal constructor(
      * equals its target method's hit total, which means each call took the default. Sorted by class name,
      * method name, then parameter index.
      *
-     * Leaves out an overridable parameter, a target with no hits or no method probe, and a
-     * parameter with an inline, generated or unread omission probe. The row's line is the highest
-     * known line of its omission probes, or `-1`.
+     * Leaves out an overridable parameter, a target with no hits or no method probe, a parameter
+     * whose target class or omission probe's class is in [skippedClasses], and a parameter with an
+     * inline, generated or unread omission probe. The row's line is the highest known line of its
+     * omission probes, or `-1`.
      */
     public fun neverSupplied(): List<OptionalParameterRef> =
         checked {
@@ -597,9 +599,9 @@ public class OtherlodeTestCollector internal constructor(
      * Each optional parameter whose omission total, summed over its omission probes and instances,
      * is zero while its target method has hits, which means no call took the default. Sorted as [neverSupplied]
      * sorts. Includes an overridable parameter. Leaves out a target with no hits or no method
-     * probe, and a parameter with an inline, generated or unread omission probe. Throws
-     * [IllegalStateException] while an instance's zero counts are not evidence; see
-     * [neverInitialized].
+     * probe, a parameter whose target class or omission probe's class is in [skippedClasses], and a
+     * parameter with an inline, generated or unread omission probe. Throws [IllegalStateException]
+     * while an instance's zero counts are not evidence; see [neverInitialized].
      */
     public fun alwaysSupplied(): List<OptionalParameterRef> =
         checkedZeroCounts {
@@ -626,6 +628,11 @@ public class OtherlodeTestCollector internal constructor(
                 )
             }.mapNotNull { (groupKey, members) ->
                 if (members.any { it.inline || it.isLookedThrough }) return@mapNotNull null
+                if (skippedByClassName.containsKey(groupKey.targetClassName) ||
+                    members.any { skippedByClassName.containsKey(it.key.method.className) }
+                ) {
+                    return@mapNotNull null
+                }
                 val targetKeys =
                     findMethodProbesOrNull(groupKey.targetClassName, groupKey.methodName, groupKey.methodDescriptor)
                         ?: return@mapNotNull null
@@ -709,11 +716,11 @@ public class OtherlodeTestCollector internal constructor(
      * generated and optional-argument probes, the METHOD probe of a static initialiser, methods a
      * class finding covers ([neverInitialized], [neverInstantiated]), a never-hit lambda body folded
      * into the never-hit methods that create it, routine outcomes ([neverHitRoutineOutcomes]),
-     * unread shapes ([neverHitUnreadShapes]) and classes in [failedToInitialize]. A constructor is
-     * a row only when another constructor of its class ran. Leaves out a BRANCH probe whose site lies
-     * in a never-hit method that is not an unread shape, even a method that is not a row itself. It
-     * also leaves out a BRANCH probe whose guard is an outcome this list would hold if not for these
-     * two rules.
+     * unread shapes ([neverHitUnreadShapes]) and classes in [failedToInitialize] or [skippedClasses].
+     * A constructor is a row only when another constructor of its class ran. Leaves out a BRANCH
+     * probe whose site lies in a never-hit method that is not an unread shape, even a method that is
+     * not a row itself. It also leaves out a BRANCH probe whose guard is an outcome this list would
+     * hold if not for these two rules.
      *
      * Throws [IllegalStateException] while an instance's zero counts are not evidence; see
      * [neverInitialized].
@@ -739,7 +746,7 @@ public class OtherlodeTestCollector internal constructor(
     private fun neverHitRows(): List<ProbeRef> {
         val judgement = judgeClasses()
         val locations = mergedLocations()
-        val unjudgeable = failedToInitializeNames() + classesWithInitializerRunning()
+        val unjudgeable = unjudgeableClassNames()
         val candidates =
             locations.filter {
                 it.key.kind != WireProbeKind.OPTIONAL_ARGUMENT &&
@@ -935,7 +942,7 @@ public class OtherlodeTestCollector internal constructor(
     /**
      * Each loaded class with a judgeable static initialiser that ran in no instance, sorted by
      * class name. [neverHit] and [unreachedClusters] fold the class's never-hit methods into this
-     * finding. Leaves out a class in [failedToInitialize], and a class whose static initialiser has
+     * finding. Leaves out a class in [failedToInitialize] or [skippedClasses], and a class whose static initialiser has
      * started but not finished in each instance that loaded it.
      *
      * Throws [IllegalStateException] while an instance's zero counts are not evidence. They are not
@@ -947,7 +954,7 @@ public class OtherlodeTestCollector internal constructor(
     /**
      * Each loaded class with a judgeable constructor and a judgeable instance method, where no
      * judgeable constructor and no instance method ran in any instance, sorted by class name.
-     * Leaves out a class [neverInitialized] lists, a class in [failedToInitialize], and a class
+     * Leaves out a class [neverInitialized] lists, a class in [failedToInitialize] or [skippedClasses], and a class
      * whose static initialiser has started but not finished in each instance that loaded it.
      *
      * [neverHit] and [unreachedClusters] fold the class's never-hit constructors and instance
@@ -1016,7 +1023,7 @@ public class OtherlodeTestCollector internal constructor(
                 .map { it.key.method }
                 .filter { it.methodName != CONSTRUCTOR && it.methodName != CLASS_INIT }
                 .mapTo(mutableSetOf()) { it.className }
-        val withheld = failedToInitializeNames() + classesWithInitializerRunning()
+        val withheld = unjudgeableClassNames()
         for ((className, methods) in judgeable.values.groupBy { it.key.className }) {
             val initialisers = methods.filter { it.key.methodName == CLASS_INIT }
             val constructors = methods.filter { it.key.methodName == CONSTRUCTOR }
@@ -1067,8 +1074,10 @@ public class OtherlodeTestCollector internal constructor(
         constructed: Set<String>,
     ): Pair<Set<NodeKey>, Set<NodeKey>> {
         val creators = creatorsOf()
+        val unjudgeable = unjudgeableClassNames()
 
         fun absorbs(creator: NodeKey): Boolean {
+            if (creator.className in unjudgeable) return false
             if ((judgeable[creator] ?: return false).hits > 0L) return false
             if (creator in covered) return true
             return when (creator.methodName) {
@@ -1309,9 +1318,11 @@ public class OtherlodeTestCollector internal constructor(
      * cluster is the root plus each never-hit node reachable from it whose callers are all in the
      * cluster. A class or outcome root gives a cluster only when the cluster also holds another class
      * node or a method node it lists. Inline, generated and unread methods are not roots or members. Nor
-     * is a method of a class in [failedToLoad] or [failedToInitialize], or of a class whose static
-     * initialiser has started but not finished in each instance that loaded it, though it still
-     * counts as a caller.
+     * is a never-hit method of a class in [skippedClasses], a method of a class in [failedToLoad] or
+     * [failedToInitialize], or of a class whose static initialiser has started but not finished in each
+     * instance that loaded it, though each still counts as a caller. A method of a loaded class that a
+     * complete static baseline declares and no method probe covers is likewise a caller and never a
+     * root or member.
      * Throws [IllegalStateException] as [neverInitialized] does.
      */
     public fun unreachedClusters(): List<UnreachedCluster> {
@@ -1329,9 +1340,9 @@ public class OtherlodeTestCollector internal constructor(
                         key.methodName == CONSTRUCTOR && !info.neverLoaded && key !in coveredBy && key.className !in judgement.constructed
                     }.keys
             val outcomes = buildOutcomeNodes(::isHit)
-            val clusterGraph = buildClusterGraph(graph, outcomes, coveredBy)
+            val clusterGraph = buildClusterGraph(graph, outcomes, coveredBy, possiblyRunOutcomes(::isHit))
 
-            val withheld = failedToInitializeNames() + classesWithInitializerRunning() + failedToLoadNames()
+            val withheld = unjudgeableClassNames() + failedToLoadNames()
 
             fun isNeverHit(node: ClusterNode) =
                 when {
@@ -1501,6 +1512,28 @@ public class OtherlodeTestCollector internal constructor(
         return classNodes
     }
 
+    private fun unjudgeableClassNames(): Set<String> = failedToInitializeNames() + classesWithInitializerRunning() + skippedByClassName.keys
+
+    private fun isOutcomeCandidate(
+        location: MergedLocation,
+        isHit: (NodeKey) -> Boolean,
+    ): Boolean =
+        location.key.kind == WireProbeKind.BRANCH &&
+            location.key.outcome != null &&
+            !location.inline &&
+            location.generatedBy == WireGeneratedBy.NONE &&
+            location.unreadShape == WireUnreadShape.NONE &&
+            location.routine == WireRoutineKind.NONE &&
+            location.hits == 0L &&
+            isHit(location.key.method)
+
+    private fun possiblyRunOutcomes(isHit: (NodeKey) -> Boolean): Set<ClusterNode> {
+        val unjudgeable = unjudgeableClassNames()
+        return mergedLocations()
+            .filter { isOutcomeCandidate(it, isHit) && it.key.method.className in unjudgeable }
+            .mapTo(mutableSetOf()) { ClusterNode(it.key.method, it.key.outcome) }
+    }
+
     private fun buildOutcomeNodes(isHit: (NodeKey) -> Boolean): Map<ClusterNode, OutcomeNode> {
         val branchIds = branchOutcomeIds()
         val sitesByMethod =
@@ -1513,7 +1546,7 @@ public class OtherlodeTestCollector internal constructor(
                     { (_, probe) -> probe.branchSites },
                 ).mapValues { (_, lists) -> lists.flatten() }
         val locations = mergedLocations()
-        val unjudgeable = failedToInitializeNames() + classesWithInitializerRunning()
+        val unjudgeable = unjudgeableClassNames()
         val mergedIndex =
             locations
                 .filter { it.key.kind == WireProbeKind.BRANCH && it.key.outcome != null }
@@ -1525,18 +1558,8 @@ public class OtherlodeTestCollector internal constructor(
             rawIndex: Int,
         ): Int? = branchIds[OutcomeKey(instance, method, rawIndex)]?.let { mergedIndex[method to it] }
         return locations
-            .filter {
-                val outcome = it.key.outcome
-                it.key.kind == WireProbeKind.BRANCH &&
-                    outcome != null &&
-                    !it.inline &&
-                    it.generatedBy == WireGeneratedBy.NONE &&
-                    it.unreadShape == WireUnreadShape.NONE &&
-                    it.routine == WireRoutineKind.NONE &&
-                    it.hits == 0L &&
-                    isHit(it.key.method) &&
-                    it.key.method.className !in unjudgeable
-            }.associate { location ->
+            .filter { isOutcomeCandidate(it, isHit) && it.key.method.className !in unjudgeable }
+            .associate { location ->
                 val instance = location.newest.key.serviceInstanceId
                 val method = location.key.method
                 val branchIndex = location.newest.value.branchIndex
@@ -1560,6 +1583,7 @@ public class OtherlodeTestCollector internal constructor(
         graph: CallGraph,
         outcomes: Map<ClusterNode, OutcomeNode>,
         coveredBy: Map<NodeKey, ClusterNode>,
+        possiblyRun: Set<ClusterNode>,
     ): ClusterGraph {
         val callersOf = mutableMapOf<ClusterNode, MutableSet<ClusterNode>>()
         val calleesOf = mutableMapOf<ClusterNode, MutableSet<ClusterNode>>()
@@ -1575,11 +1599,14 @@ public class OtherlodeTestCollector internal constructor(
         fun nodeOf(key: NodeKey) = coveredBy[key] ?: ClusterNode(key)
         for ((caller, calls) in graph.calls) {
             for (call in calls) {
-                val guardNode = call.guard?.let { ClusterNode(caller, it) }?.takeIf { it in outcomes }
+                val guardNode = call.guard?.let { ClusterNode(caller, it) }?.takeIf { it in outcomes || it in possiblyRun }
                 val from = guardNode ?: nodeOf(caller)
                 val to = nodeOf(call.callee)
                 if (from != to) link(from, to)
             }
+        }
+        for ((caller, callees) in graph.unknownCallers) {
+            for (callee in callees) link(ClusterNode(caller), nodeOf(callee))
         }
         for ((node, outcome) in outcomes) {
             val guardNode =
@@ -1642,7 +1669,27 @@ public class OtherlodeTestCollector internal constructor(
                 transparent[key].orEmpty().forEach { resolve(it, mutableSetOf(key), targets) }
                 calls[key] = targets.map { ResolvedCall(it, null) }.toSet()
             }
-        return CallGraph(nodes, calls, hitGeneratedCallers)
+        return CallGraph(nodes, calls, hitGeneratedCallers, unknownCallers(nodes, transparent, ::resolve))
+    }
+
+    private fun unknownCallers(
+        nodes: Map<NodeKey, NodeInfo>,
+        transparent: Map<NodeKey, Set<CallEdge>>,
+        resolve: (CallEdge, MutableSet<NodeKey>, MutableSet<NodeKey>) -> Unit,
+    ): Map<NodeKey, Set<NodeKey>> {
+        val unknown = mutableMapOf<NodeKey, Set<NodeKey>>()
+        for ((className, declared) in consultedDeclaredClasses) {
+            if (className !in dynamicallyKnownClassNames) continue
+            for (method in declared.methods) {
+                val caller = NodeKey(className, method.methodName, method.methodDescriptor)
+                if (method.inline || caller in nodes || caller in transparent) continue
+                val targets = mutableSetOf<NodeKey>()
+                method.calls.forEach { resolve(it, mutableSetOf(caller), targets) }
+                targets -= caller
+                if (targets.isNotEmpty()) unknown[caller] = targets
+            }
+        }
+        return unknown
     }
 
     private fun buildTransparentMethods(): Map<NodeKey, Set<CallEdge>> {

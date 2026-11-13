@@ -93,8 +93,15 @@ A finding method takes no arguments and returns a list. It judges the merged hit
 - A `<clinit>`, which is a class state. A constructor appears only as an unused overload, when another constructor of its class ran.
 - A method that can run only through a class that `neverInitialized` or `neverInstantiated` lists, and a lambda body whose every creator is such a method or a never-hit method listed.
 - A method of a class that failed to initialise, and of its subtypes. See below.
+- A method of a class that some instance reported as skipped, even where another instance probed it. A skipped class's hits may never arrive, so a zero count says nothing about it.
 - A branch inside code that never ran. It folds into the row for that code.
 - A routine outcome and an unread shape, listed by the two queries above.
+
+#### Skipped classes
+
+A class that any instance lists in `skippedClasses()` supports no claim that rests on missing hits, even where another instance probed it, and even where one JVM holds a probed copy and a skipped copy of the class. `neverHit`, `neverHitRoutineOutcomes`, `neverHitUnreadShapes`, `neverInitialized`, `neverInstantiated`, `neverSupplied`, `alwaysSupplied` and `unreachedClusters` leave out the class. `neverSupplied` and `alwaysSupplied` also leave out a parameter whose function belongs to a skipped class. A method of the class that has hits stays hit, but an untaken outcome of that method still blocks the call it guards. A never-hit method of the class is neither a root nor a member of a cluster, and it still counts as a caller, so a method that only it calls is not a root.
+
+A method of a loaded class that a complete static baseline declares, and that has no method probe, is a caller the testkit cannot judge. That covers a method of a skipped class, of an unreported class, or of a loaded class with no probe for it. Such a caller is neither hit nor never hit, and a method it calls is not a root and joins no cluster through it.
 
 `neverHit` rows sort by class name, method name, line, then branch index. `neverInitialized`, `neverInstantiated` and `skippedClasses` sort by class name. `unreachedClusters` sorts by `membersTotal`, largest first, then by root as `neverHit` sorts.
 

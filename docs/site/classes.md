@@ -74,6 +74,8 @@ otherlode: instrumentation failed for com.acme.Foo, class will run uninstrumente
 otherlode: com.acme.Foo is reported as skipped: its manifest entries alone exceed the ingest limits on encoded bytes or elements, so its methods are not reported
 ```
 
+The testkit applies the same rule. A class that any instance skipped supports no claim from missing hits, even where another instance probed it. `neverHit`, the class findings, `neverSupplied`, `alwaysSupplied` and `unreachedClusters` leave it out. See [the testkit API](testkit-api#skipped-classes).
+
 A type that a field or method signature names, but that is not a supertype, does not skip a class. The class weaves, and the JVM resolves the type only if the class uses it.
 
 ## Loaded where no transformer saw it
