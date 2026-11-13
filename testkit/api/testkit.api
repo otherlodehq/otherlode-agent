@@ -97,6 +97,7 @@ public final class dev/otherlode/testkit/DependencyUsage : java/lang/Enum {
 	public static final field UNREACHED Ldev/otherlode/testkit/DependencyUsage;
 	public static final field UNREFERENCED Ldev/otherlode/testkit/DependencyUsage;
 	public static final field USED Ldev/otherlode/testkit/DependencyUsage;
+	public static final field WITHOUT_EVIDENCE Ldev/otherlode/testkit/DependencyUsage;
 	public static fun getEntries ()Lkotlin/enums/EnumEntries;
 	public static fun valueOf (Ljava/lang/String;)Ldev/otherlode/testkit/DependencyUsage;
 	public static fun values ()[Ldev/otherlode/testkit/DependencyUsage;

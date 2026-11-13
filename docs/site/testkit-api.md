@@ -99,7 +99,7 @@ A finding method takes no arguments and returns a list. It judges the merged hit
 
 #### Skipped classes
 
-A class that any instance lists in `skippedClasses()` supports no claim that rests on missing hits, even where another instance probed it, and even where one JVM holds a probed copy and a skipped copy of the class. `neverHit`, `neverHitRoutineOutcomes`, `neverHitUnreadShapes`, `neverInitialized`, `neverInstantiated`, `neverSupplied`, `alwaysSupplied` and `unreachedClusters` leave out the class. `neverSupplied` and `alwaysSupplied` also leave out a parameter whose function belongs to a skipped class. A method of the class that has hits stays hit, but an untaken outcome of that method still blocks the call it guards. A never-hit method of the class is neither a root nor a member of a cluster, and it still counts as a caller, so a method that only it calls is not a root.
+A class that any instance lists in `skippedClasses()` supports no claim that rests on missing hits, even where another instance probed it, and even where one JVM holds a probed copy and a skipped copy of the class. `neverHit`, `neverHitRoutineOutcomes`, `neverHitUnreadShapes`, `neverInitialized`, `neverInstantiated`, `neverSupplied`, `alwaysSupplied` and `unreachedClusters` leave out the class. `neverSupplied` and `alwaysSupplied` also leave out a parameter whose function belongs to a skipped class. A method of the class that has hits stays hit, but an untaken outcome of that method still blocks the call it guards. A never-hit method of the class is neither a root nor a member of a cluster, and it still counts as a caller, so a method that only it calls is not a root. So does a generated method of the class that has no hits.
 
 A method of a loaded class that a complete static baseline declares, and that has no method probe, is a caller the testkit cannot judge. That covers a method of a skipped class, of an unreported class, or of a loaded class with no probe for it. Such a caller is neither hit nor never hit, and a method it calls is not a root and joins no cluster through it.
 
@@ -117,9 +117,9 @@ A class is initialised in an instance when its static initialiser's returned slo
 
 `failedToInitialize()` does not list a name that no instance loaded, such as a library class the verifier rejected, but it lists that class's loaded subtypes. It does not list a class that failed to initialise in one instance and initialised in another.
 
-`neverHit`, `neverHitRoutineOutcomes`, `neverHitUnreadShapes`, `neverInitialized`, `neverInstantiated` and `unreachedClusters` leave out a listed class. A method that only such a class calls is the root of a cluster only when a calling method of that class has hits. The static initialiser of a class whose initialiser threw has hits, so a never-hit method of another class that only it calls is a `REACHED_FROM_HIT` root. `neverCalled` leaves out an endpoint whose handler class failed to initialise.
+`neverHit`, `neverHitRoutineOutcomes`, `neverHitUnreadShapes`, `neverInitialized`, `neverInstantiated` and `unreachedClusters` leave out a listed class. `neverCalled` leaves out an endpoint when, in every instance that reports it, that instance has a probe of the handler class and the class failed to initialise there, is listed, or has its initialiser still running there. `alwaysSupplied` leaves out a parameter when each of its omission probes is in such a class. A method of such a class that has hits is not a hit caller, so a never-hit method of another class that only it calls is in no cluster. That covers the static initialiser of a class whose initialiser threw, which has hits. A generated or unread-shape method of the class that has hits still counts as a hit caller. A never-hit method of the class, an untaken outcome of one of its hit methods and a generated method of it that has no hits each still count as a caller that blocks.
 
-The same queries, apart from `neverCalled`, leave out a class whose static initialiser is still running, and `failedToInitialize()` does not list it. Its initialiser is still running when, in every instance that loaded it, the initialiser's entry probe counted, the instance sent its returned and threw slots, and neither slot counted. A never-hit method of another class that only its static initialiser calls is a `REACHED_FROM_HIT` root.
+All of these queries also leave out a class whose static initialiser is still running, and `failedToInitialize()` does not list it. Its initialiser is still running when, in every instance that loaded it, the initialiser's entry probe counted, the instance sent its returned and threw slots, and neither slot counted. Unlike a class that failed to initialise, a method of such a class that has hits still counts as a hit caller. A dependency that a method of such a class with no hits references reads `WITHOUT_EVIDENCE` until the initialiser returns or throws, unless a live site, or a class that failed to load or initialise, references it.
 
 #### Queries that refuse
 
@@ -146,7 +146,7 @@ A query that reads no zero count keeps answering: `wasHit`, `hitCount`, `omissio
 |---|---|
 | `wasCalled(verb, routeTemplate): Boolean` | `true` if the summed call count is above zero. |
 | `callCount(verb, routeTemplate): Long` | The count summed over instances, each instance's highest delivered total. |
-| `neverCalled(): List<EndpointRef>` | Every endpoint with a summed count of zero, sorted by route template, then verb, then path, regex and servlet pattern in that order. Leaves out an endpoint whose handler class failed to initialise, and one whose endpoint module every reporting instance switched off. Refuses while an instance's zero counts are not evidence. |
+| `neverCalled(): List<EndpointRef>` | Every endpoint with a summed count of zero, sorted by route template, then verb, then path, regex and servlet pattern in that order. Leaves out an endpoint whose handler class, in every instance that reports it and has a probe of the class, failed to initialise, is listed in `failedToInitialize()`, or has a static initialiser still running, and one whose endpoint module every reporting instance switched off. Refuses while an instance's zero counts are not evidence. |
 | `endpoints(): List<EndpointRef>` | Every endpoint any instance reported, sorted the same way. |
 | `disabledEndpointModules(): List<DisabledEndpointModule>` | The endpoint modules an instance reported as switched off, each with its kind: those that switched themselves off, such as on a framework version the agent does not support, and those the agent's configuration kept off. Sorted by module name. |
 
@@ -548,9 +548,10 @@ What the dependency rules say about one dependency.
 | `NO_LIVE_REFERENCE` | Loaded, with no live reference, from an instance that sent no complete baseline. It is unreferenced or unreached, and the two cannot be told apart. |
 | `FAILED_TO_LOAD` | Loaded, with no live reference, and referenced from a class that failed to load. A prompt to review, not a claim that it can go. |
 | `USED` | Referenced from a method with hits, or at class level by a class that loaded and can run. |
-| `LOADED` | Loaded, and no instance that lists it records references, so nothing further is claimed. |
+| `LOADED` | Loaded, and nothing further is claimed, because no instance that lists it records references. |
 | `RESOURCES_ONLY` | The listing counted no class in it, as with native libraries, web assets and message bundles. Nothing is claimed. |
 | `FAILED_TO_INITIALIZE` | Loaded, with no live reference, and referenced from a class that failed to initialise and from none that failed to load. A prompt to review, not a claim that it can go. A dependency referenced from both kinds of failed class reads as `FAILED_TO_LOAD`. |
+| `WITHOUT_EVIDENCE` | Loaded, with no live reference, and referenced from a method with no hits in a class whose static initialiser is still running, so its zero counts prove nothing. The split queries leave it out and keep answering. |
 
 ## Compatibility
 

@@ -159,10 +159,10 @@ public class OtherlodeTestCollector internal constructor(
     private class CallGraph(
         val nodes: Map<NodeKey, NodeInfo>,
         val calls: Map<NodeKey, Set<ResolvedCall>>,
-        val hitGeneratedCallers: Map<NodeKey, NodeInfo> = emptyMap(),
+        val generatedCallers: Map<NodeKey, NodeInfo> = emptyMap(),
         val unknownCallers: Map<NodeKey, Set<NodeKey>> = emptyMap(),
     ) {
-        fun infoOf(key: NodeKey): NodeInfo = nodes[key] ?: hitGeneratedCallers.getValue(key)
+        fun infoOf(key: NodeKey): NodeInfo = nodes[key] ?: generatedCallers.getValue(key)
     }
 
     private data class ClusterNode(
@@ -599,13 +599,15 @@ public class OtherlodeTestCollector internal constructor(
      * Each optional parameter whose omission total, summed over its omission probes and instances,
      * is zero while its target method has hits, which means no call took the default. Sorted as [neverSupplied]
      * sorts. Includes an overridable parameter. Leaves out a target with no hits or no method
-     * probe, a parameter whose target class or omission probe's class is in [skippedClasses], and a
-     * parameter with an inline, generated or unread omission probe. Throws [IllegalStateException]
+     * probe, a parameter whose target class or omission probe's class is in [skippedClasses], a
+     * parameter whose omission probes are all in classes in [failedToInitialize] or whose static
+     * initialiser has started but not finished in each instance that loaded them, and a parameter
+     * with an inline, generated or unread omission probe. Throws [IllegalStateException]
      * while an instance's zero counts are not evidence; see [neverInitialized].
      */
     public fun alwaysSupplied(): List<OptionalParameterRef> =
         checkedZeroCounts {
-            optionalParameterFindings {
+            optionalParameterFindings(withholdInitializerGaps = true) {
                 omitted,
                 _,
                 _,
@@ -615,9 +617,11 @@ public class OtherlodeTestCollector internal constructor(
         }
 
     private fun optionalParameterFindings(
+        withholdInitializerGaps: Boolean = false,
         claims: (omitted: Long, targetHits: Long, overridable: Boolean) -> Boolean,
-    ): List<OptionalParameterRef> =
-        mergedLocations()
+    ): List<OptionalParameterRef> {
+        val initializerGaps = if (withholdInitializerGaps) initializerGapClassNames() else emptySet()
+        return mergedLocations()
             .filter { it.key.kind == WireProbeKind.OPTIONAL_ARGUMENT }
             .groupBy {
                 OmissionTargetKey(
@@ -633,6 +637,7 @@ public class OtherlodeTestCollector internal constructor(
                 ) {
                     return@mapNotNull null
                 }
+                if (members.all { it.key.method.className in initializerGaps }) return@mapNotNull null
                 val targetKeys =
                     findMethodProbesOrNull(groupKey.targetClassName, groupKey.methodName, groupKey.methodDescriptor)
                         ?: return@mapNotNull null
@@ -650,6 +655,7 @@ public class OtherlodeTestCollector internal constructor(
                     targetClassName = members.mapNotNull { it.targetClassName }.maxOrNull(),
                 )
             }.sortedWith(compareBy({ it.className }, { it.methodName }, { it.parameterIndex }))
+    }
 
     private fun findMethodProbes(
         className: String,
@@ -1156,9 +1162,14 @@ public class OtherlodeTestCollector internal constructor(
     private fun failedToInitializeNames(): Set<String> {
         if (initializationFailures.isEmpty()) return emptySet()
         val initialized = initializedClassNames()
-        val failed = HashSet<String>()
+        return failedToInitializeByInstance().values.flatten().filterTo(HashSet()) { it !in initialized && it in dynamicallyKnownClassNames }
+    }
+
+    private fun failedToInitializeByInstance(): Map<String, Set<String>> {
+        val byInstance = HashMap<String, Set<String>>()
         val namedByInstance = initializationFailures.entries.groupBy { it.key.serviceInstanceId }
         for ((instance, entries) in namedByInstance) {
+            val failed = HashSet<String>()
             val rejected = entries.filter { InitializationFailure.VERIFIER_REJECTED in it.value }.mapTo(HashSet()) { it.key.id }
             val threw = entries.filter { InitializationFailure.STATIC_INITIALIZER_THREW in it.value }.mapTo(HashSet()) { it.key.id }
             val supertypes = supertypesByInstance.filterKeys { it.serviceInstanceId == instance }.mapKeys { it.key.id }
@@ -1176,8 +1187,9 @@ public class OtherlodeTestCollector internal constructor(
             for (className in supertypes.keys) {
                 if (className !in failed && carriesFailure(className, supertypes, rejected, threw, withDefaultMethods)) failed += className
             }
+            byInstance[instance] = failed
         }
-        return failed.filterTo(HashSet()) { it !in initialized && it in dynamicallyKnownClassNames }
+        return byInstance
     }
 
     private fun initializedClassNames(): Set<String> {
@@ -1225,7 +1237,23 @@ public class OtherlodeTestCollector internal constructor(
         return false
     }
 
-    private fun classesWithInitializerRunning(): Set<String> {
+    private fun classesWithInitializerRunning(): Set<String> = initializerRunningByInstance().second
+
+    private fun initializerGapsByInstance(): Map<String, Set<String>> {
+        val reported = HashMap<String, MutableSet<String>>()
+        for ((key, probe) in probesByKey) reported.getOrPut(key.serviceInstanceId) { HashSet() } += probe.className
+        val failedOverall = failedToInitializeNames()
+        val failedByInstance = failedToInitializeByInstance()
+        val gaps = HashMap<String, MutableSet<String>>()
+        for ((instance, classes) in reported) {
+            val failed = failedOverall + failedByInstance[instance].orEmpty()
+            gaps[instance] = classes.filterTo(HashSet()) { it in failed }
+        }
+        initializerRunningByInstance().first.forEach { (instance, names) -> gaps.getOrPut(instance) { HashSet() } += names }
+        return gaps
+    }
+
+    private fun initializerRunningByInstance(): Pair<Map<String, Set<String>>, Set<String>> {
         class Initializer {
             var entered = false
             var returnedSlot = false
@@ -1254,13 +1282,16 @@ public class OtherlodeTestCollector internal constructor(
                 }
             }
         }
-        return loading
-            .filter { (className, instances) ->
-                instances.all { instance ->
-                    initializers[InstanceKey(instance, className)]?.let { it.entered && it.returnedSlot && it.threwSlot && !it.finished } ==
-                        true
-                }
-            }.keys
+        fun running(
+            instance: String,
+            className: String,
+        ) = initializers[InstanceKey(instance, className)]?.let { it.entered && it.returnedSlot && it.threwSlot && !it.finished } == true
+        val byInstance = HashMap<String, MutableSet<String>>()
+        for ((className, instances) in loading) {
+            for (instance in instances) if (running(instance, className)) byInstance.getOrPut(instance) { HashSet() } += className
+        }
+        val everywhere = loading.filter { (className, instances) -> instances.all { running(it, className) } }.keys
+        return byInstance to everywhere
     }
 
     internal fun kotlinKind(className: String): KotlinKind? =
@@ -1313,7 +1344,8 @@ public class OtherlodeTestCollector internal constructor(
      * to each known subtype that has it. A call guarded by an outcome node counts as a call from that
      * outcome.
      *
-     * A root is a never-hit node with no caller, or with a caller that is a method with hits.
+     * A root is a never-hit node with no caller, or with a caller that is a method with hits, other
+     * than a method of a class in [failedToInitialize] that is neither generated nor an unread shape.
      * [RootKind] names its shape. Some nodes, such as static initialisers, are never roots. The
      * cluster is the root plus each never-hit node reachable from it whose callers are all in the
      * cluster. A class or outcome root gives a cluster only when the cluster also holds another class
@@ -1329,7 +1361,7 @@ public class OtherlodeTestCollector internal constructor(
         return checkedZeroCounts {
             val graph = computeCallGraph()
 
-            fun isHit(key: NodeKey) = ((graph.nodes[key] ?: graph.hitGeneratedCallers[key])?.hits ?: 0L) > 0L
+            fun isHit(key: NodeKey) = ((graph.nodes[key] ?: graph.generatedCallers[key])?.hits ?: 0L) > 0L
 
             val judgement = judgeClasses()
             val classNodes = buildClassNodes(graph, judgement)
@@ -1342,6 +1374,7 @@ public class OtherlodeTestCollector internal constructor(
             val outcomes = buildOutcomeNodes(::isHit)
             val clusterGraph = buildClusterGraph(graph, outcomes, coveredBy, possiblyRunOutcomes(::isHit))
 
+            val failedToInitialize = failedToInitializeNames()
             val withheld = unjudgeableClassNames() + failedToLoadNames()
 
             fun isNeverHit(node: ClusterNode) =
@@ -1363,7 +1396,13 @@ public class OtherlodeTestCollector internal constructor(
             return neverHitNodes
                 .mapNotNull { node ->
                     val callers = clusterGraph.callersOf[node].orEmpty()
-                    val hitCallers = callers.filter { it.outcome == null && !it.isClass && isHit(it.method) }
+                    val hitCallers =
+                        callers.filter {
+                            it.outcome == null &&
+                                !it.isClass &&
+                                isHit(it.method) &&
+                                (it.method.className !in failedToInitialize || it.method !in graph.nodes)
+                        }
                     if (callers.isNotEmpty() && hitCallers.isEmpty()) return@mapNotNull null
                     val kind =
                         when {
@@ -1512,7 +1551,9 @@ public class OtherlodeTestCollector internal constructor(
         return classNodes
     }
 
-    private fun unjudgeableClassNames(): Set<String> = failedToInitializeNames() + classesWithInitializerRunning() + skippedByClassName.keys
+    private fun initializerGapClassNames(): Set<String> = failedToInitializeNames() + classesWithInitializerRunning()
+
+    private fun unjudgeableClassNames(): Set<String> = initializerGapClassNames() + skippedByClassName.keys
 
     private fun isOutcomeCandidate(
         location: MergedLocation,
@@ -1658,18 +1699,24 @@ public class OtherlodeTestCollector internal constructor(
             }
             calls[nodeKey] = resolved
         }
-        val hitGeneratedCallers = mutableMapOf<NodeKey, NodeInfo>()
+        val generatedCallers = mutableMapOf<NodeKey, NodeInfo>()
+        val unjudgeable = unjudgeableClassNames()
         mergedLocations()
-            .filter { it.key.kind == WireProbeKind.METHOD && !it.inline && it.isLookedThrough && it.hits > 0L }
+            .filter {
+                it.key.kind == WireProbeKind.METHOD &&
+                    !it.inline &&
+                    it.isLookedThrough &&
+                    (it.hits > 0L || it.key.method.className in unjudgeable)
+            }
             .forEach { location ->
                 val key = location.key.method
                 if (key in nodes) return@forEach
-                hitGeneratedCallers[key] = NodeInfo(location.line, neverLoaded = false, location.hits, emptySet())
+                generatedCallers[key] = NodeInfo(location.line, neverLoaded = false, location.hits, emptySet())
                 val targets = mutableSetOf<NodeKey>()
                 transparent[key].orEmpty().forEach { resolve(it, mutableSetOf(key), targets) }
                 calls[key] = targets.map { ResolvedCall(it, null) }.toSet()
             }
-        return CallGraph(nodes, calls, hitGeneratedCallers, unknownCallers(nodes, transparent, ::resolve))
+        return CallGraph(nodes, calls, generatedCallers, unknownCallers(nodes, transparent, ::resolve))
     }
 
     private fun unknownCallers(
@@ -1899,19 +1946,23 @@ public class OtherlodeTestCollector internal constructor(
 
     /**
      * Each endpoint any instance reported whose summed call count is zero, sorted by route
-     * template, verb, then path, regex and servlet pattern. Leaves out an endpoint whose handler
-     * class is in [failedToInitialize], and one whose framework module each reporting instance
-     * disabled ([disabledEndpointModules]). Throws [IllegalStateException] as [neverInitialized]
-     * does.
+     * template, verb, then path, regex and servlet pattern. Leaves out an endpoint when, in every
+     * instance that reports it, the instance has a probe of the handler class and that class failed to
+     * initialise there or is in [failedToInitialize], or its static initialiser has started but not
+     * finished there. Also
+     * leaves out one whose framework module each reporting instance disabled ([disabledEndpointModules]).
+     * Throws [IllegalStateException] as [neverInitialized] does.
      */
     public fun neverCalled(): List<EndpointRef> =
         checkedZeroCounts {
-            val failedToInitialize = failedToInitializeNames()
+            val gapsByInstance = initializerGapsByInstance()
             endpointRefsByIdentity
                 .filterKeys { identity -> (endpointKeysByIdentity[identity]?.sumOf { endpointHitsByKey[it] ?: 0L } ?: 0L) <= 0L }
                 .filterKeys { identity -> !endpointModuleDisabledEverywhere(identity) }
-                .values
-                .filter { it.handlerClass !in failedToInitialize }
+                .filter { (identity, ref) ->
+                    val keys = endpointKeysByIdentity[identity].orEmpty()
+                    keys.isEmpty() || keys.any { ref.handlerClass !in gapsByInstance[it.serviceInstanceId].orEmpty() }
+                }.values
                 .sortedWith(compareBy({ it.routeTemplate }, { it.verb }, { it.isServletPatternTemplate }, { it.isRegexTemplate }))
         }
 
@@ -2125,7 +2176,7 @@ public class OtherlodeTestCollector internal constructor(
     }
 
     private fun dependencyReport(): DependencyReport =
-        computeDependencyReport(dependencyViews(), failedToLoad().toSet(), failedToInitializeNames())
+        computeDependencyReport(dependencyViews(), failedToLoad().toSet(), failedToInitializeNames(), classesWithInitializerRunning())
 
     private fun dependenciesWithStatus(
         status: DependencyUsage,

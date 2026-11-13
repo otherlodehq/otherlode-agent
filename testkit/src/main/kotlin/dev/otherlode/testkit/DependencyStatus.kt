@@ -41,6 +41,12 @@ public enum class DependencyUsage {
      * failed to load does.
      */
     FAILED_TO_INITIALIZE,
+
+    /**
+     * No live site references it, and a method with no hits in a class whose static initialiser has started
+     * but not finished does, so its zero counts are no evidence.
+     */
+    WITHOUT_EVIDENCE,
 }
 
 /**

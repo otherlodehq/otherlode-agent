@@ -82,6 +82,7 @@ internal fun computeDependencyReport(
     instances: List<InstanceDependencyView>,
     failedClassNames: Set<String> = emptySet(),
     failedToInitializeClassNames: Set<String> = emptySet(),
+    initializerRunningClassNames: Set<String> = emptySet(),
 ): DependencyReport {
     val failed = failedClassNames - instances.flatMapTo(mutableSetOf()) { it.loadedClassNames }
     val recording = instances.filter { it.referencesRecorded }
@@ -93,6 +94,7 @@ internal fun computeDependencyReport(
             .mapValues { (_, held) -> held.sumOf { it.hits } }
 
     val referencesByDependency = mutableMapOf<String, MutableSet<Pair<DependencyReferenceSite, Boolean>>>()
+    val withoutEvidence = mutableSetOf<String>()
     val absentSites = mutableMapOf<String, MutableSet<DependencyReferenceSite>>()
     for (instance in recording) {
         val identityKeys = instance.dependencies.associate { it.dependencyId to it.identityKey }
@@ -115,6 +117,10 @@ internal fun computeDependencyReport(
             val failedSite = held.origin == ReferenceOrigin.BASELINE && instance.baselineComplete && held.className in failed
             val failedInitialization = held.className in failedToInitializeClassNames
             val liveSite = live && !(failedInitialization && held.origin == ReferenceOrigin.MANIFEST_CLASS)
+            val unhitMethodOfRunningInitializer =
+                !live &&
+                    held.origin == ReferenceOrigin.MANIFEST_METHOD &&
+                    held.className in initializerRunningClassNames
             val site =
                 DependencyReferenceSite(
                     held.className,
@@ -131,6 +137,7 @@ internal fun computeDependencyReport(
                 }
                 val identityKey = mapping.dependencyId?.let(identityKeys::get) ?: continue
                 referencesByDependency.getOrPut(identityKey) { mutableSetOf() } += site to liveSite
+                if (unhitMethodOfRunningInitializer) withoutEvidence += identityKey
             }
         }
     }
@@ -170,6 +177,10 @@ internal fun computeDependencyReport(
 
                         references.any { (site, _) -> site.failedToInitialize } -> {
                             DependencyUsage.FAILED_TO_INITIALIZE
+                        }
+
+                        identityKey in withoutEvidence -> {
+                            DependencyUsage.WITHOUT_EVIDENCE
                         }
 
                         !judging.all { it.baselineComplete } -> {

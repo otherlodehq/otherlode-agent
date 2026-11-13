@@ -70,15 +70,16 @@ The testkit derives one status per dependency from the instances it heard from. 
 |---|---|
 | Resources only | Every instance's listing counted no class in the jar, and no instance loaded a class from it, as with native libraries, web assets, or message bundles. |
 | Unloaded | Some instance listed the jar from its startup classpath, and no instance loaded a class from it. |
-| Loaded | A class loaded, and no instance that lists the jar records references, so the testkit claims nothing further. |
+| Loaded | A class loaded, and the testkit claims nothing further, because no instance that lists the jar records references. |
 | Used | Your code holds a live reference to the jar. |
 | Failed to load | No live reference, and your code references the jar from a class that a complete baseline declares and that failed to load. |
 | Failed to initialise | No live reference, no reference from a class that failed to load, and your code references the jar from a class that failed to initialise. |
+| Without evidence | No live reference, and a method with no hits in a class whose static initialiser is still running references the jar, so its zero counts prove nothing. |
 | No live reference | The jar has no live reference, and some instance that lists it sent no complete baseline, so the testkit cannot tell unreferenced from unreached. |
 | Unreferenced | A class from the jar loaded, and nothing in your code references the jar. |
 | Unreached | Your code references the jar, but only from methods that were never hit or classes that never loaded. |
 
-Otherlode reports these statuses too, and three more that claim nothing: stale, counts behind and without evidence. [Unused dependencies](/docs/server/findings#unused-dependencies) has Otherlode's rules.
+Otherlode reports these statuses too, and two more that claim nothing: stale and counts behind. [Unused dependencies](/docs/server/findings#unused-dependencies) has Otherlode's rules.
 
 The agent does not start without `includePackages`, so every running agent records references. A dependency reads loaded only when no instance that lists it sent references.
 
@@ -168,7 +169,7 @@ The entry usually arrives in the same flush as the first count, and at the earli
 | `awaitDependency(groupId, artifactId, timeout)` | Waits until a manifest lists the dependency. |
 | `awaitDependenciesListed(timeout)` | Waits until the testkit has heard from at least one instance and every instance it heard from has sent the "dependencies listed" flag. |
 
-The result of a query is a `DependencyStatus` with a `DependencyUsage` value. `DependencyUsage` has the values `UNLOADED`, `UNREFERENCED`, `UNREACHED`, `NO_LIVE_REFERENCE`, `FAILED_TO_LOAD`, `USED`, `LOADED`, `RESOURCES_ONLY`, and `FAILED_TO_INITIALIZE`. A later release can add values, so a `when` over it needs an `else` branch. Each referencing site prints as `Class#method`, with `(class level)`, `(never loaded)`, `(failed to load)`, or `(failed to initialise)` where they apply.
+The result of a query is a `DependencyStatus` with a `DependencyUsage` value. `DependencyUsage` has the values `UNLOADED`, `UNREFERENCED`, `UNREACHED`, `NO_LIVE_REFERENCE`, `FAILED_TO_LOAD`, `USED`, `LOADED`, `RESOURCES_ONLY`, `FAILED_TO_INITIALIZE`, and `WITHOUT_EVIDENCE`. A later release can add values, so a `when` over it needs an `else` branch. Each referencing site prints as `Class#method`, with `(class level)`, `(never loaded)`, `(failed to load)`, or `(failed to initialise)` where they apply.
 
 These rules apply to the queries:
 
